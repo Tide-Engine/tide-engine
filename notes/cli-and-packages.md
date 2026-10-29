@@ -1,5 +1,20 @@
 # `tide`, packages and the package
 
+## Interactive hidden play (2026-10-29)
+
+`run --interactive <replay.txt>` forwards the replay's absolute path and
+selects the ordinary one-shot native build/run path, retaining inherited
+stdin/stdout. The hidden runner accepts live frame-queued script input,
+explicit steps and current-frame captures, with executed actions saved for
+--script replay; contracts and platform tests are in notes/standard-host.md,
+Dynamic agent play. Existing web/Android/server checks refuse this native
+player mode before building. The help catalog, CLI reference and agent guides
+describe the protocol and provisional names. No CLI telemetry field changed.
+Run-exit dispatch/path forwarding, hidden/unsupported/missing-value checks,
+and focused help tests cover the CLI integration. Native CLI builds and docs
+production build pass; final compatibility results are in standard-host.md.
+
+
 ## CLI pins select a side-by-side release (2026-10-29)
 
 Owner requested using a project's pin and asking to download a missing release,

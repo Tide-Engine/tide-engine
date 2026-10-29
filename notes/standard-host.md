@@ -1,5 +1,59 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Dynamic agent play (2026-10-29)
+
+The owner requested agents that can inspect rendered games and queue input
+while the same game stays alive. `--interactive <replay.txt>` selects the
+existing desktop hidden host. It draws frame 1 normally, then blocks on stdin
+between explicit `step <n>` requests. No session/simulation clock advances
+while waiting. Keyboard/mouse/clicks/movement/scroll/text/touch/gamepad and
+player leave/drop/rejoin use script.c's existing parser and device path.
+No generated C, match behavior, embed ABI or runtime function changed.
+
+The provisional protocol is documented in docs/tools/cli.md, Interactive play:
+absolute future-frame script lines queue actions (stable order for equal
+frames, sorted insertion across frames); step advances 1..1,000,000 frames;
+capture reads the current frame, optionally for one player; status observes;
+clear frees pending actions without releasing held input; quit/EOF ends at
+the current frame. Flushed `tide: interactive ready/ok/error` lines report
+completion and permit recovery from malformed requests. Lines are limited to
+4,094 bytes, pending events to 65,536, frames to 1,000,000,000. --frames can
+cap the session, --capture/--capture-audio write final outputs; --script is
+mutually exclusive. Dynamic audio-capture lines are refused because audio
+not requested ahead of time can already have been discarded.
+
+Only player 1 reads stdin and writes the replay. players.c broadcasts control
+commands on the existing private coordinator connections, and acknowledges
+completion/error from each process, separate from frame datagram exchanges.
+Every process steps together, including while disconnected from its match.
+An observation targeting another player's capture is acknowledged after the
+file is written, and a failure there reaches the controller. External peers
+and services do not stop with this process; --players keeps a whole local
+match under frame control.
+
+Executed events alone are flushed to the replay in frame/arrival order,
+including events targeting other players. Current-frame observations append
+only after successful acknowledgement. Consumed events are freed; abandoned
+future plans do not enter the replay. Clean exits append the last frame's
+quit. Replay uses the normal --script path and requires matching runtime
+settings and starting saves/external state. Relative captures/recordings are
+beside the replay file, matching ordinary scripts.
+
+Validation: Windows Clang 23.1.2/Node 24.22.1 strict native builds and the web
+platform archive build pass. tide_platform_interactive passes visual
+observe/click/step decisions, held/released movement, text, no advancement
+between observations, out-of-order queues, clear, error recovery/long lines,
+two synchronized players, targeted input/capture, a second player's capture
+failure, leave, EOF, a --frames cap, and byte-identical normal script replays.
+All ten existing capture/refusal, multiplayer/refusal/network and CLI
+compatibility CTests pass. The final interactive, no-GPU three-process control
+acknowledgement/error test and CLI forwarding test also pass (3/3).
+Docs production build passes (the existing unstaged-example 404s remain).
+No browser was launched, deterministic hash changed, or extra CI dispatched.
+Other desktop OS execution, Android and sanitizers remain untested locally;
+the interactive command itself is desktop-only.
+
+
 ## A slow network to play on (2026-10-27)
 
 The owner's ask: tune how a match feels online (Parry's blocks, struck through a guard that looked up in time) without
@@ -416,7 +470,7 @@ Validation: Windows Clang 23.1.2, Node 24.19.0; the full native debug suite
 fixture's vertex layout and rerunning the affected draw tests. Native coverage
 includes OpenGL and Vulkan with both descriptor paths under validation; web
 coverage includes WebGL/WebGPU and exact host-to-drawer vertex totals.
-The production docs build and `git diff --check` pass. A 960×540 hidden capture
+The production docs build and `git diff --check` pass. A 960Ãƒâ€”540 hidden capture
 was visually checked: a clear plus one rectangle reports 9 vertices, with the
 drawer excluded. Android, other OS builds and sanitizers were not run; no CI
 was dispatched. Hardware vertex-shader invocation counts remain outside this
@@ -459,7 +513,7 @@ submitted-geometry counter's scope.
   - **`hidden.c`'s audio devices are its own**: it defines the devices' four functions (`tide_audio_out_open` and `_close`, `tide_audio_in_open` and `_close`), which open nothing and, in its `audio` mode, print what they're asked. The platform layer is a static library, so a program that has all four isn't linked with `platform/desktop/audio.c`; a fifth function there that the platform calls has to be given here too, or the link fails on the four, defined twice. So the test knows what a window asked for, by the devices' own word and with nothing timed, and neither of its runs opens the machine's device. `audio` hands a hidden window a voice and, for two frames, the microphone's name: with the variable nothing is asked for, and without it the output opens with the window and closes with it, and the microphone opens at the first frame that names it and closes at the first that doesn't. In both, the mixer has the voice (the test's thread renders a block of it, as no device's does). With the gate taken out, the first of the two fails (tried).
 - The stats are a drawer (agreed 2026-10-05: always open, they covered two thirds of a game at the size the docs embed one, and a game can't ask where they are; what's picked is Provisional in `docs/spec.md`, Settings). `tide/stats.h` (`engine/src/stats.c`, in the engine beside the GUI and the profiler, so its tests need no window) is the drawer, and `tide/host.h` drives it:
   - Closed, it's one line, with what's worth a glance: the frame rate, and the ping when another machine runs the match (`tide_stats_values.remote`: this machine's own is the loopback's). Open, the rest is listed above that line, which stays where it is, so a click in the same place closes it again. The list is cut from its end where a screen is too low for it, and a system's name is cut where a line is too wide, never what the system took. It shows outside a match too, with the lines that aren't a match's.
-  - **The list reads as two columns, and nothing in it shifts but the digits** (2026-10-07; the owner found it hard to read, "things shift a lot", and `cpu` unclear as a total; the shape is Claude's pick, Provisional in `docs/spec.md`, Settings). Each line is a label on the left and its value on the right (`tide_stats_line.label` and `value`, which `tests/test_stats.c` checks by; `entities 2472`, where it was `2472 entities`), labels dimmer than values, in four groups with a little space between (`gap`): a frame's times, the match's, the machine's, and the systems. `cpu` is the whole of a frame's work, and `render` is indented under it (`indent`) as the part of it that's rendering; `gpu` stands beside them, as the two overlap. What belongs together is one line (the owner, the same day): the frame's draw calls are in the GPU line's label, `gpu (22 draw calls)`, and a line of their own, `draw calls`, only where the backend has no GPU timer; the input delay is in the ping's, `ping (delay 3 ticks)`, and a line of its own only in a remote match, whose ping is in the drawer's one line; up and down are one `network` line, `↑2.0  ↓0.5 KB/s`, whose arrows the drawer draws itself (`draw_arrow`, a shaft and a head of thick lines, as its chevron is: Tuffy has U+2191 and U+2193, and at 16 pixels they look like a 1); and the tick is gone (`tide_stats_values` has no `tick`), as it said nothing at a glance and changed every frame. A system keeps its row while it stays among the three slowest, and one that joins them takes the row of the one it replaces (`tide_stats_collect`), so the rows don't shuffle twice a second; the first three are slowest first. Open, the panel keeps the widest it has been (`tide_stats.held`), so its edge doesn't jump as a long system name comes and goes, and closing it, or `tide_stats_off`, lets that go; the screen still bounds it, and a label is cut where the values' column leaves it no room.
+  - **The list reads as two columns, and nothing in it shifts but the digits** (2026-10-07; the owner found it hard to read, "things shift a lot", and `cpu` unclear as a total; the shape is Claude's pick, Provisional in `docs/spec.md`, Settings). Each line is a label on the left and its value on the right (`tide_stats_line.label` and `value`, which `tests/test_stats.c` checks by; `entities 2472`, where it was `2472 entities`), labels dimmer than values, in four groups with a little space between (`gap`): a frame's times, the match's, the machine's, and the systems. `cpu` is the whole of a frame's work, and `render` is indented under it (`indent`) as the part of it that's rendering; `gpu` stands beside them, as the two overlap. What belongs together is one line (the owner, the same day): the frame's draw calls are in the GPU line's label, `gpu (22 draw calls)`, and a line of their own, `draw calls`, only where the backend has no GPU timer; the input delay is in the ping's, `ping (delay 3 ticks)`, and a line of its own only in a remote match, whose ping is in the drawer's one line; up and down are one `network` line, `Ã¢â€ â€˜2.0  Ã¢â€ â€œ0.5 KB/s`, whose arrows the drawer draws itself (`draw_arrow`, a shaft and a head of thick lines, as its chevron is: Tuffy has U+2191 and U+2193, and at 16 pixels they look like a 1); and the tick is gone (`tide_stats_values` has no `tick`), as it said nothing at a glance and changed every frame. A system keeps its row while it stays among the three slowest, and one that joins them takes the row of the one it replaces (`tide_stats_collect`), so the rows don't shuffle twice a second; the first three are slowest first. Open, the panel keeps the widest it has been (`tide_stats.held`), so its edge doesn't jump as a long system name comes and goes, and closing it, or `tide_stats_off`, lets that go; the screen still bounds it, and a label is cut where the values' column leaves it no room.
   - A click or a tap on it opens it and closes it (the left button or a finger that went down on it and is let go on it), and so does F8, beside the profiler's F7: the game reads the key too. `tide_run_drawer_input` asks right after `tide_platform_poll`, before anything reads the devices.
   - It starts closed, and `tide run --stats` starts it open (`tide_run_desc.stats_open`, which tide sets for `run` alone: `opts.stats_open` in `compiler/cli/main.c`), since whoever typed that wants to read it. A game's setting, `tide build --stats` and `STATS` are what players get: the one line.
   - Open or closed is the host's (`tide_run_drawer`), never a build's, so a hot reload keeps it: on desktop the host outlives the game's library, and on the web it goes with what a program leaves the next one (`saved.stats_open` in `platform/src/reload.c`).

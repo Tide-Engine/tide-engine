@@ -734,6 +734,9 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             tide_run_headless_desc.capture_audio =
                 tide_run_value(&i, arg, "the file everything the run plays goes to, like --capture-audio run.wav");
             tide_run_headless = true;
+        } else if (strcmp(arg, "--interactive") == 0) {
+            tide_run_headless_desc.interactive = tide_run_value(&i, arg, "a replay file, like --interactive play.txt");
+            tide_run_headless = true;
         } else if (strcmp(arg, "--script") == 0) {
             tide_run_headless_desc.script = tide_run_value(&i, arg, "a file of input by frame, like --script play.txt");
             tide_run_headless = true;

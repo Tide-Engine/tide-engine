@@ -98,7 +98,7 @@ endforeach()
 message(STATUS "ok: several players in a run with a window are refused")
 
 # An option that takes a file says so without one, before anything is built.
-foreach(option --capture --capture-audio --script --microphone)
+foreach(option --capture --capture-audio --script --microphone --interactive)
     tide_run(1 --frames 3 ${option})
     string(FIND "${said}" "${option} takes a file, like `${option} " at)
     if(NOT code EQUAL 2 OR at EQUAL -1 OR EXISTS "${game}/.tide")
@@ -106,6 +106,14 @@ foreach(option --capture --capture-audio --script --microphone)
     endif()
 endforeach()
 message(STATUS "ok: a file's option with no file is refused")
+
+foreach(target --web --android --server)
+    tide_run(1 ${target} --interactive play.txt)
+    if(NOT code EQUAL 2 OR EXISTS "${game}/.tide")
+        message(FATAL_ERROR "${target} --interactive should fail before building: ${code}: ${said}")
+    endif()
+endforeach()
+goes_on("interactive hidden play" 1 --interactive play.txt)
 
 foreach(target --web --android --server)
     tide_run(1 ${target} --data-dir test-saves)

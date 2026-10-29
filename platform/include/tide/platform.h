@@ -82,6 +82,10 @@ typedef struct tide_headless_desc {
     // (docs/tools/cli.md, Scripts, has every kind); NULL for none. A file it
     // names is beside it.
     const char *script;
+    // Interactive stdin control, with executed actions saved as this script.
+    // Starts with frame 1 drawn, then waits for step/input/capture/quit lines.
+    // Relative captures are beside this file. NULL for an ordinary run.
+    const char *interactive;
     // A run of several players (tide_platform_players, below): how many, each
     // a process of its own that the first starts; 0 for a run that isn't one.
     // The first is given the program's command line, `argc` and `argv`, and

@@ -81,6 +81,10 @@ if (mode === 'refused') {
     refused('a run nothing ends', ['--capture', 'x.png'], 'nothing ends this run', '--frames');
     refused('a script that never quits', ['--script', script('endless.txt', ['3 key d'])], 'nothing ends this run', '`quit`');
     refused('--frames with no number', ['--frames'], '--frames takes how many frames');
+    refused('--interactive without a replay file', ['--interactive'], '--interactive takes a replay file');
+    refused('--interactive with an unreadable output folder', ['--interactive', 'missing/replay.txt'], "can't write replay");
+    refused('--interactive combined with a script', ['--interactive', 'replay.txt', '--script', 'unused.txt'],
+            '--interactive takes new actions over stdin', 'omit --script');
     refused('--data-dir with no directory', ['--data-dir'], '--data-dir takes a save directory');
     refused('--data-dir with an empty directory', ['--data-dir', ''], '--data-dir takes a nonempty save directory');
     refused('--capture-audio with no file', ['--frames', '2', '--capture-audio'], '--capture-audio takes the file');
