@@ -83,3 +83,64 @@ raw saves through the existing generated header clearing, and serializes tables
 in logical order; restored tables start in identity layout. Its raw world header
 size differs from the shipping build, so raw-byte equivalence was checked
 between identity and packed worlds within the probe, not against old saves.
+
+## Production sequence and game baseline (2026-10-29)
+
+The owner asked how to complete integration and whether the docs samples and
+`D:/Projects/tide-prototypes` hold up. The regressions above reject unconditional
+packing, not a selective implementation. The next implementation should proceed
+in independently testable steps:
+
+1. Move the mapped table implementation into the engine with automatic selection
+   disabled, rebuilding all consumers against its header. Test forced mapped
+   tables through the actual generated/runtime paths, not a mixed-ABI overlay.
+2. Make ordinary generated traversal preserve logical order: queries, events,
+   commands, views, interpolation across differently mapped snapshots, visibility,
+   local attachments and deferred changes. Translate entity locations before
+   direct physical access. Audit C rows and hot reload explicitly; initially
+   exclude whole tables used by unsupported consumers from packing.
+3. Prove physical-loop eligibility through helper calls. Begin with independent
+   numeric row writes and read-only singleton inputs, excluding cross-entity
+   queries, random draws, extern calls, shared writes and queued effects unless
+   their ordering has separately been proved safe. A safe system alone does not
+   make its table's other readers safe.
+4. Add conservative layout selection using table size, selectivity and membership
+   changes, with one selected partition per table and protection against repeated
+   repartitioning. Keep identity for tiny/mixed-density cases. The current evidence
+   does not establish a universal size/density threshold. Include the logical
+   hash cache, snapshot retention and extra memory in the selection measurements.
+5. Replay identical gameplay inputs with packing forced off/on, asserting that
+   the on run really packs rows. Compare every tick's logical hash, entity IDs,
+   event/command order, restores and network corrections; validate views as well
+   as simulation. Then measure full tick/hash/snapshot and frame costs. Merely
+   passing games which stayed on the identity fallback is not packed coverage.
+
+Concrete existing cases:
+
+- `docs/examples/systems.tide` has only nine bodies, two filters, `Snap()` and
+  filtered views. It should stay cheap through the identity path.
+- `docs/examples/entities.tide` changes Poisoned membership via commands and
+  destroys depleted entities, exercising more than numeric row updates.
+- `examples/samples/asteroids/game.tide`, `Shoot`, sends a hit to the first
+  overlapping rock and returns. Physical reordering must not change that rock.
+- Foldline uses Box3D C interop, shared mutable state and cross-entity queries;
+  Gravewake's combat and views also query other entities. Neither is covered by
+  the isolated wide-game proof.
+
+Baseline validation uses engine `765935637` and the owner's prototype checkout
+at `31429e7`, whose tracked files were clean (untracked `.claude/` was left alone).
+The release and web-release configurations include that checkout through
+`TIDE_EXTERNAL_DIRS`, with platform and docs examples enabled. All 49 docs
+examples and 11 gallery games build on both targets, and all 60 pass a native
+`--frames 3` startup check with `TIDE_HIDDEN=1`. The existing Inside Out,
+Underfoot, Foldline, Gravewake, Banked and Two Forks simulation test targets
+pass on native and WASI (six targets per platform).
+Inside Out, Underfoot, Foldline, Gravewake, Banked and Parry also build on both
+targets and pass the same bounded native startup check. Foldline's build-time
+map export/connection check passes on both targets.
+
+These checks use shipping identity storage, not the packed overlay. They do not
+measure gameplay performance or prove future packed compatibility. No browser
+playtest, long gameplay run, Sidekick tool test or new Bevy comparison is claimed;
+Parry has no registered simulation test. No prototype source or hash pin changed.
+Local build/test/startup logs are under `build/packed-integration/`.
