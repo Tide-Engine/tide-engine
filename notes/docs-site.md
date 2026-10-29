@@ -31,6 +31,11 @@ Production docs build passes with Node 24.22.1 and the existing allowed
 unstaged-example 404s. Native and WebGPU captures were visually inspected.
 Other operating systems and real-phone testing remain unavailable locally.
 
+Integration retains incoming benchmark and Render3D notes through 16fcf26ea;
+the only conflict was concurrent notes prepends. The merged docs production
+build and selected desktop interaction checks pass again on WebGL and WebGPU.
+Incoming package changes do not affect this example's compiled runtime.
+
 ## Public ECS benchmark page (2026-10-29)
 
 `/benchmarks` is an ordinary prerendered docs page, linked from the home page
