@@ -875,7 +875,7 @@ tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
 | `tide update` | Every package from git, to the newest commit of what it follows |
 | `tide update physics` | One, by its name, its repository's name or its source |
 
-Both add the lines of the packages the game's packages need that it doesn't list yet.
+Both write only the lines they name: what the game's packages need, the game builds from their own lines (see [The packages a package needs](../packages/using-and-writing.md#the-packages-a-package-needs)). Each then checks that the game's packages resolve, and fails with the error if not.
 
 ## eject
 
@@ -887,7 +887,7 @@ tide eject rooms    # the rooms line becomes ./packages/rooms
 
 A package that's a folder already is left where it is, and a folder already at `packages/<name>` is an error, with nothing copied.
 
-`tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, and adds the same lines: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
+`tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, what its packages need included, and those any `#if` leaves out of this build: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
 
 ## upgrade
 

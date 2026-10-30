@@ -398,7 +398,7 @@ char **tide_game_sources(const char *folder_arg, int *count)
         if (!package->line->local) continue;
         if (strncmp(package->folder, game, strlen(game)) != 0) {
             fprintf(stderr, "%s:%d: error: %s is in a folder outside the game's, so it can't be published with it\n",
-                    packages.file.path, package->line->line, package->name);
+                    package->listed_in, package->line->line, package->name);
             fprintf(stderr, "  = note: list it from git, by its repository and commit, or move its folder into the game's\n");
             ok = false;
             continue;
