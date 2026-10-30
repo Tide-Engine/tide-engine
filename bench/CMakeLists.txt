@@ -89,6 +89,11 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
+# Pose.Sample of a separate animation export, a call at a time (pose/main.c);
+# the test checks that kept sample plans give the bits of one-call plans.
+tide_add_game(bench_pose SOURCES pose/game.tide NAME game HOST pose/main.c)
+add_test(NAME bench_pose COMMAND bench_pose --quick)
+
 # Static Render3D PBR and equivalent cached public-C direct submission.
 # All referenced sources exist before this registration is added; no common
 # compiler/runtime/platform build settings change for this benchmark.

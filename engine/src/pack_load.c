@@ -101,6 +101,7 @@ static struct {
 static TIDE_THREAD_LOCAL uint32_t mapped_epoch;
 // Never reset on unload: an offset reused by another load is a different proof.
 static uint64_t skinned_proof_identity;
+static uint64_t generation; // tide_pack_generation
 
 // What a Texture names an image by: the declaration (its name's hash, as its
 // entry has it), and for one of a glob's, its place in the list or its key
@@ -700,6 +701,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     index_skinned_spans();
     note_cubes(); // Once nothing more is laid out: the region is where it stays
     pack.epoch++;
+    __atomic_add_fetch(&generation, 1u, __ATOMIC_RELEASE);
     tide_pack_region_slots = slots;
     tide_pack_use();
     return true;
@@ -729,6 +731,7 @@ void tide_pack_unload(void)
     pack.file_size = 0;
     pack.entry_count = 0;
     pack.epoch++;
+    __atomic_add_fetch(&generation, 1u, __ATOMIC_RELEASE);
     tide_pack_region_slots = 0;
     tide_pack_use();
 }
@@ -828,6 +831,8 @@ void *tide_pack_mesh_open(const tide_pack_entry *e, const uint32_t k, const uint
 void tide_pack_mesh_updated(void *vertices, const uint32_t vertex)
 {
     tide_asset_pack_clear();
+    // The caller has written the vertices, wherever they are.
+    __atomic_add_fetch(&generation, 1u, __ATOMIC_RELEASE);
     if (!pack.region || !vertices) return;
     const uintptr_t begin = (uintptr_t)pack.region, at = (uintptr_t)vertices;
     if (at < begin || at - begin < sizeof(tide_block) || at - begin > pack.size) return;
@@ -844,6 +849,11 @@ void tide_pack_mesh_updated(void *vertices, const uint32_t vertex)
     const tide_block *b = (const tide_block *)(const void *)(pack.region + offset);
     changed_skinned_span(offset, offset + b->next + (uint32_t)sizeof version);
     memcpy(pack.region + offset + b->next, &version, sizeof version);
+}
+
+uint64_t tide_pack_generation(void)
+{
+    return __atomic_load_n(&generation, __ATOMIC_ACQUIRE);
 }
 
 // Locate a record only through an entry of the current pack. Comparisons use

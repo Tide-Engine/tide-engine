@@ -377,6 +377,12 @@ bool tide_pack_skinned_proof(tide_list data, uint64_t *identity, uint64_t *versi
 // invalid. The output is unchanged when no current proof exists.
 bool tide_pack_skinned_sample_proof(tide_list data, bool *nonnegative_first_times);
 
+// Changes whenever a byte of the loaded pack could have: each load, unload
+// and geometry-default write. A block within the file's bytes
+// (tide_pack_file_span) holds the same bytes for as long as this is the
+// same, so runtime caches of what was read from it key on both.
+uint64_t tide_pack_generation(void);
+
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps
 // (tide_text_use), so every thread that runs Tide code reads the pack.

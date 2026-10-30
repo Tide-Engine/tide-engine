@@ -1,5 +1,70 @@
 # Assets and local files
 
+## Kept sample plans (2026-10-30)
+
+bannerlord-duel measured `Pose.Sample` of an FBX clip onto its Synty
+character at 12 µs a call: before sampling anything, each call checked both
+node tables and every key of the clip (an ordinary packed `Animation` has no
+load-time proof), built two name tables and bound the rigs. Timings:
+notes/benchmarks.md, Pose.Sample a call at a time.
+
+`tide_skinned_sample` and `tide_skinned_sample_into` (`engine/src/skinned.c`)
+now make a sample plan: whether the clip binds, each bound channel's
+descriptor and output node (or folded slot), the pose before any channel
+(target rest with the required source defaults over it), folded nodes'
+starting locals and the folds to finish with. It's made by the same code
+that made those decisions per call before: `plan_own` is the old
+`tide_skinned_sample` preflight (the pack proofs included), `plan_bound` the
+separate binding (`require_clip`, `bind_nodes`, `clip_folds_uniform`), and a
+refusal still reports once through `report_binding`. `plan_apply` then
+sizes the output, copies the starting pose, samples every channel in clip
+order and applies the folds. Its arithmetic is the samplers' own: the same
+search result, span, `t`, lerp, slerp, Hermite terms and the two rotation
+normalizations, in the same order. What changed is only where they happen:
+channels whose key times are the same bytes share one search and one
+(span, t) (`plan_groups`, kept plans only); keys decode as fixed three or
+four lanes, a zero in the fourth as before; and every channel's value is
+made before the rotations are normalized in a loop of their own, then
+written in channel order. `linear_rotation` is `tide_slerp_q` with its
+nlerp branch's normalizing left to that loop (the wide-angle branch still
+calls `tide_slerp_q`).
+
+A plan is kept when both models' bytes have a key that can't name other
+bytes:
+
+- A pack block within the file's bytes (`tide_pack_file_span`), keyed by its
+  offset and `tide_pack_generation()`, a new runtime function (not called by
+  generated code) that changes on every load, unload and
+  `tide_pack_mesh_updated`. Generated code never writes the pack; the
+  runtime's writes are the load's and geometry defaults', each followed by
+  `tide_pack_mesh_updated`, so a forged pack whose geometry write overlaps a
+  model plans again, as its proof is dropped.
+- An asset-held list (`tide_asset_list`: a component's copy of an asset),
+  keyed by its SHA-256 id, which names its bytes.
+
+Owned lists (scratch, decoded, edited) plan for each call and free the plan,
+as they checked for each call before. The key has the mode (own skeleton or
+into another), the clip index and both models' keys; a kept plan also
+checks both views' sizes on use. Refusals are kept too. 64 sets of 4 plans,
+least recently used replaced, under a spinlock, shared by every thread; a
+caller holds a reference while applying, so eviction by another thread frees
+nothing in use. Plans are malloc'd (a 55-node, 156-channel plan is about
+7 KB) and live until evicted. Pose bits, refusals, output ownership (scratch
+and world outputs, heap/chunked through the list cache), the
+untouched-output-on-refusal rule and `tide_skinned_pose_into` are unchanged.
+
+Tests (`tests/test_skinned.c`): `skinned_kept_sample_plans_match_plans_made_for_one_call`
+(pack- and asset-held bytes against owned copies: the exact rig, separate
+bindings both ways, an armature folded in and out, refused bindings and
+clips, scratch and world outputs, twice so the second pass reads kept
+plans); `skinned_kept_sample_plans_follow_reloaded_packs` (another pack at
+the same offsets with a changed key and rest plans again);
+`skinned_kept_sample_plans_survive_eviction` (2,400 refused keys among valid
+samples). Leaving the generation out of the key fails the reload test and
+the two existing proof-invalidation tests. `bench_pose --quick` checks kept
+against single-call plans over a 192-channel clip. The pinned cross-platform
+pose bits (`skinned_crossplatform_pose_bits`) are unchanged.
+
 ## FBX keys closer than a float are one key (2026-10-29, bug)
 
 Reported by the owner from the duel (`bannerlord-duel`'s `notes/gaps.md`):
