@@ -133,8 +133,8 @@ still performs only front-end validation, even with a preview flag.
 
 | Option | What it does |
 |---|---|
-| `--release` | Optimizes game and package code for testing and profiling, keeping symbols, diagnostics and assets |
-| `--distribution` | Optimizes for shipping, with symbol/name stripping, shader minification and unused-asset pruning; implies `--release` |
+| `--release` | Optimizes game and package code for testing and profiling, keeping symbols and diagnostics; standalone builds leave out unused code, data and assets |
+| `--distribution` | Builds for shipping: `--release` plus symbol/name stripping, shader minification and packaging (smaller web pages, Android app bundles) |
 | `-O0`, `-O1`, `-O2`, `-O3` | Overrides engine, game and package C/C++ optimization; deterministic math and the chosen build mode stay unchanged |
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
@@ -181,7 +181,7 @@ artifact.
 
 By default, the engine is optimized in every build. In the default debug mode, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
-Use `tide run --release --stats` to test a large game at optimized speed. Release retains debug symbols, readable profiling and diagnostic names, assets, C assertions and native debugger visualizers. Optimized stepping may skip inlined calls or show locals as unavailable. Both optimized modes leave `DEBUG` undefined. Debug, release and distribution use separate `.tide/<target>-<mode>/` caches.
+Use `tide run --release --stats` to test a large game at optimized speed. Release retains debug symbols, readable profiling and diagnostic names, C assertions and native debugger visualizers, and leaves out unused code, data and assets as a distribution does. Optimized stepping may skip inlined calls or show locals as unavailable. Both optimized modes leave `DEBUG` undefined. Debug, release and distribution use separate `.tide/<target>-<mode>/` caches.
 
 Choose one optimization override to experiment, for example `tide run --release -O3 --stats` or `tide build --distribution -O1`. `-O0` disables optimization; `-O1`, `-O2` and `-O3` select increasing optimization levels, which are not guaranteed to improve a particular workload. The override applies to engine sources, generated game code and game/package C/C++, including hot reload, native, web, Android, servers and `tide unity`. Prebuilt libraries keep their own optimization. Without an override, debug game code uses `-O0`, debug engine code uses `-O2`, and release/distribution use `-O2` for both.
 
@@ -206,7 +206,7 @@ Until the game first draws, the page shows what it's doing: how much of the game
 - An element with the ID `tide-loading` is the loader: the game takes it away once it has drawn, and fills in the elements in it with the IDs `tide-loading-bar` (a bar, whose first child's width is how much has downloaded), `tide-loading-text` (what's happening, in words) and `tide-loading-logo` (an `<img>` for the icon). Leave it out for no loader.
 - `Tide.onProgress`, set in the `var Tide = { ... }` before the game's script, is told each step for a loader of your own: `{ stage, loaded, total, error }`, where `stage` is `download` (`loaded` of `total` bytes), `compile`, `waiting` (for `Tide.start()`, on a page that set `Tide.wait`), `start` (the game is running, until it first draws), `done` (it drew) or `error` (it couldn't start, and `error` says why).
 
-Standalone distribution builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#distribution-builds). Debug, release and hot-reload builds keep their usual code and asset loading behavior.
+Standalone release and distribution builds remove unreachable native code and data; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Distribution builds also strip debug symbols. Debug and hot-reload builds keep all code and every declared asset.
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
 

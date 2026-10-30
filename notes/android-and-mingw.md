@@ -1,8 +1,8 @@
 # Android and MinGW builds
 
 CLI modes (2026-10-30): --release is optimized with symbols and debuggable APKs,
-using a default app ID if needed. --distribution owns shipping exports, appId
-requirement and AAB creation. The CLI builds warning-free under Windows ASan;
+using a default app ID if needed, and links with --gc-sections. --distribution
+owns symbol stripping, shipping exports, appId requirement and AAB creation. The CLI builds warning-free under Windows ASan;
 native/web artifact/C++ coverage passes. Android packaging/device execution
 for this split remains CI coverage; details: cli-and-packages.md.
 

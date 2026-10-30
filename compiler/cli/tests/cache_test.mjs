@@ -328,8 +328,8 @@ int Native(int value)
             }
             for (const [name, marker] of Object.entries(markers)) {
                 // WebAssembly already collects unused code in debug. Native
-                // debug/release keep it, proving that distribution changes the link.
-                const expected = name.endsWith("Called") || (!distribution && target === "native");
+                // debug keeps it, proving that release changes the link.
+                const expected = name.endsWith("Called") || (mode === "debug" && target === "native");
                 check(program.includes(Buffer.from(marker)) === expected,
                     `${target} ${mode}: ${name} ${expected ? "was removed" : "was retained"}`);
             }
@@ -342,20 +342,20 @@ int Native(int value)
                 const unusedGlfw = Buffer.from("Invalid gamma value");
                 check(readFileSync(join(installation, "lib", "native", "libtide_platform.a")).includes(unusedGlfw),
                     "unused GLFW sentinel missing from the prebuilt platform archive");
-                check(program.includes(unusedGlfw) === !distribution,
-                    `native ${mode}: unused GLFW gamma API ${distribution ? "was retained" : "was removed"}`);
+                check(program.includes(unusedGlfw) === (mode === "debug"),
+                    `native ${mode}: unused GLFW gamma API ${mode === "debug" ? "was removed" : "was retained"}`);
             }
-            if (distribution) {
+            if (mode !== "debug") {
                 // Both unused bodies/data really entered the link: their
                 // disappearance is link collection, not C-level optimization.
-                const cache = join(game, ".tide", `${target}-distribution`);
+                const cache = join(game, ".tide", `${target}-${mode}`);
                 check(readFileSync(join(cache, "engine", "strip_test.c.o")).includes(Buffer.from(markers.engineUnused)),
                     "unused engine sentinel missing before the release link");
                 check(readFileSync(join(cache, "c", "probe.c.o")).includes(Buffer.from(markers.userUnused)),
                     "unused user sentinel missing before the release link");
             }
         }
-        console.log("  called engine/user code remains; uncalled code/data is absent from distributions");
+        console.log("  called engine/user code remains; uncalled code/data is absent from releases and distributions");
     } finally {
         removeOwned(root, engine);
     }
@@ -373,15 +373,16 @@ async function assetModeTests(tide, root, target) {
         const cache = join(game, ".tide", `${target}-${mode}`, "gen");
         const packFile = join(cache, "game.pack");
         const pack = existsSync(packFile) ? readFileSync(packFile) : Buffer.alloc(0);
-        check(pack.includes(Buffer.from("UNUSED_ASSET_MODE_28f9b4")) === (mode !== "distribution"),
+        check(pack.includes(Buffer.from("UNUSED_ASSET_MODE_28f9b4")) === (mode === "debug"),
             `${target} ${mode}: wrong unused-asset policy`);
-        if (target === "native" && mode !== "distribution") {
+        // A window needs a GPU, which CI's runners haven't.
+        if (opts.gpu && target === "native" && mode !== "distribution") {
             const output = join(game, ".build", `asset-modes-${target}${process.platform === "win32" ? ".exe" : ""}`);
             const result = await run(output, ["--frames", "2"], game, { TIDE_HIDDEN: "1" });
             check(result.code === 0, `${mode} bounded run failed:\n${result.said}`);
         }
     }
-    console.log(`  ${target}: only distribution prunes unused Tide assets`);
+    console.log(`  ${target}: release and distribution prune unused Tide assets`);
 }
 
 async function optimizationTests(tide, installation, root, target) {
@@ -398,7 +399,16 @@ int ${name}(void) {
 #endif
 }
 `;
-    put(engine, probe("EngineOptimized"));
+    // The engine probe also checks its flags as it compiles, so a runner
+    // without a GPU, which runs no game below, still sees them reach clang.
+    // It's outside the game's folder, so its text is no part of the game's
+    // simulation identity. Its first version's time comes back with it, for
+    // the return to -O0 to find nothing changed.
+    const firstProbe = new Date(Math.floor(Date.now() / 1000) * 1000 - 60000);
+    const engineProbe = (mode, level) => `#if defined(__OPTIMIZE__) != ${Number(level !== 0)}`
+        + ` || defined(NDEBUG) != ${Number(mode === "distribution")}\n#error engine_flags_changed\n#endif\n`
+        + probe("EngineOptimized");
+    put(engine, engineProbe("debug", 0), firstProbe);
     put(join(game, "probe.cpp"), 'extern "C" {\n' + probe("CppOptimized") + '}\n');
     put(join(game, "probe.c"), probe("GameOptimized") + `
 #include <stdlib.h>
@@ -427,8 +437,10 @@ int CheckOptimization(void) {
 `);
     put(join(game, "game.tide"), 'scene Main { }\nextern int CheckOptimization();\n'
         + 'system Tick() { Debug.Assert(CheckOptimization() == 1, "optimization or deterministic math changed"); }\n');
-    const output = join(root, `optimization-${target}${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
+    // Not the game's folder's name: on Linux and macOS a program has no extension.
+    const output = join(root, `optimization-${target}-out${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
     const build = async (mode, level) => {
+        put(engine, engineProbe(mode, level), mode === "debug" && level === 0 ? firstProbe : undefined);
         const result = await run(tide, ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []),
             ...(mode === "debug" ? [] : [`--${mode}`]), `-O${level}`], game);
         check(result.code === 0, `${target} ${mode} -O${level} failed:\n${result.said}`);
@@ -450,7 +462,8 @@ int CheckOptimization(void) {
             }
             if (mode === "debug") identities.add(readFileSync(`${output}.simulation`, "utf8"));
             if (mode === "debug" && level === 0) saved = mark(cache);
-            if (target === "native") {
+            // A window needs a GPU, which CI's runners haven't.
+            if (opts.gpu && target === "native") {
                 const result = await run(output, ["--frames", "2"], game,
                     { TIDE_HIDDEN: "1", TIDE_OPT_EXPECT: level === 0 ? "0" : "1",
                         TIDE_ASSERT_EXPECT: mode === "distribution" ? "1" : "0" });

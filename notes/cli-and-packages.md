@@ -1,5 +1,34 @@
 # `tide`, packages and the package
 
+## Release prunes again; distribution keeps only shipping cuts (2026-10-30)
+
+Owner, on the split below: "also release should prune unused stuff / i think
+it moved too many things to distribution layer". Standalone `--release`
+(and so `--distribution`) builds again compile with function/data sections and
+link with --gc-sections (ELF, MinGW lld, Android) or -dead_strip (Apple), and
+Tide-only games omit unreferenced assets (`strip_game_assets`). WebAssembly
+collects sections in every mode, as before. Distribution alone keeps: symbol
+stripping (-s, Apple -S -x -no_exported_symbols, wasm -s), name/shader-name
+stripping with the private game.names map, debugger-sidecar cleanup, -DNDEBUG,
+the Windows GUI subsystem, the minified/compressed web page, Android's export
+allowlist, appId requirement, non-debuggable APK and AAB. Release keeps -g,
+PDB/dSYM, natvis/LLDB views, names and assertions. NDEBUG stays a distribution
+cut: it is no pruning, and the split's release-keeps-assertions choice stands
+until the owner says otherwise.
+
+Package CI fixes in cache_test.mjs (Nightly 41059993148): the asset-mode and
+optimization fixtures ran native games with --frames, which open a hidden GL
+window that CI's GPU-less Windows runner can't make. Those runs now need
+`--gpu`, like nativeRunTest; the optimization fixture's installed engine probe
+instead `#error`s at compile time unless __OPTIMIZE__/NDEBUG match the mode and
+level, so CI still sees each level reach clang. The probe is outside the game
+folder, so the custom-C simulation identity check is unchanged; its -O0 text
+returns with its first mtime so the reuse check still finds nothing written.
+The optimization fixture's output was `<root>/optimization-native`, the game's
+own folder on Linux/macOS (no extension), so ld failed with EISDIR; it is now
+`optimization-<target>-out`. Expectations: unused engine/user/GLFW code and
+the unused asset are gone in release and distribution, kept in debug.
+
 ## Per-project optimization experiments (2026-10-30)
 
 Owner requested an explicit optimization-level flag for project experiments.

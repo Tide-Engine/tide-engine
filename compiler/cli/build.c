@@ -642,7 +642,7 @@ static void config_flags(args *a, const build *b, const bool cpp, const bool eng
         arg(a, "-fno-eliminate-unused-debug-types");
         arg(a, "-gno-column-info");
     }
-    if (b->opts->distribution || b->opts->server) arg_list(a, release_sections);
+    if (b->opts->release || b->opts->server) arg_list(a, release_sections);
     // A library's code works wherever it's loaded, and Android's games are libraries.
     // On Linux and Android, a function whose locals take more than a page
     // touches each page as it makes room for them (-fstack-clash-protection):
@@ -1688,8 +1688,9 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     arg(&a, output);
     build_flags(&a, opts, false);
     // Hot-reload libraries keep their public symbols and their existing link
-    // policy. Standalone distributions only need code reachable from their entry.
-    if ((opts->distribution || opts->server) && !opts->watch && !shared) {
+    // policy. Standalone releases only need code reachable from their entry;
+    // distributions also strip their symbols.
+    if ((opts->release || opts->server) && !opts->watch && !shared) {
         if (opts->web && opts->distribution) arg(&a, "-Wl,-s"); // wasm-ld already collects unused sections.
 #ifdef __APPLE__
         else if (!opts->web) arg(&a, opts->distribution ? "-Wl,-dead_strip,-S,-x,-no_exported_symbols" : "-Wl,-dead_strip");
@@ -2090,7 +2091,7 @@ static bool folder_has_c_code(const char *folder)
 // Only a closed Tide game gives the compiler every root of its asset graph.
 static bool strip_game_assets(const build *b, const bool layout)
 {
-    if (!b->opts->distribution || b->opts->watch || b->library || layout || folder_has_c_code(b->folder)) return false;
+    if (!b->opts->release || b->opts->watch || b->library || layout || folder_has_c_code(b->folder)) return false;
     for (int i = 0; i < b->packages.count; i++) {
         if (folder_has_c_code(b->packages.items[i].folder)) return false;
     }
@@ -3904,6 +3905,9 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     arg(&a, output);
     build_flags(&a, b->opts, false);
     char *exports = NULL;
+    // A release collects unused sections; a distribution also strips its
+    // symbols and exports only the activity's way in.
+    if (b->opts->release && !b->opts->distribution && !b->opts->watch) arg(&a, "-Wl,--gc-sections");
     if (b->opts->distribution && !b->opts->watch) {
         exports = path_join(b->root, "lib/android/game.exports");
         if (!sys_exists(exports)) {

@@ -71,9 +71,9 @@ file(COPY "${e2e}/cpp_code.cpp" DESTINATION "${game}/lib")
 file(APPEND "${game}/cpp.tide" "\nsettings { appId = \"dev.tide.test.cpp\"; }\n")
 foreach(target IN LISTS targets)
     tide("${game}" ARGS build . ${${target}_args} EXPECT "Built ")
-    tide("${game}" ARGS build . ${${target}_args} --release EXPECT "Built ")
-    # Distribution section collection must retain constructors, virtual dispatch,
+    # Release section collection must retain constructors, virtual dispatch,
     # and the code's own new/delete implementation as well as direct calls.
+    tide("${game}" ARGS build . ${${target}_args} --release EXPECT "Built ")
     tide("${game}" ARGS build . ${${target}_args} --distribution EXPECT "Built ")
 endforeach()
 if(ANDROID)

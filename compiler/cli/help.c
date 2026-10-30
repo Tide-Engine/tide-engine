@@ -168,14 +168,14 @@ static const argument_help arguments[] = {
     {"file.tprefab", "<file.tprefab>", "Authored prefab or scene file",
      "Selects the file to edit or validate. Use --project to choose the game root.", OPEN},
     {"--release", "--release", "Optimize game code for testing and profiling",
-     "Keeps debug symbols, readable diagnostics, assertions and assets. Engine\n"
-     "code defaults to -O2; default game/package code is unoptimized.\n"
-     "DEBUG is undefined. Use --distribution for shipping cuts.", COMPILE},
+     "Keeps debug symbols, readable diagnostics and assertions. Engine code\n"
+     "defaults to -O2; default game/package code is unoptimized. DEBUG is\n"
+     "undefined. Standalone builds collect unused code and data, and Tide-only\n"
+     "games omit unreferenced assets. Use --distribution for shipping cuts.", COMPILE},
     {"--distribution", "--distribution", "Build an optimized game for distribution",
-     "Implies --release. Standalone builds strip debug symbols and readable\n"
-     "diagnostic/shader names, collect unused code and omit unreferenced\n"
-     "assets in Tide-only games. Keeps a private game.names diagnostic map\n"
-     "in the build cache. Watched/embedded builds retain required metadata.\n"
+     "Implies --release. Standalone builds also strip debug symbols and\n"
+     "readable diagnostic/shader names, keeping a private game.names map in\n"
+     "the build cache. Watched/embedded builds retain required metadata.\n"
      "Android also makes an app bundle and requires the game's appId.", COMPILE},
     {"-O0", "-O0", "Disable optimization of game and engine sources",
      "Overrides the mode default; see tide help -O3.", COMPILE},
