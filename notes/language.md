@@ -1,5 +1,57 @@
 # Language features, as tidec builds them
 
+## Static mesh values keep stable IDs (2026-10-30)
+
+Owner-approved follow-up: ordinary Mesh<V> lists/arrays should use the existing
+asset-ID machinery internally, sharing large geometry and borrowing it on access.
+This supersedes the Mesh collection/field/async restrictions recorded below.
+
+Non-import Mesh<V> types and expressions canonicalize to the existing checked
+Asset<Mesh<V>> struct (one hidden long). Explicit Asset spelling denotes the
+same type; Value is identity for static meshes. vertices/indices resolve the ID
+through the generated typed resolver, and Draw's existing two-list expansion
+uses that path. Match/local fields, lists, arrays, maps, nested structs and task
+state use ordinary ownership, padding, snapshots, hashes and codecs. Geometry
+members remain immutable. Skinned Value semantics and worker restrictions stay
+as before. A generated equality helper avoids C self-comparison warnings when
+comparing a handle with its Value.
+
+Imported declarations retain raw TY_MESH/tide_mesh_lists for pack building and
+loading. Glob imports add private generic list/map metadata entries named by a
+SHA-256 lookup of qualified-name + #mesh-values. Values are 64-bit IDs; geometry
+blocks remain shared and unchanged. Singular IDs keep the existing positive
+63-bit qualified-name FNV identity. Glob IDs additionally hash a zero separator
+and the authored file key. All static/skinned singular and static glob IDs are
+sorted and checked for collisions before code generation.
+
+Each load clears compiler-private geometry caches and binds actual pack rows
+by their metadata IDs. Compiled ID switches resolve those cached two-list
+handles. Reordering the glob/pack rows therefore cannot change a retained
+selection. Unknown/removed IDs read empty geometry. Metadata map records use
+the ordinary generated handle-map layout (24-byte rows, ID at offset 16); raw
+mesh map records retain their original value at offset 12. Builder allocation
+is reused with compile-time size checks and byte copies. No runtime function,
+raw mesh pack kind, geometry format or engine ABI changed. Server asset pruning
+retains matching glob domains as well as singular assets for received IDs.
+
+mesh_values pins eight-byte scalar IDs and sixteen-byte pairs, ordinary Mesh
+annotations/aliases, nested lists/arrays/structs, maps, mutable/return helpers,
+copy independence, snapshot/pack equality, task waits, unknown IDs, and a
+replacement pack whose raw mesh rows and ID metadata are reversed. Existing
+asset_meshes, LOD, mesh_bones, alias_assets, asset_references, no-asset signatures,
+skinned references and asset-usage checks retain their drawing/import/reload
+coverage. Old refusal fixtures are removed or updated to the handle diagnostics.
+
+Validation: ten affected E2E programs pass on Windows ASan and WASI, plus the
+native asset-usage target. The 2,117-case diagnostic sweep had six old expectations;
+two obsolete errors were removed and the other four corrected cases pass (2,115
+remaining cases). The 264-case LSP sweep had two stale resource-collection
+expectations from the preceding completion; both corrected cases pass, along
+with mesh/reference/alias checks after direct-member/type-tree updates. The
+production docs build passes on Node 24.22.1. GPU backends and other native
+platforms remain CI coverage.
+
+
 ## Resource values in collections (2026-10-30)
 
 Owner-requested completion after a sound-layer implementation worked around

@@ -1,3 +1,0 @@
-// expect: a borrowed asset collection is read-only
-void Keep(in List<Mesh<Vertex3>> values) { Debug.Log(values.count); }
-scene Main { }

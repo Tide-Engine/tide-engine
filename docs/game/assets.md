@@ -283,20 +283,28 @@ Layouts without a tangent field, layouts with `float3 tangent`, and skinned mesh
 
 **It comes in as Tide has the world.** Tide's world is left-handed with fronts [clockwise](./3d.md#which-side-draws), like Unity's. glTF is right-handed with fronts counterclockwise: a file's `x` is turned around and its triangles are wound the other way, so `+y` stays up and a model that faces `+z` still faces `+z`. OBJ uses the same conversion. FBX first converts its declared axes and units to right-handed Y-up meters, then uses that conversion too. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
 
-**Nothing keeps one.** A `Mesh` is the pack's own memory, which code reads by the asset's name: a local, a function's parameter and what a function returns pass one on, and no field holds one, nor a task while it waits. What says which model a thing has is a number or a key of yours:
+**A mesh value is a stable ID.** Fields, lists, arrays, maps, parameters and tasks can keep a `Mesh<V>` without copying its vertices or indices. Reading `.vertices` or `.indices` borrows the currently loaded geometry. `Asset<Mesh<V>>` is the same checked reference type; its `.Value` spelling remains available, and ordinary `Mesh<V>` code needs no extra wrapper.
 
 ```csharp
 component Prop
 {
     float3 position;
-    int model; // Its place in `rocks`
+    Mesh<Vertex3> model;
+}
+
+singleton Models
+{
+    List<Mesh<Vertex3>> choices;
+    Mesh<Vertex3>[2] favorites;
 }
 
 view Props(Prop prop)
 {
-    Draw.Mesh(rocks[prop.model], float4x4.Translate(prop.position), Look);
+    Draw.Mesh(prop.model, float4x4.Translate(prop.position));
 }
 ```
+
+Collections follow ordinary value-copy and mutation rules. Copying an immutable asset collection can share its ID storage until a write. Geometry stays in the asset pack. Singular IDs follow the qualified declaration name; glob-element IDs also include the written file key, so changing a glob's order keeps retained selections stable. A removed or unknown ID resolves to empty geometry. Renaming a declaration or file key changes that identity.
 
 A frag and a vert don't read a mesh's two lists: the draw sends them to the GPU as the mesh they are.
 

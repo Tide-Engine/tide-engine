@@ -1,3 +1,0 @@
-// expect: a borrowed asset collection can't be optional
-void Keep(List<Mesh<Vertex3>>? values) { Debug.Log(values); }
-scene Main { }

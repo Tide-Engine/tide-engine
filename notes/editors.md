@@ -1,5 +1,18 @@
 # The language server and the editors
 
+## Ordinary mesh handles and members (2026-10-30)
+
+Mesh<V> now canonicalizes to the existing static Asset<Mesh<V>> handle. Member
+completion offers vertices/indices directly without exposing identity, and
+Value chains retain them. The type-tree walker distinguishes the vertex in
+Mesh<V> from the model argument in Asset<Mesh<V>>. Whole-mesh draw signature
+help and vertex discovery recognize handles. Mesh help describes persistent ID
+storage. Existing LSP mesh/reference/alias checks pass; two stale Clip/Texture
+borrow/refusal expectations from the preceding collection task are corrected.
+Compiler and combined native/WASI validation: language.md, Static mesh values
+keep stable IDs.
+
+
 ## Humanoid retargeting (2026-10-30)
 
 The common language server offers HumanoidRig, HumanoidBone,

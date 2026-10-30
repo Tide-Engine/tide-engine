@@ -1,4 +1,4 @@
-// expect: a constant can't be a Mesh: one is an asset's, the pack's own, which code reads by the asset's name and nothing keeps
+// expect: a constant's value must be a constant expression
 struct Corner
 {
     float3 position;

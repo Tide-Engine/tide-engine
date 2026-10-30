@@ -1,4 +1,0 @@
-// expect: a Mesh is read-only
-using Model = Mesh<Vertex3>;
-void Change(mut Model mesh) { }
-scene Main;

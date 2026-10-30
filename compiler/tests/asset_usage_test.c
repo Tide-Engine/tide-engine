@@ -368,6 +368,8 @@ TIDE_TEST(asset_usage_server_retains_dynamic_match_asset_reference_targets)
         "struct V { float3 position; int extra = defaults.length; }\n"
         "asset Mesh<V> first = \"assets/meshes/quad.glb\";\n"
         "asset Mesh<V> second = \"assets/meshes/quad.glb\";\n"
+        "asset List<Mesh<V>> choices = \"assets/meshes/*.glb\";\n"
+        "asset Map<string, Mesh<V>> catalog = \"assets/meshes/*.glb\";\n"
         "asset Texture picture = \"assets/hero.png\";\n"
         "input Controls { Asset<Mesh<V>> choice; }\n"
         "singleton State { int count; }\nscene Main { }\n"
@@ -376,6 +378,7 @@ TIDE_TEST(asset_usage_server_retains_dynamic_match_asset_reference_targets)
     TIDE_REQUIRE(p);
     program_strip_server_assets(p);
     TIDE_CHECK(has_asset(p, "first") && has_asset(p, "second") && has_asset(p, "defaults"));
+    TIDE_CHECK(has_asset(p, "choices") && has_asset(p, "catalog"));
     TIDE_CHECK(!has_asset(p, "picture"));
     done();
 }

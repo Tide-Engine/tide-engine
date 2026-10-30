@@ -149,7 +149,7 @@ typedef enum type_kind {
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
     TY_ARRAY,      // T[N]: decl is the array type (DECL_ARRAY), whose one field is its element and array_length N
-    TY_MESH,       // Mesh<V>: decl is the mesh type (DECL_MESH), whose one field is its vertex. An asset's vertices and indices, the pack's own
+    TY_MESH,       // Raw imported geometry; ordinary Mesh<V> values use its checked asset-reference struct.
     TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
     TY_QUERY,      // A read-only entity set, borrowed by helpers; decl is its compiler-only row struct
     TY_COMPONENT,

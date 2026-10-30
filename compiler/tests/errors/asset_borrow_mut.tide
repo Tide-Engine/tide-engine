@@ -1,3 +1,0 @@
-// expect: a borrowed asset collection is read-only
-void Change(mut List<Mesh<Vertex3>> values) { values.Clear(); }
-scene Main { }

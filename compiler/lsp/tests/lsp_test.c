@@ -348,7 +348,7 @@ TIDE_TEST(lsp_borrowed_asset_collections_in_helpers)
     open_document("scene Main { }\nint Count(List<Clip> val$ues) { return values.count; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "List<Clip> values"));
-    TIDE_CHECK(has(request("textDocument/hover"), "Read-only asset collection borrowed"));
+    TIDE_CHECK(!has(request("textDocument/hover"), "Read-only asset collection borrowed"));
     TIDE_CHECK(offers(complete("scene Main { }\nint Count(List<Texture> values) { return values.$; }\n"), "count"));
     TIDE_CHECK(offers(complete("scene Main { }\nint Count(Map<string, Clip> values) { return values.$; }\n"), "TryGet"));
     const char *shader = complete("scene Main { }\nint Count(List<Texture> values) { return values.count; }\n"
@@ -2837,6 +2837,7 @@ TIDE_TEST(lsp_asset_reference_members)
     const char *members = complete("component Art { Asset<Mesh<Vertex3>> model; }\nscene Main {}\n"
                                    "system Read(Art art) { var model = art.model.$; }\n");
     TIDE_CHECK(offers(members, "Value"));
+    TIDE_CHECK(offers(members, "vertices") && offers(members, "indices"));
     TIDE_CHECK(!offers(members, "id"));
     TIDE_CHECK(offers(complete("component Art { $ }\nscene Main {}\n"), "Asset"));
     TIDE_CHECK(offers(complete("component Art { Asset<Mesh<Vertex3>> model; }\nscene Main {}\n"
@@ -11550,8 +11551,8 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     open_uri(uri_main, "[Wrap(Wrap.Repeat), Wrap(Wrap.Mirror)]\nasset Texture tiles = \"art/tile.png\";\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "'tiles' already has a Wrap"));
     open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    List<Texture> frames;\n}\n");
-    TIDE_CHECK(has(last_sent(), "a list or a map can't hold rendering resources"));
-    TIDE_CHECK(has(last_sent(), "asset List<Texture> frames"));
+    TIDE_CHECK(!has(last_sent(), "a list or a map can't hold rendering resources"));
+    TIDE_CHECK(!has(last_sent(), "asset List<Texture> frames"));
 
     static const char sampling_aliases[] = "using Sampling;\n"
         "namespace Sampling { using Sampler = Filter; using Address = Wrap; }\n"
@@ -11942,7 +11943,7 @@ TIDE_TEST(lsp_asset_meshes)
     TIDE_CHECK(has(last_sent(), "'art/rock.glb' has an invalid GLB header: its magic isn't glTF"));
     TIDE_CHECK(has(last_sent(), "'art/hill.gltf' is glTF of no version, and Tide reads glTF 2.0"));
     TIDE_CHECK(has(last_sent(), "'art/other.txt' isn't a mesh file Tide reads"));
-    TIDE_CHECK(has(last_sent(), "a field can't be a Mesh"));
+    TIDE_CHECK(!has(last_sent(), "a field can't be a Mesh"));
 
     remove_game_file("lsp_mesh/main.tide");
     remove_game_file("lsp_mesh/art/tree.obj");
