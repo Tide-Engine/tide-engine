@@ -1,5 +1,39 @@
 # `tide`, packages and the package
 
+## Per-project optimization experiments (2026-10-30)
+
+Owner requested an explicit optimization-level flag for project experiments.
+CLI build/run/unity accepts one of -O0, -O1, -O2 or -O3. The borrowed
+build_options.optimization overrides engine, generated game, launcher and
+game/package C/C++ compile/link flags. It does not change mode, DEBUG,
+NDEBUG, visualizers, stripping or deterministic float rules. Prebuilt libraries
+are unchanged. Without the flag the existing mode defaults remain. Other
+levels, -Ofast and duplicate optimization flags fail before building.
+
+Explicit levels use caches such as native-release-O3, including watch/server/
+Android/web targets. Compile stamps include the override; returning to a level
+can reuse its objects. Trusted-C simulation identity includes the effective
+game optimization level because __OPTIMIZE__ can change custom C behavior.
+Unity's declaration fallback forwards the flag with space for its argument.
+No runtime API, Tide semantics, telemetry fields or CMake defaults changed.
+The CLI reference and focused help describe the override and its limits.
+
+Validation: strict Windows ASan CLI/dispatch builds and the two focused
+run-exit/help CTests pass. The installed optimization-only cache fixture builds
+all four levels on native/web, plus release/distribution at O0 and O3, retaining
+each mode's name-map/visualizer policy and separate custom-C identities.
+Eight bounded two-frame native runs check actual engine, game C and C++
+optimization macros, NDEBUG policy, noncontracted multiply/add bits and
+subnormal preservation. Switching back to O0 rewrites no engine/game objects.
+Release O3 web-watch passes C/Tide edits, identity/launcher reuse, custom-C pack
+changes and visual-only repacking. The production docs build, Node syntax and
+diff checks pass (Clang 23.1.2, Node 24.22.1, private staged ASan CLI using
+external clang). The normal package cache test includes the optimization cases.
+Android, Unity editor execution, embedded LLVM, other OSes and actual WASM
+runtime FP probes remain CI/follow-up coverage; this does not claim full
+all-platform determinism validation of every optimization level or measure
+performance. No workflow was manually dispatched.
+
 ## Optimized testing versus distribution (2026-10-30)
 
 Owner approved three CLI modes: default debug, optimized `--release` for

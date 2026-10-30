@@ -493,6 +493,15 @@ static const char *const debug_flags[] = {"-O0", "-g", NULL};
 static const char *const engine_debug_flags[] = {"-O2", "-g", NULL};
 static const char *const release_flags[] = {"-O2", "-g", NULL};
 static const char *const distribution_flags[] = {"-O2", "-DNDEBUG", NULL};
+// Optimization is independent of symbols, assertions and shipping policy.
+// Only -O0..3 reach this field; none relax floating-point rules.
+static void build_flags(args *a, const build_options *opts, const bool engine)
+{
+    arg_list(a, opts->distribution ? distribution_flags : opts->release ? release_flags
+                     : engine ? engine_debug_flags : debug_flags);
+    if (opts->optimization) arg(a, opts->optimization);
+}
+
 // These compile flags are part of every object's stamp. The link runs on
 // every build, so changing its collection policy cannot reuse an old program.
 static const char *const release_sections[] = {"-ffunction-sections", "-fdata-sections", NULL};
@@ -610,8 +619,8 @@ typedef struct build {
 static uint64_t header_stamp(const char *folder);
 static uint64_t hash_text(uint64_t h, const char *text);
 
-// Game code stays unoptimized for debugging; the engine keeps its speed in
-// every configuration, with debug information and assertions in development.
+// By default game code stays unoptimized for debugging and the engine uses O2.
+// Explicit optimization overrides preserve the selected mode's diagnostics.
 static void config_flags(args *a, const build *b, const bool cpp, const bool engine)
 {
     if (b->opts->server) arg(a, "-DTIDE_SERVER_BUILD=1");
@@ -625,7 +634,7 @@ static void config_flags(args *a, const build *b, const bool cpp, const bool eng
     }
     arg_list(a, cpp ? cpp_flags : c_flags);
     arg_list(a, common_flags);
-    arg_list(a, b->opts->distribution ? distribution_flags : b->opts->release ? release_flags : engine ? engine_debug_flags : debug_flags);
+    build_flags(a, b->opts, engine);
     // Every type the game declares, for its debug views: a type only the generated plumbing names
     // (a list's element, a map's entry) would otherwise be left out with the plumbing's debug info.
     // No columns: generated C's would point into .tide lines at places that mean nothing there.
@@ -1080,8 +1089,9 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
     // Everything tide makes goes in <folder>/.tide/<configuration>.
     char *tide_dir = opts->work ? path_absolute(opts->work) : tide_work_folder(b->folder);
     char config[32];
-    snprintf(config, sizeof config, "%s-%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
-             opts->distribution ? "distribution" : opts->release ? "release" : "debug");
+    snprintf(config, sizeof config, "%s-%s%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
+             opts->distribution ? "distribution" : opts->release ? "release" : "debug",
+             opts->optimization ? opts->optimization : "");
     b->cache = path_join(tide_dir, config);
     free(tide_dir);
     if (!opts->work && (opts->scene || opts->editor_source)) {
@@ -1676,7 +1686,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     if (!opts->managed && (!shared || b->info.bold)) arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
-    arg_list(&a, opts->distribution ? distribution_flags : opts->release ? release_flags : debug_flags);
+    build_flags(&a, opts, false);
     // Hot-reload libraries keep their public symbols and their existing link
     // policy. Standalone distributions only need code reachable from their entry.
     if ((opts->distribution || opts->server) && !opts->watch && !shared) {
@@ -2201,6 +2211,10 @@ static bool generate(build *b, const char *gen, const bool layout)
     if (has_external) {
         const uint8_t mode = b->opts->distribution ? 2u : b->opts->release ? 1u : 0u;
         tide_sha256_add(&external, &mode, 1);
+        // Trusted C can branch on __OPTIMIZE__; different experiments must
+        // not claim the same simulation identity merely because C text matches.
+        const char optimization = b->opts->optimization ? b->opts->optimization[2] : b->opts->release ? '2' : '0';
+        tide_sha256_add(&external, &optimization, 1);
     }
     tide_sha256_end(&external, external_identity);
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
@@ -3002,7 +3016,7 @@ static bool build_embed_host(run *r)
         for (int i = 0; i < keep.count; i++) arg(&a, keep.items[i]);
         arg(&a, "-o");
         arg(&a, linked);
-        arg_list(&a, r->b.opts->distribution ? distribution_flags : r->b.opts->release ? release_flags : debug_flags);
+        build_flags(&a, r->b.opts, false);
 #if defined(_WIN32) || defined(TIDE_EMBEDDED_CLANG)
         arg(&a, "-fuse-ld=lld");
 #endif
@@ -3468,7 +3482,7 @@ static void write_unity_declarations(const run *r)
     char *bin = sys_exe_dir();
     char *tide = path_join(bin, "tide" EXE_SUFFIX); // Itself: the compiler is clang where tide hasn't it built in
     free(bin);
-    const int fixed = 9;
+    const int fixed = 10;
     const char **argv = calloc((size_t)(fixed + 2 * opts->define_count + 1), sizeof *argv);
     if (!argv) abort();
     int n = 0;
@@ -3482,6 +3496,7 @@ static void write_unity_declarations(const run *r)
     argv[n++] = opts->unity_assets;
     if (opts->distribution) argv[n++] = "--distribution";
     else if (opts->release) argv[n++] = "--release";
+    if (opts->optimization) argv[n++] = opts->optimization;
     for (int i = 0; i < opts->define_count; i++) {
         if (strcmp(opts->defines[i], "DEBUG") == 0) continue; // Every build's but --release's, said again there
         argv[n++] = "--define";
@@ -3887,7 +3902,7 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
-    arg_list(&a, b->opts->distribution ? distribution_flags : b->opts->release ? release_flags : debug_flags);
+    build_flags(&a, b->opts, false);
     char *exports = NULL;
     if (b->opts->distribution && !b->opts->watch) {
         exports = path_join(b->root, "lib/android/game.exports");

@@ -169,7 +169,7 @@ static const argument_help arguments[] = {
      "Selects the file to edit or validate. Use --project to choose the game root.", OPEN},
     {"--release", "--release", "Optimize game code for testing and profiling",
      "Keeps debug symbols, readable diagnostics, assertions and assets. Engine\n"
-     "code is always optimized; default game/package code is unoptimized.\n"
+     "code defaults to -O2; default game/package code is unoptimized.\n"
      "DEBUG is undefined. Use --distribution for shipping cuts.", COMPILE},
     {"--distribution", "--distribution", "Build an optimized game for distribution",
      "Implies --release. Standalone builds strip debug symbols and readable\n"
@@ -177,6 +177,18 @@ static const argument_help arguments[] = {
      "assets in Tide-only games. Keeps a private game.names diagnostic map\n"
      "in the build cache. Watched/embedded builds retain required metadata.\n"
      "Android also makes an app bundle and requires the game's appId.", COMPILE},
+    {"-O0", "-O0", "Disable optimization of game and engine sources",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O1", "-O1", "Use optimization level 1",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O2", "-O2", "Use optimization level 2",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O3", "-O3", "Use optimization level 3",
+     "Choose one of -O0, -O1, -O2 or -O3 for engine, game and package C/C++.\n"
+     "Does not rebuild prebuilt libraries or change DEBUG, assertions, symbols\n"
+     "or shipping cuts. Deterministic math stays enabled; no fast-math or FMA.\n"
+     "Defaults: debug game -O0, engine -O2; release/distribution both -O2.\n"
+     "Explicit levels use separate caches. Example: tide run --release -O3 --stats.", COMPILE},
     {"--web", "--web", "Build a web page",
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
      "build makes a folder to put online, .build/web: index.html, which shows\n"

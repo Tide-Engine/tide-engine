@@ -356,7 +356,14 @@ static int command_main(const int argc, char **argv)
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
         else if (strcmp(a, "--release") == 0) opts.release = true;
         else if (strcmp(a, "--distribution") == 0) opts.distribution = opts.release = true;
-        else if (strcmp(a, "--web") == 0) opts.web = true;
+        else if (strncmp(a, "-O", 2) == 0) {
+            if (strlen(a) != 3 || a[2] < '0' || a[2] > '3' || opts.optimization) {
+                fputs("tide: choose one optimization level: -O0, -O1, -O2 or -O3; deterministic math stays enabled\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.optimization = a;
+        } else if (strcmp(a, "--web") == 0) opts.web = true;
         else if (build && strcmp(a, "--single-file") == 0) opts.single_file = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
         else if (strcmp(a, "--stats") == 0) opts.stats = true;

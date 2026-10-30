@@ -1,5 +1,5 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, gpu: false, keep: false };
+const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, optimizationOnly: false, gpu: false, keep: false };
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -19,10 +19,11 @@ for (let i = 2; i < process.argv.length; i++) {
     else if (process.argv[i] === "--watch-only") opts.watchOnly = true;
     else if (process.argv[i] === "--strip-only") opts.stripOnly = true;
     else if (process.argv[i] === "--server-only") opts.serverOnly = true;
+    else if (process.argv[i] === "--optimization-only") opts.optimizationOnly = true;
     else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
@@ -383,7 +384,90 @@ async function assetModeTests(tide, root, target) {
     console.log(`  ${target}: only distribution prunes unused Tide assets`);
 }
 
-async function webRunTest(tide, root, release = false) {
+async function optimizationTests(tide, installation, root, target) {
+    const game = join(root, `optimization-${target}`);
+    mkdirSync(game);
+    const engine = join(installation, "src", "engine", "optimization_test.c");
+    check(!existsSync(engine), "private installation already has optimization_test.c");
+    const probe = (name) => `#ifdef __FAST_MATH__\n#error unsafe_math_enabled\n#endif
+int ${name}(void) {
+#ifdef __OPTIMIZE__
+    return 1;
+#else
+    return 0;
+#endif
+}
+`;
+    put(engine, probe("EngineOptimized"));
+    put(join(game, "probe.cpp"), 'extern "C" {\n' + probe("CppOptimized") + '}\n');
+    put(join(game, "probe.c"), probe("GameOptimized") + `
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+int EngineOptimized(void);
+int CppOptimized(void);
+int CheckOptimization(void) {
+    const char *expected = getenv("TIDE_OPT_EXPECT");
+    const int optimized = expected && strcmp(expected, "1") == 0;
+    const char *assertions = getenv("TIDE_ASSERT_EXPECT");
+#ifdef NDEBUG
+    const int disabled = 1;
+#else
+    const int disabled = 0;
+#endif
+    volatile float a = 0x1.000002p0f, b = 0x1.fffffcp-1f, c = -1.0f;
+    const float separate = a * b + c;
+    uint32_t bits;
+    memcpy(&bits, &separate, sizeof bits);
+    volatile float tiny = 0x1p-140f;
+    return EngineOptimized() == optimized && GameOptimized() == optimized && CppOptimized() == optimized
+        && disabled == (assertions && strcmp(assertions, "1") == 0)
+        && bits == 0 && tiny * 2.0f == 0x1p-139f;
+}
+`);
+    put(join(game, "game.tide"), 'scene Main { }\nextern int CheckOptimization();\n'
+        + 'system Tick() { Debug.Assert(CheckOptimization() == 1, "optimization or deterministic math changed"); }\n');
+    const output = join(root, `optimization-${target}${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
+    const build = async (mode, level) => {
+        const result = await run(tide, ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []),
+            ...(mode === "debug" ? [] : [`--${mode}`]), `-O${level}`], game);
+        check(result.code === 0, `${target} ${mode} -O${level} failed:\n${result.said}`);
+    };
+    try {
+        let saved;
+        const identities = new Set();
+        for (const [mode, level] of [["debug", 0], ["debug", 1], ["debug", 2], ["debug", 3],
+            ["release", 0], ["release", 3], ["distribution", 0], ["distribution", 3]]) {
+            await build(mode, level);
+            const cache = join(game, ".tide", `${target}-${mode}-O${level}`);
+            check(existsSync(join(cache, "game.o")), "explicit optimization cache missing");
+            check(existsSync(join(cache, "gen", "game.names")) === (mode === "distribution"),
+                "optimization override changed the metadata policy");
+            if (target === "native") {
+                const stem = output.replace(/\.exe$/, "");
+                check(existsSync(`${stem}.natvis`) === (mode !== "distribution"),
+                    "optimization override changed debugger sidecars");
+            }
+            if (mode === "debug") identities.add(readFileSync(`${output}.simulation`, "utf8"));
+            if (mode === "debug" && level === 0) saved = mark(cache);
+            if (target === "native") {
+                const result = await run(output, ["--frames", "2"], game,
+                    { TIDE_HIDDEN: "1", TIDE_OPT_EXPECT: level === 0 ? "0" : "1",
+                        TIDE_ASSERT_EXPECT: mode === "distribution" ? "1" : "0" });
+                check(result.code === 0, `${mode} -O${level} failed optimization/FP probe:\n${result.said}`);
+            }
+        }
+        check(identities.size === 4, "custom-C optimization levels must have separate simulation identities");
+        await build("debug", 0);
+        expectWrites(join(game, ".tide", `${target}-debug-O0`), saved, [],
+            "returning to -O0 reuses its engine/game objects");
+        console.log(`  ${target}: all levels build; mode policies stay independent`);
+    } finally {
+        removeOwned(root, engine);
+    }
+}
+
+async function webRunTest(tide, root, release = false, optimization = null) {
     console.log(`Cache correctness: ${release ? "release" : "debug"} web hot reload`);
     const game = join(root, `web-reload-${release ? "release" : "debug"}`);
     mkdirSync(game);
@@ -393,7 +477,7 @@ async function webRunTest(tide, root, release = false) {
     put(source, tideText);
     put(join(game, "message.txt"), "before");
     put(c, "int Native(int value) { return value + 1; }\n");
-    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7", ...(release ? ["--release"] : [])],
+    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7", ...(release ? ["--release"] : []), ...(optimization ? [optimization] : [])],
         { cwd: game, env, shell: false, windowsHide: true });
     let output = "", url = null, exited = false, exitCode = null, startError = null;
     const closed = new Promise((accept) => {
@@ -450,7 +534,7 @@ async function webRunTest(tide, root, release = false) {
         check(page.includes('Tide.arguments = [ "--seed","7"]'), "web run passes the game's arguments");
         check(page.includes("Tide.reload = true;"), "web run enables page polling by default");
         await waitFor(async () => await buildNumber() === 1, "initial web build");
-        const cache = join(game, ".tide", `web-${release ? "release" : "debug"}`);
+        const cache = join(game, ".tide", `web-${release ? "release" : "debug"}${optimization ?? ""}`);
         let before = mark(cache);
         const generated = [...before.keys()].find((file) => /^run\/watch-\d+\/game\.o$/.test(file));
         check(generated, "web run's generated object not found");
@@ -892,11 +976,19 @@ async function main() {
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
+        if (opts.optimizationOnly) {
+            for (const target of opts.web ? ["native", "web"] : ["native"])
+                await optimizationTests(tide, installation, root, target);
+            if (opts.web) await webRunTest(tide, root, true, "-O3");
+            console.log("Optimization integration tests passed.");
+            return;
+        }
         if (opts.serverOnly) await serverTests(tide, root);
         if (!opts.watchOnly && !opts.serverOnly) {
             for (const target of opts.web ? ["native", "web"] : ["native"]) {
                 await strippingTests(tide, installation, root, target, embedded);
                 await assetModeTests(tide, root, target);
+                await optimizationTests(tide, installation, root, target);
             }
             if (!opts.stripOnly) {
                 for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);

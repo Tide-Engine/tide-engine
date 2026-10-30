@@ -135,6 +135,7 @@ still performs only front-end validation, even with a preview flag.
 |---|---|
 | `--release` | Optimizes game and package code for testing and profiling, keeping symbols, diagnostics and assets |
 | `--distribution` | Optimizes for shipping, with symbol/name stripping, shader minification and unused-asset pruning; implies `--release` |
+| `-O0`, `-O1`, `-O2`, `-O3` | Overrides engine, game and package C/C++ optimization; deterministic math and the chosen build mode stay unchanged |
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace |
@@ -178,9 +179,13 @@ existing live instances. Restart the run to play from fresh initial state.
 `--scene` leaves the output filename unchanged; use `-o` for a separate build
 artifact.
 
-The engine is optimized in every build. In the default debug mode, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
+By default, the engine is optimized in every build. In the default debug mode, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
 Use `tide run --release --stats` to test a large game at optimized speed. Release retains debug symbols, readable profiling and diagnostic names, assets, C assertions and native debugger visualizers. Optimized stepping may skip inlined calls or show locals as unavailable. Both optimized modes leave `DEBUG` undefined. Debug, release and distribution use separate `.tide/<target>-<mode>/` caches.
+
+Choose one optimization override to experiment, for example `tide run --release -O3 --stats` or `tide build --distribution -O1`. `-O0` disables optimization; `-O1`, `-O2` and `-O3` select increasing optimization levels, which are not guaranteed to improve a particular workload. The override applies to engine sources, generated game code and game/package C/C++, including hot reload, native, web, Android, servers and `tide unity`. Prebuilt libraries keep their own optimization. Without an override, debug game code uses `-O0`, debug engine code uses `-O2`, and release/distribution use `-O2` for both.
+
+The override changes no build-mode policy: `tide run -O3` still defines `DEBUG`, and `tide build --release -O0` still keeps release's symbols and diagnostics. Deterministic math remains enforced, including disabled FMA contraction and fast-math. Explicit levels have separate caches, such as `.tide/native-release-O3/`, so switching experiments can reuse their objects. For builds with custom C, the selected level also enters simulation compatibility because C can branch on optimization macros. Unsupported levels and multiple optimization flags are errors.
 
 Standalone `tide build --distribution` removes readable system/view profiling labels, shader labels, event/command diagnostic names, and assertion source lines and paths. Asset loading uses the pack's existing SHA-256 name IDs directly. Assertions still check their conditions and keep messages you wrote; profiles and failures use IDs. Resolve them with `.tide/<target>-distribution/gen/game.names`, a private diagnostic map for that build. Keep that map with your build records, and distribute only the finished game files, never `.tide/`, generated C, debug files or the map. Replacing a native debug output with a distribution removes its old debugger sidecars. Debug, release, watched/hot-reload and Unity builds retain their names.
 
