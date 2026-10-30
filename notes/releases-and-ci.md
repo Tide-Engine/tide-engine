@@ -1,5 +1,38 @@
 # Releases, installing and CI
 
+## Bounded compiler-cache retention (2026-10-30)
+
+The owner raised the repository cache limit to 30 GB; the GitHub storage-limit
+API confirms max_cache_size_gb=30. Compute and caching remain on GitHub.
+
+Build's separate cache-cleanup job runs after tests, packages and Docs, even if
+tests failed. It has Actions write permission only in this job and executes only
+on dev/release, not pull requests. Release does not depend on cleanup, and the
+maintenance step is best-effort. Other jobs' permissions and publication gates
+are unchanged.
+
+.github/cache-cleanup.mjs paginates caches for the current ref and recognizes
+only per-commit ccache-* keys ending in a 40-character hex commit. It groups by
+the complete key prefix (platform, architecture, preset/compiler version, or
+Docs), retains the two newest creation times per family, and removes older IDs.
+Recent accesses to an old snapshot do not evict its newer replacement. Other
+branches, dependency downloads, LTO and test-duration caches remain untouched;
+GitHub's normal expiry still applies. Concurrent deletion's 404 is harmless.
+Invalid refs, retention settings or matching-cache metadata prevent deletion.
+
+Validation: five cleanup tests plus the three existing release-note tests pass
+through npm test --prefix .github. Cases cover family/branch isolation, unrelated
+keys, one/two-cache families, shuffled API order, recent restores, timestamp ties,
+invalid inputs, pagination parameters, scoped deletion IDs, concurrent 404s and
+API failures. The exact github-script wrapper imports and runs on Windows.
+Actionlint passes with the existing concurrency.queue exception; parsed YAML
+comparison preserves existing jobs/gates apart from the Version test step's name.
+A real scoped cleanup retained all 15 dev compiler snapshots and removed zero:
+none currently exceeded two per family. No cache was deleted unnecessarily.
+No engine, docs artifact, runtime or platform code changed; the already-passing
+native/web validation from the preceding change need not repeat. The normal
+push-to-dev run exercises the hosted maintenance job; no extra CI is dispatched.
+
 ## Faster feedback for overlapping dev builds (2026-10-30)
 
 Build gives each dev run its own workflow concurrency group. Its native/web/

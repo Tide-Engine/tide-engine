@@ -1,5 +1,16 @@
 # Test infrastructure
 
+## Cache cleanup tests (2026-10-30)
+
+.github/cache-cleanup.test.mjs checks bounded compiler-cache retention with fake
+paginated GitHub responses, including branch/family isolation, preservation of
+newest snapshots and the retry fallback, unsafe metadata and concurrent deletion.
+It runs alongside release-note fixtures in Version's existing npm test step.
+All eight tests pass on Node 24.22.1; the exact hosted-action script also imports
+and executes on Windows. This changes cache maintenance only; native/web tests
+from the preceding workflow change remain valid. Hosted execution follows the
+normal push trigger, with no additional dispatched run.
+
 ## Web CI shards and sanitizer scheduling (2026-10-30)
 
 Build's web-release entries select every third CTest index on each of three

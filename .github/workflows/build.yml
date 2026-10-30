@@ -74,7 +74,7 @@ jobs:
         with:
           node-version: '^24.22.1'
           check-latest: true
-      - name: Test release notes
+      - name: Test workflow helpers
         shell: bash
         run: |
           npm ci --prefix .github --ignore-scripts --legacy-peer-deps --no-audit --no-fund
@@ -223,6 +223,28 @@ jobs:
           TEST_RESULT: ${{ needs.checks.result }}
           PACKAGE_RESULT: ${{ needs.packages.result }}
         run: test "$TEST_RESULT" = success && test "$PACKAGE_RESULT" = success
+
+  # Once replacements have been saved, trim old per-commit compiler snapshots.
+  # This includes Docs' compiler cache; dependency archives remain untouched.
+  cache-cleanup:
+    name: Clean compiler caches
+    needs: [checks, packages, docs]
+    if: always() && !cancelled() && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/release')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep two snapshots per cache family
+        continue-on-error: true # Cache maintenance must not prevent a release.
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const url = pathToFileURL(`${process.env.GITHUB_WORKSPACE}/.github/cache-cleanup.mjs`);
+            const { cleanupCompilerCaches } = await import(url.href);
+            await cleanupCompilerCaches(github, { ...context.repo, ref: context.ref }, core.info);
 
   # The plugin for JetBrains IDEs (tools/tide-jetbrains), checked against
   # the oldest IDE it supports and the newest CLion.
