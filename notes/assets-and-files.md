@@ -94,6 +94,13 @@ existing test, 13/13 total); the 13-frame synthetic pose hash matched exactly,
 `a669d398066dafa5`, and is pinned in the test. The two public API e2e cases also
 passed on both platforms. Existing skinned CPU coverage passed 62/62 on each.
 
+After merging the incoming Pose.Sample cache and codegen changes, overlap
+validation rebuilt the affected targets. Native ASan and WASM each passed the
+retarget filter (13/13), expanded skinned CPU coverage (65/65), and all seven
+affected e2e CTests, including retargeting and net_alone_seen. Both private
+probes again applied all 593 frames successfully; all 256 measurement lines
+were identical before/after the merge and between native and WASM.
+
 ## Kept sample plans (2026-10-30)
 
 bannerlord-duel measured `Pose.Sample` of an FBX clip onto its Synty
