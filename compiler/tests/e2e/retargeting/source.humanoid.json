@@ -1,0 +1,4 @@
+{
+  "reference": { "file": "source.gltf", "pose": "rest" },
+  "bones": { "LeftHand": "LeftHand", "LeftToes": null }
+}

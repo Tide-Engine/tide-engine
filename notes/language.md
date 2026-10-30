@@ -1,5 +1,70 @@
 # Language features, as tidec builds them
 
+## Imported humanoid profiles and baked retargeting (2026-10-30)
+
+Owner-approved `.humanoid.json` `HumanoidRig` assets and
+`[Retarget(sourceRig, targetRig)]` on Animation/AnimationCatalog use the shared
+runtime preparation/transfer algorithm during import. The result is ordinary
+target-skeleton canonical animation data; generated playback has no retarget
+operation. Dynamic Pose.Retarget remains unchanged. Schema and syntax are in
+docs/spec.md and docs/game/animation.md.
+
+`humanoid_assets.c` resolves explicit rest or named-clip reference poses through
+the existing file reader, applies finite local calibration edits, runs Auto,
+then exact-name role overrides. Unknown/duplicate keys, invalid references and
+ambiguous explicit names diagnose at the asset. Profiles may remain partially
+discovered; baking validates required roles through Create. No manifest recursion
+is introduced: references import as glTF/FBX animation data. JSON work is bounded
+by HUMANOID_PROFILE_MAX_BYTES (1 MiB) and HUMANOID_PROFILE_MAX_VALUES (16,384).
+Editor metadata-only checks retain the profile's resolved paths and asset type
+without reading the profile or importing/discovering its reference rig. Full
+builds validate profile contents and bake; ordinary edits do not run FBX import
+or Auto for a HumanoidRig declaration.
+
+Profiles are singular assets. A private versioned byte payload contains four
+aligned ordinary list blocks: geometry/clip-free canonical skeleton, calibration
+TRS, 55 role indices and statuses. Generated loaders construct the HumanoidRig
+from those immutable pack handles; original skeleton identity is preserved.
+The existing complete byte fingerprint preflight authenticates embedded list
+headers and payload before replacement. Normal generated list ownership handles
+copying, detaching edits, world fields, snapshots and packing; no new runtime
+pack kind or pointer-bearing game value is introduced.
+
+Retarget is the only declaration attribute using `attribute.call` and the normal
+argument parser, with two positional profile names followed by named numeric
+settings. Checker resolution supports forward profile declarations and refuses
+dependency cycles. `rootOffset` accepts constant float3 construction; other
+settings accept numeric literal/constant arithmetic. Selected Animation imports
+bake one clip and reset the stored index to zero; combined catalogs retain their
+source/clip ordering and inferred aliases. Source cache objects are never edited:
+only the current declaration's asset_match selects derived canonical bytes.
+
+Derived disk cache keys cover canonical source bytes, both compiled profiles,
+options, automatic-scale choice and baker version. The cached payload carries
+its own SHA-256 and must pass full canonical validation, or is rebuilt. Profile
+manifests, reference files and external buffers become side dependencies before
+cache lookup, including when release strips profiles used only by a bake.
+Profiles used by runtime code retain ordinary asset usage and match identity.
+
+Coverage added: retargeting_baked E2E compares baked/ordinary sampling against
+live maps, manual statuses, separate actual exports, calibration, controls,
+forward declarations, catalogs, copies, snapshots, serialization and rejected
+profile pack changes. retarget_asset_* diagnostics cover attribute placement,
+types/options, collection profiles and malformed schema. retarget_assets.mjs
+checks cold/warm/repaired cache output, calibration/options identity and
+transitive dependency output. Native full-suite validation passed 2,923 tests;
+two test-fixture failures were corrected (the extended asset-type diagnostic and
+a JSON fixture directory accidentally treated as a diagnostic program), then all
+nine affected checks passed. Humanoid asset editor regressions pass 2/2, asset
+type completion passes 1/1, and the production docs build passes. Native ASan and
+WASM each pass all 25 runtime/baker checks. The ignored real-asset fixture passes
+1,181 bake/live comparison samples across five clips with identical native/web
+printed maxima. The full web suite passes all 2,812 enabled tests (one existing
+disabled Newton test). Final integration results are in tide-programs.md.
+Final review also corrected relative URL profile references to ignore slashes
+inside query/fragment text when selecting the profile URL's parent; the focused
+cache/import fixture exercises parent-relative and root-relative model URLs.
+
 ## Standalone humanoid pose retargeting (2026-10-30)
 
 Owner-approved automatic-plus-manual runtime retargeting is independent of

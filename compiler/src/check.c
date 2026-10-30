@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "asset_files.h"
+#include "humanoid_assets.h"
 #include "assets.h"
 #include "model_metadata.h"
 #include "ast.h"
@@ -14056,6 +14057,13 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (inner.kind == TY_CLIP) *kind = ASSET_CLIP;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATIONS) *kind = ASSET_ANIMATIONS;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATION) *kind = ASSET_ANIMATION;
+    else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_HUMANOID_RIG) {
+        if (*many) {
+            diag_error(at, "a HumanoidRig asset names one profile: declare each rig separately");
+            return false;
+        }
+        *kind = ASSET_HUMANOID;
+    }
     else if (inner.kind == TY_MESH) *kind = ASSET_MESH;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH) *kind = ASSET_SKINNED;
     else if (inner.kind == TY_CUBEMAP) {
@@ -14074,7 +14082,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         }
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '%s'", type_name(inner));
+                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), or a HumanoidRig (.humanoid.json), not '%s'", type_name(inner));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
@@ -14344,8 +14352,17 @@ static void keep_blend_shapes(decl *k, const loc at)
 // Checks an asset declaration: its type, its path (a constant text) and the
 // files the path resolves to, read and decoded (asset_files.h), which codegen
 // packs. Errors at the path say what to write.
+static void check_asset_decl(checker *c, decl *k);
+#include "retarget_assets.inc"
+
 static void check_asset_decl(checker *c, decl *k)
 {
+    if (k->index == 2) return;
+    if (k->index == 1) {
+        diag_error(k->at, "asset '" STR_FMT "' depends on itself through Retarget", STR_ARG(k->name));
+        return;
+    }
+    k->index = 1;
     const unit *const outer = c->unit;
     c->unit = k->unit;
     check_reserved(k->name, k->at);
@@ -14363,9 +14380,13 @@ static void check_asset_decl(checker *c, decl *k)
     // How its files are read: a Mesh with bones, as a skinned model is
     const asset_kind read = typed && fills && kind == ASSET_MESH && mesh_wants_skin(asset_mesh_vertex(k->return_type))
                           ? ASSET_SKINNED : kind;
+    attribute *retarget = NULL;
     for (int a = 0; a < k->attributes.count; a++) {
         attribute *attr = &k->attributes.items[a];
-        if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
+        if (str_eq_c(attr->name, "Retarget")) {
+            if (retarget) diag_error(attr->at, "an animation asset has one Retarget attribute");
+            else retarget = attr;
+        } else if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
             check_sampling_attribute(c, k, attr);
         } else if (str_eq_c(attr->name, "BlendShapes")) {
             check_blend_shapes_attribute(k, attr, typed, kind);
@@ -14429,7 +14450,11 @@ static void check_asset_decl(checker *c, decl *k)
             combined->items = matches.items;
             combined->count = matches.count;
             if (valid) k->asset = combined;
-        } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
+        } else if (c->prog->asset_metadata_only && kind == ASSET_HUMANOID) {
+            const expr *path = k->asset_paths.items[0];
+            k->asset = asset_resolve_paths(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
+        } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS
+                                                    && kind != ASSET_ANIMATION && kind != ASSET_HUMANOID)) {
             const expr *path = k->asset_paths.items[0];
             k->asset = asset_resolve(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
             if (k->asset && read == ASSET_MESH && !c->prog->asset_metadata_only) {
@@ -14446,7 +14471,10 @@ static void check_asset_decl(checker *c, decl *k)
         if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS)
             skinned_asset_catalogs(c, k, k->asset_paths.items[0]);
         else if (kind == ASSET_ANIMATION) skinned_animation_asset(c, k, k->asset_paths.items[0]);
+        else if (kind == ASSET_HUMANOID && k->asset && !c->prog->asset_metadata_only)
+            if (!humanoid_asset_read(&k->asset->items[0], k->value->at, c->prog->game_folder)) k->asset = NULL;
     }
+    if (retarget) check_retarget_attribute(c, k, retarget);
     k->index = 2;
     vec_push(c->prog->assets, k);
     c->unit = outer;
@@ -19605,6 +19633,11 @@ static void check_attributes(checker *c)
                     diag_error(attr->at, "Name selects a clip on an Animation asset: [Name(\"Root|Run\")] asset Animation run = \"run.fbx\";");
                 continue; // The selection was checked with the asset.
             }
+            if (str_eq_c(attr->name, "Retarget")) {
+                if (d->kind != DECL_ASSET)
+                    diag_error(attr->at, "Retarget goes before an Animation or AnimationCatalog asset");
+                continue;
+            }
             if (str_eq_c(attr->name, "Channel") || str_eq_c(attr->name, "Unordered")) {
                 check_channel_attribute(c, d, attr);
                 continue;
@@ -19663,6 +19696,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Name");
+                suggest_consider_c(&s, "Retarget");
                 suggest_consider_c(&s, "Sparse");
                 suggest_consider_c(&s, "Bus");
                 suggest_consider_c(&s, "Channel");

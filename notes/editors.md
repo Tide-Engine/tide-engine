@@ -26,6 +26,22 @@ lsp_humanoid_retargeting_roles_signatures_and_restrictions. Both passed on
 Windows with native ASan. Compiler/runtime contracts and combined validation
 are recorded in notes/assets-and-files.md.
 
+HumanoidRig is also offered as a singular asset type, with .humanoid.json path
+completion and ordinary asset file rename edits. Retarget attribute completion
+offers profile assets for its first two arguments, then unused named bake
+settings; hover and signature help explain build-time baking and ordinary
+runtime sampling. The editor indexes the attribute's positional and named
+argument expressions, so profile references, namespace qualifiers and option
+constants support definition, references and rename. Editor analysis resolves
+profile paths without importing their reference models; profile validation and
+baking run during the build. An unavailable reference FBX regression pins this
+boundary. The focused
+lsp_humanoid_assets_bake_completion_and_signatures and
+lsp_humanoid_assets_paths_and_bake_references regressions cover these paths;
+the existing asset type test also excludes profile collections. Both regressions
+and lsp_asset_type_completion passed under Windows native ASan (3/3). The full
+native suite also passed, including all language-server tests.
+
 ## Sanitizer test builds keep their own server (2026-10-29)
 
 With TIDE_SANITIZE enabled, tidels stays in that build's bin directory and

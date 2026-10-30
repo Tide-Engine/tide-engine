@@ -584,7 +584,7 @@ static const char *kind_name(const asset_kind kind)
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
          : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
          : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "AnimationCatalog"
-         : kind == ASSET_ANIMATION ? "Animation" : "Grid2<Color>";
+         : kind == ASSET_ANIMATION ? "Animation" : kind == ASSET_HUMANOID ? "HumanoidRig" : "Grid2<Color>";
 }
 
 static bool source_extension(const char *path, const char *extension)

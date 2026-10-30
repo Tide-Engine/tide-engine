@@ -209,6 +209,13 @@ tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, 
 tide_e2e_test(mesh_bones) # A Mesh with joints and weights: the model at rest, with its skeleton's bones
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
 tide_e2e_test(retargeting) # Automatic humanoid characterization, calibrated pose transfer and manual corrections
+tide_e2e_test(retargeting_baked) # Reusable rig profiles and retargeted clips use ordinary animation playback
+if(TIDE_NODE)
+    add_test(NAME tidec_retarget_assets
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/retarget_assets.mjs"
+            "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/retarget-assets" "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(tidec_retarget_assets PROPERTIES TIMEOUT 120)
+endif()
 # Run the same asset/snapshot checks through the shipping loader, including
 # prehashed raw-pack fingerprint requests. This host needs no window or GPU.
 set(private_names_dir "${CMAKE_CURRENT_BINARY_DIR}/release_names")
@@ -595,6 +602,13 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND CMAKE_GENERATOR MATCHES "Ninja")
             "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/asset_deletion.cmake")
     set_tests_properties(tide_add_game_asset_deletion PROPERTIES TIMEOUT 600)
+    if(TIDE_NODE)
+        add_test(NAME tide_add_game_retarget_dependencies
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/retarget_dependencies.mjs"
+                "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/retarget-dependencies" "${PROJECT_SOURCE_DIR}"
+                "${CMAKE_COMMAND}" "${CMAKE_TOOLCHAIN_FILE}" "${CMAKE_MAKE_PROGRAM}")
+        set_tests_properties(tide_add_game_retarget_dependencies PROPERTIES TIMEOUT 120)
+    endif()
 endif()
 
 # Restrict lane parameters and sparse presence/fallback columns together must

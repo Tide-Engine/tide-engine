@@ -126,6 +126,16 @@ static void attributes(asset_usage *w, const attribute *items, const int count)
         }
         number(w, items[i].values.count);
         for (int k = 0; k < items[i].values.count; k++) queue(w, USAGE_EXPR, items[i].values.items[k]);
+        // Retarget profiles are build inputs; their baked result and transitive
+        // dependencies already contribute through the animation's asset bytes.
+        // Keep option constants in the semantic digest without retaining rigs
+        // in a stripped runtime pack merely because a bake used them.
+        if (items[i].call) {
+            for (int k = 2; k < items[i].call->args.count; k++) {
+                if (k < items[i].call->arg_names.count) text(w, items[i].call->arg_names.items[k]);
+                queue(w, USAGE_EXPR, items[i].call->args.items[k]);
+            }
+        }
     }
 }
 

@@ -1,0 +1,3 @@
+// expect: unknown key 'LeftHnad'
+asset HumanoidRig source = "../retarget_profiles/bad.humanoid.json";
+scene Main { }

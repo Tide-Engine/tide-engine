@@ -1,5 +1,103 @@
 # Assets and local files
 
+## Profile assets and retargeted animation baking (2026-10-30)
+
+The owner chose reusable `.humanoid.json` rig profiles and
+`[Retarget(sourceRig, targetRig)]` on Animation/AnimationCatalog assets, with
+Tide independent of tide-motion. Build-time conversion produces ordinary
+target-skeleton animation bytes: playback uses existing sampling and has no
+per-frame retarget pass. The live Pose API remains available for dynamic
+poses. The shared C baker can support baking a dynamically loaded clip once,
+but no public Tide bake-on-load method is exposed by this change.
+
+A singular `asset HumanoidRig` names a profile. Its `reference` selects either
+`{"file":"reference.fbx","pose":"rest"}` or
+`{"file":"reference.fbx","clip":"exact clip name","seconds":0}` with
+seconds inside that clip's duration. Paths resolve relative to the profile;
+the importer never guesses an animation's first frame as its calibration.
+Optional `referenceEdits` maps exact bone names to `positionOffset` (three
+numbers), `rotationOffsetDegrees` (three X/Y/Z degree components, applied
+Z then X then Y and postmultiplied)
+and `scaleMultiplier` (positive uniform scalar). Edits precede automatic role
+discovery. Optional `bones` maps HumanoidBone role names to exact bone names
+or null to unmap, applying those assignments last as Manual. Unknown and
+duplicate keys fail. Profiles pack a stripped original skeleton, calibrated
+reference transforms and 55 role/status values in an immutable byte payload;
+loading does no JSON parsing or automatic discovery.
+
+The Retarget attribute supports constant named `rootScale`, `rootOffset`,
+`headingDegrees`, `spineDistribution`, `twistDistribution` and `sampleRate`;
+the latter defaults to 60 Hz. Root scale otherwise uses Create's calibrated
+leg ratio. Every source export prepares its own existing retarget plan using
+the selected source/target profiles. A catalog bakes every clip; a selected
+Animation bakes its selected clip. Original clip names, durations and source
+ordering survive, while every output uses the target's original node names,
+order, parent links, source-node indices, rest transforms and skeleton hash.
+Calibration edits become output channels, not a different target identity.
+
+The compiler's `.tide/assets/retarget` cache hashes the source canonical
+content, both complete imported profile payloads, settings and algorithm
+version. Cached output has its own SHA-256 and full canonical validation;
+damaged entries are rebuilt. Retargeting changes per-declaration asset data,
+leaving the raw import cache available unchanged to other declarations.
+Dependencies include both profile files, their reference files and external
+glTF buffers even on a cache hit. Their edits therefore reach watched rebuilds
+and asset identity. Release pruning can omit profiles used only by the build.
+The compiler fixture covers profile import and ordinary baked sampling;
+diagnostics and a Node cache/identity fixture cover configuration, reuse and
+transitive edits. The actual Ninja regression checks that profile, reference
+model and external-buffer changes rebuild the pack, including escaped paths.
+Metadata-only editor checks retain profile paths/types without importing FBX or
+running Auto; C-definition navigation emits only a placeholder profile value.
+
+`engine/src/retarget_bake.c` and `tide/retarget_bake.h` are shared cold-path C
+support. They call the same `tide_skinned_sample` and `tide_retarget_apply`
+math as live poses, then write geometry-free canonical version-1 bytes.
+Sampling includes endpoints, a regular grid and all authored key times within
+the clip. Each STEP change also samples the preceding representable float;
+LINEAR output then preserves the jump without an interpolated float time
+inside it. Consecutive output quaternions share a hemisphere. Rest-equal
+constant channels disappear; other constant channels have one key; changing
+channels share their clip's time array. Interpolation between baked samples
+is an approximation to live retargeting, not an arbitrary-time bit guarantee.
+Increase sampleRate when that approximation needs improvement.
+
+The helper borrows input lists and returns free-compatible independent bytes
+only after complete success. Failure preserves both output parameters,
+caller scratch and world state. It checks packed descriptor spans before
+reading them, relevant skeleton/clip/channel contents and all selected key
+values; source scale channels must stay at static export scale with zero
+cubic tangents. Geometry is not needed or traversed. Failures identify invalid
+settings, the clip/time of a failed application, animated-scale bones or the
+named work limit. Limits are individual defines in the header: 1,048,576
+distinct samples across clips, 4,194,304 evaluated source-plus-target node
+transforms, 1,073,741,824 sampled input-key numbers and 128 MiB encoded output,
+plus the existing canonical channel/key limits. Limits are implementation
+picks, not new language requirements; exhaustion uses the ordinary engine
+allocation policy. Owned inputs currently revalidate sampling keys each frame,
+so the explicit key-read budget bounds that remaining cold-path cost.
+
+Seven `tests/test_retarget_bake.c` fixtures cover independent root travel and
+STEP expectations, live-math agreement at bake samples, original target rest
+and identity, calibrated constants, clip names/durations, selected and zero
+duration clips, quaternion signs, deterministic repeated bytes, stripped
+geometry, output lifetime after input disposal, every source-blob cut length,
+malformed channels/keys, static versus animated scale, invalid settings and
+limits, and unchanged scratch/owned heap/snapshot state on success or failure.
+Native ASan and WASM pass all seven; with the runtime follow-up's additional
+fixtures, the combined retarget filter passes 25/25 on each. The native full suite
+passed 2,923 tests; two fixture errors were then fixed (the asset-type diagnostic
+expectation and an asset-only directory accidentally registered as an error
+program), with all nine affected checks passing. Humanoid asset LSP regressions
+pass 2/2 and asset-type completion 1/1; the production docs build passes. The
+ignored real-asset probe compares five baked clips with live transfer at 1,181
+60 Hz grid/midpoint samples and passes. It retains no licensed assets in the
+repository. The full web suite passes all 2,812 enabled tests, with one existing disabled
+Newton test; its real-asset bake/live printed maxima match native exactly.
+Final integration details are in tide-programs.md. Relative URL profiles strip
+query/fragment text before resolving a parent or root-relative reference; a
+focused HTTP regression covers slashes in signed-query and fragment text.
+
 ## Humanoid pose retargeting (2026-10-30)
 
 The owner approved a standalone runtime path, without a tide-motion dependency:
@@ -91,7 +189,7 @@ applied all 593 frames with zero failures; their 256 status, scale, direction
 and completion lines matched at the recorded precision. All twelve new C
 fixtures passed on native ASan and WASM (the retarget filter also runs one
 existing test, 13/13 total); the 13-frame synthetic pose hash matched exactly,
-`a669d398066dafa5`, and is pinned in the test. The two public API e2e cases also
+`a669d398066dafa5`, and was pinned before the performance follow-up below. The two public API e2e cases also
 passed on both platforms. Existing skinned CPU coverage passed 62/62 on each.
 
 After merging the incoming Pose.Sample cache and codegen changes, overlap
@@ -100,6 +198,55 @@ retarget filter (13/13), expanded skinned CPU coverage (65/65), and all seven
 affected e2e CTests, including retargeting and net_alone_seen. Both private
 probes again applied all 593 frames successfully; all 256 measurement lines
 were identical before/after the merge and between native and WASM.
+
+### Runtime performance follow-up (2026-10-30)
+
+The owner rejected the initial roughly 10 microseconds per live pose. Phase
+measurements put nearly all of that in quaternion and hierarchy arithmetic
+(source 4.49 microseconds, target 5.39; setup/commit together 0.154). The final
+solver prepares local calibration for matching direct parent chains and keeps
+the global solver for hips and differing helper chains. Global transforms only
+needed to validate otherwise-unused branches use a conservative finite-position
+proof, with complete original hierarchy evaluation when that proof is
+inconclusive. Every input local and accumulated scale remains checked; failures
+are still atomic. Preparation also normalizes static calibration once, and
+Apply reads one list view, writes contiguous runs and reclaims staging when
+reusing a scratch output. The C ABI is unchanged. Implementation and proof:
+runtime-ownership.md, Humanoid retargeting boundary.
+
+Cancelling global rotations algebraically changes rounding intentionally. An
+alternating old/new comparison of the five private clips and all 593 frames
+found at most 0.000051027 degrees of local quaternion difference and
+0.000001372 metres of model-position difference. Omitting proven-unused global
+transforms produced exactly the same output bytes as evaluating them with the
+new local solver. The new 13-frame synthetic pose hash is `1c354e8036dca9f4`,
+verified on native ASan and WASM and pinned; the previous hash above records the
+earlier global arithmetic. Private plan magic is v3; `TIDE_RETARGET_BAKE_VERSION`
+is 2 so previously cached bakes cannot hide this intentional arithmetic change.
+No temporary timing hooks, experimental global switches or alternate-build
+defines remain in the production implementation.
+
+The release benchmark uses the owner's 89-source-node/55-target-node rigs, a
+10,004-byte owned map, nine timing rounds per run and three production runs.
+Median-of-run-medians: C Apply 2.776 microseconds (initial 9.933), raw sampling
+plus Apply 4.189 microseconds. The same-process experimental comparison was
+9.067 versus 2.815 microseconds. Freshly baked profile output samples in 0.527
+microseconds; the separately reported legacy game bake samples in 0.552.
+Generated Tide view work measured 0.716 microseconds per baked pose versus
+4.519 per live-retargeted pose at 100 calls, and 1.775 versus 7.217 at 1,000.
+These include pose construction/sampling and the view's accumulation of one
+bone value, not drawing or IK; the higher large-batch cost remains visible.
+For prepared clips, `[Retarget]` removes live retarget work altogether. The
+private benchmark sources/results and licensed inputs remain ignored under
+`build/retarget-perf`; fresh profile output and the legacy bake are distinct
+cases, not interchangeable baselines.
+
+All 25 combined runtime/bake tests pass native ASan and WASM. Added runtime
+coverage checks scratch reuse, multi-chunk lists and snapshots, conservative
+proof fallbacks that accept finite large transforms and reject unused overflow,
+non-unit/signed rotations, skipped-node scale/nonfinite validation and forged
+specialization metadata. Existing tests still cover changed facing and heading,
+different spine/helper chains and explicit reference/export separation.
 
 ## Kept sample plans (2026-10-30)
 

@@ -88,17 +88,20 @@ static void put_word(uint8_t *p, const uint32_t at, const uint32_t value)
 
 static void put_number(uint8_t *p, const uint32_t at, const float value) { put_word(p, at, tide_f_bits(value)); }
 
-static tide_list model_of(const test_rig *r)
+static tide_list model_of_nodes(const test_node *nodes, const int32_t count)
 {
-    uint8_t bytes[16384] = {0};
+    size_t room = TIDE_SKINNED_HEADER_SIZE + (size_t)count * TIDE_SKINNED_NODE_SIZE + 3u;
+    for (int32_t i = 0; i < count; i++) room += strlen(nodes[i].name) + 1u;
+    uint8_t *bytes = tide_scratch_memory(room);
+    memset(bytes, 0, room);
     put_word(bytes, 0, TIDE_SKINNED_DATA_MAGIC);
     put_word(bytes, 4, TIDE_SKINNED_DATA_VERSION);
-    put_word(bytes, 16, (uint32_t)r->count);
+    put_word(bytes, 16, (uint32_t)count);
     put_word(bytes, 20, TIDE_SKINNED_HEADER_SIZE);
-    uint32_t name_at = TIDE_SKINNED_HEADER_SIZE + (uint32_t)r->count * TIDE_SKINNED_NODE_SIZE;
+    uint32_t name_at = TIDE_SKINNED_HEADER_SIZE + (uint32_t)count * TIDE_SKINNED_NODE_SIZE;
     const uint32_t names = name_at;
-    for (int32_t i = 0; i < r->count; i++) {
-        const test_node n = r->nodes[i];
+    for (int32_t i = 0; i < count; i++) {
+        const test_node n = nodes[i];
         const uint32_t at = TIDE_SKINNED_HEADER_SIZE + (uint32_t)i * TIDE_SKINNED_NODE_SIZE;
         const uint32_t length = (uint32_t)strlen(n.name);
         put_word(bytes, at, (uint32_t)n.parent);
@@ -117,6 +120,8 @@ static tide_list model_of(const test_rig *r)
     tide_sha256_of(bytes + TIDE_SKINNED_HEADER_SIZE, size - TIDE_SKINNED_HEADER_SIZE, bytes + 88);
     return tide_list_from(bytes, (int32_t)size, 1u);
 }
+
+static tide_list model_of(const test_rig *r) { return model_of_nodes(r->nodes, r->count); }
 
 static tide_list reference_of(const test_rig *r)
 {
@@ -496,6 +501,7 @@ TIDE_TEST(retarget_invalid_input_leaves_pose_and_heap_unchanged)
         TIDE_CHECK(transform_hash(output) == before_pose && tide_heap_hash(TIDE_HASH_START, &heap) == before_heap);
     }
     TIDE_CHECK(!tide_retarget_apply(kept_map, p.target, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
+    TIDE_CHECK(!tide_retarget_apply((tide_list){0xbffffffcu}, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
     const int32_t length = tide_list_count(p.map);
     const void *bytes = tide_list_at(p.map, 0, 1u);
     for (int32_t cut = 0; cut < length; cut++) {
@@ -535,6 +541,186 @@ TIDE_TEST(retarget_crossplatform_pose_bits)
         hash = tide_hash_more(hash, &value, sizeof value);
     }
     hash = tide_hash_end(hash);
-    TIDE_CHECK(hash == UINT64_C(0xa669d398066dafa5));
+    TIDE_CHECK(hash == UINT64_C(0x1c354e8036dca9f4));
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(retarget_reuses_scratch_output_without_retaining_staging)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, false);
+    prepared p;
+    TIDE_REQUIRE(prepare(&source, &target, &p));
+    tide_list output = {0};
+    TIDE_REQUIRE(apply(&p, p.source_pose, &output));
+    const uint64_t expected = transform_hash(output);
+    const uint32_t settled = tide_scratch_mark();
+    for (int i = 0; i < 40; i++) {
+        TIDE_REQUIRE(apply(&p, p.source_pose, &output));
+        TIDE_CHECK(tide_scratch_mark() == settled);
+        TIDE_CHECK(transform_hash(output) == expected);
+    }
+    tide_list alias = tide_list_copy(p.source_pose, sizeof(tide_bone_transform));
+    const uint32_t alias_mark = tide_scratch_mark();
+    TIDE_REQUIRE(apply(&p, alias, &alias));
+    TIDE_CHECK(tide_scratch_mark() == alias_mark);
+    TIDE_CHECK(transform_hash(alias) == expected);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(retarget_chunked_lists_keep_pose_bits_and_copy_on_write)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, true);
+    prepared p;
+    TIDE_REQUIRE(prepare(&source, &target, &p));
+    // More transforms than one heap chunk exercises both read-view chunk
+    // transitions and every committed output run, not just its first page.
+    const int32_t source_count = (int32_t)(TIDE_LIST_CHUNK / sizeof(tide_bone_transform)) + 19;
+    const int32_t target_count = source_count + 13;
+    test_node *source_nodes = tide_scratch_memory((size_t)source_count * sizeof *source_nodes);
+    test_node *target_nodes = tide_scratch_memory((size_t)target_count * sizeof *target_nodes);
+    memcpy(source_nodes, source.nodes, (size_t)source.count * sizeof *source_nodes);
+    memcpy(target_nodes, target.nodes, (size_t)target.count * sizeof *target_nodes);
+    for (int32_t i = source.count; i < source_count; i++)
+        source_nodes[i] = (test_node){"unused_helper", 0, {tide_f3((float)i * 0.01f, 0, 0), tide_identity_q(), {1, 1, 1}}};
+    for (int32_t i = target.count; i < target_count; i++)
+        target_nodes[i] = (test_node){"unused_helper", 0, {tide_f3((float)i * 0.02f, 0, 0), tide_identity_q(), {1, 1, 1}}};
+    p.source = model_of_nodes(source_nodes, source_count);
+    p.target = model_of_nodes(target_nodes, target_count);
+    tide_list_resize(&p.source_pose, source_count, sizeof(tide_bone_transform), TIDE_IN_SCRATCH);
+    tide_list_resize(&p.target_pose, target_count, sizeof(tide_bone_transform), TIDE_IN_SCRATCH);
+    for (int32_t i = source.count; i < source_count; i++) *transform_at(p.source_pose, i) = source_nodes[i].local;
+    for (int32_t i = target.count; i < target_count; i++) *transform_at(p.target_pose, i) = target_nodes[i].local;
+    TIDE_REQUIRE(tide_retarget_create(p.source, p.source, p.source_pose, p.source_bones, p.source_status,
+        p.target, p.target_pose, p.target_bones, p.target_status, &p.map, &p.scale, TIDE_IN_SCRATCH) == TIDE_RETARGET_OK);
+    tide_list expected = {0};
+    TIDE_REQUIRE(apply(&p, p.source_pose, &expected));
+    tide_heap heap = {0}, snapshot = {0};
+    tide_text_use(&heap, NULL);
+    tide_list input = {0}, output = {0}, plan = {0};
+    const int32_t bigger = target_count + 10;
+    tide_list_resize(&input, bigger, sizeof(tide_bone_transform), TIDE_IN_MATCH);
+    tide_list_resize(&output, bigger, sizeof(tide_bone_transform), TIDE_IN_MATCH);
+    tide_list_resize(&plan, tide_list_count(p.map) + 1, 1u, TIDE_IN_MATCH);
+    tide_list_resize(&input, source_count, sizeof(tide_bone_transform), TIDE_IN_MATCH);
+    tide_list_resize(&output, target_count, sizeof(tide_bone_transform), TIDE_IN_MATCH);
+    tide_list_resize(&plan, tide_list_count(p.map), 1u, TIDE_IN_MATCH);
+    for (int32_t i = 0; i < source_count; i++) *transform_at(input, i) = source_nodes[i].local;
+    for (int32_t i = 0; i < target_count; i++) *transform_at(output, i) = target_nodes[i].local;
+    for (int32_t i = 0; i < tide_list_count(p.map); i++)
+        *(uint8_t *)tide_list_at_mut(plan, i, 1u) = *(const uint8_t *)tide_list_at(p.map, i, 1u);
+    TIDE_CHECK(tide_block_at(input.at)->b & TIDE_LIST_CHUNKED);
+    TIDE_CHECK(tide_block_at(output.at)->b & TIDE_LIST_CHUNKED);
+    TIDE_CHECK(tide_block_at(plan.at)->b & TIDE_LIST_CHUNKED);
+    tide_heap_copy(&snapshot, &heap);
+    const uint32_t before = tide_scratch_mark();
+    TIDE_REQUIRE(tide_retarget_apply(plan, p.source, input, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
+    TIDE_CHECK(tide_scratch_mark() == before);
+    TIDE_CHECK(transform_hash(output) == transform_hash(expected));
+    for (int32_t i = 0; i < target_count; i++) {
+        const tide_bone_transform *old = tide_list_read(&snapshot, output, i, sizeof *old);
+        TIDE_REQUIRE(old);
+        TIDE_CHECK(!memcmp(old, &target_nodes[i].local, sizeof *old));
+    }
+    tide_heap_free(&snapshot); tide_heap_free(&heap); tide_text_use(NULL, NULL);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(retarget_large_unused_positions_keep_full_validation_fallback)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const test_rig source = humanoid(false, 1, 0, false);
+    test_rig target = humanoid(true, 2, 0.4f, false);
+    prepared p;
+    TIDE_REQUIRE(prepare(&source, &target, &p));
+    tide_list animated = tide_list_copy(p.source_pose, sizeof(tide_bone_transform)), output = {0};
+    TIDE_REQUIRE(apply(&p, animated, &output));
+    const uint64_t reference = transform_hash(output);
+    // This unused leaf exceeds the conservative fast proof, but its actual
+    // global transform is finite. Full FK must accept it without changing output.
+    const float huge = FLT_MAX / 32.0f;
+    transform_at(animated, source.count - 1)->position = tide_f3(huge, 0, 0);
+    TIDE_REQUIRE(apply(&p, animated, &output));
+    TIDE_CHECK(transform_hash(output) == reference);
+    // The target hierarchy also falls back for a large, still valid hip offset.
+    TIDE_REQUIRE(tide_retarget_apply(p.map, p.source, animated, p.target, p.scale, tide_f3(huge, 0, 0), 0, 1, 1, &output, TIDE_IN_SCRATCH));
+    TIDE_CHECK(transform_at(output, target.role[TIDE_HUMANOID_HIPS])->position.x == huge);
+    const uint64_t before = transform_hash(output);
+    // Both local positions are finite; only their unused global sum overflows.
+    transform_at(animated, source.role[TIDE_HUMANOID_SPINE])->position = tide_f3(FLT_MAX, 0, 0);
+    transform_at(animated, source.count - 1)->position = tide_f3(FLT_MAX, 0, 0);
+    TIDE_CHECK(!apply(&p, animated, &output));
+    TIDE_CHECK(transform_hash(output) == before);
+    target.nodes[target.count - 1].local.position.x = FLT_MAX * 0.75f;
+    prepared large;
+    TIDE_REQUIRE(prepare(&source, &target, &large));
+    TIDE_CHECK(!tide_retarget_apply(large.map, large.source, large.source_pose, large.target, large.scale,
+        tide_f3(FLT_MAX * 0.75f, 0, 0), 0, 1, 1, &output, TIDE_IN_SCRATCH));
+    TIDE_CHECK(transform_hash(output) == before);
+    // Static input scale and nonfinite values remain checked even in a skipped leaf.
+    animated = tide_list_copy(p.source_pose, sizeof(tide_bone_transform));
+    transform_at(animated, source.count - 1)->scale = tide_f3_splat(FLT_MAX);
+    TIDE_CHECK(!apply(&p, animated, &output));
+    transform_at(animated, source.count - 1)->scale = tide_f3_splat(1);
+    transform_at(animated, source.count - 1)->rotation.value.w = tide_f_from_bits(0x7fc00000u);
+    TIDE_CHECK(!apply(&p, animated, &output));
+    TIDE_CHECK(transform_hash(output) == before);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(retarget_local_calibration_handles_nonunit_and_signed_quaternions)
+{
+    const uint32_t mark = tide_scratch_mark();
+    test_rig source = humanoid(false, 1, 0, false);
+    const test_rig target = humanoid(true, 1.3f, 0.4f, false);
+    source.nodes[0].local.rotation = tide_axisangle_q(tide_f3(0, 1, 0), 0.8f);
+    prepared p;
+    TIDE_REQUIRE(prepare(&source, &target, &p));
+    tide_list animated = tide_list_copy(p.source_pose, sizeof(tide_bone_transform)), expected = {0}, output = {0};
+    const int32_t arm = source.role[TIDE_HUMANOID_LEFT_UPPER_ARM];
+    const tide_quaternion rotation = tide_euler_q(tide_f3(0.7f, -0.2f, 0.5f));
+    transform_at(animated, arm)->rotation = rotation;
+    TIDE_REQUIRE(tide_retarget_apply(p.map, p.source, animated, p.target, p.scale, tide_f3(.1f, .2f, -.3f), 37, .7f, .8f, &expected, TIDE_IN_SCRATCH));
+    const float factors[] = {1e-30f, -1e-30f, 7.0f, -7.0f, 1e30f, -1e30f};
+    for (uint32_t f = 0; f < sizeof factors / sizeof factors[0]; f++) {
+        transform_at(animated, arm)->rotation.value = tide_mul_f4(rotation.value, tide_f4_splat(factors[f]));
+        TIDE_REQUIRE(tide_retarget_apply(p.map, p.source, animated, p.target, p.scale, tide_f3(.1f, .2f, -.3f), 37, .7f, .8f, &output, TIDE_IN_SCRATCH));
+        for (int role = TIDE_HUMANOID_LEFT_UPPER_ARM; role <= TIDE_HUMANOID_RIGHT_HAND; role++)
+            TIDE_CHECK(near3(model_position(p.target, output, target.role[role]), model_position(p.target, expected, target.role[role])));
+        const tide_float4x4 a = tide_skinned_model(p.target, output, target.role[TIDE_HUMANOID_LEFT_HAND]);
+        const tide_float4x4 b = tide_skinned_model(p.target, expected, target.role[TIDE_HUMANOID_LEFT_HAND]);
+        TIDE_CHECK(near3(tide_f3(a.c1.x, a.c1.y, a.c1.z), tide_f3(b.c1.x, b.c1.y, b.c1.z)));
+    }
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(retarget_rejects_forged_specializations_before_writing)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, .4f, false);
+    prepared p;
+    TIDE_REQUIRE(prepare(&source, &target, &p));
+    tide_list output = {0};
+    TIDE_REQUIRE(apply(&p, p.source_pose, &output));
+    const uint64_t before = transform_hash(output);
+    // White-box offsets pin validation of v3's private packed plan records.
+    const uint32_t base = 136u + 12u * (uint32_t)source.count + 160u * (uint32_t)target.role[TIDE_HUMANOID_LEFT_LOWER_ARM];
+    const struct { uint32_t offset, bits; } edits[] = {
+        {base + 4u, UINT32_MAX}, {base + 4u, INT32_MAX}, {base + 8u, UINT32_MAX},
+        {base + 120u, UINT32_MAX - 1u}, {base + 120u, 0u}, {base + 128u, 0x7f800000u},
+        {base + 124u, 2u}, {base, INT32_MAX},
+        {136u + 12u * (uint32_t)source.role[TIDE_HUMANOID_HIPS] + 8u, 0u}
+    };
+    for (uint32_t i = 0; i < sizeof edits / sizeof edits[0]; i++) {
+        const uint32_t mutation_mark = tide_scratch_mark();
+        tide_list corrupt = tide_list_copy(p.map, 1u);
+        memcpy(tide_list_at_mut(corrupt, (int32_t)edits[i].offset, 1u), &edits[i].bits, sizeof edits[i].bits);
+        const uint32_t staged = tide_scratch_mark();
+        TIDE_CHECK(!tide_retarget_apply(corrupt, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_SCRATCH));
+        TIDE_CHECK(tide_scratch_mark() == staged);
+        TIDE_CHECK(transform_hash(output) == before);
+        tide_scratch_reset(mutation_mark);
+    }
     tide_scratch_reset(mark);
 }

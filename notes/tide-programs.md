@@ -1,5 +1,40 @@
 # `tide_add_game` and the generated header
 
+## Retarget baking dependencies (2026-10-30)
+
+`tide_add_game` passes `tidec --depfile <name>.d` and consumes it through
+the custom command's DEPFILE. Compiler-resolved transitive inputs now rebuild
+the pack: humanoid profile reference models and external glTF buffers, alongside
+ordinary source/assets. Existing configure-time asset globs and the asset-list
+dependency still detect additions/deletions. Main writes standard Make escaping
+and fails the compile if the requested dependency file cannot be written.
+Ninja consumes that file directly under scoped CMP0116 OLD: CMake's depfile
+transformer removes dollar/hash escaping (reproduced with 3.31.3 and still in
+its 4.1 implementation). The command runs from the top build directory with a
+relative output path so Ninja's output matches. Only this policy workaround's
+deprecation warning is suppressed locally. The isolated Ninja regression covers
+unchanged builds and edits to profiles, models and external buffers with spaces,
+dollar signs and hashes in their paths; all pass.
+
+Native tidec now links the same CPU `tide` archive as the browser compiler;
+the tools-only cross-build host creates that archive too. This replaces duplicate
+importer-side engine objects and lets the baker reuse runtime sampling/maps.
+It links no platform layer. Baking contracts and coverage are in
+assets-and-files.md; focused build/dependency validation is recorded there.
+
+Pre-merge integration validation: the native ASan suite passed all 2,924 enabled
+real checks across the full run and a focused correction run. The first run
+exposed an outdated expected asset-type diagnostic and a JSON fixture directory
+accidentally registered as a multi-file error test; both were corrected, with
+all nine affected diagnostics passing. The full web-debug suite passed all
+2,812 enabled checks. Each suite retains the pre-existing disabled Newton
+right-turn test. The docs site build also passed. Private tests against five
+Kubold clips and the Bannerlord prototype's Synty character cover 1,181 sample
+times, including bake-grid midpoints; native/WASM printed error measurements
+match, with no failures and maximum model-endpoint discrepancy 0.00000101 m.
+Licensed inputs and measurements stay under ignored build/; no prototype assets
+or game source are part of this commit.
+
 Deleted asset files (2026-10-27, owner-approved fix): the asset files a game's
 declarations name were only in tidec's DEPENDS, and Ninja never reruns a
 command because a dependency disappeared, so a file deleted from a glob's

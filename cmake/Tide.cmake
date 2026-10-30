@@ -240,6 +240,7 @@ function(tide_add_game target)
     set(out_h "${out_dir}/${name}.h")
     set(out_pack "${out_dir}/${name}.pack")
     set(out_pack_c "${out_dir}/${name}_pack.c")
+    set(out_depfile "${out_dir}/${name}.d")
     set(pack_c "")
     set(pack_outputs "")
     if(ARG_HOST)
@@ -342,14 +343,37 @@ function(tide_add_game target)
         set(visualizers --visualizers)
         set(visualizer_outputs "${out_dir}/${name}.natvis" "${out_dir}/${name}_lldb.py")
     endif()
+    # CMake's Ninja depfile transformation drops Make escapes for '$' and '#'.
+    # Give Ninja the compiler's correctly escaped file directly. Its output
+    # target is relative to the top build directory, as Ninja's target is.
+    set(tidec_out_dir "${out_dir}")
+    set(tidec_working_dir "${CMAKE_CURRENT_BINARY_DIR}")
+    cmake_policy(PUSH)
+    if(CMAKE_GENERATOR MATCHES "^Ninja")
+        # Until CMake preserves these escapes, NEW produces invalid dependencies.
+        # Suppress only this workaround's policy deprecation, restoring the
+        # caller's warning setting immediately afterward.
+        set(tidec_warn_deprecated YES)
+        if(DEFINED CMAKE_WARN_DEPRECATED)
+            set(tidec_warn_deprecated "${CMAKE_WARN_DEPRECATED}")
+        endif()
+        set(CMAKE_WARN_DEPRECATED NO)
+        cmake_policy(SET CMP0116 OLD)
+        set(CMAKE_WARN_DEPRECATED "${tidec_warn_deprecated}")
+        file(RELATIVE_PATH tidec_out_dir "${CMAKE_BINARY_DIR}" "${out_dir}")
+        set(tidec_working_dir "${CMAKE_BINARY_DIR}")
+    endif()
     add_custom_command(
         OUTPUT "${out_c}" "${out_h}" ${pack_outputs} ${visualizer_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" "-DSTRIP_NAMES=${strip_names}" -P "${TIDE_RUN_TIDEC}"
-            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
+            -- "@${listed}" -o "${tidec_out_dir}" --name "${name}" --depfile "${out_depfile}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${asset_list}" "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
+        DEPFILE "${out_depfile}"
+        WORKING_DIRECTORY "${tidec_working_dir}"
         COMMENT "tidec ${target}"
         VERBATIM)
+    cmake_policy(POP)
 
     if(ARG_HOST AND ARG_WINDOW AND TIDE_ANDROID)
         add_library(${target} SHARED ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})

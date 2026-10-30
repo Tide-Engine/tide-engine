@@ -2633,7 +2633,11 @@ static void parse_attributes(parser *p)
         const token *name = expect_ident(p, "attribute name");
         a.name = name->text;
         a.at = name->at;
-        if (accept(p, T_LPAREN)) {
+        if (str_eq_c(a.name, "Retarget") && at(p, T_LPAREN)) {
+            a.call = NEW(expr);
+            a.call->at = a.at;
+            parse_args(p, a.call);
+        } else if (accept(p, T_LPAREN)) {
             if (!at(p, T_RPAREN)) {
                 if (str_eq_c(a.name, "Stage")) {
                     vec_push(a.args, parse_qname(p, "an enum member, like 'RenderStages.Objects'"));

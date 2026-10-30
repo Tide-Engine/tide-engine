@@ -40,6 +40,7 @@ static void usage(void)
             "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
             "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
             "  --pack-c       also write the assets' pack as C (<name>_pack.c: tide_game_pack), for a host that embeds it\n"
+            "  --depfile <file> write source and transitive asset dependencies for the generated C\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
             "                 wait, instead of generating code\n"
             "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
@@ -168,6 +169,49 @@ static bool add_listed(const char *path, input_list *inputs)
     return true;
 }
 
+// Make-style dependencies, consumed by CMake/Ninja. Windows separators are
+// normalized before escaping; dollar signs, spaces, hashes and drive colons
+// must remain part of a path rather than become build-language syntax.
+static void dependency_path(FILE *file, const char *path)
+{
+    for (; *path; path++) {
+        char c = *path;
+#ifdef _WIN32
+        if (c == '\\') c = '/';
+#endif
+        if (c == '$') fputc('$', file);
+        else if (c == ' ' || c == '\t' || c == '#' || c == ':' || c == '\\') fputc('\\', file);
+        fputc(c, file);
+    }
+}
+
+static bool write_dependencies(const char *path, const codegen_options *opts,
+                               const input_list *inputs, const game_info *info)
+{
+    FILE *file = fopen(path, "wb");
+    if (!file) {
+        fprintf(stderr, "tidec: can't write dependency file '%s'\n", path);
+        return false;
+    }
+    sb target = {0};
+    sb_printf(&target, "%s/%s.c", opts->out_dir, opts->name);
+    dependency_path(file, target.data);
+    fputc(':', file);
+    for (int i = 0; i < inputs->count; i++) {
+        fputs(" \\\n  ", file);
+        dependency_path(file, inputs->items[i].path);
+    }
+    for (int i = 0; i < info->asset_count; i++) {
+        fputs(" \\\n  ", file);
+        dependency_path(file, info->asset_paths[i]);
+    }
+    fputc('\n', file);
+    bool ok = !ferror(file);
+    if (fclose(file) != 0) ok = false;
+    if (!ok) fprintf(stderr, "tidec: can't finish dependency file '%s'\n", path);
+    return ok;
+}
+
 int main(const int argc, char **argv)
 {
     input_list inputs = {0};
@@ -175,6 +219,7 @@ int main(const int argc, char **argv)
     opts.line_directives = true;
     bool schedule = false;
     bool pack_c = false;
+    const char *depfile = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
@@ -207,6 +252,8 @@ int main(const int argc, char **argv)
             opts.game_folder = argv[++i];
         } else if (strcmp(argv[i], "--pack-c") == 0) {
             pack_c = true;
+        } else if (strcmp(argv[i], "--depfile") == 0 && i + 1 < argc && !depfile) {
+            depfile = argv[++i];
         } else if (strcmp(argv[i], "--layout") == 0) {
             opts.layout = true;
         } else if (strcmp(argv[i], "--embed") == 0) {
@@ -246,7 +293,7 @@ int main(const int argc, char **argv)
             return 2;
         }
     }
-    if (inputs.count == 0 || (!opts.out_dir && !schedule)) {
+    if (inputs.count == 0 || (!opts.out_dir && !schedule) || (depfile && (schedule || !*depfile))) {
         usage();
         return 2;
     }
@@ -275,7 +322,15 @@ int main(const int argc, char **argv)
         if (pack_c) opts.pack_c = pack_c_path.data;
     }
 
-    if (!schedule) return compile_inputs(inputs.items, inputs.count, &opts, NULL) ? 0 : 1;
+    if (!schedule) {
+        game_info info = {0};
+        if (depfile) opts.info = &info;
+        bool ok = compile_inputs(inputs.items, inputs.count, &opts, NULL);
+        if (ok && depfile) ok = write_dependencies(depfile, &opts, &inputs, &info);
+        for (int i = 0; i < info.asset_count; i++) free(info.asset_paths[i]);
+        free(info.asset_paths);
+        return ok ? 0 : 1;
+    }
     sb text = {0};
     if (!compile_inputs(inputs.items, inputs.count, &opts, &text)) return 1;
     fputs(text.data, stdout);

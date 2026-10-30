@@ -1,0 +1,3 @@
+// expect: a HumanoidRig asset names one profile: declare each rig separately
+asset List<HumanoidRig> rigs = "../e2e/retargeting/*.humanoid.json";
+scene Main { }

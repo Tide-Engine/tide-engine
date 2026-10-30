@@ -1411,6 +1411,7 @@ static void index_program(void)
                 }
             }
             for (int v = 0; v < at->values.count; v++) walk_expr(at->values.items[v]);
+            if (at->call) for (int v = 0; v < at->call->args.count; v++) walk_expr(at->call->args.items[v]);
         }
         if (d->kind == DECL_SYSTEM || d->kind == DECL_SHADER) {
             add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_SYSTEM, .declaration = true, .decl = d,
@@ -2385,6 +2386,13 @@ static const char *shader_record_doc(const decl *d)
     "inspect GetStatus and override a role with rig[HumanoidBone.LeftHand] = bone."
 #define RETARGET_MAP_DOC "A prepared source-to-target retargeting map. Create it once for the actual animation skeleton " \
     "and both characterized rigs, then reuse it with Pose.Retarget."
+#define HUMANOID_ASSET_DOC "A reusable .humanoid.json profile with an explicit reference model or sampled reference clip, " \
+    "automatic bone discovery, manual bone assignments and reference edits. Copy the asset to edit a profile at runtime."
+#define RETARGET_ATTRIBUTE_FORM "Retarget(HumanoidRig sourceRig, HumanoidRig targetRig, float rootScale = automatic, " \
+    "float3 rootOffset = default, float headingDegrees = 0, float spineDistribution = 1, float twistDistribution = 1, float sampleRate = 60)"
+#define RETARGET_ATTRIBUTE_DOC "Bakes an Animation or AnimationCatalog into the target rig during the build. " \
+    "The first two arguments name HumanoidRig assets; optional settings are named build-time constants. " \
+    "The result uses ordinary animation sampling with no per-frame retargeting. Sampling between baked keys is approximate."
 
 static const char *retarget_type_doc(const decl *d)
 {
@@ -3406,6 +3414,10 @@ static void describe(const occurrence *o, sb *out)
             if (o->decl->asset_kind == ASSET_ANIMATION) {
                 sb_put(out, " An `Animation` asset imports the only clip in a glTF or FBX file, or the exact clip selected by [Name(\"source name\")].");
             }
+            if (o->decl->asset_kind == ASSET_HUMANOID) sb_put(out, " " HUMANOID_ASSET_DOC);
+            for (int a = 0; a < o->decl->attributes.count; a++) {
+                if (str_eq_c(o->decl->attributes.items[a].name, "Retarget")) sb_put(out, "\n\n" RETARGET_ATTRIBUTE_DOC);
+            }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them. It can initialize "
                             "`[Raw] Texture` fields and be borrowed by GPU sampling and metadata helpers, preserving the "
@@ -3875,6 +3887,7 @@ static void describe(const occurrence *o, sb *out)
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
             {"Name", "[Name(\"source name\")]",
              "Selects an exact original clip on an Animation asset, or names the Animation or Bone a SkinnedMesh contract field promises."},
+            {"Retarget", "[" RETARGET_ATTRIBUTE_FORM "]", RETARGET_ATTRIBUTE_DOC},
             {"Channel", "[Channel(Channels.Uploads)]",
              "Puts the command after it in a channel of the game's, an enum member: a player's commands are handled in the "
              "order sent within a channel, and in no order against another channel's, so a chat line never waits behind an "
@@ -7888,6 +7901,7 @@ static void complete_asset_types(completion *c, const bool collection)
          "List<byte> imports any file as bytes. A List of another asset type imports the files a path or glob matches.",
          collection ? "List<byte>" : "List<${1:byte}>");
     if (!collection) {
+        item(c, "HumanoidRig", CK_STRUCT, "Humanoid calibration profile asset", HUMANOID_ASSET_DOC, NULL);
         item(c, "Cubemap", CK_STRUCT, "Six image faces", builtin_type_doc(TY_CUBEMAP), NULL);
         item(c, "Animation", CK_STRUCT, "One animation clip asset",
              "Imports a file's only animation clip, or the exact original clip selected by [Name(\"source name\")].", NULL);
@@ -9402,6 +9416,58 @@ static const decl *completion_enum(const scope *sc, const int last, const int br
     return NULL;
 }
 
+static void complete_retarget_attribute(completion *c, const int open, const int last)
+{
+    int argument = 0, first = open + 1, depth = 0;
+    for (int i = first; i <= last; i++) {
+        const tok_kind kind = DOC->toks[i].kind;
+        if (kind == T_LPAREN || kind == T_LBRACKET || kind == T_LBRACE) depth++;
+        else if (kind == T_RPAREN || kind == T_RBRACKET || kind == T_RBRACE) depth--;
+        else if (kind == T_COMMA && depth == 0) { argument++; first = i + 1; }
+    }
+    if (argument < 2) {
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_ASSET && d->asset_kind == ASSET_HUMANOID)
+                item(c, name_for(d), CK_VARIABLE, "asset HumanoidRig", HUMANOID_ASSET_DOC, NULL);
+        }
+        complete_namespaces(c, false);
+        return;
+    }
+    if (first + 1 <= last && DOC->toks[first].kind == T_IDENT && DOC->toks[first + 1].kind == T_COLON) {
+        const bool offset = str_eq_c(DOC->toks[first].text, "rootOffset");
+        complete_constants(c, offset && depth == 0 ? TY_FLOAT3 : TY_FLOAT);
+        if (!offset || depth) complete_constants(c, TY_INT);
+        if (offset) item(c, "float3", CK_STRUCT, "Constant model-space offset in metres", NULL, "float3($1, $2, $3)");
+        item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+        complete_namespaces(c, false);
+        return;
+    }
+    static const struct { const char *name, *value, *doc; } settings[] = {
+        {"rootScale", "1", "Root travel scale. Omitted: target/source leg-length ratio; zero removes travel."},
+        {"rootOffset", "float3(0, 0, 0)", "Target model-space root offset in metres. Omitted: zero."},
+        {"headingDegrees", "0", "Turn about the target reference hips and up axis, in degrees. Omitted: zero."},
+        {"spineDistribution", "1", "Extra spine and neck interpolation, from zero to one. Omitted: one."},
+        {"twistDistribution", "1", "Longitudinal twist in helper bones, from zero to one. Omitted: one."},
+        {"sampleRate", "60", "Bake samples per second. Omitted or zero: 60. Authored keys and endpoints are also included."},
+    };
+    call_args args;
+    call_arguments(open, &args);
+    for (size_t i = 0; i < sizeof settings / sizeof settings[0]; i++) {
+        bool used = false;
+        for (int a = 2; a < args.count; a++) {
+            const int token = args.first[a];
+            if (token + 1 <= args.last[a] && DOC->toks[token].kind == T_IDENT
+                && DOC->toks[token + 1].kind == T_COLON && str_eq_c(DOC->toks[token].text, settings[i].name)) used = true;
+        }
+        if (used) continue;
+        sb snippet = {0};
+        sb_printf(&snippet, "%s: ${1:%s}", settings[i].name, settings[i].value);
+        item(c, settings[i].name, CK_PROPERTY, i == 1 ? "float3 build-time option" : "float build-time option",
+             settings[i].doc, snippet.data);
+    }
+}
+
 static void expected_enum_item(completion *c, const char *label, const int kind, const char *detail,
                                const char *sort, const bool preselect)
 {
@@ -9642,6 +9708,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "NativeName(\"$1\")");
             item(&c, "Name", CK_FUNCTION, "[Name(\"source name\")]",
                  "Selects a unique exact original clip from an Animation asset's file.", "Name(\"$1\")");
+            item(&c, "Retarget", CK_FUNCTION, "[Retarget(sourceRig, targetRig)]", RETARGET_ATTRIBUTE_DOC,
+                 "Retarget(${1:sourceRig}, ${2:targetRig})");
             item(&c, "Channel", CK_FUNCTION, "[Channel(Channels.Uploads)]",
                  "Puts the command in a channel of the game's: in order among that channel's commands, and in no order against the others.",
                  "Channel($1)");
@@ -9707,7 +9775,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
         break;
 
     case CTX_ATTRIBUTE_ARGS:
-        if (order == ORDER_OFFSET) {
+        if (f.open >= 1 && str_eq_c(DOC->toks[f.open - 1].text, "Retarget")) {
+            complete_retarget_attribute(&c, f.open, last);
+        } else if (order == ORDER_OFFSET) {
             complete_constants(&c, TY_INT);
             complete_namespaces(&c, false);
         } else if (pk == T_LPAREN || pk == T_COMMA) {
@@ -11902,7 +11972,8 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         s.named = DOC->toks[first_of_arg].text;
     }
     const occurrence *attribute = occurrence_at(DOC->toks[callee].at);
-    if (attribute && attribute->kind == OCC_ATTRIBUTE) {
+    if ((attribute && attribute->kind == OCC_ATTRIBUTE)
+        || (str_eq_c(name, "Retarget") && callee > 0 && DOC->toks[callee - 1].kind == T_LBRACKET)) {
         if (str_eq_c(name, "Stage")) {
             add_signature(&s, "Stage(Stages.Phase, int offset = 0)",
                           "Phases follow enum declaration order. The signed constant offset orders work within the phase.");
@@ -11910,6 +11981,8 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb label = {0};
             sb_printf(&label, STR_FMT "(DeclarationOrPhase, ...)", STR_ARG(name));
             add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
+        } else if (str_eq_c(name, "Retarget")) {
+            add_signature(&s, RETARGET_ATTRIBUTE_FORM, RETARGET_ATTRIBUTE_DOC);
         }
     } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
         const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];
@@ -12719,6 +12792,7 @@ static void collect_assets(void)
     static const char *const images[] = {".png", ".psd", ".jpg", ".jpeg", ".tga", ".bmp"};
     static const char *const clips[] = {".wav", ".ogg", ".mp3", ".flac"};
     static const char *const models[] = {".glb", ".gltf", ".fbx", ".obj"};
+    static const char *const profiles[] = {".humanoid.json"};
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind != DECL_ASSET || !d->value || !d->unit) continue;
@@ -12743,6 +12817,9 @@ static void collect_assets(void)
             } else if (d->asset_kind == ASSET_CLIP) {
                 site.formats = clips;
                 site.format_count = (int)(sizeof clips / sizeof clips[0]);
+            } else if (d->asset_kind == ASSET_HUMANOID) {
+                site.formats = profiles;
+                site.format_count = 1;
             } else if (d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED || d->asset_kind == ASSET_ANIMATIONS
                        || d->asset_kind == ASSET_ANIMATION) {
                 site.formats = models;

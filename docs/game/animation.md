@@ -249,6 +249,63 @@ This supports separate files exported from the same named hierarchy. It does not
 
 ## Retarget between humanoids
 
+For imported clips, bake retargeting during the build. The result is an ordinary
+`Animation` on the target skeleton, so playback only samples the baked clip:
+
+```tide
+asset HumanoidRig motionRig = "rigs/motion.humanoid.json";
+asset HumanoidRig heroRig = "rigs/hero.humanoid.json";
+
+[Retarget(motionRig, heroRig)]
+asset AnimationCatalog movement = "motion/*.fbx";
+
+[Name("Root|Run"), Retarget(motionRig, heroRig, sampleRate: 60)]
+asset Animation run = "motion/run.fbx";
+```
+
+A `.humanoid.json` profile chooses an explicit anatomical reference, then
+overrides automatic assignments where needed:
+
+```json
+{
+  "reference": { "file": "../art/hero.glb", "pose": "rest" },
+  "bones": { "LeftHand": "hand_l", "LeftToes": null },
+  "referenceEdits": {
+    "upperarm_l": { "rotationOffsetDegrees": [0, 0, 5] }
+  }
+}
+```
+
+Reference paths are relative to the profile. To use a calibration clip instead
+of rest transforms, write `"reference": { "file": "reference.fbx", "clip":
+"T-Pose", "seconds": 0 }`. The clip name is exact and unambiguous, and seconds
+must lie within its duration. The calibration file may be separate from the
+animation export; its default pose is never guessed from the first frame.
+
+`bones` uses `HumanoidBone` names and exact source bone names. Omitted roles keep
+their automatic assignment; `null` explicitly unmaps a role. `referenceEdits`
+names exact bones and accepts `positionOffset` in local metres,
+`rotationOffsetDegrees` as local X/Y/Z Euler angles (applied Z, X, then Y, as
+`quaternion.Euler`), and a positive uniform
+`scaleMultiplier`. Edits apply before discovery; explicit mappings apply last.
+Rotation offsets postmultiply the existing local rotation. These edits calibrate
+anatomy; use ordinary pose edits after sampling for persistent artistic offsets.
+
+`Retarget` accepts named `rootScale`, `rootOffset`, `headingDegrees`,
+`spineDistribution` and `twistDistribution` with the same meaning as the runtime
+map below. Omitted root scale uses the leg-length ratio. Other defaults are zero
+offset/heading and unit distributions. `sampleRate` defaults to 60 samples per
+second. The baker also preserves source key times, endpoints and STEP boundaries;
+between samples the target clip's interpolation approximates live retargeting.
+Raise the rate when fast motion needs more precision.
+
+Builds cache derived clips by source content, both profiles and bake options.
+Changing a profile, reference model or external buffer rebuilds dependent clips.
+Invalid required mappings fail the build. The source imports remain unchanged,
+and clips retain their original names and duration. A profile asset is also an
+ordinary `HumanoidRig` value: inspect its statuses or copy it and edit its mapping
+before creating a runtime map. Each profile is a separate asset declaration.
+
 Runtime retargeting adapts a source humanoid's motion to a character's proportions
 and bone axes. It is part of Tide and does not require Tide Motion. Prepare a
 `RetargetMap` once, then use it for every sampled pose from that animation export.

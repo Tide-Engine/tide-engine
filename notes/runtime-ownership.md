@@ -1,5 +1,33 @@
 # Runtime written by Claude for now
 
+## Shared retarget baking support (2026-10-30)
+
+Within the owner's approved profile-assets and Retarget-attribute task, agents
+maintain `tide/retarget_bake.h`, `engine/src/retarget_bake.c` and their focused
+tests alongside the existing skinned/retarget maintenance exception. The C
+helpers `tide_retarget_bake` and `tide_retarget_bake_skeleton` are compiler and
+cold-path support; generated Tide code calls neither, and this adds no public
+Tide bake-on-load method. Dynamic-load support can reuse this implementation
+when its language API is agreed. There is no tide-motion dependency.
+
+The baker borrows canonical source/target lists, a prepared pointer-free map
+and scalar settings. Clip index -1 selects the source catalog; a nonnegative
+index selects one clip. Successful output is free-compatible canonical bytes
+owned by the caller, independent of input lifetimes. Both output parameters,
+scratch and world bytes remain unchanged on failure. It uses existing sampling
+and retarget application, with temporary scratch poses and bounded owned
+sample/encoder buffers; no pointer enters simulation state or a prepared map.
+It does not depend on the map's private layout. The skeleton-only helper
+strips reference geometry and animation without changing original target
+identity. No existing runtime signature or canonical format is changed.
+
+Sampling, compression, named resource limits, approximation boundaries,
+profile/cache integration and tests are recorded in assets-and-files.md,
+Profile assets and retargeted animation baking. The seven focused C fixtures
+pass native ASan, including immutable caller/snapshot state, complete truncated
+source coverage and scale rejection. Web and compiler integration validation
+are pending the root's final run at this checkpoint.
+
 ## Humanoid retargeting boundary (2026-10-30)
 
 Within the owner's approved standalone retargeting task, agents maintain
@@ -22,8 +50,8 @@ values follow the declared HumanoidBone order, ending with UpperChest. Status
 values are Missing=0, Automatic=1, Uncertain=2 and Manual=3. Missing and uncertain
 required-role diagnostics identify the role; a failed Create preserves outputs.
 
-The plan contains a 136-byte header, an 8-byte record per actual source node,
-and a 120-byte record per target node. Static assertions pin their padding-free
+The v3 plan contains a 136-byte header, a 12-byte record per actual source node,
+and a 160-byte record per target node. Static assertions pin their padding-free
 layouts. Records carry parent/source indices, scalar options, calibrated
 quaternions and reference local transforms; they contain no pointers, caches,
 asset offsets or allocator handles. Lists therefore keep normal copy-on-write,
@@ -36,12 +64,13 @@ then prepares semantic anchors and torso/twist chains. Hand ancestry and chain
 sampling use parent-first/monotonic passes. Apply reads only the immutable
 skeleton headers for node counts and SHA-256 identity (with a chunk-size static
 assertion); it does not flatten or traverse whole mesh/animation payloads.
-Packed skeleton headers and payload spans are checked before access. All source
-globals and target locals/globals are staged in scratch; only a completely
+Packed skeleton and plan headers and payload spans are checked before access.
+Needed source/target globals and every output local are staged in scratch; only a completely
 valid result prepares/resizes/writes the destination transform list. Existing
 destination storage is reused. Source transform/output aliasing is supported;
-aliasing a transform output with a byte-list plan or model is rejected. World
-output paths release the temporary scratch mark, leaving no persistent pointer.
+aliasing a transform output with a byte-list plan or model is rejected. Reused
+scratch outputs and world outputs release the temporary staging mark; only a
+newly allocated scratch output retains it. No persistent pointer escapes.
 Current source scales must match the prepared static export scales. Finite
 options, hierarchy order, indices and intermediate transforms are checked;
 malformed inputs cannot partially mutate the output or its match heap.
@@ -52,9 +81,39 @@ geometric expectations, export separation, missing optional source roles,
 automatic/manual diagnostics, invalid data atomicity, copy-on-write snapshots
 and cross-platform output bits. Native ASan and WASM passed all twelve new C
 fixtures, the existing retarget regression and both new public API e2e cases.
-The exact 13-frame pose hash `a669d398066dafa5` is pinned after agreeing on both
-platforms. Existing skinned CPU coverage passed 62/62 on each. Private user-asset
+The initial 13-frame pose hash was `a669d398066dafa5`. The intentional local-space
+arithmetic change below replaces it with `1c354e8036dca9f4`, verified and pinned
+on native ASan and WASM. Existing skinned CPU coverage passed 62/62 on each. Private user-asset
 measurements and visual checks are recorded with the asset contract.
+
+The same-day performance follow-up keeps the public C ABI and all ownership
+rules. Prepared inverses, alignment rotations, heading and twist axes are
+normalized once; direct matching source/target parent chains additionally keep
+two local calibration quaternions. Applying these directly avoids reconstructing
+and cancelling whole global chains. Other joints, torso/twist helpers and hips
+retain the global solver. This is mathematically equivalent but intentionally
+changes float rounding, so the private plan magic is v3 and the bake/cache
+algorithm version is 2. Existing imported or baked asset formats are unchanged.
+
+Prepared source/target dependency flags close over ancestors of every required
+global transform. Every input local and accumulated scale is still checked.
+Unused global positions are proved finite with a conservative bound: the
+unit-quaternion rotation's intermediates are bounded by 13 times the maximum
+scaled local-position component; the fast proof uses 16 times that component,
+adds the parent's bound and requires at most FLT_MAX/4. If inconclusive, the
+whole source or target hierarchy is evaluated with the original composition
+before any output is committed. This preserves rejection of overflow in unused
+branches. Specialization indices, sentinels, matching-parent eligibility and
+dependency flags are checked before use. Input lists use one checked view and
+output writes copy contiguous runs, including copy-on-write heap chunks.
+
+Five additional C fixtures cover retained scratch, multi-chunk input/output and
+plans with snapshots, finite and overflowing large-position fallbacks, static
+scale/nonfinite rejection in skipped nodes, signed/nonunit quaternions and
+forged specialization metadata. All 25 tests in the combined retarget filter
+(17 new runtime fixtures, the earlier binding regression and seven bake
+fixtures) pass native ASan and WASM with the new pinned bits. Release timings and
+old/new geometric error measurements are recorded in assets-and-files.md.
 
 ## Kept sample plans (2026-10-30)
 

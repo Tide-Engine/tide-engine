@@ -258,6 +258,7 @@ typedef struct attribute {
     loc at;
     VEC(qname) args;     // On declarations, names: [After(Physics.Gravity)]
     VEC(expr *) values;  // Constant values: field bounds, NativeName's text, or Stage's optional offset
+    expr *call; // Retarget uses ordinary positional and named call arguments.
 } attribute;
 
 // ---------------------------------------------------------------------------

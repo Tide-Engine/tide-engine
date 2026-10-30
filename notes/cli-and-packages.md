@@ -1,5 +1,15 @@
 # `tide`, packages and the package
 
+## Compiler dependency files (2026-10-30)
+
+`tidec --depfile <path>` writes Make-style source and transitive asset dependencies
+after successful code generation, using the existing `game_info.asset_paths`
+collection. It refuses inspection-only modes and fails on output I/O errors.
+`tide_add_game` consumes the file for reference model/side-buffer rebuilds;
+the in-process CLI watcher already reads the same asset path collection.
+No game runtime ABI or telemetry fields change. Contracts and validation:
+notes/tide-programs.md and notes/assets-and-files.md.
+
 ## Release prunes again; distribution keeps only shipping cuts (2026-10-30)
 
 Owner, on the split below: "also release should prune unused stuff / i think

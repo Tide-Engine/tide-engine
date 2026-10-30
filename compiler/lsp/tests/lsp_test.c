@@ -7982,7 +7982,7 @@ TIDE_TEST(lsp_asset_type_completion)
         "[LOD] asset Me$", "namespace Art { asset Tex$ }",
     };
     static const char *const types[] = {
-        "string", "Texture", "Clip", "Grid2", "Mesh", "SkinnedMesh", "AnimationCatalog", "Animation", "Cubemap", "List", "Map",
+        "string", "Texture", "Clip", "Grid2", "Mesh", "SkinnedMesh", "AnimationCatalog", "Animation", "HumanoidRig", "Cubemap", "List", "Map",
     };
     for (size_t i = 0; i < sizeof declarations / sizeof declarations[0]; i++) {
         open_document(declarations[i]);
@@ -7998,7 +7998,7 @@ TIDE_TEST(lsp_asset_type_completion)
         open_document(collections[i]);
         const char *reply = request("textDocument/completion");
         TIDE_CHECK(offers(reply, "Texture") && offers(reply, "Mesh") && offers(reply, "SkinnedMesh") && offers(reply, "AnimationCatalog"));
-        TIDE_CHECK(!offers(reply, "Animation") && !offers(reply, "Cubemap") && !offers(reply, "Map"));
+        TIDE_CHECK(!offers(reply, "Animation") && !offers(reply, "HumanoidRig") && !offers(reply, "Cubemap") && !offers(reply, "Map"));
         TIDE_CHECK(has(reply, "\"insertText\":\"List<byte>\""));
         TIDE_CHECK(offers(reply, "byte") == (i < 2));
     }
@@ -12405,6 +12405,151 @@ TIDE_TEST(lsp_humanoid_retargeting_roles_signatures_and_restrictions)
     TIDE_CHECK(!offers(completion, "Auto"));
     completion = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { HumanoidRig rig = default; rig.$ }\n");
     TIDE_CHECK(!offers(completion, "GetStatus") && !offers(completion, "referencePose"));
+}
+
+static const char *humanoid_asset_request(const char *uri, const char *marked, const char *method)
+{
+    char text[4096];
+    size_t n = 0;
+    int line = 0, column = 0, cursor_at_line = 0, cursor_at_column = 0;
+    for (const char *p = marked; *p && n + 1 < sizeof text; p++) {
+        if (*p == '$') { cursor_at_line = line; cursor_at_column = column; continue; }
+        text[n++] = *p;
+        if (*p == '\n') { line++; column = 0; } else column++;
+    }
+    text[n] = '\0';
+    open_uri(uri, text);
+    return request_at(uri, method, cursor_at_line, cursor_at_column, "");
+}
+
+TIDE_TEST(lsp_humanoid_assets_bake_completion_and_signatures)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_humanoid_completion");
+    static const char profile[] = "{\"reference\":{\"file\":\"rig.gltf\",\"pose\":\"rest\"}}";
+    write_file("lsp_humanoid_completion/source.humanoid.json", profile);
+    write_file("lsp_humanoid_completion/target.humanoid.json", profile);
+    write_file("lsp_humanoid_completion/rig.gltf", "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"Hips\"}],"
+               "\"scenes\":[{\"nodes\":[0]}],\"scene\":0}");
+    write_file("lsp_humanoid_completion/clip.gltf", "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Idle\"}]}");
+    write_file("lsp_humanoid_completion/other.txt", "text");
+    write_file("lsp_humanoid_completion/main.tide", "scene Main { }\n");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root[700], uri[700], text[2048];
+    snprintf(root, sizeof root, "file:///%s/lsp_humanoid_completion", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_humanoid_completion/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    TIDE_CHECK(offers(humanoid_asset_request(uri, "[$]\nscene Main { }\n", "textDocument/completion"), "Retarget"));
+    static const char profiles[] = "const string sourcePath = \"source.humanoid.json\";\n"
+                                  "const string targetPath = \"target.humanoid.json\";\n"
+                                  "const string otherPath = \"other.txt\";\n"
+                                  "const string clipPath = \"clip.gltf\";\n"
+                                  "asset HumanoidRig sourceRig = sourcePath;\n"
+                                  "asset HumanoidRig targetRig = targetPath;\n"
+                                  "asset string other = otherPath;\n";
+    snprintf(text, sizeof text, "%s[Retarget($)]\nasset Animation baked = clipPath;\n", profiles);
+    const char *reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "sourceRig") && offers(reply, "targetRig") && !offers(reply, "other") && !offers(reply, "rootScale"));
+    snprintf(text, sizeof text, "%s[Retarget(sourceRig, targetRig, $)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "rootScale") && offers(reply, "rootOffset") && offers(reply, "headingDegrees")
+               && offers(reply, "spineDistribution") && offers(reply, "twistDistribution") && offers(reply, "sampleRate"));
+    TIDE_CHECK(has(reply, "sampleRate: ${1:60}") && !offers(reply, "sourceRig"));
+    snprintf(text, sizeof text, "%s[Retarget(sourceRig, targetRig, sampleRate: 30, $)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "rootOffset") && !offers(reply, "sampleRate"));
+    snprintf(text, sizeof text, "%sconst float3 offset = float3(0, 1, 0);\n"
+             "[Retarget(sourceRig, targetRig, rootOffset: $)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/completion");
+    TIDE_CHECK(offers(reply, "offset") && offers(reply, "float3") && !offers(reply, "sampleRate"));
+    snprintf(text, sizeof text, "%s[Reta$rget(sourceRig, targetRig)]\nasset Animation baked = clipPath;\n", profiles);
+    TIDE_CHECK(has(humanoid_asset_request(uri, text, "textDocument/hover"), "no per-frame retargeting"));
+    snprintf(text, sizeof text, "%s[Retarget(sourceRig, targetRig, sampleRate: $30)]\nasset Animation baked = clipPath;\n", profiles);
+    reply = humanoid_asset_request(uri, text, "textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "HumanoidRig sourceRig") && has(reply, "sampleRate = 60") && has(reply, "\"activeParameter\":7"));
+    TIDE_CHECK(has(humanoid_asset_request(uri, "[Retarget($\n", "textDocument/signatureHelp"), "HumanoidRig targetRig"));
+    remove_game_file("lsp_humanoid_completion/source.humanoid.json");
+    remove_game_file("lsp_humanoid_completion/target.humanoid.json");
+    remove_game_file("lsp_humanoid_completion/rig.gltf");
+    remove_game_file("lsp_humanoid_completion/clip.gltf");
+    remove_game_file("lsp_humanoid_completion/other.txt");
+    remove_game_file("lsp_humanoid_completion/main.tide");
+    remove_game_file("lsp_humanoid_completion/.tide/assets.sha256");
+    remove_game_file("lsp_humanoid_completion/.tide/.gitignore");
+    remove_folder("lsp_humanoid_completion/.tide");
+    remove_folder("lsp_humanoid_completion");
+    clear_sent();
+    lsp_free(&server);
+}
+
+TIDE_TEST(lsp_humanoid_assets_paths_and_bake_references)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_humanoid_assets");
+    make_folder("lsp_humanoid_assets/art");
+    static const char profile[] = "{\"reference\":{\"file\":\"rig.gltf\",\"pose\":\"rest\"}}";
+    static const char rig[] = "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"Hips\",\"translation\":[0,1,0]}],"
+                              "\"scenes\":[{\"nodes\":[0]}],\"scene\":0}";
+    static const char source[] = "namespace Rigs {\n"
+        "    asset HumanoidRig sourceRig = \"art/source.humanoid.json\";\n"
+        "    asset HumanoidRig targetRig = \"art/target.humanoid.json\";\n}\n"
+        "const float rate = 30;\n"
+        "[Retarget(Rigs.sourceRig, Rigs.targetRig, sampleRate: rate, rootOffset: float3(0, 0, 0))]\n"
+        "asset Animation baked = \"art/clip.gltf\";\nscene Main { }\n"
+        "asset HumanoidRig unloaded = \"art/unloaded.humanoid.json\";\n";
+    write_file("lsp_humanoid_assets/main.tide", source);
+    write_file("lsp_humanoid_assets/art/source.humanoid.json", profile);
+    write_file("lsp_humanoid_assets/art/target.humanoid.json", profile);
+    // Editor analysis resolves the profile path without importing its model.
+    // A build remains responsible for checking this unavailable reference.
+    write_file("lsp_humanoid_assets/art/unloaded.humanoid.json",
+               "{\"reference\":{\"file\":\"not-available.fbx\",\"pose\":\"rest\"}}");
+    write_file("lsp_humanoid_assets/art/unrelated.json", "{}");
+    write_file("lsp_humanoid_assets/art/rig.gltf", rig);
+    write_file("lsp_humanoid_assets/art/clip.gltf", "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Idle\"}]}");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root[700], uri[700];
+    snprintf(root, sizeof root, "file:///%s/lsp_humanoid_assets", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_humanoid_assets/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri, source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *reply = request_at(uri, "textDocument/completion", 1, (int)strlen("    asset HumanoidRig sourceRig = \"art/"), "");
+    TIDE_CHECK(offers(reply, "source.humanoid.json") && offers(reply, "target.humanoid.json")
+               && !offers(reply, "unrelated.json") && !offers(reply, "rig.gltf") && !offers(reply, "*.humanoid.json"));
+    reply = request_at(uri, "textDocument/hover", 5, (int)strlen("[Retarget(Rigs.s"), "");
+    TIDE_CHECK(has(reply, "asset HumanoidRig sourceRig") && has(reply, ".humanoid.json profile"));
+    reply = request_at(uri, "textDocument/hover", 6, (int)strlen("asset Animation b"), "");
+    TIDE_CHECK(has(reply, "no per-frame retargeting"));
+    reply = request_at(uri, "textDocument/definition", 5, (int)strlen("[Retarget(Rigs.s"), "");
+    TIDE_CHECK(has(reply, "\"line\":1"));
+    reply = request_at(uri, "textDocument/references", 1, (int)strlen("    asset HumanoidRig s"), "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(reply, "\"uri\"") == 2);
+    request_at(uri, "textDocument/rename", 5, (int)strlen("[Retarget(Rigs.s"), "\"newName\":\"calibrated\"");
+    const char *edited = apply_reply(source, uri);
+    TIDE_CHECK(has(edited, "asset HumanoidRig calibrated") && has(edited, "Retarget(Rigs.calibrated, Rigs.targetRig"));
+    request_at(uri, "textDocument/rename", 4, (int)strlen("const float r"), "\"newName\":\"frequency\"");
+    edited = apply_reply(source, uri);
+    TIDE_CHECK(has(edited, "const float frequency") && has(edited, "sampleRate: frequency"));
+    request_at(uri, "textDocument/rename", 0, (int)strlen("namespace R"), "\"newName\":\"Profiles\"");
+    edited = apply_reply(source, uri);
+    TIDE_CHECK(has(edited, "namespace Profiles") && has(edited, "Retarget(Profiles.sourceRig, Profiles.targetRig"));
+    will_rename("lsp_humanoid_assets/art/source.humanoid.json", "lsp_humanoid_assets/art/calibrated.humanoid.json");
+    TIDE_CHECK(has(apply_reply(source, uri), "art/calibrated.humanoid.json"));
+    remove_game_file("lsp_humanoid_assets/art/source.humanoid.json");
+    remove_game_file("lsp_humanoid_assets/art/target.humanoid.json");
+    remove_game_file("lsp_humanoid_assets/art/unloaded.humanoid.json");
+    remove_game_file("lsp_humanoid_assets/art/unrelated.json");
+    remove_game_file("lsp_humanoid_assets/art/rig.gltf");
+    remove_game_file("lsp_humanoid_assets/art/clip.gltf");
+    remove_game_file("lsp_humanoid_assets/main.tide");
+    remove_game_file("lsp_humanoid_assets/.tide/assets.sha256");
+    remove_game_file("lsp_humanoid_assets/.tide/.gitignore");
+    remove_folder("lsp_humanoid_assets/.tide");
+    remove_folder("lsp_humanoid_assets/art");
+    remove_folder("lsp_humanoid_assets");
+    clear_sent();
+    lsp_free(&server);
 }
 
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)

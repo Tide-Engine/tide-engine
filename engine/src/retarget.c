@@ -1,6 +1,7 @@
 #include "tide/retarget.h"
 
 #include <stdio.h>
+#include <float.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,7 +11,7 @@
 
 // Plans contain only 32-bit scalars, not C pointers or allocation handles.
 // They are copied, snapshotted and packed as ordinary immutable byte lists.
-#define RETARGET_MAGIC 0x31544752u
+#define RETARGET_MAGIC 0x33544752u
 
 enum { TRANSFER_NONE, TRANSFER_BONE, TRANSFER_SPINE, TRANSFER_TWIST };
 
@@ -25,6 +26,7 @@ typedef struct retarget_header {
 typedef struct retarget_source {
     int32_t parent;
     float scale;
+    int32_t needed;
 } retarget_source;
 
 typedef struct retarget_target {
@@ -33,11 +35,13 @@ typedef struct retarget_target {
     tide_quaternion inverse_a, inverse_b, aligned;
     tide_float3 axis;
     tide_bone_transform local;
+    int32_t local_source, needed;
+    tide_quaternion local_left, local_right;
 } retarget_target;
 
 _Static_assert(sizeof(retarget_header) == 136u, "retarget header has no padding");
-_Static_assert(sizeof(retarget_source) == 8u, "retarget source has no padding");
-_Static_assert(sizeof(retarget_target) == 120u, "retarget target has no padding");
+_Static_assert(sizeof(retarget_source) == 12u, "retarget source has no padding");
+_Static_assert(sizeof(retarget_target) == 160u, "retarget target has no padding");
 _Static_assert(TIDE_LIST_CHUNK >= TIDE_SKINNED_SHAPED_HEADER_SIZE, "identity header fits one list chunk");
 
 typedef struct rig_node {
@@ -812,7 +816,7 @@ int32_t tide_retarget_create(const tide_list source_data,
         retarget_source *sources = (retarget_source *)(bytes + sizeof *header);
         retarget_target *targets = (retarget_target *)(sources + actual.view.nodes);
         for (uint32_t i = 0; i < actual.view.nodes; i++)
-            sources[i] = (retarget_source){actual.nodes[i].info.parent, actual.nodes[i].local.scale.x};
+            sources[i] = (retarget_source){.parent = actual.nodes[i].info.parent, .scale = actual.nodes[i].local.scale.x};
         for (uint32_t i = 0; i < target.view.nodes; i++) {
             targets[i].parent = target.nodes[i].info.parent;
             targets[i].source_a = targets[i].source_b = -1;
@@ -825,6 +829,38 @@ int32_t tide_retarget_create(const tide_list source_data,
             to->aligned = normalized(tide_mul_q(align_role(&source, &target, calibration, tr, role, header->heading), target.nodes[tr[role]].rotation));
         }
         prepare_chains(&source, &target, exported, sr, tr, header->heading, targets);
+        // Freeze precisely the normalized values formerly recomputed by Apply.
+        // Do this after calibration: its arithmetic uses the original heading.
+        header->heading = normalized(header->heading);
+        for (uint32_t i = 0; i < target.view.nodes; i++) {
+            targets[i].inverse_a = normalized(targets[i].inverse_a);
+            targets[i].inverse_b = normalized(targets[i].inverse_b);
+            targets[i].aligned = normalized(targets[i].aligned);
+            targets[i].axis = tide_fromto_unit_f3(targets[i].axis);
+        }
+        for (uint32_t i = 0; i < target.view.nodes; i++) {
+            retarget_target *to = &targets[i];
+            to->local_source = -1;
+            if (to->mode != TRANSFER_BONE || to->parent < 0) continue;
+            const retarget_target *parent = &targets[to->parent];
+            if (parent->mode != TRANSFER_BONE || sources[to->source_a].parent != parent->source_a) continue;
+            to->local_source = to->source_a;
+            to->local_left = normalized(tide_mul_q(tide_mul_q(tide_conjugate_q(parent->aligned), header->heading),
+                tide_conjugate_q(parent->inverse_a)));
+            to->local_right = normalized(tide_mul_q(tide_mul_q(to->inverse_a, tide_conjugate_q(header->heading)), to->aligned));
+        }
+        sources[header->source_hips].needed = 1;
+        for (uint32_t i = 0; i < target.view.nodes; i++) if (targets[i].mode && targets[i].local_source < 0) {
+            sources[targets[i].source_a].needed = 1;
+            sources[targets[i].source_b].needed = 1;
+        }
+        for (uint32_t i = actual.view.nodes; i-- > 0;) if (sources[i].needed && sources[i].parent >= 0)
+            sources[sources[i].parent].needed = 1;
+        for (uint32_t i = 0; i < target.view.nodes; i++) if (targets[i].parent >= 0
+            && ((targets[i].mode && targets[i].local_source < 0) || (int32_t)i == header->target_hips))
+            targets[targets[i].parent].needed = 1;
+        for (uint32_t i = target.view.nodes; i-- > 0;) if (targets[i].needed && targets[i].parent >= 0)
+            targets[targets[i].parent].needed = 1;
         tide_list_set(plan, tide_list_from(bytes, (int32_t)size, 1u), 1u, where);
         *root_scale = ratio;
         free(bytes);
@@ -864,7 +900,9 @@ typedef struct global_transform { tide_float3 position; tide_quaternion rotation
 static bool compose_global(const tide_bone_transform local, const int32_t parent,
                             const global_transform *globals, global_transform *out)
 {
-    if (!valid_local(local)) return false;
+    // Callers validate local data before transfer. A normalized finite local
+    // rotation and normalized parent produce a finite unit rotation here;
+    // only positions and accumulated scale can overflow during composition.
     out->position = local.position;
     out->rotation = normalized(local.rotation);
     out->scale = local.scale.x;
@@ -874,7 +912,7 @@ static bool compose_global(const tide_bone_transform local, const int32_t parent
         out->rotation = normalized(tide_mul_q(p.rotation, out->rotation));
         out->scale *= p.scale;
     }
-    return finite3(out->position) && finiteq(out->rotation) && tide_is_finite_f(out->scale) && out->scale > 0.0f;
+    return finite3(out->position) && tide_is_finite_f(out->scale) && out->scale > 0.0f;
 }
 
 static tide_quaternion twist_of(const tide_quaternion rotation, const tide_float3 axis)
@@ -885,19 +923,34 @@ static tide_quaternion twist_of(const tide_quaternion rotation, const tide_float
     return tide_dot_q(twist, twist) > 1e-12f ? normalized(twist) : tide_identity_q();
 }
 
+// Keep the small value-returning math helpers in this hot loop: out-of-line
+// aggregate arguments/returns otherwise repeatedly spill on the desktop ABI.
+__attribute__((flatten))
 bool tide_retarget_apply(const tide_list plan, const tide_list source_data, const tide_list source_transforms,
                          const tide_list target_data, const float root_scale, const tide_float3 root_offset,
                          const float heading_degrees, const float spine_distribution, const float twist_distribution,
                          tide_list *out, const uint32_t where)
 {
-    const int32_t bytes = tide_list_count(plan);
+    int32_t bytes;
+    const uint8_t *packed = NULL;
+    if (tide_pack_holds(plan.at)) {
+        const uint32_t at = plan.at & 0x3fffffffu;
+        tide_block block;
+        const void *span = tide_pack_span(at, sizeof block);
+        if (!span || at % _Alignof(retarget_header)) return false;
+        memcpy(&block, span, sizeof block);
+        if (block.a != block.b || block.a > INT32_MAX) return false;
+        bytes = (int32_t)block.a;
+        packed = tide_pack_span(at + (uint32_t)sizeof block, block.a);
+        if (!packed) return false;
+    } else bytes = tide_list_count(plan);
     const size_t maximum = sizeof(retarget_header) + (size_t)(TIDE_SKINNED_MAX_NODES + 1u) * (sizeof(retarget_source) + sizeof(retarget_target));
     if (!out || (out->at && (out->at == plan.at || out->at == source_data.at || out->at == target_data.at))
         || bytes < (int32_t)sizeof(retarget_header) || (size_t)bytes > maximum
         || !tide_is_finite_f(root_scale) || root_scale < 0.0f || !finite3(root_offset)
         || !tide_is_finite_f(heading_degrees) || !tide_is_finite_f(spine_distribution) || !tide_is_finite_f(twist_distribution)) return false;
     bool copied = false;
-    const uint8_t *flat = tide_list_flatten(plan, 1u, false, &copied);
+    const uint8_t *flat = packed ? packed : tide_list_flatten(plan, 1u, false, &copied);
     if (!flat) return false;
     retarget_header header;
     memcpy(&header, flat, sizeof header);
@@ -917,18 +970,47 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
     global_transform *sg = tide_scratch_memory((size_t)header.source_count * sizeof *sg);
     global_transform *tg = tide_scratch_memory((size_t)header.target_count * sizeof *tg);
     tide_bone_transform *locals = tide_scratch_memory((size_t)header.target_count * sizeof *locals);
-    tide_list_cache reads = {0};
+    tide_list_view reads = {0};
+    tide_list_view_find(&reads, source_transforms, sizeof(tide_bone_transform));
+    float *bounds = tide_scratch_memory((size_t)header.source_count * sizeof *bounds);
+    float *target_bounds = tide_scratch_memory((size_t)header.target_count * sizeof *target_bounds);
+    bool full_source = false, full_target = false;
     for (uint32_t i = 0; valid && i < header.source_count; i++) {
         const retarget_source record = sources[i];
-        const tide_bone_transform *local = tide_list_cached_at(&reads, source_transforms, (int32_t)i, sizeof *local);
+        const tide_bone_transform *local = tide_list_view_at(&reads, i, sizeof *local);
         valid = (i ? record.parent >= 0 && (uint32_t)record.parent < i : record.parent == -1)
             && local && tide_is_finite_f(record.scale) && record.scale > 0.0f
             && tide_abs_f(local->scale.x - record.scale) <= record.scale * 0.00001f
-            && compose_global(*local, record.parent, sg, &sg[i]);
+            && valid_local(*local);
+        if (!valid) break;
+        {
+            if (record.needed < 0 || record.needed > 1
+                || (record.needed && record.parent >= 0 && !sources[record.parent].needed)
+                || ((int32_t)i == header.source_hips && !record.needed)) { valid = false; break; }
+            if (!record.needed) {
+                const float parent_scale = record.parent < 0 ? 1.0f : sg[record.parent].scale;
+                sg[i].scale = parent_scale * local->scale.x;
+                valid = tide_is_finite_f(sg[i].scale) && sg[i].scale > 0.0f;
+                const float translation = tide_cmax_f3(tide_abs_f3(tide_mul_f3(tide_f3_splat(parent_scale), local->position)));
+                bounds[i] = (record.parent < 0 ? 0.0f : bounds[record.parent]) + 16.0f * translation;
+                // The original unit-quaternion rotation has intermediate
+                // magnitude <=13 times the translated component maximum.
+                // Leave generous headroom for all rounding and parent adds.
+                // An inconclusive bound falls back to the complete old FK.
+                if (!(bounds[i] <= FLT_MAX * 0.25f)) full_source = true;
+                continue;
+            }
+        }
+        valid = compose_global(*local, record.parent, sg, &sg[i]);
+        bounds[i] = tide_cmax_f3(tide_abs_f3(sg[i].position));
+    }
+    if (valid && full_source) for (uint32_t i = 0; valid && i < header.source_count; i++) {
+        const tide_bone_transform *local = tide_list_view_at(&reads, i, sizeof *local);
+        valid = compose_global(*local, sources[i].parent, sg, &sg[i]);
     }
     const float radians = tide_radians_f(heading_degrees);
     const tide_quaternion extra = tide_axisangle_q(header.up, radians);
-    const tide_quaternion heading = normalized(header.heading), inverse = tide_conjugate_q(heading);
+    const tide_quaternion heading = header.heading, inverse = tide_conjugate_q(heading);
     const float spine = tide_saturate_f(spine_distribution), twist = tide_saturate_f(twist_distribution);
     for (uint32_t i = 0; valid && i < header.target_count; i++) {
         const retarget_target record = targets[i];
@@ -937,21 +1019,41 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
             && tide_is_finite_f(record.fraction) && record.fraction >= 0.0f && record.fraction <= 1.0f
             && finiteq(record.inverse_a) && finiteq(record.inverse_b) && finiteq(record.aligned) && finite3(record.axis);
         if (!valid) break;
+        if (record.mode && (record.source_a < 0 || (uint32_t)record.source_a >= header.source_count
+            || record.source_b < 0 || (uint32_t)record.source_b >= header.source_count)) { valid = false; break; }
+        if (record.local_source < -1 || (record.local_source >= 0
+            && (record.mode != TRANSFER_BONE || record.local_source != record.source_a || record.parent < 0
+                || targets[record.parent].mode != TRANSFER_BONE
+                || sources[record.source_a].parent != targets[record.parent].source_a))) { valid = false; break; }
+        if (record.needed < 0 || record.needed > 1
+            || (record.parent >= 0 && !targets[record.parent].needed
+                && (record.needed || (record.mode && record.local_source < 0) || (int32_t)i == header.target_hips))) {
+            valid = false;
+            break;
+        }
         locals[i] = record.local;
+        if (record.local_source >= 0) {
+            if (record.mode != TRANSFER_BONE || (uint32_t)record.local_source >= header.source_count
+                || !finiteq(record.local_left) || !finiteq(record.local_right)) { valid = false; break; }
+            const tide_bone_transform *sample = tide_list_view_at(&reads, (uint32_t)record.local_source, sizeof *sample);
+            if (!sample) { valid = false; break; }
+            locals[i].rotation = normalized(tide_mul_q(tide_mul_q(record.local_left, normalized(sample->rotation)), record.local_right));
+        } else
         if (record.mode) {
-            if (record.source_a < 0 || (uint32_t)record.source_a >= header.source_count
-                || record.source_b < 0 || (uint32_t)record.source_b >= header.source_count) { valid = false; break; }
-            const tide_quaternion a = normalized(tide_mul_q(sg[record.source_a].rotation, normalized(record.inverse_a)));
-            const tide_quaternion b = normalized(tide_mul_q(sg[record.source_b].rotation, normalized(record.inverse_b)));
+            if (!sources[record.source_a].needed || !sources[record.source_b].needed) { valid = false; break; }
+            const tide_quaternion a = normalized(tide_mul_q(sg[record.source_a].rotation, record.inverse_a));
             tide_quaternion delta = a;
-            if (record.mode == TRANSFER_SPINE) delta = normalized(tide_slerp_q(a, b, record.fraction * spine));
-            else if (record.mode == TRANSFER_TWIST) {
-                const tide_quaternion relative = normalized(tide_mul_q(tide_conjugate_q(a), b));
-                const tide_quaternion axial = twist_of(relative, tide_fromto_unit_f3(record.axis));
-                delta = normalized(tide_mul_q(a, tide_slerp_q(tide_identity_q(), axial, record.fraction * twist)));
+            if (record.mode == TRANSFER_SPINE || record.mode == TRANSFER_TWIST) {
+                const tide_quaternion b = normalized(tide_mul_q(sg[record.source_b].rotation, record.inverse_b));
+                if (record.mode == TRANSFER_SPINE) delta = normalized(tide_slerp_q(a, b, record.fraction * spine));
+                else {
+                    const tide_quaternion relative = normalized(tide_mul_q(tide_conjugate_q(a), b));
+                    const tide_quaternion axial = twist_of(relative, record.axis);
+                    delta = normalized(tide_mul_q(a, tide_slerp_q(tide_identity_q(), axial, record.fraction * twist)));
+                }
             }
             tide_quaternion desired = tide_mul_q(tide_mul_q(heading, delta), inverse);
-            desired = normalized(tide_mul_q(extra, tide_mul_q(desired, normalized(record.aligned))));
+            desired = normalized(tide_mul_q(extra, tide_mul_q(desired, record.aligned)));
             locals[i].rotation = record.parent >= 0 ? normalized(tide_mul_q(tide_conjugate_q(tg[record.parent].rotation), desired)) : desired;
         }
         if ((int32_t)i == header.target_hips) {
@@ -963,18 +1065,37 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
                 locals[i].position = tide_div_f3(tide_rotate_q(tide_conjugate_q(p.rotation), tide_sub_f3(desired, p.position)), tide_f3_splat(p.scale));
             } else locals[i].position = desired;
         }
-        valid = compose_global(locals[i], record.parent, tg, &tg[i]);
+        if (!record.needed) {
+            const float parent_scale = record.parent < 0 ? 1.0f : tg[record.parent].scale;
+            tg[i].scale = parent_scale * locals[i].scale.x;
+            valid = tide_is_finite_f(tg[i].scale) && tg[i].scale > 0.0f;
+            const float translation = tide_cmax_f3(tide_abs_f3(tide_mul_f3(tide_f3_splat(parent_scale), locals[i].position)));
+            target_bounds[i] = (record.parent < 0 ? 0.0f : target_bounds[record.parent]) + 16.0f * translation;
+            if (!finite3(locals[i].position) || !(target_bounds[i] <= FLT_MAX * 0.25f)) full_target = true;
+        } else {
+            valid = compose_global(locals[i], record.parent, tg, &tg[i]);
+            target_bounds[i] = tide_cmax_f3(tide_abs_f3(tg[i].position));
+        }
     }
+    if (valid && full_target) for (uint32_t i = 0; valid && i < header.target_count; i++)
+        valid = compose_global(locals[i], targets[i].parent, tg, &tg[i]);
     if (valid) {
         tide_list_prepare(out, sizeof *locals, where);
         tide_list_resize(out, (int32_t)header.target_count, sizeof *locals, where);
         tide_list_cache writes = {0};
-        for (uint32_t i = 0; i < header.target_count; i++) {
-            tide_bone_transform *to = tide_list_cached_at_mut(&writes, *out, (int32_t)i, sizeof *to);
-            if (to) *to = locals[i];
+        for (uint32_t i = 0; i < header.target_count;) {
+            tide_bone_transform *to = tide_list_cache_fill_mut(&writes, *out, (int32_t)i, sizeof *to);
+            uint32_t count = header.target_count - i;
+            if (writes.at && count > writes.count) count = writes.count;
+            if (to) memcpy(to, locals + i, (size_t)count * sizeof *to);
+            i += count;
         }
     }
-    if (!valid || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
+    // Only a newly allocated scratch output can outlive this staging mark.
+    // Reusing a destination retains no workspace, even inside a long handler.
+    const bool retained = valid && out->at >> 30 == TIDE_IN_SCRATCH
+        && (out->at & 0x3fffffffu) >= mark;
+    if (!retained) tide_scratch_reset(mark);
     tide_list_unflatten(plan, (void *)flat, 1u, false, copied);
     return valid;
 }

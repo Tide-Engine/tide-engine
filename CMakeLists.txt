@@ -105,6 +105,9 @@ else()
 endif()
 
 if(TIDE_TOOLS_ONLY)
+    # Asset baking uses the same CPU pose implementation as a running game.
+    # The engine library has no platform/window dependency.
+    add_subdirectory(engine)
     add_subdirectory(compiler)
     return()
 endif()

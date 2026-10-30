@@ -1920,6 +1920,7 @@ Agreed 2026-10-08 and implemented the same day. Static `Mesh<V>` retains its fla
 - **A skinned model is a `SkinnedMesh<V>`.** It provides geometry over the game's vertex struct, its skeleton and its animations. A mesh is shared independently of playback: several characters can use the same model with different poses.
 - **A pose is separate from the mesh.** Animation produces a pose; game code can read and edit its bones, and drawing uses it to deform the mesh. Both match systems and views can sample and use poses, including for sockets, hitboxes and root motion. Sampling and blending are deterministic CPU operations using Tide's math. GPU deformation is for drawing and never supplies match results.
 - **Humanoid retargeting belongs to the runtime Pose API** (agreed 2026-10-30). Tide works independently of tide-motion. Automatic role discovery supplies a useful initial mapping, with explicit typed-bone overrides, reusable editable reference poses, inspectable assignment status and configurable root/chain controls. `HumanoidRig.Auto(referencePose)`, `rig[HumanoidBone.LeftHand] = bone`, `RetargetMap.Create(actualSourceSkeleton, sourceRig, targetRig)` and mutable `pose.Retarget(sourcePose, mapping)` separate preparation from repeated transfer. The actual animation export's skeleton is distinct from its calibration reference; an export's first-frame defaults need not be its anatomical reference pose. Existing same-rig sampling/binding remains unchanged. Detailed preparation, error and settings rules are provisional below.
+- **Imported humanoid motion can be retargeted at build time** (agreed 2026-10-30). `asset HumanoidRig sourceRig = "source.humanoid.json";` imports a reusable automatic/manual calibration profile. `[Retarget(sourceRig, targetRig)]` on an `Animation` or `AnimationCatalog` asset bakes ordinary target-skeleton clips using the same algorithm as runtime retargeting. Playback does no retarget work. Runtime preparation and pose transfer remain available for dynamically loaded assets.
 - **Drawing has its own call, `Draw.SkinnedMesh`.** Its pose is optional: omission uses the model's authored rest transforms. `model.defaultPose` returns those transforms as an editable Pose, including for a model with no animation clips (agreed 2026-10-10). The implemented argument list and pose operations are below.
 - **Animation catalogs can be separate assets.** `asset AnimationCatalog movement = "art/movement.glb";` exposes the file's clips directly, such as `movement.run`. The editor offers checked names from a known file. Clips from separate exports of the same rig can be sampled into a character's pose or drawn with its model (agreed 2026-10-10); binding details are below.
 - **Blend shapes are imported and baked on the CPU** (decided by the owner, 2026-10-27: "Import + bake: Skinned imports (FBX and glTF) keep morph targets; a CPU call returns the model with chosen shape weights applied, e.g. part.Shaped(weights). Draws unchanged. Body shape is set per character, as Synty's own tool bakes it. No GPU/shader changes."). GPU per-draw shape weights and shape-weight animation were not chosen and remain outside. The implemented API is under Provisional.
@@ -2106,6 +2107,46 @@ and poses use ordinary owned-value, match snapshot and serialization rules.
 catalogs retain their checked members and can pass to a plain `Skeleton` parameter.
 No per-frame name resolution, IK/contact correction, foot planting or automatic
 entity movement is added.
+
+#### Imported humanoid profiles and baked clips
+
+Implemented schema and bake controls are provisional details of the approved
+profile/attribute design. A `HumanoidRig` asset names one JSON document. Its
+`reference` object requires `file` plus either `pose: "rest"` or an exact unique
+`clip` name and finite `seconds` within the clip duration. Files resolve relative
+to the profile through ordinary glTF/FBX import, including external buffers.
+The referenced model's original skeleton identity is retained even when a
+sampled clip or edits supply different reference transforms.
+
+Optional `bones` maps `HumanoidBone` names to unique exact reference bone names
+or `null` to unmap them. Optional `referenceEdits` maps exact bone names to local
+`positionOffset` (three metres), `rotationOffsetDegrees` (X/Y/Z degrees, applied
+Z then X then Y as quaternion.Euler, postmultiplied) and positive uniform
+`scaleMultiplier`. Calibration edits precede
+automatic discovery; explicit mappings follow it and have `Manual` status.
+Unknown keys, duplicates, invalid values and missing/ambiguous explicit bones
+are errors. Partial discovered profiles are valid values; preparing a bake still
+requires a valid complete mapping for every required role.
+
+`[Retarget(sourceRig, targetRig)]` takes two profile asset names, followed by
+optional named numeric constants `rootScale`, `headingDegrees`,
+`spineDistribution`, `twistDistribution`, `sampleRate`, and a constant
+`float3(...)` `rootOffset`. Settings use the runtime map's validation/defaults;
+omitted root scale is automatic and the default sample rate is 60 Hz. A selected
+`Animation` bakes its selected clip; catalogs bake every clip and retain names,
+source order and inferred members. Target clips preserve the original target
+skeleton names/order/rest/hash and source duration. Sampling includes regular
+grid samples, authored keys, endpoints and adjacent float times around STEP
+changes; ordinary interpolation between samples approximates the live transfer.
+Geometry and unrelated animations are excluded from profile/bake payloads.
+
+Profiles, reference files and their side buffers are transitive build/watch
+dependencies. Derived clip caches are keyed by canonical source bytes, both
+calibrated profiles, options and baker version; raw imports are never mutated.
+Profile assets can be read/copied/edited with the runtime API and use ordinary
+owned-list snapshots and serialization. Whole compiled profile payloads are
+authenticated before replacing a loaded pack. Profiles used only during baking
+can be omitted from a stripped runtime pack.
 
 ### Open
 

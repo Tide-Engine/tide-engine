@@ -29,6 +29,7 @@ typedef enum asset_kind {
     ASSET_SKINNED,
     ASSET_ANIMATIONS, // AnimationCatalog: glTF skeleton/clip data, without typed render geometry
     ASSET_ANIMATION, // Animation: one selected clip from an animation source.
+    ASSET_HUMANOID, // HumanoidRig: a checked calibration profile, packed as immutable typed blocks.
 } asset_kind;
 
 typedef struct asset_match {
@@ -41,6 +42,7 @@ typedef struct asset_match {
     mesh_file mesh;       // ASSET_MESH: its vertices and triangles, which stay until the file changes, as its bytes do
     const uint8_t *skinned;
     uint32_t skinned_size;
+    struct humanoid_asset *humanoid;
     const char **sides;   // ...and the files beside a .gltf that it was read with, its buffers': absolute paths
     int side_count;
 } asset_match;
