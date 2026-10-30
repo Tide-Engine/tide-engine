@@ -485,30 +485,114 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
 }
 
 // A level only pays by the triangles it takes off, so none is made with
-// fewer than a source says: the chain stops above it, and a mesh of under
-// twice as many has no levels at all.
+// fewer than a source says: the chain stops above it. And a mesh of fewer
+// triangles than a source says has no levels at all.
 TIDE_TEST(mesh_lod_makes_no_level_under_the_fewest_triangles)
 {
     shape s = ball(32, 64); // 3,968 triangles
     mesh_lod_source source = source_of(&s);
     mesh_lod all, some, none;
     mesh_lod_make(&source, &all);
-    source.triangles_least = MESH_LOD_TRIANGLES_LEAST;
+    source.triangles_least = 500;
     mesh_lod_make(&source, &some);
     // 1,984 and 992, and not the 496 after them
     TIDE_REQUIRE(all.levels > 2u && some.levels == 2u);
     TIDE_CHECK(some.count[0] == all.count[0] && some.count[1] == all.count[1] && some.error[1] == all.error[1]);
-    TIDE_CHECK(some.count[1] >= MESH_LOD_TRIANGLES_LEAST * 3u && all.count[2] < MESH_LOD_TRIANGLES_LEAST * 3u);
+    TIDE_CHECK(some.count[1] >= 500u * 3u && all.count[2] < 500u * 3u);
+    TIDE_CHECK(memcmp(some.index, all.index, some.indices * sizeof(uint32_t)) == 0);
+    mesh_lod_free(&some);
+    // A game's: on to levels of a few dozen triangles, none under the floor
+    source.mesh_least = MESH_LOD_MESH_LEAST;
+    source.triangles_least = MESH_LOD_TRIANGLES_LEAST;
+    mesh_lod_make(&source, &some);
+    TIDE_REQUIRE(some.levels > 3u);
+    TIDE_CHECK(some.count[some.levels - 1u] >= MESH_LOD_TRIANGLES_LEAST * 3u && some.count[some.levels - 1u] < 500u * 3u);
     TIDE_CHECK(memcmp(some.index, all.index, some.indices * sizeof(uint32_t)) == 0);
     shape light = ball(16, 32); // 960
     mesh_lod_source other = source_of(&light);
+    other.mesh_least = MESH_LOD_MESH_LEAST;
     other.triangles_least = MESH_LOD_TRIANGLES_LEAST;
     mesh_lod_make(&other, &none);
     TIDE_CHECK(none.levels == 0 && none.index == NULL && none.radius > 0.99f);
-    other.triangles_least = 480; // Just enough for one
+    other.mesh_least = 960; // Just enough
     mesh_lod_make(&other, &none);
-    TIDE_CHECK(none.levels == 1 && none.count[0] <= 480u * 3u);
+    TIDE_CHECK(none.levels > 0);
     mesh_lod_free(&all), mesh_lod_free(&some), mesh_lod_free(&none);
     shape_free(&light);
+    shape_free(&s);
+}
+
+// What's on a surface is off by as much as it shows, which is by the size
+// of the patch it's on: a few corners whose normals turn hard (a bevel, a
+// buckle) make no level off by the whole mesh's size, so the chain goes on
+// and is picked as near as its surface allows. A normal off over all of the
+// surface still counts for all of it.
+TIDE_TEST(mesh_lod_weighs_what_a_surface_shows_by_the_patch_it_is_on)
+{
+    const uint32_t side = 32;
+    shape s = grid(side);
+    // Around the middle, a patch two cells across whose normals lean 37 degrees
+    const float patch = 2.0f / (float)side;
+    for (uint32_t z = side / 2u - 1u; z <= side / 2u + 1u; z++) {
+        for (uint32_t x = side / 2u - 1u; x <= side / 2u + 1u; x++) {
+            float *n = &s.normal[(z * (side + 1u) + x) * 3u];
+            n[0] = 0.6f, n[1] = 0.8f, n[2] = 0.0f;
+        }
+    }
+    const mesh_lod_source source = source_of(&s);
+    mesh_lod lod;
+    mesh_lod_make(&source, &lod);
+    TIDE_REQUIRE(lod.levels >= 4u);
+    TIDE_CHECK(levels_hold(&s, &lod));
+    TIDE_CHECK(lod.count[lod.levels - 1u] <= s.indices / 16u);
+    TIDE_CHECK(lod.error[0] < 1e-5f); // The rest of the square is as flat as it was
+    // Taking the patch away is off by about the patch's size, not the square's
+    for (uint32_t level = 0; level < lod.levels; level++) TIDE_CHECK(lod.error[level] < 2.0f * patch);
+    mesh_lod_free(&lod);
+    // Leaning one way and the other from each corner to the next, all over: a level that smooths it is off by
+    // about the lean over the whole square
+    for (uint32_t v = 0; v < s.vertices; v++) {
+        const uint32_t x = v % (side + 1u), z = v / (side + 1u);
+        float *n = &s.normal[v * 3u];
+        n[0] = x % 2u ? 0.42f : -0.42f, n[1] = 0.8f, n[2] = z % 2u ? 0.42f : -0.42f;
+    }
+    mesh_lod_make(&source, &lod);
+    TIDE_REQUIRE(lod.levels > 0u);
+    TIDE_CHECK(levels_hold(&s, &lod));
+    TIDE_CHECK(lod.error[lod.levels - 1u] > 2.0f * patch);
+    mesh_lod_free(&lod);
+    shape_free(&s);
+}
+
+// How many vertices a GPU's cache of the last 16 transformed ones would transform again, for each triangle.
+static double cache_misses(const uint32_t *index, const uint32_t count)
+{
+    uint32_t cache[16], cached = 0, misses = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        bool there = false;
+        for (uint32_t j = 0; j < cached && !there; j++) there = cache[j] == index[i];
+        if (there) continue;
+        misses++;
+        if (cached == 16u) memmove(cache, cache + 1, 15u * sizeof(uint32_t)), cached--;
+        cache[cached++] = index[i];
+    }
+    return (double)misses / (double)(count / 3u);
+}
+
+// A level's triangles are in an order a GPU's vertex cache reuses: about two vertices transformed for each three
+// triangles of a smooth mesh, which has a vertex for each two.
+TIDE_TEST(mesh_lod_orders_levels_for_the_vertex_cache)
+{
+    shape s = ball(32, 64);
+    const mesh_lod_source source = source_of(&s);
+    mesh_lod lod;
+    mesh_lod_make(&source, &lod);
+    TIDE_REQUIRE(lod.levels >= 4u);
+    for (uint32_t level = 0; level < lod.levels; level++) {
+        const double misses = cache_misses(&lod.index[lod.first[level]], lod.count[level]);
+        // Unordered, as the collapses left them, the bigger ones were 1.0 to 1.5
+        if (lod.count[level] >= 100u * 3u) TIDE_CHECK(misses < 0.75);
+    }
+    mesh_lod_free(&lod);
     shape_free(&s);
 }

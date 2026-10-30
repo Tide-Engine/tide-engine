@@ -1,5 +1,168 @@
 # Netcode: sessions, prediction, commands
 
+## A match played alone ticks once (2026-10-30)
+
+A session that hosts its own match runs a server and this machine's client in one process, and each ran every tick: the client its prediction, the server the same tick with the same input. A game played alone paid for its simulation twice (a battle of 20000 fighters in the Bannerlord duel's tools/army: 11.9 ms a tick, 23.8 ms a frame at 60 ticks a second). Now, while `tide_session_update` updates its server, the server knows this machine's client (`tide_server.twin`), and a tick the client has run already as the server would is taken from it (`twin_ran`, a copy of its world) rather than run again: 11.4 ms a frame. Only when that's certain to be the same world: no recipient projections (`client_state`), no other player connected, the client predicting with nothing to catch up, repair or get again, its verified tick the one the server is about to run (so the world it ran from is the server's, checked by hash) and the frame as it predicted it (`as_predicted`: its own input and nothing else, no joins, leaves, commands or shard messages). Anything else, the server ticks as before. The client goes on hashing and confirming as it did.
+
+Tests: `net_a_session_played_alone_ticks_once` (each tick run once over 240 frames of changing input, the worlds alike every frame); `net_a_session_takes_a_new_build_of_its_game` counts a new build's ticks once, not twice.
+
+## Protocol 20: rows entities left are holes (2026-10-29)
+
+`PROTOCOL` is 20 (`engine/src/session.c`, and the tests that write it by hand:
+`tests/test_commands.c`, `test_session_packets.c`, `test_session_view_time.c`,
+`packages/voice/test/voice_test.c`). Builds before and after place rows
+differently once entities leave (notes/ecs.md, Holes), so the same game would
+agree on its first ticks and then disagree.
+
+## Projected repair delivery on unordered traffic (2026-10-26)
+
+The follow-up to the view-time fix below measures and fixes actual repair lag,
+without changing maxRewind, timestamps, visibility policy, hashes or the wire.
+The unchanged BREACH repro's first 480 ticks at 20 ms one-way latency, 5 ms
+jitter and 3% loss had 101 repair adoptions: compressed size median 711 bytes,
+maximum 98,249; transfer time median 133 ms, maximum 283 ms; adoption age median
+150 ms, maximum 417 ms. Eleven requests already named endpoints over 100 ms
+old when packed. Across all 1,800 ticks, 350 of 407 repairs were under 1 KB,
+yet 192 of those small transfers took over 100 ms. A 64-chunk update budget
+was not the bottleneck, nor was the confirmed presentation clock.
+
+WELCOME and its chunks travel unordered. Jitter regularly delivered chunks
+before WELCOME, and the client discarded them until timeout retransmission
+(1.5 answer round trips, about 100 ms here). Projected clients now retain one
+upcoming transfer's authenticated chunks, capped at one 64-chunk send burst
+(64,512 bytes of lazy retained storage). Matching, accepted WELCOME metadata
+feeds them through the ordinary exact-size/index/duplicate chunk validator.
+Queued bytes are not acknowledged before that metadata validates their chunks;
+world publication and verification still require the complete baseline,
+canonical hash and repair checks. Overflow falls back to retransmission. Old transfers are ignored; pending
+bytes clear on disconnect, reload or authoritative replacement and are freed
+at client destruction. Address/cookie/attempt checks still precede buffering.
+
+For projected transfers, an acknowledgement of later chunks permits one early
+retry of each missing chunk; ordinary timeout retransmission remains available.
+The existing 64-chunk update budget is unchanged. A byte per sent chunk bounds
+the extra retry; packet reordering can cause at most one such extra copy per
+chunk. Equal-prefix acknowledgement masks accumulate instead of forgetting
+already received bits. Non-projected world transfers keep their original
+early-chunk/timeout behavior.
+
+Valid stream requests also refresh the recent-repair time. Periodic prediction
+probes still run, but a failed probe resumes fresh coalesced repair immediately
+instead of restarting with old exact endpoints. Accepted repair work is packed
+after the update's authoritative ticks and all incoming acknowledgements:
+stream requests choose the actual latest endpoint; exact requests preserve
+their requested tick. Existing in-flight bytes/baselines remain stable, and
+permitted lifecycle journals retain their original ordering and validation.
+Pending work clears on reconnect and build migration. No verified clock moves
+past an actual decoded endpoint; all admission/future/fraction/age guards stay.
+
+A scratch 480-tick real-game trace of the bounded delivery/probe changes
+retained 315 early chunks, adopted 179 repairs, and measured median 33 ms
+transfer / 50 ms adoption age. Only the two initial catch-up repairs started
+over 100 ms old; sampled receive-to-presentation lag was zero. The final
+end-of-update scheduling additionally removes one tick of stream endpoint age.
+Scratch instrumentation remains only under ignored build/debug; it is not
+production telemetry or a changed game harness.
+
+The CPU regression in `tests/test_session_view_time.c` now includes about 70 KB
+of random public history rotating through 17 frames, changing every tick from
+hidden authoritative consequences. Its transport holds WELCOME across an
+update while chunks pass, over the same 20 ms/5 ms/3% profile. Every observed
+confirmed world is checked against its authoritative canonical hash. Final
+native/WASI agree: 128 confirmations, 292/320 supplied stamps inside the
+unchanged bound, maximum confirmation lag 18 ticks, zero resyncs/lost actual
+stamps. Linking the same fixture against e16a820 fails: 90 confirmations,
+3/320 bounded stamps and a 46-tick worst lag. The existing render-pause case
+still checks every rejected/accepted stamp; its expired-count floor now
+measures the deliberate pause rather than relying on the removed network lag.
+
+Final native/WASI validation passes the 15 session cases, seven existing
+visibility cases (the visibility filter also selects the consecutive-repair
+regression), generated `view_time`, and both complete Box2D/Box3D actual-frame
+rewind-network fixtures. The unchanged 1,800-tick real BREACH repro passes on
+both platforms with identical results: 378/386 canonical confirmed worlds,
+177/194 hidden updates, 167/187 hidden movement updates, 52/57 availability
+transitions and zero resyncs. All 3,503 supplied valid claims have zero
+rejections at ages <=250 ms; only 117 older claims expire, versus 1,966 before
+this follow-up. This is not a guarantee for arbitrary loss or a wider rewind
+window: expired claims still fail, and each correction still advances only
+when its actual permitted state arrives. No prototype source/assertion changed.
+All commands retain TIDE_HIDDEN; no GPU, native window, browser or CI run.
+Independent read-only review approved both the bounded transfer changes and
+the final post-tick scheduling/reconnect/migration diff without blockers.
+
+## Presented view times survive visibility repair (2026-10-26)
+
+BREACH's real lossy culling test exposed two session bugs. Each new repair
+moved `snapshot_tick`, which the server also used as its view-time floor;
+legitimate frames already displayed or in flight then became pre-snapshot
+claims. Coalesced repair adoption also cleared the client's `presented_view`
+before the same update sampled input, although no replacement frame had drawn.
+
+The connection now has a private `view_start`: the authoritative tick when
+its first fully decoded, cookie/attempt-authenticated CLIENT is accepted while
+`welcoming`. This is the admission floor for that connection attempt, including
+tick zero. A cookie reconnect starts a new attempt and resets it at that
+attempt's first authenticated CLIENT. Repairs, replacement transfers and repair
+fallbacks leave this floor unchanged; `snapshot_tick` remains transfer state.
+The last scalar tick/fraction actually marked presented survives a coalesced
+repair until another frame is marked. Missing intermediate snapshots still
+reset the confirmed interpolation endpoints. Initial/full-world adoption,
+reload and authoritative timeline replacement retain their presentation reset.
+
+For a supplied stamp, `at = tick - 1 + alpha` must still have a nonnegative
+tick and a finite fraction in [0,1], be at least `view_start`, at most the
+connection's server-advertised `view_limit` and execution tick, and have an
+execution age no greater than the unchanged game's positive `maxRewind`.
+Only server WELCOME/SERVER sending advances `view_limit`; a client claim or
+acknowledgement cannot raise it. Authentication proves the connection, not what
+a modified client displayed or whether every advertised datagram arrived.
+Rejected stamps become invalid zero without losing ordinary input. Missing
+inputs can still repeat a held stamp, so Physics.Rewind retains its independent
+age/history checks. No API, generated-C contract or wire format changes.
+
+`tests/test_session_view_time.c` exercises consecutive visibility repairs over
+20 ms one-way latency, 5 ms jitter and 3% loss, with 120 Hz updates, 20 Hz
+presentation and a two-thirds-second render pause. It checks each newly
+received input against the actual preceding frame, correction adoption before
+redraw, reveal/conceal, expired frames and continued prediction. Native/WASI
+agree: 74 projections, 69 skipped transfer intervals, 374 accepted timestamps
+(241 during continuous repairs), 91 expired stamps, zero lost actual stamps
+and zero resyncs. Separately linking the original `866f7be77` session against
+this regression fails (147 lost stamps and valid bounded claims rejected).
+The raw-peer case covers tick-zero/nonzero admission, live-cookie reconnect,
+pre-admission, future, negative, malformed/nonfinite fractions, expired claims
+and an unadvertised stamp before its execution tick; ordinary input survives
+every rejected timestamp.
+
+Validation: warnings-as-errors native/WASI builds; both pass the session group
+(14 cases), existing visibility group (seven cases), generated `view_time`,
+and Box2D/Box3D actual-frame rewind-network fixtures. The visibility name filter
+also runs the new consecutive-repair case. Node is 24.22.1. All commands use
+TIDE_HIDDEN; no window, GPU, browser or CI run was started.
+
+Independent read-only lifecycle/security reviews approved the minimal fix and
+the final regression diff without blockers. Their scope is source review, not
+a second test run. The spec's older Confirmed view time paragraph still calls
+the lower bound the "connection snapshot"; this note records the corrected
+connection-attempt admission contract. The owner-limited implementation task
+changes only session internals, focused CPU tests and this note.
+
+The unchanged strict prototype repro
+`breach_culling_real_lossy_clients_receive_conceal_reveal_and_keep_predicting`
+still fails identically on native/WASI after 1,800 ticks at 20 ms/way, 5 ms
+jitter and 3% loss. All 3,501 supplied valid claims have zero rejections at
+ages <=250 ms; 1,966 older claims are still rejected as required. The clients
+match 212/196 canonical worlds with zero resyncs, but have only 12/11 hidden
+updates and 10/10 hidden movement updates, below the unchanged test's bounds.
+This fix closes the false-rejection/stamp-reset bugs; it does not establish
+that real projection corrections keep every human presentation within the
+rewind window. Correction delivery/confirmation lag remains an integration
+gap (the earlier projection lag measurements below remain relevant). No game
+test, culling policy, timestamp or maxRewind bound was weakened here. The repro
+was built only in this checkout's CPU-only debug/web-debug slots, with BREACH
+as their sole external directory; the prototype agent owns its final tests.
+
 ## A session's recorder and rewind (2026-10-26)
 
 For Unity's time travel (notes/unity.md, Time travel), host-side session calls; generated code calls nothing new.
@@ -665,6 +828,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - The server notes when the datagram that said the time it echoes arrived (`connection.their_arrived`), and says how long it held it with every echo: `held_ms`, a varint of milliseconds after the echo in a SERVER (a byte, while it's under 128 ms) and 16 bits in a WELCOME. `PROTOCOL` went to 9 with it.
   - A client remembers when it sent each of its last 256 times, by the transport's clock (`said_time`), and `measure` finds the one echoed: the ping is the answer's arrival less that, less the held time. No session time is in it, so neither is the work of an update between reading and sending.
   - The loopback network's clock is its time, and a datagram arrived when its time came (`engine/src/net.c`): a machine's ping to its own server is 0, and tests and benchmarks repeat.
+  - `tide_net_conditioned` (2026-10-27) wraps any transport with a loopback's queue and conditions, both ways: what `tide run --latency/--jitter/--loss` puts between a machine and a match it joins (notes/standard-host.md, A slow network to play on).
   - Rooms on the web: the page notes `performance.now()` as a datagram comes, or as the page lets go of one it held back (`Tide.lag`), which the program's clock is too (`room_arrived` in `platform/web/tide.js`).
   - UDP and desktop WebRTC read their sockets through `platform/src/arrivals.c`, which says when each datagram arrived, by `tide_time_now_ns`. Linux, macOS and Android stamp datagrams themselves (`SO_TIMESTAMP`, read with `recvmsg`; by the wall's clock, so it's how long ago that was, never longer than since the socket last had nothing). Windows only does from Windows 11 on, so there the system calls when the socket has something (`WSAEventSelect` on an event the thread pool waits on, `RegisterWaitForSingleObject`), and the call reads it and notes the time into a buffer the frame takes from (up to 256 KiB for sessions' UDP, 64 KiB for a WebRTC peer: what a socket held by itself); no thread of ours. WebRTC carries it up: the ICE socket's (`rtc_ice.arrived`), to the message it came in (`rtc_peer.arrived`), to the room (`backend_arrived` in `platform/src/rooms.c`). A host on UDP and in a room at once says each datagram's by the transport it came on.
   - `net_a_ping_is_the_networks_round_trip` (`compiler/tests/e2e/net_test.c`) checks it in made-up time: 80 ms on a network 40 ms each way with updates 11 and 22 ms apart, 0 on one that takes no time, and through a transport with no clock, the waits counted. `udp_a_ping_counts_no_wait_for_a_frame` (`platform/tests/udp.c`) checks real sockets with frames 60 ms apart: the least of 20 pings, as a busy machine can note one late (measured on Windows: 0 ms, with answers taking 120). In the docs' match on one machine it went from 13.9 ms to 0.6.
@@ -676,7 +840,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 `tide_view_worlds` supplies confirmed `verified`, `verified_previous`, `verified_alpha` and upper `verified_tick` separately from prediction. Its clock advances by elapsed real time, clamps to the latest confirmation and never extrapolates. Join catch-up skips its presentation backlog so a large download cannot fill the bounded snapshot ring and stall verification. The ring retains the displayed confirmed interval alongside prediction (maximum twice the prediction window plus four). Latest verified-world access remains latest confirmed state; view endpoints may lag it. Reload, resync and migration reset presentation onto their new timeline.
 
-A presented frame stamps the next sampled input with `tick - 1 + alpha`, through optional generated tide_game callbacks, after Sample. The server treats this as untrusted: finite fraction/range, nonnegative tick, connection snapshot start, advertised server tick, execution tick and configured maximum age must pass. Rejection replaces only the timestamp with invalid zero; ordinary input is retained. Missing input can repeat an old stamp, so Physics.Rewind independently rejects stale/unavailable history. A timestamp cannot establish what a modified client displayed. Games validate shooter, origin, aim, ammo, cadence and damage against authoritative state.
+A presented frame stamps the next sampled input with `tick - 1 + alpha`, through optional generated tide_game callbacks, after Sample. The server treats this as untrusted: finite fraction/range, nonnegative tick, connection-attempt admission start, advertised server tick, execution tick and configured maximum age must pass. Repairs do not advance the admission start (the 2026-10-26 correction above). Rejection replaces only the timestamp with invalid zero; ordinary input is retained. Missing input can repeat an old stamp, so Physics.Rewind independently rejects stale/unavailable history. A timestamp cannot establish what a modified client displayed. Games validate shooter, origin, aim, ammo, cadence and damage against authoritative state.
 
 `view_time` exercises engine stamping, fractional/held confirmed clocks and future, negative, out-of-range, NaN, pre-join and stale wire claims, with no resync and usable ordinary input. `net_join_big` covers bounded catch-up. Full networking/migration suites retain their existing behavior.
 

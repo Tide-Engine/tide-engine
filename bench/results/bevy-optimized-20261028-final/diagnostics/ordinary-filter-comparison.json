@@ -1,0 +1,6 @@
+{
+  "ordinary_filter_assembly_identical": true,
+  "before_lines": 126,
+  "current_lines": 126,
+  "method": "Compile frozen/current generated wide C with the benchmark compile flags; ignore debug directives/comments and normalize local basic-block label numbers. Equal instruction text does not establish equal whole-program layout or runtime cost."
+}

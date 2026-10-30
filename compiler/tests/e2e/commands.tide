@@ -11,6 +11,7 @@ command Rename
     Entity other;
 }
 command Announce { string message; }
+command Tag { string[2] words; }
 component Name { string value = "before"; }
 singleton Seen
 {
@@ -22,6 +23,7 @@ singleton Seen
     string note;
     int count;
     string announcement;
+    string[2] tagged;
     PlayerID claimed;
     Entity other;
 }
@@ -30,6 +32,7 @@ local singleton UI
     bool send;
     bool announce;
     bool handler;
+    bool tag;
     string text = "Alice";
     Entity target;
 }
@@ -60,6 +63,11 @@ command(Announce announce, PlayerID sender) AnnounceWorld(mut Seen seen)
     KeepAnnouncement(announce, seen);
     seen.sender = sender;
 }
+command(Tag tag, PlayerID sender) TagWorld(mut Seen seen)
+{
+    _ = sender;
+    seen.tagged = tag.words;
+}
 void KeepAnnouncement(Announce payload, mut Seen seen) { seen.announcement = payload.message; }
 local event(Submit) SubmitFromHandler(UI ui)
 {
@@ -76,6 +84,11 @@ view SubmitFromView(mut UI ui)
     {
         Send(Announce { message = ui.text });
         ui.announce = false;
+    }
+    if (ui.tag)
+    {
+        Send(Tag { words = [ui.text, "tag"] });
+        ui.tag = false;
     }
     if (ui.handler)
     {

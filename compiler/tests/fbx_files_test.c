@@ -254,6 +254,180 @@ TIDE_TEST(fbx_skin_preserves_five_influences_inverse_binds_rest_and_clip)
     free(b);
 }
 
+// Blend channels become the model's shapes, named after their target shape,
+// with the channel's DeformPercent as the default the vertices already have.
+TIDE_TEST(fbx_blend_shapes_become_shapes_and_in_betweens_are_refused)
+{
+    size_t a_size, b_size;
+    uint8_t *a = fixture("shapes/shapes_ascii.fbx", &a_size), *b = fixture("shapes/shapes_binary.fbx", &b_size);
+    TIDE_REQUIRE(a && b);
+    uint8_t *ascii = NULL, *binary = NULL;
+    uint32_t ascii_size = 0, binary_size = 0;
+    TIDE_REQUIRE(decode(a, a_size, &ascii, &ascii_size));
+    TIDE_REQUIRE(decode(b, b_size, &binary, &binary_size));
+    TIDE_CHECK(ascii_size == binary_size && memcmp(ascii, binary, ascii_size) == 0);
+    TIDE_CHECK(tide_skinned_data_validate(ascii, ascii_size));
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(ascii, ascii_size, &view));
+    TIDE_REQUIRE(view.vertices == 3 && view.shapes == 2 && view.shape_deltas == 3);
+    tide_skinned_shape_data smile, jaw;
+    TIDE_REQUIRE(tide_skinned_data_shape(&view, 0, &smile) && tide_skinned_data_shape(&view, 1, &jaw));
+    TIDE_CHECK(smile.name_length == 5 && memcmp(smile.name, "smile", 5) == 0 && smile.weight == 0.25f && smile.deltas == 2);
+    TIDE_CHECK(jaw.name_length == 7 && memcmp(jaw.name, "jawOpen", 7) == 0 && jaw.weight == 0.0f && jaw.deltas == 1);
+    tide_skinned_shape_delta_data delta[3];
+    for (uint32_t i = 0; i < 3; i++) TIDE_REQUIRE(tide_skinned_data_shape_delta(&view, i, delta + i));
+    // The triangle's corners are its vertices; x is reflected as everywhere.
+    TIDE_CHECK(delta[0].vertex == 0 && vector3(delta[0].position, 0, 0.5f, 0) && vector3(delta[0].normal, 0, 0, 0));
+    TIDE_CHECK(delta[1].vertex == 2 && vector3(delta[1].position, 0, 0, 0.25f) && vector3(delta[1].normal, -1, 0, 0));
+    TIDE_CHECK(delta[2].vertex == 1 && vector3(delta[2].position, 0, -1, 0));
+    tide_skinned_vertex_data vertex;
+    TIDE_REQUIRE(tide_skinned_data_vertex(&view, 0, &vertex));
+    TIDE_CHECK(vector3(vertex.position, 0, 0.125f, 0) && vertex.influences == 5);
+    TIDE_REQUIRE(tide_skinned_data_vertex(&view, 2, &vertex));
+    TIDE_CHECK(vector3(vertex.position, 0, 2, 0.0625f) && vector3(vertex.normal, -0.25f, 0, 1));
+    TIDE_REQUIRE(tide_skinned_data_vertex(&view, 1, &vertex));
+    TIDE_CHECK(vector3(vertex.position, -2, 0, 0));
+    // Static meshes keep the rest geometry, shapes ignored.
+    mesh_file mesh = {0};
+    TIDE_REQUIRE(read_mesh(a, a_size, "shapes_ascii.fbx", &mesh));
+    TIDE_CHECK(mesh.vertices == 3 && vector3(mesh.position, 0, 0, 0));
+    mesh_file_free(&mesh);
+    tide_skinned_data_free(ascii);
+    tide_skinned_data_free(binary);
+    free(a);
+    free(b);
+    static const char *const between[] = {"shapes/inbetween_ascii.fbx", "shapes/inbetween_binary.fbx"};
+    for (uint32_t i = 0; i < 2; i++) {
+        size_t size;
+        uint8_t *bytes = fixture(between[i], &size), *glb = NULL;
+        TIDE_REQUIRE(bytes);
+        size_t glb_size = 0;
+        char why[256], note[256];
+        TIDE_CHECK(!fbx_file_to_glb(bytes, size, true, &glb, &glb_size, why, note) && !glb);
+        TIDE_CHECK(strstr(why, "blend shape 'Blends.smile' with in-between shapes") && strstr(note, "without in-between shapes"));
+        // A static mesh reads its rest geometry whatever its shapes are.
+        TIDE_CHECK(read_mesh(bytes, size, between[i], &mesh));
+        mesh_file_free(&mesh);
+        free(bytes);
+    }
+}
+
+// Euler rotation keys written wrapped (179 then -179 degrees about z) are a
+// two-degree turn; the 60 Hz bake between them must not sweep back through 0.
+TIDE_TEST(fbx_wrapped_euler_rotation_keys_bake_the_short_way)
+{
+    static const char *const names[] = {"animation/wrapped_ascii.fbx", "animation/wrapped_binary.fbx"};
+    uint8_t *canonical[2] = {NULL, NULL};
+    uint32_t sizes[2] = {0, 0};
+    for (uint32_t f = 0; f < 2; f++) {
+        size_t size;
+        uint8_t *bytes = fixture(names[f], &size);
+        TIDE_REQUIRE(bytes);
+        TIDE_REQUIRE(decode(bytes, size, &canonical[f], &sizes[f]));
+        free(bytes);
+    }
+    TIDE_CHECK(sizes[0] == sizes[1] && !memcmp(canonical[0], canonical[1], sizes[0]));
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(canonical[0], sizes[0], &view));
+    const uint32_t bone = named_node(&view, "Bone0");
+    bool found = false;
+    for (uint32_t c = 0; c < view.channels; c++) {
+        tide_skinned_channel_data channel;
+        TIDE_REQUIRE(tide_skinned_data_channel(&view, c, &channel));
+        if (channel.node != bone || channel.path != TIDE_SKINNED_ROTATION) continue;
+        found = true;
+        TIDE_CHECK(channel.keys >= 3u);
+        float previous[4] = {0};
+        for (uint32_t k = 0; k < channel.keys; k++) {
+            float time, q[4], in[4], out[4];
+            TIDE_REQUIRE(tide_skinned_data_key(&view, &channel, k, &time, q, in, out));
+            // Every key is within a degree of a half turn about z: none near the identity.
+            TIDE_CHECK(fabsf(q[2]) > 0.9999f && fabsf(q[3]) < 0.0175f);
+            if (k) TIDE_CHECK(q[0] * previous[0] + q[1] * previous[1] + q[2] * previous[2] + q[3] * previous[3] > 0.9998f);
+            memcpy(previous, q, sizeof previous);
+        }
+    }
+    TIDE_CHECK(found);
+    tide_skinned_data_free(canonical[0]);
+    tide_skinned_data_free(canonical[1]);
+}
+
+// A rotation keyed in its other Euler triple, (0, 10, 0) then (180, 170, 180),
+// is one rotation: every baked key, the bake's in-between ones too, is it.
+TIDE_TEST(fbx_euler_keys_in_their_other_triple_bake_as_the_same_rotation)
+{
+    static const char *const names[] = {"animation/twin_ascii.fbx", "animation/twin_binary.fbx"};
+    uint8_t *canonical[2] = {NULL, NULL};
+    uint32_t sizes[2] = {0, 0};
+    for (uint32_t f = 0; f < 2; f++) {
+        size_t size;
+        uint8_t *bytes = fixture(names[f], &size);
+        TIDE_REQUIRE(bytes);
+        TIDE_REQUIRE(decode(bytes, size, &canonical[f], &sizes[f]));
+        free(bytes);
+    }
+    TIDE_CHECK(sizes[0] == sizes[1] && !memcmp(canonical[0], canonical[1], sizes[0]));
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(canonical[0], sizes[0], &view));
+    const uint32_t bone = named_node(&view, "Bone0");
+    uint32_t keys = 0;
+    for (uint32_t c = 0; c < view.channels; c++) {
+        tide_skinned_channel_data channel;
+        TIDE_REQUIRE(tide_skinned_data_channel(&view, c, &channel));
+        if (channel.node != bone || channel.path != TIDE_SKINNED_ROTATION) continue;
+        for (uint32_t k = 0; k < channel.keys; k++, keys++) {
+            float time, q[4], in[4], out[4];
+            TIDE_REQUIRE(tide_skinned_data_key(&view, &channel, k, &time, q, in, out));
+            // Ten degrees about y: (0, sin 5, 0, cos 5), up to sign.
+            TIDE_CHECK(fabsf(q[0]) < 1e-4f && fabsf(q[2]) < 1e-4f && fabsf(fabsf(q[1]) - 0.0871557f) < 1e-4f
+                       && fabsf(fabsf(q[3]) - 0.9961947f) < 1e-4f);
+        }
+    }
+    TIDE_CHECK(keys >= 3u);
+    tide_skinned_data_free(canonical[0]);
+    tide_skinned_data_free(canonical[1]);
+}
+
+// A key one tick before its take's end (Mixamo's last keys are) and the end's
+// boundary sample are one float time: they import as one key, at the end.
+TIDE_TEST(fbx_keys_closer_than_a_float_are_one_key)
+{
+    static const char *const names[] = {"animation/close_ascii.fbx", "animation/close_binary.fbx"};
+    uint8_t *canonical[2] = {NULL, NULL};
+    uint32_t sizes[2] = {0, 0};
+    for (uint32_t f = 0; f < 2; f++) {
+        size_t size;
+        uint8_t *bytes = fixture(names[f], &size);
+        TIDE_REQUIRE(bytes);
+        TIDE_REQUIRE(decode(bytes, size, &canonical[f], &sizes[f]));
+        free(bytes);
+    }
+    TIDE_CHECK(sizes[0] == sizes[1] && !memcmp(canonical[0], canonical[1], sizes[0]));
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(canonical[0], sizes[0], &view));
+    const uint32_t bone = named_node(&view, "Bone0");
+    bool found = false;
+    for (uint32_t c = 0; c < view.channels; c++) {
+        tide_skinned_channel_data channel;
+        TIDE_REQUIRE(tide_skinned_data_channel(&view, c, &channel));
+        if (channel.node != bone || channel.path != TIDE_SKINNED_TRANSLATION) continue;
+        found = true;
+        TIDE_REQUIRE(channel.keys >= 2u);
+        float first[4], last[4], in[4], out[4], time, before = -1.0f;
+        for (uint32_t k = 0; k < channel.keys; k++) {
+            TIDE_REQUIRE(tide_skinned_data_key(&view, &channel, k, &time, k ? last : first, in, out));
+            TIDE_CHECK(time > before);
+            before = time;
+        }
+        // The take's end, and the last key's value there: five times the first's (1 then 5).
+        TIDE_CHECK(time == (float)(38.0 / 30.0));
+        TIDE_CHECK(fabsf(last[0] - 5.0f * first[0]) <= 1e-5f * fabsf(last[0]));
+    }
+    TIDE_CHECK(found);
+    tide_skinned_data_free(canonical[0]);
+    tide_skinned_data_free(canonical[1]);
+}
+
 TIDE_TEST(fbx_animation_only_ascii_and_binary_keep_clips_without_geometry)
 {
     static const char *const names[] = {"clips/move_ascii.fbx", "clips/move_binary.fbx"};
@@ -642,3 +816,4 @@ TIDE_TEST(fbx_static_and_skinned_cache_notifications_override_unchanged_metadata
     remove(model);
     free(bytes);
 }
+

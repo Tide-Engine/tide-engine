@@ -18,6 +18,28 @@ The starter prompt is also plain text:
 
 Tell the agent the gameplay you want, the intended platforms and any existing project conventions. An agent with a terminal can compile and inspect captures. A chat without filesystem or execution tools can suggest code, but you will need to build and test it yourself.
 
+## Play a game interactively
+
+An agent with process input/output and image tools can play the same running
+game dynamically: `tide run --interactive play.txt` draws its first frame and
+waits. Send `capture menu.png`, inspect the PNG, queue future-frame script
+lines such as `2 mouse 640 353` and `3 button left`, then send `step 30`.
+Wait for `tide: interactive ready 31`, inspect another capture and choose the
+next actions. The game waits while the agent thinks; `quit` or closing input
+ends it. Executed actions are saved to `play.txt` for normal scripted replay.
+For an agent's terminal tools, use a persistent terminal session (a PTY when
+needed) and retain its session handle. Launch the command without waiting for
+the game to exit. Write subsequent control lines to that same session. After
+`capture`, use the agent's image-viewing tool to actually inspect the picture,
+then choose the next input from what it shows. Keep repeating this loop in the
+same process; `play.txt` is the automatic recording, not a command inbox. The
+agent needs terminal-session input and image viewing, with no additional file
+control channel or game-specific integration.
+
+See [Interactive play](../tools/cli.md#interactive-play) for the protocol,
+multiple players and limits. This uses ordinary player input and rendered
+pictures; it does not require game-specific agent code.
+
 ## Keep project context between conversations
 
 Put the [starter AGENTS.md](/ai/AGENTS.md) in your **game folder** and keep it in source control. Merge it into existing instructions rather than overwriting them. It points to the overview and contains game build/run guidance. Add your own project's important decisions and validation commands as they become established. This is separate from the Tide engine repository's contributor guide.

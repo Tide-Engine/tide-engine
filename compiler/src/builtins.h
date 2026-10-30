@@ -39,6 +39,21 @@ void builtins_use_io(const decl *bytes, const decl *paths);
 #define WEB_REQUEST_MAKER "WebRequestTo"
 const char *web_prelude(size_t *len);
 bool web_prelude_wanted(const char *text, size_t len);
+// Fills' types and functions, which are Tide's own code the same way:
+// Draw.Rect(rect, radius, fill) is DRAW_FILL_RECT's call, and Draw.Shape(shape,
+// fill) DRAW_FILL_SHAPE's, where the last argument is a Func<float2, Color>.
+// Their vert and frag make every fill one shader, the function's tag and
+// captures an instance's, and Gradient's functions return such functions. A
+// program whose text shows a fill, in all its files together, compiles it
+// (draw_prelude_wanted), as no other pays for its shader.
+#define DRAW_PRELUDE_PATH "<tide>/draw.tide"
+#define DRAW_FILL_RECT "TideFillRect"
+#define DRAW_FILL_SHAPE "TideFillShape"
+// ...and with a Func<float2, float2, Color>, which takes the shape's size too
+#define DRAW_FILL_RECT_SIZED "TideFillRectSized"
+#define DRAW_FILL_SHAPE_SIZED "TideFillShapeSized"
+const char *draw_prelude(size_t *len);
+bool draw_prelude_wanted(const char *const *texts, const size_t *lens, int count);
 // Its Format enum, which RenderTarget.Window takes, the same way.
 void builtins_use_format(const decl *format);
 void builtins_use_stencil(const decl *test, const decl *op);

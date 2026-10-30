@@ -1,0 +1,92 @@
+{
+  "valid": true,
+  "rounds": 3,
+  "warmup": 200,
+  "ticks": 400,
+  "has_before": true,
+  "processes": 9,
+  "estimator": "median of process tick medians; ratios are median of paired ratios",
+  "scope": "ECS ticks only; excludes setup, snapshots, per-tick hashing, networking and rendering",
+  "cases": [
+    {
+      "tagged": 1,
+      "frozen": 99,
+      "workload": "wide",
+      "rate": 0,
+      "id": "filtered-frozen99-1m-1",
+      "threads": 1,
+      "count": 1000000,
+      "digest": "0xa683eb7fe00d6622",
+      "tide_ms": 0.26425,
+      "bevy_ms": 0.04755,
+      "c_ms": 1.1128,
+      "tide_range_ms": [
+        0.25965,
+        0.2736
+      ],
+      "bevy_range_ms": [
+        0.04745,
+        0.0476
+      ],
+      "c_range_ms": [
+        1.09205,
+        1.1418
+      ],
+      "ratio_bevy_over_tide": 0.18013245033112585,
+      "paired_ratios": [
+        0.18274600423647216,
+        0.1737938596491228,
+        0.18013245033112585
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          0.25965,
+          0.2736,
+          0.26425
+        ],
+        "Bevy": [
+          0.04745,
+          0.04755,
+          0.0476
+        ],
+        "C": [
+          1.09205,
+          1.1418,
+          1.1128
+        ],
+        "Before": [
+          0.28365,
+          0.28905,
+          0.2713
+        ],
+        "Before_C": [
+          1.1672,
+          1.1862,
+          1.2949
+        ]
+      },
+      "before_ms": 0.28365,
+      "before_range_ms": [
+        0.2713,
+        0.28905
+      ],
+      "before_c_ms": 1.1862,
+      "before_c_range_ms": [
+        1.1672,
+        1.2949
+      ],
+      "ratio_before_over_tide": 1.0564692982456139,
+      "paired_before_ratios": [
+        1.0924321201617564,
+        1.0564692982456139,
+        1.0266792809839167
+      ],
+      "paired_change_percent": [
+        -8.461131676361722,
+        -5.345096004151517,
+        -2.5985993365278293
+      ],
+      "change_percent": -5.345096004151517
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "valid": true,
+  "rounds": 3,
+  "warmup": 200,
+  "ticks": 400,
+  "has_before": true,
+  "processes": 9,
+  "estimator": "median of process tick medians; ratios are median of paired ratios",
+  "scope": "ECS ticks only; excludes setup, snapshots, per-tick hashing, networking and rendering",
+  "cases": [
+    {
+      "frozen": 99,
+      "count": 1000000,
+      "threads": 1,
+      "id": "filtered-frozen99-1m-1",
+      "rate": 0,
+      "workload": "wide",
+      "tagged": 1,
+      "digest": "0xa683eb7fe00d6622",
+      "tide_ms": 0.10565,
+      "bevy_ms": 0.0493,
+      "c_ms": 1.24935,
+      "tide_range_ms": [
+        0.1049,
+        0.10665
+      ],
+      "bevy_range_ms": [
+        0.0483,
+        0.05025
+      ],
+      "c_range_ms": [
+        1.2137,
+        1.2682
+      ],
+      "ratio_bevy_over_tide": 0.46225972808251287,
+      "paired_ratios": [
+        0.45716990061523904,
+        0.4790276453765491,
+        0.46225972808251287
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          0.10565,
+          0.1049,
+          0.10665
+        ],
+        "Bevy": [
+          0.0483,
+          0.05025,
+          0.0493
+        ],
+        "C": [
+          1.2682,
+          1.2137,
+          1.24935
+        ],
+        "Before": [
+          0.2657,
+          0.2591,
+          0.2622
+        ],
+        "Before_C": [
+          1.3667,
+          1.26625,
+          1.19585
+        ]
+      },
+      "before_ms": 0.2622,
+      "before_range_ms": [
+        0.2591,
+        0.2657
+      ],
+      "before_c_ms": 1.26625,
+      "before_c_range_ms": [
+        1.19585,
+        1.3667
+      ],
+      "ratio_before_over_tide": 2.4699714013346044,
+      "paired_before_ratios": [
+        2.514907714150497,
+        2.4699714013346044,
+        2.4585091420534457
+      ],
+      "paired_change_percent": [
+        -60.237109522017306,
+        -59.513701273639526,
+        -59.32494279176201
+      ],
+      "change_percent": -59.513701273639526
+    }
+  ]
+}

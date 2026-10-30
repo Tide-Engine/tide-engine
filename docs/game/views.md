@@ -98,6 +98,8 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.Ellipse(center, radii, color)` | An ellipse. `Ellipse(center, radii, rotation, color)` turns it, and `WireEllipse(center, radii, width, color)` is its outline |
 | `Draw.Arc(center, radius, start, sweep, width, color)` | Part of a ring |
 | `Draw.Shape(shape)` | A [`Shape`](#the-general-shape): a fill from one color to another, an outline around a fill, an edge that fades |
+| `Draw.Rect(rect, radius, fill)`, `Draw.Shape(shape, fill)` | A shape [filled by a function](#fills) of where in it each pixel is: a `Gradient`, or any `Func<float2, Color>` |
+| `Draw.Shadow(rect, radius, size)` | A soft shadow under a box at `rect`, fading out over `size` pixels, a quarter of `size` lower: black at 0.4, or `Draw.Shadow(rect, radius, size, color)`. Draw it before the box |
 | `Draw.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it (see [Text](#text)) |
 | `Draw.Text(text, position, size, color, anchor)` | Text with `position` another place of its box: `Anchor.MiddleCenter` centers it there |
 | `Draw.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw.Text(text, position, size, color, anchor, font)` |
@@ -238,6 +240,42 @@ view Card(Deal deal)
 
 `Arc` is the one call `Shape` doesn't cover.
 
+### Fills
+
+A fill colors a shape by a function of where in it each pixel is: `Draw.Rect(rect, radius, fill)`, `Draw.Rect(rect, radii, fill)` with four corners, and `Draw.Shape(shape, fill)`, where `fill` is a `Func<float2, Color>`. It runs on the GPU for each pixel, given the pixel's place in the shape from `(0, 0)` at its top left to `(1, 1)` at its bottom right. `Gradient`'s functions make the usual ones:
+
+```csharp
+view Buttons()
+{
+    Draw.SetScreen();
+    // Lighter at the top: a button that looks raised
+    Draw.Rect(Rect(20, 20, 200, 48), 12, Gradient.Vertical(Color(0.35, 0.5, 0.9), Color(0.15, 0.25, 0.6)));
+    // Three colors, left to right
+    Draw.Rect(Rect(20, 80, 200, 48), 24, Gradient.Horizontal(Color.red, Color.yellow, Color.green));
+    // A glow: bright in the middle, clear at the edge
+    Draw.Rect(Rect(240, 20, 108, 108), 54, Gradient.Radial(Color(1, 0.9, 0.5), Color.clear));
+    // Any function of the place: stripes
+    Draw.Rect(Rect(20, 140, 200, 48), 8, (float2 uv) => int(uv.x * 8) % 2 == 0 ? Color.white : Color.gray);
+}
+```
+
+| Function | From, to |
+|---|---|
+| `Gradient.Vertical(top, bottom)` | The shape's top to its bottom |
+| `Gradient.Horizontal(left, right)` | Its left to its right |
+| `Gradient.Linear(angle, from, to)` | Across it at `angle`, in radians from `+x` towards `+y`, one corner to the opposite one |
+| `Gradient.Radial(inner, outer)` | Its middle out to the middle of its sides, and on to its corners |
+
+`color.WithAlpha(a)` is the color with another alpha, its red, green and blue as they are: a glow of an item's color, `rarity.WithAlpha(0.4)`. It works in a fill, and in any GPU code, too.
+
+Each takes two, three or four colors, spread evenly: `Gradient.Vertical(a, b, c)` is `b` at the middle. Colors blend with their alpha, so a gradient to `Color.clear` fades without darkening.
+
+- **A fill is a value.** Keep one in a field, pass it to a helper, or write your own: a function `Color Name(float2 uv)` named where a fill goes, or a lambda, which can use the variables around it: `Draw.Rect(rect, 8, (float2 uv) => tint * (1 - uv.y * 0.3))`. Calling one on the CPU gives the color a pixel there gets.
+- **A fill can take the shape's size too:** a `Func<float2, float2, Color>`, given the place and the shape's size in the units it's drawn in (pixels on the screen), for patterns of a fixed size whatever the shape's: `Draw.Rect(bar, 6, (float2 uv, float2 size) => int(uv.x * size.x / 12) % 2 == 0 ? light : dark)` has stripes 12 pixels wide.
+- **The rest of the shape is as ever.** `Draw.Shape(shape, fill)` takes its center, size, rotation, corners, outline, soft edge and ellipse from `shape`, and the fill replaces `color` and `color2`. Its place in the shape is the shape's own, before `rotation` turns it, and its top is the upper one on the screen whether `y` goes up or down.
+- **Fills drawn one after another are drawn together,** whatever their functions: a menu of gradient buttons costs one draw. The function is GPU code, with [what the GPU runs](./shaders.md#what-the-gpu-runs)' rules.
+- **They're local code.** A fill is drawn by views and the functions they call, in the window or inside [`GUI.Draw`](./gui.md#custom-controls-in-layout). A [render target](./render-targets.md)'s own `Rect` and `Shape` take one too, drawn by the target's size: `card.Rect(Rect(0, 0, 200, 60), 12, Gradient.Vertical(top, bottom))`.
+
 ## On the screen
 
 In `Draw.Screen() { ... }`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. After the block, the camera is what it was, so a view of the world can draw a label in pixels and leave the world's camera alone for the views after it:
@@ -374,6 +412,32 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 
 `entity.Snap()` is applied at the end of the tick, like `Destroy`, so it never makes systems wait. `singleton.Snap()` needs the singleton as a `mut` parameter.
 
+A single field can jump too: `field.Snap()` is the per-field counterpart of `entity.Snap()`. For the tick it happens in, views draw that field as it is at the newer tick, and from the next tick it blends again. The rest of its component or singleton keeps blending, so a position doesn't stutter.
+
+Use it whenever a float starts over together with something that doesn't blend. Here a stance is an enum, so views see the new stance at once, and `since` counts the seconds in it:
+
+```csharp
+component Fighter
+{
+    Stance stance;
+    float since;    // Seconds in this stance
+    float3 hand;
+
+    mut void Enter(Stance next)
+    {
+        stance = next;
+        since = 0;
+        since.Snap(); // Drawn from 0 with the new stance
+    }
+}
+```
+
+::: warning A timer that starts over
+Without `since.Snap()`, every frame between the two ticks shows the new stance with `since` blended between its old value and 0: a timer running backwards, which pops whatever the view works out from it. `[Snap]` on the field would avoid it, but then `since` never blends, and `this.Snap()` stops the whole entity blending, position included.
+:::
+
+`field.Snap()` goes on a field of a match component or singleton that views blend, wherever code may write that field: systems, match event handlers, and the functions and methods they pass it to. A field that holds a struct snaps all of it, as in `arm.pose.Snap()`; a struct's own field can't snap alone. Each field that snaps keeps a count of its snaps beside it in the match, so snapshots, rollback and host migration carry it, and it is part of the match hash.
+
 ### Provisional correction smoothing
 
 ::: warning Provisional
@@ -410,7 +474,7 @@ The built-in `Transform` already uses this behavior for its match fields: `local
 
 This state belongs to this machine's presentation. Simulation values and collisions correct immediately, and snapshots, hashes and network state are unaffected. `entity.Snap()` and `singleton.Snap()` also clear any accumulated error, keeping intentional jumps immediate. A new match, a hot reload or a replacement world with no comparable presentation history clears the error too. While a host migration reconnects, the frozen presentation retains its error; adopting the new network timeline clears it.
 
-The tags take no arguments. Use them on match fields; local state, inputs and events cannot carry them. A field cannot combine `[Position]`, `[Rotation]` and `[Snap]`.
+The tags take no arguments. Use them on match fields; local state, inputs and events cannot carry them. A field cannot combine `[Position]`, `[Rotation]` and `[Snap]`, and such a field can't snap alone with `field.Snap()`: snap its entity or singleton, which clears its error too.
 
 Ordinary structs can contain annotated built-in fields, including through nested structs. Correction smoothing for a type with its own `Interpolate` is deferred; its existing tick interpolation remains available. No new custom-type method or correction-rate setting is agreed. The [specification](../spec.md#provisional-correction-smoothing) records the provisional contract.
 

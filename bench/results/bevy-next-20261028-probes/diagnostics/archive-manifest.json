@@ -1,0 +1,1140 @@
+{
+  "schema": 1,
+  "note": "Byte-preserving compact source/diagnostic archive. Hash-only entries are recoverable repository/build inputs deliberately omitted; original build manifests and timing metadata also retain their hashes. Binaries, objects and libraries stay in ignored build directories. Original absolute paths are historical, not portable reproduction paths.",
+  "files": [
+    {
+      "archive": "probes/build-probes.ps1",
+      "sha256": "024d23fa5baea8d575203bfd8dccb9029d1f512b070e0764920b66913d3aa25b",
+      "bytes": 13435,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\build-probes.ps1"
+      ]
+    },
+    {
+      "archive": "probes/manifest.json",
+      "sha256": "fa549b185cf3973bc7bbf9a8d7a17144a82ef17fb1bee17a4e88ecdc911a7fd0",
+      "bytes": 44723,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\manifest.json"
+      ]
+    },
+    {
+      "archive": "probes/c30_control/prototype.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\c30_control\\prototype.patch"
+      ]
+    },
+    {
+      "archive": "probes/c30_control/rows.asm",
+      "sha256": "59b6e335a7240bb6a59657cc813af8c1fa2ffe927bcaef72645057584148ea6a",
+      "bytes": 11521,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\c30_control\\rows.asm"
+      ]
+    },
+    {
+      "archive": "probes/c30_control/task.asm",
+      "sha256": "53bd2b83f371d3d938238515d97016fcec4b909c343674f169e5c4c42aa8952b",
+      "bytes": 37338,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\c30_control\\task.asm"
+      ]
+    },
+    {
+      "archive": "probes/c30_control/wide.c",
+      "sha256": "9667a05b51e0ff17aeb76db0ab58ba2c8108c1b73b630c8ebe519830380c1637",
+      "bytes": 118513,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\c30_control\\wide.c",
+        "build/bevy-next-probes/c30_control/bench/versus/tide/versus_wide/wide.c",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_wide\\wide.c"
+      ]
+    },
+    {
+      "archive": "probes/common/main.c",
+      "sha256": "3a1c37caf7b33479aa1d00f5ea712e091c024e7f4d17e7f5fcb54e070c47f428",
+      "bytes": 2691,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\main.c",
+        "bench/versus/wide/main.c"
+      ]
+    },
+    {
+      "archive": "probes/common/model.c",
+      "sha256": "bea8d6ab07da3adbb59fea3948105b8e6d3e874730dfb14f914a6fe48b474d77",
+      "bytes": 9121,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\model.c",
+        "bench/versus/wide/wide.c"
+      ]
+    },
+    {
+      "archive": "probes/common/wide.c",
+      "sha256": "9667a05b51e0ff17aeb76db0ab58ba2c8108c1b73b630c8ebe519830380c1637",
+      "bytes": 118513,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\wide.c"
+      ]
+    },
+    {
+      "archive": "probes/common/wide.h",
+      "sha256": "8e6e204ed0502c24de114ce5ba09525d89aefc2775687b06a3f8f2768414f357",
+      "bytes": 23187,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\wide.h",
+        "build/bevy-next-probes/c30_control/bench/versus/tide/versus_wide/wide.h",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_wide\\wide.h",
+        "build/bevy-next-probes/nodiv/bench/versus/tide/versus_wide/wide.h",
+        "build/bevy-next-probes/fasttask/bench/versus/tide/versus_wide/wide.h",
+        "build/bevy-next-probes/versioned/bench/versus/tide/versus_wide/wide.h",
+        "build/bevy-next-probes/fasttask_versioned/bench/versus/tide/versus_wide/wide.h",
+        "build/bevy-next-probes/fasttask_versioned_or/bench/versus/tide/versus_wide/wide.h"
+      ]
+    },
+    {
+      "archive": "probes/common/wide_pack.c",
+      "sha256": "5f2827e7dd68970a7270ddcd1a876c30a18255f0c017938bb18cb50ed16d5661",
+      "bytes": 376,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\wide_pack.c",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_wide\\wide_pack.c"
+      ]
+    },
+    {
+      "archive": "probes/fasttask/prototype.patch",
+      "sha256": "e7c6b219628431f05fa0b24f9f39520bae9fba908caf68d41eab42dd4109abe3",
+      "bytes": 3072,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask\\prototype.patch"
+      ]
+    },
+    {
+      "archive": "probes/fasttask/rows.asm",
+      "sha256": "3e7f46c4c078531c28b007b2aecd0f33011d0b3979acb2f4f05ebb3aba8c605d",
+      "bytes": 11518,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask\\rows.asm"
+      ]
+    },
+    {
+      "archive": "probes/fasttask/task.asm",
+      "sha256": "e40416d2db662ac1709fadf7c5d1b8a68d66ecbe91145996c1bf2c7343ed28be",
+      "bytes": 11267,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask\\task.asm"
+      ]
+    },
+    {
+      "archive": "probes/fasttask/wide.c",
+      "sha256": "4ad2b76e7332d97668df86f948e31ea3b0a3bb390cedc790157f2fe12528341f",
+      "bytes": 120433,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask\\wide.c",
+        "build/bevy-next-probes/fasttask/bench/versus/tide/versus_wide/wide.c"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned/prototype.patch",
+      "sha256": "b7689806c4f726b94a1978a4eb0aaab2ba9a1a968eb37632c6cd49247f002659",
+      "bytes": 8820,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned\\prototype.patch"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned/rows.asm",
+      "sha256": "e51340919d7afc59b3acf537b28852d2cabe7e4f22e4f6f4bd6f8d5244d45d67",
+      "bytes": 20238,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned\\rows.asm"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned/task.asm",
+      "sha256": "d024955169f222e525a7a739ad076d973b24c5a00085e085ad75c3c4b32e5710",
+      "bytes": 11277,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned\\task.asm"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned/wide.c",
+      "sha256": "7525ce462f0af0d5dcf22e5922a8188b4c2b1d7cbcd045c91c205ed89545ed42",
+      "bytes": 121216,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned\\wide.c",
+        "build/bevy-next-probes/fasttask_versioned/bench/versus/tide/versus_wide/wide.c"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned_or/prototype.patch",
+      "sha256": "6f597eb2f5db088ce6be93ed7d0f04945248aa1ed48c04457e2891f81a4912d3",
+      "bytes": 9030,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned_or\\prototype.patch"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned_or/rows.asm",
+      "sha256": "8cbf139d83b924f0a41a68ccce31ac6a29c203bb5b649b4e28d122c982d209d0",
+      "bytes": 20241,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned_or\\rows.asm"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned_or/task.asm",
+      "sha256": "64f9171205970d606554b825abdf5ae469050e7bbfb71263e37af0c23bbfec0d",
+      "bytes": 10867,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned_or\\task.asm"
+      ]
+    },
+    {
+      "archive": "probes/fasttask_versioned_or/wide.c",
+      "sha256": "d882ae818c907cfa681cea0e55ad993a289386f79fec05822b08c7a17716516d",
+      "bytes": 121410,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned_or\\wide.c",
+        "build/bevy-next-probes/fasttask_versioned_or/bench/versus/tide/versus_wide/wide.c"
+      ]
+    },
+    {
+      "archive": "probes/nodiv/prototype.patch",
+      "sha256": "ce669311567c3ddfc8965543acebe3ad66e1a6bb3d8274e00b3aac449eb1ecbc",
+      "bytes": 2060,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\nodiv\\prototype.patch"
+      ]
+    },
+    {
+      "archive": "probes/nodiv/rows.asm",
+      "sha256": "ef5f161542ca264911f7a3b53e0a09df12c53e76560cec80e7c876ec837857c1",
+      "bytes": 11515,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\nodiv\\rows.asm"
+      ]
+    },
+    {
+      "archive": "probes/nodiv/task.asm",
+      "sha256": "4556e7ef47beb0791543db3a951a5d584ea2fc2bb2cacd075a9b8112cf7a62a3",
+      "bytes": 38131,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\nodiv\\task.asm"
+      ]
+    },
+    {
+      "archive": "probes/nodiv/wide.c",
+      "sha256": "43462ded5faf057f52c09f4dc74a011c0f366eb18373290e2456776f09913dc1",
+      "bytes": 118624,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\nodiv\\wide.c",
+        "build/bevy-next-probes/nodiv/bench/versus/tide/versus_wide/wide.c"
+      ]
+    },
+    {
+      "archive": "probes/versioned/prototype.patch",
+      "sha256": "54df8ac104ab5acf8e6fff6786399eb97983dc1e95d2fdad84e425a50901f8c9",
+      "bytes": 6195,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\versioned\\prototype.patch"
+      ]
+    },
+    {
+      "archive": "probes/versioned/rows.asm",
+      "sha256": "21ab023509a63c55fa7e04a15c8bedd66616e733995e5ea959d7508226295b82",
+      "bytes": 20229,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\versioned\\rows.asm"
+      ]
+    },
+    {
+      "archive": "probes/versioned/task.asm",
+      "sha256": "0e7f4a5d797593a9a1d2733e9d152fd2a305ff61c305722b855c6fa5be5c608e",
+      "bytes": 37336,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\versioned\\task.asm"
+      ]
+    },
+    {
+      "archive": "probes/versioned/wide.c",
+      "sha256": "65bfe60e88c58d7776c33f500ecabf4fee965ba63a6c26e32e1105a913526e46",
+      "bytes": 119296,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\versioned\\wide.c",
+        "build/bevy-next-probes/versioned/bench/versus/tide/versus_wide/wide.c"
+      ]
+    },
+    {
+      "archive": "profile/build.ps1",
+      "sha256": "3fb218e96ad9b37ba309f392cc4c30f93abcf8c750954edae3b297d40bfb4ff2",
+      "bytes": 6346,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\build.ps1"
+      ]
+    },
+    {
+      "archive": "profile/main.patch",
+      "sha256": "0a485c5c443fc4666e233fda59e340999805736c78d1d3ff0333ce3cba37dd50",
+      "bytes": 894,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\main.patch"
+      ]
+    },
+    {
+      "archive": "profile/manifest.json",
+      "sha256": "b3404f0030d0d4d58b6c606d7e285c4411e298c7cabe789435078f8aad8ea12b",
+      "bytes": 23079,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\manifest.json"
+      ]
+    },
+    {
+      "archive": "profile/profile-c30-99-serial.txt",
+      "sha256": "5fb7276e76d4e2c614675d55e93a940c1e30947de0f07cbec8d5fa03b7601891",
+      "bytes": 4529,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\profile-c30-99-serial.txt"
+      ]
+    },
+    {
+      "archive": "profile/common/main.c",
+      "sha256": "ee4c8ee07b68e00c4c71736bb90bc57cce39486615ef40d2834af1021b7f3950",
+      "bytes": 2683,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\common\\main.c"
+      ]
+    },
+    {
+      "archive": "profile/common/original-main.c",
+      "sha256": "3a1c37caf7b33479aa1d00f5ea712e091c024e7f4d17e7f5fcb54e070c47f428",
+      "bytes": 2691,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\common\\original-main.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/bevy/run.ps1",
+      "sha256": "a751acf65ddf4a7187f9b2a590e5c1098523272352c2814237923412a85b9eef",
+      "bytes": 12216,
+      "origins": [
+        "bench/bevy/run.ps1"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/bevy/analyze.py",
+      "sha256": "61192d39db566d951e96ff6edf9cb3dd32c38521fe7eb09ba14832ab299c484e",
+      "bytes": 13064,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\bench\\bevy\\analyze.py"
+      ]
+    },
+    {
+      "archive": "audit.py",
+      "sha256": "40b77e22209e74163811fcc5ef387fe136c3ae087ead6652052db33e6de8ee68",
+      "bytes": 8119,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\bench\\results\\bevy-next-20261028-probes\\diagnostics\\audit.py"
+      ]
+    }
+  ],
+  "hash_only": [
+    {
+      "archive": "probes/common/include/tide/attached.h",
+      "sha256": "f2dccd73fac9471c28beb239a8c181af97f972b9829d2b4fcf56f2e5acf48174",
+      "bytes": 4126,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\attached.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/audio.h",
+      "sha256": "c2370268696e0257e782b80af62071e2ead7ce06b90c8938c9da126aba57cb43",
+      "bytes": 11037,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\audio.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/color.h",
+      "sha256": "d8f826dc7097b7de34681f162c33bf9f6fd00f0d76afb91c3eff6a955b2e9ffb",
+      "bytes": 4539,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\color.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/debug.h",
+      "sha256": "6a22ad3873fa7ab15b72cd67a3dabd87e97e37052baf9f8718abeeea201e8411",
+      "bytes": 794,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\debug.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/delta.h",
+      "sha256": "08c230543559eaa6ab863b4209c2574d42d903c87ed3861a8b9e9cdde3c67ec2",
+      "bytes": 6019,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\delta.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/devices.h",
+      "sha256": "16656815e524a69d676a51d313d5a86836f2bd6a80f1d148ace2a54975b428a5",
+      "bytes": 11728,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\devices.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/draw.h",
+      "sha256": "a15ba147fb47a834a89322e18f5b3cb6f599bd29586ce25e93c267ffe66e73cf",
+      "bytes": 138499,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\draw.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/embed.h",
+      "sha256": "1e441a29d0242c479e13a4b81bca4058ab9a7b551cb54ccdd30bf9199052af76",
+      "bytes": 22387,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\embed.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/embed_game.h",
+      "sha256": "6e3c8affa2324de2351f4532a0548338cdb0850740fc2c7fff5f7c3c8f0d1781",
+      "bytes": 10296,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\embed_game.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/entity.h",
+      "sha256": "381702b175ca2ad70851270959c18ee6ecd6fdae6ba4aa927ca785b297084f72",
+      "bytes": 10105,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\entity.h",
+        "engine/include/tide/entity.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/events.h",
+      "sha256": "183381c262b66d4d62cd23b0840f28850ba9caf2af42a79b65023fae15eb5e44",
+      "bytes": 8866,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\events.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/grid.h",
+      "sha256": "a3f7ec9773e81c408bd1581ce23ae35560e432365ad2abceab35746b79b6bffe",
+      "bytes": 20311,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\grid.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/gui.h",
+      "sha256": "b1a5e0c38f223dc60c7481a3d798a373932abe506377983e396881f4f6b9af1a",
+      "bytes": 30573,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\gui.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/heap.h",
+      "sha256": "e7d4b34116148854b8a914ec5421d911a96bb27d675a86f2d15b6a12c095fc82",
+      "bytes": 7663,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\heap.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/host.h",
+      "sha256": "c405f00708389aa212bcbf833ca71a7e4908912c83949bec2c0c3058cb8ba64d",
+      "bytes": 72084,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\host.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/hosting.h",
+      "sha256": "105bf925b222cc5876c56a8df3e0a6ed1df193424472445ef7a24cef8226bc06",
+      "bytes": 6531,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\hosting.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/io.h",
+      "sha256": "d09b63bf2153cf6018c692ab76b2385b2ec46b8b54f0dcdb0b200299ade0ea69",
+      "bytes": 9085,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\io.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/jobs.h",
+      "sha256": "7ddea5044171648bdde2fae4a20a19480872283e6868552afbe7520ee40ca961",
+      "bytes": 11187,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\jobs.h",
+        "engine/include/tide/jobs.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/json.h",
+      "sha256": "ae08b6657e449dd3eda1a22885468f4bb49209191099bb6bd42e9d5af5e83f0d",
+      "bytes": 4876,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\json.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/layout.h",
+      "sha256": "fdd652e2eb82229e9f7e62b4d18e0fd15bd8cae622d375cc6e3c34a2ac31e5a3",
+      "bytes": 5168,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\layout.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/list.h",
+      "sha256": "a468a04814293e8a19e3c8b8110d07de8b59616888eabdc61050fcccbcb49b66",
+      "bytes": 24938,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\list.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/managed_run.h",
+      "sha256": "25c7790c1013fa979542c41a698246f4fdf0a9c1b7c20196ed2a5b2f7fb9f258",
+      "bytes": 24072,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\managed_run.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/map.h",
+      "sha256": "0fcef3501b84eeb9f3086c9580cc060ee136523bd04e888191d4306e748fe6ce",
+      "bytes": 9014,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\map.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/math.h",
+      "sha256": "54aebb71c51158a96b5e483a3efdec27e62878c871a427c263b343463004584f",
+      "bytes": 78205,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\math.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/mesh.h",
+      "sha256": "c408284b4d4bee56ed6b2a7820f954cb5e96ca90f07db8617dc46da3b7c4f90a",
+      "bytes": 11435,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\mesh.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/migrate.h",
+      "sha256": "3214100092ecba58b74d05670a2b033dccbb580ab2376ae00db4df04f8a716e5",
+      "bytes": 3062,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\migrate.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/net.h",
+      "sha256": "da61776cc410dccbe8aecb8086e45662d6dd30447c71d12a31c804085b830149",
+      "bytes": 12055,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\net.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/network.h",
+      "sha256": "8f94db4df6bcf13ee419ecc12a56e61f386452245026a3f26397360097dd7c15",
+      "bytes": 11095,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\network.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/pack.h",
+      "sha256": "2fca1e12a678fa6650fb252f388353acbd39e26b5f051913959ba66e9d08b6d3",
+      "bytes": 23748,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\pack.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/page.h",
+      "sha256": "283ab68a7481b6e294ded85426936fce9ca74756e6110a3c142664dab05f1f17",
+      "bytes": 7846,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\page.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/platform.h",
+      "sha256": "b3a20e6d406e7e402fdceddadf39ee837a21f83cf47f5b9e9e3b9412c7fc56ff",
+      "bytes": 30094,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\platform.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/player.h",
+      "sha256": "5542876f223d95ca4cae39dca47bf1a0a62c789956fde049b5c31f2595735614",
+      "bytes": 2594,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\player.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/png.h",
+      "sha256": "b245975a43b954ac78fb149bfc92ee79eb28cd483e89b6248902703e14de6d9f",
+      "bytes": 4953,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\png.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/profile.h",
+      "sha256": "3233493f228ff0d4cd4708bb881333be2c8570312ce08ad7d877e7cb5d9da55c",
+      "bytes": 3724,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\profile.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/profiler.h",
+      "sha256": "d792818985c8dce0b88084da612539d3c758361cf178fbb4137ecbacb4e46b83",
+      "bytes": 4363,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\profiler.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/random.h",
+      "sha256": "d5488721359c9accdc66ad1b30ed299df10ad58eff06e690f51e2ab819efcbfc",
+      "bytes": 8929,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\random.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/resident.h",
+      "sha256": "14564cf7f0651831b1628e25b96131c5c3ca6c5dbe7b37596acd210ce1f30a6d",
+      "bytes": 8335,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\resident.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/rows.h",
+      "sha256": "b8d9331e7616e114707beef8efec8d1f2a97152f9ffe00083355c670c5eef801",
+      "bytes": 7090,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\rows.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/run.h",
+      "sha256": "3813ea04da4394e954bcde6c57127efc64bf259e030b36f59d8deacfdeddc577",
+      "bytes": 9745,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\run.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/serve.h",
+      "sha256": "78e3ae30236a9949450d4114d7bd0e8936feb2f2446eb1e6f889edbd7255533a",
+      "bytes": 693,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\serve.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/server_run.h",
+      "sha256": "89b81e245860d7c18d523c64f8dfe4106a4fd19ec29dd05774199bacd96fd309",
+      "bytes": 911,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\server_run.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/session.h",
+      "sha256": "031c44bf07a6cd79ced98fc4b336b78aa49bb0b8c89e554ccf7f6781bc860772",
+      "bytes": 55439,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\session.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/sha256.h",
+      "sha256": "40d56b46ba57d9442e3be6652b2c3d694c1fa1119feabfd85e6fc2571ca7f7c1",
+      "bytes": 604,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\sha256.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/shard.h",
+      "sha256": "b6bc29c7e6032ff10d292b618fe2caaf4ae922f3edb50f00fde501c90a256669",
+      "bytes": 18422,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\shard.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/shards.h",
+      "sha256": "5fdc87f7a709581463ddc39a6b5c1e8ec24c04ea62b5019f4d8c4bb7e63a28e2",
+      "bytes": 7913,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\shards.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/shard_agent.h",
+      "sha256": "66a9dff09cfd81dc86bc51b0fd16358e589370e422af5273ee1613300bb9185f",
+      "bytes": 5286,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\shard_agent.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/shard_client.h",
+      "sha256": "5e0779bb73392ac3a68c99e05c5000d7bbbaeeb67406989c9dcfa2a4e73d56f4",
+      "bytes": 3194,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\shard_client.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/shard_coordinator.h",
+      "sha256": "82863b98890d98b7997f5fb3ed8f51f4e5db52a526b589ff8a6b0002a83b837e",
+      "bytes": 8276,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\shard_coordinator.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/skinned.h",
+      "sha256": "e44a1c1b3f2b1d9c980ebb02e5e427df34335d3e51e49c19abc00e7dd1463448",
+      "bytes": 7176,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\skinned.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/skinned_data.h",
+      "sha256": "33a611e099e6c3e65d809855a1ba1547acf82dbe3ef8921d3379ef5c3e8448b4",
+      "bytes": 10774,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\skinned_data.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/stats.h",
+      "sha256": "cb97475ee38ac36a597545bf84f918531f76022437569f4961da16ccb8934ee4",
+      "bytes": 8990,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\stats.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/table.h",
+      "sha256": "2343f64fd60ec21174d74f0f01e52acaf8e9762c84094a2d506b88f012c41eb3",
+      "bytes": 18896,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\table.h",
+        "engine/include/tide/table.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/text.h",
+      "sha256": "e8a2639a8bf8d0feeb1c1a33e7941541fd1b6d34552f3f3f93130529f01d288f",
+      "bytes": 17221,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\text.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/texture_blocks.h",
+      "sha256": "d114d2de9396e1fd2be13f70699012756f3250d8bf7e56857fd20ab6059155dc",
+      "bytes": 1176,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\texture_blocks.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/time.h",
+      "sha256": "32779f67592ee9eb1604610f04a019dfa09a1f265db0ca526d19bfadf5eda4a3",
+      "bytes": 308,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\time.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/timeline.h",
+      "sha256": "a8999cbcae1e3b1f9e6f0a6933ac185d33e58a4e05f1032197fdcc265ed6c1de",
+      "bytes": 4896,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\timeline.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/voice.h",
+      "sha256": "5f17e02ddb69fa972c5011555bafdb53c4913633ffcba8901dcb012354aeabeb",
+      "bytes": 854,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\voice.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/vorbis.h",
+      "sha256": "3af2b4f413940f86823142953d53d2b2ef32875710c0a59e423e85f43c01a827",
+      "bytes": 5153,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\vorbis.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/wav.h",
+      "sha256": "7058664d638c1671d4ae5d65c31fcd3e3d08bd7aa82f1bcfabed6dc91863d49d",
+      "bytes": 2109,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\wav.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/worker.h",
+      "sha256": "00a04e0605d0f6937b9e4763cace2fcd4eb54ad2c5e61e450ed1f2b426d21981",
+      "bytes": 2763,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\worker.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/internal/count_text.h",
+      "sha256": "d5878b177078c01e8fc11dfe398d16c0436be7117ed992de20f860b78978ad7b",
+      "bytes": 687,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\internal\\count_text.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/internal/gltf_extensions.h",
+      "sha256": "9c9fc21ebc667dcdf472d35b52918e069e3ad861001256403fd69a4c8eaa06ff",
+      "bytes": 1086,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\internal\\gltf_extensions.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/internal/gltf_json.h",
+      "sha256": "958dee250520164999bce7dc9ceb9382a1bee49a088a1b567e8138b783878369",
+      "bytes": 15283,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\internal\\gltf_json.h"
+      ]
+    },
+    {
+      "archive": "probes/common/include/tide/internal/gltf_read.h",
+      "sha256": "ef482f085844a578872dcd681832f63e6a2267b589a07c6d5b196f1a8815f031",
+      "bytes": 13615,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\common\\include\\tide\\internal\\gltf_read.h"
+      ]
+    },
+    {
+      "archive": "profile/common/versus.c",
+      "sha256": "3ab538150b5fde6da539916aada418c6040510464b6b59a3ee25da4bb2ae3389",
+      "bytes": 21846,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\common\\versus.c",
+        "bench/versus/versus.c"
+      ]
+    },
+    {
+      "archive": "profile/common/versus.h",
+      "sha256": "991338a31bd5a9c9535245aca70655e6e6c95376fa18aa7a0c9bb552f1eee900",
+      "bytes": 4189,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\common\\versus.h",
+        "bench/versus/versus.h"
+      ]
+    },
+    {
+      "archive": "profile/common/wide.c",
+      "sha256": "9667a05b51e0ff17aeb76db0ab58ba2c8108c1b73b630c8ebe519830380c1637",
+      "bytes": 118513,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\common\\wide.c"
+      ]
+    },
+    {
+      "archive": "profile/common/wide.h",
+      "sha256": "8e6e204ed0502c24de114ce5ba09525d89aefc2775687b06a3f8f2768414f357",
+      "bytes": 23187,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\common\\wide.h"
+      ]
+    },
+    {
+      "archive": "profile/common/wide_pack.c",
+      "sha256": "5f2827e7dd68970a7270ddcd1a876c30a18255f0c017938bb18cb50ed16d5661",
+      "bytes": 376,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile\\common\\wide_pack.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/bevy/src/main.rs",
+      "sha256": "a2580e28bbe2afbb0daf6a773eb3dbd503065243dec3c96fdb488cb2ef6b0ab0",
+      "bytes": 15816,
+      "origins": [
+        "bench/bevy/src/main.rs"
+      ]
+    },
+    {
+      "archive": "inputs/repository/build/bevy-next-probes/c30_control/compile_commands.json",
+      "sha256": "3744d87f30d88d2efd7125d3925b022488aba0e54ed6fc7beeda59fb8a2ca74c",
+      "bytes": 2407015,
+      "origins": [
+        "build/bevy-next-probes/c30_control/compile_commands.json",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\compile_commands.json",
+        "build/bevy-next-probes/nodiv/compile_commands.json",
+        "build/bevy-next-probes/fasttask/compile_commands.json",
+        "build/bevy-next-probes/versioned/compile_commands.json",
+        "build/bevy-next-probes/fasttask_versioned/compile_commands.json",
+        "build/bevy-next-probes/fasttask_versioned_or/compile_commands.json"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/bevy/Cargo.lock",
+      "sha256": "52c7bea687ad50e982bc29bcdf702ecdff2b3c4cd2ca46ce7cc66001b4281a45",
+      "bytes": 26662,
+      "origins": [
+        "bench/bevy/Cargo.lock"
+      ]
+    },
+    {
+      "archive": "inputs/repository/engine/src/entity.c",
+      "sha256": "c7b26c8b166b0494555c210c2de78a3f04ff1e9f154cabf1769b771c06dd3b05",
+      "bytes": 17698,
+      "origins": [
+        "engine/src/entity.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/compiler/src/ast.h",
+      "sha256": "1c0f231090a36e479d023d88799f1faae42b4e1190ee572c77ac87ee020dcd8e",
+      "bytes": 108013,
+      "origins": [
+        "compiler/src/ast.h"
+      ]
+    },
+    {
+      "archive": "inputs/frozen/bevy-before-c30a131da/codegen.c",
+      "sha256": "0342cfe8fafde011bf038d492c4705e91f934b8548f2dedefd5dd4f52f295e30",
+      "bytes": 1234252,
+      "origins": [
+        "compiler/src/codegen.c",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\codegen.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/build/bevy-next-probes/c30_control/CMakeCache.txt",
+      "sha256": "810efe78d0cef0eb00a88d51950fd36f8693da428e51253632503a46e3e0cdfc",
+      "bytes": 23916,
+      "origins": [
+        "build/bevy-next-probes/c30_control/CMakeCache.txt",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\CMakeCache.txt",
+        "build/bevy-next-probes/nodiv/CMakeCache.txt",
+        "build/bevy-next-probes/fasttask/CMakeCache.txt",
+        "build/bevy-next-probes/versioned/CMakeCache.txt",
+        "build/bevy-next-probes/fasttask_versioned/CMakeCache.txt",
+        "build/bevy-next-probes/fasttask_versioned_or/CMakeCache.txt"
+      ]
+    },
+    {
+      "archive": "inputs/repository/cmake/TideFlags.cmake",
+      "sha256": "c90000af80412c6690a27c40fdd1bc00178b46247f3d9b7133fbc2dfb9f6e4c3",
+      "bytes": 2359,
+      "origins": [
+        "cmake/TideFlags.cmake"
+      ]
+    },
+    {
+      "archive": "inputs/frozen/bevy-before-c30a131da/rows_cache_codegen.inc",
+      "sha256": "485acd89238f99fd406e1fe0bcc9674b4903ab3dc00825a4f45e5fb5a8db8a7d",
+      "bytes": 12619,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\rows_cache_codegen.inc",
+        "compiler/src/rows_cache_codegen.inc"
+      ]
+    },
+    {
+      "archive": "inputs/frozen/bevy-before-c30a131da/bench/versus/tide/versus_churn/churn_pack.c",
+      "sha256": "278582b0599a7ca209d92abc666fe9d1428adc10ba8bcdecc9a59030ebfc902d",
+      "bytes": 378,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_churn\\churn_pack.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/versus/churn/main.c",
+      "sha256": "4c02381f3d4f77b427912820acb0288bb6d8a1d98bc6de5694ccf4513af8c3b0",
+      "bytes": 2000,
+      "origins": [
+        "bench/versus/churn/main.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/build/bevy-next-probes/c30_control/bench/versus/tide/versus_particles/particles.c",
+      "sha256": "55ec34f7f668793726196f76cb74bcf0563b6963b265c48eb5835b74fa8f6109",
+      "bytes": 67641,
+      "origins": [
+        "build/bevy-next-probes/c30_control/bench/versus/tide/versus_particles/particles.c",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_particles\\particles.c",
+        "build/bevy-next-probes/nodiv/bench/versus/tide/versus_particles/particles.c",
+        "build/bevy-next-probes/fasttask/bench/versus/tide/versus_particles/particles.c",
+        "build/bevy-next-probes/versioned/bench/versus/tide/versus_particles/particles.c",
+        "build/bevy-next-probes/fasttask_versioned/bench/versus/tide/versus_particles/particles.c",
+        "build/bevy-next-probes/fasttask_versioned_or/bench/versus/tide/versus_particles/particles.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/build/bevy-next-probes/c30_control/bench/versus/tide/versus_churn/churn.h",
+      "sha256": "c019e30ff50fda82aaa0e5cf5f753634093db906de2e700a8773103964c43eb1",
+      "bytes": 21263,
+      "origins": [
+        "build/bevy-next-probes/c30_control/bench/versus/tide/versus_churn/churn.h",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_churn\\churn.h",
+        "build/bevy-next-probes/nodiv/bench/versus/tide/versus_churn/churn.h",
+        "build/bevy-next-probes/fasttask/bench/versus/tide/versus_churn/churn.h",
+        "build/bevy-next-probes/versioned/bench/versus/tide/versus_churn/churn.h",
+        "build/bevy-next-probes/fasttask_versioned/bench/versus/tide/versus_churn/churn.h",
+        "build/bevy-next-probes/fasttask_versioned_or/bench/versus/tide/versus_churn/churn.h"
+      ]
+    },
+    {
+      "archive": "inputs/frozen/bevy-before-c30a131da/bench/versus/tide/versus_particles/particles.h",
+      "sha256": "165f920631bb9e9cac63a208b896866622848c0e63964a3afdc2a27943bb56b3",
+      "bytes": 21350,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_particles\\particles.h",
+        "build/bevy-next-probes/c30_control/bench/versus/tide/versus_particles/particles.h",
+        "build/bevy-next-probes/nodiv/bench/versus/tide/versus_particles/particles.h",
+        "build/bevy-next-probes/fasttask/bench/versus/tide/versus_particles/particles.h",
+        "build/bevy-next-probes/versioned/bench/versus/tide/versus_particles/particles.h",
+        "build/bevy-next-probes/fasttask_versioned/bench/versus/tide/versus_particles/particles.h",
+        "build/bevy-next-probes/fasttask_versioned_or/bench/versus/tide/versus_particles/particles.h"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/bevy/Cargo.toml",
+      "sha256": "f7fb6cb91fd08c7c55a46ee0b85d8e8529347397d5532034e860d1822ec5324f",
+      "bytes": 471,
+      "origins": [
+        "bench/bevy/Cargo.toml"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/versus/particles/main.c",
+      "sha256": "85966fbd2e7388d3d5ab4b5126de4a3220591db7a7fa520b55321202f79bd0e5",
+      "bytes": 2261,
+      "origins": [
+        "bench/versus/particles/main.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/engine/src/jobs.c",
+      "sha256": "513141e929a710f45d6a84fe9af3663d0ea61d8823d010b75fd5ac37e0f308a3",
+      "bytes": 29114,
+      "origins": [
+        "engine/src/jobs.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/engine/src/table.c",
+      "sha256": "0e814efd451928a3183a016f613b2d8b6980719586c2b3a107f3c7c39f55d534",
+      "bytes": 21410,
+      "origins": [
+        "engine/src/table.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/versus/particles/particles.c",
+      "sha256": "dbc7801986a3d5c91d47ef657696e3e7fdc9fdc832763661d829bf1bba420c32",
+      "bytes": 4600,
+      "origins": [
+        "bench/versus/particles/particles.c"
+      ]
+    },
+    {
+      "archive": "inputs/frozen/bevy-before-c30a131da/original-measurement-metadata.json",
+      "sha256": "38aa754215f3d130b71007312d14c31eed67c81fa4a428848742ad47be6fc35c",
+      "bytes": 14433,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\original-measurement-metadata.json"
+      ]
+    },
+    {
+      "archive": "inputs/frozen/bevy-before-c30a131da/bench/versus/tide/versus_churn/churn.c",
+      "sha256": "b8ef8587fb17ccf9404b651d97f129659ff5a256989ac3aac1a11f39d08849e5",
+      "bytes": 67967,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_churn\\churn.c",
+        "build/bevy-next-probes/c30_control/bench/versus/tide/versus_churn/churn.c",
+        "build/bevy-next-probes/nodiv/bench/versus/tide/versus_churn/churn.c",
+        "build/bevy-next-probes/fasttask/bench/versus/tide/versus_churn/churn.c",
+        "build/bevy-next-probes/versioned/bench/versus/tide/versus_churn/churn.c",
+        "build/bevy-next-probes/fasttask_versioned/bench/versus/tide/versus_churn/churn.c",
+        "build/bevy-next-probes/fasttask_versioned_or/bench/versus/tide/versus_churn/churn.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/versus/churn/churn.c",
+      "sha256": "8a52d2b9bf0b9140e3a2899fd99550fd1e80d1a82b252ea64001aa73ba6fb827",
+      "bytes": 5920,
+      "origins": [
+        "bench/versus/churn/churn.c"
+      ]
+    },
+    {
+      "archive": "inputs/frozen/bevy-before-c30a131da/bench/versus/tide/versus_particles/particles_pack.c",
+      "sha256": "27be78f52e3a942f2e1db7798555181314cd69f33e9adf108e628a1753eb0cf2",
+      "bytes": 386,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bench\\versus\\tide\\versus_particles\\particles_pack.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/compiler/src/check.c",
+      "sha256": "945f177eac3297466c86c9851861bb618551bd1055b1224c17e81f6c7ef1ecfe",
+      "bytes": 1099714,
+      "origins": [
+        "compiler/src/check.c"
+      ]
+    },
+    {
+      "archive": "inputs/repository/bench/bevy/README.md",
+      "sha256": "96d15e05a0c1b02e05139f7481085c431a484d81c120a134e16be9bd31b798a6",
+      "bytes": 8164,
+      "origins": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\bench\\bevy\\README.md"
+      ]
+    }
+  ]
+}

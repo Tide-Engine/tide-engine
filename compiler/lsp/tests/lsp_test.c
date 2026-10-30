@@ -962,13 +962,20 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetLOD'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
 
     const char *offered = complete("[$] asset Texture masks = \"art/tile.png\";\nscene Main { }\n");
-    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter"));
+    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter") && offers(offered, "BlendShapes"));
     open_document("[LO$D] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "LOD has simpler versions of a mesh made") && has(last_sent(), "'Rock' isn't a mesh"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "[LOD]") && has(hover, "levels of detail made as the game is built") && has(hover, "Draw.LODCamera"));
     open_document("[Lod] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
+    // [BlendShapes], beside them: offered, explained, refused off an asset, suggested for a misspelling.
+    open_document("[BlendSha$pes(\"jaw*\")] component Face { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "BlendShapes chooses which blend shapes a SkinnedMesh asset keeps"));
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "[BlendShapes(") && has(hover, "any run of characters") && has(hover, "keeps none"));
+    open_document("[BlendShape(\"jaw*\")] component Face { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "did you mean 'BlendShapes'?"));
 }
 
 // Cull, which side of a 3D mesh's triangles draws: both forms, its sides, hovers, and rename fixes.
@@ -3495,6 +3502,19 @@ TIDE_TEST(lsp_snap)
                                    "system S(Body body)\n{\n    var r = body.heading.$\n}\n");
     TIDE_CHECK(offers(methods, "Radians"));
     TIDE_CHECK(!offers(methods, "Interpolate"));
+    // A field that blends snaps alone, in match code; one that doesn't blend, or a view's, has no Snap
+#define FIGHTER "component Fighter { float since; int stance; [Snap] float began; }\nscene Main { }\n"
+    TIDE_CHECK(offers(complete(FIGHTER "system Enter(mut Fighter f)\n{\n    f.since.$\n}\n"), "Snap"));
+    TIDE_CHECK(!offers(complete(FIGHTER "system Enter(mut Fighter f)\n{\n    var s = f.stance.$\n}\n"), "Snap"));
+    TIDE_CHECK(!offers(complete(FIGHTER "system Enter(mut Fighter f)\n{\n    f.began.$\n}\n"), "Snap"));
+    TIDE_CHECK(!offers(complete(FIGHTER "view Show(Fighter f)\n{\n    var s = f.since.$\n}\n"), "Snap"));
+    open_document("component Fighter { float since; }\nscene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Fighter { }); }\n"
+                  "system Enter(mut Fighter f)\n{\n    f.since = 0;\n    f.since.Sn$ap();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *snap = request("textDocument/hover");
+    TIDE_CHECK(has(snap, "This field jumped"));
+    TIDE_CHECK(has(snap, "`entity.Snap()` is the whole entity's"));
+#undef FIGHTER
 }
 
 #define THIS_GAME                                                              \
@@ -6182,6 +6202,16 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(has(request("textDocument/hover"), "physical pixels"));
     snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.image.$ }\n", types);
     TIDE_CHECK(offers(complete(program), "size"));
+    snprintf(program, sizeof program, "%sint2 Size(DepthTexture depth) { return depth.size; }\nview V(Lamp lamp) { Debug.Log($$\"{Size(lamp.shadow)}\"); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { var extent = lamp.shadow.si$ze; Debug.Log($$\"{extent}\"); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "physical pixels"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.shadow.$ }\n", types);
+    TIDE_CHECK(offers(complete(program), "size"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.shadow.size.$ }\n", types);
+    TIDE_CHECK(offers(complete(program), "x"));
     snprintf(program, sizeof program, "%sColor Above(Cubemap sky, float3 way)\n{\n    return sky.$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Sample"));
     snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    float near = depth.Sample(at.xy);\n"
@@ -12254,6 +12284,35 @@ TIDE_TEST(lsp_float_bitcasts_and_float_hash_help)
     open_document("scene Main { }\nview V() { var hash = Math.Ha$sh(float4(1, 2, 3, 4)); Debug.Log(\"\" + hash); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "float's exact bits"));
+}
+
+TIDE_TEST(lsp_skinned_blend_shapes_complete_hover_and_help)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    model.$\n}\n");
+    TIDE_CHECK(offers(completion, "blendShapes") && offers(completion, "Shaped") && has(completion, "Shaped(List<float> weights)"));
+    completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    var n = model.blendShapes.count;\n"
+                          "    model.blendShapes.$\n}\n");
+    TIDE_CHECK(offers(completion, "count") && offers(completion, "TryGetByName") && offers(completion, "TryGetAt")
+               && !offers(completion, "data"));
+    completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                          "    if (model.blendShapes.TryGetByName(\"jawOpen\", out var jaw)) {\n        Debug.Log(jaw.$);\n    }\n}\n");
+    TIDE_CHECK(offers(completion, "name") && offers(completion, "weight") && !offers(completion, "index"));
+    // `out BlendShape` names the type; the static form still offers Decode only.
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    model.blendShapes.TryGetAt(0, out BlendShape first);\n"
+                  "    var open = model.Sha$ped([first.weight, 1]);\n    Draw.SkinnedMesh(open, float4x4.identity);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Shaped(List<float> weights)") && has(hover, "SkinnedMesh<Vertex3>") && has(hover, "extrapolating"));
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    var open = model.Shaped($[0.5]);\n    Draw.SkinnedMesh(open, float4x4.identity);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Shaped(List<float> weights)"));
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    var n = model.blend$Shapes.count;\n"
+                  "    Debug.Log(\"\" + n);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "TryGetByName"));
+    completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
+    TIDE_CHECK(offers(completion, "Decode") && !offers(completion, "Shaped"));
 }
 
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)

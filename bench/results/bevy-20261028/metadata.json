@@ -1,0 +1,159 @@
+{
+  "git_status": [
+    " M bench/versus/versus.c",
+    "?? bench/bevy/"
+  ],
+  "complete": true,
+  "rustflags": "-C target-cpu=x86-64 -C target-feature=-fma",
+  "schema": 1,
+  "warmup": 200,
+  "quiet_resets": [],
+  "quiet_seconds": 15,
+  "revision": "367ae4da2d31913176ae1e2624e1d78a1204f03c",
+  "cpu": [
+    {
+      "Name": "AMD Ryzen 9 7900X 12-Core Processor            ",
+      "NumberOfCores": 12,
+      "NumberOfLogicalProcessors": 24
+    }
+  ],
+  "contention_poll_ms": 250,
+  "rounds": 5,
+  "rustc": [
+    "rustc 1.95.0 (59807616e 2026-04-14)",
+    "binary: rustc",
+    "commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860",
+    "commit-date: 2026-04-14",
+    "host: x86_64-pc-windows-msvc",
+    "release: 1.95.0",
+    "LLVM version: 22.1.2"
+  ],
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "methodology": "Median per scheduled ECS tick; setup/digest/snapshots/network/render excluded; alternating process pairs; default affinity/clocks.",
+  "files": {
+    "bench/versus/particles/particles.c": "dbc7801986a3d5c91d47ef657696e3e7fdc9fdc832763661d829bf1bba420c32",
+    "build/release/bench/versus/tide/versus_wide/wide.c": "eeb5ffaef5f9f44624c9b335543460c543d58de5e5f099760ae72197c8059f6b",
+    "bench/versus/wide/main.c": "3a1c37caf7b33479aa1d00f5ea712e091c024e7f4d17e7f5fcb54e070c47f428",
+    "bench/versus/wide/wide.c": "bea8d6ab07da3adbb59fea3948105b8e6d3e874730dfb14f914a6fe48b474d77",
+    "bench/versus/versus.h": "991338a31bd5a9c9535245aca70655e6e6c95376fa18aa7a0c9bb552f1eee900",
+    "build/release/bin/versus_wide.exe": "945e762e241a9416078632f7e3071bcf6446b373f26b5030be7d07a9f81b599f",
+    "build/release/bench/versus/tide/versus_churn/churn.h": "fb0263f09e9436b95deeddeee5d101c29c99bebcc0619f108eb86f3f5fb288a1",
+    "cmake/TideFlags.cmake": "c90000af80412c6690a27c40fdd1bc00178b46247f3d9b7133fbc2dfb9f6e4c3",
+    "build/bevy/release/tide-bevy-bench.exe": "d83769333a56edceb3aed09ab38878774f8491e9c8b0ba3444db3bcfbeaed081",
+    "bench/versus/versus.c": "3ab538150b5fde6da539916aada418c6040510464b6b59a3ee25da4bb2ae3389",
+    "bench/versus/churn/churn.c": "8a52d2b9bf0b9140e3a2899fd99550fd1e80d1a82b252ea64001aa73ba6fb827",
+    "build/release/bench/versus/tide/versus_particles/particles.h": "813867ceeb1713c00011f60ac87def9e72403fddfb5756f006cf9283c81dff7f",
+    "build/release/bench/versus/tide/versus_churn/churn.c": "659b715555a862457e59348785802c6a0f768f30f5302431491194fec9d50c1e",
+    "bench/versus/churn/churn.tide": "1ef1aab97f3ec8bd4b4a309c898e8b7cf2ca923228dbfe1bc28b2852bfec017c",
+    "bench/versus/churn/main.c": "4c02381f3d4f77b427912820acb0288bb6d8a1d98bc6de5694ccf4513af8c3b0",
+    "bench/versus/particles/main.c": "85966fbd2e7388d3d5ab4b5126de4a3220591db7a7fa520b55321202f79bd0e5",
+    "build/release/bin/versus_churn.exe": "10e1c6e00284907675825d50b6b7ca9f55bdce6c839c097cf3c9606b571173a1",
+    "bench/bevy/Cargo.lock": "52c7bea687ad50e982bc29bcdf702ecdff2b3c4cd2ca46ce7cc66001b4281a45",
+    "build/release/bench/versus/tide/versus_wide/wide.h": "24d01d01ea002fe053368bef025f88ff1c070aeb4c636ed6781a9fc87c3a1f09",
+    "build/release/compile_commands.json": "07e5cf183ecdfb107f0070f1c20e82e55d5c2e32a9e4d6b977c53413712bc45a",
+    "build/release/CMakeCache.txt": "810efe78d0cef0eb00a88d51950fd36f8693da428e51253632503a46e3e0cdfc",
+    "bench/bevy/Cargo.toml": "f7fb6cb91fd08c7c55a46ee0b85d8e8529347397d5532034e860d1822ec5324f",
+    "build/release/bench/versus/tide/versus_particles/particles.c": "365f8f116c699d33c68030a32845b2ab2286f51202ca73cf54f24cd7a1e46c5e",
+    "bench/versus/particles/particles.tide": "f5db7f030b8182cd1b180c962073dc6f19e4c38f671436b77781b920438b60f2",
+    "build/release/bin/versus_particles.exe": "f41262c0eb12bea0c586bce08316d5b04d22704481e4f2674e3ef29fea5f2542",
+    "bench/bevy/src/main.rs": "a2580e28bbe2afbb0daf6a773eb3dbd503065243dec3c96fdb488cb2ef6b0ab0",
+    "bench/bevy/run.ps1": "1c7f5587a8464e718176ed5c1969351859481e5c1d22bd5fbc11a547e9416c2b",
+    "bench/versus/wide/wide.tide": "8ed14d5871bc215208b5084c81567be33076b2839dca1921bdc3d780e20986f5"
+  },
+  "finished": "2026-10-28T20:40:19.6603255Z",
+  "cases": [
+    {
+      "rate": 0,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "particles-10k-1",
+      "threads": 1,
+      "workload": "particles",
+      "count": 10000
+    },
+    {
+      "rate": 0,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "particles-100k-1",
+      "threads": 1,
+      "workload": "particles",
+      "count": 100000
+    },
+    {
+      "rate": 0,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "particles-1m-1",
+      "threads": 1,
+      "workload": "particles",
+      "count": 1000000
+    },
+    {
+      "rate": 0,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "particles-1m-4",
+      "threads": 4,
+      "workload": "particles",
+      "count": 1000000
+    },
+    {
+      "rate": 0,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "wide-1m-1",
+      "threads": 1,
+      "workload": "wide",
+      "count": 1000000
+    },
+    {
+      "rate": 0,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "wide-1m-4",
+      "threads": 4,
+      "workload": "wide",
+      "count": 1000000
+    },
+    {
+      "count": 1000000,
+      "tagged": 1,
+      "workload": "wide",
+      "frozen": 50,
+      "id": "filtered-1m-1",
+      "threads": 1,
+      "rate": 0
+    },
+    {
+      "count": 1000000,
+      "tagged": 1,
+      "workload": "wide",
+      "frozen": 50,
+      "id": "filtered-1m-4",
+      "threads": 4,
+      "rate": 0
+    },
+    {
+      "rate": 2000,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "churn-2k-1",
+      "threads": 1,
+      "workload": "churn",
+      "count": 0
+    },
+    {
+      "rate": 2000,
+      "tagged": 0,
+      "frozen": 0,
+      "id": "churn-2k-4",
+      "threads": 4,
+      "workload": "churn",
+      "count": 0
+    }
+  ],
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "started": "2026-10-28T20:38:23.5825493Z",
+  "ticks": 400
+}

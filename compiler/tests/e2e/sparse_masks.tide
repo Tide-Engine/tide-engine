@@ -1,0 +1,68 @@
+// Sparse-only traversal with rare intersections and exact row-range tails.
+scene Main;
+
+component Item
+{
+    int ordinal;
+    int visits;
+    byte small = 9;
+}
+
+[Sparse]
+component NeededA { }
+[Sparse]
+component NeededB { }
+[Sparse]
+component SkippedA { }
+[Sparse]
+component SkippedB { }
+
+singleton Rules
+{
+    int count;
+    bool ready;
+    bool heavy;
+    List<int> seen;
+}
+
+system Setup(mut Rules rules)
+{
+    if (rules.ready) return;
+    rules.ready = true;
+    for (var i = 0; i < rules.count; i++)
+    {
+        var made = Spawn(Item { ordinal = i });
+        var at = i % 128;
+        if (at == 0 || at == 15 || at == 16 || at == 31 || at == 32 ||
+            at == 63 || at == 64 || at == 127 || i == rules.count - 1)
+            made.Add(NeededA);
+        if (i % 5 != 2) made.Add(NeededB);
+        if (at == 31) made.Add(SkippedA);
+        if (at == 16) made.Add(SkippedB);
+    }
+}
+
+system Clear(mut Rules rules)
+{
+    rules.seen.Clear();
+}
+
+// The never-set heavy flag makes the scheduler split chunks in the pooled
+// case. The ordinary update still has a plain independent C model.
+system Update(mut Item item, Rules rules, with NeededA, with NeededB, without SkippedA, without SkippedB)
+{
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) item.visits += i;
+    }
+    item.visits += 1;
+    item.small += 3;
+    if (item.ordinal % 3 == 0) this.Remove(NeededB);
+}
+
+// The ordered list also observes the first traversal's deferred presence
+// writes: all its original matches still run until the end of this tick.
+system Record(Item item, mut Rules rules, with NeededA, with NeededB, without SkippedA, without SkippedB)
+{
+    rules.seen.Add(item.ordinal);
+}

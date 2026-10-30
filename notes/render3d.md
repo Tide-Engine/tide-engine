@@ -1,5 +1,188 @@
 # Render3D package
 
+## GPU fixture use-after-free resolved (2026-10-29)
+
+The owner requested investigating the intermittent native skinning crash rather
+than accepting another retry. On baseline `19fe15426`, Windows AddressSanitizer
+reproduces a heap-use-after-free on the first scene transition in
+`skinning_pixels.c`, `material_pixels.c` and `pixels.c`. Skinning reproduces on
+OpenGL too: this failure is in common test-host cleanup, not Vulkan-only code.
+Twelve ordinary debugger launches passed, so debugger retries alone did not
+identify it.
+
+The failing stack is `tide_render_target_live` (`draw.h:710`) through
+`forget_disposed_targets` (`platform.c:2465`), `draw_list`, and the next scene's
+pixel readback. The previous scene called `tide_draw_free`, which zeroed its
+epoch, then `tide_render_targets_free`, which released managed target states.
+The platform still cached those target IDs. Another zero-epoch draw skipped
+cache invalidation and read `state->alive` through a freed pointer. The sanitizer
+reports the allocation in Render3D Prepare, the free in scenario teardown, and
+the later read independently. Whether the freed allocation stays readable
+explains why ordinary runs could pass and a debugger changed the symptom.
+
+These three multi-scene fixtures now retain the main draw list and call
+`tide_draw_forget` before releasing target bookkeeping; the increasing epoch
+invalidates cached targets before the next scene inspects them. The list is
+freed once after all scenarios. This follows the existing standard host's
+`tide_run_end` contract. No extra GPU flush, runtime/backend change, tolerance
+change or skipped assertion is needed. Existing multi-scene pixel tests are the
+regression; their unchanged oracles continue to check rendering and match hashes.
+
+Baseline sanitizer logs and the scoped build are under ignored
+`build/crash-analysis` and `build/crash-asan`. The latter uses clang 23.1.2,
+`-fsanitize=address -fno-omit-frame-pointer` for compilation and
+`-fsanitize=address` for linking; its LLVM Windows sanitizer DLL directory is
+on the process PATH, `ASAN_OPTIONS=detect_leaks=0`, and `TIDE_HIDDEN=1` throughout.
+All six fixed sanitizer CTests pass on Vulkan/OpenGL with the usual Vulkan
+validation environment. The same six ordinary native CTests pass ten consecutive
+launches each (`--repeat until-fail:10`, 60 passes with no retry exclusions).
+All nine corresponding web checks pass on WebGL, ANGLE D3D11 and WebGPU.
+No unrelated suite, mobile/other native OS run or extra CI dispatch was needed.
+
+## Height parallax direction (2026-10-29)
+
+The owner noticed the mapped cube's relief looked inverted and authorized the
+correction. Its generated height map already has raised bright centers and dark
+grooves; its normals are derived from the same height gradients. `ParallaxUV`
+instead subtracted the tangent-plane view offset while `viewDirection` points
+from surface to eye, interpreting bright values as inward depth. It now adds
+the offset: positive `heightScale` means brighter is raised, darker recessed,
+and 0.5 neutral. Negative scale reverses the relief. The single sample, grazing
+denominator floor, UV-only behavior and shared color/cutout-shadow path remain.
+No texture, normal-map convention, runtime or compiler change is needed.
+
+The previous numeric and pixel expectations encoded the reversed sign. A new
+CPU oracle intersects camera rays with offset planes and recovers UVs from
+the hit points, covering both UV axes and view directions, rotated/mirrored
+frames, below/above/neutral/clamped heights and positive/zero/negative scales.
+Material GPU witnesses independently intersect the authored quad's relief
+plane for emission stripes and cutout coverage in color and shadow passes,
+including both camera sides, black/neutral/white maps and disabled parallax.
+The material and skinning targets build native/web; all six focused native
+CTests and eight web CTests pass across runs, covering Vulkan/OpenGL and
+WebGL/ANGLE D3D11/WebGPU. The initial Vulkan skinning process crashed without
+diagnostics; the unchanged binary passes under LLDB with validation enabled
+and in the isolated CTest retry. No cause or correction for that intermittent
+failure is claimed, consistent with the earlier skinning crashes below.
+The materials demo builds native/web, the scripted native close-up now shows
+raised tile relief, and the production docs build passes with its existing
+unstaged-example prerender 404 notices. No other native OS/mobile or Unity
+execution was run locally. All tolerances and simulation hash checks remain.
+
+## Higher initial shadow detail (2026-10-29)
+
+The owner approved a higher default resolution after inspecting the cascaded
+shadows. `shadowResolution` now defaults to 2048 and the atlas cap is 4096, so
+one default four-cascade directional uses four 2048-square cells, rather than
+having a higher request silently reduced by the former 2048 atlas cap. The
+default atlas has four times the depth texels; filter tap counts are unchanged.
+Explicit lower resolutions remain supported.
+
+The existing texture-size query is completed for `DepthTexture` (contracts and
+tests in textures.md). After requesting an atlas size, Render3D reads its physical
+dimensions without allocating a GPU image. If the device clamps it, the package
+caches that smaller limit in derived `shadowAtlasLimit`, realigns to whole cells
+and resizes to the physical dimensions before drawing. Gutters, filter phase,
+point-face edge clamps, bias and cascade snapping therefore keep real texels.
+The cached limit resets when renderer resources are recreated; a lower device
+limit discovered later is also honored. The standard host supplies the existing
+target-size resolver; custom C hosts must bind `draw.target_pixels` likewise.
+Without that metadata the query reports zero and Render3D retains its request.
+
+CPU coverage pins the default 2048 cells/4096 atlas, a simulated 2048 device,
+actual-pixel gutters and cascade fitting, no repeated resizing after fallback,
+an explicit lower request and three-column rounding. GPU witnesses exercise
+the default and a simulated smaller device with the existing independent
+cascade and tent-filter oracles. All 31 focused native CTests pass (the complete
+Render3D package, texture/depth metadata and diagnostics, and platform shader
+pixels on Vulkan/OpenGL). Another 23 depth diagnostics/SPIR-V/HLSL checks and
+the targeted LSP completion/hover check pass. All 38 corresponding web CTests
+pass, including WASI CPU tests and WebGL, ANGLE D3D11 and WebGPU pixels.
+The production docs build passes;
+unstaged example routes still produce its existing prerender 404 notices.
+The native materials demo rebuilt and its scripted close-up capture was inspected
+at the new default. Actual minimum-capability mobile hardware, other native OSes
+and Unity execution remain unavailable locally; the smaller-device path is
+covered by a simulated resolver on the tested backends.
+
+## Camera-fitted cascades and stable shadow filtering (2026-10-29)
+
+The owner requested improving the official renderer after the materials example
+showed soft but ragged shadows. Directional shadows now default to four
+camera-fitted cascades. `shadowCascades` clamps to 0..4; zero explicitly selects
+the existing fixed `shadowCenter`/`shadowExtent`/`shadowDistance` volume.
+`shadowRange = 40` bounds camera-forward receiver depth, limited by the main
+camera far plane. It is separate from `shadowDistance`, which supplies upstream
+caster reach in cascade mode and retains total light-depth meaning in fixed mode.
+
+Each directional light reserves all its cascades or none, in the existing
+priority order. Point faces still reserve six together; spots and fixed
+directionals reserve one. The 8-view default budget, 16-view maximum and portable
+2048-square atlas cap remain. A directional with four cascades plus one shadowed
+point therefore needs `maxShadowMaps >= 10`. Allocation happens before fitting,
+so snapping uses actual cell interiors (`cell - 4`), including resolution
+reductions caused by other lights. The original caster submission paths remain.
+
+Splits average uniform and logarithmic camera depth. Rotation-independent sphere
+bounds cover each slice plus the preceding transition band; light-space XY
+centers snap to interior texels. Two-texel padding covers snap/filter footprints.
+Light-depth bounds include the sphere plus `shadowDistance` toward the light,
+retaining off-camera casters. The final 10% of each nominal slice smoothly blends
+to the next; the last fades to lit. The shader selects by camera-forward depth.
+Per-view bias scales existing normalized offsets by world texel size and inverse
+light-depth span relative to the original 20-unit/1020-texel/40-depth defaults.
+Fixed, point and spot views retain bias scale one and point-face seam handling.
+
+The former fixed +/-0.75-texel filter gave the center less weight than its
+neighbors at texel centers. It is replaced by an exact separable [1,2,1] tent:
+phase-dependent pairing reconstructs nine bilinear comparisons with four reads.
+Every read still clamps to its own atlas interior. There is no stochastic jitter
+or temporal history. Vulkan's existing nearest-comparison fallback on depth
+formats without linear filtering does not reproduce the exact tent; that backend
+limitation is documented and is not changed here. No runtime API, compiler or
+simulation behavior changes are introduced.
+
+Existing fixed-volume material, skinning, batch and pipeline fixtures now select
+zero cascades explicitly; the benchmark does likewise to preserve its workload.
+The three demos fit shadow range to their camera/exhibit, as recorded in
+docs-site.md. Leaf textures and cutout semantics are unchanged: the observed
+large scallops are consistent with magnifying the 128-square mask and raising
+its cutoff, not evidence of an incorrect sampler binding.
+
+Independent CPU oracles cover the tent convolution and center of mass, rotated
+frusta and transition overlap, upstream extrusion, oblique and both vertical
+lights, actual-resolution light-space snapping, rotation/subtexel stability,
+atomic mixed-light budgets, fixed mode, retained resources and unchanged match
+hashes. GPU witnesses use a real off-camera caster and controlled depth tiles
+to pin cascade selection, transition/far fading and a normalized monotonic edge
+at 1x/2x. The new three native and four web CTests pass; adding oblique/vertical
+CPU rows also passes native/WASI. Existing 17 native and 22 web package checks
+pass across focused runs, including all material/skinning/batch regressions on
+Vulkan/OpenGL and WebGL/ANGLE D3D11/WebGPU. One initial Vulkan material process
+crashed without diagnostics; it passes under LLDB and the isolated CTest retry
+without a code change. Its cause remains unknown, as with historical isolated
+Vulkan crashes recorded below. Native CTests enable the installed validation layer.
+
+Native and web benchmark quick checks pass (two each), preserving the explicitly
+fixed workload. No new timing result or historical pixel equivalence is claimed.
+All three docs demos build native/web, and their source/rendering/camera/control
+smokes pass on WebGL and WebGPU. The production docs build passes with only these
+examples staged (unrelated unstaged example routes produce prerender 404 notices).
+Native default/zoomed-orbit captures were inspected; evidence remains under the
+ignored build/shadow-quality directory. Source review found no blocking defect
+and prompted the oblique-light coverage and Vulkan fallback clarification.
+
+Four cascades add caster passes and atlas storage versus the former single map;
+the filter keeps four reads per map, with a second map sampled in transition
+bands. No measured frame-time claim accompanies this change. Mobile, other
+native OSes, Unity player execution, nearest-only Vulkan depth filtering and
+old-layout hot reload remain untested locally.
+
+The origin/dev merge brings aa8269a9a's independent GUI-style example and guide.
+Only the docs note's insertion point conflicted; both complete entries are kept.
+No Render3D source or dependency changed, so the focused validations above are
+not repeated for that unrelated incoming work.
+
 ## Skinning, shared vertex deformation and HDR effects (2026-10-25)
 
 The owner requested extending this package rather than implementing another

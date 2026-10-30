@@ -8,6 +8,7 @@
 // web). When worlds' storage or transfer changes on purpose, the tests print what they got; both games must
 // print the same.
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,17 +16,20 @@
 #include "game.h"
 #include "tide_test.h"
 
-#define SAME_HASH UINT64_C(0xAB58CD3A5BFEE54F)
-#define SAME_WHOLE_SIZE 219u
-#define SAME_WHOLE UINT64_C(0xD49D9FE755B1C27F)
-#define SAME_DELTA_SIZE 122u
-#define SAME_DELTA UINT64_C(0xE1D6B6872BC8EB96)
+#define SAME_HASH UINT64_C(0x7DA3DCEF6129C1DB)
+#define SAME_WHOLE_SIZE 207u
+#define SAME_WHOLE UINT64_C(0x3D561FB1CE247599)
+#define SAME_DELTA_SIZE 124u
+#define SAME_DELTA UINT64_C(0xD05916C20C33E8ED)
+// Raw headers are pointer-sized in places, so their pins are the platform's.
+// Since tags move entities (2026-10-29) this game's tag is an archetype's, so
+// it has no sparse filter and no derived cache slot.
 #if UINTPTR_MAX > 0xFFFFFFFFu
-#define SAME_PACKED_SIZE 391u
-#define SAME_PACKED UINT64_C(0x86C35F36016263E9)
+#define SAME_PACKED_SIZE 521u
+#define SAME_PACKED UINT64_C(0x7974D0233467449D)
 #else
-#define SAME_PACKED_SIZE 363u
-#define SAME_PACKED UINT64_C(0x2B6955DB84AECDF9)
+#define SAME_PACKED_SIZE 465u
+#define SAME_PACKED UINT64_C(0x1DDEB056DC63EFBD)
 #endif
 
 static uint64_t same_bytes_hash(const uint8_t *bytes, const uint32_t size)
@@ -62,10 +66,28 @@ static void same_match_check(tide_world *w, tide_world *base, void (*between)(co
     const bool same = hash == SAME_HASH && packed_size == SAME_PACKED_SIZE && packed_hash == SAME_PACKED
                    && whole_size == SAME_WHOLE_SIZE && whole_hash == SAME_WHOLE && delta_size == SAME_DELTA_SIZE
                    && delta_hash == SAME_DELTA;
+    // Derived query-cache ownership must never enter a raw saved header, in a
+    // game whose filters keep one (TIDE_ROWS_CACHE_ABI: a sparse filter)
+#ifdef TIDE_ROWS_CACHE_ABI
+    const uint32_t cache_begin = (uint32_t)offsetof(tide_world, tide_rows_cache);
+    const uint32_t cache_end = cache_begin + (uint32_t)sizeof w->tide_rows_cache;
+    for (uint32_t i = cache_begin; i < cache_end; i++) TIDE_CHECK(packed[i] == 0);
+#endif
     if (!same) {
         printf("    hash 0x%016llX\n    packed %uu 0x%016llX\n    whole %uu 0x%016llX\n    delta %uu 0x%016llX\n",
                (unsigned long long)hash, (unsigned)packed_size, (unsigned long long)packed_hash, (unsigned)whole_size,
                (unsigned long long)whole_hash, (unsigned)delta_size, (unsigned long long)delta_hash);
+#ifdef TIDE_ROWS_CACHE_ABI
+        // This isolates the intentional opaque-pointer header growth when
+        // comparing the current raw save with its pre-cache pin.
+        uint64_t without_cache = UINT64_C(0xCBF29CE484222325);
+        for (uint32_t i = 0; i < packed_size; i++) {
+            if (i >= cache_begin && i < cache_end) continue;
+            without_cache = (without_cache ^ packed[i]) * UINT64_C(0x100000001B3);
+        }
+        printf("    packed without zero cache slot %uu 0x%016llX\n",
+               (unsigned)(packed_size - (cache_end - cache_begin)), (unsigned long long)without_cache);
+#endif
     }
     TIDE_CHECK(same);
     TIDE_CHECK(tide_world_entity_count(w) == 4);

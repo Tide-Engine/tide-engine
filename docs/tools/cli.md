@@ -33,6 +33,10 @@ tide <command> [folder] [options]
 | `tide deploy [folder]` | Creates or reuses a project and saves its link in `tide.deploy.json`; builds and uploads locally. `--server-only` omits the client, `--bundle-only` only builds |
 | `tide cc <options>` | clang, built into tide, for C you build yourself (see [Calling C](../c/functions.md#where-the-c-goes)) |
 
+Project build and package commands automatically use the version pinned with
+`tide pin`, asking before downloading a missing release into the shared
+version cache. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
+
 Managed deployment, project selection, prepaid credit and current availability
 are described in [Managed hosting](../multiplayer/hosting.md).
 
@@ -138,11 +142,13 @@ still performs only front-end validation, even with a preview flag.
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
-| `--capture`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
+| `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--interactive`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
+| `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
 | `-o <path>` | `build` only: where the program goes |
+| `--single-file` | `build --web` only: one self-contained `.html` with the game inside, which opens from disk, instead of a folder whose page downloads the game (see [The page while it loads](#the-page-while-it-loads)) |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
 Choose a startup without writing a `Main` scene:
@@ -173,9 +179,24 @@ artifact.
 
 The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
-`tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
+Standalone `tide build --release` also removes readable system/view profiling labels, shader labels, event/command diagnostic names, and assertion source lines and paths. Asset loading uses the pack's existing SHA-256 name IDs directly. Assertions still check their conditions and keep messages you wrote; profiles and failures use IDs. Resolve them with `.tide/<target>-release/gen/game.names`, a private diagnostic map for that build. Keep that map with your build records, and distribute only the finished game files, never `.tide/`, generated C, debug files or the map. Replacing a native debug output with a release removes its old debugger sidecars. Debug, watched/hot-reload and Unity builds retain their names.
 
-Web releases compress the program and assets inside that file and use a smaller page runtime. Decoding is included, so playing or building a packaged Tide game needs no extra tools or downloads. Debug and hot-reload pages keep their readable runtime and original payloads.
+Shipping shader source also replaces function, type, field, parameter and local identifiers derived from Tide names with short tokens. Renderer bindings and shader entry points stay fixed. The private map records the original identifiers for each shader stage. Expressions, numeric literals and layouts stay the same.
+
+Standalone macOS release executables expose no public symbols. Android's shipping `libgame.so` exports only `ANativeActivity_onCreate`, the entry point Android loads. Additional shared libraries supplied by your game keep their own exports; code needing a public dynamic API should provide it in a separate library. Hot-reload and Unity libraries retain their host APIs.
+
+This makes reverse engineering less convenient; it does not encrypt a game or prevent copying a downloaded demo. Game text, lookup keys, model contents and executable shader source remain available where the game needs them. For a custom compiler pipeline, `tidec --strip-names` applies the same metadata policy and writes `<name>.names` beside its generated C. CMake's standard-host `Release`/`MinSizeRel` games enable it automatically; custom hosts, layout/embed targets, `RelWithDebInfo` and explicit debugger-visualizer builds retain names unless their compiler pipeline explicitly requests stripping. `tide_add_game(... STRIP_NAMES)` opts in explicitly, including for custom hosts. Required layout/embed metadata still retains its names. The repository's `release` preset uses `RelWithDebInfo` for profiling; use `tide build --release` for a shipping build.
+
+`tide build --release --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
+
+`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web releases compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Release pages of either kind use a smaller page runtime. Debug and hot-reload pages keep the readable runtime and original payloads.
+
+### The page while it loads
+
+Until the game first draws, the page shows what it's doing: how much of the game has downloaded, then that it's starting. A game's `icon.png` (in its folder, as for [Android](#android)) shows above that, and is the page's icon in the browser's tab. For a page of your own, put a `shell.html` in the game's folder: it replaces the page around the game, its loader included, under `tide build --web` and `tide run --web`. It's a whole HTML page with `{{{ SCRIPT }}}` at the end of its `<body>`, where the game's script goes. Start from [Tide's own](https://github.com/Tide-Engine/tide-engine/blob/dev/platform/web/shell.html):
+
+- An element with the ID `tide-loading` is the loader: the game takes it away once it has drawn, and fills in the elements in it with the IDs `tide-loading-bar` (a bar, whose first child's width is how much has downloaded), `tide-loading-text` (what's happening, in words) and `tide-loading-logo` (an `<img>` for the icon). Leave it out for no loader.
+- `Tide.onProgress`, set in the `var Tide = { ... }` before the game's script, is told each step for a loader of your own: `{ stage, loaded, total, error }`, where `stage` is `download` (`loaded` of `total` bytes), `compile`, `waiting` (for `Tide.start()`, on a page that set `Tide.wait`), `start` (the game is running, until it first draws), `done` (it drew) or `error` (it couldn't start, and `error` says why).
 
 Standalone release builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Debug and hot-reload builds keep their usual code and asset loading behavior.
 
@@ -229,6 +250,8 @@ The list is two columns, a label on the left and its value on the right, in four
 | `renderer` | What draws: Vulkan, OpenGL 3.3, OpenGL ES 3, WebGPU or WebGL 2 |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
+Vertex counts use decimal suffixes: `123.5K` for thousands, `97M` for millions and `4.3B` for billions, continuing with `T`, `P` and `E` for larger counts. Counts below 1,000 stay exact; larger counts round to one decimal, with trailing zeroes omitted.
+
 Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
 
 A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game, unless the frame rate in a corner is what you want them to have.
@@ -258,7 +281,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 
 - The app's ID is the game's `appId` setting (see [Settings](../language/basics.md#settings)). Without one, it's `dev.tide.<the game's name>`, which is fine for testing, but `--release` needs one.
 - Its name under its icon is the game's `title` setting, or `--title`, or else the game's name.
-- Its icon is `icon.png` in the game's folder: a square PNG, 512 by 512 pixels is plenty. Without one, it's Tide's.
+- Its icon is `icon.png` in the game's folder: a square PNG, 512 by 512 pixels is plenty. Without one, it's Tide's. It's a web page's icon too, shown while the page loads (see [The page while it loads](#the-page-while-it-loads)).
 - The Android libraries in the game's folder (`.so` files) go in the app with the game (see [Calling C](../c/functions.md#android)).
 - `tide` signs apps with a key it makes on your computer the first time, `~/.android/tide.pem`. A phone only takes an update to an app signed with the same key, so keep a copy of it somewhere safe, and don't share it: whoever has it can sign apps as you. `tide run --android` replaces an app another computer installed.
 - To sign with another key (a build server's, or one you already have), set `TIDE_ANDROID_KEY` to its file: PEM, the private key (RSA, 2048 bits or more) and then its certificate. `openssl pkcs12 -in upload.p12 -nodes -out key.pem` makes one from a keystore; a `.jks` keystore becomes a `.p12` first with `keytool -importkeystore -srckeystore upload.jks -destkeystore upload.p12 -deststoretype PKCS12`.
@@ -557,6 +580,31 @@ server executable; browser players still connect through WebRTC.
 
 To check a match with no window on screen, `--players` plays [several players](#several-players) at once and takes a picture from each.
 
+### A slow network
+
+On one machine, or on a fast network, a match feels better than it will online: what another player does shows up at once. To feel and tune it as players far apart will, make the way to the match's server worse:
+
+| Option | What it does |
+|---|---|
+| `--latency <ms>` | Each datagram takes this many milliseconds more, each way, so the ping is twice that more |
+| `--jitter <ms>` | ...and up to this many more, at random, each way, so datagrams also come out of order |
+| `--loss <percent>` | This share of datagrams is lost, each way, from 0 to 100 |
+
+```
+tide run --connect 192.168.1.5 --latency 80 --jitter 10 --stats   # join a match on the network as if from far away
+tide run --players 2 --latency 80 --script duel.txt               # two players with no window, the second 80 ms from the first
+```
+
+They're the way from this machine to a match it joins, with `--join`, `--connect`, a game's own `Session.Join` and `Session.Connect`, or a dedicated server's match. A machine that runs the match's server adds nothing: its own player has no way to go, and the way to every other player is that player's. So set them on the machine that joins; the one that runs `--host` needs none. The [stats](#stats) show the ping that makes.
+
+With [several players](#several-players), each player who joins is that far from the match's server. Player 1, who opens it, isn't. `<player>:<value>` says one player's own, which wins over everyone's: `--latency 80 --latency 3:150` puts players 2 and 4 80 ms away and player 3 150 ms. A run like this still repeats exactly: the same datagrams are late and lost every time, so a script and its pictures show the same moment from each player's side, like the joining player's under 80 ms. Each way also has the frame that a packet takes there anyway.
+
+On the web, `?latency=80`, `?jitter=10` and `?loss=5` in the page's address do the same, as does `tide run --web --latency 80`.
+
+::: info Provisional
+These options are new: their names, `<player>:<value>`, and that a machine running the server adds nothing may still change.
+:::
+
 ### In a web page's address
 
 A game's web page takes the same from its address, so a link can say which match it's for:
@@ -565,6 +613,7 @@ A game's web page takes the same from its address, so a link can say which match
 |---|---|
 | `?host` | As `--host`: the game opens its match, in a room |
 | `?join=K7QF2M` | As `--join K7QF2M`: the game joins the match in that room. A game's `Session.invite` is that link to its own page, for a player to send |
+| `?latency=80`, `?jitter=10`, `?loss=5` | As `--latency 80`, `--jitter 10` and `--loss 5`: the way to a match the page joins is that much worse (see [A slow network](#a-slow-network)) |
 | `?lag=100` | The page's player has a ping of 100 milliseconds, the round trip to the match's server, to see a match as on a slow connection with both players at one desk. What the trip takes already counts: the page holds back what it sends and what it receives by half of what's missing each. A page that hosts the match adds nothing |
 | `?embedded` | The game is part of a page that scrolls, in a frame of it, and leaves that page its scrolling: the wheel, and a finger that swipes up or down, until the player taps the game |
 | `?wait` | The game loads, and starts when the page around it says so |
@@ -603,10 +652,12 @@ tide run --frames 300 --capture menu.png --stats
 | Option | What it does |
 |---|---|
 | `--capture <file.png>` | Writes the run's last frame as a PNG |
+| `--record <file.gif>` | Writes the whole run as a GIF that loops: every second frame, so 30 a second, each shown as long as it was. `record` lines in a [script](#scripts) record part of a run |
 | `--capture-audio <file.wav>` | Writes everything the run played as a WAV (16-bit stereo at 48 kHz). A game with no sound gives silence, a 60th of a second a frame |
 | `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
+| `--interactive <replay.txt>` | Keeps the game alive for [dynamic input and captures](#interactive-play), saving executed actions as a replay script |
 | `--players <n>` | Plays the game `n` times at once, as the `n` players of one match (see [Several players](#several-players)) |
 | `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/render-targets.md) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
@@ -618,6 +669,8 @@ These options' names and the script's format are new, and may still change.
 
 The picture is what the window would show: the views, the GUI over them, and the stats and the profiler when they're on. It's `--size` times `--scale` pixels: `--size 1280 720 --scale 2` is 2560 by 1440. The [stats](#stats) are as a player would have them: one line unless the run asked with `--stats`, and a script's click on that line, or its `key f8`, opens them.
 
+A recording is those pictures, every second one, as a GIF: 30 a second, since players show a GIF's frames no faster than 50 a second, and it lasts as long as the run would have in a window. A frame has 256 colors at most: one with more gets the 255 nearest its own, which smooth gradients show as bands. It's written as the run goes, so a long one needs no memory for it; a second of a game's usual flat colors is a few PNGs' worth.
+
 Nothing of the run depends on the machine it's on, or on what's happening there:
 
 - **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
@@ -627,12 +680,12 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so a run like this isn't for a match with another machine, or with another run: neither would wait for the other. A match with [several players](#several-players) is one run, which plays them all.
 
-Something has to end a run nobody can close: `--frames`, or the script's `quit`. The run's exit code says how it went:
+Something has to end a run nobody can close: `--frames`, the script's `quit`, or an interactive controller's `quit`/closed input. The run's exit code says how it went:
 
 | Exit code | What happened |
 |---|---|
-| 0 | The run ended at `--frames` or `quit`, and its pictures were written |
-| 1 | A picture couldn't be written. Folders aren't made for it |
+| 0 | The run ended at `--frames` or `quit`, and its pictures and recordings were written |
+| 1 | A picture or a recording couldn't be written. Folders aren't made for it |
 | 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 
 A game `tide build` made takes the same options itself, so a build server needs no `tide`: `.build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
@@ -652,7 +705,7 @@ Each player is a copy of the game, a program of its own, as on a machine of its 
 - **Addresses.** `Session.Connect` reaches the first player whose match is open on the address's port, 7777 unless `Session.Open(port)` picked another. The rest of the address says nothing here, and no name is looked up. A port nobody opened never answers, and the game times out, as on a network.
 - **One script for everyone.** A line says whose it is after its frame: `120 player 2 key d down`. Input that names no player is player 1's, so a script for one player plays as it did. `quit` and `--frames` end the run for everyone.
 - **Leaving and coming back.** `300 player 2 leave`, `drop` and `rejoin` say whose match changes, which tests what a game does when a player goes and returns: `PlayerLeft`, seats that free up, a player who comes back as the same `PlayerID`. A host that leaves or drops ends its match for the others, as on a network.
-- **Pictures from each.** A file gets its player's number before the extension: `capture fight.png` writes `fight-1.png` and `fight-2.png`, and `--capture`, `--capture-audio` and `capture-audio` go the same way. `400 player 2 capture hers.png` takes player 2's alone, as `hers-2.png`.
+- **Pictures from each.** A file gets its player's number before the extension: `capture fight.png` writes `fight-1.png` and `fight-2.png`, and `--capture`, `--record`, `record`, `--capture-audio` and `capture-audio` go the same way. `400 player 2 capture hers.png` takes player 2's alone, as `hers-2.png`.
 - **A game that stops ends the run.** When one player's game ends before the run does (it stopped, or couldn't write a picture), the run says which player's and at which frame, the others end with it, and the exit code is that game's (1, when the system stopped it).
 
 ```
@@ -663,7 +716,7 @@ Each player is a copy of the game, a program of its own, as on a machine of its 
 310 quit
 ```
 
-A packet takes a frame each way, in every run, so a player's [ping](../multiplayer/matches.md#where-this-machine-stands) is a few frames long, and the same each time. A run has 32 players at most, and no more than the game's `maxPlayers`. It takes no `--host`, `--join` or `--connect`: who's in the match is the run's to say, or the game's. A match whose host leaves ends for the others: it can't [change hands](../multiplayer/matches.md#host-migration), which goes through the relay.
+A packet takes a frame each way, in every run, so a player's [ping](../multiplayer/matches.md#where-this-machine-stands) is a few frames long, and the same each time. `--latency`, `--jitter` and `--loss` put the players who join further away, or one of them (see [A slow network](#a-slow-network)). A run has 32 players at most, and no more than the game's `maxPlayers`. It takes no `--host`, `--join` or `--connect`: who's in the match is the run's to say, or the game's. A match whose host leaves ends for the others: it can't [change hands](../multiplayer/matches.md#host-migration), which goes through the relay.
 
 `--players 1` is a run of one whose network is made up too: its match opens in room `AAAAAA` with nobody to join it, and its pictures have no number.
 
@@ -675,13 +728,86 @@ This is new, and its details may still change: the option's name, the rooms' cod
 
 Set the `TIDE_HIDDEN` environment variable where nobody is there to look at a window, or to close one: on a build server, or in the shell of an agent that works on your machine while you do. Any value but nothing or `0` counts. No Tide game shows a window there, however it's started:
 
-- A run with no window goes as ever: `--frames`, `--capture` and `--script`.
+- A run with no window goes as ever: `--frames`, `--capture`, `--script` and `--interactive`.
 - Any other run is refused, with exit code 2, before anything is built or opened. Only closing its window would end it, and nobody could. The message says what to give the run instead.
 - `tide run --web --stats` serves the page and opens no browser.
 - Nobody listens there either: a program that opens its window hidden, as a test does, opens no audio device and no microphone.
 - A game that stops says why on stderr and shows no dialog. On Windows, a debug build that stops would otherwise show one and wait for a click.
 
 A game `tide build` made follows it too, on its own. Leave the variable out of your own terminal and your editor, where you want the window.
+
+### Interactive play
+
+An agent can inspect a picture, choose its next actions and continue the same
+game session. Start a desktop hidden run with a replay file:
+
+```sh
+tide run --interactive play.txt --size 1280 720
+```
+
+Keep the process's standard input open and read its standard output. The game
+draws frame 1, prints `tide: interactive ready 1`, then waits. Waiting advances
+neither frames nor the run's made-up time. Send one command per line:
+
+```text
+capture menu.png
+2 mouse 640 353
+3 button left
+step 30
+capture arena.png
+32 key d down
+44 key d up
+step 13
+capture moved.png
+quit
+```
+
+Read `menu.png` before choosing the click, and `arena.png` before choosing the
+movement. The steps finish at frames 31 and 44. A frame number is absolute,
+counted from 1, and must be later than the current frame. Queue lines use the
+[script grammar](#scripts), including `player <n>`, keyboard, mouse, locked
+movement, scroll, text, touch, gamepads, captures, GIF recording and
+leave/drop/rejoin. Lines can arrive out of frame order; actions at the same
+frame keep their arrival order. Held input stays held until released.
+
+| Command | Result |
+|---|---|
+| `<frame> <event>` | Queues an action without advancing; at most 65,536 pending actions |
+| `step <n>` | Advances every player together by exactly `n` frames, then waits; `n` is 1 to 1,000,000 and the resulting frame is at most 1,000,000,000 |
+| `capture <file.png>` | Captures the current frame without advancing; `player 2 capture hers.png` selects one player |
+| `status` | Reports the current frame without advancing |
+| `clear` | Removes all pending actions; already held keys/buttons stay held |
+| `quit`, or closing standard input | Ends the session at its current frame |
+
+After a step, wait for `tide: interactive ready <frame>` before inspecting
+results or deciding the next batch. Other accepted commands print
+`tide: interactive ok <frame>` after every player has completed them. Invalid
+commands print `tide: interactive error <reason>` and leave the session open
+for correction. These lines are flushed immediately; ordinary capture output
+and game logs can appear alongside them. Blank lines and comments beginning
+with `#` are accepted. A command is at most 4,094 UTF-8 bytes, excluding its
+newline; terminate each command with a newline.
+
+Capture and recording paths are relative to the replay file's directory,
+including when `tide run` was invoked elsewhere. Several players use the same
+numbered capture names as scripted runs. Only the first process reads commands;
+all players wait together, so an agent can take time to inspect each picture.
+External peers and services keep their own clocks; use `--players` for a match
+whose participants all wait together.
+
+`play.txt` is written incrementally in executed frame order. A clean exit adds
+its final `quit`; future actions discarded with `clear` or left unexecuted are
+absent. Replay with `tide run --script play.txt`, using the same size, scale,
+seed, player count and other runtime settings. Replay writes the captures and
+recordings again. As with ordinary scripts, persistent saves or external
+services can change the outcome; use an explicit `--data-dir` for test saves.
+
+`--interactive` runs once without hot reload, on desktop only, and cannot be
+combined with `--script`. Optional `--frames` caps the whole session and can
+end a step early. `--capture` writes its final frame. Use `--capture-audio` to
+retain the run's audio from its start; dynamically queued `capture-audio`
+lines are refused because past audio may already have been discarded.
+These command names and protocol details are provisional.
 
 ### Scripts
 
@@ -718,6 +844,8 @@ tide run --script play.txt --size 1280 720 --stats
 | `pad leftTrigger <value>`, `pad rightTrigger <value>` | A trigger, from 0 to 1 |
 | `capture <file.png>` | Writes the frame, once it drew, as a PNG. A file a script names is beside the script |
 | `capture-audio <file.wav>` | Writes what played since the last such line, or since the run began, as a WAV beside the script |
+| `record <file.gif>` | Records from this frame on, every second frame, as a GIF that loops, beside the script. It goes on to `record stop`, another `record` or the run's end. `--record`'s recording is its own, and goes on beside it |
+| `record stop` | Ends the recording, with this frame in it if it's one of its frames, and writes it out |
 | `quit` | Ends the run once this frame drew |
 | `player <n> leave` | In a run of [several players](#several-players), player `n` leaves its match, as `Session.Leave` does: the match hears `PlayerLeft` at once |
 | `player <n> drop` | ...or goes silent both ways, as a phone that went away or a lost connection: nobody hears of it until a side times out, after 5 seconds |
@@ -749,7 +877,7 @@ tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
 | `tide update` | Every package from git, to the newest commit of what it follows |
 | `tide update physics` | One, by its name, its repository's name or its source |
 
-Both add the lines of the packages the game's packages need that it doesn't list yet.
+Both write only the lines they name: what the game's packages need, the game builds from their own lines (see [The packages a package needs](../packages/using-and-writing.md#the-packages-a-package-needs)). Each then checks that the game's packages resolve, and fails with the error if not.
 
 ## eject
 
@@ -761,7 +889,7 @@ tide eject rooms    # the rooms line becomes ./packages/rooms
 
 A package that's a folder already is left where it is, and a folder already at `packages/<name>` is an error, with nothing copied.
 
-`tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, and adds the same lines: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
+`tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, what its packages need included, and those any `#if` leaves out of this build: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
 
 ## upgrade
 

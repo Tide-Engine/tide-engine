@@ -1,0 +1,85 @@
+diff --git "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/common/wide.c" "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/versioned/wide.c"
+index 0ad493665..2b5a335b3 100644
+--- "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/common/wide.c"
++++ "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/versioned/wide.c"
+@@ -1649,9 +1649,26 @@ TIDE_ROWS void tide_rows_Shift_6(tide_world *tide_w, const uint32_t tide_from, c
+     uint8_t *const tide_col_Crate[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
+     const uint16_t *tide_selected = tide_selection->selected;
+ #if !defined(__wasm__)
+-    const bool tide_prefetch = tide_selection->pass < (tide_selection->rows + 63u) / 64u;
+-    for (uint32_t tide_warm = tide_from; tide_prefetch && tide_warm < tide_to && tide_warm - tide_from < 4u; tide_warm++) {
+-        const uint32_t tide_prefetch_i = tide_selected[tide_warm];
++    if (tide_selection->pass < (tide_selection->rows + 63u) / 64u) {
++        for (uint32_t tide_warm = tide_from; tide_warm < tide_to && tide_warm - tide_from < 4u; tide_warm++) {
++            const uint32_t tide_prefetch_i = tide_selected[tide_warm];
++            __builtin_prefetch(tide_col_Crate[0] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[1] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[2] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[3] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[4] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[5] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[6] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[7] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[8] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[9] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[10] + (size_t)tide_prefetch_i * 4u, 1, 3);
++            __builtin_prefetch(tide_col_Crate[11] + (size_t)tide_prefetch_i * 4u, 1, 3);
++        }
++            uint32_t tide_pick = tide_from;
++        const uint32_t tide_hint_to = tide_to - tide_from > 4u ? tide_to - 4u : tide_from;
++        for (; tide_pick < tide_hint_to; tide_pick++) {
++        const uint32_t tide_prefetch_i = tide_selected[tide_pick + 4u];
+         __builtin_prefetch(tide_col_Crate[0] + (size_t)tide_prefetch_i * 4u, 1, 3);
+         __builtin_prefetch(tide_col_Crate[1] + (size_t)tide_prefetch_i * 4u, 1, 3);
+         __builtin_prefetch(tide_col_Crate[2] + (size_t)tide_prefetch_i * 4u, 1, 3);
+@@ -1664,31 +1681,28 @@ TIDE_ROWS void tide_rows_Shift_6(tide_world *tide_w, const uint32_t tide_from, c
+         __builtin_prefetch(tide_col_Crate[9] + (size_t)tide_prefetch_i * 4u, 1, 3);
+         __builtin_prefetch(tide_col_Crate[10] + (size_t)tide_prefetch_i * 4u, 1, 3);
+         __builtin_prefetch(tide_col_Crate[11] + (size_t)tide_prefetch_i * 4u, 1, 3);
++        const uint32_t tide_i = tide_selected[tide_pick];
++        Crate tide_v0;
++        tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
++        tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
++        tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
++        }
++        for (; tide_pick < tide_to; tide_pick++) {
++        const uint32_t tide_i = tide_selected[tide_pick];
++        Crate tide_v0;
++        tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
++        tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
++        tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
++        }
++        return;
+     }
+ #endif
+     for (uint32_t tide_pick = tide_from; tide_pick < tide_to; tide_pick++) {
+-#if !defined(__wasm__)
+-        if (tide_prefetch && tide_to - tide_pick > 4u) {
+-            const uint32_t tide_prefetch_i = tide_selected[tide_pick + 4u];
+-            __builtin_prefetch(tide_col_Crate[0] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[1] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[2] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[3] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[4] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[5] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[6] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[7] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[8] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[9] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[10] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[11] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        }
+-#endif
+-            const uint32_t tide_i = tide_selected[tide_pick];
+-            Crate tide_v0;
+-            tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
+-            tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
+-            tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
++        const uint32_t tide_i = tide_selected[tide_pick];
++        Crate tide_v0;
++        tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
++        tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
++        tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
+     }
+ }
+ 

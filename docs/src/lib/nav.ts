@@ -33,6 +33,7 @@ export const sidebar: Group[] = [
             { text: 'Playground', link: '/guide/playground' },
             { text: 'Samples', link: '/guide/samples' },
             { text: 'Earth demo', link: '/guide/earth' },
+            { text: 'Benchmarks', link: '/benchmarks' },
         ],
     },
     {
@@ -66,6 +67,7 @@ export const sidebar: Group[] = [
             { text: 'Local state', link: '/game/local-state' },
             { text: 'Files and directories', link: '/game/files' },
             { text: 'GUI', link: '/game/gui' },
+            { text: 'Good-looking UI', link: '/game/ui-style' },
         ],
     },
     {
@@ -113,6 +115,7 @@ export const sidebar: Group[] = [
         text: 'Tools',
         items: [
             { text: 'The tide command', link: '/tools/cli' },
+            { text: 'Tide Motion', link: '/tools/motion' },
             { text: 'Debugging', link: '/tools/debugging' },
             { text: 'Debug views', link: '/tools/debug-views' },
             { text: 'Usage data', link: '/tools/telemetry' },

@@ -25,7 +25,8 @@ static const command_help commands[] = {
      "Native captures and scripted runs play once without a window, in fixed\n"
      "1/60-second frames, and return the game's exit code. Use --frames or a\n"
      "script's quit to end them. They are unavailable on web and Android.\n"
-     "With TIDE_HIDDEN set, native runs require a bounded mode; web opens no browser.\n\n"
+     "--interactive keeps a hidden session for stdin input, steps and captures.\n"
+     "With TIDE_HIDDEN set, native runs need hidden play; web opens no browser.\n\n"
      "Examples: tide run --web\n"
      "          tide run --frames 300 --capture menu.png", RUN},
     {"build", "build [folder] [options]", "Build a game for distribution",
@@ -81,10 +82,11 @@ static const command_help commands[] = {
      "Example: tide eject rooms", EJECT},
     {"pin", "pin [version]", "Build the game with one version of tide",
      "Writes `tide = <version>` in the current game's tide.packages: this tide's\n"
-     "version, or the one given. A tide of another version then refuses to\n"
-     "build the game, saying how to install the pinned one, so everyone working\n"
-     "on it builds the same. In a Unity project, Tide's package uses the tide\n"
-     "of its own commit, and a pin it doesn't match is an error.\n\n"
+     "version, or the one given. Project commands use that version from the\n"
+     "shared TIDE_VERSIONS cache, asking to download it when missing. Other\n"
+     "versions and the main installation stay installed. In a Unity project,\n"
+     "Tide's package uses the tide of its own commit, and a pin it doesn't\n"
+     "match is an error.\n\n"
      "Examples: tide pin\n"
      "          tide pin 0.5.0-nightly.12", PIN},
     {"fetch", "fetch [folder]", "Download missing git packages",
@@ -172,10 +174,19 @@ static const argument_help arguments[] = {
      "unreferenced assets. schedule/shaders use this to leave DEBUG undefined.", COMPILE},
     {"--web", "--web", "Build a web page",
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
-     "build --release produces one self-contained HTML file. run serves the\n"
-     "page and opens a browser unless --no-open or TIDE_HIDDEN is set.\n"
+     "build makes a folder to put online, .build/web: index.html, which shows\n"
+     "its download and caches the index.wasm and index.pack it loads.\n"
+     "--single-file makes one HTML file instead. run serves the page and opens\n"
+     "a browser unless --no-open or TIDE_HIDDEN is set. A game's shell.html\n"
+     "replaces the page around the game, and its icon.png shows as it loads.\n"
      "unity --web builds tide-game.js, for a Unity WebGL player's page, once.\n"
      "Choose one target: native (default), --web or --android.", RUN | BUILD | UNITY},
+    {"--single-file", "--single-file", "Build one self-contained web page",
+     "With build --web: the program and its assets go inside one .html, which\n"
+     "opens straight from disk, at .build/<name>.html. Pages split into files\n"
+     "(the default) load faster, show how much has downloaded and cache the\n"
+     "game between visits, but need a server: a page opened from disk can't\n"
+     "download its files.", BUILD},
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
      "Saving rebuilds and restarts the app. Release builds also make an app\n"
@@ -259,6 +270,12 @@ static const argument_help arguments[] = {
      "Requires run --server. A checkpoint now and then, and every shard's ticks\n"
      "since, on the disk before anything a shard sends goes on: a server\n"
      "started again with the same folder goes on where the world was.", RUN},
+    {"--interactive", "--interactive <replay.txt>", "Play dynamically over stdin without a window",
+     "Draws frame 1, then waits for commands: future-frame script lines queue\n"
+     "input; step <n> advances; capture <file.png> observes; quit or EOF ends.\n"
+     "Reports tide: interactive ready <frame> after each step. Executed actions\n"
+     "are saved as a replay script; relative captures are beside that script.\n"
+     "Supports --players. Desktop only; cannot combine with --script.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
      "The output path is relative to the directory where tide was invoked.", RUN | OPEN},
@@ -271,6 +288,11 @@ static const argument_help arguments[] = {
      "Writes 16-bit stereo WAV at 48 kHz. Without sound the file is silent.\n"
      "Native only; add --frames or a script's quit. Paths are relative to\n"
      "where tide was invoked.", RUN},
+    {"--record", "--record <file.gif>", "Save a headless run as a looping GIF",
+     "Every second frame, so 30 a second, at the run's size. Native only; add\n"
+     "--frames or a script's quit. Script lines `record clip.gif` and\n"
+     "`record stop` record part of a run instead. Paths are relative to where\n"
+     "tide was invoked.", RUN},
     {"--microphone", "--microphone <file>", "Loop WAV or Ogg Vorbis into the microphone",
      "Native headless runs otherwise hear silence. Paths are relative to\n"
      "where tide was invoked. Add --frames or a script's quit.", RUN},
@@ -303,6 +325,18 @@ static const argument_help arguments[] = {
      "Script input can name a player: 120 player 2 key d down.\n"
      "Captures gain player numbers, like fight-2.png. With --players 1, filenames\n"
      "have no number. Cannot combine with --host, --join or --connect.", RUN},
+    {"--latency", "--latency <ms>", "Delay this player's datagrams each way",
+     "Plays a match this machine joins as if it were that far from its server,\n"
+     "to tune how online play feels: with --players, each player who joins;\n"
+     "with --join or --connect, this machine. A machine that runs the match's\n"
+     "server adds none. <player>:<ms>, like 2:120, sets one player of\n"
+     "--players. Also as latency=80 in a web page's address.", RUN},
+    {"--jitter", "--jitter <ms>", "Delay each datagram up to this much more",
+     "At random, both ways, so datagrams also come out of order. Takes\n"
+     "<player>:<ms> like --latency, and jitter=10 in a web page's address.", RUN},
+    {"--loss", "--loss <percent>", "Lose this share of datagrams each way",
+     "From 0 to 100. Takes <player>:<percent> like --latency, and loss=5 in a\n"
+     "web page's address. Runs with --players lose the same ones every time.", RUN},
     {"--project", "--project <name-or-id>", "Select or relink the deployment project",
      "Overrides tide.deploy.json and saves the selected project after deploy.\n"
      "An explicit missing name creates a Small/one-match project; an invalid\n"

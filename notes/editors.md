@@ -1,5 +1,14 @@
 # The language server and the editors
 
+## Sanitizer test builds keep their own server (2026-10-29)
+
+With TIDE_SANITIZE enabled, tidels stays in that build's bin directory and
+does not replace the shared build/tools/tidels editor copy. Routine sanitizer
+tests therefore leave the editor's server and runtime selection alone. Ordinary
+native builds still refresh the shared copy. The instrumented server and its
+stdio/pipe tests remain part of the sanitizer build; configuration and validation
+are recorded in notes/testing.md.
+
 ## Following a Unity development session (2026-10-26)
 
 The owner replaces Unity's saved compiler override with a launch-only
@@ -434,9 +443,11 @@ Nested instances omit a Transform reset so authored TRS defaults survive.
 Startup checks cover BOM/CRLF/trailing comments, invalid string RHS replacement,
 settings namespaces and name shadowing, exact disk bytes including appended
 NULs, exclusive file creation, source ownership, pending recovery and active
-.tide source baselines. A bare global prefab shadowed by a prefab in the
-settings namespace is refused before writing; the user can move that setting
-to global scope. Repeated startup selection preserves the active declaration.
+.tide source baselines. A bare global prefab shadowed by a declaration in
+the settings namespace is refused before writing (any kind but a system or an
+asset, as the compiler's nearest namespace decides whatever its kind, since
+2026-10-30: a scene or struct there used to let the global prefab through);
+the user can move that setting to global scope. Repeated startup selection preserves the active declaration.
 The installed Play test builds/runs a no-Main unsaved scene twice with real
 Spawned/systems/unmarked views, input, camera pixels and fresh state after Stop.
 
@@ -1009,6 +1020,11 @@ missing-image and metadata-only semantics. lsp_textures_in_functions checks
 CPU helper diagnostics, view/helper completion and the member hover. Shared
 compiler checking also supplies empty-map, component-value and payload-helper
 behavior; no editor-specific syntax rule is added.
+
+DepthTexture.size (2026-10-29) uses the same member completion, int2 chaining and
+metadata hover. lsp_textures_in_functions covers its CPU helper and view reads,
+completion and hover alongside ordinary Texture.size. No sampling capability
+was added to CPU views; Sample/Compare keep their existing completion rules.
 
 ## Scene visibility uses ordinary groups (2026-10-15)
 

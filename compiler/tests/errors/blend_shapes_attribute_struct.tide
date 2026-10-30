@@ -1,0 +1,3 @@
+// expect: BlendShapes chooses which blend shapes a SkinnedMesh asset keeps, and 'Face' isn't an asset
+[BlendShapes("jaw*")] struct Face { float x; }
+scene Main { }

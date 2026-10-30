@@ -1,0 +1,8 @@
+// expect: local state is never blended: views see it as it is
+component Spark { float age; }
+scene Main { }
+view Fade(mut local Spark spark)
+{
+    spark.age = 0;
+    spark.age.Snap();
+}

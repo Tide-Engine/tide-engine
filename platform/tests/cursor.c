@@ -1,15 +1,17 @@
-// Desktop only: a window holds the cursor only while it has the focus.
-//
-// This window is hidden, as every test's is, so it never has the focus: the
-// game asks for the lock, frame after frame, and the platform says it isn't
-// locked, as it does for a game the player went away from with Alt+Tab. When a
-// window with the focus holds the cursor, cursor_rules.c checks. What it does
-// with one it holds is GLFW's, which nothing here can check without taking the
-// screen and the mouse from whoever is at them.
+// Desktop only: hidden windows never hold the cursor, regardless of focus.
+// The pure rules test covers focused/visible windows without taking the
+// screen or mouse from whoever is using them.
 
 #include <stdio.h>
 
 #include "tide/platform.h"
+
+// GLFW's actual cursor mode, without bringing its header into the host API.
+typedef struct GLFWwindow GLFWwindow;
+GLFWwindow *tide_glfw_window(void);
+int glfwGetInputMode(GLFWwindow *window, int mode);
+#define GLFW_CURSOR 0x00033001
+#define GLFW_CURSOR_NORMAL 0x00034001
 
 static tide_devices devices;
 static int failures;
@@ -35,7 +37,7 @@ static int frame(void *user, const float seconds)
     case 1:
     case 2:
     case 3:
-        check(!devices.mouse.locked, "asked for, a window without the focus doesn't hold the cursor");
+        check(!devices.mouse.locked, "asked for, a hidden window doesn't hold the cursor");
         break;
     case 4:
         want = false;
@@ -47,6 +49,8 @@ static int frame(void *user, const float seconds)
         break;
     }
     tide_platform_cursor_lock(want);
+    check(glfwGetInputMode(tide_glfw_window(), GLFW_CURSOR) == GLFW_CURSOR_NORMAL,
+          "a hidden window leaves GLFW's actual cursor mode normal");
     tide_devices_consume(&devices);
     return code;
 }

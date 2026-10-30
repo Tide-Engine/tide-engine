@@ -1,5 +1,84 @@
 # Releases, installing and CI
 
+## Tests alongside JetBrains verification (2026-10-29)
+
+Build's eight native/web/MinGW/sanitizer test entries now depend only on
+Version, so they start alongside the JetBrains plugin instead of waiting for
+its build and verification. The three package entries remain dependent on
+Version and JetBrains because they bundle its exact-version installer.
+Both matrices call check.yml with the original runner steps, cache settings,
+platforms, presets and test budgets. The required Build (platform) checks
+require both matrices to succeed before Release can publish.
+
+Validation: parsed YAML comparison checks all eleven matrix entries and every
+runner setting/step against the previous workflow, reversing only the context
+substitutions needed by the reusable workflow. Version, JetBrains, Release,
+Marketplace, triggers, concurrency and workflow environment are unchanged.
+Actionlint 1.7.12 passes with only its existing unsupported concurrency.queue
+key excluded, and the whitespace check passes. The release gate passes only
+for two successful matrices across all sixteen success/failure/cancelled/skipped
+combinations. Hosted scheduling and the
+elapsed-time saving remain normal push-to-dev CI coverage; no extra workflow
+is dispatched.
+
+## Raw-save pins and journal isolation in run 40787272828 (2026-10-29)
+
+The completed run at `c30a131da` fails `local_fields` and `local_fields_plain`
+in all nine failed platform/package jobs. MinGW additionally times out in
+`tide_server_shards_journal` during its second server process. Windows/macOS
+packaging, Docs deployment and JetBrains verification pass; aggregate gates
+fail/cancel and publication is skipped. No nightly is published by this run.
+
+The local-fields logical hash remains `AB58CD3A5BFEE54F`, whole-transfer bytes
+remain 219/`D49D9FE755B1C27F`, and delta bytes remain
+122/`E1D6B6872BC8EB96` on every inspected platform. Only the intentional zeroed
+derived-cache pointer slot changed the raw header. Removing exactly that slot
+recovers both previous packed-byte pins in both fixtures. The corrected pins
+are 399/`53E7F64483E0C089` for 64-bit pointers and
+367/`AE6996790AA73F09` for 32-bit pointers; a new assertion checks the raw cache
+slot stays zero. Both fixture CTests pass optimized native and WASI validation.
+
+The journal failure had already restored its checkpoint and opened all three
+fresh logs before the deadline. It ran beside installers, room/server tests and
+other CPU/disk work. The bounded fixture now runs serially within CTest and
+records journal-size progress for timeout diagnosis; both 200-update recoveries,
+all assertions and the 25-second process/80-second CTest deadlines remain.
+This addresses observed contention as a plausible cause; the old log cannot
+prove whether updates stalled. Local validation and remaining MinGW coverage
+are recorded in sharding.md. No workflow, publishing gate or test is removed.
+
+The fixes use the normal push-to-dev trigger. Retrying the old commit would
+retain its old pins and scheduling; no manual retry or dispatch is needed.
+
+## Earth benchmark pins in run 40419145201 (2026-10-27)
+
+The completed run at `eaf260488` fails only bench_earth, bench_earth_split
+and bench_earth_diverge in all nine failed platform/package jobs. Docs,
+JetBrains verification and Windows/macOS packaging pass; aggregate gates
+fail/cancel, and Release/Marketplace are skipped. No nightly is published.
+Every platform agrees on the new hashes after `d0ead429a`'s projected repair
+delivery change. The controlled old-session reproduction and scoped pin
+correction are in notes/benchmarks.md, Earth pins after projected repair
+delivery. The ordinary push-to-dev trigger will validate the correction;
+retrying the old commit cannot include it.
+
+## CI telemetry opt-out (2026-10-26)
+
+Build and Docs set `TIDE_TELEMETRY: '0'` at workflow scope alongside
+`TIDE_HIDDEN`. The hidden-run CLI fixture deliberately unsets TIDE_HIDDEN or
+sets it to 0 for several expected failures. With a release/nightly CLI those
+cases could otherwise send real telemetry from a new scratch installation.
+The independent opt-out survives those cases. The telemetry test already
+removes inherited opt-outs and directs sending cases to its local collectors,
+so its on/off/CI checks retain their coverage. No CLI behavior is changed.
+
+Parsed YAML comparisons against HEAD verify that each workflow changes only
+this environment setting, preserving jobs, triggers and publication gates.
+The docs-side historical filtering and passing regression/build/admin checks
+are recorded in `notes/docs-site.md`, Exclude CI from CLI usage totals. Hosted
+workflow execution remains the normal push-to-dev coverage; no extra run was
+dispatched.
+
 ## Journal deadline in run 40338328972 (2026-10-26)
 
 At `195c8f1d`, the completed MinGW suite passes 2,744 tests and fails only
@@ -77,8 +156,9 @@ No manual dispatch or retry was performed.
 
 The JetBrains job also builds and uploads tide-jetbrains-installer.zip, an
 offline Tide/LSP4IJ bundle with the engine's exact version and upstream notices.
-The checks matrix waits for that job; package entries download the artifact to
-build/jetbrains before cmake/package.cmake adds it to editors/ and stages its
+The package matrix waits for that job (test entries run independently as of
+2026-10-29); package entries download the artifact to build/jetbrains before
+cmake/package.cmake adds it to editors/ and stages its
 notices under licenses/jetbrains. Packaging rejects absent/mismatched versions.
 The installed-package smoke step runs jetbrains_test.cmake with the real bundle,
 using isolated profiles and checking every installed Tide/LSP4IJ byte.

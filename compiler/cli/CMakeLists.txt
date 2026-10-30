@@ -1,7 +1,7 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang.
 add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c jetbrains.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
-    serve.c sys.c telemetry.c toolchain.c unity_assets.c unity_code.c unity_mapping.c unity_shaders.c unity_yaml.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
+    serve.c sys.c telemetry.c toolchain.c unity_assets.c unity_code.c unity_mapping.c unity_shaders.c unity_yaml.c unzip.c upgrade.c versions.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/unity_names.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
 target_include_directories(tide_cli PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/platform/src/rtc")
@@ -89,6 +89,18 @@ add_test(NAME tide_cli_packages
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/packages_test.cmake")
 
 if(TIDE_NODE)
+    add_executable(tide_cli_versions_driver tests/versions_driver.c versions.c upgrade.c release.c install.c line.c sys.c unzip.c
+        ../lsp/json.c ../lsp/packages.c ../lsp/unity_names.c "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/platform/src/rtc/crypto.c")
+    target_include_directories(tide_cli_versions_driver PRIVATE . ../lsp)
+    target_link_libraries(tide_cli_versions_driver PRIVATE tidec_core)
+    if(NOT WIN32)
+        target_link_libraries(tide_cli_versions_driver PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    add_executable(tide_cli_version_child tests/version_child.c)
+    target_link_libraries(tide_cli_version_child PRIVATE tide_flags)
+    add_test(NAME tide_cli_versions COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/versions_test.mjs"
+        "$<TARGET_FILE:tide_cli_versions_driver>" "$<TARGET_FILE:tide_cli_version_child>" "${CMAKE_COMMAND}"
+        "${CMAKE_CURRENT_BINARY_DIR}/versions test" "$<TARGET_FILE:tide_cli>")
     add_test(NAME tide_cli_installers
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/installers_test.mjs")
     # Assets: the pack tidec writes, and URLs fetched once and kept with their ETag, against a server on this machine

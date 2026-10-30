@@ -19,6 +19,9 @@ endforeach()
 if(STRIP_UNUSED_ASSETS)
     list(APPEND args --strip-unused-assets)
 endif()
+if(STRIP_NAMES)
+    list(APPEND args --strip-names)
+endif()
 
 execute_process(
     COMMAND "${TIDEC}" ${args}

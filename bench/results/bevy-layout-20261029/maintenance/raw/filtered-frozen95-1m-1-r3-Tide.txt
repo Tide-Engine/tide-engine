@@ -1,0 +1,1 @@
+{"setup_ms":31.851900,"active":49935,"data_bytes":48009216,"index_bytes":12000000,"churn":[{"toggles":0,"mean_tick_and_changes_ms":0.028748},{"toggles":1,"mean_tick_and_changes_ms":0.028670},{"toggles":100,"mean_tick_and_changes_ms":0.030349},{"toggles":1000,"mean_tick_and_changes_ms":0.043892},{"toggles":10000,"mean_tick_and_changes_ms":0.197009}]}

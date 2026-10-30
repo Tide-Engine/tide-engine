@@ -1,5 +1,143 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Compact vertex counts (2026-10-30)
+
+The stats drawer formats vertices with decimal K/M/B/T/P/E suffixes, rounded
+to one decimal with trailing zeroes omitted (123.5K, 97M, 4.3B). Values below
+1,000 remain exact. Rounding promotes to the next suffix at its boundary,
+so 999,950 shows 1M. Integer arithmetic covers the full uint64 range without
+overflow. Only presentation in engine/src/stats.c changed; submitted geometry
+counting and the host/runtime interfaces retain their contracts.
+
+Validation: all 13 stats drawer tests pass on Windows ASan and WebAssembly
+under Node 24.22.1, including rendered text, suffix/rounding boundaries, zero,
+values above 32 bits and UINT64_MAX. The docs production build passes with
+the existing unstaged-example 404 messages. Builds used TIDE_PLATFORM=OFF
+and no external prototypes; no GPU/browser or other OS tests were needed
+for this text-formatting change. User documentation: docs/tools/cli.md, Stats.
+
+## Dynamic agent play (2026-10-29)
+
+The owner requested agents that can inspect rendered games and queue input
+while the same game stays alive. `--interactive <replay.txt>` selects the
+existing desktop hidden host. It draws frame 1 normally, then blocks on stdin
+between explicit `step <n>` requests. No session/simulation clock advances
+while waiting. Keyboard/mouse/clicks/movement/scroll/text/touch/gamepad and
+player leave/drop/rejoin use script.c's existing parser and device path.
+No generated C, match behavior, embed ABI or runtime function changed.
+
+The provisional protocol is documented in docs/tools/cli.md, Interactive play:
+absolute future-frame script lines queue actions (stable order for equal
+frames, sorted insertion across frames); step advances 1..1,000,000 frames;
+capture reads the current frame, optionally for one player; status observes;
+clear frees pending actions without releasing held input; quit/EOF ends at
+the current frame. Flushed `tide: interactive ready/ok/error` lines report
+completion and permit recovery from malformed requests. Lines are limited to
+4,094 bytes, pending events to 65,536, frames to 1,000,000,000. --frames can
+cap the session, --capture/--capture-audio write final outputs; --script is
+mutually exclusive. Dynamic audio-capture lines are refused because audio
+not requested ahead of time can already have been discarded.
+
+Only player 1 reads stdin and writes the replay. players.c broadcasts control
+commands on the existing private coordinator connections, and acknowledges
+completion/error from each process, separate from frame datagram exchanges.
+Every process steps together, including while disconnected from its match.
+An observation targeting another player's capture is acknowledged after the
+file is written, and a failure there reaches the controller. External peers
+and services do not stop with this process; --players keeps a whole local
+match under frame control.
+
+Executed events alone are flushed to the replay in frame/arrival order,
+including events targeting other players. Current-frame observations append
+only after successful acknowledgement. Consumed events are freed; abandoned
+future plans do not enter the replay. Clean exits append the last frame's
+quit. Replay uses the normal --script path and requires matching runtime
+settings and starting saves/external state. Relative captures/recordings are
+beside the replay file, matching ordinary scripts.
+
+Validation: Windows Clang 23.1.2/Node 24.22.1 strict native builds and the web
+platform archive build pass. tide_platform_interactive passes visual
+observe/click/step decisions, held/released movement, text, no advancement
+between observations, out-of-order queues, clear, error recovery/long lines,
+two synchronized players, targeted input/capture, a second player's capture
+failure, leave, EOF, a --frames cap, and byte-identical normal script replays.
+All ten existing capture/refusal, multiplayer/refusal/network and CLI
+compatibility CTests pass. The final interactive, no-GPU three-process control
+acknowledgement/error test and CLI forwarding test also pass (3/3).
+Docs production build passes (the existing unstaged-example 404s remain).
+No browser was launched, deterministic hash changed, or extra CI dispatched.
+Integration: merged origin/dev's routine Windows sanitizer configuration,
+retaining both new CLI notes sections. The affected ASan targets build with
+Clang 23.1.2 and all six selected CTests pass: visual interactive play/replay,
+three-process control acknowledgements/errors, capture refusals, CLI dispatch,
+help and hidden/unsupported modes. No sanitizer finding or hash change.
+Other desktop OS execution and Android remain untested locally; the interactive
+command itself is desktop-only.
+
+## Agent-tool play verification (2026-10-29)
+
+After the owner clarified that the goal is agents seeing and controlling a
+running game, the existing interface was exercised through the agent's actual
+persistent terminal and image-viewing tools, rather than only a subprocess test.
+The hidden capture fixture reached ready 1; terminal input stepped to frame 3
+and captured it; image inspection located the Go button at (80,40). The agent
+then queued mouse/click and held/released D input, advanced to frame 12, and
+inspected another capture: the button's green witness appeared and the red
+mover moved. Quit ended the same process cleanly. Artifacts are
+build/debug/agent-before.png, agent-after.png and agent-live-proof.txt.
+No game input was prewritten to the replay file, and no file transport was
+needed. The proposed append-file detour was discarded before commit. The AI
+guide now explicitly describes keeping a terminal session handle, writing
+controls to it, and using an image tool between decisions.
+The docs production build and diff checks pass; no runtime code changed.
+
+## A slow network to play on (2026-10-27)
+
+The owner's ask: tune how a match feels online (Parry's blocks, struck through a guard that looked up in time) without
+two machines on the internet, from `tide run`, scripts and `--capture` included.
+
+- **Options** (`tide_run_configure`, `tide_run_condition` in `tide/host.h`): `--latency <ms>` each way (0 to 10,000),
+  `--jitter <ms>` (up to that much more each way, at random, so datagrams also reorder), `--loss <percent>` (0 to 100,
+  each way). `<player>:<value>` (`--latency 3:150`) is one player's of a `--players` run and wins over everyone's,
+  whatever the order; a player the run doesn't have, a player's value without `--players`, and player 0 are refused with
+  exit code 2 before anything opens. `tide run` passes them on (repeatable: `game_args` grew to 128 in
+  `compiler/cli/main.c`), `--server` refuses them, and `tide run --web` puts them in the page's arguments. On the web the
+  address's `latency=`, `jitter=` and `loss=` are the same words (`tide.js`, beside `stats`; the page's own
+  `Tide.arguments` win), so a page takes them as a desktop command line does.
+- **One implementation, the loopback's** (`tide_net_conditioned`, `tide/net.h`): a transport wrapping another, both ways,
+  whose queue, seeded randomness and conditions are a `tide_loopback`'s (`queue_put`/`queue_take` in `engine/src/net.c`,
+  which the loopback's own send and receive now call: the same draws in the same order, so seeded fixtures are
+  unchanged). What's sent waits on the queue as endpoint 1 (the address it's for kept as `from`), and what the inner
+  transport brings waits as endpoint 2, from when it arrived (`inner.arrived`, else now). Its time is the inner
+  transport's clock, or the clock it's given where there's none (`--players` ends: the host gives `tide_run_now`, the
+  run's made-up time). Datagrams move only when it's used, so on a real network they go and arrive at frame granularity.
+  Its `clock`/`arrived` are the inner clock and the delayed arrival, so the session's ping counts what's added. Closing it
+  sends what was on its way out at once (a goodbye isn't lost), then closes the inner one.
+- **Where it applies** (`tide_run_conditioned`, Claude's pick, Provisional in `docs/tools/cli.md`): a match this machine
+  joins, every way it joins one: `--join`/`--connect` and `Session.Join`/`Connect` (rooms, UDP, the made-up network, a
+  game's own network), a dedicated server's match (`tide_run_hosted_request`) and a migrated match joined again. A machine
+  that runs the server adds nothing, as the web's `Tide.lag` already did (notes/web.md): its player has no way to go, and
+  each joiner's way is that joiner's. So in `--players 2 --latency 80` player 2 is 80 ms from player 1's server each way,
+  and in three, players 2 and 3 are 160 ms from each other through it. One machine's setting delays both ways, so it's
+  meant for one side: two machines both set to 80 would be 160 apart.
+- **Repeats.** Each process seeds its own (`0x6E6574636F6E6400 ^ tide_platform_player()`), and a `--players` run's time
+  is made up, so the same datagrams are lost and late every run: a run with jitter and loss repeats byte for byte.
+  Real-network runs use the same seed but real clocks, so they don't repeat.
+- **Not the web's `lag`.** `Tide.lag`/`lag=` (agreed 2026-10-05) is a target ping that the page reaches by measuring
+  what the trip takes and holding back the rest in `tide.js`; `latency` adds a fixed amount each way in the program. Both
+  can be on; they add up.
+- Tests: `tests/test_net_conditioned.c` (engine, native and WASI): both ways' delays and arrival time by the inner
+  clock, jitter reordering and repeating by seed, loss each way, a close sending what was on its way, and a clockless
+  inner transport taking the given clock. `tide_platform_players` (`players.mjs`, label `gpu`): two players at
+  `--latency 80 --jitter 10 --loss 5` both see both blocks end where they do, the second's ping is 150 ms or more
+  (`players.tide`'s yellow block at 300,140), the first's has none, and the run repeats byte for byte; three at
+  `--latency 3:80` give the third a slow ping and the second the made-up network's own. `tide_platform_players_refused`
+  has the six refusals. `tide_cli_run_exit` passes the options on (and an option given 48 times is still refused).
+  `tide_platform_web_debug_views` has `latency=80&jitter=10&loss=5` in its address and checks the host's conditions.
+- Measured: not timed; the added cost is one queue scan a datagram, only where an option is set.
+- Not built: changing them while a run goes (a script line such as `player 2 latency 150`, or a key), bandwidth limits,
+  and conditions for a machine that runs the server.
+
 ## Time travel inside another program (2026-10-26)
 
 `tide/embed.h` gained the debugger's calls (embed ABI 7; notes/unity.md, Time travel, has the design, decisions and
@@ -384,6 +522,10 @@ submitted-geometry counter's scope.
   - Nothing about a run is this machine's, or timed. The frame loop makes time up, a 60th of a second a frame (`step`), frames are counted, and the host's session takes no clock and no entropy (`tide_run_new_session` in `tide/host.h`, which every session the host makes comes from), so its matches start with seed 0 and a game that rolls plays the same every run. `--seed <n>`, from 0 to 2147483647, picks another seed, to see the game roll otherwise: it's the seed of every match the machine starts in that run (`tide_session_desc.seed`, which a session with no entropy starts its matches with). It's the standard host's on every platform and with a window too, where it stands in for the system's entropy, and `tide run` passes it on. The devices are made up too (`script.c` says what `window.h` would, and `tide_platform_poll` takes it the same way, so the GUI's hiding and views' claims go as in play): never the system's, as even a hidden window knows where the real cursor is. The cursor locks whenever the game asks, and the clipboard is left alone. So a run's match is the same on every machine, and its pictures on one machine byte for byte; GPUs differ in what they blend.
   - Exit codes: 0 at `--frames` or `quit`; 1 when a picture can't be written; 2, before anything ran, for a flag or a script's line that's wrong, or a run nothing ends. Desktop only: a web page is driven and screenshotted in headless Chrome, as the web tests do.
   - `tide_platform_png` (`platform/tests/png.mjs`, every platform, no GPU) reads what the writer wrote with Node's zlib; `tide_platform_capture` (`capture.mjs`, label `gpu`) runs `capture.tide` with a script of every kind of input and reads its pictures' pixels, the match's seed and what it rolled from it among what they show, then runs it again for the same bytes, and with `--seed` for the seed it asked for and other rolls; `tide_platform_capture_refused` checks what a run refuses, with no GPU.
+  - **Recordings** (the owner's ask, 2026-10-27: they record runs as GIFs a lot, and had stitched `capture` lines together with ffmpeg; the owner picked GIF from an encoder of Tide's own, runs with no window, and `--record` plus script lines, over MP4 and over recording a windowed game). `--record <file.gif>` (`tide_headless_desc.record`) records the whole run; a script's `record <file.gif>` records from its frame and `record stop` ends it, as do another `record` and the run's end (`tide_platform_record`, `_record_stop` in `tide/platform.h`). The two are separate slots in `platform.c` (`run_recording`, `script_recording`), so a script's stretches don't cut the run's. A recording takes every second frame from the one it started at, the frame a `record` or `record stop` line is at among them when it's one of its own: 30 a second, because players show a frame of under 2 hundredths for a tenth, and GIF counts in hundredths, so delays go 3, 4, 3 and a recording lasts as long as the run would in a window. Each frame is read back (`tide_platform_frame_pixels`), encoded and written at once, so a recording holds a frame and the last one's pixels, never the run. Its file is named as a capture's is: beside the script for a line, from where `tide` ran for the flag (`tide run` makes it absolute, in its list of file options), with the player's number in a run of several. `finish` writes out what's still recording when a run ends otherwise; one that can't be written makes the exit code 1, as a picture does.
+    - `platform/src/gif.c` is ours, from the GIF89a specification and Netscape's looping block, as `png.c` is from the RFCs. A frame is the rectangle that changed since the last, its unchanged pixels transparent (disposal 1, so the last frame shows through) and the rest with a palette of their own: their exact colors when there are 255 or fewer, and otherwise 255 by median cut over 5-bit bins, each box its pixels' mean (exact colors from the sums, not the bins' centers), each bin the nearest. No dithering, so a run's recording is the same bytes every time, as its pictures are. LZW with a 13-bit open-addressed table, which starts over at code 4095. A frame like the last is one transparent pixel. Measured: 240 frames of `towers` at 960 by 540 recorded as 120 in 447 KB, its last PNG 35 KB, and the debug run took 2 seconds.
+    - Tests: `tide_platform_gif` (`platform/tests/gif.c`, `gif.mjs`, every platform, no GPU) decodes made-up recordings with the tests' own reader (`gif_read.mjs`): a panel that moves and stops (exact, the changed part only, a still frame as one pixel), a gradient of more than 256 colors (within 24 of each pixel, 3.25 on average) and noise of many codes (exact, through the table's restart); its delays and that it loops. `tide_platform_capture` records the whole run and a `record`/`record stop` stretch of `capture.tide`, checks their frame counts and lengths (60 frames and 2 seconds; 6 and a fifth), that frame 5 of each is the PNG captured at it, and the same bytes on a second run; `_refused` checks a bare `record` and `--record` without a file. `tide_cli_run_exit` passes `--record` on as a path.
+    - Not built: a windowed game's recording (a key or a flag while a player plays), other rates or a cap on size, MP4 or another format, and `tide open`'s editor runs, which weren't tried.
 - **A run of several players** (`--players <n>`, the owner's card of 2026-10-08): a run with no window plays a game `n` times at once, as the players of one match, and takes a picture from each. Before it, two players with no window on screen meant two pages in headless Chrome through the relay: a windowless run plays 1,200 frames in 1.6 seconds, so the session's 5 seconds of patience are 0.4 of a clock's, and a `--host` run was over before a `--connect` one started. Every agent of the 2026-10-06 trial asked for it too.
   - **The design is the owner's pick of three** (2026-10-08). The two turned down: `--realtime`, a windowless run paced to the wall clock so that `--host` and `--connect` processes meet (small, but a run takes real time, nothing repeats, two scripts line up only by a margin, and its test rests on timing); and the players in one process (the same from outside, but the standard host's some 45 statics and the platform layer's devices, script, mixer and frame all become a player's, and a game's C statics would be shared by players as no match shares them). What's picked inside it is Claude's, Provisional in `docs/tools/cli.md`: the names, who's put in the match, the rooms' codes, what an address reaches, the files' numbers.
   - **Each player is a process, and they go a frame at a time together** (`platform/src/players.c`, `players.h`). The first player's process is the one the command line started. In `tide_platform_open_headless`, once the script is read and before it has a window or a thread (a fork takes neither along), it listens on TCP at 127.0.0.1, any port, and starts itself again for each of the others (`start_copy`: `CreateProcess` or `fork` and `execv`, on its own path), with its command line and `--player <number> <port>` after it. The others connect and say which they are. Then `step` (`platform/src/platform.c`) calls `tide_platform_players_step` once a frame drew, unless it was the run's last: each player sends what it said of the frame (a size, then records) and waits for what it's told; the first reads everyone's, routes it (`route`) and answers everyone. So a datagram sent in frame k is read in frame k+1, by whom it's for, in the players' order and then the order it was sent in, the same every run, and no player starts a frame the others haven't finished the one before of. Nothing in it takes a clock: the one wait with a time on it is `gather`'s, a 20th of a second at a time for a connection, between which it asks whether a player that hasn't connected has ended, which only decides how soon that's noticed.
@@ -394,7 +536,8 @@ submitted-geometry counter's scope.
   - **Ending.** `--frames` and `quit` are every process's, so all end at the same frame, and the last frame has no exchange. The first then hangs up and waits for the others (`tide_platform_players_finish`, from `finish`), and the run's exit code is the first that isn't 0. A run of one frame heard from nobody yet, so the first lets the others connect before it hangs up, or they'd find no run. When a player's process ends before the run does (it stopped, or couldn't write a picture), the first finds its connection closed at that frame's end, says whose game ended and at which frame, hangs up, and ends with that process's exit code, or 1 for one the system stopped; each of the others finds nobody at its own frame's end and ends with 1, saying nothing. So no process is left running, and none waits on a time.
   - **Measured** (2026-10-08, Windows, debug): Tag, two players, 1,200 frames at 640 by 360, in 3.4 seconds, where one player's run took 1.6.
   - Tests: `tide_platform_players_net` and `tide_platform_players_net_ended` (`platform/tests/players_net.c`, no GPU, every desktop's tests) are three processes with no window that send text through the network and check, frame by frame, when it arrives, in what order and from whom, what a room nobody opened says, that an end let go of is nobody's, and that a process that ends at frame 3 ends the run there with its exit code. `tide_platform_players` (`players.mjs`, label `gpu`) runs `players.tide`, whose Main is the match's, with two and three players and one, and `players_menu.tide`, which starts in a menu, where the script has the players open and join by the rooms' codes, an address and one nobody is at: it reads every player's pictures, runs each again for the same bytes, and has a game stop and a picture fail. `tide_platform_players_refused` is what such a run refuses, with no GPU, and `tide_cli_hidden` that `tide run` passes `--players` on and refuses it with a window. CI leaves the `gpu` label out, so `tide_platform_players_net` is what runs the processes and the sockets on Linux and macOS.
-  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`; `leave`, `drop` and `rejoin`, above, cover its match); a network that's worse than a frame each way (a made-up lag or loss, which the first player's process could add, as every datagram goes through it); host migration on the made-up network; and players who start apart where `Main` is the match's.
+  - A network worse than a frame each way: `--latency`, `--jitter` and `--loss` (A slow network to play on, 2026-10-27, above).
+  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`; `leave`, `drop` and `rejoin`, above, cover its match); host migration on the made-up network; and players who start apart where `Main` is the match's.
 - That nothing an agent runs shows on the owner's screen doesn't rest on the agent remembering: `TIDE_HIDDEN` in the environment, set to anything but nothing or 0, says nobody watches a run (`tide_hidden`, `tide/page.h`), and then no Tide program shows a window or a dialog, or opens an audio device. Desktop only. Inside Unity, whose audio plays an embedded game's, the package's `TideAudio` clears each block it fills and opens no microphone under it (2026-10-22).
   - Where agents' shells get it, and the rules that stand beside it, are in `AGENTS.md`, Rendering and platform.
   - A window that isn't `hidden` has only its closing to end its run, which nobody could do, so the program is refused: it ends with exit code 2 before it opens anything, having said what to give it instead (decided over running hidden for a counted number of frames, which would end with 0 as if something had been checked, and as a run with no window that nothing ends is refused already). `tide_platform_open` refuses any such window (`platform/src/platform.c`), the standard host names its flags first (`tide_run_open` in `tide/host.h`), and `tide run` refuses before it builds (`compiler/cli/main.c`); `tide run --web` serves its page and opens no browser. A window that's `hidden`, as every test's is, and a run with no window go as they do without the variable, but for the window's sound (Nobody listens either, below). Under the refusal, `tide_window_open` shows no window whatever asked (`platform/desktop/glfw.c`).

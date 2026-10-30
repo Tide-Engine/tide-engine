@@ -1,0 +1,67 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release
+      Start   46: tidec_e2e_structural
+ 1/18 Test   #46: tidec_e2e_structural .............   Passed    0.07 sec
+      Start   48: tidec_e2e_sparse
+ 2/18 Test   #48: tidec_e2e_sparse .................   Passed    0.06 sec
+      Start   49: tidec_e2e_rows
+ 3/18 Test   #49: tidec_e2e_rows ...................   Passed    0.31 sec
+      Start   50: tidec_e2e_sparse_rows
+ 4/18 Test   #50: tidec_e2e_sparse_rows ............   Passed    0.07 sec
+      Start   51: tidec_e2e_sparse_masks
+ 5/18 Test   #51: tidec_e2e_sparse_masks ...........   Passed    0.10 sec
+      Start   52: tidec_sparse_masks_codegen
+ 6/18 Test   #52: tidec_sparse_masks_codegen .......   Passed    0.06 sec
+      Start   53: tidec_e2e_destroy_rows
+ 7/18 Test   #53: tidec_e2e_destroy_rows ...........   Passed    0.07 sec
+      Start   54: tidec_destroy_rows_codegen
+ 8/18 Test   #54: tidec_destroy_rows_codegen .......   Passed    0.18 sec
+      Start   59: tidec_e2e_world_set_read
+ 9/18 Test   #59: tidec_e2e_world_set_read .........   Passed    0.08 sec
+      Start   60: tidec_e2e_world_set_mut
+10/18 Test   #60: tidec_e2e_world_set_mut ..........   Passed    0.07 sec
+      Start   79: tidec_e2e_function_tasks
+11/18 Test   #79: tidec_e2e_function_tasks .........   Passed    0.07 sec
+      Start  174: tidec_e2e_ownership
+12/18 Test  #174: tidec_e2e_ownership ..............   Passed    0.05 sec
+      Start 2486: tidec_rows_parameters
+13/18 Test #2486: tidec_rows_parameters ............***Failed    0.21 sec
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: in-place/apart loops, filtered and for every row
+
+6 !== 4
+
+    at file:///C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/compiler/tests/rows/parameters.mjs:37:8
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 6,
+  expected: 4,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.22.1
+
+      Start 2754: versus_particles
+14/18 Test #2754: versus_particles .................   Passed    0.05 sec
+      Start 2755: versus_wide
+15/18 Test #2755: versus_wide ......................   Passed    0.06 sec
+      Start 2756: versus_wide_kept
+16/18 Test #2756: versus_wide_kept .................   Passed    0.04 sec
+      Start 2759: versus_churn
+17/18 Test #2759: versus_churn .....................   Passed    0.06 sec
+      Start 2769: versus_particles_kept
+18/18 Test #2769: versus_particles_kept ............   Passed    0.03 sec
+
+94% tests passed, 1 tests failed out of 18
+
+Total Test time (real) =   1.74 sec
+
+The following tests FAILED:
+	2486 - tidec_rows_parameters (Failed)
+Errors while running CTest

@@ -11,6 +11,7 @@
 #include "tide/audio.h" // How many bytes an audio declaration's state and knobs have
 #include "tide/devices.h"
 #include "tide/player.h" // How many players a game can take
+#include "tide/skinned_data.h" // [BlendShapes] keeps some of an imported model's shapes
 #include "types.h"
 
 // Semantic analysis: resolves names and types, enforces access and mutability
@@ -44,6 +45,7 @@ typedef struct checker {
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
+    VEC(struct heap_pass) heap_passes; // Components and parameters passed whole to a function's `mut` or `out` parameter (settle_heap_passes)
     VEC(struct call_site) bare;  // Operators used where no code runs (a default, a constant): they can't roll there
     const expr *device_whole_ok; // A device record about to be checked that isn't read whole: a.b's a, or an argument
     const expr *colors_indexed;  // A 'target.colors' about to be checked that an index reads one of: target.colors[1]'s
@@ -85,6 +87,20 @@ typedef struct task_call {
 
 // A call of a function, and the code it's in: a function, method, system,
 // view, handler or the input.
+// A system's component, or a function's parameter, passed whole to a Tide
+// function's `mut` or `out` parameter: whether text, lists or grids change
+// through it is the callee's code's to say, worked out once every body is
+// checked (settle_heap_passes). Before, a component holding text passed this
+// way changed the heap whatever the callee did, which kept every system that
+// handed its component to a helper off threads and in line behind every other
+// such system.
+typedef struct heap_pass {
+    decl *system; // The system whose component it is, or...
+    param *from;  // ...the function's parameter
+    decl *to;     // The callee...
+    int index;    // ...and its parameter
+} heap_pass;
+
 typedef struct call_site {
     decl *from;
     decl *to;
@@ -138,7 +154,7 @@ static void check_placement_body(checker *c, decl *m)
     check_method_body(&nested, m);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
     MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
-    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
+    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
 #undef MERGE_CHECKS
 }
 
@@ -421,12 +437,34 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     return find_in_folders(prog, ns, name, kind);
 }
 
+// Whether `ns` has a declaration named `name` that a `kind` of that name
+// couldn't share it with in one namespace (the clashes check_decls reports):
+// it hides any `kind` of the name further out. A type and a system can share
+// a name; a function, a frag or vert, a constant or an alias shares none.
+static bool hides_kind(const program *prog, const str ns, const str name, const name_kind kind)
+{
+    const decl_index *index = decls_by(prog, false);
+    const uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), name.ptr, (size_t)name.len);
+    const bool kind_type = kind == NAME_TYPE || kind == NAME_PREFAB;
+    const bool kind_sole = kind == NAME_FUNCTION || kind == NAME_SHADER || kind == NAME_CONST;
+    for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
+        const decl *d = prog->decls.items[i];
+        if (!str_eq(d->name, name) || !str_eq(decl_ns(d), ns)) continue;
+        const bool sole = d->kind == DECL_FUNCTION || d->kind == DECL_SHADER || d->kind == DECL_CONST || d->kind == DECL_ALIAS;
+        const bool type = is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB;
+        if (sole || kind_sole || (type && kind_type) || (d->kind == DECL_SYSTEM && kind == NAME_SYSTEM)) return true;
+    }
+    return false;
+}
+
 // What a name means as written in `from`. A qualified name (Combat.Health) is
 // exact. A plain one is looked up in the file's namespace, then its parents
 // out to the global namespace, then the `using` namespaces, as in C#: what a
 // game declares itself is what its code means, whatever a namespace it
-// imports also has by that name. If two `using` namespaces both have it,
-// *other gets the second: the name is ambiguous.
+// imports also has by that name. The nearest namespace with the name decides,
+// whatever kind it has there: a package's enum Side hides the game's global
+// function Side from the package's code. If two `using` namespaces both have
+// it, *other gets the second: the name is ambiguous.
 static decl *lookup(const program *prog, const unit *from, const str text, const name_kind kind, decl **other)
 {
     *other = NULL;
@@ -437,6 +475,7 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
     for (ns = from ? from->ns : global_ns;;) {
         decl *d = find_in(prog, ns, text, kind);
         if (d) return d;
+        if (hides_kind(prog, ns, text, kind)) return NULL;
         if (ns.len == 0) break; // The global namespace, which is around every other
         int dot = ns.len - 1;
         while (dot >= 0 && ns.ptr[dot] != '.') dot--;
@@ -1040,6 +1079,8 @@ static type check_expr_any(checker *c, expr *e);
 static bool same_place(const expr *a, const expr *b);
 static bool gpu_refuses(const checker *c, loc at, const char *what, const char *instead);
 static type check_snap(checker *c, expr *e, decl *singleton);
+static bool names_snapped_field(const checker *c, const expr *e, type obj);
+static type check_field_snap(checker *c, expr *e);
 static void c_name_of(const decl *d, sb *out);
 
 // The code whose device reads are being recorded: a function or method, or a
@@ -1364,7 +1405,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -1393,7 +1434,7 @@ static type mesh_of(program *prog, const type vertex)
     sb name = {0};
     sb_printf(&name, "Mesh<%s>", type_name(vertex));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->meshes.count;
     vec_push(prog->meshes, d);
@@ -1472,10 +1513,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1767,7 +1808,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -2305,7 +2346,7 @@ static type array_of(program *prog, const type element, const int n, const loc a
     sb name = {0};
     sb_printf(&name, "%s[%d]", type_name(element), n);
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->arrays.count;
     vec_push(prog->arrays, d);
@@ -2335,8 +2376,9 @@ static bool reaches_long_array(const type t)
     }
 }
 
-// What an array's elements can be: plain values, which an array keeps side by
-// side in the bytes of whatever holds it, so nothing that needs the heap.
+// What an array's elements can be: values an array keeps side by side in the
+// bytes of whatever holds it. Text, lists, maps and sets are their handles
+// there, kept in the heap as a struct's fields' are; grids and resources never.
 static bool array_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
@@ -2347,10 +2389,9 @@ static bool array_element_ok(const type t, const loc at)
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
     case TY_STRUCT:
-        if (holds_heap(t) || holds_grid(t)) {
-            diag_error(at, "an array's elements can't be '" STR_FMT "': it holds %s", STR_ARG(t.decl->name),
-                       holds_grid(t) ? "a grid" : "text or a list");
-            diag_note("an array is its holder's own bytes, with nothing in the heap: a List<%s> holds them", type_name(t));
+        if (holds_grid(t)) {
+            diag_error(at, "an array's elements can't be '" STR_FMT "': it holds a grid", STR_ARG(t.decl->name));
+            diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
             return false;
         }
         if (holds_render_resource(t)) {
@@ -2358,9 +2399,10 @@ static bool array_element_ok(const type t, const loc at)
             return false;
         }
         return true;
-    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
-        diag_error(at, "an array's elements are plain values, not %s", t.kind == TY_STRING ? "text" : t.kind == TY_LIST ? "lists" : t.kind == TY_GRID ? "grids" : "maps or sets");
-        diag_note("an array is its holder's own bytes, with nothing in the heap: a list holds those, 'List<%s>'", type_name(t));
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: return true;
+    case TY_GRID:
+        diag_error(at, "an array's elements can't be grids");
+        diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
         return false;
     default:
         diag_error(at, "an array's elements are plain values, like numbers, enums, vectors and structs of them, not %s", type_name(t));
@@ -2444,7 +2486,15 @@ static bool element_path_in_place(const expr *target)
     const char *why = NULL;
     const expr *cell = NULL;
     const type kept = is_optional_field(target) ? target->field->type : target->type; // A T? field: what it's kept as
-    if (holds_heap(kept) || holds_grid(kept)) why = "it holds text or a list, which an element's bytes can't take as they are";
+    // Text and lists go where they are through arrays alone: an array is its holder's own bytes, whose text and
+    // lists are its holder's, where a list's element is the list's
+    bool only_arrays = true;
+    for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) {
+        if (e->kind == E_INDEX && e->object->type.kind != TY_ARRAY) only_arrays = false;
+        if (e->skin_operation == SKIN_OP_POSE_INDEX) only_arrays = false;
+    }
+    if (holds_grid(kept) || (holds_heap(kept) && !only_arrays))
+        why = "it holds text or a list, which an element's bytes can't take as they are";
     for (const expr *e = target; !why && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_MEMBER && !e->field && e->swizzle_len == 0) why = "it's a part of a value, not a field";
         if (e->kind == E_INDEX && e->object->type.kind == TY_GRID) cell = e;
@@ -3869,17 +3919,65 @@ static bool check_io_use(checker *c, const loc at, const char *what, const bool 
 // One of the declarations of Web.Request's own Tide code (web_prelude), by
 // its name: NULL in a program that doesn't have it, or whose own declaration
 // has the name.
-static decl *web_decl(const program *prog, const char *name, const decl_kind kind)
+static type check_function_call(checker *c, expr *e, decl *fn);
+
+static decl *prelude_decl(const program *prog, const char *path, const char *name, const decl_kind kind)
 {
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind == kind && str_eq_c(d->name, name) && d->unit && d->unit->src
-            && strcmp(d->unit->src->path, WEB_PRELUDE_PATH) == 0) return d;
+            && strcmp(d->unit->src->path, path) == 0) return d;
     }
     return NULL;
 }
 
+static decl *web_decl(const program *prog, const char *name, const decl_kind kind)
+{
+    return prelude_decl(prog, WEB_PRELUDE_PATH, name, kind);
+}
+
 static type builtin_task_start(checker *c, expr *e, type result, int side);
+
+// Draw.Rect(rect, radius, fill) and Draw.Shape(shape, fill), where `fill` is a
+// Func<float2, Color> that colors the shape: calls of fills' own Tide code
+// (draw_prelude), which a program has where its text shows a fill. True, with
+// the call's type in *result, where it is one; the arguments it checked to see
+// are checked, for the built-in versions the call is otherwise.
+static bool check_fill_draw(checker *c, expr *e, type *result, const bool on_target)
+{
+    const bool rect = str_eq_c(e->name, "Rect");
+    if (e->args.count != (rect ? 3 : 2)) return false;
+    expr *fill = e->args.items[e->args.count - 1];
+    if (fill->is_out) return false;
+    // A lambda has its type from what takes it; it and a function value take the shape's size too with two arguments
+    int arguments = 0;
+    if (fill->lambda) arguments = fill->lambda_params.count;
+    else {
+        const type t = check_expr(c, fill);
+        fill->prechecked = true;
+        if (!is_callable(t)) return false;
+        arguments = t.decl->call_types.count - 1;
+    }
+    const char *name = arguments == 2 ? (rect ? DRAW_FILL_RECT_SIZED : DRAW_FILL_SHAPE_SIZED)
+                                      : (rect ? DRAW_FILL_RECT : DRAW_FILL_SHAPE);
+    decl *const fn = prelude_decl(c->prog, DRAW_PRELUDE_PATH, name, DECL_FUNCTION);
+    if (!fn) { // A function value whose type the program's text doesn't write out
+        diag_error(fill->at, "a fill's function needs its type where the program can see it: give it as a lambda, "
+                             "`(float2 uv) => ...`, or declare it as `Color Name(float2 uv)` (or `(float2 uv, float2 size)`)");
+        *result = T_ERR;
+        return true;
+    }
+    if (on_target) { // target.Rect(...): the target goes first, to the overloads that draw into one
+        expr *target = e->object;
+        target->prechecked = true;
+        vec_push(e->args, target);
+        for (int i = e->args.count - 1; i > 0; i--) e->args.items[i] = e->args.items[i - 1];
+        e->args.items[0] = target;
+        e->targeted = false;
+    }
+    *result = check_function_call(c, e, fn);
+    return true;
+}
 
 // await request.Send(): the request goes out, by this machine, and the task
 // waits for its answer, as with Web.Fetch. An answer of any status is its
@@ -5185,7 +5283,9 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             continue;
         }
         if (untyped_arg(arg)) {
-            check_expr_want_checked(c, arg, want, true);
+            // A list's elements were checked to pick it; a lambda or a function's name is bound to the Func it
+            // goes to now, its captures read as it is
+            check_expr_want_checked(c, arg, want, !arg->lambda && !arg->callable_reference);
             continue;
         }
         const param *taken_by = &m->params.items[param_of[best][i]];
@@ -7817,6 +7917,10 @@ static type check_method(checker *c, expr *e)
         }
         if (str_eq_c(owner, "RenderTarget")) return check_window_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
+        if (str_eq_c(owner, "Draw") && (str_eq_c(e->name, "Rect") || str_eq_c(e->name, "Shape"))) {
+            type filled;
+            if (check_fill_draw(c, e, &filled, false)) return filled;
+        }
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
         if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh"))) return check_mesh_draw(c, e);
@@ -7964,6 +8068,7 @@ static type check_method(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
+    if (names_snapped_field(c, e, obj)) return check_field_snap(c, e);
     if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // this.Discard(): the frag's pixel isn't drawn
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!str_eq_c(e->name, "Discard") || e->args.count) {
@@ -8079,6 +8184,10 @@ static type check_method(checker *c, expr *e)
         }
         // A target's methods are Draw's, told apart by the receiver alone: the window is a target too
         e->targeted = true;
+        if (str_eq_c(e->name, "Rect") || str_eq_c(e->name, "Shape")) { // ...with a fill too
+            type filled;
+            if (check_fill_draw(c, e, &filled, true)) return filled;
+        }
         if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh")) return check_mesh_draw(c, e);
         if (str_eq_c(e->name, "Blit")) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -8096,6 +8205,18 @@ static type check_method(checker *c, expr *e)
         check_default_args(c, e);
         e->call = CALL_DRAW;
         e->draw_dims = 2;
+        return result;
+    }
+    // glow.WithAlpha(0.5), tip.MoveInside(Screen.rect): a Color's and a Rect's methods, called as text's are
+    if (obj.kind == TY_COLOR || obj.kind == TY_RECT) {
+        for (int i = 0; i < e->args.count; i++) {
+            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
+        }
+        const type result = resolve_builtin_call(str_from(obj.kind == TY_COLOR ? "Color" : "Rect"), e);
+        if (result.kind != TY_ERROR) {
+            e->call = CALL_TEXT;
+            check_default_args(c, e);
+        }
         return result;
     }
     if (obj.kind == TY_STRING) {
@@ -8324,6 +8445,94 @@ static type check_snap(checker *c, expr *e, decl *singleton)
     }
     e->call = CALL_SNAP;
     e->type_decl = singleton;
+    return T_VOID_;
+}
+
+// `f.since.Snap()`, or `since.Snap()` in a method: a field, not a whole
+// entity or singleton. A field of an entity's type snaps that entity, and a
+// struct's own Snap method is called as any method.
+static bool names_snapped_field(const checker *c, const expr *e, const type obj)
+{
+    if (!str_eq_c(e->name, "Snap")) return false;
+    if (obj.kind == TY_ENTITY || obj.kind == TY_LOCAL_ENTITY || obj.kind == TY_SINGLETON || obj.kind == TY_COMPONENT) return false;
+    if (obj.kind == TY_STRUCT && find_method(obj.decl, e->name)) return false;
+    const expr *place = e->object;
+    if (place->kind == E_MEMBER) return place->field != NULL;
+    return place->kind == E_NAME && place->bind == BIND_FIELD && c->method && c->method->owner;
+}
+
+// Whether views' correction smoothing moves a field: a [Position] or a
+// [Rotation], or a struct holding one.
+static bool field_smoothed(const field *f)
+{
+    for (int i = 0; i < f->attributes.count; i++) if (str_eq_c(f->attributes.items[i].name, "Snap")) return false;
+    if (f->view_correction) return true;
+    if (f->type.kind != TY_STRUCT || f->type.decl->interpolate) return false;
+    for (int i = 0; i < f->type.decl->fields.count; i++) if (field_smoothed(&f->type.decl->fields.items[i])) return true;
+    return false;
+}
+
+// field.Snap(): this field jumped this tick (a timer started over, a stance
+// that changed), so views draw it as it is at the newer tick for that
+// interval, while the rest of its component or singleton blends. Each field
+// that snaps counts its snaps in a hidden field of its own (check_program).
+static type check_field_snap(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (e->args.count != 0) diag_error(e->at, "Snap takes no arguments");
+    expr *place = e->object;
+    field *f = place->field;
+    const decl *owner = place->kind == E_MEMBER ? place->object->type.decl : c->method->owner;
+    const type_kind kind = place->kind == E_MEMBER ? place->object->type.kind : decl_type((decl *)owner).kind;
+    const str name = f->name;
+    if (c->in_input || !owner || (kind != TY_COMPONENT && kind != TY_SINGLETON && kind != TY_STRUCT)) {
+        diag_error(e->at, "only a component's or a singleton's field can snap: views blend the match, and nothing else");
+        return T_ERR;
+    }
+    if (owner->is_local || owner->placement_of || f->is_local || place->local_field) {
+        diag_error(e->at, "local state is never blended: views see it as it is");
+        return T_ERR;
+    }
+    if (kind == TY_STRUCT) {
+        diag_error(e->at, "a struct's field can't snap alone: snap the component's or the singleton's field that holds it");
+        diag_note("that field is drawn as it is for the tick it jumped, all of the struct");
+        return T_ERR;
+    }
+    if (owner->interpolate) {
+        diag_error(e->at, "'" STR_FMT "' blends its own way, with its Interpolate, so a field of it can't snap alone",
+                   STR_ARG(owner->name));
+        diag_note("snap the entity, 'this.Snap()', or have Interpolate take the newer value when it jumped");
+        return T_ERR;
+    }
+    for (int i = 0; i < f->attributes.count; i++) {
+        if (!str_eq_c(f->attributes.items[i].name, "Snap")) continue;
+        diag_error(e->at, "'" STR_FMT "' is [Snap], so views always draw it as it is", STR_ARG(name));
+        diag_note("without [Snap] it blends, but for the ticks it snaps");
+        return T_ERR;
+    }
+    if (!type_blends(f->type)) {
+        diag_error(e->at, "views never blend %s, so '" STR_FMT "' is drawn as it is already", type_name(f->type), STR_ARG(name));
+        return T_ERR;
+    }
+    if (field_smoothed(f)) {
+        diag_error(e->at, "views smooth '" STR_FMT "' through corrections, as a [Position] or a [Rotation], so it can't snap alone",
+                   STR_ARG(name));
+        diag_note(kind == TY_COMPONENT ? "snap the entity, 'this.Snap()', which starts its smoothing over too"
+                                       : "snap the singleton, which starts its smoothing over too");
+        return T_ERR;
+    }
+    if (in_async_function(c)) {
+        if (!note_task_side(c, TASK_MATCH, e->at)) return T_ERR;
+    } else if (local_code(c)) {
+        diag_error(e->at, "%s can't change the match, and snapping is part of it", local_code_what(c->system));
+        diag_note("snap it in the system that changes it, so every machine draws the jump the same");
+        return T_ERR;
+    }
+    if (!check_writable(c, place, NULL, NULL)) return T_ERR;
+    if (builds(c->prog)) f->snap_counted = true;
+    e->call = CALL_SNAP;
+    e->type_decl = (decl *)owner;
+    e->snapped_field = f;
     return T_VOID_;
 }
 
@@ -9094,7 +9303,7 @@ static type check_member(checker *c, expr *e)
         return type_asset_reference_value(obj.decl);
     }
 
-    if (obj.kind == TY_TEXTURE) {
+    if (obj.kind == TY_TEXTURE || obj.kind == TY_DEPTH_TEXTURE) {
         if (str_eq_c(e->member, "size")) {
             e->object->raw_sampled = true; // Metadata does not read or expose Raw pixels.
             c->prog->uses_texture_size = true;
@@ -9105,8 +9314,9 @@ static type check_member(checker *c, expr *e)
             }
             return (type){TY_INT2, NULL};
         }
-        diag_error(e->at, "a Texture has 'size', its int2 pixel dimensions, not '" STR_FMT "'", STR_ARG(e->member));
-        diag_note("Sample(uv[, filter[, wrap]]) reads its pixels on the GPU");
+        diag_error(e->at, "a %s has 'size', its int2 pixel dimensions, not '" STR_FMT "'", type_name(obj), STR_ARG(e->member));
+        diag_note(obj.kind == TY_DEPTH_TEXTURE ? "Sample(uv) and Compare(uv, value) read its depth on the GPU"
+                                               : "Sample(uv[, filter[, wrap]]) reads its pixels on the GPU");
         return T_ERR;
     }
     if (obj.kind == TY_RENDER_TARGET) {
@@ -9144,7 +9354,9 @@ static type check_member(checker *c, expr *e)
             e->target_colors = true;
             return obj; // What check_index makes a Texture of
         }
-        diag_error(e->at, "a RenderTarget has 'color', 'colors' and 'depth', not '" STR_FMT "'", STR_ARG(e->member));
+        if (str_eq_c(e->member, "valid")) return T_BOOL_; // Made and not disposed, or the window
+        if (str_eq_c(e->member, "size")) return (type){TY_FLOAT2, NULL}; // In logical pixels
+        diag_error(e->at, "a RenderTarget has 'color', 'colors', 'depth', 'size' and 'valid', not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
 
@@ -10863,6 +11075,7 @@ static type check_expr_any_raw(checker *c, expr *e);
 static type check_expr_any(checker *c, expr *e)
 {
     if (e->prefab_reference) return e->type;
+    if (e->prechecked) return e->type;
     const unit *saved = c->unit;
     if (e->authored_unit) c->unit = e->authored_unit;
     const type result = check_expr_any_raw(c, e);
@@ -11227,8 +11440,11 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("copy the touch into a 'mut var' to change it");
             return false;
         }
-        if (part->kind == E_MEMBER && part->object->type.kind == TY_TEXTURE && str_eq_c(part->member, "size")) {
-            diag_error(target->at, "a Texture's size is read-only: resize its RenderTarget or change its source grid instead");
+        if (part->kind == E_MEMBER && (part->object->type.kind == TY_TEXTURE || part->object->type.kind == TY_DEPTH_TEXTURE)
+            && str_eq_c(part->member, "size")) {
+            diag_error(target->at, part->object->type.kind == TY_DEPTH_TEXTURE
+                ? "a DepthTexture's size is read-only: resize its RenderTarget instead"
+                : "a Texture's size is read-only: resize its RenderTarget or change its source grid instead");
             return false;
         }
         // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
@@ -11287,7 +11503,31 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     bool in_list = false;
     for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) in_list |= e->kind == E_INDEX;
     const bool passed_holder = world_place && arg_of && target == root && decl_holds_text(root->param->type.decl);
-    note_text_write(c, world_place && (holds_heap(target->type) || target->type.kind == TY_GRID || in_list || passed_holder));
+    const bool heap_place = holds_heap(target->type) || target->type.kind == TY_GRID || in_list;
+    // Passed whole to a Tide function's parameter: what it changes there is
+    // its code's (settle_heap_passes)
+    const int pass_index = arg_of && called && called->kind == DECL_FUNCTION && called->body && !called->is_extern && !called->is_async
+                                   && !called->is_virtual && !called->is_override && arg_of >= called->params.items
+                                   && arg_of < called->params.items + called->params.count
+                               ? (int)(arg_of - called->params.items)
+                               : -1;
+    if (passed_holder && pass_index >= 0 && c->system && c->system->kind == DECL_SYSTEM && !c->method) {
+        vec_push(c->heap_passes, ((heap_pass){c->system, NULL, (decl *)called, pass_index}));
+    } else {
+        note_text_write(c, world_place && (heap_place || passed_holder));
+    }
+    // A function's own parameter changed: text, lists or grids in it, or the
+    // whole of one holding them (passed on whole, as the callee says)
+    if (root && root->bind == BIND_PARAM && root->param->function_param) {
+        param *p = root->param;
+        const bool whole_holds = target == root && (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON || p->type.kind == TY_STRUCT)
+                              && p->type.decl && decl_holds_text(p->type.decl);
+        if (target == root && whole_holds && pass_index >= 0) {
+            vec_push(c->heap_passes, ((heap_pass){NULL, p, (decl *)called, pass_index}));
+        } else if (heap_place || whole_holds) {
+            p->heap_written = true;
+        }
+    }
     if (!root || root->bind == BIND_NONE || root->bind == BIND_TYPE || root->bind == BIND_NAMESPACE) {
         if (arg_of) {
             diag_error(target->at, "'" STR_FMT "' %s its '" STR_FMT "', so pass it a variable or field",
@@ -11654,7 +11894,8 @@ static void settle_grid_loops(program *prog, stmt *s)
 static bool own_cell_only_expr(const expr *e, const stmt *loop)
 {
     if (!e) return true;
-    if (e->kind == E_MEMBER && e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) return false;
+    if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
+        && str_eq_c(e->member, "size")) return false;
     if (e->io_operation || e->storage_flush || e->web_fetch) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
@@ -11858,7 +12099,8 @@ static void check_step_expr(checker *c, const expr *e)
 {
     if (!e) return;
     const char *what = e->io_operation ? "access the filesystem" : NULL;
-    if (e->kind == E_MEMBER && e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) what = "read frame image metadata";
+    if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
+        && str_eq_c(e->member, "size")) what = "read frame image metadata";
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "add, remove or destroy"; break;
@@ -13926,7 +14168,9 @@ static bool mesh_vertex_ok(const decl *vertex, const loc at)
         const char *is;
     } filled[] = {{"normal", TY_FLOAT3, TY_FLOAT3, "a float3"}, {"uv", TY_FLOAT2, TY_FLOAT2, "a float2"},
                   {"uv2", TY_FLOAT2, TY_FLOAT2, "a float2"},   {"color", TY_COLOR, TY_COLOR, "a Color"},
-                  {"tangent", TY_FLOAT4, TY_FLOAT3, "a float4, its last number the side its bitangent is on"}};
+                  {"tangent", TY_FLOAT4, TY_FLOAT3, "a float4, its last number the side its bitangent is on"},
+                  {"joints", TY_INT4, TY_INT4, "an int4, the bones its weights are of"},
+                  {"weights", TY_FLOAT4, TY_FLOAT4, "a float4, its bones' weights"}};
     const int dims = vertex_dims(vertex, at, true);
     if (dims == 0) return false;
     if (dims != 3) {
@@ -13942,8 +14186,8 @@ static bool mesh_vertex_ok(const decl *vertex, const loc at)
                 || f->type.kind == TY_ERROR) continue;
             diag_error(at, "a mesh file's '%s' is %s, and '" STR_FMT "." STR_FMT "' is %s", filled[k].name, filled[k].is,
                        STR_ARG(vertex->name), STR_ARG(f->name), type_name(f->type));
-            diag_note("a Mesh asset fills its vertex's 'position', 'normal', 'uv', 'uv2', 'color' and 'tangent' from the file, by "
-                      "those names; a field of any other name keeps its default");
+            diag_note("a Mesh asset fills its vertex's 'position', 'normal', 'uv', 'uv2', 'color', 'tangent', 'joints' and "
+                      "'weights' from the file, by those names; a field of any other name keeps its default");
             return false;
         }
     }
@@ -13958,7 +14202,105 @@ static decl *asset_mesh_vertex(const type t)
          : inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH ? inner.decl->skin_vertex.decl : NULL;
 }
 
+// A Mesh whose vertex has 'joints' or 'weights' is read as a skinned model is,
+// for its skin: its vertices are the same, and each has its bones and weights.
+static bool mesh_wants_skin(const decl *vertex)
+{
+    for (int f = 0; vertex && f < vertex->fields.count; f++) {
+        if (str_eq_c(vertex->fields.items[f].name, "joints") || str_eq_c(vertex->fields.items[f].name, "weights")) return true;
+    }
+    return false;
+}
+
 #include "skinned_catalogs.inc"
+
+// A blend shape name against a [BlendShapes] pattern: * is any run of
+// characters (none too), everything else itself.
+static bool blend_shape_matches(const str pattern, const char *name, const uint32_t length)
+{
+    int p = 0, star = -1;
+    uint32_t n = 0, resume = 0;
+    while (n < length) {
+        if (p < pattern.len && pattern.ptr[p] == '*') {
+            star = p++;
+            resume = n;
+        } else if (p < pattern.len && pattern.ptr[p] == name[n]) {
+            p++, n++;
+        } else if (star >= 0) {
+            p = star + 1;
+            n = ++resume;
+        } else return false;
+    }
+    while (p < pattern.len && pattern.ptr[p] == '*') p++;
+    return p == pattern.len;
+}
+
+static bool blend_shape_kept(void *user, const char *name, const uint32_t length)
+{
+    const decl *k = user;
+    for (int i = 0; i < k->blend_shape_patterns.count; i++)
+        if (blend_shape_matches(k->blend_shape_patterns.items[i], name, length)) return true;
+    return false;
+}
+
+// [BlendShapes("masculineFeminine", "default*")]: names or * patterns, each a constant text.
+static void check_blend_shapes_attribute(decl *k, const attribute *attr, const bool typed, const asset_kind kind)
+{
+    if (k->blend_shapes_chosen) {
+        diag_error(attr->at, "'" STR_FMT "' already has a BlendShapes", STR_ARG(k->name));
+        return;
+    }
+    if (typed && kind != ASSET_SKINNED) {
+        diag_error(attr->at, "BlendShapes chooses which of a skinned model's blend shapes its import keeps, and '" STR_FMT "' is %s",
+                   STR_ARG(k->name), type_name(k->return_type));
+        diag_note("it goes before a SkinnedMesh<V> asset, like '[BlendShapes(\"jawOpen\", \"eye*\")] asset SkinnedMesh<Vertex3> head = \"head.fbx\";'");
+        return;
+    }
+    if (attr->args.count) {
+        diag_error(attr->at, "BlendShapes takes shape names and * patterns, not named arguments: '[BlendShapes(\"jawOpen\", \"eye*\")]'");
+        return;
+    }
+    k->blend_shapes_chosen = true;
+    for (int i = 0; i < attr->values.count; i++) {
+        const expr *literal = text_literal(attr->values.items[i]);
+        if (!literal) {
+            diag_error(attr->values.items[i]->at, "a BlendShapes pattern is a text literal or a 'const string': a shape's name, "
+                       "where * stands for any run of characters");
+            continue;
+        }
+        sb decoded = {0};
+        for (int c = 0; c < literal->text.len; c++) {
+            char ch = literal->text.ptr[c];
+            if (ch == '\\' && c + 1 < literal->text.len) {
+                ch = literal->text.ptr[++c];
+                ch = ch == 'n' ? '\n' : ch == 'r' ? '\r' : ch == 't' ? '\t' : ch;
+            }
+            sb_putn(&decoded, &ch, 1);
+        }
+        vec_push(k->blend_shape_patterns, ((str){decoded.data ? decoded.data : "", (int)decoded.len}));
+    }
+}
+
+// The declaration's own models, with only the shapes [BlendShapes] keeps.
+static void keep_blend_shapes(decl *k, const loc at)
+{
+    if (!k->blend_shapes_chosen || !k->asset) return;
+    for (int i = 0; i < k->asset->count; i++) {
+        asset_match *item = &k->asset->items[i];
+        if (!item->skinned) continue;
+        uint8_t *kept = NULL;
+        uint32_t size = 0;
+        if (!tide_skinned_data_keep_shapes(item->skinned, item->skinned_size, blend_shape_kept, k, &kept, &size)) {
+            diag_error(at, "'%s' can't have its blend shapes chosen: its imported model doesn't read back", item->key);
+            continue;
+        }
+        uint8_t *owned = arena_alloc(size ? size : 1u);
+        memcpy(owned, kept, size);
+        tide_skinned_data_free(kept);
+        item->skinned = owned;
+        item->skinned_size = size;
+    }
+}
 
 // Checks an asset declaration: its type, its path (a constant text) and the
 // files the path resolves to, read and decoded (asset_files.h), which codegen
@@ -13979,10 +14321,15 @@ static void check_asset_decl(checker *c, decl *k)
                     || mesh_vertex_ok(asset_mesh_vertex(k->return_type), k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at);
     k->asset_kind = kind;
     k->asset_many = many;
+    // How its files are read: a Mesh with bones, as a skinned model is
+    const asset_kind read = typed && fills && kind == ASSET_MESH && mesh_wants_skin(asset_mesh_vertex(k->return_type))
+                          ? ASSET_SKINNED : kind;
     for (int a = 0; a < k->attributes.count; a++) {
         attribute *attr = &k->attributes.items[a];
         if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
             check_sampling_attribute(c, k, attr);
+        } else if (str_eq_c(attr->name, "BlendShapes")) {
+            check_blend_shapes_attribute(k, attr, typed, kind);
         } else if (str_eq_c(attr->name, "LOD")) {
             // Levels of detail (docs/spec.md): a mesh's, made as the game is built
             if (attr->args.count || attr->values.count) {
@@ -14021,14 +14368,14 @@ static void check_asset_decl(checker *c, decl *k)
     if (typed && fills && valid) {
         if (catalog) {
             asset_value *combined = NEW(asset_value);
-            combined->kind = kind;
+            combined->kind = read;
             combined->paths_only = c->prog->asset_metadata_only;
             VEC(asset_match) matches = {0};
             for (int i = 0; i < k->asset_paths.count; i++) {
                 const expr *path = k->asset_paths.items[i];
                 asset_value *v = c->prog->asset_metadata_only
-                    ? asset_resolve_paths(k->unit->src->path, path->text, kind, true, false, path->at, c->prog->game_folder)
-                    : asset_resolve(k->unit->src->path, path->text, kind, true, false, path->at, c->prog->game_folder);
+                    ? asset_resolve_paths(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder)
+                    : asset_resolve(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder);
                 if (!v) { valid = false; continue; }
                 for (int n = 0; n < v->count; n++) {
                     bool duplicate = false;
@@ -14043,10 +14390,10 @@ static void check_asset_decl(checker *c, decl *k)
             combined->items = matches.items;
             combined->count = matches.count;
             if (valid) k->asset = combined;
-        } else if (!c->prog->asset_metadata_only || (kind != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
+        } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
             const expr *path = k->asset_paths.items[0];
-            k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
-            if (k->asset && kind == ASSET_MESH && !c->prog->asset_metadata_only) {
+            k->asset = asset_resolve(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
+            if (k->asset && read == ASSET_MESH && !c->prog->asset_metadata_only) {
                 const decl *vertex = asset_mesh_vertex(k->return_type);
                 bool tangents = false;
                 for (int f = 0; f < vertex->fields.count; f++) {
@@ -14055,6 +14402,7 @@ static void check_asset_decl(checker *c, decl *k)
                 }
                 if (tangents && !asset_mesh_tangents(k->asset, path->at)) k->asset = NULL;
             }
+            if (kind == ASSET_SKINNED && !c->prog->asset_metadata_only) keep_blend_shapes(k, path->at);
         }
         if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS)
             skinned_asset_catalogs(c, k, k->asset_paths.items[0]);
@@ -14649,6 +14997,7 @@ static void order_struct(program *prog, decl *d)
 static bool holds_list(const type t)
 {
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) return true;
+    if (t.kind == TY_ARRAY) return holds_list(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_list(t.decl->fields.items[i].type)) return true;
@@ -14662,6 +15011,7 @@ static bool holds_list_but_bytes(const type t)
 {
     if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind != TY_BYTE;
     if (t.kind == TY_MAP || t.kind == TY_SET) return true;
+    if (t.kind == TY_ARRAY) return holds_list_but_bytes(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_list_but_bytes(t.decl->fields.items[i].type)) return true;
@@ -14684,6 +15034,7 @@ static bool holds_grid(const type t)
 static bool holds_text(const type t)
 {
     if (t.kind == TY_STRING) return true;
+    if (t.kind == TY_ARRAY) return holds_text(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_text(t.decl->fields.items[i].type)) return true;
@@ -17272,12 +17623,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     field rewind_field = {0};
@@ -17365,7 +17716,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -17570,7 +17921,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -17590,7 +17941,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -17608,7 +17959,7 @@ static void add_builtins(program *prog)
         {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
     for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
         const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(shape->fields, f);
     }
     expr *none = NEW(expr);
@@ -17656,6 +18007,34 @@ static void add_builtins(program *prog)
     theme_radius.name = str_from("radius");
     theme_radius.type_name = str_from("float");
     vec_push(theme->fields, theme_radius);
+    // ...then its border, shading, shadow, transitions and sizes, as
+    // tide_gui_theme_default has them: a color's four parts, or one number
+    static const char *const theme_more[][6] = {
+        {"border", "Color", "1", "1", "1", "0.12"}, {"borderWidth", "float", "0"}, {"shading", "float", "0"},
+        {"shadow", "Color", "0", "0", "0", "0.35"}, {"shadowSize", "float", "16"}, {"transition", "float", "0.1"},
+        {"textSize", "float", "16"}, {"padding", "float", "12"}, {"spacing", "float", "5"}};
+    for (int i = 0; i < (int)(sizeof theme_more / sizeof theme_more[0]); i++) {
+        field f = {0};
+        f.name = str_from(theme_more[i][0]);
+        f.type_name = str_from(theme_more[i][1]);
+        const bool color = strcmp(theme_more[i][1], "Color") == 0;
+        expr *value = NEW(expr);
+        if (color) { // Color(r, g, b, a)
+            value->kind = E_CALL;
+            value->name = str_from("Color");
+            for (int k = 2; k < 6; k++) {
+                expr *part = NEW(expr);
+                part->kind = E_FLOAT;
+                part->text = str_from(theme_more[i][k]);
+                vec_push(value->args, part);
+            }
+        } else {
+            value->kind = E_FLOAT;
+            value->text = str_from(theme_more[i][2]);
+        }
+        if (color || strcmp(theme_more[i][2], "0") != 0) f.default_value = value;
+        vec_push(theme->fields, f);
+    }
     prog->gui_theme = theme;
     // GUI.Control's interaction flags and GUI-space pointer position, as
     // tide/gui.h's tide_control. Generated padding stays explicit and zeroed.
@@ -17663,11 +18042,12 @@ static void add_builtins(program *prog)
     control->kind = DECL_STRUCT;
     control->name = str_from("GUIControl");
     control->builtin = true;
-    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked", "down", "up", "cancelled", "position"};
+    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked", "down", "up", "cancelled",
+                                                 "position", "hover", "press", "focus"};
     for (int i = 0; i < (int)(sizeof control_fields / sizeof control_fields[0]); i++) {
         field f = {0};
         f.name = str_from(control_fields[i]);
-        f.type_name = str_from(i == 7 ? "float2" : "bool");
+        f.type_name = str_from(i == 7 ? "float2" : i > 7 ? "float" : "bool");
         vec_push(control->fields, f);
     }
     prog->gui_control = control;
@@ -17878,7 +18258,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -17887,7 +18267,7 @@ static void add_builtins(program *prog)
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
     const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
-                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
     // going, for local handlers to let go of what they hold (see check_forgotten).
@@ -17954,7 +18334,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, f);
 }
 
@@ -18424,17 +18804,23 @@ static comp_mask solid(const program *prog, const comp_mask m)
     return mask_andnot(m, prog->sparse_mask);
 }
 
-// Whether a sparse component is one: [Sparse], or a tag (no fields) that any
-// Add or Remove names, which would otherwise double the archetypes it can
-// reach. A tag only set at Spawn stays part of its archetype, so filtering on
-// it costs nothing a row.
+static const attribute *attribute_named(const decl *d, const char *name)
+{
+    for (int a = 0; a < d->attributes.count; a++) {
+        if (str_eq_c(d->attributes.items[a].name, name)) return &d->attributes.items[a];
+    }
+    return NULL;
+}
+
+// Whether a sparse component is one: [Sparse], or a tag the archetypes would
+// otherwise pass the limit with (derive_archetypes). Any other component's Add
+// and Remove move the entity to the archetype with or without it, so a
+// system filtering on it goes through whole archetypes.
 static bool sparse_component_source(const program *prog, const decl *d)
 {
+    (void)prog;
     if (d->is_scene) return false;
-    for (int a = 0; a < d->attributes.count; a++) {
-        if (str_eq_c(d->attributes.items[a].name, "Sparse")) return true;
-    }
-    return d->fields.count == 0 && (mask_has(prog->added_mask, d->index) || mask_has(prog->removed_mask, d->index));
+    return attribute_named(d, "Sparse") || d->sparse_fallback;
 }
 
 static bool sparse_component(const program *prog, const decl *d)
@@ -18527,7 +18913,9 @@ static void append_component_names(const program *prog, const comp_mask mask, ch
 // Every spawn creates an archetype, and the Adds and Removes that can reach
 // each archetype's entities (change_site) make the rest, until nothing new
 // appears.
-static void derive_archetypes(const checker *c)
+// One try at the archetypes, with the components sparse_component says are
+// sparse: false past the limit, with what it made left for the next try to clear.
+static bool derive_archetypes_once(const checker *c)
 {
     program *prog = c->prog;
     pending p = {{0}, {0}};
@@ -18561,12 +18949,60 @@ static void derive_archetypes(const checker *c)
         c->spawns.items[i]->spawn_archetype = a;
         prog->spawn_target.items[a] = true;
     }
-    return;
+    return true;
 
 too_many:
+    return false;
+}
+
+// Whether tag `d` is one Add or Remove names, which a fallback could make sparse;
+// with `anywhere`, only one named by a change on an entity read from a field or
+// a parameter, which can reach every archetype
+static bool fallback_tag(const program *prog, const decl *d, const bool anywhere)
+{
+    if (d->is_scene || d->is_sparse || d->sparse_fallback || d->fields.count > 0) return false;
+    if (!mask_has(prog->added_mask, d->index) && !mask_has(prog->removed_mask, d->index)) return false;
+    if (!anywhere) return true;
+    for (int pass = 0; pass < 2; pass++) {
+        const change_sites *sites = pass ? &prog->removes : &prog->adds;
+        for (int i = 0; i < sites->count; i++) {
+            const change_site *s = &sites->items[i];
+            if (!s->from && !s->spawn && mask_has(s->comps, d->index)) return true;
+        }
+    }
+    return false;
+}
+
+// Every spawn creates an archetype, and the Adds and Removes that can reach
+// each archetype's entities (change_site) make the rest. Where a tag's moving
+// entities takes them past the limit, tags become presence bits in the row
+// instead (sparse_fallback), one at a time until they fit: first those an Add
+// or Remove on any entity names, which multiply the combinations, then the
+// rest, each in the order declared. Which tags those are depends on the code
+// alone, so every build of a game makes the same ones.
+static void derive_archetypes(const checker *c)
+{
+    program *prog = c->prog;
+    for (;;) {
+        prog->archetypes.count = 0;
+        prog->possible.count = 0;
+        prog->archetype_local.count = 0;
+        prog->sparse_mask = mask_none();
+        if (derive_archetypes_once(c)) return;
+        decl *next = NULL;
+        for (int anywhere = 1; anywhere >= 0 && !next; anywhere--) {
+            for (int i = 0; i < prog->components.count && !next; i++) {
+                if (fallback_tag(prog, prog->components.items[i], anywhere)) next = prog->components.items[i];
+            }
+        }
+        if (!next) break;
+        next->sparse_fallback = true;
+    }
     diag_error((loc){1, 1, 0}, "the program can create more than %d different component combinations", MAX_ARCHETYPES);
     diag_note("an Add or Remove on an entity read from a field or a parameter can apply to any entity, so combinations "
               "multiply; one on 'this', or on an entity a Spawn in the same code made, only reaches what it can");
+    diag_note("a component with fields that entities gain and lose all the time can be '[Sparse]': a presence bit and its "
+              "value in the row, which no Add or Remove moves");
 }
 
 static const char *system_what(const decl *sys)
@@ -19138,6 +19574,12 @@ static void check_attributes(checker *c)
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
+            if (str_eq_c(attr->name, "BlendShapes")) {
+                if (d->kind != DECL_ASSET) // An asset's was read with it
+                    diag_error(attr->at, "BlendShapes chooses which blend shapes a SkinnedMesh asset keeps, and '" STR_FMT
+                               "' isn't an asset", STR_ARG(d->name));
+                continue;
+            }
             if (str_eq_c(attr->name, "LOD")) {
                 if (d->kind != DECL_ASSET) { // An asset's was read with it
                     diag_error(attr->at, "LOD has simpler versions of a mesh made, for where it's drawn small, and '" STR_FMT
@@ -19190,6 +19632,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
                 suggest_consider_c(&s, "LOD");
+                suggest_consider_c(&s, "BlendShapes");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
@@ -20277,6 +20720,26 @@ static void check_task_params(const checker *c)
             diag_note_at(q->task_own_at, "it does on line %d", q->task_own_at.line);
             diag_note("a task gets its components and singletons as they are: a copy would miss what changes while it waits");
         }
+    }
+}
+
+// Whether the text, lists or grids passed whole to a function's parameter
+// change there: its code's own writes, and what the functions it passes it on
+// to change, until nothing more changes. A system whose component a callee can
+// change them through changes its world's heap.
+static void settle_heap_passes(checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->heap_passes.count; i++) {
+            const heap_pass *h = &c->heap_passes.items[i];
+            if (!h->from || h->from->heap_written) continue;
+            if (h->to->params.items[h->index].heap_written) h->from->heap_written = changed = true;
+        }
+    }
+    for (int i = 0; i < c->heap_passes.count; i++) {
+        const heap_pass *h = &c->heap_passes.items[i];
+        if (h->system && h->to->params.items[h->index].heap_written) h->system->writes_text = true;
     }
 }
 
@@ -21468,6 +21931,7 @@ bool check(program *prog)
             site->to->task_cpu = changed = true;
         }
     }
+    settle_heap_passes(&c);
     check_acts(&c);
     check_render_resource_calls(&c);
     check_io_calls(&c);
@@ -21535,8 +21999,21 @@ bool check(program *prog)
     collect_device_uses(&c);
     check_workers(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
+    // So does a field something snaps alone, after the rest.
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
+        if (d->kind != DECL_SINGLETON && d->kind != DECL_COMPONENT) continue;
+        const int fields = d->fields.count;
+        for (int k = 0; k < fields; k++) {
+            if (!d->fields.items[k].snap_counted) continue;
+            sb counter = {0};
+            sb_printf(&counter, "tide_snaps_" STR_FMT, STR_ARG(d->fields.items[k].name));
+            field snaps = {0};
+            snaps.name = str_from(counter.data);
+            snaps.type = (type){TY_INT, NULL};
+            snaps.hidden = true;
+            vec_push(d->fields, snaps);
+        }
         if (d->kind != DECL_SINGLETON || !d->snapped) continue;
         field snaps = {0};
         snaps.name = str_from("tide_snaps");

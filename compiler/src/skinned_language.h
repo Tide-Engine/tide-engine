@@ -23,10 +23,18 @@ typedef enum skinned_operation {
     SKIN_OP_POSE_MODEL,
     SKIN_OP_POSE_INDEX,
     SKIN_OP_DECODE,
+    SKIN_OP_BLEND_SHAPES,
+    SKIN_OP_BLEND_SHAPE_COUNT,
+    SKIN_OP_BLEND_SHAPE_NAME,
+    SKIN_OP_BLEND_SHAPE_WEIGHT,
+    SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME,
+    SKIN_OP_TRY_GET_BLEND_SHAPE_AT,
+    SKIN_OP_SHAPED,
 } skinned_operation;
 
 static inline bool skinned_lookup(const skinned_operation op)
 {
     return op == SKIN_OP_TRY_GET_ANIMATION_BY_NAME || op == SKIN_OP_TRY_GET_BONE_BY_NAME
-        || op == SKIN_OP_TRY_GET_ANIMATION_AT || op == SKIN_OP_TRY_GET_BONE_AT;
+        || op == SKIN_OP_TRY_GET_ANIMATION_AT || op == SKIN_OP_TRY_GET_BONE_AT
+        || op == SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME || op == SKIN_OP_TRY_GET_BLEND_SHAPE_AT;
 }

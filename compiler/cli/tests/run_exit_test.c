@@ -14,7 +14,7 @@ int tide_open(int argc, char **argv) { (void)argc; (void)argv; return 0; }
 char *tide_build_editor(const char *root, const build_options *opts) { (void)root; (void)opts; return NULL; }
 int tide_unity(const char *root, const build_options *opts) { (void)root; (void)opts; return 0; }
 static size_t call_count;
-static const char *passed[40]; // What the last run was given for its game
+static const char *passed[128]; // What the last run was given for its game
 static int passed_count;
 static const char *passed_scene, *passed_source, *passed_draft, *passed_work;
 
@@ -144,7 +144,9 @@ int main(void)
         {{"tide", "run", "--frames", "1"}, 4, "UN"},
         {{"tide", "run", "--capture", "frame.png"}, 4, "UN"},
         {{"tide", "run", "--script", "play.txt"}, 4, "UN"},
+        {{"tide", "run", "--interactive", "play.txt"}, 4, "UN"},
         {{"tide", "run", "--capture-audio", "run.wav"}, 4, "UN"},
+        {{"tide", "run", "--record", "run.gif"}, 4, "UN"},
         {{"tide", "run", "--microphone", "voice.wav"}, 4, "UN"},
         {{"tide", "run", "--web", "--no-open"}, 4, "Uw"},
         {{"tide", "run", "--android"}, 3, "Ua"},
@@ -168,8 +170,9 @@ int main(void)
     // as it was typed, but for the files, which are where the command says
     // from here, as the game runs in its own folder.
     char *all[] = {"tide", "run", "--host", "7777", "--join", "K7QF2M", "--connect", "localhost", "--capture", "frame.png",
-                   "--capture-audio", "run.wav", "--script", "play.txt", "--microphone", "voice.wav", "--frames", "1",
-                   "--scale", "2", "--players", "2", "--seed", "7", "--data-dir", "test saves", "--size", "640", "480", "game"};
+                   "--capture-audio", "run.wav", "--record", "run.gif", "--script", "play.txt", "--interactive", "live play.txt", "--microphone", "voice.wav", "--frames", "1",
+                   "--scale", "2", "--players", "2", "--seed", "7", "--data-dir", "test saves", "--size", "640", "480",
+                   "--latency", "80", "--jitter", "10", "--loss", "5", "--latency", "2:120", "game"};
     const int all_count = (int)(sizeof all / sizeof all[0]);
     call_count = 0;
     calls[0] = '\0';
@@ -183,8 +186,8 @@ int main(void)
     for (int i = 0; i < passed_count; i++) {
         const char *typed = all[i + 2];
         const char *before = i > 0 ? all[i + 1] : "";
-        const bool file = strcmp(before, "--capture") == 0 || strcmp(before, "--capture-audio") == 0 ||
-                          strcmp(before, "--script") == 0 || strcmp(before, "--microphone") == 0 || strcmp(before, "--data-dir") == 0;
+        const bool file = strcmp(before, "--capture") == 0 || strcmp(before, "--capture-audio") == 0 || strcmp(before, "--record") == 0 ||
+                          strcmp(before, "--script") == 0 || strcmp(before, "--interactive") == 0 || strcmp(before, "--microphone") == 0 || strcmp(before, "--data-dir") == 0;
         const char *expected = file ? path_absolute(typed) : typed;
         if (strcmp(passed[i], expected) != 0) {
             fprintf(stderr, "every option once: argument %d should be '%s', not '%s'\n", i, expected, passed[i]);
@@ -219,19 +222,22 @@ int main(void)
     puts("ok: startup selection, original-path source overlay and isolated cache stay compiler options");
 
     // More of them than that is said, never written past the room there is
-    char *many[2 + 3 * 16] = {"tide", "run"};
-    for (int i = 0; i < 16; i++) {
+    char *many[2 + 3 * 48] = {"tide", "run"};
+    for (int i = 0; i < 48; i++) {
         many[2 + 3 * i] = "--size";
         many[3 + 3 * i] = "640";
         many[4 + 3 * i] = "480";
     }
     call_count = 0;
     calls[0] = '\0';
-    const int refused = tide_command_main(2 + 3 * 16, many);
+    const int refused = tide_command_main(2 + 3 * 48, many);
     if (refused != 2 || calls[0]) {
-        fprintf(stderr, "an option given 16 times: expected exit code 2 and no run; got calls '%s' and code %d\n", calls, refused);
+        fprintf(stderr, "an option given 48 times: expected exit code 2 and no run; got calls '%s' and code %d\n", calls, refused);
         return 1;
     }
     puts("ok: an option given over and over is refused");
     return 0;
 }
+
+int tide_use_pinned(const char *folder, int argc, char **argv, const char *version)
+{ (void)folder; (void)argc; (void)argv; (void)version; return -1; }

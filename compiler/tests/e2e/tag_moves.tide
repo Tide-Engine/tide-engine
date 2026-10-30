@@ -1,0 +1,43 @@
+// Tags that come and go: Sleeping's Add and Remove move the entity to the
+// archetype with or without it, as any component's do. Drowsy is [Sparse]: a
+// presence bit in the row, which moves nobody.
+
+component Body
+{
+    int id;
+    int steps;
+    int naps;
+}
+
+component Sleeping { }
+
+[Sparse]
+component Drowsy { }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 6; i++) Spawn(Body { id = i });
+}
+
+// Awake bodies step; on tick 1 the even ones fall asleep and the odd ones get drowsy
+system Step(mut Body body, Time time, without Sleeping)
+{
+    body.steps += 1;
+    if (time.tick != 1) return;
+    if (body.id % 2 == 0) this.Add(Sleeping);
+    else this.Add(Drowsy);
+}
+
+// Sleepers count their naps and wake on tick 3
+system Nap(mut Body body, Time time, with Sleeping)
+{
+    body.naps += 1;
+    if (time.tick == 3) this.Remove(Sleeping);
+}
+
+system Rouse(Time time, with Drowsy)
+{
+    if (time.tick == 3) this.Remove(Drowsy);
+}

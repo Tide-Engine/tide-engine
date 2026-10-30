@@ -1,0 +1,109 @@
+// Blend shapes: a skinned FBX's channels and a decoded GLB's morph targets,
+// looked up by name and index, and baked with Shaped in match code and a view.
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    float tag = 7;
+}
+
+asset SkinnedMesh<Corner> part = "fbx/shapes/shapes_ascii.fbx";
+asset List<byte> faceBytes = "blend_shapes/face.glb";
+// [BlendShapes]: only the shapes these names or * patterns match are imported.
+[BlendShapes("jaw*")] asset SkinnedMesh<Corner> jawOnly = "fbx/shapes/shapes_ascii.fbx";
+[BlendShapes()] asset SkinnedMesh<Corner> noShapes = "fbx/shapes/shapes_binary.fbx";
+[BlendShapes("smile", "nothing*")] asset List<SkinnedMesh<Corner>> smiles = "fbx/shapes/shapes_*.fbx";
+[BlendShapes("*Open")] asset Map<string, SkinnedMesh<Corner>> opens = "fbx/shapes/shapes_*.fbx";
+[BlendShapes("blink")] asset SkinnedMesh<Corner> faceModel = "blend_shapes/face.glb";
+
+singleton ShapeProbe
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    int ticks;
+    SkinnedMesh<Corner> shaped;
+    BlendShape smile;
+    List<float> weights;
+    float jaw;
+}
+
+scene Main { }
+
+void Expect(mut ShapeProbe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+
+bool Same(float3 a, float3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+// A helper takes any model of the vertex type and its weights.
+SkinnedMesh<Corner> Open(SkinnedMesh<Corner> model, float amount)
+{
+    return model.Shaped([0.25, amount]);
+}
+
+system Check(mut ShapeProbe p)
+{
+    if (p.ticks == 0)
+    {
+        Expect(p, part.blendShapes.count == 2);
+        Expect(p, part.blendShapes.TryGetByName("smile", out var smile) && smile.name == "smile" && smile.weight == 0.25);
+        Expect(p, part.blendShapes.TryGetAt(1, out BlendShape jaw) && jaw.name == "jawOpen" && jaw.weight == 0);
+        Expect(p, !part.blendShapes.TryGetByName("frown", out var missing) && missing.name == "" && missing.weight == 0);
+        Expect(p, !part.blendShapes.TryGetByName("Blends.smile", out _) && !part.blendShapes.TryGetByName("", out _));
+        Expect(p, !part.blendShapes.TryGetAt(2, out _) && !part.blendShapes.TryGetAt(-1, out _));
+        // The vertices have the file's default weights already.
+        Expect(p, Same(part.vertices[0].position, float3(0, 0.125, 0)) && Same(part.vertices[2].normal, float3(-0.25, 0, 1)));
+        var same = part.Shaped([0.25, 0]);
+        Expect(p, Same(same.vertices[0].position, part.vertices[0].position) && Same(same.vertices[2].position, part.vertices[2].position));
+        var open = part.Shaped([1, 2]);
+        Expect(p, Same(open.vertices[0].position, float3(0, 0.5, 0)));
+        Expect(p, Same(open.vertices[1].position, float3(-2, -2, 0)));
+        Expect(p, Same(open.vertices[2].position, float3(0, 2, 0.25)) && Same(open.vertices[2].normal, float3(-1, 0, 1)));
+        Expect(p, open.vertices[0].tag == 7 && open.vertices[1].uv.x == part.vertices[1].uv.x && open.vertices[1].uv.y == part.vertices[1].uv.y);
+        Expect(p, open.indices.count == part.indices.count && open.skeleton.bones.count == part.skeleton.bones.count);
+        Expect(p, open.animations.TryGetAt(0, out var move) && move.name == "Move" && open.blendShapes.count == 2);
+        // Weights outside 0..1 extrapolate; a missing one is its shape's default.
+        var less = part.Shaped([-1]);
+        Expect(p, Same(less.vertices[0].position, float3(0, -0.5, 0)) && Same(less.vertices[1].position, part.vertices[1].position));
+        Expect(p, Same(Open(part, 1).vertices[1].position, float3(-2, -1, 0)));
+        // The base model is unchanged.
+        Expect(p, Same(part.vertices[1].position, float3(-2, 0, 0)));
+        p.smile = smile;
+        p.weights = [0.25, 0.5];
+        // A decoded GLB carries its morph targets' names and default weights.
+        var face = SkinnedMesh<Corner>.Decode(faceBytes)!;
+        Expect(p, face.blendShapes.count == 2 && face.blendShapes.TryGetByName("blink", out var blink) && blink.weight == 1);
+        Expect(p, Same(face.vertices[2].position, float3(0, 0, 0)));
+        var awake = face.Shaped([0, 0]);
+        Expect(p, Same(awake.vertices[2].position, float3(0, 1, 0)) && Same(awake.vertices[1].position, float3(-1, 0, 0)));
+        // Chosen shapes: the rest are gone, the vertices still have every default.
+        Expect(p, jawOnly.blendShapes.count == 1 && jawOnly.blendShapes.TryGetAt(0, out var only) && only.name == "jawOpen"
+            && !jawOnly.blendShapes.TryGetByName("smile", out _) && Same(jawOnly.vertices[0].position, float3(0, 0.125, 0))
+            && Same(jawOnly.Shaped([2]).vertices[1].position, float3(-2, -2, 0)));
+        Expect(p, noShapes.blendShapes.count == 0 && Same(noShapes.Shaped([1, 1]).vertices[0].position, float3(0, 0.125, 0)));
+        Expect(p, smiles.count == 2 && smiles[0].blendShapes.count == 1 && smiles[1].blendShapes.TryGetByName("smile", out _));
+        Expect(p, opens["fbx/shapes/shapes_ascii.fbx"].blendShapes.count == 1
+            && opens["fbx/shapes/shapes_binary.fbx"].blendShapes.TryGetAt(0, out var open0) && open0.name == "jawOpen");
+        Expect(p, faceModel.blendShapes.count == 1 && faceModel.blendShapes.TryGetByName("blink", out var shut)
+            && shut.weight == 1 && Same(faceModel.vertices[2].position, float3(0, 0, 0)));
+        var talking = face.Shaped([1]);
+        Expect(p, Same(talking.vertices[1].position, float3(-1, 0, 1)) && Same(talking.vertices[2].position, float3(0, 0, 0)));
+    }
+    // Kept in the match: a stored shaped model and a stored shape.
+    p.jaw = p.jaw + 0.5;
+    p.weights[1] = p.jaw;
+    p.shaped = part.Shaped(p.weights);
+    Expect(p, p.shaped.vertices[1].position.y == -p.jaw && p.smile.name == "smile" && p.smile.weight == 0.25);
+    p.ticks++;
+}
+
+view Show(ShapeProbe p)
+{
+    Draw.SkinnedMesh(p.shaped, float4x4.identity);
+    Draw.SkinnedMesh(part.Shaped([1, 1]), float4x4.Translate(float3(3, 0, 0)), part.defaultPose);
+}

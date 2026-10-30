@@ -16,7 +16,95 @@ static void make_room(tide_table *t, const tide_columns *c, const uint32_t chunk
     uint32_t room = t->room ? t->room * 2u : 4u;
     while (room < chunks) room *= 2u;
     t->pages = tide_realloc(t->pages, (size_t)t->room * c->count * sizeof *t->pages, (size_t)room * c->count * sizeof *t->pages);
+    t->chunk_holes = tide_realloc(t->chunk_holes, (size_t)t->room * sizeof *t->chunk_holes, (size_t)room * sizeof *t->chunk_holes);
+    memset(t->chunk_holes + t->room, 0, (size_t)(room - t->room) * sizeof *t->chunk_holes);
     t->room = room;
+}
+
+static const tide_entity *row_entity(const tide_table *t, const tide_columns *c, const uint32_t row)
+{
+    return tide_table_get(t, c, row, 0);
+}
+
+// The last row goes, and a chunk left empty with it.
+static void drop_last(tide_table *t, const tide_columns *c)
+{
+    t->count--;
+    if (t->count == (t->chunks - 1u) << c->shift) {
+        t->chunks--;
+        for (uint32_t k = 0; k < c->count; k++) tide_page_release(t->pages[t->chunks * c->count + k], 1);
+        t->chunk_holes[t->chunks] = 0;
+        t->last_room = t->chunks ? full_room(c) : 0u;
+    }
+}
+
+// Holes at the end aren't rows: they go.
+static void drop_trailing_holes(tide_table *t, const tide_columns *c)
+{
+    while (t->holes && t->count && tide_row_gone(row_entity(t, c, t->count - 1u))) {
+        t->chunk_holes[(t->count - 1u) >> c->shift]--;
+        t->holes--;
+        drop_last(t, c);
+    }
+    if (t->hole_from > t->count) t->hole_from = t->count;
+}
+
+// The lowest hole, no longer one.
+static uint32_t take_hole(tide_table *t, const tide_columns *c)
+{
+    uint32_t chunk = t->hole_from >> c->shift;
+    while (!t->chunk_holes[chunk]) chunk++;
+    const uint32_t start = chunk == t->hole_from >> c->shift ? t->hole_from & (full_room(c) - 1u) : 0u;
+    const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+    const tide_entity *e = tide_table_column(t, c, chunk, 0);
+    uint32_t i = start;
+    while (i < rows && !tide_row_gone(&e[i])) i++;
+    const uint32_t row = (chunk << c->shift) + i;
+    t->chunk_holes[chunk]--;
+    t->holes--;
+    t->hole_from = row + 1u;
+    return row;
+}
+
+// Fills `row` with the last row, telling the entity table where that one went.
+static void fill_from_last(tide_table *t, const tide_columns *c, const uint32_t row, tide_entities *entities, const uint32_t archetype)
+{
+    const uint32_t last = t->count - 1u;
+    for (uint32_t k = 0; k < c->count; k++) memcpy(tide_table_cell(t, c, row, k), tide_table_get(t, c, last, k), c->sizes[k]);
+    tide_entity moved;
+    memcpy(&moved, row_entity(t, c, row), sizeof moved);
+    tide_entity_set_location(entities, moved, (tide_location){archetype, row});
+    drop_last(t, c);
+}
+
+void tide_table_settle(tide_table *t, const tide_columns *c, tide_entities *entities, const uint32_t archetype)
+{
+    if ((uint64_t)t->holes * 32u <= t->count) return;
+    while (t->holes) {
+        drop_trailing_holes(t, c);
+        if (!t->holes) break;
+        const uint32_t row = take_hole(t, c);
+        fill_from_last(t, c, row, entities, archetype);
+    }
+    t->hole_from = t->count;
+}
+
+void tide_table_count_holes(tide_table *t, const tide_columns *c)
+{
+    t->holes = 0;
+    t->hole_from = t->count;
+    for (uint32_t chunk = 0; chunk < t->chunks; chunk++) {
+        const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+        const tide_entity *e = tide_table_column(t, c, chunk, 0);
+        uint32_t holes = 0;
+        for (uint32_t i = 0; i < rows; i++) {
+            if (!tide_row_gone(&e[i])) continue;
+            if (!holes && t->hole_from == t->count) t->hole_from = (chunk << c->shift) + i;
+            holes++;
+        }
+        t->chunk_holes[chunk] = holes;
+        t->holes += holes;
+    }
 }
 
 // A byte count that has to fit in 32 bits: a world's packed size, and what's in a page.
@@ -118,6 +206,19 @@ void tide_table_lanes_end_pieces(tide_table *t, const tide_columns *c, const uin
 
 uint32_t tide_table_add(tide_table *t, const tide_columns *c)
 {
+    // A hole in the last chunk, which an append would write too, is filled; holes
+    // further in wait for tide_table_settle, as filling one writes its chunk
+    if (t->holes && t->chunk_holes[t->chunks - 1u]) {
+        const uint32_t chunk = t->chunks - 1u;
+        const tide_entity *e = tide_table_column(t, c, chunk, 0);
+        uint32_t i = 0;
+        while (!tide_row_gone(&e[i])) i++;
+        const uint32_t hole = (chunk << c->shift) + i;
+        t->chunk_holes[chunk]--;
+        t->holes--;
+        for (uint32_t k = 0; k < c->count; k++) memset(tide_table_cell(t, c, hole, k), 0, c->sizes[k]);
+        return hole;
+    }
     if (t->count == UINT32_MAX) tide_out_of_memory();
     const uint32_t row = t->count;
     const uint32_t chunk = row >> c->shift;
@@ -126,6 +227,7 @@ uint32_t tide_table_add(tide_table *t, const tide_columns *c)
         make_room(t, c, chunk + 1u);
         const uint32_t room = chunk == 0 && FIRST_ROOM < full_room(c) ? FIRST_ROOM : full_room(c);
         for (uint32_t k = 0; k < c->count; k++) t->pages[chunk * c->count + k] = tide_page_new(bytes_of((uint64_t)room * c->sizes[k]));
+        t->chunk_holes[chunk] = 0;
         t->chunks++;
         t->last_room = room;
     } else if (at == t->last_room) { // The first chunk, full but not as big as the others: twice the room
@@ -147,23 +249,17 @@ uint32_t tide_table_add(tide_table *t, const tide_columns *c)
 void tide_table_remove(tide_table *t, const tide_columns *c, const uint32_t row, tide_entities *entities,
                        const uint32_t archetype)
 {
-    const uint32_t last = t->count - 1u;
-    if (row != last) {
-        for (uint32_t k = 0; k < c->count; k++) {
-            void *gap = tide_table_cell(t, c, row, k);
-            memcpy(gap, tide_table_get(t, c, last, k), c->sizes[k]);
-        }
-        tide_entity moved;
-        memcpy(&moved, tide_table_get(t, c, row, 0), sizeof moved);
-        tide_entity_set_location(entities, moved, (tide_location){archetype, row});
+    (void)entities;
+    (void)archetype;
+    if (row == t->count - 1u) {
+        drop_last(t, c);
+        drop_trailing_holes(t, c);
+        return;
     }
-    t->count = last;
-    // A last chunk left empty goes
-    if (t->count == (t->chunks - 1u) << c->shift) {
-        t->chunks--;
-        for (uint32_t k = 0; k < c->count; k++) tide_page_release(t->pages[t->chunks * c->count + k], 1);
-        t->last_room = t->chunks ? full_room(c) : 0u;
-    }
+    memset(tide_table_cell(t, c, row, 0), 0, sizeof(tide_entity));
+    t->chunk_holes[row >> c->shift]++;
+    t->holes++;
+    if (t->holes == 1u || row < t->hole_from) t->hole_from = row;
 }
 
 void tide_table_remove_row(tide_table *t, const tide_columns *c, const uint32_t row)
@@ -207,6 +303,9 @@ void tide_table_copy(tide_table *to, const tide_table *from, const tide_columns 
     for (uint32_t i = 0; i < to->chunks * c->count; i++) tide_page_release(to->pages[i], 1);
     make_room(to, c, from->chunks);
     if (pages) memcpy(to->pages, from->pages, pages * sizeof *to->pages);
+    if (from->chunks) memcpy(to->chunk_holes, from->chunk_holes, from->chunks * sizeof *to->chunk_holes);
+    to->holes = from->holes;
+    to->hole_from = from->hole_from;
     to->count = from->count;
     to->chunks = from->chunks;
     to->last_room = from->last_room;
@@ -237,6 +336,7 @@ void tide_table_free(tide_table *t, const tide_columns *c)
 {
     for (uint32_t i = 0; i < t->chunks * c->count; i++) tide_page_release(t->pages[i], 1);
     free(t->pages);
+    free(t->chunk_holes);
     memset(t, 0, sizeof *t);
 }
 
@@ -283,6 +383,8 @@ bool tide_table_unpack(tide_table *t, const tide_columns *c, tide_reader *r)
     }
     t->count = count;
     t->chunks = chunks;
+    t->holes = 0; // Until the world counts its archetypes' (tide_table_count_holes)
+    t->hole_from = count;
     t->last_room = chunks ? room : 0u;
     for (uint32_t k = 0; k < c->count; k++) {
         for (uint32_t chunk = 0; chunk < chunks; chunk++) {
@@ -323,6 +425,8 @@ bool tide_table_unpack_delta(tide_table *t, const tide_table *base, const tide_c
     make_room(t, c, chunks);
     const uint32_t room = room_for(c, count);
     t->count = count; // For tide_table_rows: its chunks follow
+    t->holes = 0; // Until the world counts its archetypes' (tide_table_count_holes)
+    t->hole_from = count;
     t->last_room = chunks ? room : 0u;
     for (uint32_t chunk = 0; chunk < chunks; chunk++) {
         const bool based = base && chunk < base->chunks;

@@ -1,5 +1,6 @@
 #include "tide/net.h"
 
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -153,12 +154,11 @@ static void remove_at(tide_loopback *net, const uint32_t i)
     net->queue[i] = net->queue[--net->count];
 }
 
-static void loopback_send(void *self, const tide_address to, const void *data, const uint32_t size)
+// Puts a datagram on its way to endpoint `to`, as the network's conditions
+// say, from when it was `sent`: lost, or due once its delay passed.
+static void queue_put(tide_loopback *net, const uint32_t to, const tide_address from, const void *data, const uint32_t size,
+                      const double sent)
 {
-    const endpoint *from = self;
-    tide_loopback *net = from->net;
-    if (to.kind != TIDE_ADDRESS_LOOPBACK || to.host < 1 || to.host > LOOPBACK_ENDPOINTS) return;
-    if (!net->endpoints[to.host - 1u].open) return; // Nobody there
     if (chance(net) < net->conditions.loss) return;
     if (net->count == net->capacity) {
         const uint32_t capacity = net->capacity ? net->capacity * 2u : 64u;
@@ -171,18 +171,20 @@ static void loopback_send(void *self, const tide_address to, const void *data, c
     if (!copy) return;
     memcpy(copy, data, size);
     const double delay = net->conditions.latency + net->conditions.jitter * chance(net);
-    net->queue[net->count++] = (datagram){to.host, tide_loopback_address(from->number), net->now + delay, net->sent++, size, copy};
+    net->queue[net->count++] = (datagram){to, from, sent + delay, net->sent++, size, copy};
 }
 
-static uint32_t loopback_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
+// The next datagram for endpoint `to` whose time came by the network's,
+// copied into `data`: its size, or 0 when there's none, with whom it's from
+// and when it arrived. Longer ones are dropped.
+static uint32_t queue_take(tide_loopback *net, const uint32_t to, tide_address *from, double *arrived, void *data,
+                           const uint32_t capacity)
 {
-    endpoint *e = self;
-    tide_loopback *net = e->net;
     for (;;) {
         int32_t next = -1;
         for (uint32_t i = 0; i < net->count; i++) {
             const datagram *d = &net->queue[i];
-            if (d->to != e->number || d->at > net->now) continue;
+            if (d->to != to || d->at > net->now) continue;
             const datagram *best = next >= 0 ? &net->queue[next] : NULL;
             if (!best || d->at < best->at || (d->at == best->at && d->order < best->order)) next = (int32_t)i;
         }
@@ -194,10 +196,25 @@ static uint32_t loopback_receive(void *self, tide_address *from, void *data, con
         }
         memcpy(data, d.data, d.size);
         *from = d.from;
-        e->arrived = d.at;
+        *arrived = d.at;
         remove_at(net, (uint32_t)next);
         return d.size;
     }
+}
+
+static void loopback_send(void *self, const tide_address to, const void *data, const uint32_t size)
+{
+    const endpoint *from = self;
+    tide_loopback *net = from->net;
+    if (to.kind != TIDE_ADDRESS_LOOPBACK || to.host < 1 || to.host > LOOPBACK_ENDPOINTS) return;
+    if (!net->endpoints[to.host - 1u].open) return; // Nobody there
+    queue_put(net, to.host, tide_loopback_address(from->number), data, size, net->now);
+}
+
+static uint32_t loopback_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
+{
+    endpoint *e = self;
+    return queue_take(e->net, e->number, from, &e->arrived, data, capacity);
 }
 
 // The network's time is its clock, and a datagram arrived when its time came,
@@ -231,6 +248,105 @@ tide_transport tide_loopback_endpoint(tide_loopback *net, const uint32_t number)
     endpoint *e = &net->endpoints[number - 1u];
     e->open = true;
     return (tide_transport){e, loopback_send, loopback_receive, loopback_close, NULL, loopback_clock, loopback_arrived};
+}
+
+// ---------------------------------------------------------------------------
+// A transport made worse: a loopback network's queue holds what's on its way,
+// out to the inner transport (its endpoint 1, `from` saying whom to) and in
+// from it (its endpoint 2), and its conditions say how late each is.
+
+enum { OUTGOING = 1, INCOMING = 2 };
+
+typedef struct conditioned {
+    tide_transport inner;
+    tide_loopback *net;
+    double (*clock)(void *context);
+    void *context;
+    double arrived;
+    uint8_t buffer[UINT16_MAX + 1u]; // What the inner transport gave, or what goes to it
+} conditioned;
+
+// The time now: the inner transport's, or the clock's where it has none.
+static void conditioned_time(conditioned *c)
+{
+    c->net->now = c->inner.clock ? c->inner.clock(c->inner.self) : c->clock(c->context);
+}
+
+static void conditioned_flush(conditioned *c)
+{
+    tide_address to;
+    double at;
+    uint32_t size;
+    while ((size = queue_take(c->net, OUTGOING, &to, &at, c->buffer, sizeof c->buffer)) != 0) {
+        c->inner.send(c->inner.self, to, c->buffer, size);
+    }
+}
+
+static void conditioned_send(void *self, const tide_address to, const void *data, const uint32_t size)
+{
+    conditioned *c = self;
+    conditioned_time(c);
+    queue_put(c->net, OUTGOING, to, data, size, c->net->now);
+    conditioned_flush(c);
+}
+
+static uint32_t conditioned_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
+{
+    conditioned *c = self;
+    conditioned_time(c);
+    conditioned_flush(c);
+    tide_address sender;
+    uint32_t size;
+    while ((size = c->inner.receive(c->inner.self, &sender, c->buffer, sizeof c->buffer)) != 0) {
+        const double arrived = c->inner.arrived ? c->inner.arrived(c->inner.self) : c->net->now;
+        queue_put(c->net, INCOMING, sender, c->buffer, size, arrived);
+    }
+    return queue_take(c->net, INCOMING, from, &c->arrived, data, capacity);
+}
+
+static void conditioned_close(void *self)
+{
+    conditioned *c = self;
+    c->net->now = DBL_MAX; // What was on its way out goes now, rather than never
+    conditioned_flush(c);
+    c->inner.close(c->inner.self);
+    tide_loopback_destroy(c->net);
+    free(c);
+}
+
+static void conditioned_end(void *self)
+{
+    const conditioned *c = self;
+    c->inner.end(c->inner.self);
+}
+
+static double conditioned_clock(void *self)
+{
+    conditioned *c = self;
+    conditioned_time(c);
+    return c->net->now;
+}
+
+static double conditioned_arrived(void *self)
+{
+    const conditioned *c = self;
+    return c->arrived;
+}
+
+bool tide_net_conditioned(const tide_transport inner, const tide_net_conditions conditions, const uint64_t seed,
+                          double (*clock)(void *context), void *context, tide_transport *out)
+{
+    conditioned *c = malloc(sizeof *c);
+    tide_loopback *net = c ? tide_loopback_create(seed) : NULL;
+    if (!net) {
+        free(c);
+        return false;
+    }
+    tide_loopback_set_conditions(net, conditions);
+    *c = (conditioned){.inner = inner, .net = net, .clock = clock, .context = context};
+    *out = (tide_transport){c, conditioned_send, conditioned_receive, conditioned_close, inner.end ? conditioned_end : NULL,
+                            conditioned_clock, conditioned_arrived};
+    return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,7 @@
+// expect: a view can't change the match, and snapping is part of it
+component Fighter { float since; }
+scene Main { }
+view Show(Fighter f)
+{
+    f.since.Snap();
+}

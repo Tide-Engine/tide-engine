@@ -1,0 +1,67 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/web-release
+      Start   17: tidec_e2e_structural
+ 1/18 Test   #17: tidec_e2e_structural .............   Passed    0.10 sec
+      Start   19: tidec_e2e_sparse
+ 2/18 Test   #19: tidec_e2e_sparse .................   Passed    0.08 sec
+      Start   20: tidec_e2e_rows
+ 3/18 Test   #20: tidec_e2e_rows ...................   Passed    0.57 sec
+      Start   21: tidec_e2e_sparse_rows
+ 4/18 Test   #21: tidec_e2e_sparse_rows ............   Passed    0.19 sec
+      Start   22: tidec_e2e_sparse_masks
+ 5/18 Test   #22: tidec_e2e_sparse_masks ...........   Passed    0.09 sec
+      Start   23: tidec_sparse_masks_codegen
+ 6/18 Test   #23: tidec_sparse_masks_codegen .......   Passed    0.06 sec
+      Start   24: tidec_e2e_destroy_rows
+ 7/18 Test   #24: tidec_e2e_destroy_rows ...........   Passed    0.12 sec
+      Start   25: tidec_destroy_rows_codegen
+ 8/18 Test   #25: tidec_destroy_rows_codegen .......   Passed    0.06 sec
+      Start   30: tidec_e2e_world_set_read
+ 9/18 Test   #30: tidec_e2e_world_set_read .........   Passed    0.09 sec
+      Start   31: tidec_e2e_world_set_mut
+10/18 Test   #31: tidec_e2e_world_set_mut ..........   Passed    0.11 sec
+      Start   50: tidec_e2e_function_tasks
+11/18 Test   #50: tidec_e2e_function_tasks .........   Passed    0.09 sec
+      Start  145: tidec_e2e_ownership
+12/18 Test  #145: tidec_e2e_ownership ..............   Passed    0.09 sec
+      Start 2451: tidec_rows_parameters
+13/18 Test #2451: tidec_rows_parameters ............***Failed    0.20 sec
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: in-place/apart loops, filtered and for every row
+
+6 !== 4
+
+    at file:///C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/compiler/tests/rows/parameters.mjs:37:8
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 6,
+  expected: 4,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.22.1
+
+      Start 2644: versus_particles
+14/18 Test #2644: versus_particles .................   Passed    0.14 sec
+      Start 2645: versus_wide
+15/18 Test #2645: versus_wide ......................   Passed    0.15 sec
+      Start 2646: versus_wide_kept
+16/18 Test #2646: versus_wide_kept .................   Passed    0.16 sec
+      Start 2649: versus_churn
+17/18 Test #2649: versus_churn .....................   Passed    0.15 sec
+      Start 2659: versus_particles_kept
+18/18 Test #2659: versus_particles_kept ............   Passed    0.15 sec
+
+94% tests passed, 1 tests failed out of 18
+
+Total Test time (real) =   2.69 sec
+
+The following tests FAILED:
+	2451 - tidec_rows_parameters (Failed)
+Errors while running CTest

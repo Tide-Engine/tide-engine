@@ -39,6 +39,7 @@ static uint64_t digest(const void *world)
     const tide_world *w = world;
     uint64_t sum = 0;
     for (uint32_t row = 0; row < w->arch0_Bullet.count; row++) {
+        if (TIDE_ROW_GONE(w, arch0_Bullet, row)) continue; // A hole an entity left
         const Bullet b = TIDE_AT(w, arch0_Bullet, Bullet, row);
         sum += versus_item(&b, sizeof b);
     }

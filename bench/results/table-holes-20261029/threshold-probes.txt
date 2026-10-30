@@ -1,0 +1,6 @@
+Settle threshold probes (three or five alternating rounds, base = dev without holes):
+lowest-hole fill on arrival, settle 1/8: moving 10/30/100 toggles -11%/-5%/0%; churn +26%, kept +16%
+last-chunk fill, settle 1/8:  moving 10/30/100/300 -45%/-66%/-63%/-54%; churn +53%, kept +14%
+last-chunk fill, settle 1/16: moving 10/100/300 -47%/-63%/-55%; churn +24%, kept +2%
+last-chunk fill, settle 1/32: moving 10/100/300 -50%/-62%/-50%; churn +13%, kept -2%   <- chosen
+last-chunk fill, settle 1/64: moving 10/100 -52%/-61%; churn +21%, kept +19%

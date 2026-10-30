@@ -1,0 +1,179 @@
+// A desktop: a window of widgets drawn into a render target (GUI.Target), shown as
+// a mesh that bends into the dock with a genie effect, and back out when its
+// thumbnail is clicked.
+scene Main { }
+
+const float WIDTH = 340;
+const float HEIGHT = 244;
+const int COLUMNS = 10;
+const int ROWS = 28;
+const Color INK = Color(0.12, 0.13, 0.16);
+
+local singleton Desk
+{
+    RenderTarget content;   // The window, drawn flat, then bent as a mesh
+    float2 offset;          // Drag offset from the responsive centered position
+    bool minimized;
+    float2 grabbed;         // Where in the title bar the pointer took it
+    string title = "Tide demo";
+    bool pinned = true;
+    float fontSize = 15;
+    int shared;
+}
+
+// The window as its app draws it: title bar, traffic lights and a note
+void DrawWindow(RenderTarget t, float hover)
+{
+    t.Clear(Color.clear);
+    t.SetScreen();
+    t.RoundRect(float2(WIDTH * 0.5, HEIGHT * 0.5), float2(WIDTH, HEIGHT), 12, Color(0.98, 0.98, 0.99));
+    t.Shape(Shape { center = float2(WIDTH * 0.5, 22), size = float2(WIDTH, 44), radius = 12,
+                    color = Color(0.93, 0.93, 0.95), color2 = Color(0.88, 0.88, 0.91) });
+    t.Rect(float2(WIDTH * 0.5, 38), float2(WIDTH, 12), Color(0.88, 0.88, 0.91));
+    t.Rect(float2(WIDTH * 0.5, 44), float2(WIDTH, 1), Color(0, 0, 0, 0.12));
+    // Traffic lights; the yellow one minimizes this demonstration window.
+    Color[3] lights = [Color(1, 0.37, 0.34), Color(1, 0.74, 0.18), Color(0.16, 0.79, 0.25)];
+    for (var i = 0; i < 3; i++)
+    {
+        var c = float2(20 + i * 20, 22);
+        t.Circle(c, 6, lights[i]);
+        t.WireCircle(c, 6, 0.5, Color(0, 0, 0, 0.18));
+        var glyph = hover;
+        if (i == 1) t.Line(c - float2(3, 0), c + float2(3, 0), 1.4, Color(0.45, 0.28, 0, glyph));
+        if (i == 0) { t.Line(c - float2(2.5, 2.5), c + float2(2.5, 2.5), 1.4, Color(0.4, 0, 0, glyph)); t.Line(c + float2(-2.5, 2.5), c + float2(2.5, -2.5), 1.4, Color(0.4, 0, 0, glyph)); }
+        if (i == 2) t.Line(c - float2(2.5, 2.5), c + float2(2.5, 2.5), 1.4, Color(0, 0.35, 0, glyph));
+    }
+    t.Text("Notes", float2(WIDTH * 0.5, 22), 14, Color(0.3, 0.3, 0.34), Anchor.MiddleCenter, Font.Bold);
+}
+
+void NoteWidgets(mut Desk desk, GUITheme look)
+{
+    GUI.Theme(look)
+    {
+        GUILayout.Area(Rect(18, 56, WIDTH - 36, HEIGHT - 64))
+        {
+            GUILayout.TextField("Title", desk.title);
+            GUILayout.Toggle("Pinned to the top", desk.pinned);
+            GUILayout.Slider("Font size", desk.fontSize, 10, 30);
+            GUILayout.Horizontal()
+            {
+                if (GUILayout.Button("Share")) desk.shared++;
+            }
+            GUILayout.Label(desk.shared > 0 ? $"Shared {desk.shared} times" : "Yellow button minimizes the note.");
+        }
+    }
+}
+
+// Every row keeps its height order while the bottom narrows first. At p = 1,
+// the mesh is exactly the thumbnail, so there is no collapsed-line handoff.
+float2 Genie(float u, float v, float p, Rect window, Rect slot)
+{
+    var squeeze = Math.SmoothStep(0, 0.6, p);
+    var slide = Math.SmoothStep(0.15, 1, p);
+    var bend = squeeze * Math.Lerp(v * v, 1, slide);
+    var left = Math.Lerp(window.x, slot.x, bend);
+    var right = Math.Lerp(window.x + window.width, slot.x + slot.width, bend);
+    var y = Math.Lerp(window.y + v * window.height, slot.y + v * slot.height, slide);
+    return float2(Math.Lerp(left, right, u), y);
+}
+
+// The window's image on a grid bent by the genie
+void DrawBent(Desk desk, float p, Rect window, Rect slot)
+{
+    mut List<Vertex> vertices = [];
+    mut List<int> indices = [];
+    for (var r = 0; r <= ROWS; r++)
+    {
+        for (var c = 0; c <= COLUMNS; c++)
+        {
+            float u = float(c) / COLUMNS;
+            float v = float(r) / ROWS;
+            vertices.Add(Vertex { position = Genie(u, v, p, window, slot), uv = float2(u, v), color = Color.white });
+        }
+    }
+    for (var r = 0; r < ROWS; r++)
+    {
+        for (var c = 0; c < COLUMNS; c++)
+        {
+            int i = r * (COLUMNS + 1) + c;
+            indices.Add(i);
+            indices.Add(i + 1);
+            indices.Add(i + COLUMNS + 2);
+            indices.Add(i);
+            indices.Add(i + COLUMNS + 2);
+            indices.Add(i + COLUMNS + 1);
+        }
+    }
+    Draw.Mesh(vertices, indices, desk.content.color);
+}
+
+view Desktop(mut Desk desk)
+{
+    if (!desk.content.valid) desk.content = RenderTarget(WIDTH, HEIGHT);
+    var progress = GUI.Tween(desk.minimized ? 1.0 : 0.0, 0.42);
+    var p = Math.EaseInOut(progress);
+    Draw.SetScreen();
+    Draw.Rect(Screen.rect, 0, Gradient.Linear(1.2, Color(0.18, 0.22, 0.52), Color(0.55, 0.33, 0.62), Color(0.95, 0.55, 0.45)));
+    Draw.Rect(Rect(0, 0, Screen.width, 26), Color(1, 1, 1, 0.2));
+    Draw.Text("Notes", float2(16, 13), 14, Color.white, Anchor.MiddleLeft, Font.Bold);
+    Draw.Text("Tue 9:41", float2(Screen.width - 16, 13), 14, Color.white, Anchor.MiddleRight);
+
+    // Keep the entire dock above the host's bottom-right stats corner. Its
+    // geometry stays fixed while the window moves, including on reversal.
+    var dock = Rect(Screen.width * 0.5 - 76, Screen.height - 104, 152, 56);
+    var appRect = Rect(dock.x + 14, dock.y + 8, 40, 40);
+    var slot = Rect(dock.x + 82, dock.y + 9, 52, 38);
+    Draw.Shadow(dock, 16, 10, Color(0, 0, 0, 0.18));
+    Draw.Rect(dock, 16, Color(1, 1, 1, 0.3));
+    Draw.Rect(Rect(dock.x + 68, dock.y + 10, 1, 36), Color(1, 1, 1, 0.3));
+    var app = GUI.Control(appRect);
+    if (app.clicked) { desk.minimized = false; GUI.ClearFocus(); }
+    Draw.Rect(appRect, 10, Gradient.Vertical(Color(1, 0.88, 0.4), Color(0.96, 0.66, 0.17)));
+    Draw.Text("N", float2(appRect.x + 20, appRect.y + 20), 24, INK, Anchor.MiddleCenter, Font.Bold);
+    if (app.hover > 0 || app.focus > 0)
+        Draw.WireRoundRect(float2(appRect.x + 20, appRect.y + 20), float2(44, 44), 12, 2, Color.white);
+    Draw.Text("Click note to restore", float2(Screen.width * 0.5, dock.y + 68), 12, Color.white, Anchor.MiddleCenter);
+
+    // Full-sized text in the normal docs embed; scale only for smaller views.
+    var scale = Math.Min(1.0, Math.Min((Screen.width - 32) / WIDTH, (dock.y - 50) / HEIGHT));
+    var size = float2(WIDTH, HEIGHT) * scale;
+    var origin = float2((Screen.width - size.x) * 0.5, 38);
+    mut var window = Rect(origin.x + desk.offset.x, origin.y + desk.offset.y, size.x, size.y)
+        .MoveInside(Rect(12, 34, Screen.width - 24, dock.y - 42));
+    mut float overLights = 0;
+    if (progress == 0)
+    {
+        var yellow = GUI.Control(Rect(window.x + 28 * scale, window.y + 10 * scale, 24 * scale, 24 * scale));
+        overLights = yellow.hover;
+        if (yellow.clicked) { desk.minimized = true; GUI.ClearFocus(); }
+        var title = GUI.Control(Rect(window.x + 76 * scale, window.y, window.width - 76 * scale, 44 * scale));
+        if (title.down) desk.grabbed = title.position - float2(window.x, window.y);
+        if (title.pressed)
+        {
+            window = Rect(title.position.x - desk.grabbed.x, title.position.y - desk.grabbed.y, size.x, size.y)
+                .MoveInside(Rect(12, 34, Screen.width - 24, dock.y - 42));
+        }
+        desk.offset = float2(window.x, window.y) - origin;
+        DrawWindow(desk.content, overLights);
+        GUITheme NOTE = GUITheme { text = INK, panel = Color.clear, control = Color(0.92, 0.93, 0.96),
+            hot = Color(0.86, 0.89, 0.97), pressed = Color(0.8, 0.84, 0.94), field = Color.white,
+            fieldHot = Color(0.97, 0.98, 1), accent = Color(0.25, 0.45, 1), radius = 7,
+            borderWidth = 0, shadowSize = 0,
+            textSize = 15, padding = 0, spacing = 10 };
+        GUI.Target(desk.content, window) { NoteWidgets(desk, NOTE); }
+    }
+    else if (progress == 1)
+    {
+        var thumb = GUI.Control(slot);
+        if (thumb.clicked) { desk.minimized = false; GUI.ClearFocus(); }
+        if (thumb.focus > 0)
+            Draw.WireRoundRect(float2(slot.x + 26, slot.y + 19), float2(56, 42), 4, 2, Color.white);
+    }
+    // Freeze the target while bent: hidden widgets cannot receive input.
+    // Restore is available from the Notes icon even during minimization.
+    GUI.Draw()
+    {
+        if (p < 0.25) Draw.Shadow(window, 12, 12, Color(0, 0, 0, 0.22 * (1 - p * 4)));
+        DrawBent(desk, p, window, slot);
+    }
+}

@@ -1,0 +1,103 @@
+// Sleep: bodies that fall asleep and wake, in a world kept as a predicting
+// client keeps it. Awake bodies move; sleeping ones lie still. Every tick
+// `toggles` bodies, picked by hash, change: half of them sleeping ones that
+// wake, half awake ones that fall asleep, as contacts wake and settle bodies
+// in a physics game.
+//
+// Built two ways: Sleeping a presence bit in every body's row ([Sparse]), or
+// with LASTING (versus_sleep_lasting) a tag as tags are, whose Add and Remove
+// move the body to an archetype of its own. main.c runs the client's frames.
+
+scene Main { }
+
+// The benchmark sets these before the first tick, which spawns everything.
+singleton Setup
+{
+    int bodies = 1000;
+    int asleep = 90;  // Of every hundred bodies, how many start asleep
+    int toggles = 10; // Bodies that wake or fall asleep each tick, half of each
+    List<Entity> all; // Every body, to pick the ones that change
+    bool ready;
+}
+
+struct Motion
+{
+    float3 position;
+    float3 velocity;
+    float3 push;
+    float drag;
+    float bounce;
+    float radius;
+}
+
+component Body
+{
+    Motion motion;
+}
+
+#if !LASTING
+[Sparse]
+#endif
+component Sleeping { }
+
+system Start(mut Setup setup)
+{
+    if (setup.ready) return;
+    setup.ready = true;
+    for (var i = 0; i < setup.bodies; i++)
+    {
+        var h = Math.Hash(int2(i, 0));
+        var g = Math.Hash(int2(i, 1));
+        var f = Math.Hash(int2(i, 2));
+        var motion = Motion
+        {
+            position = float3(float(h % 10000) * 0.01, float(g % 10000) * 0.01 + 1, float(f % 10000) * 0.01),
+            velocity = float3(float(h % 201 - 100) * 0.1, float(g % 201 - 100) * 0.1, float(f % 201 - 100) * 0.1),
+            push = float3(float(f % 21 - 10) * 0.05, -9.81, float(h % 21 - 10) * 0.05),
+            drag = float(g % 50) * 0.001,
+            bounce = 0.5 + float(h % 40) * 0.01,
+            radius = 0.25 + float(f % 4) * 0.25
+        };
+        if ((Math.Hash(int2(i, 3)) & 0x7FFFFFFF) % 100 < setup.asleep) setup.all.Add(Spawn(Body { motion = motion }, Sleeping));
+        else setup.all.Add(Spawn(Body { motion = motion }));
+    }
+}
+
+void Step(mut Motion m, float dt)
+{
+    m.velocity += m.push * dt;
+    m.velocity *= 1 - m.drag * dt;
+    m.position += m.velocity * dt;
+    if (m.position.y < m.radius)
+    {
+        m.position.y = m.radius * 2 - m.position.y;
+        m.velocity.y = -m.velocity.y * m.bounce;
+    }
+}
+
+system Move(mut Body body, Time time, without Sleeping)
+{
+    Step(body.motion, time.dt);
+}
+
+// Wakes `toggles` / 2 sleeping bodies and settles as many awake ones, picked
+// by hash (the first of a few tries that's the kind wanted), so the share
+// asleep stays where it started. The changes apply at the end of the tick,
+// in the order they were made
+system Toggle(Setup setup, Time time, World world)
+{
+    var count = setup.all.count;
+    if (count == 0) return;
+    for (var k = 0; k < setup.toggles; k++)
+    {
+        var waking = k % 2 == 0;
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var e = setup.all[(Math.Hash(int2(time.tick * 64 + attempt, k)) & 0x7FFFFFFF) % count];
+            if (world.Has<Sleeping>(e) != waking) continue;
+            if (waking) e.Remove(Sleeping);
+            else e.Add(Sleeping);
+            break;
+        }
+    }
+}

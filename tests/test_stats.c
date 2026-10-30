@@ -151,7 +151,7 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     draw();
     const char *labels[] = {"60 fps", "cpu", "draw calls", "vertices", "ping", "network", "entities",
                             "threads", "memory", "vram", "renderer", "Combat.Hit", "Fall", "Move"};
-    const char *values_[] = {"", "2.1 ms", "7", "123456", "34 ms", "2.0  0.5 KB/s", "56",
+    const char *values_[] = {"", "2.1 ms", "7", "123.5K", "34 ms", "2.0  0.5 KB/s", "56",
                              "12", "48 MB", "12 MB", "OpenGL 3.3", "1.50 ms", "0.31 ms", "0.20 ms"};
     TIDE_REQUIRE(stats.line_count == 14);
     for (uint32_t i = 0; i < 14; i++) TIDE_CHECK(line_is(i, labels[i], values_[i]) && text_command(labels[i]));
@@ -199,9 +199,15 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     draw();
     TIDE_CHECK(stats.line_count == 5 && line_is(0, "144 fps", "") && line_is(1, "cpu", "0.5 ms") && line_is(2, "draw calls", "2")
                && line_is(3, "vertices", "0") && line_is(4, "threads", "1") && stats.lines[4].gap);
-    values.vertices = UINT64_C(4294967296);
-    draw();
-    TIDE_CHECK(line_is(3, "vertices", "4294967296"));
+    const uint64_t counts[] = {999, 1000, 1049, 1050, 999949, 999950, 1000000, 97000000,
+                               999950000, UINT64_C(4294967296), UINT64_C(1000000000000), UINT64_MAX};
+    const char *compact[] = {"999", "1K", "1K", "1.1K", "999.9K", "1M", "1M", "97M",
+                             "1B", "4.3B", "1T", "18.4E"};
+    for (unsigned i = 0; i < sizeof counts / sizeof counts[0]; i++) {
+        values.vertices = counts[i];
+        draw();
+        TIDE_CHECK(line_is(3, "vertices", compact[i]) && text_command(compact[i]));
+    }
     tide_draw_free(&list);
 }
 
@@ -292,7 +298,7 @@ TIDE_TEST(stats_render_and_gpu_times_keep_the_three_system_rows)
     draw();
     TIDE_REQUIRE(stats.line_count == 15);
     TIDE_CHECK(line_is(1, "cpu", "2.1 ms") && line_is(2, "render", "0.32 ms") && line_is(3, "gpu (7 draw calls)", "1.25 ms"));
-    TIDE_CHECK(line_is(4, "vertices", "123456"));
+    TIDE_CHECK(line_is(4, "vertices", "123.5K"));
     TIDE_CHECK(stats.lines[2].indent && !stats.lines[1].indent && !stats.lines[3].indent && stats.lines[5].gap);
     TIDE_CHECK(text_command("render")->a.x == text_command("cpu")->a.x + 12.0f
                && text_command("gpu (7 draw calls)")->a.x == text_command("cpu")->a.x);

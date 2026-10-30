@@ -19,8 +19,10 @@
 //   #if STEAM                            the lines to its #elif, #else or #endif are the build's
 //                                        only when the condition holds (packages_set_symbols)
 //
-// A game's file lists every package it builds with, those its packages need
-// included, and its line for one wins over theirs.
+// What a package needs, a game builds too, from the package's own line: a game
+// lists only what it chooses. The game's line for a package wins over any
+// package's, and two packages needing one from git at different commits is an
+// error until the game lists the one to build.
 
 #define PACKAGES_FILE "tide.packages"
 
@@ -73,7 +75,9 @@ void packages_free_file(packages_file *f);
 typedef struct package {
     char *name;               // Its `package` line's: its namespace
     char *folder;             // Its files, absolute and ending in '/'
-    const package_line *line; // The game's line for it
+    const package_line *line; // The line it's built from: the game's, or else that of a package that needs it
+    const char *listed_in;    // The tide.packages `line` is in
+    packages_file file;       // Its own tide.packages
 } package;
 
 typedef struct game_packages {
@@ -88,25 +92,14 @@ typedef struct game_packages {
 typedef bool (*packages_fetch_fn)(void *user, const package_line *line, const char *dir);
 
 // Reads the tide.packages of the game (or package) in `folder` and finds its
-// packages, with `fetch` getting those from git that aren't here yet (NULL:
-// they're left out). Checks that each is a package, that this tide is new
-// enough for it, and that the game lists what it needs. False after reporting
+// packages and what they need, and so on, with `fetch` getting those from git
+// that aren't here yet (NULL: they're left out). Checks that each is a
+// package, that this tide is new enough for it, and that no two packages need
+// different commits of one the game doesn't list. False after reporting
 // what's wrong; the packages it found are in `out` either way.
 bool packages_resolve(const char *folder, game_packages *out, packages_fetch_fn fetch, packages_report_fn report,
                       void *user);
 void packages_free(game_packages *g);
-
-// A package that a package needs, which the game's tide.packages doesn't list.
-typedef struct package_need {
-    char *line; // The line for it, as the game's tide.packages writes it
-    char *by;   // The package that needs it
-} package_need;
-
-// What the packages of the game in `folder` need that its tide.packages
-// doesn't list, each once, with `fetch` getting packages that aren't here yet
-// (to read what they need). Returns how many, into `out` (malloc'd).
-int packages_missing(const char *folder, packages_fetch_fn fetch, void *user, package_need **out);
-void packages_free_needs(package_need *needs, int count);
 
 // Where packages from git are kept, each commit once: $TIDE_PACKAGES, or else
 // %LOCALAPPDATA%/Tide/packages on Windows and ~/.tide/packages elsewhere.

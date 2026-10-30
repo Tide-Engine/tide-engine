@@ -2,6 +2,7 @@
 // node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -170,6 +171,60 @@ function embeddedPayload(page, name) {
     return { bytes: gzip ? gunzipSync(bytes) : bytes, gzip };
 }
 
+function checkReleaseMetadata(program, game, cache, output, target, release) {
+    const names = ["PrivateTick_c17b42", "PrivateView_e5a6d9", "PrivateAsset_95fe23", "PrivateModel_2acb40"];
+    for (const name of names) {
+        check(program.includes(Buffer.from(name)) === !release,
+            `${target}: ${name} ${release ? "leaked into release metadata" : "missing from debug metadata"}`);
+    }
+    const shaderNames = ["ShaderSecretHelper924", "ShaderSecretParam012", "ShaderSecretLocal123", "ShaderSecretFrag597", "ShaderSecretField539"];
+    for (const name of shaderNames)
+        check(program.includes(Buffer.from(name)) === !release, `${target}: shader identifier ${name} was not stripped correctly`);
+    for (const path of [join(game, "game.tide"), join(game, "game.tide").replaceAll("\\", "/")]) {
+        if (release) check(!program.includes(Buffer.from(path)), `${target}: release leaked its Tide source path`);
+    }
+    check(program.includes(Buffer.from("TIDE_KEEP_AUTHORED_MESSAGE_56c8")), `${target}: authored assertion message was removed`);
+    const map = join(cache, "gen", "game.names");
+    check(existsSync(map) === release, `${target}: unexpected private name map policy`);
+    const stem = output.replace(/\.(html|exe)$/, "");
+    if (!release && target === "native") {
+        for (const suffix of [".natvis", "_lldb.py", ...(process.platform === "win32" ? [".pdb"] : [])])
+            check(existsSync(stem + suffix), `debug fixture didn't produce ${suffix} before the release replaced it`);
+    }
+    if (release) {
+        const mapping = readFileSync(map, "utf8");
+        for (const name of names) check(mapping.includes(`\t${name}\n`), `${target}: private map lost ${name}`);
+        for (const name of shaderNames) check(mapping.includes(name), `${target}: private shader map lost ${name}`);
+        for (const suffix of [".names", ".pdb", ".natvis", "_lldb.py", ".c", ".h", ".wasm.map"])
+            check(!existsSync(stem + suffix), `${target}: development file shipped beside the release: ${suffix}`);
+        check(!existsSync(`${output}.dSYM`), `${target}: release retained its previous debug bundle`);
+        if (target === "web") {
+            const module = new WebAssembly.Module(program);
+            for (const section of ["name", ".debug_info", ".debug_line", "sourceMappingURL", "external_debug_info"])
+                check(WebAssembly.Module.customSections(module, section).length === 0, `release WebAssembly retained ${section}`);
+        } else if (process.platform === "win32") {
+            const pe = program.readUInt32LE(0x3c);
+            check(program.readUInt32LE(pe + 12) === 0 && program.readUInt32LE(pe + 16) === 0,
+                "release PE retained its COFF symbol table");
+            const optional = pe + 24;
+            const directories = optional + (program.readUInt16LE(optional) === 0x20b ? 112 : 96);
+            check(program.readUInt32LE(directories + 6 * 8 + 4) === 0, "release PE retained a debug directory");
+        } else if (process.platform === "darwin") {
+            check(program.readUInt32LE(0) === 0xfeedfacf, "release is not a 64-bit Mach-O executable");
+            const commands = program.readUInt32LE(16);
+            let at = 32, found = false;
+            for (let i = 0; i < commands; i++) {
+                if (program.readUInt32LE(at) === 0xb) { // LC_DYSYMTAB: defined external symbols
+                    check(program.readUInt32LE(at + 20) === 0, "release Mach-O retained defined external symbols");
+                    found = true;
+                }
+                at += program.readUInt32LE(at + 4);
+            }
+            check(found, "release Mach-O has no dynamic symbol-table command");
+        }
+    }
+}
+
 async function strippingTests(tide, installation, root, target, embedded) {
     console.log(`Release code stripping: ${target}`);
     const game = join(root, `strip-${target}`);
@@ -195,6 +250,7 @@ __attribute__((noinline)) const char *${prefix}Unused(void) { return ${prefix}_u
     put(join(game, "caller.c"), `
 #include <stdlib.h>
 #include <string.h>
+#include "tide/pack.h"
 const char *EngineProbeCalled(void);
 const char *UserProbeCalled(void);
 int Native(int value)
@@ -202,14 +258,24 @@ int Native(int value)
     const char *engine = EngineProbeCalled();
     const char *user = UserProbeCalled();
     if (strcmp(engine, "${markers.engineCalled}") || strcmp(user, "${markers.userCalled}")) abort();
+    if (!tide_pack_find("fromC", TIDE_PACK_TEXT)) abort();
     return value + (unsigned char)engine[0] + (unsigned char)user[0];
 }
 `);
-    put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; }\nextern int Native(int value);\n"
+    cpSync(new URL("../../tests/e2e/skinned/models/a.gltf", import.meta.url), join(game, "model.gltf"));
+    put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; SkinnedMesh<PackedCorner> model; }\nextern int Native(int value);\n"
         + 'asset string fromC = "from-c.txt";\n'
-        + "system Update(mut State state) { state.value = Native(state.value); }\n");
+        + 'asset string PrivateAsset_95fe23 = "from-c.txt";\n'
+        + 'struct PackedCorner { float3 position; float ShaderSecretField539 = float(PrivateAsset_95fe23.length); }\n'
+        + 'asset SkinnedMesh<PackedCorner> PrivateModel_2acb40 = "model.gltf";\n'
+        + 'float ShaderSecretHelper924(float ShaderSecretParam012) { var ShaderSecretLocal123 = ShaderSecretParam012 * 0.25; return ShaderSecretLocal123; }\n'
+        + 'frag ShaderSecretFrag597(PackedCorner vertex, out Color color) { color = Color.white * ShaderSecretHelper924(float(vertex.ShaderSecretField539)); }\n'
+        + "system PrivateTick_c17b42(mut State state) { state.value = Native(state.value) + PrivateAsset_95fe23.length; state.model = PrivateModel_2acb40; }\n"
+        + 'view PrivateView_e5a6d9(State state) {\nDebug.Assert(state.value >= 0, "TIDE_KEEP_AUTHORED_MESSAGE_56c8");\n'
+        + 'Draw.SkinnedMesh(PrivateModel_2acb40, float4x4.identity, ShaderSecretFrag597);\n}\n');
     const packedMarker = "TIDE_C_ASSET_WITHOUT_TIDE_REFERENCE_2c961b87";
     put(join(game, "from-c.txt"), packedMarker);
+    const sharedOutput = join(root, `strip-${target}-shared${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
     try {
         for (const release of [false, true]) {
             // Check real compiler behavior for each side of the build: engine
@@ -221,7 +287,7 @@ int Native(int value)
             put(join(game, "probe.c"), `#if defined(__OPTIMIZE__) != ${assertionMode} || defined(NDEBUG) != ${assertionMode}\n`
                 + `#error game_build_mode_changed\n#endif\n`
                 + functions("UserProbe", markers.userCalled, markers.userUnused));
-            const output = join(root, `strip-${target}-${release ? "release" : "debug"}${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
+            const output = sharedOutput; // Release must clean the previous debug build's own sidecars.
             const args = ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []), ...(release ? ["--release"] : [])];
             const result = await run(tide, args, game);
             check(result.code === 0, `stripping fixture build failed:\n${result.said}`);
@@ -229,13 +295,29 @@ int Native(int value)
             check(pack.includes(Buffer.from(packedMarker)), "C interop lost an asset without a Tide reference");
             let program = readFileSync(output);
             if (target === "web") {
+                // Split by default: the program and pack beside the page, named with their hashes
                 const page = program.toString("utf8");
-                const payload = embeddedPayload(page, "TIDE_PROGRAM");
+                const stem = output.slice(0, -".html".length);
+                program = readFileSync(`${stem}.wasm`);
+                check(program.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d])), "the page's program is not WebAssembly");
+                check(readFileSync(`${stem}.pack`).equals(pack), "the page's pack differs from generated pack");
+                for (const [name, bytes] of [["program", program], ["pack", pack]]) {
+                    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+                    const file = `${basename(stem)}.${name === "program" ? "wasm" : "pack"}`;
+                    check(page.includes(`${name}: { url: "${file}?v=${hash}", size: ${bytes.length} }`),
+                        `the page doesn't name its ${name} by its hash and size`);
+                }
+                check(!page.includes("const TIDE_PROGRAM = \""), "a split page has its program inside");
+                // ...and one self-contained page
+                const single = join(root, `strip-single-${release ? "release" : "debug"}.html`);
+                const result = await run(tide, ["build", game, "-o", single, "--web", "--single-file", ...(release ? ["--release"] : [])], game);
+                check(result.code === 0, `single-file build failed:\n${result.said}`);
+                const singlePage = readFileSync(single, "utf8");
+                const payload = embeddedPayload(singlePage, "TIDE_PROGRAM");
                 const expectGzip = release && embedded && existsSync(join(installation, "web", "tide.release.js"));
                 check(payload.gzip === expectGzip, `web ${release ? "release" : "debug"}: unexpected program compression`);
-                program = payload.bytes;
-                check(program.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d])), "embedded program is not WebAssembly");
-                check(embeddedPayload(page, "TIDE_PACK").bytes.equals(pack), "embedded pack differs from generated pack");
+                check(payload.bytes.equals(program), "the single page's program differs from the split page's");
+                check(embeddedPayload(singlePage, "TIDE_PACK").bytes.equals(pack), "embedded pack differs from generated pack");
             }
             for (const [name, marker] of Object.entries(markers)) {
                 // WebAssembly already collects unused code in debug. Native
@@ -244,6 +326,7 @@ int Native(int value)
                 check(program.includes(Buffer.from(marker)) === expected,
                     `${target} ${release ? "release" : "debug"}: ${name} ${expected ? "was removed" : "was retained"}`);
             }
+            checkReleaseMetadata(program, game, join(game, ".tide", `${target}-${release ? "release" : "debug"}`), output, target, release);
             if (target === "native" && process.platform === "win32") {
                 // GLFW's gamma setter shares an archive member (monitor.c)
                 // with the monitor queries the window makes, and no host

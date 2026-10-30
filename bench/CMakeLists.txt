@@ -36,12 +36,12 @@ tide_add_game(bench_earth NAME game HOST earth/main.c
     SOURCES "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" "${earth_dir}/city.tide" "${earth_dir}/layout.tide"
             "${earth_dir}/globe.tide" "${earth_dir}/shapes.tide" "${earth_dir}/show.tide" "${earth_dir}/terrain.tide" "${earth_dir}/plants.tide")
 target_link_libraries(bench_earth PRIVATE tide_bench)
-add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x2d4f30cae27728fa)
+add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x8d679303b6836f22)
 # A town hop changes shard and what the machine sees at once: corrections put it up to two seconds behind, as
 # the engine's visibility tests allow
-add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x77140ad82e885ede)
+add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x1019cc68d13cf499)
 # Comparing one bot's world with what the server says it is, tick by tick
-add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x2d4f30cae27728fa)
+add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x8d679303b6836f22)
 
 # Page hashes: the engine's beside candidates for its place, timed on the
 # shapes a world's hash reads (`bench_hash`, natively and under Node); the test
@@ -157,3 +157,5 @@ if(WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_link_libraries(tide_sample PRIVATE psapi)
     target_compile_definitions(tide_sample PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
+
+tide_add_game(bench_views SOURCES views/game.tide NAME game HOST views/main.c)

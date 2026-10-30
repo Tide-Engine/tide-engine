@@ -35,6 +35,7 @@ static void usage(void)
             "  --declarations the game's types alone: its systems, views, handlers, functions, frags and verts\n"
             "                 left out, as tide unity builds them while the code doesn't build\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
+            "  --strip-names          strip diagnostic/shader identifiers; write a private <name>.names map\n"
             "  --server               preserve the client identity and emit server build metadata\n"
             "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
             "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
@@ -192,6 +193,8 @@ int main(const int argc, char **argv)
             }
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
+        } else if (strcmp(argv[i], "--strip-names") == 0) {
+            opts.strip_names = true;
         } else if (strcmp(argv[i], "--server") == 0) {
             opts.server = true;
         } else if (strcmp(argv[i], "--strip-server-assets") == 0) {

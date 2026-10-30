@@ -33,7 +33,7 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 | `string` | Text (see [Text and lists](./text-and-lists.md)) |
 | `char` | One character of text, like `'a'` (see [Characters](./text-and-lists.md#characters)) |
 | `List<T>` | A list of values (see [Text and lists](./text-and-lists.md)) |
-| `T[N]`, like `int[32]` | A fixed number of plain values, stored side by side (see [Arrays](./text-and-lists.md#arrays)) |
+| `T[N]`, like `int[32]` or `string[3]` | A fixed number of values, stored side by side (see [Arrays](./text-and-lists.md#arrays)) |
 | `Map<K, V>`, `Set<K>` | Values by key, and keys each once, in the order they were added (see [Text and lists](./text-and-lists.md#maps-and-sets)) |
 | `Grid2<T>`, `Grid3<T>` | Cells at `int2` or `int3` positions, in fields (see [Grids](./grids.md)) |
 | `Entity` | A handle to an entity (see [Components and entities](../game/entities.md)) |
@@ -162,6 +162,8 @@ settings
 ## Logging and asserting
 
 `Debug.Log(text)` prints a line: to the terminal under `tide run`, to the browser's console on the web, to the system's log on Android. `Debug.Assert(condition)`, or `Debug.Assert(condition, text)`, stops the program when the condition is false and says where, with the source line and the text. Both go anywhere: systems, views, handlers, functions.
+
+Standalone [release builds](../tools/cli.md#run-and-build) keep assertions and messages you wrote, but replace the source path with an ID and omit the copied source line. Keep the build's private `game.names` map to resolve reported source IDs and line numbers.
 
 ```csharp
 system Fall(Time time, mut Body body)

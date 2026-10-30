@@ -1,0 +1,13 @@
+diff --git "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile/common/original-main.c" "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile/common/main.c"
+index 1b7afc3b6..2a5e3a3e0 100644
+--- "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile/common/original-main.c"
++++ "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-profile/common/main.c"
+@@ -73,7 +73,7 @@ static void destroy(void *world)
+ 
+ int main(int argc, char **argv)
+ {
+-    const versus_way ways[] = {{"Tide", make, tick, digest, destroy}, wide_c};
++    const versus_way ways[] = {{"Tide", make, tick, digest, destroy}};
+     const versus_desc desc = {
+         .name = "versus_wide",
+         .about = "bodies of a dozen floats each fall and bounce, a tick changing half of them",

@@ -1,0 +1,9 @@
+// expect: a struct's field can't snap alone: snap the component's or the singleton's field that holds it
+struct Pose { float angle; float2 reach; }
+component Fighter { Pose pose; }
+scene Main { }
+system Enter(mut Fighter f)
+{
+    f.pose.angle = 0;
+    f.pose.angle.Snap();
+}

@@ -20,6 +20,8 @@
 //     332 pad rightTrigger 1         ...and its triggers, from 0 to 1
 //     400 capture fight.png          the frame, once it drew, as a PNG beside the script
 //     401 capture-audio fight.wav    what played since the last such line (or the start), as a WAV beside it
+//     410 record fight.gif           every second frame from this one, as a GIF beside the script...
+//     470 record stop                ...to this one; or to another `record`, or the run's end
 //     500 quit                       the run ends once this frame drew, with exit code 0
 //
 // What a line does at a frame is in the devices at that frame's poll, as a
@@ -171,6 +173,8 @@ typedef enum event_kind {
     EVENT_PAD_TRIGGER,
     EVENT_CAPTURE, // A script's own, from here on: not input
     EVENT_CAPTURE_AUDIO,
+    EVENT_RECORD,
+    EVENT_RECORD_STOP,
     EVENT_QUIT,
     EVENT_LEAVE, // A player's match, in a run of several
     EVENT_DROP,
@@ -188,7 +192,8 @@ typedef struct event {
     uint32_t press; // PRESS_*, or a touch's tide_touch_phase
     bool placed;    // A touch that says where
     float x, y;
-    char *text; // What's typed, or a capture's file
+    char *text; // What's typed, or a capture's or a recording's file
+    char *source; // An interactive event's original line, for replay after it runs
 } event;
 
 static void mouse_by(const float dx, const float dy)
@@ -280,6 +285,8 @@ static void apply(const event *e)
         break;
     case EVENT_CAPTURE:
     case EVENT_CAPTURE_AUDIO:
+    case EVENT_RECORD:
+    case EVENT_RECORD_STOP:
     case EVENT_QUIT:
         break;
     }
@@ -533,6 +540,15 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         if (!e->text[0]) return fail(error, size, "`capture-audio` takes the file what played goes to: `capture-audio shot.wav`");
         return true;
     }
+    if (strcmp(verb, "record") == 0) {
+        e->text = rest(at);
+        e->kind = strcmp(e->text, "stop") == 0 ? EVENT_RECORD_STOP : EVENT_RECORD;
+        if (!e->text[0]) {
+            return fail(error, size, "`record` takes the file the frames go to, `record fight.gif`, or ends the recording, "
+                                     "`record stop`");
+        }
+        return true;
+    }
     if (strcmp(verb, "quit") == 0) {
         e->kind = EVENT_QUIT;
         return ended(&at, error, size);
@@ -542,7 +558,7 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         return ended(&at, error, size);
     }
     return fail(error, size, "'%s' isn't something a line does: that's key, button, mouse, move, scroll, text, touch, pad, capture, "
-                             "capture-audio, leave, drop, rejoin or quit",
+                             "capture-audio, record, leave, drop, rejoin or quit",
                 verb);
 }
 
@@ -551,7 +567,8 @@ bool tide_script_event(const char *text, char *error, const size_t error_size)
     event e = {0};
     bool ok = parse(text, &e, error, error_size);
     if (ok && e.kind >= EVENT_CAPTURE) {
-        ok = fail(error, error_size, "`capture`, `capture-audio`, `quit`, `leave`, `drop` and `rejoin` are a script's lines, not input");
+        ok = fail(error, error_size,
+                  "`capture`, `capture-audio`, `record`, `quit`, `leave`, `drop` and `rejoin` are a script's lines, not input");
     }
     if (ok) apply(&e);
     free(e.text);
@@ -570,6 +587,26 @@ static struct {
     uint32_t last_audio; // 1 + the place of its last capture-audio line: 0 for none
     char *folder; // The script's own, which its captures' files are named from: "" or ending with a slash
 } script;
+
+static bool interactive;
+static FILE *replay;
+static bool replay_failed;
+
+static bool first_player(void)
+{
+    return tide_platform_player() <= 1u;
+}
+
+static bool for_player(const event *e)
+{
+    const uint32_t own = tide_platform_player() ? tide_platform_player() : 1u;
+    return e->kind == EVENT_QUIT || (e->player ? e->player == own : e->kind >= EVENT_CAPTURE || own == 1u);
+}
+
+static void replay_line(const char *line)
+{
+    if (replay && (fprintf(replay, "%s\n", line) < 0 || fflush(replay) != 0)) replay_failed = true;
+}
 
 static bool slash(const char c)
 {
@@ -714,7 +751,9 @@ bool tide_script_captures_audio(void)
 void tide_script_input(const uint32_t frame)
 {
     while (script.next_input < script.count && script.events[script.next_input].frame <= frame) {
-        apply(&script.events[script.next_input++]);
+        const event *e = &script.events[script.next_input++];
+        if (e->source) replay_line(e->source);
+        if (for_player(e)) apply(e);
     }
 }
 
@@ -723,14 +762,195 @@ int tide_script_drawn(const uint32_t frame)
     bool quit = false;
     for (; script.next_drawn < script.count && script.events[script.next_drawn].frame <= frame; script.next_drawn++) {
         const event *e = &script.events[script.next_drawn];
+        if (!for_player(e)) continue;
         if (e->kind == EVENT_QUIT) quit = true;
-        if (e->kind != EVENT_CAPTURE && e->kind != EVENT_CAPTURE_AUDIO) continue;
+        if (e->kind == EVENT_RECORD_STOP && !tide_platform_record_stop()) return 1;
+        if (e->kind != EVENT_CAPTURE && e->kind != EVENT_CAPTURE_AUDIO && e->kind != EVENT_RECORD) continue;
         char *beside = beside_script(e->text);
         char *path = tide_platform_players_file(beside); // With the player's number, in a run of several
         free(beside);
-        const bool written = e->kind == EVENT_CAPTURE ? tide_platform_capture(path) : tide_platform_capture_audio(path);
+        const bool written = e->kind == EVENT_CAPTURE         ? tide_platform_capture(path)
+                             : e->kind == EVENT_CAPTURE_AUDIO ? tide_platform_capture_audio(path)
+                                                              : tide_platform_record(path);
         free(path);
         if (!written) return 1;
     }
-    return quit ? 0 : TIDE_KEEP_RUNNING;
+    if (interactive && script.next_drawn) {
+        const uint32_t n = script.next_drawn;
+        for (uint32_t i = 0; i < n; i++) {
+            free(script.events[i].text);
+            free(script.events[i].source);
+        }
+        script.count -= n;
+        memmove(script.events, script.events + n, script.count * sizeof(event));
+        script.next_input -= n;
+        script.next_drawn = 0;
+        script.last_audio = script.last_audio > n ? script.last_audio - n : 0;
+    }
+    return replay_failed ? 1 : quit ? 0 : TIDE_KEEP_RUNNING;
+}
+
+bool tide_script_interactive_open(const char *path)
+{
+    interactive = true;
+    size_t folder = strlen(path);
+    while (folder && !slash(path[folder - 1])) folder--;
+    script.folder = tide_alloc(folder + 1u);
+    memcpy(script.folder, path, folder);
+    script.folder[folder] = '\0';
+    if (!first_player()) return true;
+    replay = fopen(path, "wb");
+    if (!replay) {
+        fprintf(stderr, "tide: --interactive: can't write replay %s: %s\n", path, strerror(errno));
+        return false;
+    }
+    replay_line("# Interactive play; replay with the same size, seed and players.");
+    return !replay_failed;
+}
+
+// Parse an interactive event using the same device and capture grammar as a
+// script. The numbered form queues it; a capture without a frame observes the
+// current frame without advancing the game.
+static bool interactive_event(const char *line, const uint32_t frame, char *error, const size_t error_size)
+{
+    const char *p = line;
+    char number[32];
+    event e = {0};
+    word(&p, number, sizeof number);
+    const bool numbered = whole(number, &e.frame);
+    if (!numbered) {
+        e.frame = frame;
+        p = line;
+    }
+    bool ok = player_of(&p, &e.player, error, error_size) && parse(p, &e, error, error_size);
+    if (ok && numbered && (e.frame <= frame || e.frame > 1000000000u)) {
+        ok = fail(error, error_size, "queue a future frame, from %u to 1000000000", (unsigned)(frame + 1u));
+    }
+    if (ok && (e.kind == EVENT_QUIT || (!numbered && e.kind != EVENT_CAPTURE))) {
+        ok = fail(error, error_size, "use `<frame> <event>` to queue input, `capture <file.png>` to look, or `quit` to end");
+    }
+    if (ok && e.kind == EVENT_CAPTURE_AUDIO) {
+        ok = fail(error, error_size, "use --capture-audio <file.wav> to keep the interactive run's audio from its start");
+    }
+    if (ok && e.kind >= EVENT_LEAVE && (tide_platform_players() < 2u || !e.player)) {
+        ok = fail(error, error_size, "leave, drop and rejoin need --players 2 or more and `player <n>` before the event");
+    }
+    if (ok && numbered && script.count >= 65536u) {
+        ok = fail(error, error_size, "the queue has 65536 events: step the game before adding more");
+    }
+    if (!ok) {
+        free(e.text);
+        return false;
+    }
+    if (!numbered) {
+        if (for_player(&e)) {
+            char *beside = beside_script(e.text);
+            char *path = tide_platform_players_file(beside);
+            ok = tide_platform_capture(path);
+            free(path);
+            free(beside);
+        }
+        free(e.text);
+        if (!ok) return fail(error, error_size, "capture failed; choose a writable PNG path");
+        return true;
+    }
+    const size_t length = strlen(line) + 1u;
+    e.source = tide_alloc(length);
+    memcpy(e.source, line, length);
+    if (script.count == script.capacity) {
+        const uint32_t grown = script.capacity ? script.capacity * 2u : 64u;
+        script.events = tide_realloc(script.events, script.capacity * sizeof(event), grown * sizeof(event));
+        script.capacity = grown;
+    }
+    uint32_t at = script.count;
+    // Stable insertion: an agent can add an earlier action to a future plan.
+    while (at && script.events[at - 1u].frame > e.frame) {
+        script.events[at] = script.events[at - 1u];
+        at--;
+    }
+    script.events[at] = e;
+    script.count++;
+    return true;
+}
+
+int tide_script_interactive_wait(const uint32_t frame)
+{
+    if (first_player()) {
+        printf("tide: interactive ready %u\n", (unsigned)frame);
+        fflush(stdout);
+    }
+    for (;;) {
+        char line[4096] = "", error[512] = "";
+        if (first_player()) {
+            if (!fgets(line, sizeof line, stdin)) {
+                if (ferror(stdin)) return -1;
+                memcpy(line, "quit", 5);
+            } else if (!strchr(line, '\n') && !feof(stdin)) {
+                int c;
+                while ((c = fgetc(stdin)) != '\n' && c != EOF) { }
+                puts("tide: interactive error command is too long (4094 bytes maximum)");
+                fflush(stdout);
+                continue;
+            }
+            line[strcspn(line, "\r\n")] = '\0';
+        }
+        if (!tide_platform_players_control(line, sizeof line)) return -1;
+        const char *p = line;
+        char verb[32], number[32];
+        word(&p, verb, sizeof verb);
+        uint32_t steps = 0;
+        bool quit = false;
+        bool observation = false;
+        if (!verb[0] || verb[0] == '#') {
+            // Empty lines and comments are accepted, as in script files.
+        } else if (strcmp(verb, "quit") == 0) {
+            quit = !word(&p, number, sizeof number);
+            if (!quit) snprintf(error, sizeof error, "quit takes no arguments");
+        } else if (strcmp(verb, "step") == 0) {
+            if (!word(&p, number, sizeof number) || !whole(number, &steps) || !steps || steps > 1000000u ||
+                steps > 1000000000u - frame || word(&p, number, sizeof number)) {
+                steps = 0;
+                snprintf(error, sizeof error, "step takes 1 to 1000000 frames, ending at frame 1000000000 or earlier");
+            }
+        } else if (strcmp(verb, "status") == 0) {
+            if (word(&p, number, sizeof number)) snprintf(error, sizeof error, "status takes no arguments");
+        } else if (strcmp(verb, "clear") == 0) {
+            if (word(&p, number, sizeof number)) snprintf(error, sizeof error, "clear takes no arguments");
+            else {
+                for (uint32_t i = 0; i < script.count; i++) {
+                    free(script.events[i].text);
+                    free(script.events[i].source);
+                }
+                script.count = script.next_input = script.next_drawn = script.last_audio = 0;
+            }
+        } else {
+            uint32_t at;
+            observation = !whole(verb, &at);
+            interactive_event(line, frame, error, sizeof error);
+        }
+        bool ok = !error[0] && !replay_failed;
+        if (!tide_platform_players_control_done(&ok) || replay_failed) return -1;
+        if (!ok && !error[0]) snprintf(error, sizeof error, "command failed for another player; see stderr");
+        if (ok && observation && replay) {
+            if (fprintf(replay, "%u %s\n", (unsigned)frame, line) < 0 || fflush(replay) != 0) replay_failed = true;
+            if (replay_failed) return -1;
+        }
+        if (quit) return 0;
+        if (steps) return (int)steps;
+        if (first_player()) {
+            if (error[0]) printf("tide: interactive error %s\n", error);
+            else printf("tide: interactive ok %u\n", (unsigned)frame);
+            fflush(stdout);
+        }
+    }
+}
+
+bool tide_script_interactive_close(const uint32_t frame)
+{
+    if (!replay) return !replay_failed;
+    if (fprintf(replay, "%u quit\n", (unsigned)(frame ? frame : 1u)) < 0) replay_failed = true;
+    if (fclose(replay) != 0) replay_failed = true;
+    replay = NULL;
+    if (replay_failed) fprintf(stderr, "tide: couldn't write the interactive replay\n");
+    return !replay_failed;
 }

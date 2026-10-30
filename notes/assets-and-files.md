@@ -1,5 +1,346 @@
 # Assets and local files
 
+## FBX keys closer than a float are one key (2026-10-29, bug)
+
+Reported by the owner from the duel (`bannerlord-duel`'s `notes/gaps.md`):
+Mixamo clips downloaded onto a Synty character, four of the five slashes of
+its Great Sword Pack and three of the Pro Sword and Shield Pack's attacks,
+were refused: "has FBX animation keys too close together for float
+timestamps". The owner: "i dont like when the engine is in the way". Their
+last key is 2e-8 s before the take's end (1.2666666454 s of a 38-frame take
+ending at 1.2666666667: the tick count's rounding), where `fbx_channel` adds
+its end boundary sample; as floats both are 1.26666665 s, and the importer
+refused any key not after the one before. Now keys whose float times aren't
+after the previous key's are one key, at the earlier's time with the later's
+value (the end's evaluated value there). Only files that were refused import
+differently: wherever every float time rose before, the output is the same
+bytes. All seven of the owner's files then build.
+
+Test: `fbx_keys_closer_than_a_float_are_one_key` (`animation/close_*.fbx`
+from `fbx_make.mjs`: Bone0's last key one tick before a 38-frame take's end;
+the channel's times rise and end at the take's end, with the last key's
+value; fails before this change, refused). Validation: `tidec_fbx_files`,
+`tidec_e2e_fbx_assets`, `tidec_e2e_animations`, `tidec_e2e_blend_shapes`,
+`tidec_animations_identity` and the FBX and animation diagnostics, native
+debug (18 tests). The importer runs only in native tidec, so web was not
+run.
+
+## FBX Euler keys unwrapped before baking (2026-10-27, bug)
+
+Follow-up the same day: HeavyStab01 still swung `spine_01` about 45 degrees
+per 1/240 s near 0.34 s. Its exporter switched to the rotation's other Euler
+triple between source keys, (179.99, 180.30, -183.12) then (0.00, 0.10,
+-2.96), which is (x + 180, 180 - y, z + 180) and the same rotation for every
+Tait-Bryan order; per-axis unwrapping can't see it, and the bake's in-between
+key landed half a turn away. Hemisphere continuity or shortest-path sampling
+can't help either: both neighbouring keys agree; the inserted key itself is a
+different rotation. `fbx_unwrap_rotations` is now the full Euler filter: where
+a rotation's three curves have keys at the same times, each key takes whichever
+of its two triples (each unwrapped by whole turns) is nearer the previous key
+by summed angle, negating the middle axis's tangent slopes when the twin is
+taken; curves keyed apart keep per-axis unwrapping. On the real clips the
+largest adjacent-key change is then 28 degrees (LightCombo01A, an IK hand) and
+50 degrees (HeavyStab01's `elbowAttach_l` at 0.88 s, where Y passes through
+the gimbal from 79.5 to 139.9 degrees between source keys: authored motion,
+neither triple is near). Test:
+`fbx_euler_keys_in_their_other_triple_bake_as_the_same_rotation`
+(`animation/twin_*.fbx`, (0, 10, 0) then (180, 170, 180) over one 30 fps frame;
+every baked key is 10 degrees about y; fails before this change). No existing
+expectation or pinned hash changed (99 affected native tests).
+
+Reported by the owner: Synty's `A_MOD_SWD_Attack_LightCombo01A_Neut.fbx`
+spun `spine_01` a full turn in 33 ms (keys at 0.0333/0.05/0.0667 s of
+(-0.9945, 0.10, ..), (0.0986, 0.9948, ..), (0.9949, -0.09, ..)), also
+`spine_02` at 0.20-0.37 s and HeavyStab01 at 0.34 s. The brief suspected a
+q to -q sign flip interpolated the long way; that wasn't it. `tide_slerp_q`
+already takes the shorter path for LINEAR keys, and the converter already
+makes consecutive baked quaternions hemisphere-continuous. The middle key
+was a 60 Hz bake key half a rotation from both neighbours: the clip's Euler
+curves are keyed at 30 fps, wrapped (Z -182.72 then 178.20, one degree
+apart), and `minimum_sample_rate` 60 has ufbx evaluate the curve between
+them, sweeping through 0. `fbx_unwrap_rotations` (`fbx_files.c`) now moves
+each `Lcl Rotation` curve key by whole turns to within 180 degrees of the one
+before, before baking (Maya's Euler filter); the rotation at every key is
+unchanged. After it, the clip's largest change between adjacent keys is about
+28 degrees per 1/60 s (an IK hand mid-swing). A genuine full turn keyed
+between two adjacent keys is now read as the short way; authored spins keep
+their intermediate keys. No glTF decoder change: its LINEAR keys already
+sample the short way, and rewriting their signs would only change bytes.
+
+Tests: `fbx_wrapped_euler_rotation_keys_bake_the_short_way` (ASCII/binary
+`animation/wrapped_*.fbx` from `fbx_make.mjs`: Bone0 179 to -179 degrees over
+one 30 fps frame; every baked key within a degree of the half turn; fails
+without the fix) and `skinned_linear_rotation_between_opposite_signs_takes_the_short_way`
+(a glTF clip q to -q samples q throughout). No existing expectation or pinned
+hash changed.
+
+
+## Choosing which blend shapes an asset imports (2026-10-27)
+
+The owner chose an asset attribute (verbatim in docs/spec.md): Sidekick heads
+carry ~50 facial shapes, which doubled the character tool's pack to 235 MB.
+`[BlendShapes("masculineFeminine", "default*")]` before a `SkinnedMesh<V>`
+asset (single, list, map, glob) keeps only matching shapes.
+
+Built: `check_blend_shapes_attribute` (`check.c`, the asset attribute loop
+beside `[LOD]`) records constant-text patterns (escapes decoded as `[Name]`'s)
+on the declaration; misuse on another asset kind, a non-text pattern, named
+arguments, a repeat, or the attribute on a non-asset are diagnosed, with
+BlendShapes among the unknown-attribute suggestions. After resolving,
+`keep_blend_shapes` replaces each of the declaration's items' canonical bytes
+(per-declaration `asset_match` copies; the shared file cache, the typed
+geometry and its hash are untouched, since dropped shapes' defaults are
+already in the vertices) with `tide_skinned_data_keep_shapes`
+(`skinned_data.h`, `skinned_decode.c`, build-time only): it reads the
+validated model back into the decoder's tables and runs the decoder's own
+`encode`, so keeping everything is byte-identical and keeping nothing is the
+version 1 model a file without targets decodes to. Packing, identity, LOD keys
+and fingerprints all see the filtered bytes. Matching is `*` = any run
+(including none), else exact; `[BlendShapes()]` keeps none; a pattern matching
+nothing is fine; an unnamed shape is only kept by a pattern matching the empty
+name. The editor's catalog metadata is unaffected (shapes have no dot members).
+
+Tests: `skinned_shapes_kept_by_name_rewrite_the_model_as_the_decoder_would`
+(keep all = same bytes, keep none = the no-target decode byte for byte, keep
+one, invalid input refused); `tidec_e2e_blend_shapes` gains five declarations
+(FBX `jaw*`, empty, a list and a map over `fbx/shapes/shapes_*.fbx` with a
+pattern matching nothing, a glTF) checked through counts, names, baked
+defaults and Shaped, plus a pack scan finding exactly one version 1 model
+(the empty one); three `tidec_error_blend_shapes_attribute_*` fixtures;
+`lsp_levels_of_detail` checks completion, hover, misuse and the misspelling
+suggestion.
+
+
+## Clips skip nodes the model lacks (2026-10-27)
+
+The owner chose lenient separate-rig binding for modular characters (verbatim
+in docs/spec.md, Separate-file binding): Synty Sidekick clips animate
+`ik_settings`, `ik_foot_root` and the whole body, while a part file has some
+of the chain (a hair part root..head) or extra chains (a cape's `abac_dyn_*`).
+`bind_nodes` (`engine/src/skinned.c`) now maps a required source node with no
+same-named target node to `BIND_SKIPPED`: its channels are left out of
+`tide_skinned_sample_into`, its locals out of `tide_skinned_pose_into` (and so
+out of the generated draw path, which binds through `pose_into`). A top-level
+source node with no target name and no bound child, formerly "missing" after
+the fold pass, is skipped too; one above bound bones still folds. Chosen rule
+for a present node below an absent one: its source parent must be bound and
+map to its target parent, as before, so a node below a skipped node is refused
+("is below X in it, which the model hasn't got") rather than re-parented; a
+whole absent subtree is skipped. Still refused, with the console reason:
+ambiguous required names on either side, unnamed required nodes, different
+parents, uneven fold scale, and a clip or pose whose named required nodes are
+all absent ("the model has none of the nodes it moves"), which keeps a wholly
+different rig a reported failure. Exact-skeleton sampling, canonical bytes,
+generated C and the pose-bit pin are unchanged.
+
+Tests: `skinned_separate_bindings_skip_nodes_the_model_lacks` (extra animated
+top-level, chained and leaf nodes give bit-identical sample_into and
+pose_into results to the plain export, and the pose draws; a target with only
+the arm, for the moving clip and the hand-only clip; a node below an absent
+elbow refused by both routes with the pose unchanged; another rig and a
+duplicate name refused). `skinned_separate_poses_bind_procedural_edits_...`
+now expects an edited node the model lacks to bind and move nothing (it
+formerly expected refusal). All 60 skinned runtime tests pass.
+
+
+## Blend shapes: imported and baked on the CPU (2026-10-27)
+
+The owner chose "Import + bake" (verbatim in `docs/spec.md`, Skinned meshes,
+Decided) for an internal character tool built from Synty's Sidekick packs,
+whose parts are skinned FBX with body shapes (`masculineFeminine`,
+`defaultHeavy`...) and ~50 ARKit facial shapes. GPU per-draw weights were not
+chosen. This supersedes the "morph targets are refused" statements in the
+skinned entries below; static `Mesh<V>` imports still take rest geometry.
+
+**Canonical format.** `tide/skinned_data.h` version 2 adds two tables after a
+136-byte header (words 30..33): shapes (20 bytes: name offset/length in the
+string section, first delta, delta count, default weight) and deltas (40
+bytes: vertex, position, normal and tangent xyz). A model without shapes is
+still written as version 1 with its 120-byte header, byte for byte what it
+was: no existing pack, Simulation ID, pinned hash or hand-built test blob
+changed. Version 2 requires at least one shape, so each model has one form.
+`tide_skinned_data_shape`/`_shape_delta` check their records;
+`tide_skinned_data_validate` also requires shapes' ranges to follow each
+other in order and cover the delta table, and each shape's vertices to
+increase strictly. The vertices are the authored geometry with every shape at
+its file default (so a nonzero glTF `weights` or FBX DeformPercent is the
+model's rest); the skeleton SHA-256 is unchanged. The chunk-capacity
+assertion in `skinned.c` now covers the 136-byte header, so owned byte lists
+still hold the whole header in their first run.
+
+**Decoder** (`skinned_decode.c`, shared by build-time imports and runtime
+`Decode`). A primitive's `targets` (POSITION, NORMAL, TANGENT; dense or
+sparse accessors through the existing `floats`, counted against
+`TIDE_SKINNED_MAX_READS`) are read one target at a time, x-reflected like the
+part's own values, added into the part's vertices at the default weight in
+target order, and kept as deltas only where a vertex moves. A mesh's targets
+map to model-level shapes once per mesh (`mesh_shapes`): a name from
+`extras.targetNames` is one shape across every mesh (a sorted name index, one
+binary search each); same-named targets must share their `weights` default;
+an unnamed target is one shape for its mesh, the same for every part and every
+node placing it. Refused: a name twice in one mesh, differing defaults, a
+`weights` count unlike the targets', parts of one mesh with different target
+counts, a target that isn't an object, wrong accessor counts. NORMAL targets
+are ignored on a part without normals (the importer's own flat normals don't
+follow shapes; such a part's deltas are copied to each triangle-corner vertex
+of their source) and TANGENT targets on a part without tangents. Animation
+channels targeting `weights` are now skipped instead of refusing the file.
+New limits, one `#define` each: `TIDE_SKINNED_MAX_SHAPES` (4,096) and
+`TIDE_SKINNED_MAX_SHAPE_DELTAS` (2,097,152, 80 MiB); the "every limit" peak is
+now about 600 MiB by arithmetic, not remeasured.
+
+**FBX** (`fbx_files.c`). Skinned conversion no longer refuses blend
+deformers. Each channel of every blend deformer is a glTF target of every
+material part: POSITION from the shape's offsets at each part vertex's FBX
+vertex (`ufbx_get_blend_shape_offset_index`), NORMAL when the mesh has normals
+and the shape normal offsets, both as sparse accessors over zeros (no view and
+no sparse block where a shape moves nothing in that part). The mesh says
+`weights` (the channel's DeformPercent / 100) and `extras.targetNames`: the
+keyframe shape's name, else the channel's. That is `masculineFeminine` for a
+Maya-style channel `TORSBlends.masculineFeminine`, so one name drives every
+part. A channel with more than one keyframe, or one whose target weight isn't
+100%, is refused before any output with export guidance (Tide's shapes are
+linear). Blender's FullWeights-less shapes and offset weights are not applied
+specially. Static conversion emits no targets, so static FBX packs are
+byte-identical.
+
+**Language** (`skinned_types.inc`, `skinned_ops.inc`, `skinned_codegen.inc`,
+`skinned_adapters.inc`, `skinned_language.h`). `model.blendShapes` (catalog
+type `BlendShapes`, `count`/`TryGetAt`/`TryGetByName`, no checked dot members:
+enumeration and exact-name lookup only, which keeps editor metadata reading
+unchanged), `BlendShape` (hidden data and index; `name`, `weight`), and
+`model.Shaped(List<float>)` returning the receiver's own type, so inferred
+and contracted catalogs survive. The names: `blendShapes`/`BlendShape` follow
+Unity's term and avoid claiming a bare `Shape`, a common game type name;
+`Shaped` is the owner's example. Both types are made the first time a program
+names `blendShapes`, `Shaped` or `BlendShape`, so other skinned programs keep
+their generated C and header. The generated `tide_skin_<model>_shaped` passes
+`offsetof` of the vertex struct's `position`, `normal` and `tangent` fields
+(the static importer's fill rules) to `tide_skinned_shaped`; Decode results
+and stored models work alike. A shaped model keeps the asset's `data` and
+`indices` handles, so pack proofs, palette memoization, atlas batching and LOD
+levels (found by the index list) still apply; only `vertices` is a new list,
+which the draw list content-hashes per draw like any vertex list made while
+playing (an upload when it changes, a hash per draw of a stored model).
+
+**Runtime** (`skinned.c`): `tide_skinned_shape_count`, `_find_shape`,
+`_shape_name`, `_shape_weight` and `tide_skinned_shaped`. Shaped returns
+`vertices` itself when no weight differs from its default (missing and
+non-finite weights are defaults), when the data is invalid, or when the counts
+or field places don't fit; otherwise a scratch copy, prepared with
+`tide_list_prepare` so a copy of pack vertices is its own before writing
+(found by the e2e: an unprepared copy of pack data refuses `_at_mut`). Each
+shape in order adds `(w - default) * delta` per component with basic IEEE
+operations under the build's no-contraction flags; an addition that would
+leave float range leaves that component, so huge weights can't make
+infinities or NaN in match state. Normals aren't renormalized.
+
+**Tests.** `tests/test_skinned_shapes.c` (6): two meshes sharing a named
+shape plus unnamed and sparse targets, exact deltas, defaults baked into
+vertices, repeatable bytes; a shapeless model staying version 1; a flat part's
+corner deltas and a skipped weights channel; nine refusals including the
+4,097-target limit; every cut length and nine spoiled fields of the shape
+tables; baking (defaults/empty/NaN return the same list, mismatched counts and
+places, exact results against a reference, base unchanged, repeat bits,
+positions only, overflow kept). `tidec_fbx_files`:
+`fbx_blend_shapes_become_shapes_and_in_betweens_are_refused` (ASCII and
+binary fixtures from `fbx_make.mjs` in `e2e/fbx/shapes/`, byte-identical
+canonical data, shape names, defaults, deltas, static rest geometry, the
+in-between refusal). `tidec_e2e_blend_shapes` (FBX asset and a GLB from
+`blend_shapes_make.mjs` decoded at runtime: lookup, Shaped values checked
+exactly, extrapolation, defaults, a helper, a stored shaped model across
+ticks, snapshots and world packing, and both views' recorded vertices).
+Three `tidec_error_blend_shapes_*` diagnostics and
+`lsp_skinned_blend_shapes_complete_hover_and_help`. A Blender 4.4 export of a
+skinned cube with shape keys (not committed) decodes from FBX and GLB to the
+same shape names, defaults and delta counts.
+
+**Gaps.** No GPU morphing or shape-weight animation; no checked dot members
+for shapes; FBX in-between shapes and Blender's per-vertex offset weights
+aren't read; flat-shaded parts' generated normals don't follow shapes;
+normals aren't renormalized after baking; Synty's own files were not
+imported here (licensed; the owner's tool will be the first real use).
+
+
+## Prehashed release asset loading (2026-10-27)
+
+Owner-approved tide_pack_find_id(name[32], kind) and
+tide_pack_find_mesh_id(name[32], kind, layout) select the existing SHA-256
+qualified-name keys. The ordinary string lookup delegates to the ID lookup;
+its C API and pack version/bytes are unchanged. NULL/unknown IDs, wrong kinds
+and wrong mesh layouts return NULL, including after unload. Lookup remains a
+read-only directory scan with the same selected entry and lifetime as before.
+
+Codegen's strip_names emits static name-ID arrays for asset loads/default fills
+and for the private raw-pack fingerprint requests. Requests take exactly one
+of qualified or id; duplicate selected IDs, malformed packs and mismatched
+content retain the existing rejection paths before any loaded state changes.
+Diagnostics use IDs/ordinals, mapped privately beside the generated C. Map keys,
+catalog/bone/clip names and actual asset contents retain their game semantics.
+
+pack_prehashed_lookup_preserves_names_kinds_layouts_and_reload covers ordinary
+and typed lookup, missing/NULL/wrong-kind/wrong-layout IDs, replacement and
+unload. The fingerprint all-kinds fixture compares named and hashed requests
+with identical expected hashes and checks duplicate/missing/ambiguous requests.
+tidec_release_names runs the existing skinned lifecycle/snapshot tests through
+the stripped loader with its unchanged deterministic pin. Full validation and
+artifact inspection results are in cli-and-packages.md.
+
+## Blender's armature node folds into separate-export binding (2026-10-27)
+
+Found from the Parry prototype: a Synty clip round-tripped through Blender 4.4
+(FBX export, `bake_anim`, unit scale applied) sampled as the rest pose on its
+character. Blender always writes the armature object as a named node above the
+skeleton's top bone (`Armature`, scale 0.01 for a centimetre rig, constant
+T/R/S channels baked with the take), so `Root`'s parent chain differed from the
+character's (`Root` top-level, its 0.01 put there by ufbx's
+`ADJUST_TRANSFORMS` unit conversion) and `bind_nodes` rejected it silently.
+
+`engine/src/skinned.c` now folds a named top-level node (parent is node zero or
+the unnamed FBX wrapper) whose name is absent from the other hierarchy. Source
+side: such a node maps to `BIND_FOLDED`, its sampled local (defaults plus this
+clip's channels) or its source Pose local is composed into each bound child's
+local (`fold_into`: position `A.p + A.r*(A.s*C.p)`, rotation `A.r*C.r`
+normalized, scale `A.s*C.s`). Target side: a bound node whose target parent is
+such a node gets that parent's rest divided out (`fold_out`), so a character
+exported from Blender also plays clips exported elsewhere; the target node
+itself keeps its rest. Both are exact TRS only for uniform scale: folded
+scales (default, every key, cubic tangents; the actual Pose value on the draw
+path) must agree within relative 1e-5, otherwise binding fails before output
+is touched. A source fold needs a bound child, so an unmatched top-level node
+moving nothing bound is still "missing" (the existing rejection fixtures
+depend on that). Matched names are never folded. Exact-skeleton sampling, the
+generated-C boundary, canonical bytes and the importer are unchanged; sample
+and pose routes give bit-identical results.
+
+Failed bindings now say why: `bind_nodes` writes the differing node (missing,
+ambiguous, unnamed, different parent, uneven fold scale) and
+`report_binding` prints it once per (target skeleton, source skeleton, clip)
+through `tide_debug_log`, with a 64-slot atomic table (worker-safe, never in
+match state; past 64 pairs it stops reporting). Invalid data prints nothing.
+A build-time diagnostic was not built: the compiler doesn't track which model
+a Pose belongs to at a `Sample` call.
+
+Evidence: `A_Attack_HeavyStab01_Sword.fbx` through the owner's round-trip
+script, sampled into `PolygonSyntyCharacter.fbx` against the original clip at
+every fifth frame: worst bone model-space difference 0.0099 mm by both
+`sample_into` and `pose_into`. Between frames it reaches 23 mm at the weapon
+hand, because Blender bakes at the scene's 30 fps while the importer resamples
+the original curves at 60 Hz; a smaller `bake_anim_step` in the export should
+reduce that (not measured). Blender's glTF export of the same scene binds too (its `Armature` node
+has the axis rotation) and matches within 0.01 mm once shifted by two frames:
+the exporter's clip starts two frames early and is two frames longer, an export
+timing matter rather than binding. The Synty files are not committed.
+
+Test: `skinned_separate_bindings_fold_unmatched_top_level_nodes`
+(`tests/test_skinned.c`) builds a Blender-shaped glTF rig (translated, rotated
+`Armature` at 0.01 with an animated uniform scale) and checks arm/hand
+model-space matrices against the source's own sampling at five times in both
+directions, sample/pose bit parity, the target's armature kept at rest,
+uneven-scale rejection on both routes and a same-named armature beside the arm
+rejected. Validation: 53 native skinned runtime tests, `tide_tests` on web,
+`tidec_fbx_files`, animation/skinned/FBX E2E and both platform skinned tests.
+
 ## Missing static tangents for normal maps (2026-10-25)
 
 The owner approved normal maps in Render3D and the corresponding static-import
@@ -270,10 +611,10 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 - `docs/spec.md`, Levels of detail, has the design: the owner decided opt-in with `[LOD]` on a mesh asset's declaration (opt-out was the first proposal; "that way no surprises for the user"), everything else automatic and made at build time with a cache, a pick for each instance of `Draw.Instanced`, skinned meshes included, and two overrides (a level by its number, and a camera for a target to pick through; "they probably want it to match the visuals the main camera rendered"). Every other rule there is a pick, Provisional. `docs/game/assets.md` (Levels of detail) is the users' page. What's built, and what code relies on:
   - **The language** (`compiler/src/check.c`): `[LOD]` is read with the asset's other attributes, in the loop that reads `[Filter]`, and sets `decl.lod`; it takes nothing, goes once, and is an error on an asset that isn't `ASSET_MESH` or `ASSET_SKINNED`, and on any declaration that's no asset (in the declarations' attribute loop, which also suggests it for `[Lod]`). `Draw.LOD`, `Draw.SetLOD`, `Draw.LODCamera` and `Draw.SetLODCamera` are `add_setting` signatures in `builtins.c`, so both forms, each one's misuse and quick fix, a target's own and the editors' completion and hover are the family's code. The forms with no arguments are settings of no parameters, as `Screen` is, whose block form is `tide_draw_push_no_lod` or `tide_draw_push_no_lod_camera`.
   - **Nothing in generated draw code changed.** A level is found by the mesh's indices' list (below), so `Draw.Mesh(rock, ...)`, `Draw.Mesh(rock.vertices, rock.indices, ...)`, a list's element and a map's value are all the same calls they were. A game with no `[LOD]` and none of the settings generates the C it did.
-  - **Making the levels** (`compiler/src/mesh_lod.c`, `mesh_lod.h`; tidec's alone, nothing of it is in the engine or a game): edges collapsed onto one of their ends, the cheapest first from a heap, by quadrics. Vertices are numbered by their position's bits (`place`), and again by position with uvs and colors (`chart`): topology and the planes are a position's, so a mesh whose every triangle has corners of its own is still a surface, and a seam is a position with two charts. A collapse is refused where the edge isn't a side of one triangle (for a position on an open edge) or of two (inside), where another position is next to both ends (the surface would fold), where a vertex's chart has nothing beside it along the edge (a seam would tear) and where a triangle that stays would turn more than `TURN_LEAST` or go flat. A position gathers its triangles' planes by area, and ten times an open edge's own plane; a vertex gathers what its values (uv, uv2 and color times their weights, then the normal times its) do over its triangles, as a slope and where from, Hoppe's way. What a collapse costs is both ends' planes at the end it goes to, over their weight, plus what the moved vertices' values were against the ones they take, plus, for a skinned mesh, the edge's length times how differently the two follow their bones (`mesh_lod_source.apart`). A level's error is the square root of the dearest collapse so far, times the mesh's extent. Corners at a position are a linked list through their triangles' corners, so a collapse splices two lists; a position with more than `FAN_MOST` (96) corners stays.
+  - **Making the levels** (`compiler/src/mesh_lod.c`, `mesh_lod.h`; tidec's alone, nothing of it is in the engine or a game): edges collapsed onto one of their ends, the cheapest first from a heap, by quadrics. Vertices are numbered by their position's bits (`place`), and again by position with uvs and colors (`chart`): topology and the planes are a position's, so a mesh whose every triangle has corners of its own is still a surface, and a seam is a position with two charts. A collapse is refused where the edge isn't a side of one triangle (for a position on an open edge) or of two (inside), where another position is next to both ends (the surface would fold), where a vertex's chart has nothing beside it along the edge (a seam would tear) and where a triangle that stays would turn more than `TURN_LEAST` or go flat. A position gathers its triangles' planes by area, and ten times an open edge's own plane; a vertex gathers what its values (uv, uv2 and color times their weights, then the normal times its) do over its triangles, as a slope and where from, Hoppe's way. What a collapse costs is both ends' planes at the end it goes to, over their weight, plus what the moved vertices' values were against the ones they take, summed over the area they held them on (not averaged: see the crowd's two gaps below), plus, for a skinned mesh, the edge's length times how differently the two follow their bones (`mesh_lod_source.apart`). A level's error is the square root of the dearest collapse so far, times the mesh's extent. Corners at a position are a linked list through their triangles' corners, so a collapse splices two lists; a position with more than `FAN_MOST` (96) corners stays.
     - **Everything is `+ - * /` and `sqrt` on doubles in a fixed order**, with `#pragma STDC FP_CONTRACT OFF`, and ties in the heap go by the positions' numbers, so a file gives the same levels wherever it's built. Nothing reads a level but a draw, so this is for packs that are the same bytes, not for the match.
     - **A file's numbers are somebody else's**: an index past the vertices and a triangle with two corners in one place are left out, positions that are no number make no plane and pass no check, and a mesh with no extent has no levels.
-    - A chain ends at `MESH_LOD_MOST` (7) levels, where a level can't take a quarter of the triangles left, and where it would be off by more than half the ball's radius.
+    - A chain ends at `MESH_LOD_MOST` (7) levels, where a level can't take a quarter of the triangles left, where it would be off by more than half the ball's radius, and before a level under `triangles_least`. A mesh of fewer than `mesh_least` triangles has none.
   - **The cache** (`mesh_lod_cached`): by a key that's the SHA-256 of a version text, the mesh file's hash and, for a skinned model, its bytes' hash (`mesh_levels` in `codegen.c`). Kept for the process in a table, and in `<game>/.tide/assets/lod/<key>.lod` where there's a game folder: a header of words, then the indices. A file is checked whole before it's taken (its size to the byte, each level within the indices and whole triangles, errors that rise, every index under the mesh's vertices), and made again otherwise; it's written beside its name and renamed. The version text changes whenever `mesh_lod.c` would give other levels.
   - **Skinned meshes** go through the same `pack_mesh`, as their typed geometry always did. `bone_weights_of` reads each vertex's influences from the model's bytes through the checked getters (`tide/skinned_data.h`), and `bones_apart` is half the sum of the weights' differences, bone by bone: 0 for two vertices that follow alike, 1 for two with no bone in common. Bytes that aren't a model of that many vertices give no weights, and the levels are made as a mesh that follows none.
   - **The pack** (`engine/src/pack.c`, `pack_load.c`): `tide_pack_mesh_levels` is `tide_pack_mesh` with a `tide_mesh_levels`. The levels are a block of their own (`levels_block`: 28 words, which are the ball, the count, the indices' count and each level's error, first index and count, then the indices), and the mesh's indices' block names it in the word after its element's size, which was 0: 1 + the block's offset, as a block can be the region's first, at 0. **That was a bug as first built**: the first leveled mesh of a pack had no levels, which `pack_meshes_have_levels_of_detail_beside_their_lists` now pins with a pack that starts with one. The pack's version didn't change: an older pack says 0 there, and an older loader never read the word. The content a mesh is shared and told by has the levels' key in it, so the same file with and without `[LOD]` is two meshes, and a mesh marked `[LOD]` that got no levels is the mesh it is without.
@@ -295,7 +636,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
     - **A light mesh, the test ball of 960 triangles, 40,000 instances.** From 5 to 600 units, a draw each: 5.03 ms whole and 4.07 ms picked (38.4 M triangles to 3.6 M, in 7 draw calls for 2). From 3 to 30 units, where two thirds stay whole: 5.73 ms whole and 6.60 ms picked, so picking costs more than it saves there. As one `tide_draw_instances` call: 2.11 ms far and 5.10 ms near, the best of each.
     - **Where the cost is:** recording 40,000 single draws of a mesh with no levels takes 1.60 ms, and 2.1 to 2.25 ms where each picks: 13 to 16 ns a draw more, for the pick, the level's place, and commands that change level, which `tide_draw_gather_levels` then sorts as the frame is rendered. One instanced call records in 0.44 to 0.52 ms against 0.14 ms with no levels: about 8 ns an instance. `lod_view_kept` keeps the camera's part of the pick between single draws (it was worked out at each, 18 ns a draw more); what's left to take is the gathering. A mesh with no levels records in the time it did (1.59 against 1.60 ms).
     - **So:** it pays by the triangles it takes off. A model of thousands of triangles drawn small wins several times over; one of a thousand triangles, on a GPU this fast, gains little a draw each and wants `Draw.Instanced`, or no `[LOD]`. One GPU, one run: no other machine, backend or a phone was measured.
-  - **No level under 500 triangles** (2026-10-11; the owner, of those numbers: "fixed floor is fine"; 500 is Claude's pick). `MESH_LOD_TRIANGLES_LEAST` in `mesh_lod.h`, which `mesh_levels` in `codegen.c` gives the source as `triangles_least`: `mesh_lod_make` ends the chain where the next level would aim under it, so a mesh of under 1,000 triangles has none and is packed, drawn and recorded as one with no `[LOD]`. A source that says 0 has no floor, which is what the maker's own tests go by. The cache's version text says the number (a `_Static_assert` beside it), so levels made before it are made again. The test models grew for it: `ball.glb` is 9,024 triangles (four levels, of 4,511, 2,255, 1,126 and 563) and `arm.glb` 2,048 (two), and `light.glb` is the old ball of 960, marked and with none. `mesh_lod_makes_no_level_under_the_fewest_triangles` pins the rule, and `lod_assets_have_levels_beside_the_full_mesh` the counts.
+  - **No level under 500 triangles** (2026-10-11; the owner, of those numbers: "fixed floor is fine"; 500 is Claude's pick; split in two 2026-10-30, below: a mesh of under 1,000 has none, and a level has 64 at the least). `MESH_LOD_TRIANGLES_LEAST` in `mesh_lod.h`, which `mesh_levels` in `codegen.c` gives the source as `triangles_least`: `mesh_lod_make` ends the chain where the next level would aim under it, so a mesh of under 1,000 triangles has none and is packed, drawn and recorded as one with no `[LOD]`. A source that says 0 has no floor, which is what the maker's own tests go by. The cache's version text says the number (a `_Static_assert` beside it), so levels made before it are made again. The test models grew for it: `ball.glb` is 9,024 triangles (four levels, of 4,511, 2,255, 1,126 and 563) and `arm.glb` 2,048 (two), and `light.glb` is the old ball of 960, marked and with none. `mesh_lod_makes_no_level_under_the_fewest_triangles` pins the rule, and `lod_assets_have_levels_beside_the_full_mesh` the counts.
     - **Measured with it** (the same scratch program and machine, once each; whole, then picked a draw each, then picked as one instanced call, in ms; about 39 M triangles whole in each):
 
       | Triangles | Levels | Instances | 5 to 600 units | 3 to 30 units |
@@ -308,7 +649,18 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 
       Picked is no slower than whole in any row now. The first row's mesh has no levels, so its three numbers are the same draws as an unmarked mesh's (its two a-draw-each numbers differ by the run's noise; the instanced one is faster as one call records in 0.18 ms where 40,000 take 2.2). The machine was busier than for the numbers above, so set rows against each other, not against those.
   - **Validation:** full native debug (2,135 tests) and web debug (2,106) suites pass after merging `origin/dev` through `e6a4133a` (texture compression and idle GPU assets among it, in the same renderer and pack files), with the pixel test on OpenGL 3.3, WebGL 2 and WebGPU, and the docs site builds. Linux, macOS, MinGW, Android and the sanitizers are a requested CI run's.
-  - **Not built:** a setting in the language for the pixels a level may be off by (`tide_draw_lod_pixels` is there for C); levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. No measurement of a real exporter's model has been made: the fixtures are generated. The first level of the test ball (480 triangles of 960) says it's off by 0.032 of a radius, most of it its normals' and uvs' share, which is where its weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) would be tuned against real art.
+  - **Not built:** a setting in the language for the pixels a level may be off by (`tide_draw_lod_pixels` is there for C); levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. The first real exporter's model measured is the crowd's below; the weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) were tuned on it alone.
+  - **A crowd's two gaps: the pick kept the full mesh, and the chain ended at its first level** (2026-10-30; the Bannerlord duel's battle of 20,000, `tools/army` in that repository, Tide 0.5.0-nightly.59). Its far fighters are `[LOD] asset Mesh<CrowdCorner>` of Synty's `PolygonSyntyCharacter.fbx` (4,896 triangles; `joints` and `weights`, so read skinned, at rest, in metres, radius 1.12) drawn as one `Draw.Instanced` through a vert that skins on the GPU, about 10,600 of them 30 to 150 m off at 960 by 540.
+    - **The cause of both was the values' share of a collapse's cost.** It was the area-weighted mean of how far a vertex's values (normal, uv, color, times their weights) were from what they became, in the mesh's whole extent: a normal turned 28 degrees on a 4 cm patch of the model (a bevel or a buckle, its corners sharing a position and a uv but not a normal) cost as much as a surface 0.49 m off. One such collapse, at 4,136 triangles left, made the 2,448-triangle level 1 say 0.495 m (the pick allows 0.06 m at 30 m), and the next level would have said 0.63, over half the reach, so the chain ended. Traced by the cost's three parts: the planes' share stayed under 2 cm, the bones' (`bones_apart`) under 3 cm, and uvs gave nothing (their share was 0 throughout); with normals unweighed the chain went on to 611 triangles at 2 cm. The rest bounds and the instance's transform through the vert's struct were right: once levels said what they're off by, the same draw picked them.
+    - **Now** (`weigh` in `mesh_lod.c`): the values' share is summed over the area they held, not averaged, so a value off by e over a patch L across costs as much as a surface off by e times L, and `WEIGHT_NORMAL` and `WEIGHT_COLOR` are 2 (they were 0.5): a normal 30 degrees off, or a color off by half, over a pixel is a pixel off. The weights were picked on the crowd: at 0.5 the far fighters' shading went darker and the far band's color moved (mean red 111 to 103) at 24.9 M vertices; at 1, 31.3 M and still darker; at 2, 45.6 M with each band's color as close to the full mesh's as `Draw.LOD(1)`'s (which the duel's agent found the same by eye); at 4, 81.1 M. Pixels more than 32 off the full mesh in the furthest band: 8% for level 1 forced, 16% for level 3, 21% picked at 2. Most of that is the crowd's aliasing, a figure there being a few pixels.
+    - **The floor is two** (`mesh_lod.h`): `MESH_LOD_MESH_LEAST` (1,000), under which a mesh has no levels, which is what the measurement behind the old floor was of, and `MESH_LOD_TRIANGLES_LEAST` (64), under which no level is made, as a level costs only a draw call more where it's in use. With the old 500 the crowd's chain stopped at 611. `mesh_lod_source.mesh_least` is new beside `triangles_least`, both 0 (none) unless a caller says.
+    - **The crowd's levels now:** 2,448, 1,224, 611, 304, 151 and 75 triangles, off by 4.4, 7.0, 10.5, 13.9, 23.7 and 33.9 cm. The cache's version texts are 4 and 5, saying both numbers, so levels made before are made again.
+    - **Measured** (`tide run --release tools/army --frames 300 --capture x.png --stats` on a scratch copy of the duel's `combat/` and `tools/army/` with the crowd at the default pick, three runs each, interleaved, this Windows machine's GPU on Vulkan): nightly.59 174,316,125 vertices and GPU 16.2 ms; with this, 45,596,328 and 5.9 to 6.2 ms; `Draw.LOD(1)` with nightly.59, the duel's workaround, 96,266,475 and 8.1 to 9.3 ms. The "after" was this checkout's release `tide.exe` in a copy of the nightly.59 installation (the same engine files: HEAD was nightly.59). Single runs in between read up to 13 ms under other load: compare interleaved runs.
+    - **Tests:** `mesh_lod_weighs_what_a_surface_shows_by_the_patch_it_is_on` (a flat square with a patch two cells across whose normals lean 37 degrees: every level off by under twice the patch's size, which the averaged measure fails; and the same square leaning one way and the other at each corner, whose last level is off by more); `mesh_lod_makes_no_level_under_the_fewest_triangles` pins both floors. In `e2e/lod`, the ball now has seven levels (to 70 triangles), the skinned arm five, and the near draws moved from 2 and 2.5 units to 1.5 and 1.75, as the ball's first level is within a pixel at 2 now. The near arm's check is the level within a pixel there, which is no longer the full mesh.
+    - **Not built:** a measure of what thinner limbs take off a crowd's coverage in all. A far figure loses a thin arm within a pixel, which is right for one, and many of them show more ground between them. At the picked weights each band's color is within what level 1 forced moves it.
+  - **Levels ordered for the vertex cache** (2026-10-30, the owner: "it will help in the future if not here"). `order_for_cache` in `mesh_lod.c` reorders each level's triangles as it's made, by Forsyth's linear-speed scoring over 32 cache places, with `x * sqrt(x)` and `2 / sqrt(n)` for his `pow`s, so the order is the same on every machine; ties go to the lower triangle number, and where nothing near the cache is left the next is the first undrawn in the list. Only a level's order changes: the full mesh's indices are the file's, as games read them. The cache's version texts are 6 and 7.
+    - **Measured** (vertices transformed a triangle, a 16-place FIFO): the test ball's bigger levels from 1.0 to 1.5 down to 0.65 to 0.70; levels under about 60 triangles were in the cache already. The duel's fighter, whose triangles share few corners, reaches the least there is at each level (2.81 to 2.55, 2.61 to 2.28, 2.37 to 2.00, 2.14 to 1.85 against 1.81). Its GPU time didn't change measurably: three interleaved runs each, 5.54, 6.18 and 5.54 ms unordered against 5.95, 6.25 and 5.42 ordered, so this GPU's own vertex reuse, or the frame's other costs, hide it there.
+    - **Test:** `mesh_lod_orders_levels_for_the_vertex_cache` (each of the ball's levels of 100 triangles or more under 0.75 a triangle; unordered, they're 1.0 to 1.5).
 
 ## Conservative release asset pruning (2026-10-10)
 

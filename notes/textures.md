@@ -1,5 +1,34 @@
 # Textures and how they are sampled
 
+## Depth dimensions (2026-10-29)
+
+The Render3D resolution increase needs physical shadow dimensions after the
+device clamps a target. `DepthTexture.size` now completes the existing image
+metadata API: an int2 in local CPU code and shaders, including depth-only and
+color-target depth. Retained references follow resize/dispose; invalid, window,
+cube-face and default references remain zero. A missing frame resolver is zero.
+Metadata works before allocation or multisample resolve and never reads pixels.
+
+Generated code reuses `tide_texture_size` with a temporary texture reference
+marked by `TIDE_TEXTURE_DEPTH` in image.height. Only its color-index check is
+bypassed; target resolution, lifetime checks and the borrowed target_pixels
+callback are unchanged. No runtime function, signature or layout was added.
+READ_SIZE still supplies uniform ints without texture bindings. CPU evaluation
+order and the direct/transitive parallel-loop restrictions match Texture.size.
+
+`depth_size` covers both target kinds, missing/invalid references, helpers,
+resize/dispose, source order, automatic loops, callback restoration, no callback,
+zero texture captures and a simulated 2048-pixel device limit. Three diagnostics
+cover assignment and direct/transitive parallel reads. Existing platform shader
+pass 23 checks CPU/vert/frag parity, multiple depth helper sources, real device
+limits on an oversized metadata-only target and web device recreation. The LSP
+fixture covers completion, chained vector members and hover. The combined
+native scope passes 31 CTests, including metadata/errors and Vulkan/OpenGL
+shader pixels; lsp_textures_in_functions passes. The corresponding 38 web
+CTests pass, including WASI metadata/error checks and WebGL, ANGLE D3D11 and
+WebGPU shader pixels. The docs production build passes. Final validation and
+local coverage limits are recorded with the Render3D change in render3d.md.
+
 ## Twelve shader slots (2026-10-25)
 
 The internal draw capacity is twelve. Individual Texture references retain

@@ -18,6 +18,7 @@
 #include "telemetry.h"
 #include "toolchain.h"
 #include "upgrade.h"
+#include "versions.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
 #include "cc.h"
@@ -65,6 +66,15 @@ static char *command_folder(char *folder)
     const size_t n = strlen(unity);
     if (n > 1 && unity[n - 1] == '/') unity[n - 1] = '\0'; // As path_absolute gives a folder
     return unity;
+}
+
+// A delegated command records its own usage data with its selected version.
+static bool selected_pin;
+static int use_pinned(const char *folder, int argc, char **argv)
+{
+    const int code = tide_use_pinned(folder, argc, argv, TIDE_VERSION);
+    if (code >= 0) selected_pin = true;
+    return code;
 }
 
 static int command_main(const int argc, char **argv)
@@ -127,6 +137,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute("."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return tide_add(folder, argv[2]);
     }
 
@@ -137,6 +149,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute("."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
     }
 
@@ -155,6 +169,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute("."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return tide_eject(folder, argv[2]);
     }
 
@@ -164,6 +180,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute(argc == 3 ? argv[2] : "."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return command[0] == 'f' ? tide_fetch(folder) : tide_publish(folder);
     }
 
@@ -202,12 +220,13 @@ static int command_main(const int argc, char **argv)
     if (!defines) abort();
     build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, and a
-    // run with no window. Each once is 35 arguments
-    const char *game_args[40] = {NULL};
+    // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, a
+    // network made worse, and a run with no window. Each once is 43 arguments, and --latency, --jitter and --loss
+    // can say several players' too
+    const char *game_args[128] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
-    bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
+    bool headless = false; // --capture, --capture-audio, --record, --frames, --microphone, --script or --interactive: no window
     bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
     bool data_directory = false;
@@ -215,7 +234,7 @@ static int command_main(const int argc, char **argv)
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
-        if (run && game_arg_count > 36) { // Room for the longest of them yet, --size's 3, and the NULL after them
+        if (run && game_arg_count > 124) { // Room for the longest of them yet, --size's 3, and the NULL after them
             fprintf(stderr, "tide: run takes each of its options once\n");
             free(defines);
             return 2;
@@ -263,12 +282,14 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
             data_directory = true;
-        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--script") == 0 ||
-                           strcmp(a, "--microphone") == 0)) {
+        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--record") == 0 ||
+                           strcmp(a, "--script") == 0 || strcmp(a, "--microphone") == 0 || strcmp(a, "--interactive") == 0)) {
             if (left < 1) {
                 const char *like = "--capture menu.png";
-                if (a[2] == 's') like = "--script play.txt";
+                if (a[2] == 'r') like = "--record run.gif";
+                else if (a[2] == 's') like = "--script play.txt";
                 else if (a[2] == 'm') like = "--microphone voice.wav";
+                else if (a[2] == 'i') like = "--interactive play.txt";
                 else if (a[9]) like = "--capture-audio run.wav"; // What's after --capture
                 fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, like);
                 free(defines);
@@ -287,6 +308,18 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
             if (a[2] == 'f') headless = true;
+        } else if (run && (strcmp(a, "--latency") == 0 || strcmp(a, "--jitter") == 0 || strcmp(a, "--loss") == 0)) {
+            // The game says what's wrong with a value: a player's (2:120) needs its --players
+            if (left < 1) {
+                fprintf(stderr, "tide: %s takes %s\n", a,
+                        a[3] == 'a' ? "how many milliseconds a datagram takes each way, like `--latency 80`"
+                        : a[2] == 'j' ? "up to how many milliseconds more a datagram takes, like `--jitter 20`"
+                                      : "the share of datagrams lost, in percent, like `--loss 5`");
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--players") == 0) {
             if (left < 1) {
                 fprintf(stderr, "tide: --players takes how many players the run has, like `--players 2`\n");
@@ -323,6 +356,7 @@ static int command_main(const int argc, char **argv)
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
         else if (strcmp(a, "--release") == 0) opts.release = true;
         else if (strcmp(a, "--web") == 0) opts.web = true;
+        else if (build && strcmp(a, "--single-file") == 0) opts.single_file = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
         else if (strcmp(a, "--stats") == 0) opts.stats = true;
         else if (strcmp(a, "--debug-views") == 0) opts.debug_views = true;
@@ -412,6 +446,11 @@ static int command_main(const int argc, char **argv)
         free(defines);
         return 2;
     }
+    if (opts.single_file && !opts.web) {
+        fputs("tide: --single-file is for a web page: add --web\n", stderr);
+        free(defines);
+        return 2;
+    }
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
         free(defines);
@@ -443,6 +482,10 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         open_page = false;
+    }
+    if (!unity) {
+        const int selected = use_pinned(opts.folder, argc, argv);
+        if (selected >= 0) { free(defines); return selected; }
     }
     // A run ends with its game. Do the occasional update check before it
     // starts, so the network can't keep tide alive after the window closes.
@@ -487,7 +530,7 @@ int main(const int argc, char **argv)
     const int64_t start = sys_now_ms();
     const int code = command_main(argc, argv);
     char *root = install_root();
-    tide_telemetry_record(root, argc, (const char *const *)argv, code, sys_now_ms() - start, TIDE_VERSION);
+    if (!selected_pin) tide_telemetry_record(root, argc, (const char *const *)argv, code, sys_now_ms() - start, TIDE_VERSION);
     free(root);
     return code;
 }

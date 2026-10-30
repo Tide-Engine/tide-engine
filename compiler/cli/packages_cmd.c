@@ -160,49 +160,14 @@ static char *package_name(const package_line *line, const char *folder)
     return name ? name : dup(line->source);
 }
 
-// Adds the lines of what the game's packages need that it doesn't list yet,
-// and then what those need, and so on. False after saying what went wrong.
-static bool add_needed(const char *folder)
+// Resolves the game's packages, with what they need, getting what isn't here
+// yet: a command that changed the file fails when the game can't build with it.
+// False after saying what went wrong.
+static bool resolves(const char *folder)
 {
-    char **added = NULL;
-    int added_count = 0;
-    bool ok = true;
-    for (bool more = true; more && ok;) {
-        package_need *needs = NULL;
-        const int n = packages_missing(folder, fetch_package, NULL, &needs);
-        more = n > 0;
-        packages_text t = load(folder);
-        for (int i = 0; i < n && ok; i++) {
-            for (int k = 0; k < added_count && ok; k++) {
-                if (strcmp(added[k], needs[i].line) != 0) continue;
-                // Added already, and still missing: it isn't the package they need.
-                fprintf(stderr, "tide: %s needs %s, which doesn't seem to be it\n", needs[i].by, needs[i].line);
-                ok = false;
-            }
-            if (!ok) break;
-            append(&t, needs[i].line);
-            printf("tide: added %s, which %s needs\n", needs[i].line, needs[i].by);
-            added = realloc(added, sizeof(char *) * (size_t)(added_count + 1));
-            if (!added) abort();
-            added[added_count++] = dup(needs[i].line);
-        }
-        if (more && !save(&t)) ok = false;
-        if (!more) {
-            free(t.path);
-            free(t.text);
-        }
-        packages_free_needs(needs, n);
-    }
-    for (int i = 0; i < added_count; i++) free(added[i]);
-    free(added);
-    if (ok) {
-        // No missing lines doesn't mean the graph is usable: a listed
-        // folder or its metadata can be invalid. Resolve once with reports
-        // after adding the dependencies, and keep its success or failure.
-        game_packages packages;
-        ok = packages_resolve(folder, &packages, fetch_package, report, NULL);
-        packages_free(&packages);
-    }
+    game_packages packages;
+    const bool ok = packages_resolve(folder, &packages, fetch_package, report, NULL);
+    packages_free(&packages);
     return ok;
 }
 
@@ -284,7 +249,7 @@ int tide_add(const char *folder, const char *what)
         printf("tide: %s is in tide.packages already, on line %d\n", name, other->line);
         if (!other->local && !other->builtin) printf("  = note: `tide update %s` moves it to the newest commit\n", name);
         free(name);
-        return add_needed(folder) ? 0 : 1;
+        return resolves(folder) ? 0 : 1;
     }
 
     git_refs refs = {0};
@@ -342,7 +307,7 @@ int tide_add(const char *folder, const char *what)
     packages_free_file(&pf);
     git_refs_free(&refs);
     free(dir);
-    return add_needed(folder) ? 0 : 1;
+    return resolves(folder) ? 0 : 1;
 }
 
 int tide_fetch(const char *folder)
@@ -350,20 +315,22 @@ int tide_fetch(const char *folder)
     packages_file game;
     if (!packages_read(folder, &game, report, NULL)) return 1;
     packages_free_file(&game);
-    // What the packages need goes in the file first, which downloads each to read what it needs
-    if (!add_needed(folder)) return 1;
     game_packages packages;
     bool ok = packages_resolve(folder, &packages, fetch_package, report, NULL);
     int count = packages.count;
-    // What an #if leaves out of this build is another build's: here too, so that one needs no network either
-    for (int i = 0; i < packages.file.off_count && ok; i++) {
-        const package_line *line = &packages.file.off[i];
-        char *repo_dir = packages_repo_dir(line);
-        if (repo_dir) {
-            ok = packages_fetched(repo_dir) || fetch_package(NULL, line, repo_dir);
-            count++;
+    // What an #if leaves out of this build is another build's, the game's lines and its packages': here too, so
+    // that one needs no network either
+    for (int p = -1; p < packages.count && ok; p++) {
+        const packages_file *f = p < 0 ? &packages.file : &packages.items[p].file;
+        for (int i = 0; i < f->off_count && ok; i++) {
+            const package_line *line = &f->off[i];
+            char *repo_dir = packages_repo_dir(line);
+            if (repo_dir) {
+                ok = packages_fetched(repo_dir) || fetch_package(NULL, line, repo_dir);
+                count += p < 0;
+            }
+            free(repo_dir);
         }
-        free(repo_dir);
     }
     packages_free(&packages);
     if (!ok) return 1;
@@ -472,7 +439,7 @@ int tide_update(const char *folder, const char *const *names, const int count)
         free(t.text);
     }
     packages_free_file(&game);
-    return add_needed(folder) && !failed ? 0 : 1;
+    return resolves(folder) && !failed ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -610,7 +577,7 @@ int tide_eject(const char *folder, const char *name)
     free(to);
     free(source);
     packages_free_file(&game);
-    return add_needed(folder) ? 0 : 1;
+    return resolves(folder) ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------

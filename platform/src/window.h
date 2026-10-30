@@ -80,7 +80,8 @@ void tide_window_mouse_state(tide_window_mouse *out);
 // and kept in the window, for a camera that looks around. The window holds it
 // when the system lets it, and tide_window_mouse_state says whether it does:
 //
-// - A desktop window holds it while it has the focus: Alt+Tab lets the cursor
+// - A visible, non-minimized desktop window holds it while it has the focus
+//   (never in a quiet run): Alt+Tab lets the cursor
 //   go, and coming back takes it again while the game still asks. Escape gives
 //   it back to the player, until a click on the window or another key's press,
 //   or until the game stops asking (desktop/cursor.h).

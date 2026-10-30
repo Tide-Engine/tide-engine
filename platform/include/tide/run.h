@@ -44,6 +44,7 @@
 //                                             as on a display scaled to 200%
 //     game --frames 300 --capture-audio run.wav
 //                                             everything the run played, as a WAV
+//     game --frames 300 --record run.gif      the run, as a GIF of every second frame
 //     game --script play.txt --seed 7         the same input, in a match that rolls otherwise
 //
 // Such a run ends with exit code 0 at --frames or the script's `quit`, with

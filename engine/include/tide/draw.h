@@ -228,6 +228,26 @@ typedef struct tide_rect {
     float x, y, width, height;
 } tide_rect;
 
+// rect.MoveInside(bounds): the rect moved, not resized, as little as it takes
+// to be inside `bounds`: a popup kept on the screen. Where it's wider or
+// taller than `bounds`, its left or top edge is at theirs. A number that
+// isn't one counts as 0.
+static inline float tide_rect_inside_axis(float at, float size, float from, float room)
+{
+    at = at == at ? at : 0.0f;
+    size = size == size && size > 0.0f ? size : 0.0f;
+    from = from == from ? from : 0.0f;
+    room = room == room && room > 0.0f ? room : 0.0f;
+    if (at + size > from + room) at = from + room - size;
+    return at < from ? from : at;
+}
+
+static inline tide_rect tide_rect_move_inside(const tide_rect r, const tide_rect bounds)
+{
+    return (tide_rect){tide_rect_inside_axis(r.x, r.width, bounds.x, bounds.width),
+                       tide_rect_inside_axis(r.y, r.height, bounds.y, bounds.height), r.width, r.height};
+}
+
 // A place of a box, named as Unity's TextAnchor: which of a text's is at its
 // position, and where GUILayout.Area puts an area on the screen. Tide's
 // Anchor enum has the same values. Upper is towards the top of the screen.
@@ -696,6 +716,13 @@ static inline uint64_t tide_render_target_version(const uint64_t id)
     return s ? s->version : 0;
 }
 
+// target.valid: whether drawing into it draws: the window, or a target made
+// and not disposed (a default one, never made, isn't).
+static inline bool tide_render_target_valid_id(const uint64_t id)
+{
+    return id == TIDE_RENDER_WINDOW || tide_render_target_live(id);
+}
+
 // A local destination reference. The window uses TIDE_RENDER_WINDOW. Borrowed
 // C descriptors use a nonzero id without the managed bit; their owner supplies
 // the size, and they hold color. A zero-initialized reference is invalid.
@@ -703,6 +730,17 @@ typedef struct tide_render_target {
     uint64_t id;
     tide_target_size size;
 } tide_render_target;
+
+// target.size: its size in logical pixels, in a window of `window_size`: the
+// window's, a target that follows it, or the size it was made or resized to.
+// Nothing for a target that isn't there.
+static inline tide_float2 tide_render_target_logical(const tide_render_target t, const tide_float2 window_size)
+{
+    if (t.id == TIDE_RENDER_WINDOW) return window_size;
+    const tide_render_target_state *s = tide_render_target_state_of(t.id);
+    if (s && !s->alive) return tide_f2(0.0f, 0.0f);
+    return tide_target_size_logical(s ? s->size : t.size, window_size);
+}
 
 // Texture's common sampling reference: CPU pixels, a rendered image, an image
 // of the game's pack (an `asset Texture`: no pixels and no target, its size
@@ -737,6 +775,7 @@ tide_target_pixels_fn tide_texture_target_pixels(tide_target_pixels_fn resolve);
 #define TIDE_TEXTURE_SAMPLING_SHIFT 60u
 #define TIDE_TEXTURE_NAME ((UINT64_C(1) << TIDE_TEXTURE_SAMPLING_SHIFT) - 1u)
 #define TIDE_TEXTURE_GRID (-1) // A grid's reference's `image.height`
+#define TIDE_TEXTURE_DEPTH (-2) // Metadata-only depth reference for tide_texture_size; never sampled as color
 
 static inline uint32_t tide_sampling_bits(const int32_t filter, const int32_t wrap)
 {
@@ -1857,6 +1896,13 @@ typedef struct tide_shape {
 
 void tide_draw_shape(tide_draw_list *d, tide_shape shape);
 
+// Draw.Shadow(rect, radius, size[, color]): a soft shadow under a box at
+// `rect` with corners `radius`, fading out over `size`, a quarter of `size`
+// lower (in the GUI's pixels, down the screen). Drawn before the box. With no
+// color, black at 0.4.
+void tide_draw_shadow_area(tide_draw_list *d, tide_rect rect, float radius, float size, tide_color color);
+void tide_draw_shadow_area_default(tide_draw_list *d, tide_rect rect, float radius, float size);
+
 // A line `width` thick, with round ends: it reaches half its width past them.
 void tide_draw_thick_line(tide_draw_list *d, tide_float2 from, tide_float2 to, float width, tide_color color);
 
@@ -2137,6 +2183,11 @@ void tide_draw_restore_window(tide_draw_list *d, const tide_draw_place *before, 
 // Reposition the window's 2D content of an anchored GUI area. Plain records
 // before `plains` and clips before `clips` belong to the surrounding content.
 void tide_draw_move_gui(tide_draw_list *d, uint32_t commands, uint32_t plains, uint32_t clips, tide_float2 offset);
+// ...the same for content recorded into destination `home` (tide_draw_list.target): a render target's GUI
+void tide_draw_move_gui_in(tide_draw_list *d, uint32_t home, uint32_t commands, uint32_t plains, uint32_t clips,
+                           tide_float2 offset);
+// tide_draw_restore_window for another destination: `target`'s settings put back.
+void tide_draw_restore_to(tide_draw_list *d, tide_render_target target, const tide_draw_place *before, uint32_t mark);
 
 // The texture `id` of `space` (TIDE_PIXELS_*) at `version`, for a mesh
 // command: 1 + its place in the list's textures, or 0 when it has no size.

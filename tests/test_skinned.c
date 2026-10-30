@@ -966,7 +966,8 @@ TIDE_TEST(skinned_separate_poses_bind_procedural_edits_aliases_and_capture_draws
     tide_bone_transform *extra = tide_list_at_mut(source_pose, 1, sizeof *extra);
     TIDE_REQUIRE(extra);
     extra->position.x = 1.0f;
-    TIDE_CHECK(!tide_skinned_pose_into(target, source, source_pose, &pose, TIDE_IN_SCRATCH));
+    // A node the model hasn't got is skipped (2026-10-27): editing it moves nothing.
+    TIDE_CHECK(tide_skinned_pose_into(target, source, source_pose, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(pose_hash(pose) == before);
     extra->position.x = -9.0f;
 
@@ -1074,6 +1075,109 @@ TIDE_TEST(skinned_separate_bindings_skip_only_static_identity_scene_wrappers)
     TIDE_REQUIRE(tide_skinned_valid(nested));
     TIDE_CHECK(!tide_skinned_sample_into(target, nested, 0, 1, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(pose_hash(pose) == reverse);
+    tide_scratch_reset(mark);
+}
+
+// The shape of a Blender export: the armature object is a named node above the
+// skeleton's top bone, carrying the object's transform (0.01 for a centimetre
+// rig). Clip "move" moves the arm and hand and animates the armature's uniform
+// scale; clip "uneven" scales it unevenly.
+static tide_list armature_model(void)
+{
+    static const char json[] =
+        "{\"asset\":{\"version\":\"2.0\"},\"nodes\":["
+        "{\"name\":\"Armature\",\"translation\":[1,2,3],\"rotation\":[0.70710677,0,0,0.70710677],"
+        "\"scale\":[0.01,0.01,0.01],\"children\":[1]},"
+        "{\"name\":\"arm\",\"translation\":[-200,0,0],\"children\":[2]},"
+        "{\"name\":\"hand\",\"translation\":[0,300,0]}],"
+        "\"buffers\":[{\"byteLength\":80,\"uri\":\"data:application/octet-stream;base64,"
+        "AAAAAAAAAEAAAADAAAAAAAAAAAAAAIDAAAAAAAAAAAAK1yM8CtcjPArXIzwK16M8CtejPArXozwK1yM8CtejPArXIzwK1yM8CtejPArXIzw=\"}],"
+        "\"bufferViews\":[{\"buffer\":0,\"byteLength\":8},{\"buffer\":0,\"byteOffset\":8,\"byteLength\":24},"
+        "{\"buffer\":0,\"byteOffset\":32,\"byteLength\":24},{\"buffer\":0,\"byteOffset\":56,\"byteLength\":24}],"
+        "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+        "{\"bufferView\":3,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}],"
+        "\"animations\":[{\"name\":\"move\",\"samplers\":[{\"input\":0,\"output\":1},{\"input\":0,\"output\":2}],"
+        "\"channels\":[{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"translation\"}},"
+        "{\"sampler\":0,\"target\":{\"node\":2,\"path\":\"translation\"}},"
+        "{\"sampler\":1,\"target\":{\"node\":0,\"path\":\"scale\"}}]},"
+        "{\"name\":\"uneven\",\"samplers\":[{\"input\":0,\"output\":1},{\"input\":0,\"output\":3}],"
+        "\"channels\":[{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"translation\"}},"
+        "{\"sampler\":1,\"target\":{\"node\":0,\"path\":\"scale\"}}]}]}";
+    uint8_t *bytes = NULL;
+    uint32_t size = 0;
+    char why[256], note[256];
+    const bool decoded = tide_skinned_data_decode(json, sizeof json - 1u, false, NULL, NULL, &bytes, &size, why, note);
+    if (!decoded) printf("armature fixture: %s (%s)\n", why, note);
+    const tide_list out = decoded ? tide_list_from(bytes, (int32_t)size, 1u) : (tide_list){0};
+    tide_skinned_data_free(bytes);
+    return out;
+}
+
+static bool same_model_space(const tide_list a_data, const tide_list a_pose, const tide_list b_data, const tide_list b_pose,
+                             const char *name)
+{
+    const tide_str bone_name = tide_str_from_cstr(name);
+    const tide_float4x4 a = tide_skinned_model(a_data, a_pose, tide_skinned_find_bone(a_data, bone_name));
+    const tide_float4x4 b = tide_skinned_model(b_data, b_pose, tide_skinned_find_bone(b_data, bone_name));
+    const float *x = &a.c0.x, *y = &b.c0.x;
+    for (uint32_t i = 0; i < 16u; i++) {
+        if (!(tide_abs_f(x[i] - y[i]) <= 1e-5f)) return false;
+    }
+    return true;
+}
+
+TIDE_TEST(skinned_separate_bindings_fold_unmatched_top_level_nodes)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list plain = model(), armature = armature_model();
+    TIDE_REQUIRE(tide_skinned_valid(armature));
+    TIDE_REQUIRE(tide_skinned_find_animation(armature, tide_str_from_cstr("move")) == 0);
+    // A Blender clip drawn on a character exported elsewhere: the armature's
+    // transform, including its animated scale, moves into the arm.
+    for (uint32_t step = 0; step <= 4u; step++) {
+        const float seconds = 0.5f * (float)step;
+        tide_list source_pose = {0}, into = {0}, rebound = {0};
+        TIDE_REQUIRE(tide_skinned_sample(armature, 0, seconds, &source_pose, TIDE_IN_SCRATCH));
+        TIDE_REQUIRE(tide_skinned_sample_into(plain, armature, 0, seconds, &into, TIDE_IN_SCRATCH));
+        TIDE_REQUIRE(tide_skinned_pose_into(plain, armature, source_pose, &rebound, TIDE_IN_SCRATCH));
+        TIDE_CHECK(tide_list_count(into) == 3 && pose_hash(into) == pose_hash(rebound));
+        TIDE_CHECK(same_model_space(plain, into, armature, source_pose, "arm"));
+        TIDE_CHECK(same_model_space(plain, into, armature, source_pose, "hand"));
+    }
+    // The other way around, the character's own armature node is undone.
+    for (uint32_t step = 0; step <= 4u; step++) {
+        const float seconds = 0.5f * (float)step;
+        tide_list source_pose = {0}, into = {0}, rebound = {0};
+        TIDE_REQUIRE(tide_skinned_sample(plain, 0, seconds, &source_pose, TIDE_IN_SCRATCH));
+        TIDE_REQUIRE(tide_skinned_sample_into(armature, plain, 0, seconds, &into, TIDE_IN_SCRATCH));
+        TIDE_REQUIRE(tide_skinned_pose_into(armature, plain, source_pose, &rebound, TIDE_IN_SCRATCH));
+        TIDE_CHECK(pose_hash(into) == pose_hash(rebound));
+        TIDE_CHECK(same_model_space(armature, into, plain, source_pose, "arm"));
+        TIDE_CHECK(same_model_space(armature, into, plain, source_pose, "hand"));
+        const tide_bone_transform kept = bone(into, tide_skinned_find_bone(armature, tide_str_from_cstr("Armature")));
+        TIDE_CHECK(kept.scale.x == 0.01f && kept.position.z == 3.0f);
+    }
+    // An uneven scale can't be folded into the arm's translation, rotation and
+    // scale: both routes reject and leave their outputs alone.
+    tide_list pose = {0}, source_pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample_into(plain, armature, 0, 1.0f, &pose, TIDE_IN_SCRATCH));
+    const uint64_t before = pose_hash(pose);
+    TIDE_CHECK(!tide_skinned_sample_into(plain, armature, 1, 1.0f, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == before);
+    TIDE_REQUIRE(tide_skinned_sample(armature, 1, 1.0f, &source_pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(!tide_skinned_pose_into(plain, armature, source_pose, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == before);
+    // A named node that does exist on the other side is still matched, not
+    // folded: an arm below it in the clip and beside it in the model is a
+    // different rig.
+    const tide_list beside = separate_model(
+        "{\"name\":\"mesh\"},{\"name\":\"hand\",\"translation\":[0,3,0]},"
+        "{\"name\":\"arm\",\"translation\":[-2,0,0],\"children\":[1]},{\"name\":\"Armature\"}");
+    TIDE_REQUIRE(tide_skinned_valid(beside));
+    TIDE_CHECK(!tide_skinned_sample_into(beside, armature, 0, 1.0f, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == before);
     tide_scratch_reset(mark);
 }
 
@@ -1271,5 +1375,128 @@ TIDE_TEST(skinned_crossplatform_pose_bits)
     hash = tide_hash_end(hash);
     if (hash != UINT64_C(0xe5d23f82e5d18f26)) printf("skinned pose hash: %016llx\n", (unsigned long long)hash);
     TIDE_CHECK(hash == UINT64_C(0xe5d23f82e5d18f26));
+    tide_scratch_reset(mark);
+}
+
+// An export of its own nodes and one clip "go" of the given channels: sampler 0
+// moves a node from x -2 to -4 over two seconds, sampler 1 holds y at 3.
+static tide_list channels_model(const char *nodes, const char *channels)
+{
+    char json[4096];
+    const int length = snprintf(json, sizeof json,
+        "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[%s],"
+        "\"buffers\":[{\"byteLength\":56,\"uri\":\"data:application/octet-stream;base64,"
+        "AAAAAAAAAEAAAADAAAAAAAAAAAAAAIDAAAAAAAAAAAAAAAAAAABAQAAAAAAAAAAAAABAQAAAAAA=\"}],"
+        "\"bufferViews\":[{\"buffer\":0,\"byteLength\":8},{\"buffer\":0,\"byteOffset\":8,\"byteLength\":24},"
+        "{\"buffer\":0,\"byteOffset\":32,\"byteLength\":24}],"
+        "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}],"
+        "\"animations\":[{\"name\":\"go\",\"samplers\":[{\"input\":0,\"output\":1},{\"input\":0,\"output\":2}],"
+        "\"channels\":[%s]}]}", nodes, channels);
+    if (length < 0 || (size_t)length >= sizeof json) return (tide_list){0};
+    uint8_t *bytes = NULL;
+    uint32_t size = 0;
+    char why[256], note[256];
+    const bool decoded = tide_skinned_data_decode(json, (size_t)length, false, NULL, NULL, &bytes, &size, why, note);
+    if (!decoded) printf("channels fixture: %s (%s)\n", why, note);
+    const tide_list out = decoded ? tide_list_from(bytes, (int32_t)size, 1u) : (tide_list){0};
+    tide_skinned_data_free(bytes);
+    return out;
+}
+
+#define CHANNEL(sampler, node) "{\"sampler\":" #sampler ",\"target\":{\"node\":" #node ",\"path\":\"translation\"}}"
+
+// 2026-10-27: a clip may animate nodes the model lacks (IK helpers, another
+// part's bones); those are skipped. Nodes both have keep their parent chains.
+TIDE_TEST(skinned_separate_bindings_skip_nodes_the_model_lacks)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list target = model(), plain = separate_model(separate_nodes);
+    // The plain export's arm, with a top-level ik_settings, an ik_foot_root > ik_foot_l chain and a twist below the arm,
+    // all animated, none of them the model's.
+    const tide_list extra = channels_model(
+        "{\"name\":\"ik_settings\"},{\"name\":\"hand\",\"translation\":[0,3,0]},"
+        "{\"name\":\"arm\",\"translation\":[-2,0,0],\"children\":[1,4]},{\"name\":\"ik_foot_root\",\"children\":[5]},"
+        "{\"name\":\"twist\"},{\"name\":\"ik_foot_l\"}",
+        CHANNEL(0, 2) "," CHANNEL(0, 0) "," CHANNEL(1, 5) "," CHANNEL(1, 4));
+    TIDE_REQUIRE(tide_skinned_valid(extra));
+    tide_list expected = {0}, pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample_into(target, plain, 0, 1, &expected, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_sample_into(target, extra, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == pose_hash(expected) && bone(pose, 1).position.x == 3.0f);
+    // A pose of the export binds the same way, and draws.
+    tide_list plain_pose = {0}, extra_pose = {0}, from_plain = {0}, from_extra = {0};
+    TIDE_REQUIRE(tide_skinned_sample(plain, 0, 1, &plain_pose, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_sample(extra, 0, 1, &extra_pose, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_pose_into(target, plain, plain_pose, &from_plain, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_pose_into(target, extra, extra_pose, &from_extra, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(from_extra) == pose_hash(from_plain));
+    tide_draw_list draw = {0};
+    uint32_t textures[2];
+    int32_t info[3];
+    TIDE_CHECK(tide_draw_skinned_data(&draw, target, from_extra, textures, info) && info[0] == 2 && info[1] == 3);
+    tide_draw_free(&draw);
+
+    // A model with only part of the chain: the arm is moved, the hand the clip holds is skipped.
+    const tide_list arm_only = channels_model("{\"name\":\"arm\",\"translation\":[-2,0,0]}", CHANNEL(0, 0));
+    TIDE_REQUIRE(tide_skinned_sample_into(arm_only, extra, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(tide_list_count(pose) == 2 && bone(pose, 1).position.x == 3.0f);
+    TIDE_REQUIRE(tide_skinned_sample_into(arm_only, plain, 1, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(tide_list_count(pose) == 2 && bone(pose, 1).position.x == 2.0f);
+    TIDE_REQUIRE(tide_skinned_pose_into(arm_only, extra, extra_pose, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(bone(pose, 1).position.x == 3.0f);
+
+    // A node both have, below one the model lacks, is a different chain: refused, the pose left as it was.
+    const tide_list elbow = channels_model(
+        "{\"name\":\"mesh\"},{\"name\":\"hand\",\"translation\":[0,3,0]},{\"name\":\"arm\",\"children\":[3]},"
+        "{\"name\":\"elbow\",\"children\":[1]}", CHANNEL(1, 1));
+    const uint64_t before = pose_hash(expected);
+    TIDE_CHECK(!tide_skinned_sample_into(target, elbow, 0, 1, &expected, TIDE_IN_SCRATCH));
+    tide_list elbow_pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample(elbow, 0, 1, &elbow_pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(!tide_skinned_pose_into(target, elbow, elbow_pose, &expected, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(expected) == before);
+    // A clip of none of the model's nodes is another rig: refused.
+    const tide_list other = channels_model("{\"name\":\"tail\"},{\"name\":\"fin\"}", CHANNEL(0, 0) "," CHANNEL(1, 1));
+    TIDE_CHECK(!tide_skinned_sample_into(target, other, 0, 1, &expected, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(expected) == before);
+    // A duplicate name the clip needs still refuses.
+    const tide_list twice = channels_model("{\"name\":\"arm\"},{\"name\":\"arm\"}", CHANNEL(0, 0));
+    TIDE_CHECK(!tide_skinned_sample_into(target, twice, 0, 1, &expected, TIDE_IN_SCRATCH));
+    tide_scratch_reset(mark);
+}
+
+// A LINEAR rotation clip from q to -q, the same orientation, holds q: the
+// sampler takes the shorter way between keys, whatever their signs.
+TIDE_TEST(skinned_linear_rotation_between_opposite_signs_takes_the_short_way)
+{
+    const uint32_t mark = tide_scratch_mark();
+    // Keys (0.6, 0, 0, 0.8) and (-0.6, 0, 0, -0.8) at 0 and 2 seconds.
+    char json[2048];
+    snprintf(json, sizeof json,
+        "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"spine\"}],"
+        "\"buffers\":[{\"byteLength\":40,\"uri\":\"data:application/octet-stream;base64,"
+        "AAAAAAAAAECamRk/AAAAAAAAAADNzEw/mpkZvwAAAAAAAAAAzcxMvw==\"}],"
+        "\"bufferViews\":[{\"buffer\":0,\"byteLength\":8},{\"buffer\":0,\"byteOffset\":8,\"byteLength\":32}],"
+        "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}],"
+        "\"animations\":[{\"name\":\"turn\",\"samplers\":[{\"input\":0,\"output\":1}],"
+        "\"channels\":[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"rotation\"}}]}]}");
+    uint8_t *bytes = NULL;
+    uint32_t size = 0;
+    char why[256], note[256];
+    TIDE_REQUIRE(tide_skinned_data_decode(json, strlen(json), false, NULL, NULL, &bytes, &size, why, note));
+    const tide_list data = tide_list_from(bytes, (int32_t)size, 1u);
+    tide_skinned_data_free(bytes);
+    for (int i = 0; i <= 4; i++) {
+        tide_list pose = {0};
+        TIDE_REQUIRE(tide_skinned_sample(data, 0, 0.5f * (float)i, &pose, TIDE_IN_SCRATCH));
+        const tide_quaternion q = bone(pose, 1).rotation;
+        // x is reflected on import: (0.6, 0, 0, 0.8) is (0.6, -0, -0, 0.8) in Tide, up to sign
+        const float sign = q.value.w < 0.0f ? -1.0f : 1.0f;
+        TIDE_CHECK(tide_abs_f(q.value.x * sign - 0.6f) < 1e-6f && tide_abs_f(q.value.w * sign - 0.8f) < 1e-6f
+                   && tide_abs_f(q.value.y) < 1e-6f && tide_abs_f(q.value.z) < 1e-6f);
+    }
     tide_scratch_reset(mark);
 }

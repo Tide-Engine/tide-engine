@@ -173,9 +173,11 @@ tide_int2 tide_texture_size(const tide_texture_ref texture)
     if (texture.target.id) {
         const tide_render_target target = tide_render_target_resolve(texture.target);
         if (!target.id || target.id == TIDE_RENDER_INVALID || target.id == TIDE_RENDER_WINDOW || tide_render_target_cubic(target.id)
-            || tide_render_target_image(target.id) >= tide_render_target_colors(target.id)) return tide_i2(0, 0);
+            || (texture.image.height != TIDE_TEXTURE_DEPTH
+                && tide_render_target_image(target.id) >= tide_render_target_colors(target.id))) return tide_i2(0, 0);
         return target_pixels ? target_pixels(target.size) : tide_i2(0, 0);
     }
+    if (texture.image.height == TIDE_TEXTURE_DEPTH) return tide_i2(0, 0);
     if (texture.image.height == TIDE_TEXTURE_GRID) {
         tide_grid grid;
         tide_grid_shape shape;

@@ -17,6 +17,14 @@ await once(socket, 'listening');
 const port = socket.address().port;
 await new Promise(resolve => socket.close(resolve));
 
+function journalState() {
+  try {
+    return readdirSync(folder).sort().map(name => `${name} ${statSync(join(folder, name)).size}`).join(', ');
+  } catch (error) {
+    return String(error);
+  }
+}
+
 function serve(frames) {
   const server = spawn(serverPath, ['--anonymous', '--udp-only', '--port', String(port), '--frames', String(frames),
     '--shards', '2', '--shard-width', '40', '--shard-journal', folder], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env });
@@ -27,20 +35,26 @@ function serve(frames) {
   const at = what => { log += `  ${((Date.now() - begun) / 1000).toFixed(2)} s: ${what}\n`; };
   server.stderr.on('data', chunk => { output += chunk; at(String(chunk).trimEnd()); });
   server.on('exit', (code, signal) => at(`exited (${code ?? signal})`));
+  // File-size changes distinguish slow durable updates from a server that
+  // stopped progressing. Sample at most once a second, only for diagnostics.
+  let previous = journalState();
+  at(`journal initially: ${previous}`);
+  const progress = setInterval(() => {
+    const kept = journalState();
+    if (kept !== previous) at(`journal: ${kept}`);
+    previous = kept;
+  }, 1000);
+  server.once('close', () => clearInterval(progress));
   // Each recovery does 200 real-time updates, including durable disk flushes.
-  // Give each process its own budget: earlier runs must not spend its time.
+  // Hosted recovery was still writing at its 25-second cutoff even with this
+  // test running alone. Allow one minute, still with a fixed deadline: progress
+  // must never extend it, and earlier runs must not spend this one's time.
   clearTimeout(deadline);
   deadline = setTimeout(() => {
-    let kept = '';
-    try {
-      kept = readdirSync(folder).map(name => `${name} ${statSync(join(folder, name)).size}`).join(', ');
-    } catch (error) {
-      kept = String(error);
-    }
     timedOut = new Error(`timed out in ${phase}, ${((Date.now() - started) / 1000).toFixed(1)} s in; ` +
-      `the folder has ${kept}; since the run began:\n${log}`);
+      `the folder has ${journalState()}; since the run began:\n${log}`);
     server.kill('SIGKILL');
-  }, 25000);
+  }, 60000);
   return { server, output: () => output, ended: once(server, 'close') };
 }
 

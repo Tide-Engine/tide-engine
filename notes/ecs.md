@@ -1,5 +1,248 @@
 # ECS and simulation state
 
+## Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied (2026-10-30)
+
+Two costs bannerlord-duel's tools/army (20,000 fighters) found in views that
+run once per entity, both in the generated C:
+
+- **A read-only list argument copied for any `mut` list beside it**
+  (`gen_routine_call`, `call_changes_lists_of`). A call copied every read-only
+  argument holding lists (the receiver too) whenever any `mut` argument held
+  a list, whatever its type: `KeepFar(mut FarCrowd crowd, FarSkins skins, ...)`
+  copied all of `FarSkins` (four lists, one of 25,905 matrices, 1.7 MB) into
+  the scratch area for each fighter, about 30 µs a call, 337 ms a frame in the
+  army. Now it copies only when a Set through the world could change it, or a
+  `mut` argument or `mut` receiver holds lists and one of the two types can
+  hold the other (`value_contains_type` either way, as `indirect_value`
+  already asked): lists of types neither holds are never the same lists. The
+  spec already said so (docs/spec.md, Lists: "unless a `mut` argument of the
+  same call could change it"); the code was coarser.
+- **A view copying and blending the whole component for each entity**
+  (`lane_reads_codegen.inc`). A per-entity view gathered every lane of each
+  component it takes, found the entity in last tick's world, gathered all of
+  it there too (`tide_table_get` a lane) and blended every field; a view's
+  query row did the same for every row. For a 75-lane component that read one
+  field, 7 times the cost of a small one. The read analysis mirrors
+  `code_writes`: the bytes of a parameter, or of a query row's binding (`row.w`
+  of `foreach (var row in all)`), the code can read, narrowed through fields
+  and swizzles and through Tide helpers it hands a place of it to
+  (`code_reads`, memoized per function and parameter). The value whole, an
+  element's container, a property, a method's receiver, C, a built-in, a
+  virtual or override, an async callee, a call back into a function being
+  worked out, the row variable whole, and a query named anywhere but as a
+  foreach's value read all of it. A local field (`f.guards.x`) reads none of
+  the lanes. Hidden fields (snap counts) are always in the mask, as blending
+  compares them. A view then calls `tide_gather_some_<C>`,
+  `tide_prev_some_<C>` (`tide_load_some_<C>`) and `tide_blend_some_<C>` with
+  a constant word mask; they're `always_inline`, so clang folds the mask and
+  keeps only the lanes read (without it, a call tested 75 bits and gained
+  only half). The lanes not read are left uninitialized in the copy, which
+  nothing reads. Generated only for components a view reads some of
+  (`reads_some_used`).
+  - Not partial: components a `frag` or `vert` takes (a draw sends them from
+    the view's copy, which no expression in the view names; `instancing` and
+    `shaders` caught it), `verified` parameters and joins, components with corrections
+    (`decl_corrects`), an `Interpolate`, blending that reads the heap
+    (`blend_reads_heap`), sharded games, `mut` local components (put back
+    whole), views that start tasks, and components past 1,024 lanes or 4 KiB.
+  - The duel's `DrawFighter` reads 183 of `Fighter`'s 308 bytes (its pose
+    helpers read most fields); before the local-field rule it was all 308.
+- **Tests**: `view_reads` (a component of about twenty lanes: fields, a struct's field, a
+  helper handed it whole, a field that jumped alone, `[Snap]`, a component that
+  jumped whole, query rows, a `mut` view with local fields read through a
+  member, and frames with no tick before; read-only lists beside a `mut` list
+  of another singleton, and beside one their own singleton holds, which still
+  reads the list as the call began) and `view_reads_codegen` (`ReadSome`,
+  `Marked` and the `Rows` query gather and blend some; `ReadAll` all; `Keep`'s
+  read-only singleton isn't copied, `Count`'s is). Measured with
+  `bench_views`: notes/benchmarks.md, Views over wide components.
+
+## Wide components' lanes, an element's fields, and text passed to helpers (2026-10-30)
+
+Found measuring a Tide game of 20,000 sword fighters (bannerlord-duel's
+tools/army): its `Fighter` is 77 lanes and holds text (its gear's names).
+
+- **Masks past 64 lanes** (`lane_writes_codegen.inc`): `lane_mask` is 16
+  words, so components of up to 1,024 lanes put back only the lanes a system
+  writes (`LANE_MASK_MOST`; wider ones keep every lane). Up to 64 the generated
+  C is what it was; wider, `tide_scatter_some_<C>` takes the words as an array
+  (`const uint64_t *some`), passed as a compound literal, and the cached-chunk
+  shortcut tests `mask[lane >> 6] >> (lane & 63)` (`lane_mask_c`,
+  `lane_test_c`).
+- **An element's field** (bug, live for every component on `dev` before this):
+  `writes_place_of` took `s.pair[1].b` for `s.pair[0].b`, the element being all
+  of its array but the field after it narrowing to its offset in the first
+  element. Beside a kept snapshot, the write to the second element was lost.
+  A place through an index is now `element`, which a field can't narrow.
+  Lifting the 64-lane cap exposed it: `optional_fields`' `Holder` (82 lanes)
+  changed its pinned hash.
+- **Text passed whole to a helper** (`check.c`, `heap_pass`,
+  `settle_heap_passes`): a system's component holding text, passed whole to a
+  Tide function's `mut` or `out` parameter, made the system `writes_text`
+  whatever the callee did: no threads, and ordered behind every system that
+  changes the heap (the fighters' `Fight` was in stage 38 of 44, behind
+  Box3D's). Now a function's parameter records whether its code can change
+  text, lists or grids through it (`param.heap_written`: a write to text, a
+  list, a grid or an element, the whole of one holding them, or passing it on
+  to a callee whose parameter does, settled to a fixpoint), and the system
+  changes the heap only if the callee's parameter does. Extern, async, virtual
+  and override callees, methods and anything else count as before.
+- **Tests**: `wide_lanes` (an element's field beside a kept snapshot, a
+  72-lane component with text written apart, its snapshot as the tick before)
+  and `wide_lanes_codegen` (the word mask; `Step`, which hands its component
+  to helpers that change no text, doesn't flush the heap; `Name`, which does,
+  does). The element case fails without its fix. Full native suite (2,906)
+  passes; web not run locally.
+- **Measured** (tools/army, 20,000 fighters, release, same runtime): a tick
+  13.4 ms to 11.0; `Fight` 2.3 ms to 0.6, now in stage 2 beside Box3D.
+
+## Lanes a system can't write stay where they are (2026-10-29)
+
+Following the owner's thread-scaling question: Tide's dense and `[Lasting]`
+loops were already at memory bandwidth (one thread moves 36 MB in 0.42 ms at
+1M rows; hand-written C and Bevy's table storage stop scaling at the same wall),
+so the lever was bytes. On a client, a system writing a snapshot-shared chunk
+apart took a page for every lane of each `mut` component, copied the lanes its
+body never writes (clang made them `memcpy` calls), compared all of them at the
+end and handed back the unchanged ones.
+
+- **The analysis** (`compiler/src/lane_writes_codegen.inc`): for a system's
+  single `mut` parameter of a component, the bytes its body can write:
+  assignments and steps to it or its fields (by field offset; a swizzle by its
+  first and last component), places passed to `mut` parameters (through the
+  callee's own code, memoized per function and parameter; C, built-ins and a
+  call back into a function being worked out write all of the place), `out`
+  arguments and GUI `arg_mut`, any method called on a place of it, and
+  everything inside blocks, lambdas and steps. A property, an element, a local
+  part or anything it can't place writes all of what it's in; a field `Snap()`
+  writes the whole component (its hidden counter). Views, systems that don't
+  run alone (`rows_alone`: World writes, World reads of what they change,
+  tasks), `World.Set` of the component, two `mut` parameters of one component
+  and components of more than 64 lanes keep every lane. `written_lanes` turns
+  bytes into a lane mask.
+- **Codegen**: `tide_scatter_some_<Component>` puts back only the masked lanes
+  (`gen_row_puts`, used by row functions, `gen_chunk` and handlers, all of which
+  begin unwritten lanes as copies or leave them in place). `gen_system_chunk`
+  and the pieces' own/done begin, check, piece and end only runs of written
+  lanes (`written_runs`); unwritten lanes read and "write" pointers are the
+  column where it is (`gen_unwritten_lanes`), never stored to. The cached-chunk
+  shortcut checks and marks only written lanes, as the ordinary task begins
+  them; a system writing all lanes generates the C it did. Unwritten pages stay
+  shared with their hashes kept.
+- **Tests**: the full native and web suites; `field_snap` caught the Snap
+  counter and `sparse_cache_private` the shortcut's page-state parity, both
+  fixed before merging; `sparse_cache_codegen` pins the masked shortcut.
+  Measurements: notes/benchmarks.md, Lanes a system can't write.
+
+## Holes: rows entities left stay where they were (2026-10-29)
+
+The owner's request after the `[Lasting]` client measurements: removing a row
+no longer fills it from the end. Filling writes a row of every column of the
+hole's chunk, which under a kept snapshot copies all of that chunk's pages
+(about 13 cold 8 KiB pages for the sleep benchmark's bodies), then rehashes
+them. That made a moving tag cost about 20 us per toggle per tick on a client.
+
+- **Contract** (`tide/table.h`, `engine/src/table.c`): `tide_table_remove` on an
+  archetype's table writes the null entity into the row's entity cell and
+  leaves the rest as it was: a hole. The last row is dropped instead, with any
+  holes before it. `tide_table_add` fills the lowest hole of the last chunk
+  (zeroed), which an append would write anyway, and otherwise appends: filling
+  a hole further in would copy that chunk under a snapshot. At the end of each
+  tick's changes, generated `apply_commands` calls `tide_table_settle` per
+  archetype, which fills holes from the end, lowest first, once they're more
+  than a 32nd of a table's rows (1/8 and 1/16 left `versus_churn` fragmented,
+  1/64 settled too often; filling the lowest hole on arrival copied a cold
+  chunk per arrival and kept only a tenth of the gain). Where holes are
+  depends on the world's changes alone, never on page sharing, so server,
+  predicting client and resimulation agree. `holes`, `hole_from` (no hole below
+  it) and `chunk_holes` follow from the rows: generated unpack and delta unpack
+  call `tide_table_count_holes` for archetype tables; snapshots copy them.
+  Tasks' and attached tables never get holes (`tide_table_remove_row` is as it
+  was). Raw saves grow by the zeroed new header fields (16 bytes a table on
+  64-bit hosts, 12 on WASM); packing zeroes table headers, so no address leaves.
+- **Loops**: system tasks (`gen_system_chunk`), the threaded own/done steps and
+  C systems call their row functions once per run of entities
+  (`tide_table_run`); a whole chunk (`tide_table_whole`) is one run with no
+  scan. A chunk with holes is never written apart: its changed lanes are copied
+  first (`tide_table_lanes_begin` with `apart` false), so hole bytes stay and
+  page hashes stay deterministic. Sparse pass counts are taken per run there,
+  and retained sparse selections and the cached-chunk task shortcut aren't
+  used for it (`gen_rows_cache_lookup` gives NULL). Every other generated row
+  loop skips holes by their entity (`tide_row_gone`): views and batched sends
+  (`gen_chunk`), queries and query fills, heard rows, availability, client state
+  and recipient hashes, shards, unloads (which also re-check the count, as a
+  destroy can drop trailing holes), local-field and resource walks, task traces
+  and the Unity embed. `tide_world_entity_count` counts `tide_table_live`.
+  Hosts get `TIDE_ROW_GONE(world, arch, row)` (docs/c/hosts.md); the versus
+  harnesses use it. Unpack's `placed` check skips holes. Hot-reload migration
+  carries no hole (`platform/src/migrate.c`).
+- **Order**: rows of a table now come in the order holes and appends give them,
+  deterministic everywhere but not swap-remove's. Games whose results depend on
+  entity order (a shared random stream drawn per entity, `safety_churn`) get
+  other, equally deterministic values: pins moved for crossplatform,
+  towers, sumo and safety_churn; local_fields/local_events logical, whole and
+  delta hashes didn't move, only their raw save sizes. `PROTOCOL` is 20.
+- **Tests**: `tests/test_table.c` (holes, runs, lowest fill, trailing drop,
+  settle, recount); `destroy_rows` and `sparse_cache` models now model holes and
+  match exactly; `lasting`, `big_world` (pack/unpack with holes), `shards`
+  (checkpoint recovery) and every existing suite pass native and WASI.
+- **Gaps**: a hole keeps its old component bytes (released text and list handles
+  included) until filled; nothing reads them. Tables with many holes run more,
+  shorter row calls until settled. Measurements: notes/benchmarks.md.
+
+## Raw-save pins after the derived cache slot (2026-10-29)
+
+CI run 40787272828 agrees across platforms on unchanged local-fields logical
+world/whole-transfer/delta hashes, but its two equivalence fixtures still pin
+raw saves from before the zero cache pointer was appended. Only those raw pins
+change: 391 to 399 bytes on 64-bit hosts, 363 to 367 on WASI. Removing exactly
+the verified-zero pointer slot recovers both prior raw byte hashes in both
+fixtures. A direct zero-slot assertion guards against serializing cache ownership.
+Both fixture CTests pass optimized native/WASI; no simulation or transfer value
+changes. Detailed hashes and CI scope: releases-and-ci.md, Raw-save pins and
+journal isolation in run 40787272828.
+
+## Pure row updates before conditional destruction (2026-10-28)
+
+Internal compiler optimization, preserving component bytes, entity IDs, deferred
+order, snapshots and hashes: a narrowly eligible per-entity system whose plain
+row-local arithmetic ends in `if (predicate) this.Destroy()` can compute its
+updated row and predicate without touching the command queue. Its ordinary
+generated body remains for fallback paths; a private bool-returning update
+variant supplies the eligible rows loop. Each bounded block of at most 128 rows
+keeps its predicates in a C-stack bool array, writes components back through the
+existing in-place/apart machinery, then records the flagged destroys in original
+ascending row order before the next block. No allocation, runtime API, stored
+pointer, world layout or scheduling rule changes. This separates ordinary SIMD
+row arithmetic from the conditional queue writes that previously kept it scalar.
+
+The eligibility proof accepts only numeric/plain local declarations and
+assignments to own mutable component fields or locals, followed by that one
+conditional self-destroy with no else. Expressions allow primitive arithmetic,
+plain field/local/constant reads and numeric constructors. User functions,
+overloaded operators, properties, indexing, heap/resource values, C calls, random,
+tasks, World/query/input/local-field access and mutable singletons fall back.
+Sharded, local and filtered archetype paths also retain ordinary recording.
+No earlier row can reach a later row's state through an eligible body; the only
+queue effect is its final self-destroy, whose relative order is unchanged.
+
+For non-hierarchy/non-sharded destruction, private generated `destroy_at` takes
+the generation-checked location already found by `apply_destroy` while deciding
+whether the target unloads a scene. The existing `destroy_now` helper still looks
+up a fresh location for other callers. Reuse happens before any lifecycle handler;
+the destruction body retains its original lookup/handler/removal lifetime and
+scene/hierarchy/shard behavior.
+
+`destroy_rows` checks an independent C model over 4,099 initial and 17 later
+births: block/chunk tails, exact arithmetic/float bits, divide-by-zero, signed
+overflow, masked shifts, destruction-handler values and order, row swaps and
+LIFO slot/generation reuse. Serial/pieced execution, private/shared pages and
+packed restore must agree. C observers and event-sending helpers beside user
+operators pin fallback recording order; sparse filters pin untouched rows. The accompanying
+generated-C check requires the optimized helper/flag loop for the numeric case
+and refuses it for the C/helper/operator fallbacks. Validation and measurements are
+recorded by the coordinator in benchmarks.md.
+
 ## Map views across a function (2026-10-20)
 
 Owner-approved: generated code keeps a view of each map it reads or sets by
@@ -289,12 +532,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A view's rows are what the view sees: blended between ticks like its own parameters, with corrections smoothed, over the entities of the world it draws. `verified` in a query follows the rule for views: all of it `verified`, the confirmed world's entities (`param.query_verified_entities`); some of it, the drawn world's that are the same entity in the confirmed one (`param.query_verified_join`, by `tide_born_same`), filters included. A query is all the match's or all local: a local one reads the local world as it is, through the code a system's query generates.
   - A local handler's rows are the match as the tick that sent its event left it, once the tick is done (Provisional: not as each event's turn left things), and a query of local entities the local world as it is. A handler of a local event takes only those.
   - Read-only (Provisional): no `mut`, and a row has the match's fields, never an entity's local fields. A view with a query over the match doesn't run outside a match (`reads_match` in `compiler/src/codegen.c`).
-  - **Going through a lot stays cheap:** a view's or a local handler's query over the match (`param.query_rows`, set in `check_params`) is handed its rows, an array made before the code runs, which `gen_query_foreach` loops over: a generated `tide_row_<view|handler>_<Name>_<i>` each, the entity and the bound components. A view's are made once for its run in a frame, in the scratch area (`gen_query_fill`: `tide_query_<View>_<i>`, called when the view first runs for an entity, so one no entity matches makes none; the run function moves its `tide_mark` past them and lets them go at its end). So a view that runs for each of N entities and goes through M others blends the M once, not N times. Measured in a release build, 2,048 bodies each going through all 2,048: about 2 ms a frame, against about 13 ms for a list a view fills by hand each frame, and about 80 ms when the rows are made again for each entity.
+  - **Going through a lot stays cheap:** a view's or a local handler's query over the match (`param.query_rows`, set in `check_params`) is handed its rows, an array made before the code runs, which `gen_query_foreach` loops over: a generated `tide_row_<view|handler>_<Name>_<i>` each, the entity and the bound components. A view's are made once for its run in a frame, in the scratch area (`gen_query_fill`: `tide_query_<View>_<i>`, called when the view first runs for an entity, so one no entity matches makes none; the run function moves its `tide_mark` past them and lets them go at its end). So a view that runs for each of N entities and goes through M others blends the M once, not N times. A row's binding is gathered and blended only in the lanes the view reads of it (`view_query_lanes`; Views copy and blend only the lanes they read, above), as is a per-entity view's own component. Measured in a release build, 2,048 bodies each going through all 2,048: about 2 ms a frame, against about 13 ms for a list a view fills by hand each frame, and about 80 ms when the rows are made again for each entity.
   - A tick records a listener's rows after its events, once for the tick, when it recorded an event with a handler that reads them: `tide_hear_<Event>` sets `tide_rows_wanted` and the event's `TIDE_HEARD_READS_ROWS`, and `tide_world_tick_events` calls `tide_hear_rows` (`gen_hear_rows`) once the tick is done, which pushes a `TIDE_HEARD_ROWS` record for each (`tide/events.h`: `handlers` says which rows, `same` how many, the rows follow, and `tide_event_log_trim` gives back what the sparse filters left unused). Queries with the same entities and components share one (`collect_heard_rows`, `same_rows`), and their layout is part of `TIDE_HEARD_BUILD`. A client's hearing sends a run's rows out with the first of its events that reads rows and went out (`tide_hearing_end`), and keeps them with the run for `verified` handlers. The frame finds an event's rows after it in the log (`tide_event_log_rows`: the first with its tick and `as`, which are its run's). Text, lists, maps, sets and grids aren't in them.
   - The language server says what a view's and a listener's queries read on hover and in the lens above them (`put_world_lens`), from the same `world_uses` a system's are in.
   - `compiler/tests/e2e/view_queries` checks it: rows blended between two ticks, an entity that came and one that went, filters, a local query, `verified` against a world that went otherwise and on a client that predicted wrong, and handlers' rows from their tick, once, with the confirmed tick's for a `verified` one.
 - Archetypes derive from the spawn sites and from the Adds and Removes that can reach each one (`change_site` in `compiler/src/ast.h`, `derive_archetypes` in `check.c`): `this.Add` reaches what its system's filters admit, an Add on a local a Spawn in the same code set reaches that archetype, and an Add on an entity from a field or parameter reaches every archetype of its world. From an archetype, every combination of the components of the sites reaching it is reachable (their changes apply in any order at the tick's end), and the archetypes derived from it inherit what it could still apply this tick. Components are bits of a 256-bit mask (`comp_mask`), and a game has at most 1024 archetypes. Generated code for an Add or Remove that reaches no archetype stops the program (`tide_unreachable_change`) rather than leaving the entity as it was.
-- Sparse components (`decl.is_sparse`: `[Sparse]`, or a tag any Add or Remove names) are no part of an archetype's mask: each archetype whose entities can have one (`program.possible`, inherited both ways along the moves between archetypes) stores a presence byte column and then its lanes, Add and Remove of it change the row in place (`apply_add`, `apply_remove` in the generated C), and loops, handlers and views skip the rows without it (`gen_row_filter`). Their filters admit an archetype by the components that aren't sparse (`filters_admit`). To the schedule a sparse component keeps no two systems apart (`can_meet` in `parallel.c`, below): entities with it and without it are rows of the same chunks. The layout marks them (`tide_layout_place.sparse`), and migration carries the presence byte with the value.
+- Sparse components (`decl.is_sparse`: `[Sparse]`, or a tag kept in the row to stay within the archetype limit, see below) are no part of an archetype's mask: each archetype whose entities can have one (`program.possible`, inherited both ways along the moves between archetypes) stores a presence byte column and then its lanes, Add and Remove of it change the row in place (`apply_add`, `apply_remove` in the generated C), and loops, handlers and views skip the rows without it (`gen_row_filter`). Their filters admit an archetype by the components that aren't sparse (`filters_admit`). To the schedule a sparse component keeps no two systems apart (`can_meet` in `parallel.c`, below): entities with it and without it are rows of the same chunks. The layout marks them (`tide_layout_place.sparse`), and migration carries the presence byte with the value.
+  - Tags move entities by default (owner's decision, 2026-10-29, replacing the day's `[Lasting]` opt-in and the earlier rule that a toggled tag was sparse by itself): `sparse_component_source` in `check.c` is `[Sparse]` or `decl.sparse_fallback`. `derive_archetypes` tries the archetypes with every other component moving; past `MAX_ARCHETYPES` it marks one more tag `sparse_fallback` and tries again (`fallback_tag`: first tags named by an Add or Remove whose site has no `from` and no `spawn`, which reaches every archetype, then any toggled tag, each in declaration order), and only errors when no tag is left. Components with fields never fall back. Foldline's `Glimpse`, `LastWitness` and `WellFall` fall back, so it keeps its 672 archetypes. `compiler/tests/e2e/tag_moves` checks moves against a `[Sparse]` tag, snapshots and packing; `tag_fallback` twelve tags added through a field (4,096 combinations a base) beside a bounded tag that still moves. Measurements: notes/benchmarks.md (Moving tags under a client's rollback, Holes, Lanes a system can't write).
+  - Add and Remove are a function per component (`tide_apply_add<n>`, `tide_apply_remove<n>`, `noinline`), which `tide_apply_add`/`_remove` dispatch to by the change's component. As one function, `tag_fallback`'s 13 tags times 768 archetypes passed V8's limit of locals in one WebAssembly function in an unoptimized build (`local count too large`).
 - Text, lists, maps and sets in fields live in the world's heap (`tide/heap.h`): blocks handed out and reused in a fixed order, so every machine gets the same offsets. Freed memory is zeroed. Generated code says where each text, list or map it writes is (`where`: the match's, the local world's, or no world's), never the address. A map (`Map<K, V>`, `Set<K>`, `tide/map.h`) is two lists: its entries in insertion order, each a signed 64-bit order, the key and the value, and an index of entry numbers by the key's hash, a power of two of slots under half full. Positive orders are live; removing an entry negates its order and zeroes the rest. Adding a key packs live entries together when more than half are dead and at least eight are. `tide_map` is 24 bytes aligned to eight: the two handles, live count, explicit zero padding and last insertion order. Clear retains that order; copies and assignments carry it with their entries. tidec generates each map type's entry struct, hash and comparison (`gen_map_helpers`), so the engine's part is generic.
   - Lookup specialization (2026-10-11): `tide_map_find` is forced inline in the header so clang can specialize a fixed generated kind, including hash/equality callbacks and entry addressing. It still uses checked list reads and the original hash/probe sequence, with no retained pointers, allocations or changed world bytes. Collision/wrap/chunk and snapshot regression coverage is in `tests/test_map.c`; the native/web suites and independent C benchmark digests agree. This does not parallelize shared map writes or change insertion/erase/iteration semantics. Paired measurements are in `notes/benchmarks.md`.
   - `tide_map_next` follows the last visited insertion order with a checked index hint. Normal traversal takes constant work per entry; after compaction it finds the first later order by binary search over the retained magnitudes, then skips removed entries. It changes no map and allocates nothing. Each generated foreach has its own two integer cursor locals, kept in a task's frame across waits: removals, reinsertion, Clear followed by additions, nested loops and another system's compaction cannot move a later insertion behind the cursor. `tests/test_map.c` checks those runtime boundaries and signed orders beyond 32 bits; `compiler/tests/e2e/map_iteration` checks exact map/set sequences, continue, nested cursors, async waits, unchanged snapshots and packed waiting-task restoration.
@@ -326,7 +571,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `restrict` is omitted when code can reach the loop's lanes another way: writes through World, reads through World of a component it also changes, and starting tasks, which get and put back their entity's components themselves (`rows_alone`). Those systems keep the same aliasing behavior.
   - At most 240 scalar lane pointers are parameters of a rows function (`ROWS_LANES_MOST`), counting read and write pointers separately when apart. The whole signature also stays within [V8's 1,000-parameter limit](https://chromium.googlesource.com/v8/v8.git/+/main/src/wasm/wasm-limits.h) for Wasm functions (`ROWS_PARAMS_MOST`): sparse presence columns, fallback arrays, and the leading parameters count too. A component that would cross either budget is passed as arrays of pointers instead, copied into arrays of the loop's own; the fallback has no `restrict` promise for those lanes. `tidec_rows_parameters` checks a legal game at the component limit and, in the web suite, validates its compiled Wasm module.
   - Views keep their loops in their run functions (`gen_chunk`), with only the in-place version: the local world they change has no snapshots. A system whose one Send can be batched also keeps its existing path.
-  - Two measured gaps remain, and neither optimization is implemented: a chunk with mixed passing and skipped rows still runs its filtered loop, rather than sending runs of passing rows through `every`; and all lanes of a `mut` component are still written apart and compared at the end, even when the body never changes some of them. Knowing which individual lanes can change could avoid those writes and comparisons. These are implementation gaps, with no change to the language's `mut` rule.
+  - A measured gap remains: a chunk with mixed passing and skipped rows still runs its filtered loop, rather than sending runs of passing rows through `every`. The other one, every lane of a `mut` component written apart and compared even when the body never changes some, is closed (below, Lanes a system can't write, 2026-10-29). Neither touches the language's `mut` rule.
   - The wide loops without a filter vectorize at width 4 on SSE2 and Wasm, and 8 on AVX2; mixed filters remain scalar. Five alternating native runs on Windows, 12 cores, using the least saved median and the same corrected C snapshots in both builds (`row-functions-final-before` and `row-functions-final`, measured before later dev integration), put a million entities of twelve float lanes, six changed, at 6.22 -> 3.62 ms a tick on one thread while the prior state is kept. With a sparse tag and every row passing, without a kept state, it is 3.77 -> 1.32; with none passing and a kept state, 2.99 -> 0.105. Unfiltered private rows on twelve offered threads measured 0.615 -> 0.671, while identical C measured 0.534 -> 0.583; that result does not isolate dispatch costs from variation. The settings, ranges, hashes and compile measurements are in `bench/results/row-functions.md` and its metadata.
   - Five alternating end-to-end build rounds of 100 helper functions and 100 entity systems, using one or four archetypes and the least saved median, show the fixture tradeoff: with four archetypes, a Tide-body edit in native release is 33.07 -> 3.16 s, and in web release 16.22 -> 2.69 s; native debug is 0.62 -> 0.73 s and web debug 0.90 -> 0.95 s. Cold builds and unchanged/C/header edits are in the report. These Windows measurements include build completion and were taken with recorded CPU contention; their ranges and the separate direct Clang phases qualify the comparison.
   - A task's components are copies too, loaded each time it goes on and put back when it waits or ends, and around what it awaits or starts, which may change them (`gen_entity_copies` in `compiler/src/codegen.c`).

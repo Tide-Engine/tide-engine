@@ -105,6 +105,9 @@ typedef struct tide_textref tide_textref;
 #ifndef TIDE_GUI_MAX_CLAIM_RECTS
 #define TIDE_GUI_MAX_CLAIM_RECTS 256 // Places views claim the pointer at, per frame
 #endif
+#ifndef TIDE_GUI_MAX_MOTIONS
+#define TIDE_GUI_MAX_MOTIONS 1024 // Animated values kept between frames (GUI.Animate, widgets' fades); a power of two
+#endif
 
 // How the GUI's own widgets look: their colors, and how round their corners
 // are. Tide's GUITheme has the same fields. Every frame starts with the
@@ -121,6 +124,15 @@ typedef struct tide_gui_theme {
     tide_color field_hot; // ...with the pointer on it
     tide_color accent;    // The focus's outline, a toggle's check and a slider's filled part
     float radius;         // Their corners', in pixels: 0 for square ones. No rounder than half a part's smaller side
+    tide_color border;    // An outline inside each part's edge...
+    float border_width;   // ...this wide, in pixels: 0 for none
+    float shading;        // How much darker a part's bottom is than its top, from 0 (flat) to 1 (black)
+    tide_color shadow;    // A shadow under an area's panel...
+    float shadow_size;    // ...fading out over this many pixels: 0 for none
+    float transition;     // Seconds a widget takes to change color between its states: 0 changes at once
+    float text_size;      // Text's size, in pixels; a widget's height follows it
+    float padding;        // Inside an area, around its content, and inside a button, from its sides
+    float spacing;        // Between widgets
 } tide_gui_theme;
 
 // What the player is doing with a control (GUI.Control). Tide's GUIControl
@@ -134,7 +146,32 @@ typedef struct tide_control {
     bool up;      // Its pointer was released this frame, on or off the rect
     bool cancelled; // Its held gesture ended: disabled, under a modal, or taken by touch scrolling
     tide_float2 position; // Pointer position in GUI pixels, including while held outside the rect
+    // Each of hovered, pressed and focused as an amount from 0 to 1 that eases
+    // toward it over the theme's transition: what a control fades its look by
+    float hover;
+    float press;
+    float focus;
 } tide_control;
+
+// A value the GUI animates (GUI.Animate, and widgets' fades): up to four
+// floats, eased toward their target, kept while something asks for them
+// every frame.
+typedef struct tide_gui_motion {
+    uint32_t id;
+    uint32_t frame; // The frame it was last asked for; 0 for a slot never used
+    float value[4];
+} tide_gui_motion;
+
+// Where the GUI's widgets go and how the pointer reaches them: the window, or
+// a render target (GUI.Target) shown on the screen at a rect.
+typedef struct tide_gui_space {
+    tide_render_target dest; // Zeroed for the window
+    bool mapped;             // The pointer reaches it: the screen's pointer at `origin`, `scale` times smaller
+    tide_float2 origin;
+    tide_float2 scale;       // Screen pixels per target pixel
+    tide_float2 mouse;       // The screen's pointer, while the GUI's is the target's
+    float width, height;     // The screen's, while the GUI's are the target's
+} tide_gui_space;
 
 typedef struct tide_gui_group {
     uint32_t id;
@@ -167,6 +204,14 @@ typedef struct tide_gui_group {
     bool drawing;
     uint32_t clips_from;
     uint32_t nav_from;
+    float spacing;            // Between its widgets: the theme's as it took its last one
+    uint32_t shadow;          // An area: its shadow's command, a smooth shape's, or UINT32_MAX
+    float border;             // An area: its background's border, as the theme had it when it opened
+    uint32_t own_clip;        // An anchored area that's changing size: 1 + its clip in the list, or 0
+    uint32_t clip_mark;       // ...and what puts the clip around it back
+    uint32_t home;            // An area or a scroll: the GUI list's destination it opened in (tide_draw_list.target)
+    bool targeted;            // A Target block: what it found, back when it closes...
+    tide_gui_space space_before;
 } tide_gui_group;
 
 typedef struct tide_gui_scroll_state {
@@ -246,6 +291,10 @@ typedef struct tide_gui {
     // The screen this frame (Screen in Tide).
     float width;
     float height;
+    // This frame's length in seconds, which animations move by (Frame.dt in
+    // Tide: generated tide_frame sets it). 0, as a zeroed tide_gui has it,
+    // puts every animated value at its target at once.
+    float seconds;
 
     // Input this frame
     tide_measure_fn measure;
@@ -360,6 +409,8 @@ typedef struct tide_gui {
     uint32_t scrolling_count;
 
     tide_gui_theme theme; // How widgets drawn now look (GUI.SetTheme, GUI.Theme)
+    tide_gui_space space; // Where widgets drawn now go (GUI.Target)
+    bool in_target;       // ...a render target's
 
     tide_gui_group groups[TIDE_GUI_MAX_DEPTH + 1]; // [0] is the screen's own
     int depth;
@@ -368,6 +419,7 @@ typedef struct tide_gui {
     uint32_t drawing_count;
     tide_gui_size sizes[TIDE_GUI_MAX_SIZES];
     tide_gui_seen seen[TIDE_GUI_MAX_IDS];
+    tide_gui_motion motions[TIDE_GUI_MAX_MOTIONS];
     tide_draw_list list; // This frame's commands, drawn over the world at the end
 } tide_gui;
 
@@ -476,6 +528,38 @@ void tide_gui_set_theme(tide_gui *g, tide_gui_theme theme);
 // buttons.
 tide_control tide_gui_control(tide_gui *g, uint32_t id, tide_rect rect);
 
+// GUI.Animate: `target`, eased toward from where it was last frame, so a
+// value that jumps (a menu's open state, a bar's fill, a color) moves there
+// smoothly instead, by about 99% of the way in `seconds`. `id` tells the
+// animated values apart, as a widget's does. A value asked for the first
+// time, or not asked last frame, starts at `from` (the plain forms: at the
+// target). Past TIDE_GUI_MAX_MOTIONS at once, a new one is at its target.
+// Nonfinite numbers aren't kept: a value that was one starts over.
+float tide_gui_animate(tide_gui *g, uint32_t id, float target, float seconds);
+// GUI.Tween: `target`, reached at a constant speed, each change of it taking
+// exactly `seconds` from where the value was then, so an ease shapes it
+// (Math.EaseInOut). Starts at the target, or at `from`; a frame away starts it
+// over; no frame time or no seconds is at the target at once.
+float tide_gui_tween(tide_gui *g, uint32_t id, float target, float seconds);
+float tide_gui_tween_from(tide_gui *g, uint32_t id, float target, float seconds, float from);
+float tide_gui_animate_from(tide_gui *g, uint32_t id, float target, float seconds, float from);
+tide_float2 tide_gui_animate_float2(tide_gui *g, uint32_t id, tide_float2 target, float seconds);
+tide_float2 tide_gui_animate_float2_from(tide_gui *g, uint32_t id, tide_float2 target, float seconds, tide_float2 from);
+tide_color tide_gui_animate_color(tide_gui *g, uint32_t id, tide_color target, float seconds);
+tide_color tide_gui_animate_color_from(tide_gui *g, uint32_t id, tide_color target, float seconds, tide_color from);
+
+// GUI.Target(target, shown) { ... }: the widgets in the block draw into
+// `target`, laid out in its logical pixels, its size the screen's for them
+// (anchors, modals). `shown` is where the game shows the target on the
+// screen: the pointer reaches the widgets through it, and their places are
+// remembered there, so a press on one is the GUI's as on any widget.
+// tide_gui_begin_target_unshown has no pointer: keyboard and gamepad only.
+// Draw what shows the target after the block, in a GUI.Draw block: the GUI's
+// list goes over the world, so a world draw of it shows the frame before.
+// Returns the depth to close, or -1 where it's skipped (nesting, an invalid target).
+int tide_gui_begin_target(tide_gui *g, tide_render_target target, tide_rect shown);
+int tide_gui_begin_target_unshown(tide_gui *g, tide_render_target target);
+
 // Custom visuals use this list inside a GUI.Draw block. Its close restores
 // the window's drawing settings, including settings changed with Set calls.
 // At the container nesting ceiling returns -1; generated code skips the block.
@@ -520,6 +604,10 @@ bool tide_gui_text_field_entered(tide_gui *g, uint32_t id, tide_rect rect, const
 
 // The same, laid out automatically (GUILayout).
 void tide_gui_layout_label(tide_gui *g, const char *text);
+// Label(text, size): a label at a text size of its own, like a heading, its
+// line as tall as a widget of that size is.
+void tide_gui_label_sized(tide_gui *g, tide_rect rect, const char *text, float size);
+void tide_gui_layout_label_sized(tide_gui *g, const char *text, float size);
 bool tide_gui_layout_button(tide_gui *g, uint32_t id, const char *text);
 bool tide_gui_layout_toggle(tide_gui *g, uint32_t id, const char *text, bool *value);
 bool tide_gui_layout_slider(tide_gui *g, uint32_t id, const char *label, float *value, float min, float max);

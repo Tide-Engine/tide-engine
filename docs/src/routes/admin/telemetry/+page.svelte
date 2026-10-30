@@ -107,7 +107,7 @@
         <div>
             <p class="eyebrow">Tide Engine / Admin</p>
             <h1>CLI usage</h1>
-            <p class="subtitle">Anonymous events from the tide command. <a href="/tools/telemetry">What is sent</a></p>
+            <p class="subtitle">Anonymous events from the tide command, excluding CI. <a href="/tools/telemetry">What is sent</a></p>
         </div>
         <form method="POST" action="/admin/logout">
             <button class="quiet-button" type="submit">Sign out <span aria-hidden="true">↗</span></button>
@@ -155,7 +155,7 @@
         <section class="metric">
             <h2>Commands</h2>
             <p class="value tip">{summary ? numbers.format(summary.totals.events) : '—'}</p>
-            <p class="metric-note">{summary && summary.totals.events ? `${percent.format(summary.totals.ci / summary.totals.events)} from CI` : 'Events in this period'}</p>
+            <p class="metric-note">{summary ? `${numbers.format(summary.totals.ci)} CI commands excluded` : 'Excludes CI commands'}</p>
         </section>
         <section class="metric">
             <h2>Failure rate</h2>

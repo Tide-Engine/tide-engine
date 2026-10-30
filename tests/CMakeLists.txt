@@ -27,6 +27,16 @@ target_link_libraries(tide_tests PRIVATE tide tide_audio_refs)
 
 add_test(NAME tide_tests COMMAND tide_tests)
 
+# Prove that this configuration detects a memory error, rather than merely
+# compiling a successful test with flags that might no longer instrument it.
+if(TIDE_SANITIZE)
+    add_executable(tide_sanitizer_probe sanitizer/use_after_free.c)
+    target_link_libraries(tide_sanitizer_probe PRIVATE tide_flags)
+    add_test(NAME tide_sanitizer_detects_use_after_free
+        COMMAND "${CMAKE_COMMAND}" "-DPROBE=$<TARGET_FILE:tide_sanitizer_probe>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/sanitizer/check.cmake")
+endif()
+
 # A run nobody watches (TIDE_HIDDEN, see tide/page.h): what the variable does
 # to a program with no window, with it set and with it empty, whichever the
 # one who runs the tests has.

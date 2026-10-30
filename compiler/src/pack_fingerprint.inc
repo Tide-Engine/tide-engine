@@ -20,6 +20,7 @@ typedef struct tide_asset_fingerprint_desc {
 typedef struct tide_asset_fingerprint_request {
     const char *qualified;
     tide_asset_fingerprint_desc desc;
+    const uint8_t *id; // Optional SHA-256 name ID instead of qualified; exactly one must be supplied.
 } tide_asset_fingerprint_request;
 #endif
 
@@ -415,12 +416,13 @@ static bool tide_asset_fingerprints(const uint8_t *bytes, const size_t size,
     const uint32_t mask = (uint32_t)slots - 1u;
     bool ok = true;
     for (uint32_t i = 0; ok && i < count; i++) {
-        if (!requests[i].qualified) {
+        if ((!requests[i].qualified) == (!requests[i].id)) {
             if (failed) *failed = i;
             ok = false;
             break;
         }
-        tide_sha256_of(requests[i].qualified, strlen(requests[i].qualified), selected[i].name);
+        if (requests[i].id) memcpy(selected[i].name, requests[i].id, sizeof selected[i].name);
+        else tide_sha256_of(requests[i].qualified, strlen(requests[i].qualified), selected[i].name);
         uint32_t place = tide_asset_fp_u32(selected[i].name) & mask;
         while (index[place]) {
             if (!memcmp(selected[index[place] - 1u].name, selected[i].name, sizeof selected[i].name)) {

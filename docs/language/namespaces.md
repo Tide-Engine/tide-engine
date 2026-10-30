@@ -38,6 +38,7 @@ event(Spawned) Setup(with Main)
 - A file has at most one `namespace Name;` line, and files without one are in the global namespace. Namespaces can be dotted: `namespace Game.Combat;`.
 - `namespace Name;` and namespace imports (`using Combat;`) come before any declaration.
 - A plain name is looked up in the namespace of the code that writes it, then the namespaces around it out to the global namespace, then the `using` ones. So a name your game declares itself always means yours, even when a namespace you import has one too: write the namespace, `Physics.Body`, for the imported one. If two `using` namespaces both have a name that nothing of yours has, it's ambiguous: write the namespace.
+- The nearest namespace with a name decides, whatever that name is there: a package's enum `Side` is what `Side(i)` means in the package's code, even if your game has a function called `Side`. Nothing your game declares can break a package.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values, `Spawn`, `Add` and `Remove`, and `[Before]` and `[After]` (`[After(Physics.Gravity)]`). They work for constants too: `Combat.CRIT_MULTIPLIER`.
 - The same name can be declared in different namespaces.
 - An [override](overrides.md) names what it replaces the same way: `override system Combat.Move(...)`, or `Move` alone after `using Combat;`.

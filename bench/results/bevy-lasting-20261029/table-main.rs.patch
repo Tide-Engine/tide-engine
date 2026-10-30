@@ -1,0 +1,6 @@
+--- bench/bevy/src/main.rs
++++ build/bevy-table-src/src/main.rs
+@@
+ #[derive(Component)]
+-#[component(storage = "SparseSet")]
+ struct Frozen;

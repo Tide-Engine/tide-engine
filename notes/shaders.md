@@ -1,5 +1,35 @@
 # Code the GPU runs: frags and verts
 
+## Shipping shader identifiers (2026-10-27)
+
+Owner-requested follow-up to release metadata removal. shader_names.c performs
+a token-only pass over generated GLSL/WGSL when strip_names is enabled. Only
+shader.c's source-derived t_, m_, tt_, tf_ and ts_ identifiers are renamed.
+Every original code identifier is reserved before assigning deterministic qN
+aliases, avoiding collisions with helpers or bindings. A hash table keeps the
+pass linear in tokens. Comments are removed with whitespace/newlines retained;
+quoted text is untouched, including escaped quotes and nested WGSL comments.
+
+Codegen minifies local copies of the three shader texts, without mutating their
+checked AST/planning data. Per-stage alias maps go into the private .names file.
+The shader cache ID hashes the resulting shipped text; no match/header/asset
+identity or scheduling behavior changes. Numeric literals, operators, token
+order, renderer bindings, stage entry points and layout/packing are unchanged.
+SPIR-V is generated from minified WGSL and still has no OpName metadata.
+Explicit --shaders/--spirv/--hlsl dumps honor --strip-names; ordinary dumps and
+Unity's shader extraction remain readable by default. No runtime function/API
+or shader language feature is introduced.
+
+shader_names_test.c covers collisions with existing qN identifiers, repeated
+names, quoted strings, nested comments, token separation, deterministic and
+idempotent output, and growth through 4,096 identifiers. shader_names.mjs checks
+every existing shader fixture (including packages): non-name tokens and bindings
+are identical, replacements are bijective per stage and SPIR-V bytes are exact
+before/after. The existing gpu_functions platform fixture explicitly opts into
+STRIP_NAMES and retains its unchanged Vulkan/OpenGL/WebGL/D3D11/WebGPU pixel and
+batch-count checks. Actual shipping binaries/pages also check private shader
+function/parameter/local/field sentinels; validation is in cli-and-packages.md.
+
 Generated-golden whitespace: texture_capacity.txt intentionally ends with two
 LFs, like all 43 shader goldens. The shader expectation runner normalizes CRLF
 but compares the complete text without trimming. Git's new-file diff check
@@ -443,6 +473,14 @@ cover shader/value completion and the new diagnostics. Validation is recorded
 in notes/language.md with the full suites.
 
 ## Texture-size metadata and payload values (2026-10-18)
+
+DepthTexture.size joins this metadata path (2026-10-29), for component/singleton
+fields and helper parameters, on CPU and GPU. Its READ_SIZE sources remain
+uniform-only; generated captures use tide_texture_size's TIDE_TEXTURE_DEPTH
+marker and the existing frame target resolver. Depth comparisons/sampling and
+their binding types are unchanged. The depth_size E2E fixture and platform pass
+23 cover distinct depth-only/color-target sources and the device's size clamp.
+Contracts and validation ownership are recorded in textures.md, Depth dimensions.
 
 Texture.size is lowered to two uniform ints per distinct named image source.
 Compiler-only READ_SIZE flows through the existing helper sampling analysis,

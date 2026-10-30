@@ -8,10 +8,27 @@
   html, body { margin: 0; height: 100%; background: #0e0e14; overflow: hidden; }
   body { display: flex; align-items: center; justify-content: center; }
   canvas { display: block; outline: none; }
+  /* What the page is doing until the game first draws: tide.js fills it in and takes it away */
+  #tide-loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+                  justify-content: center; gap: 16px; pointer-events: none; transition: opacity .3s;
+                  font: 14px system-ui, sans-serif; color: #9a9aae; }
+  #tide-loading.done { opacity: 0; }
+  #tide-loading img { max-width: 160px; max-height: 160px; }
+  #tide-loading-bar { width: 220px; height: 4px; border-radius: 2px; background: #24242e; overflow: hidden; }
+  #tide-loading-bar div { width: 30%; height: 100%; background: #6a8cff; animation: tide-waiting 1.2s ease-in-out infinite alternate; }
+  #tide-loading-bar.known div { animation: none; transition: width .15s; }
+  #tide-loading.failed #tide-loading-bar { display: none; }
+  #tide-loading.failed #tide-loading-text { color: #ff8a8a; max-width: 80vw; text-align: center; }
+  @keyframes tide-waiting { from { margin-left: 0; } to { margin-left: 70%; } }
 </style>
 </head>
 <body>
 <canvas id="canvas" tabindex="-1" oncontextmenu="return false"></canvas>
+<div id="tide-loading" role="status">
+  <img id="tide-loading-logo" alt="" hidden>
+  <div id="tide-loading-bar"><div></div></div>
+  <div id="tide-loading-text">Loading</div>
+</div>
 <script>
   var Tide = {
     canvas: document.getElementById('canvas'),

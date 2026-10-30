@@ -1,0 +1,148 @@
+--- a/compiler/src/codegen.c
++++ b/compiler/src/codegen.c
+@@ -17152,18 +17152,59 @@
+ 
+ // Selection is a separate in-place variant. Its caller uses the pass count it
+ // already computed to choose it only where both passing and skipped rows are
+-// common. Biased filters keep the ordinary filtered loop.
++// common. Rare sparse-only matches have a separate bit-mask variant.
+ static bool rows_selectable(const gen *g, const decl *sys, const int a)
+ {
+     return rows_filtered(g, sys, a) && rows_alone(sys) && !sys->calls_c && !filters_owner(g, sys, a);
++}
++
++typedef enum rows_selection { ROWS_FILTERED, ROWS_SELECTED, ROWS_MASKED } rows_selection;
++
++// Sixteen sparse presence comparisons become one bit per matching row. Compare
++// each column before combining it: presence means nonzero, not a particular bit.
++// The short tail never loads beyond the task's range (or a small first chunk).
++static void gen_rows_mask(gen *g, const decl *sys, const int a)
++{
++    sb *o = &g->c;
++    sb_put(o, "        uint32_t tide_bits = 0u;\n"
++              "        if (tide_end - tide_base == 16u) {\n"
++              "            typedef unsigned char tide_bytes16 __attribute__((vector_size(16)));\n"
++              "            typedef signed char tide_signs16 __attribute__((vector_size(16)));\n"
++              "            tide_bytes16 tide_presence;\n"
++              "            tide_signs16 tide_mask;\n");
++    bool first = true;
++    for (int c = 0; c < g->prog->components.count; c++) {
++        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
++        if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
++        sb_printf(o, "            memcpy(&tide_presence, tide_pres_%s + tide_base, sizeof tide_presence);\n"
++                     "            tide_mask %s (tide_signs16)(tide_presence %s (tide_bytes16){0});\n",
++                  type_cname(g->prog->components.items[c]), first ? "=" : "&=", mask_has(sys->need_mask, c) ? "!=" : "==");
++        first = false;
++    }
++    sb_put(o, "#if defined(__SSE2__)\n"
++              "            tide_bits = (uint32_t)__builtin_ia32_pmovmskb128(tide_mask);\n"
++              "#elif defined(__wasm_simd128__)\n"
++              "            tide_bits = (uint32_t)__builtin_wasm_bitmask_i8x16(tide_mask);\n"
++              "#else\n"
++              "            for (uint32_t tide_lane = 0u; tide_lane < 16u; tide_lane++)\n"
++              "                tide_bits |= (uint32_t)(tide_mask[tide_lane] != 0) << tide_lane;\n"
++              "#endif\n"
++              "        } else {\n"
++              "            for (uint32_t tide_scan = tide_base; tide_scan < tide_end; tide_scan++)\n"
++              "                tide_bits |= (uint32_t)(");
++    gen_rows_pass(g, sys, a, "tide_scan", "tide_scn");
++    sb_put(o, ") << (tide_scan - tide_base);\n        }\n"
++              "        while (tide_bits) {\n"
++              "            const uint32_t tide_i = tide_base + (uint32_t)__builtin_ctz(tide_bits);\n"
++              "            tide_bits &= tide_bits - 1u;\n");
+ }
+ 
+ // A rows function from its parameters on: `apart` for the one that reads each
+ // lane the system changes in one place and writes it in another, `every` for
+ // the one called with rows that are all the system's to run for, whatever
+-// sparse components it filters by; `selected` compacts matching row indices.
++// sparse components it filters by; selection compacts matching indices or bits.
+ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *call, const char *clear, const bool apart,
+-                              const bool every, const bool selected)
++                              const bool every, const rows_selection selection)
+ {
+     sb *o = &g->c;
+     const program *prog = g->prog;
+@@ -17191,7 +17232,12 @@
+     // these presence/scene reads stay valid; exclude aliasing, C and ownership
+     // paths conservatively. Apart loops still copy skipped rows unchanged.
+     const bool destroying = batch_destroy(sys) && !rows_filtered(g, sys, a) && rows_alone(sys);
+-    if (selected) {
++    const bool selected = selection != ROWS_FILTERED;
++    if (selection == ROWS_MASKED) {
++        sb_put(o, "    for (uint32_t tide_base = tide_from; tide_base < tide_to;) {\n"
++                  "        const uint32_t tide_end = tide_to - tide_base < 16u ? tide_to : tide_base + 16u;\n");
++        gen_rows_mask(g, sys, a);
++    } else if (selected) {
+         sb_put(o, "    for (uint32_t tide_base = tide_from; tide_base < tide_to;) {\n"
+                   "        const uint32_t tide_end = tide_to - tide_base < 128u ? tide_to : tide_base + 128u;\n"
+                   "        uint32_t tide_selected[128], tide_selected_count = 0u;\n"
+@@ -17245,11 +17291,11 @@
+ // row or with its filters: its number. It's made unless an archetype before
+ // had the same one.
+ static int gen_rows(gen *g, const decl *sys, const int a, const char *call, const char *clear, const bool apart, const bool every,
+-                    const bool selected, rows_list *made)
++                    const rows_selection selection, rows_list *made)
+ {
+     const sb out = g->c;
+     g->c = (sb){0};
+-    gen_rows_function(g, sys, a, call, clear, apart, every, selected);
++    gen_rows_function(g, sys, a, call, clear, apart, every, selection);
+     const sb text = g->c;
+     g->c = out;
+     for (int i = 0; i < made->count; i++) {
+@@ -17260,7 +17306,8 @@
+     bool changes = false;
+     for (int c = 0; c < g->prog->components.count; c++) changes |= arch_stores(g, a, c) && changes_component(sys, c, false);
+     sb_printf(o, "// " STR_FMT "'s rows%s, %s%s\n", STR_ARG(tool_name(sys)), every ? ", when it's for every one of them"
+-              : selected ? ", selecting matching indices in order" : "",
++              : selection == ROWS_MASKED ? ", selecting sparse matching bits in order"
++              : selection == ROWS_SELECTED ? ", selecting matching indices in order" : "",
+               !changes ? "which it changes no component of"
+               : apart ? "each lane it changes read in one place and written in another" : "each lane it changes read and written in one place",
+               rows_alone(sys) ? "" : ": its code reaches components beside the loop, so nothing says the lanes are apart");
+@@ -17326,15 +17373,21 @@
+ typedef struct rows_set {
+     int place, apart;
+     int place_every, apart_every;
+-    int place_selected;
++    int place_selected, place_masked;
+ } rows_set;
+ 
+ // The chunk or task piece already counted its passing rows. Use selection
+-// only when at least a quarter pass and at least a quarter are skipped. These
+-// ranges hold at most a chunk's rows, so rounding the quarter up cannot wrap.
++// as indices when at least a quarter pass and at least a quarter are skipped,
++// and as sparse-only bits below that passing density. These ranges hold at most
++// a chunk's rows, so rounding the quarter up cannot wrap.
+ // The caller emitted the leading indentation or `else` already.
+ static void gen_rows_in_place(gen *g, const decl *sys, const int a, const rows_set rows, const char *pad)
+ {
++    if (rows.place_masked >= 0) {
++        sb_put(&g->c, "if (tide_pass < (tide_to - tide_from + 3u) / 4u) ");
++        gen_rows_call(g, sys, a, rows.place_masked, false);
++        sb_printf(&g->c, "%selse ", pad);
++    }
+     if (rows.place_selected >= 0) {
+         sb_put(&g->c, "if (tide_pass >= (tide_to - tide_from + 3u) / 4u && "
+                       "tide_to - tide_from - tide_pass >= (tide_to - tide_from + 3u) / 4u) ");
+@@ -18094,12 +18147,14 @@
+     for (int a = 0; !view && sys->per_entity && a < prog->archetypes.count; a++) {
+         if (!runs_on(g, sys, a) || rows_batched(g, sys, a)) continue;
+         const bool part = rows_part(g, sys, a), every = part && rows_filtered(g, sys, a);
+-        rows[a].place = gen_rows(g, sys, a, call.data, clear, false, false, false, &rows_made);
+-        rows[a].apart = part ? gen_rows(g, sys, a, call.data, clear, true, false, false, &rows_made) : -1;
+-        rows[a].place_every = every ? gen_rows(g, sys, a, call.data, clear, false, true, false, &rows_made) : -1;
+-        rows[a].apart_every = every ? gen_rows(g, sys, a, call.data, clear, true, true, false, &rows_made) : -1;
++        rows[a].place = gen_rows(g, sys, a, call.data, clear, false, false, ROWS_FILTERED, &rows_made);
++        rows[a].apart = part ? gen_rows(g, sys, a, call.data, clear, true, false, ROWS_FILTERED, &rows_made) : -1;
++        rows[a].place_every = every ? gen_rows(g, sys, a, call.data, clear, false, true, ROWS_FILTERED, &rows_made) : -1;
++        rows[a].apart_every = every ? gen_rows(g, sys, a, call.data, clear, true, true, ROWS_FILTERED, &rows_made) : -1;
+         rows[a].place_selected = rows_selectable(g, sys, a)
+-            ? gen_rows(g, sys, a, call.data, clear, false, false, true, &rows_made) : -1;
++            ? gen_rows(g, sys, a, call.data, clear, false, false, ROWS_SELECTED, &rows_made) : -1;
++        rows[a].place_masked = rows_selectable(g, sys, a) && !scene_filtered(g, sys, a)
++            ? gen_rows(g, sys, a, call.data, clear, false, false, ROWS_MASKED, &rows_made) : -1;
+     }
+ 
+     if (view) {

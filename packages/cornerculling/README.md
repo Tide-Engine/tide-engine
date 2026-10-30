@@ -1,8 +1,9 @@
 # Corner Culling
 
-Optional CPU visibility queries for Tide, in namespace `CornerCulling`. The first
-version supports **axis-aligned solid boxes** and conservative observer/target
-bounds. It is ordinary Tide code, with no C library, renderer, physics package,
+Optional CPU visibility queries for Tide, in namespace `CornerCulling`. It
+supports **rotated solid boxes and ellipsoids**, conservative observer/target
+bounds, and bounded proofs combining multiple blockers. It is ordinary Tide
+code, with no C library, renderer, physics package,
 GPU, worker-thread or Unity dependency. Games omitting it compile none of it.
 
 ```sh
@@ -10,10 +11,10 @@ tide add cornerculling
 ```
 
 Keep a `CullingWorld` in your own match or local state. Build it once from a
-`List<Box>`, then call its readonly `Query` method:
+`List<Occluder>`, then call its readonly `Query` method:
 
 ```csharp
-List<CornerCulling.Box> blockers = [CornerCulling.Box {
+List<CornerCulling.Occluder> blockers = [CornerCulling.Occluder {
     bounds = CornerCulling.Bounds {
         center = float3(0), extents = float3(0.5, 4, 4)
     }
@@ -34,9 +35,10 @@ directed observer/target pair. The overload `Query(query)` needs no cache.
 
 ## Contracts
 
-- `Bounds.center` and `extents` are world-space floats; extents are **half sizes**.
-  Endpoint extents may be zero. All blocker extents must be positive.
-- `Box.mask` and `CullingQuery.mask` are 32-bit integer bitmasks, default `-1`
+- `Bounds.center` is world-space. Endpoint extents are world-aligned half-sizes;
+  blocker extents are local half-sizes or ellipsoid radii. Endpoint extents may
+  be zero. All blocker extents must be positive.
+- `Occluder.mask` and `CullingQuery.mask` are 32-bit integer bitmasks, default `-1`
   (all bits). A box participates when their bitwise intersection is nonzero.
   Set a box's mask to zero to disable it.
 - `CullingQuery.surfaceMargin` defaults to `0.0001` world units. It shrinks each
@@ -44,8 +46,9 @@ directed observer/target pair. The overload `Query(query)` needs no cache.
   nonnegative; zero still retains numerical padding.
 - `CullingResult.status` is `Unknown`, `Visible` or `Occluded`. **Only `Occluded`
   permits hiding.** `IsVisible()` returns true for both other results.
-- `occluder` is the zero-based index in the list supplied to `Rebuild`, or `-1`
-  without a certificate. When several boxes block, which one is returned is
+- `occluder` is the zero-based input-list index for a single-blocker proof.
+  It is `-1` for a combined proof or no proof; use `status` to distinguish them.
+  When several boxes block, which one is returned is
   unspecified. Cached and uncached queries can identify different valid boxes.
 - `Rebuild(boxes)` takes a snapshot of the list and rebuilds the spatial tree.
   An empty built world reports `Visible`. A default or cleared world reports
@@ -59,13 +62,51 @@ directed observer/target pair. The overload `Query(query)` needs no cache.
   World fields and helper types are implementation storage: use these methods
   instead of editing tree entries or nodes directly.
 
-The same blocker must strictly cover every observer-corner to target-corner
-segment. This is conservative convex occlusion, not a collection of unrelated
-ray hits. Overlapping endpoints, contact with an endpoint/blocker, tangency,
-invalid geometry and incomplete coverage fail open. A center-ray early rejection
-and a stackless BVH precede full corner testing. Cached candidates are always
-retested against current geometry and query masks; caches are safe after updates,
-rebuilds, rollback, and reuse with another world.
+A single convex blocker must strictly cover every observer-corner to
+target-corner segment. Combined proofs either join solid wall sections or
+subdivide the endpoint envelopes and prove every complete child envelope.
+Different blockers hitting the sampled rays alone is not a valid proof.
+Overlapping endpoints, endpoint/blocker contact, tangency, invalid geometry and
+incomplete coverage fail open. Cached single blockers are always retested;
+combined answers are recomputed, including after updates and rebuilds.
+
+## Rotation, shapes and joined walls
+
+`Occluder` replaces `Box`. `bounds.center` is world-space; `bounds.extents` gives
+local half-sizes for `OccluderShape.Box` (the default) or three radii for
+`OccluderShape.Ellipsoid`. `rotation` defaults to `quaternion.identity`. Finite nonzero
+quaternions are normalized internally in binary64; zero/nonfinite rotations,
+unknown shapes and nonpositive extents cannot block. Observer and target bounds
+remain world-aligned, including the full motion/equipment envelope.
+
+```csharp
+Occluder diagonal = Occluder {
+    bounds = Bounds { center = float3(0), extents = float3(0.25, 2, 4) },
+    rotation = quaternion(0, 0.38268343, 0, 0.92387953)
+};
+Occluder pillar = Occluder {
+    shape = OccluderShape.Ellipsoid,
+    bounds = Bounds { center = float3(3, 0, 0), extents = float3(1, 2, 1) }
+};
+```
+
+Touching or overlapping **axis-aligned** box sections can form a solid wall.
+The proof uses a rectangular volume inside their union, never their enclosing
+AABB. Internal seams disappear; `surfaceMargin` shrinks the joined volume's
+outside surfaces. Exact touching is accepted only when the boundary arithmetic
+is exact; uncertain joins require actual overlap. No tolerance bridges a real
+gap. Joining retains at most 32 boxes derived from the first 16 eligible BVH
+candidates, so dense or fragmented maps can still fail open. Rotated boxes are
+not welded at a touching seam.
+
+For other layouts, `maxSubdivisions` (default 32, clamped to 0 to 128) bounds extra
+splits of observer/target bounds. Each child is fully certified against a single
+blocker or a joined volume. Both children must pass. This can combine overlapping
+shadows from differently oriented boxes or ellipsoids. Depth is capped at eight;
+exhausted budgets return `Visible`. Zero disables subdivision, not wall joining.
+A visible answer means **no proof was found**, not that an unobstructed ray was
+necessarily found. These limits trade culling effectiveness for bounded work;
+they never justify hiding an uncertain target.
 
 ## Motion, networking and ownership
 
@@ -110,12 +151,15 @@ package-owned scheduler or batch allocation.
 The BVH has leaves of at most four boxes, balanced median splits, three-way
 partitioning for tied centroids and subtree masks. Cached blockers bypass tree
 traversal when still valid. `Rebuild` belongs outside the relevance loop;
-`Update` currently searches and refits the whole tree in O(N). Update a few doors
-at a time; frequent movement of many blockers needs further profiling.
+`Update` uses a source-index lookup and refits only the changed leaf and its
+ancestors in O(log N) with unshared storage. Shared snapshots can incur COW
+copying. Moving many blockers can still degrade spatial quality;
+rebuild when necessary. Source/parent indices are rebuilt once if missing after
+layout migration; that recovery costs O(N).
 
-Only axis-aligned boxes are implemented. There is no mesh/terrain import,
-rotated box, sphere/capsule, multi-blocker certificate, baked PVS, automatic ECS
-collection, GPU culling or automatic network policy. Large endpoint envelopes
+Boxes and ellipsoids are implemented; equal ellipsoid radii give a sphere.
+There is no capsule, arbitrary convex hull, mesh/terrain import, baked PVS,
+automatic ECS collection, GPU culling or automatic network policy. Large endpoint envelopes
 and many overlapping near-miss blockers can cost more and hide fewer targets.
 This is an initial package, not a production anti-cheat guarantee.
 
@@ -125,5 +169,13 @@ native/WASM answer pins, projected-state privacy, snapshot/replay/pack checks,
 and synthetic 10/50-player measurements with a handwritten C comparison.
 Reference measurements and coverage are in `notes/corner-culling.md` in the
 engine repository.
+
+Open `test/visual.html` for a standalone client/server walkthrough. It replays
+actual query results from the native fixture; it does not run culling in
+JavaScript. Refresh it after changing fixtures or geometry:
+
+```sh
+python packages/cornerculling/test/make_visual.py build/debug/bin/tide_cornerculling.exe
+```
 
 Full guide: https://tide-engine.dev/packages/cornerculling

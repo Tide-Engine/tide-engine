@@ -1,0 +1,5 @@
+{
+  "change": "Only Frozen storage: SparseSet -> default Table",
+  "original_sha256": "a2580e28bbe2afbb0daf6a773eb3dbd503065243dec3c96fdb488cb2ef6b0ab0",
+  "candidate_sha256": "b41ad6fd9e178a1b6ac6d5461645d1ce8b39bd85ace8d6d2d8a493414df8ee2b"
+}

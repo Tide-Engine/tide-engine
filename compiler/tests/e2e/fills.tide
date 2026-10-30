@@ -1,0 +1,80 @@
+// Fills: Draw.Rect and Draw.Shape with a function that colors them, and
+// Gradient's functions. fills_test.c reads what was drawn and what the
+// functions give on the CPU.
+scene Main;
+
+Color Stripes(float2 uv)
+{
+    return int(uv.x * 4) % 2 == 0 ? Color.white : Color.black;
+}
+
+local singleton Probe
+{
+    Color[13] seen;
+    float[6] eases;
+    Rect moved;
+    Rect screen;
+    RenderTarget art;
+    bool validBefore;
+    bool validAfter;
+    bool windowValid;
+    float2 artSize;
+    int frames;
+    Func<float2, Color> kept;
+}
+
+view Paint(mut Probe probe)
+{
+    probe.frames++;
+    Draw.SetScreen();
+    Draw.Rect(Rect(0, 0, 10, 10), 2, Color.red); // The built-in solid rect: no fill
+    // Three fills in a row: one run of the fills' shader
+    Draw.Rect(Rect(10, 10, 100, 40), 8, Gradient.Vertical(Color.red, Color.blue));
+    Color tint = Color(0.25, 0.5, 1);
+    Draw.Rect(Rect(10, 60, 100, 40), float4(0, 4, 8, 12), (float2 uv) => tint.WithAlpha(uv.x)); // WithAlpha on the GPU
+    Draw.Rect(Rect(10, 110, 100, 40), 0, Stripes);
+    Draw.Shape(Shape { center = float2(200, 100), size = float2(80, 40), rotation = 0.5, outline = 2, soft = 4 },
+               Gradient.Radial(Color.white, Color.clear));
+    // One that takes the shape's size too: stripes 10 units wide, whatever its width
+    Draw.Rect(Rect(10, 160, 100, 20), 4, (float2 uv, float2 size) => int(uv.x * size.x / 10) % 2 == 0 ? Color.white : Color.black);
+    Draw.Shadow(Rect(10, 200, 100, 40), 8, 12); // A shape of its own, after the fills' run
+    // Nothing to draw: no size, or a size that isn't a number
+    Draw.Rect(Rect(10, 10, 0, 40), 8, Stripes);
+    Draw.Rect(Rect(10, 10, Math.Sqrt(-1), 40), 8, Stripes);
+    // A fill kept in a field, and Gradient's functions as values, called on the CPU
+    probe.kept = Gradient.Horizontal(Color.red, Color.green, Color.blue);
+    var down = Gradient.Vertical(Color.red, Color.blue);
+    probe.seen[0] = down(float2(0.5, 0));
+    probe.seen[1] = down(float2(0.5, 1));
+    probe.seen[2] = down(float2(0.5, 0.5));
+    probe.seen[3] = probe.kept(float2(0.5, 0.5));
+    probe.seen[4] = probe.kept(float2(0.75, 0.5));
+    var fade = Gradient.Vertical(Color.white, Color.clear);
+    probe.seen[5] = fade(float2(0, 0.5)); // Fades without darkening
+    var round = Gradient.Radial(Color.red, Color.blue);
+    probe.seen[6] = round(float2(0.5, 0.5));
+    probe.seen[7] = round(float2(1, 0.5));
+    var across = Gradient.Linear(0, Color.red, Color.blue);
+    probe.seen[8] = across(float2(0, 0.3));
+    var four = Gradient.Vertical(Color.red, Color.green, Color.blue, Color.white);
+    probe.seen[9] = four(float2(0, 1));
+    probe.seen[10] = down(float2(0.5, Math.Sqrt(-1))); // A NaN uv is the start
+    probe.seen[11] = Stripes(float2(0.3, 0));
+    probe.seen[12] = Color.red.WithAlpha(0.25);
+    probe.moved = Rect(90, -5, 20, 20).MoveInside(Rect(0, 0, 100, 100));
+    probe.screen = Screen.rect;
+    probe.eases[0] = Math.EaseIn(0.5);
+    probe.eases[1] = Math.EaseOut(0.5);
+    probe.eases[2] = Math.EaseInOut(0.25);
+    probe.eases[3] = Math.EaseOutBack(0.7);
+    probe.eases[4] = Math.EaseInBack(0.2);
+    probe.eases[5] = Math.EaseOut(Math.Sqrt(-1)) + Math.EaseIn(7);
+    // Into a render target: its own run, by its size
+    if (probe.frames == 1) probe.validBefore = probe.art.valid;
+    if (!probe.art.valid) probe.art = RenderTarget(64, 32);
+    probe.validAfter = probe.art.valid;
+    probe.windowValid = Draw.window.valid;
+    probe.artSize = probe.art.size;
+    probe.art.Rect(Rect(0, 0, 64, 32), 4, Gradient.Vertical(Color.red, Color.blue));
+    probe.art.Shape(Shape { center = float2(32, 16), size = float2(20, 20), ellipse = true }, (float2 uv, float2 size) => Color.white.WithAlpha(uv.x));
+}

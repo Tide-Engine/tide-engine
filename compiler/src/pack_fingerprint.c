@@ -12,6 +12,6 @@ bool pack_fingerprint(const uint8_t *bytes, const size_t size, const char *quali
                       const tide_asset_fingerprint_desc *desc, uint8_t out[32])
 {
     if (!qualified || !desc || !out) return false;
-    const tide_asset_fingerprint_request request = {qualified, *desc};
+    const tide_asset_fingerprint_request request = {.qualified = qualified, .desc = *desc};
     return tide_asset_fingerprints(bytes, size, &request, 1u, (uint8_t (*)[32])out, NULL, NULL);
 }

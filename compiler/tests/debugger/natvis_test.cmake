@@ -26,7 +26,10 @@ foreach(marker IN ITEMS sum gained recent call pairs)
     endif()
 endforeach()
 
+# Windows ASan commits its shadow pages on first-chance access violations.
+# Let its handler run; an unhandled (second-chance) violation still stops.
 file(WRITE "${WORK}/commands.txt" "\
+sxd av
 .lines -e
 l+t
 bp `fixture.tide:${at_pairs}` 3
@@ -54,6 +57,9 @@ execute_process(COMMAND "${DRIVE}" "${WORK}/commands.txt" "${PROGRAM}"
 file(WRITE "${WORK}/said.txt" "${out}${err}")
 if(NOT code EQUAL 0)
     message(FATAL_ERROR "the debugger driver failed (${code}):\n${out}${err}")
+endif()
+if("${out}${err}" MATCHES "ERROR: AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:")
+    message(FATAL_ERROR "a sanitizer's report:\n${out}${err}")
 endif()
 
 # What the debugger said for the `index`th command that was `command` (from 1)

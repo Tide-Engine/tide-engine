@@ -5,8 +5,9 @@ description: "Use conservative CPU box occlusion queries to drive game-owned per
 # Corner Culling
 
 `cornerculling` is an optional CPU visibility package in namespace `CornerCulling`.
-It checks whether one opaque, axis-aligned box completely blocks the view between
-observer and target bounds. It works without a renderer, physics integration,
+It checks whether opaque boxes or ellipsoids completely block the view between
+observer and target bounds. Blockers can rotate, and multiple blockers can
+combine conservatively. It works without a renderer, physics integration,
 GPU or worker threads, on native and WebAssembly builds.
 
 ## Add and query
@@ -34,11 +35,11 @@ cover empty space and incorrectly hide a visible player.
 | `world.Query(query, cache)` | Return a result and update a candidate cache |
 | `world.Query(query)` | Query without retaining a cache |
 | `result.IsVisible()` | True for `Visible` and `Unknown`; false only for `Occluded` |
-| `result.occluder` | Input-list index of a certified blocker, or `-1` |
+| `result.occluder` | Input-list index for a single-blocker proof; `-1` for combined proofs or no proof |
 | `world.Update(index, box)` | Replace an existing source index and immediately refit; false for an invalid index/unbuilt world |
 | `world.Clear()` | Empty contents, retaining capacity; queries become `Unknown` until rebuilt |
 
-`Box.mask` and `CullingQuery.mask` are integer bitmasks, both defaulting to `-1`
+`Occluder.mask` and `CullingQuery.mask` are integer bitmasks, both defaulting to `-1`
 (all bits). A box participates if their intersection is nonzero. Set a box's
 mask to zero to disable it. Invalid geometry also cannot block. Source indices
 remain stable until the next rebuild; adding entries requires rebuilding.
@@ -51,11 +52,50 @@ endpoints, endpoint/blocker contact, tangency and incomplete coverage fail open.
 A default/cleared world or invalid query returns `Unknown`; a built empty world
 returns `Visible`.
 
-One convex blocker must cover the complete corner envelope. The implementation
-never combines unrelated ray hits into an occlusion certificate. Caches only
-remember candidates: every query retests current geometry, so reuse after a
-rebuild, update, rollback or with another world remains safe. When several
-blockers qualify, cached and uncached queries can return different valid indices.
+A single-blocker proof covers the complete corner envelope. Combined proofs
+cover the union of solid wall sections or every complete subdivided envelope;
+unrelated corner-ray hits are never sufficient. Caches remember single-blocker
+candidates, not answers. Every query retests current geometry, so reuse after
+updates, rebuilds, rollback or with another world is safe. Combined proofs
+report `Occluded` with `occluder == -1` and are recomputed on each query.
+
+## Rotation, shapes and joined walls
+
+`Occluder` replaces `Box`. `bounds.center` is world-space; `bounds.extents` gives
+local half-sizes for `OccluderShape.Box` (the default) or three radii for
+`OccluderShape.Ellipsoid`. `rotation` defaults to `quaternion.identity`. Finite nonzero
+quaternions are normalized internally in binary64; zero/nonfinite rotations,
+unknown shapes and nonpositive extents cannot block. Observer and target bounds
+remain world-aligned, including the full motion/equipment envelope.
+
+```csharp
+Occluder diagonal = Occluder {
+    bounds = Bounds { center = float3(0), extents = float3(0.25, 2, 4) },
+    rotation = quaternion(0, 0.38268343, 0, 0.92387953)
+};
+Occluder pillar = Occluder {
+    shape = OccluderShape.Ellipsoid,
+    bounds = Bounds { center = float3(3, 0, 0), extents = float3(1, 2, 1) }
+};
+```
+
+Touching or overlapping **axis-aligned** box sections can form a solid wall.
+The proof uses a rectangular volume inside their union, never their enclosing
+AABB. Internal seams disappear; `surfaceMargin` shrinks the joined volume's
+outside surfaces. Exact touching is accepted only when the boundary arithmetic
+is exact; uncertain joins require actual overlap. No tolerance bridges a real
+gap. Joining retains at most 32 boxes derived from the first 16 eligible BVH
+candidates, so dense or fragmented maps can still fail open. Rotated boxes are
+not welded at a touching seam.
+
+For other layouts, `maxSubdivisions` (default 32, clamped to 0 to 128) bounds extra
+splits of observer/target bounds. Each child is fully certified against a single
+blocker or a joined volume. Both children must pass. This can combine overlapping
+shadows from differently oriented boxes or ellipsoids. Depth is capped at eight;
+exhausted budgets return `Visible`. Zero disables subdivision, not wall joining.
+A visible answer means **no proof was found**, not that an unobstructed ray was
+necessarily found. These limits trade culling effectiveness for bounded work;
+they never justify hiding an uncertain target.
 
 ## Reveal before a peek
 
@@ -98,17 +138,20 @@ must not overlap mutation.
 A cached blocker is tested first. Otherwise a balanced BVH rejects distant
 subtrees and masked geometry before corner testing. Leaves hold at most four
 boxes; three-way partitioning handles repeated centroids. Build outside the
-query loop. `Update` currently performs an O(N) search/refit, suitable for a few
-doors rather than thousands of moving occluders.
+query loop. `Update` uses O(1) source lookup and an O(log N) ancestor refit
+with unshared storage; shared snapshots can incur COW copying.
+Moving blockers can still degrade spatial quality; rebuild when necessary.
+Missing source/parent indices after layout migration are recovered once in O(N).
 
 For a batch, loop over preallocated storage and call `world.Query` directly.
 Take each cache element into a mutable local and write it back afterward.
 Passing a world or its lists by value to per-pair helpers can add expensive
 copies. There is no package-owned scheduler or batch allocation.
 
-The first version supports axis-aligned boxes only. Rotated boxes, meshes,
-terrain, rounded primitives, multi-blocker certificates, baked visibility sets,
-automatic scene collection and renderer integration are not implemented.
+Supported primitives are boxes and ellipsoids, including spheres. Capsules,
+arbitrary convex hulls, mesh/terrain import, baked visibility sets, automatic
+scene collection and renderer integration are not implemented. Combined proofs
+are deliberately bounded and do not solve every possible union of occluders.
 Profile a representative map: overlapping near misses and large latency bounds
 can dominate query cost. The package provides conservative geometry queries,
 not a complete anti-cheat system.

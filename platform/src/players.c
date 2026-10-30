@@ -921,3 +921,47 @@ int tide_platform_players_finish(int code)
 }
 
 #endif
+
+bool tide_platform_players_control(char *line, const size_t capacity)
+{
+#if defined(__wasm__) || defined(__ANDROID__)
+    (void)line;
+    (void)capacity;
+    return false;
+#else
+    if (count < 2u) return true;
+    if (own == 1u) {
+        if (!gathered && gather()) return false;
+        const uint32_t size = (uint32_t)strlen(line) + 1u;
+        for (uint32_t p = 2; p <= count; p++) {
+            if (!send_blob(seats[p].link, (const uint8_t *)line, size)) return false;
+        }
+        return true;
+    }
+    tide_writer told = {.grows = true};
+    const bool ok = read_blob(hub, &told) && told.size > 0 && told.size <= capacity && told.data[told.size - 1u] == 0;
+    if (ok) memcpy(line, told.data, told.size);
+    free(told.data);
+    return ok;
+#endif
+}
+
+bool tide_platform_players_control_done(bool *ok)
+{
+#if defined(__wasm__) || defined(__ANDROID__)
+    (void)ok;
+    return false;
+#else
+    if (count < 2u) return true;
+    const uint8_t result = *ok ? 1u : 0u;
+    if (own != 1u) return send_blob(hub, &result, 1);
+    tide_writer ack = {.grows = true};
+    bool connected = true;
+    for (uint32_t p = 2; p <= count && connected; p++) {
+        connected = read_blob(seats[p].link, &ack) && ack.size == 1;
+        if (connected && !ack.data[0]) *ok = false;
+    }
+    free(ack.data);
+    return connected;
+#endif
+}

@@ -96,7 +96,7 @@ typedef struct property property;
 // Catalog members are compile-time views over the model's immutable bytes.
 typedef enum skinned_kind {
     SKIN_NONE, SKIN_MESH, SKIN_ANIMATIONS, SKIN_SKELETON, SKIN_BONES,
-    SKIN_ANIMATION, SKIN_BONE, SKIN_POSE, SKIN_TRANSFORM,
+    SKIN_ANIMATION, SKIN_BONE, SKIN_POSE, SKIN_TRANSFORM, SKIN_BLEND_SHAPES, SKIN_BLEND_SHAPE,
 } skinned_kind;
 
 typedef struct skinned_member {
@@ -285,6 +285,9 @@ typedef struct field {
     // [Native]: a C library's state, which means nothing on another shard. A component's is 0 wherever its
     // entity is copied or arrives; a singleton's is each shard's own (shard_codegen.inc)
     bool native;
+    // `since.Snap()` somewhere: it counts its own snaps in a hidden int after the fields, tide_snaps_<name>,
+    // and views draw it as it is between two ticks whose counts differ
+    bool snap_counted;
 } field;
 
 typedef enum param_mode {
@@ -322,6 +325,7 @@ typedef struct param {
     loc name_at;
     bool read;    // The body names it
     bool written; // The body assigns through it
+    bool heap_written; // A function's: its code can change text, lists or grids through it (check.c, settle_heap_passes)
     bool c_indirect; // Internal CPU ABI: a proven read-only aggregate can borrow its caller's storage
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
     bool scene;     // `with scene Arena`, `without scene Arena`: by whether the entity is a loaded Arena's; no type, ...
@@ -547,7 +551,8 @@ typedef struct decl {
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
     struct prefab_node *prefab_root;
     struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
-    bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    bool is_sparse;   // [Sparse], or a tag made sparse to keep the archetypes within the limit (sparse_fallback): a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    bool sparse_fallback; // A tag Add or Remove names that would take the archetypes past the limit if it moved entities (derive_archetypes)
     bool visibility_optional; // Whole-component visibility needs an independent per-row presence byte on clients.
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
@@ -721,6 +726,10 @@ typedef struct decl {
     bool sample_raw;
     // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
     bool lod;
+    // [BlendShapes("jawOpen", "default*")] before a SkinnedMesh asset: the only shapes its import keeps, by name
+    // patterns where * is any run of characters (blend_shapes_kept); none when the attribute names none
+    bool blend_shapes_chosen;
+    VEC(str) blend_shape_patterns;
     bool asset_many; // A List or Map: a glob's matches, or the one file its path names
 
     // Systems, views, methods, functions, and an input's Sample
@@ -944,7 +953,7 @@ typedef enum builtin_call {
     CALL_UNLOAD,    // Scene.Unload(scene)
     CALL_SESSION,   // Session.Start, Open, Close, Join, Connect and Leave: `name` says which; type_decl is Start's scene
     CALL_CLIPBOARD, // Clipboard.Copy(text)
-    CALL_SNAP,      // entity.Snap() or singleton.Snap(): views draw it as it is this tick; type_decl is a singleton's
+    CALL_SNAP,      // entity.Snap(), singleton.Snap() or field.Snap(): views draw it as it is this tick; type_decl is a singleton's
     CALL_GUI,       // GUI.Button(...), GUILayout.Horizontal() { ... }: calls c_callee with the GUI first
     CALL_ACTION,    // content(): runs the Action its function was given
     CALL_TEXT,      // name.Contains(...), text's methods: calls c_callee with the text first
@@ -1056,6 +1065,7 @@ struct expr {
     str prefab_scope;          // Its source prefab instance's root path.
     int prefab_entity;         // Authored entity reference, when prefab_reference is set.
     bool prefab_reference;
+    bool prechecked;           // Checked already, to pick what takes it: checking it again gives its type
     bool shared_place; // A property compound operation reuses this receiver path.
     prefab_instance *prefab;
     loc end; // E_SWITCH: just past its closing brace, for editor spans
@@ -1096,6 +1106,7 @@ struct expr {
     expr *object;
     str member;
     field *field;          // Field of a component, singleton, input or record; BIND_FIELD's field.
+    field *snapped_field;  // CALL_SNAP of one field, `f.since.Snap()`: that field (type_decl is its component or singleton)
     property *property;    // Source member, including after lowering its read to a getter call.
     input_edge edge;       // .down / .up on an input field.
     int swizzle_len;       // Vector swizzle: number of components (0 if not a swizzle).
@@ -1546,6 +1557,7 @@ typedef struct program {
     decl *task_slots[2]; // Compiler-private match/local operation registries
     VEC(decl *) skinned_types; // Owned model values and their inferred/contracted catalog views.
     decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
+    decl *blend_shape, *blend_shapes; // Made the first time a program names them, so others keep their C
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
     bool editor_authoring; // Native authoring can instantiate checked prefabs without game startup.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination

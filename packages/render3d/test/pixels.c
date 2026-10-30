@@ -174,7 +174,8 @@ static int baseline(void)
     local.Probe.disableRenderer = true;
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     if (tide_render_target_live(hdr) || tide_render_target_live(shadow) || draw.run_count) return 1;
-    tide_draw_free(&draw);
+    // Preserve the epoch across scenes before releasing target bookkeeping.
+    tide_draw_forget(&draw);
     tide_local_free(&local);
     tide_world_free(&world);
     tide_render_targets_free();
@@ -235,7 +236,7 @@ static int scenario_pixels(const int scenario, const int face, const int flags)
     local.Probe.disableRenderer = true;
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     if (tide_render_target_live(hdr) || tide_render_target_live(shadow) || draw.run_count) return 1;
-    tide_draw_free(&draw);
+    tide_draw_forget(&draw);
     tide_local_free(&local);
     tide_world_free(&world);
     tide_render_targets_free();
@@ -259,6 +260,7 @@ static int frame(void *context, const float seconds)
         if (scenario_pixels(4, 0, flags[i])) return 1;
     for (int face = 0; face < 6; face++)
         if (scenario_pixels(5, face, 0)) return 1;
+    tide_draw_free(&draw);
     puts("ok: Render3D baseline, colored match/local lights, falloff, full spot cones, emission once, independent shadows, six point faces, exact atlas seams and strict Z/W guards");
     return 0;
 }

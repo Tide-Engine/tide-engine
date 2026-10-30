@@ -140,5 +140,82 @@ for (const p of stackProps) p.props[4] = p.props[0].endsWith("Start") ? -tick : 
 negativeObjects.find(n => n.name === "AnimationCurve").children.find(n => n.name === "KeyTime").props = [array("l", [-tick, 0n])];
 writePair("animation", "negative", negative);
 
+// Blend shapes on the rig's triangle: "smile" moves two vertices and a normal at a default of 25%,
+// "jawOpen" one vertex. Maya-style names: the channel is "Blends.smile", its shape "smile".
+function shaped(inBetween) {
+    const tree = document(true);
+    const objects = tree.find(n => n.name === "Objects").children, connections = tree.find(n => n.name === "Connections").children;
+    const shape = (id, name, indexes, vertices, normals) => node("Geometry", [id, `Geometry::${name}`, "Shape"], [node("Version", [100]),
+        node("Indexes", [array("i", indexes)]), node("Vertices", [array("d", vertices)]),
+        ...(normals ? [node("Normals", [array("d", normals)])] : [])]);
+    const channel = (id, name, percent, full) => node("Deformer", [id, `SubDeformer::Blends.${name}`, "BlendShapeChannel"], [
+        node("Version", [100]), node("DeformPercent", [percent]), node("FullWeights", [array("d", full)])]);
+    objects.push(node("Deformer", [7000n, "Deformer::Blends", "BlendShape"], [node("Version", [100])]),
+        channel(7100n, "smile", 25, inBetween ? [50, 100] : [100]), shape(7200n, "smile", [0, 2], [0, 0.5, 0, 0, 0, 0.25], [0, 0, 0, 1, 0, 0]),
+        channel(7300n, "jawOpen", 0, [100]), shape(7400n, "jawOpen", [1], [0, -1, 0]));
+    connections.push(connect(7000n, 1000n), connect(7100n, 7000n), connect(7200n, 7100n), connect(7300n, 7000n), connect(7400n, 7300n));
+    if (inBetween) {
+        objects.push(shape(7500n, "smileHalf", [0], [0, 0.25, 0]));
+        connections.push(connect(7500n, 7100n));
+    }
+    return tree;
+}
+writePair("shapes", "shapes", shaped(false));
+writePair("shapes", "inbetween", shaped(true));
+
+// Bone0 turns about z from 179 to -179 degrees over one 30 fps frame: two degrees, written wrapped, as
+// exporters do. Between the keys the bone must take the short way, not a full turn back through zero.
+const wrapped = document(true);
+const wrappedObjects = wrapped.find(n => n.name === "Objects").children;
+for (const p of wrappedObjects.find(n => n.name === "AnimationStack").children[0].children)
+    if (p.props[0].endsWith("Stop")) p.props[4] = tick / 30n;
+const rotationNode = wrappedObjects.find(n => n.name === "AnimationCurveNode");
+rotationNode.props = [6200n, "AnimCurveNode::R", ""];
+rotationNode.children = [node("Properties70", [], [prop("d|X", "Number", [0]), prop("d|Y", "Number", [0]), prop("d|Z", "Number", [179])])];
+const wrappedCurve = wrappedObjects.find(n => n.name === "AnimationCurve");
+for (const child of wrappedCurve.children) {
+    if (child.name === "Default") child.props = [179];
+    if (child.name === "KeyTime") child.props = [array("l", [0n, tick / 30n])];
+    if (child.name === "KeyValueFloat") child.props = [array("f", [179, -179])];
+}
+const wrappedConnections = wrapped.find(n => n.name === "Connections").children;
+for (const c of wrappedConnections) {
+    if (c.props[1] === 6200n && c.props[3] === "Lcl Translation") c.props[3] = "Lcl Rotation";
+    if (c.props[1] === 6300n) c.props[3] = "d|Z";
+}
+writePair("animation", "wrapped", wrapped);
+
+// Bone0 keyed (0, 10, 0) then (180, 170, 180) degrees over one 30 fps frame: the same rotation in its other
+// Euler triple, as exporters switch to. Between the keys it must stay where it is, not swing round.
+const twin = document(true);
+const twinObjects = twin.find(n => n.name === "Objects").children;
+for (const p of twinObjects.find(n => n.name === "AnimationStack").children[0].children)
+    if (p.props[0].endsWith("Stop")) p.props[4] = tick / 30n;
+const twinNode = twinObjects.find(n => n.name === "AnimationCurveNode");
+twinNode.props = [6200n, "AnimCurveNode::R", ""];
+twinNode.children = [node("Properties70", [], [prop("d|X", "Number", [0]), prop("d|Y", "Number", [10]), prop("d|Z", "Number", [0])])];
+const twinCurve = twinObjects.findIndex(n => n.name === "AnimationCurve");
+const axisCurve = (id, axis, values) => node("AnimationCurve", [id, `AnimCurve::${axis}`, ""], [node("Default", [values[0]]),
+    node("KeyVer", [4008]), node("KeyTime", [array("l", [0n, tick / 30n])]), node("KeyValueFloat", [array("f", values)]),
+    node("KeyAttrFlags", [array("i", [4, 4])]), node("KeyAttrDataFloat", [array("f", [0, 0, 0, 0, 0, 0, 0, 0])]),
+    node("KeyAttrRefCount", [array("i", [1, 1])])]);
+twinObjects.splice(twinCurve, 1, axisCurve(6300n, "X", [0, 180]), axisCurve(6301n, "Y", [10, 170]), axisCurve(6302n, "Z", [0, 180]));
+const twinConnections = twin.find(n => n.name === "Connections").children;
+for (const c of twinConnections) if (c.props[1] === 6200n && c.props[3] === "Lcl Translation") c.props[3] = "Lcl Rotation";
+twinConnections.splice(twinConnections.findIndex(c => c.props[1] === 6300n), 1,
+    connect(6300n, 6200n, "d|X"), connect(6301n, 6200n, "d|Y"), connect(6302n, 6200n, "d|Z"));
+writePair("animation", "twin", twin);
+
+// Bone0's last key one tick before its take's end, at 38 frames of 30 fps, as Mixamo's are: as floats, that key
+// and the end (where the take's boundary sample is) are the same time, and must be one key.
+const close = document(true);
+const closeObjects = close.find(n => n.name === "Objects").children;
+const closeEnd = tick * 38n / 30n;
+for (const p of closeObjects.find(n => n.name === "AnimationStack").children[0].children)
+    if (p.props[0].endsWith("Stop")) p.props[4] = closeEnd;
+for (const child of closeObjects.find(n => n.name === "AnimationCurve").children)
+    if (child.name === "KeyTime") child.props = [array("l", [0n, closeEnd - 1n])];
+writePair("animation", "close", close);
+
 mkdirSync(join(root, "bad"), { recursive: true });
 writeFileSync(join(root, "bad", "malformed.fbx"), "; FBX 7.4.0 project file\nObjects: { Geometry: 1, \"Geometry::Broken\", \"Mesh\" { Vertices: *9 { a: 0,0\n");

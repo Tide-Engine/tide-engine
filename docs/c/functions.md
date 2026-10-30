@@ -359,7 +359,7 @@ To the rest of the game it's the system its declaration says. It runs for the en
 
 ### What C is called with
 
-C is called once for each **run of rows**: entities that are side by side in the match's memory. That's a chunk of the entities that have one combination of components, a couple of thousand at most, or a piece of a chunk when the tick shares one out over threads. The runs come in the order a system written in Tide would go through the entities on one thread.
+C is called once for each **run of rows**: entities that are side by side in the match's memory. That's a chunk of the entities that have one combination of components, a couple of thousand at most, or a piece of a chunk when the tick shares one out over threads, or the entities between the rows that entities left, which a chunk can have until others take their places. The runs come in the order a system written in Tide would go through the entities on one thread.
 
 - `rows` comes first: `tide_rows_count(rows)` is how many rows the run has, and every array has that many values.
 - The **singletons** the system takes follow it, in the declaration's order, each a pointer: `const` for one it reads, and the match's own for one it takes `mut`. `Time` is `{ float dt; int32_t tick; float t; int32_t tickRate; }`, with an `int32_t seed` after them in a game that uses [the match's seed](../language/math.md#the-match-s-seed).

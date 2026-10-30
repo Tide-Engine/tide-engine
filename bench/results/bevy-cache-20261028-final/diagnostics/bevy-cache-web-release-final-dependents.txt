@@ -1,0 +1,19 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/web-release
+    Start 17: tidec_e2e_structural
+1/7 Test #17: tidec_e2e_structural .............   Passed    0.09 sec
+    Start 19: tidec_e2e_sparse
+2/7 Test #19: tidec_e2e_sparse .................   Passed    0.08 sec
+    Start 20: tidec_e2e_rows
+3/7 Test #20: tidec_e2e_rows ...................   Passed    0.60 sec
+    Start 21: tidec_e2e_sparse_rows
+4/7 Test #21: tidec_e2e_sparse_rows ............   Passed    0.09 sec
+    Start 27: tidec_e2e_destroy_rows
+5/7 Test #27: tidec_e2e_destroy_rows ...........   Passed    0.11 sec
+    Start 28: tidec_destroy_rows_codegen
+6/7 Test #28: tidec_destroy_rows_codegen .......   Passed    0.06 sec
+    Start 40: tidec_e2e_shards
+7/7 Test #40: tidec_e2e_shards .................   Passed    1.05 sec
+
+100% tests passed, 0 tests failed out of 7
+
+Total Test time (real) =   2.16 sec

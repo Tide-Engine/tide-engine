@@ -55,19 +55,69 @@ TIDE_TEST(table_grows_in_chunks)
     tide_entities_free(&entities);
 }
 
-TIDE_TEST(table_remove_moves_the_last_row_in)
+TIDE_TEST(table_remove_leaves_a_hole_the_next_row_fills)
 {
     tide_table t = {0};
     tide_entities entities = {0};
     fill(&t, &entities, 17); // A second chunk with one row
-    const tide_entity last = entity_at(&t, &columns, 16);
+    const tide_entity third = entity_at(&t, &columns, 3);
     tide_table_remove(&t, &columns, 3, &entities, 0);
-    TIDE_CHECK(t.count == 16 && t.chunks == 1);
-    TIDE_CHECK(position(&t, 3)[0] == 16.0f);
-    TIDE_CHECK(tide_entity_equal(entity_at(&t, &columns, 3), last));
-    TIDE_CHECK(tide_entity_location(&entities, last).row == 3);
+    // A hole: the null entity, the rest of the row as it was, every other row where it was
+    TIDE_CHECK(t.count == 17 && t.chunks == 2 && t.holes == 1 && tide_table_live(&t) == 16);
+    TIDE_CHECK(tide_row_gone(tide_table_get(&t, &columns, 3, 0)) && position(&t, 3)[0] == 3.0f);
+    TIDE_CHECK(!tide_table_whole(&t, 0) && tide_table_whole(&t, 1));
+    TIDE_CHECK(tide_entity_location(&entities, entity_at(&t, &columns, 16)).row == 16);
+    (void)third;
+    // Runs of entities skip it
+    const tide_entity *e = tide_table_column(&t, &columns, 0, 0);
+    uint32_t at = 0;
+    TIDE_CHECK(tide_table_run(e, &at, 16) == 3 && at == 0);
+    at = 3;
+    TIDE_CHECK(tide_table_run(e, &at, 16) == 16 && at == 4);
+    // The next row goes at the end: filling the hole would write its chunk
+    fill(&t, &entities, 1);
+    TIDE_CHECK(t.count == 18 && t.holes == 1 && position(&t, 17)[0] == 17.0f && !tide_table_whole(&t, 0));
+    // ...but a hole in the last chunk, which the end is in, is filled, zeroed
+    tide_table_remove(&t, &columns, 16, &entities, 0);
+    TIDE_CHECK(t.count == 18 && t.holes == 2 && !tide_table_whole(&t, 1));
+    fill(&t, &entities, 1);
+    TIDE_CHECK(t.count == 18 && t.holes == 1 && position(&t, 16)[0] == 16.0f && tide_table_whole(&t, 1));
+    TIDE_CHECK(tide_entity_location(&entities, entity_at(&t, &columns, 16)).row == 16);
+    // The last row goes with the holes before it, and its chunk if that's empty
+    tide_table_remove(&t, &columns, 16, &entities, 0);
     tide_table_remove(&t, &columns, 15, &entities, 0);
-    TIDE_CHECK(t.count == 15 && position(&t, 14)[0] == 14.0f);
+    TIDE_CHECK(t.count == 18 && t.holes == 3);
+    tide_table_remove(&t, &columns, 17, &entities, 0);
+    TIDE_CHECK(t.count == 15 && t.chunks == 1 && t.holes == 1 && position(&t, 14)[0] == 14.0f);
+    tide_table_free(&t, &columns);
+    tide_entities_free(&entities);
+}
+
+TIDE_TEST(table_settle_fills_holes_from_the_end)
+{
+    tide_table t = {0};
+    tide_entities entities = {0};
+    fill(&t, &entities, 40);
+    // A 32nd of the rows or fewer stay where they are
+    tide_table_remove(&t, &columns, 0, &entities, 0);
+    tide_table_settle(&t, &columns, &entities, 0);
+    TIDE_CHECK(t.count == 40 && t.holes == 1);
+    // Past that they're filled from the end, lowest hole first
+    tide_table_remove(&t, &columns, 20, &entities, 0);
+    const tide_entity last = entity_at(&t, &columns, 39);
+    tide_table_settle(&t, &columns, &entities, 0);
+    TIDE_CHECK(t.count == 38 && t.holes == 0 && t.hole_from == 38);
+    TIDE_CHECK(tide_entity_equal(entity_at(&t, &columns, 0), last) && position(&t, 0)[0] == 39.0f);
+    TIDE_CHECK(tide_entity_location(&entities, last).row == 0);
+    for (uint32_t row = 0; row < t.count; row++) {
+        const tide_entity e = entity_at(&t, &columns, row);
+        TIDE_CHECK(!tide_row_gone(&e) && tide_entity_location(&entities, e).row == row);
+    }
+    // Counted from the rows again, as a world that came as bytes does
+    tide_table_remove(&t, &columns, 7, &entities, 0);
+    t.holes = 0;
+    tide_table_count_holes(&t, &columns);
+    TIDE_CHECK(t.holes == 1 && t.hole_from == 7 && t.chunk_holes[0] == 1);
     tide_table_free(&t, &columns);
     tide_entities_free(&entities);
 }
@@ -79,14 +129,15 @@ TIDE_TEST(table_move_keeps_shared_columns)
     tide_entities entities = {0};
     fill(&from, &entities, 5);
     const tide_entity moved = entity_at(&from, &columns, 1);
+    const tide_entity stays = entity_at(&from, &columns, 2);
     const int32_t map[] = {0, 1, -1};
     const uint32_t row = tide_table_move(&from, &columns, 1, 0, &to, &wider, 1, map, &entities);
-    TIDE_CHECK(row == 0 && to.count == 1 && from.count == 4);
+    TIDE_CHECK(row == 0 && to.count == 1 && from.count == 5 && from.holes == 1);
     TIDE_CHECK(((const float *)tide_table_get(&to, &wider, 0, 1))[0] == 1.0f);
     TIDE_CHECK(*(const int32_t *)tide_table_get(&to, &wider, 0, 2) == 0);
     const tide_location at = tide_entity_location(&entities, moved);
     TIDE_CHECK(at.archetype == 1 && at.row == 0);
-    TIDE_CHECK(tide_entity_location(&entities, entity_at(&from, &columns, 1)).row == 1);
+    TIDE_CHECK(tide_entity_location(&entities, stays).row == 2);
     tide_table_free(&from, &columns);
     tide_table_free(&to, &wider);
     tide_entities_free(&entities);

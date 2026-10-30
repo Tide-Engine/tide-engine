@@ -1,0 +1,85 @@
+{
+  "valid": true,
+  "processes": 90,
+  "measured_ecs_ticks": 36000,
+  "ecs_warmup_ticks": 18000,
+  "additional_measured_c_ticks": 24000,
+  "archived_files_verified": 40,
+  "manifest_input_checks": 153,
+  "metadata_input_checks": 448,
+  "available_executables_verified": {
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bin\\versus_wide.exe": "455e586b712041306307e742697385c40a07c1be2a899a9b772ad2afb13da1e2",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\c30_control\\bin\\versus_wide.exe": "6509e121791f0deed3ee25e9e1108fb1634e009b2bee2064848b5b305a6c866e",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy\\release\\tide-bevy-bench.exe": "d83769333a56edceb3aed09ab38878774f8491e9c8b0ba3444db3bcfbeaed081",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\nodiv\\bin\\versus_wide.exe": "8961fb53505be85e99a6f78a1d991d01b221a30721d13f420ccd1064f0ad3d10",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask\\bin\\versus_wide.exe": "a84ffc034c6a4d8eeb53de164ee3fd133ed47a0fde5ae244ca23630aa5ef6f2f",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\versioned\\bin\\versus_wide.exe": "22ed816b7bd91936b783ad34092ea576f589f6427a506256cc27c80b8aef2f69",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned\\bin\\versus_wide.exe": "1905762d4a5fb6aa6ee74258696a69583cec3c3ec8e39c627ae468b06f65d472",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes\\fasttask_versioned_or\\bin\\versus_wide.exe": "743f7b62cb5d0a5684fa2770644a0f6a96ca7d21de9262527fb074b366416dc5"
+  },
+  "unavailable_original_paths": [],
+  "digests": {
+    "(1000000, 1, 99)": "0xa683eb7fe00d6622",
+    "(1000000, 0, 0)": "0x949538645cf2c1f2",
+    "(1000000, 1, 50)": "0x5696f80210717ed3",
+    "(1000000, 1, 95)": "0xd332cbdb933b490c"
+  },
+  "batches": [
+    {
+      "name": "c30_control",
+      "processes": 9,
+      "started": "2026-10-28T23:46:41.3651287Z",
+      "finished": "2026-10-28T23:47:06.8891582Z",
+      "quiet_resets": 0,
+      "contended": 0
+    },
+    {
+      "name": "nodiv",
+      "processes": 9,
+      "started": "2026-10-28T23:47:06.9018571Z",
+      "finished": "2026-10-28T23:47:31.8290846Z",
+      "quiet_resets": 0,
+      "contended": 0
+    },
+    {
+      "name": "fasttask",
+      "processes": 9,
+      "started": "2026-10-28T23:47:31.8432023Z",
+      "finished": "2026-10-28T23:47:56.7725545Z",
+      "quiet_resets": 0,
+      "contended": 0
+    },
+    {
+      "name": "versioned",
+      "processes": 9,
+      "started": "2026-10-28T23:47:56.7822087Z",
+      "finished": "2026-10-28T23:48:21.9560403Z",
+      "quiet_resets": 0,
+      "contended": 0
+    },
+    {
+      "name": "fasttask_versioned",
+      "processes": 9,
+      "started": "2026-10-28T23:48:21.9712317Z",
+      "finished": "2026-10-28T23:48:47.2238822Z",
+      "quiet_resets": 0,
+      "contended": 0
+    },
+    {
+      "name": "fasttask_versioned_or",
+      "processes": 9,
+      "started": "2026-10-28T23:48:47.2325935Z",
+      "finished": "2026-10-28T23:49:13.6933669Z",
+      "quiet_resets": 0,
+      "contended": 0
+    },
+    {
+      "name": "fasttask-controls",
+      "processes": 36,
+      "started": "2026-10-28T23:49:55.8237906Z",
+      "finished": "2026-10-28T23:51:07.3353512Z",
+      "quiet_resets": 0,
+      "contended": 0
+    }
+  ]
+}

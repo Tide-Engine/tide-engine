@@ -47,16 +47,9 @@ else()
     set(TIDE_ANDROID OFF)
 endif()
 
+include(cmake/Sanitizers.cmake)
 include(cmake/TideFlags.cmake)
 include(cmake/Tide.cmake)
-
-# For testing: AddressSanitizer and UndefinedBehaviorSanitizer on everything,
-# like the WebRTC stack's fuzzing (platform/tests/rtc_fuzz.c). Linux and macOS.
-option(TIDE_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
-if(TIDE_SANITIZE)
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
-    add_link_options(-fsanitize=address,undefined)
-endif()
 include(cmake/WebTest.cmake)
 include(cmake/VulkanTests.cmake)
 include(cmake/HlslTests.cmake)
@@ -186,7 +179,10 @@ if(TIDE_PLATFORM)
             add_test(NAME tide_server_shards_journal COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_journal.mjs"
                 "$<TARGET_FILE:tide_server_shards>")
             set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
-            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 80) # Three processes, 25 seconds each
+            # Do not overlap disk-synchronous recovery with installers and
+            # other server/process tests on shared CI runners.
+            # The 2.5-second crash run, two 60-second recoveries, and cleanup.
+            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 130 RUN_SERIAL TRUE)
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"

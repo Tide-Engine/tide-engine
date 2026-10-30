@@ -1,0 +1,8 @@
+// expect: views never blend int, so 'stance' is drawn as it is already
+component Fighter { int stance; float since; }
+scene Main { }
+system Enter(mut Fighter f)
+{
+    f.stance = 1;
+    f.stance.Snap();
+}

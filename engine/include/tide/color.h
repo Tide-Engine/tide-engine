@@ -34,6 +34,12 @@ static inline bool tide_color_is_none(const tide_color c)
 
 // Tide's operators on colors: channel by channel, alpha too, and scaled by a
 // number.
+// color.WithAlpha(a): the color with that alpha, its red, green and blue as they are.
+static inline tide_color tide_color_with_alpha(const tide_color c, const float alpha)
+{
+    return (tide_color){c.r, c.g, c.b, alpha};
+}
+
 static inline tide_color tide_add_color(const tide_color a, const tide_color b)
 {
     return (tide_color){a.r + b.r, a.g + b.g, a.b + b.b, a.a + b.a};

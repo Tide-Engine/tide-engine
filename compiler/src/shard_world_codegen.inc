@@ -457,6 +457,7 @@ static void gen_shard_queries(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (%s) continue;\n", presence_cell(g, "w", a, ghost, "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         if (prog->hierarchy[0]) sb_put(o, "        if (!tide_entity_is_null(tide_parent_of(w, e))) continue;\n");
@@ -483,6 +484,7 @@ static void gen_shard_queries(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (%s) continue;\n", presence_cell(g, "w", a, ghost, "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "        double p[3];\n        const bool placed = tide_shard_where(w, e, p);\n"
@@ -499,6 +501,7 @@ static void gen_shard_queries(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count && count < capacity; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (%s) continue;\n", presence_cell(g, "w", a, ghost, "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "        double p[3];\n        if (!tide_shard_where(w, e, p)) continue;\n"
@@ -516,6 +519,7 @@ static void gen_shard_queries(gen *g)
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a) || !arch_stores(g, a, prog->owner->index)) continue;
             sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+            sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
             sb_printf(o, "        if (%s) continue;\n", presence_cell(g, "w", a, ghost, "row", false));
             if (comp_sparse(g, prog->owner->index)) sb_printf(o, "        if (!%s) continue;\n", presence_cell(g, "w", a, prog->owner->index, "row", false));
             sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
@@ -541,6 +545,7 @@ static void gen_shard_queries(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (!%s) continue;\n", presence_cell(g, "w", a, ghost, "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         if (prog->hierarchy[0]) sb_put(o, "        if (!tide_entity_is_null(tide_parent_of(w, e))) continue;\n");
@@ -552,6 +557,7 @@ static void gen_shard_queries(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (!%s) each(context, *%s);\n    }\n", presence_cell(g, "w", a, ghost, "row", false),
                   arch_cell(g, "w", a, 0, "tide_entity", "row", false));
     }
@@ -589,6 +595,7 @@ static void gen_shard_queries(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (%s) out->ghosts++;\n        else out->owned++;\n    }\n", presence_cell(g, "w", a, ghost, "row", false));
     }
     sb_put(o, "    uint32_t size;\n    bool copied;\n"
@@ -647,6 +654,7 @@ static void gen_shard_unload(gen *g)
         const char *name = arch_name(g, a);
         sb_printf(o, "    for (uint32_t i = w->%s.count; i-- > 0;) {\n", name);
         sb_printf(o, "        if (i >= w->%s.count) continue;\n", name);
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
         sb_printf(o, "        if (!tide_entity_equal(*%s, scene) || tide_entity_equal(e, scene)) continue;\n",
                   arch_cell(g, "w", a, 1, "tide_entity", "i", false));

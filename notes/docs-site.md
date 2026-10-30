@@ -1,5 +1,215 @@
 # The docs site
 
+## Compact desktop minimize example (2026-10-29)
+
+The owner requested improving or removing gui-desktop because it overflowed
+its embed and felt janky. Kept it as a compact 340 x 244 note, centered and
+scaled only below the normal 376 x 400 viewport. Removed the sidebar, inert
+menu/app/delete actions and dock magnification. The fixed Notes icon and
+thumbnail slot sit above the host stats corner. Drag placement is clamped to
+the available desktop, including after a viewport resize.
+
+The 0.42-second reversible tween feeds a mesh whose rows retain their vertical
+order and settle directly onto the thumbnail rectangle. This replaces the
+moving dock destination and collapsed-line/thumbnail handoff. The same target
+image is frozen during motion and while minimized; widgets are not declared
+then, and minimizing clears keyboard focus. Notes restores/reverses at any
+point; the settled thumbnail also restores. User docs describe these controls.
+No engine/runtime/compiler API or default styling changes.
+
+Native and web-debug example targets compile without warnings. Scripted native
+captures cover open/bending/minimized/restored states, title editing and Share,
+and dragging far outside the desktop; 320 x 400, 376 x 400 and 960 x 540 layouts
+were inspected. The docs runner now exercises actual target widgets and exact
+pixel restoration of the edited note through thumbnail restore and in-flight
+reversal, excluding the independent FPS counter from comparisons. Both WebGL
+and WebGPU pass, including typing while minimized without altering the note.
+The browser interaction helper waits for elapsed animation time and rendered
+work, and for pointer releases to be processed before moving away; draw-call
+counts alone did not reliably settle transitions or clicks on WebGPU.
+Production docs build passes with Node 24.22.1 and the existing allowed
+unstaged-example 404s. Native and WebGPU captures were visually inspected.
+Other operating systems and real-phone testing remain unavailable locally.
+
+Integration retains incoming benchmark and Render3D notes through 16fcf26ea;
+the only conflict was concurrent notes prepends. The merged docs production
+build and selected desktop interaction checks pass again on WebGL and WebGPU.
+Incoming package changes do not affect this example's compiled runtime.
+
+## Public ECS benchmark page (2026-10-29)
+
+`/benchmarks` is an ordinary prerendered docs page, linked from the home page
+and Get started sidebar. `src/lib/components/Benchmarks.svelte` presents a
+zero-origin workload chart and the complete report table, with medians and
+the min/max of process medians. The comparison is scoped to ECS updates;
+setup, hashing, snapshots, networking and rendering are excluded. Static
+frozen membership and EnTT's explicit dispatch are stated rather than
+presented as equivalent engine services. There is no aggregate score.
+
+`src/lib/data/benchmarks.json` is the site's presentation snapshot, schema 1:
+repository URL plus independent reports, each with date/hardware, exact Tide
+and benchmark revisions, raw-result path, iteration counts, implementations,
+workloads, medians/ranges and measurement notes. Benchmark source, runner and
+raw evidence belong to the independent public `Tide-Engine/tide-benchmarks`
+repository. Reports preserve source/result revisions internally; different
+runs are not pooled. The default report compares Tide, Bevy 0.20.0, Flecs
+4.1.6 and EnTT 4.0.0 in six serial workloads, using 96 accepted processes (four cyclic
+rounds, 200 warmup and 400 measured ticks each). The raw evidence retains one
+excluded contended attempt, 75 correctness cases across four native ECS
+implementations/C reference/Tide WASI, and 26 passing harness tests. The
+initial Tide/Bevy batch remains selectable and retains its tied 50%-frozen
+four-thread result and overlapping/noisy churn observations. Both reports
+pin benchmark archive revision `810437c0df4cf01b925ea6a6c403eb78925d641c`;
+the fresh report's manifest records its pre-measurement source commit too.
+
+`src/lib/benchmarks.ts` validates finite positive timings, ordered ranges,
+complete engine coverage and report metadata at build time. The content
+pipeline replaces the interactive marker with tables in Markdown/LLM/skill
+exports, so exported numbers and Tide revision links match the website and
+changes to the dataset participate in the documentation fingerprint. No chart or
+other package dependency was added. Native selects, text values, table
+headers and a focusable horizontal scroll region support keyboard use and
+small screens; the initial report's entire table is server-rendered.
+
+The owner requested that the benchmark repository remain public on GitHub
+without being promoted in the docs. The page and Markdown/LLM exports omit
+benchmark repository, source and raw-measurement links; the measurements,
+methodology and Tide engine revision link remain. The dataset keeps its
+repository URL, pinned benchmark revisions and raw-result paths as internal
+provenance. The homepage describes the comparison without promising source
+links on the benchmark page.
+
+Link-removal validation: the production docs build and both existing
+development/isolated-production export tests pass after merging `dev`.
+GitHub still reports the benchmark repository as public. No browser rerun
+was needed for removing links and prose.
+
+Validation: Svelte check has zero errors/warnings. After merging current
+`dev`, the final docs production build and development/isolated-production
+Markdown exports plus SEO/HTTP tests pass (5 tests). A temporary ignored
+browser check used muted headless Chrome and verified switching between both
+reports, all four engine rows/columns, workload selection, 390px page fit,
+keyboard table scrolling and zero browser runtime errors. Desktop light/dark,
+the complete four-engine table and mobile screenshots were inspected. Owned
+browsers and local servers were closed after validation; benchmark timing
+did not overlap these checks. Existing unstaged game artifacts remain absent
+from this checkout's site build; its pre-existing playable-page 404
+diagnostics do not affect the benchmark page or these checks.
+
+## Render3D camera-fitted shadow examples (2026-10-29)
+
+The Render3D guide and package README now document camera-fitted directional
+cascades, the separate camera shadow range and upstream caster reach, fixed
+volume opt-in, atomic per-light view budgets and normalized tent filtering.
+The former unbuilt-cascades limitation is removed. The package's implementation,
+regressions and integration validation are recorded in `notes/render3d.md`.
+
+The three Render3D examples use their existing camera/exhibit geometry to set
+the shadow range. The base example covers its camera distance plus eight world
+units; the materials and effects examples cover the active exhibit's actual
+camera-forward depth, its bounding radius and four units of receiver margin.
+This keeps shadows within reach when zoomed out in narrow embeds while assigning
+more detail to close views. Obsolete fixed center/extent assignments are removed.
+Camera controls, framing, source textures, material cutoffs and stats placement
+are unchanged. Build and browser results belong with the accompanying Render3D
+integration validation; no separate validation run is claimed by this docs edit.
+
+## Material-inspired GUI example (2026-10-29)
+
+The owner requested a different look for the gui-style menu based on Material
+Design. The example now uses a light lavender surface, purple primary/tonal
+pill actions, translucent hover/press state layers and a focus ring. Settings
+replaces the actions with a compact themed sound card, eased vertically; Play
+shows an inverse-surface snackbar. Width is bounded by the viewport; the card
+and snackbar leave the bottom stats corner clear at the 376 x 400 embed size.
+The guide's introduction, theme and custom-button recipe match the new example;
+gradients remain documented as an optional technique. This is a Material-inspired
+composition using Tide's existing font/widgets, not a full Material component
+implementation. No engine, compiler, default theme or language changes.
+
+Validation: native and web-debug example targets compile without warnings.
+Native scripted captures at 376 x 400 cover Play feedback, Settings/Done,
+keyboard focus/activation, Music off and volume changed from 0.70 to 0.84;
+a 960 x 540 menu capture also passes visual inspection. Production docs build
+passes with Node 24.22.1 and existing unstaged-example 404s. The first browser
+smoke ran against a site built before example staging and reported unavailable;
+the site was rebuilt after staging. Final selected docs source/rendering smoke
+passes on both WebGL and WebGPU; the WebGPU capture was visually inspected.
+Other OS and real-phone coverage remains CI/device work.
+
+
+## Tide Motion mapped humanoid retargeting (2026-10-27)
+
+The Motion guide now documents offline SOMA-to-character retargeting and the
+reverse path for existing clips, reusable mapping files, skeleton inspection,
+required/optional bones, reference-pose calibration, root scaling and batch
+integration. The target hierarchy binds through ordinary Tide animation APIs;
+runtime/engine code is unchanged. Limits include fixed target bone lengths,
+reported omission of non-root translations, no automatic bone assignment or
+contact IK, and supported static uniform versus unsupported animated/nonuniform
+scale. Implementation and validation are recorded in tide-motion's notes.
+Production npm build passes with Node 24.22.1 and the existing allowed unstaged
+playable-page 404s. No manual docs workflow was dispatched.
+
+## Tide Motion public tool (2026-10-27)
+
+The Tools sidebar includes tools/motion, linked from Animation files. It covers
+the independent native CLI/installer, Kimodo generation, MotionBricks transitions,
+ordered batches that reuse loaded models, bounded Tide skeleton previews and
+ordinary Animation GLB imports. SOMA-30-only output, absent meshes/retargeting,
+memory/download requirements and separate source/model licenses are explicit.
+Links point to the now-public Tide-Engine/tide-motion repository and releases.
+Its release workflow targets Windows x64, Linux x64/ARM64 and macOS Apple Silicon;
+platform validation and publishing contracts belong in that repository's notes.
+
+Validation: npm run build passes with Node 24.22.1, including sidebar, page,
+anchor and internal-link checks. Existing allowed 404s are unstaged playable
+example pages. No engine/package/CLI code changed, and no manual docs workflow
+was dispatched; normal dev publishing handles deployment.
+
+## Corner Culling performance contract (2026-10-27)
+
+The guide now describes indexed source lookup, ancestor-only refits and recovery
+of missing indices after layout migration, with COW cost qualified separately.
+Production npm build passes with the existing unstaged playable-page 404s.
+Measurements and native/WASI validation are in notes/corner-culling.md.
+
+## Corner Culling rotated/combined geometry (2026-10-27)
+
+The package guide now documents Occluder, quaternion rotation, boxes/ellipsoids,
+joined walls, bounded subdivision and the combined-result source-index contract.
+The included Tide example compiles with the package fixture on native/WASI.
+Production npm build passes with the existing unstaged playable-page 404s.
+No site infrastructure or language spec changes; implementation/visual validation
+is recorded in notes/corner-culling.md.
+
+## Exclude CI from CLI usage totals (2026-10-26)
+
+The owner requested that CI not count as CLI usage after the dashboard showed
+large failed-run and scratch-install counts. `docs/telemetry.js` now applies
+`ci = 0` to every usage aggregate: daily/weekly activity, active installs
+(including today and the last week), commands, failures, versions, platforms
+and successful-build percentiles. This also excludes previously stored CI
+events without deleting data or changing ingestion, retention or event fields.
+`totals.ci` remains the separate count of excluded commands in the chosen
+period. The admin page labels that count as excluded instead of calculating a
+share of usage, and the Usage data page documents the distinction.
+
+Build and Docs also disable telemetry explicitly; see
+`notes/releases-and-ci.md`, CI telemetry opt-out. Existing events can only be
+distinguished by their recorded `ci` flag; unmarked automation cannot be
+identified retrospectively. The corrected historical totals take effect with
+the normal docs deployment.
+
+Validation with Node 24.22.1: all seven telemetry tests pass, including exact
+comparison of every aggregate before/after mixed CI events across 1/7/30-day
+ranges, shared/distinct install IDs, historical events, CI-only days and the
+authenticated API. All eleven admin unit/production HTTP tests pass. Svelte
+check has zero errors/warnings and the production docs build passes with the
+existing allowed unstaged-example/game 404s. No browser or native/web engine
+suite was needed for this server-query and wording change; no extra workflow
+was dispatched.
+
 ## Corner Culling package guide (2026-10-26)
 
 The package overview and sidebar now include Corner Culling. Its guide documents

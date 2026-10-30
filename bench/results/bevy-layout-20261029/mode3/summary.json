@@ -1,0 +1,108 @@
+{
+  "valid": true,
+  "rounds": 3,
+  "warmup": 200,
+  "ticks": 400,
+  "has_before": false,
+  "processes": 12,
+  "estimator": "median of process tick medians; ratios are median of paired ratios",
+  "scope": "ECS ticks only; excludes setup, snapshots, per-tick hashing, networking and rendering",
+  "cases": [
+    {
+      "workload": "wide",
+      "id": "filtered-frozen95-1m-1",
+      "threads": 1,
+      "frozen": 95,
+      "tagged": 1,
+      "rate": 0,
+      "count": 1000000,
+      "digest": "0xd332cbdb933b490c",
+      "tide_ms": 0.8762,
+      "bevy_ms": 0.22605,
+      "c_ms": 1.01435,
+      "tide_range_ms": [
+        0.8592,
+        0.91555
+      ],
+      "bevy_range_ms": [
+        0.2179,
+        0.30935
+      ],
+      "c_range_ms": [
+        1.01105,
+        1.04775
+      ],
+      "ratio_bevy_over_tide": 0.2630935754189944,
+      "paired_ratios": [
+        0.2630935754189944,
+        0.33788433182240185,
+        0.2486875142661493
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          0.8592,
+          0.91555,
+          0.8762
+        ],
+        "Bevy": [
+          0.22605,
+          0.30935,
+          0.2179
+        ],
+        "C": [
+          1.04775,
+          1.01105,
+          1.01435
+        ]
+      }
+    },
+    {
+      "workload": "wide",
+      "id": "filtered-frozen99-1m-1",
+      "threads": 1,
+      "frozen": 99,
+      "tagged": 1,
+      "rate": 0,
+      "count": 1000000,
+      "digest": "0xa683eb7fe00d6622",
+      "tide_ms": 0.0963,
+      "bevy_ms": 0.0483,
+      "c_ms": 1.03785,
+      "tide_range_ms": [
+        0.0942,
+        0.0963
+      ],
+      "bevy_range_ms": [
+        0.048,
+        0.0487
+      ],
+      "c_range_ms": [
+        1.0139,
+        1.04355
+      ],
+      "ratio_bevy_over_tide": 0.501557632398754,
+      "paired_ratios": [
+        0.5169851380042463,
+        0.4984423676012461,
+        0.501557632398754
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          0.0942,
+          0.0963,
+          0.0963
+        ],
+        "Bevy": [
+          0.0487,
+          0.048,
+          0.0483
+        ],
+        "C": [
+          1.04355,
+          1.0139,
+          1.03785
+        ]
+      }
+    }
+  ]
+}

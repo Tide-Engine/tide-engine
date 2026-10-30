@@ -201,7 +201,7 @@ This builds the game as a web page, which draws with WebGPU (or WebGL 2 where th
 tide build --release --web
 ```
 
-It goes in `.build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
+It goes in `.build/web/`, a folder to put online as it is: `index.html`, which shows the game downloading, and the game's files beside it, which browsers keep between visits. To try that page on your own machine, serve the folder (`npx serve .build/web`): a page opened from disk can't download its files. `tide build --release --web --single-file` makes one `.html` file with the game inside instead, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
 
 ## The whole game
 

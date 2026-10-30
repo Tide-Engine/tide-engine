@@ -304,6 +304,14 @@ static const uint8_t *cell(const tide_layout *l, const tide_layout_archetype *a,
     return rows + at + (uint64_t)row * column_size(l, a, column);
 }
 
+// Whether row `row` is a hole an entity left (tide_table_remove): its entity is the null one.
+static bool gone(const tide_layout *l, const tide_layout_archetype *a, const uint8_t *rows, const uint32_t count, const uint32_t row)
+{
+    tide_entity e;
+    memcpy(&e, cell(l, a, rows, count, 0, row), sizeof e);
+    return tide_row_gone(&e);
+}
+
 // Row `row`'s component at `p`, gathered from its lanes (after its presence
 // byte, for a sparse one) into `value`.
 static void gather(const tide_layout *l, const tide_layout_archetype *a, const uint8_t *rows, const uint32_t count,
@@ -490,6 +498,7 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         for (uint32_t row = 0; row < old.counts[a]; row++) {
             tide_entity e;
             memcpy(&e, cell(from_layout, fa, old.rows[a], old.counts[a], 0, row), sizeof e);
+            if (tide_row_gone(&e)) continue; // A hole: no entity, and no row in the new world
             if (goes[a] < 0) {
                 tide_entity_destroy(&old.entities, e);
                 m->entities_dropped++;
@@ -579,6 +588,7 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
                 if (goes[a] != (int32_t)k) continue;
                 const tide_layout_archetype *fa = &fw->archetypes[a];
                 for (uint32_t row = 0; row < old.counts[a]; row++) {
+                    if (gone(from_layout, fa, old.rows[a], old.counts[a], row)) continue;
                     uint8_t *value = take(&w, bytes);
                     if (tc) { // The whole value carried over, for the lane of it this column holds
                         const tide_layout_place *fc = old_component(&c, fa, tc->type);

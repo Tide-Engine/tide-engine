@@ -1,0 +1,2 @@
+// expect: 'Shaped' argument 1 is List<float>, not float
+SkinnedMesh<Vertex3> Open(SkinnedMesh<Vertex3> model) { return model.Shaped(1.0); }

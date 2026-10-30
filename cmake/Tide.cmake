@@ -126,7 +126,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -270,6 +270,21 @@ function(tide_add_game target)
             endif()
         endforeach()
     endforeach()
+    # The files themselves are in DEPENDS, but Ninja never runs a command
+    # again because a dependency went away: a file deleted from a glob's
+    # folder would stay packed. Their list, written only when it changes, is a
+    # dependency too, so a file gone (CONFIGURE_DEPENDS globs configure again)
+    # or added changes it and the pack is made again, as for the sources.
+    set(asset_list "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.assets")
+    list(REMOVE_DUPLICATES asset_files)
+    list(JOIN asset_files "\n" asset_lines)
+    set(written "-")
+    if(EXISTS "${asset_list}")
+        file(READ "${asset_list}" written)
+    endif()
+    if(NOT written STREQUAL asset_lines)
+        file(WRITE "${asset_list}" "${asset_lines}")
+    endif()
     # The warnings it means to have, written only when they change, so tidec
     # runs again when they do.
     set(expected "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.warnings")
@@ -311,6 +326,14 @@ function(tide_add_game target)
     if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT AND NOT ARG_EMBED)
         set(strip_assets "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
     endif()
+    set(strip_names OFF)
+    # RelWithDebInfo and explicit visualizers are developer/profiling builds.
+    if(NOT ARG_HOST AND NOT ARG_LAYOUT AND NOT ARG_EMBED AND NOT ARG_VISUALIZERS AND NOT TIDE_VISUALIZERS)
+        set(strip_names "$<CONFIG:Release,MinSizeRel>")
+    endif()
+    if(ARG_STRIP_NAMES)
+        set(strip_names ON)
+    endif()
     # VISUALIZERS: how debuggers show the game's values, <name>.natvis (in a Windows program's .pdb) and
     # <name>_lldb.py, as tide's debug builds have them (compiler/src/debug_views_codegen.inc)
     set(visualizers "")
@@ -322,9 +345,9 @@ function(tide_add_game target)
     add_custom_command(
         OUTPUT "${out_c}" "${out_h}" ${pack_outputs} ${visualizer_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
-        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" -P "${TIDE_RUN_TIDEC}"
+        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" "-DSTRIP_NAMES=${strip_names}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
-        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
+        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${asset_list}" "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
 
@@ -394,13 +417,18 @@ int main(int argc, char **argv)
             target_link_options(${target} PRIVATE "$<$<CONFIG:Release,MinSizeRel>:LINKER:-s>")
         elseif(APPLE)
             target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:-dead_strip>"
-                "$<$<CONFIG:Release,MinSizeRel>:LINKER:-S,-x>")
+                "$<$<CONFIG:Release,MinSizeRel>:LINKER:-S,-x,-no_exported_symbols>")
         elseif(WIN32 AND NOT MINGW)
             target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:/OPT:REF>")
         else()
             target_link_options(${target} PRIVATE "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:LINKER:--gc-sections>"
                 "$<$<CONFIG:Release,MinSizeRel>:LINKER:-s>")
         endif()
+    endif()
+    if(TIDE_ANDROID AND (NOT ARG_HOST OR ARG_WINDOW) AND NOT ARG_LAYOUT AND NOT ARG_EMBED)
+        set(exports "${PROJECT_SOURCE_DIR}/platform/android/game.exports")
+        target_link_options(${target} PRIVATE "$<$<CONFIG:Release,MinSizeRel>:LINKER:--version-script=${exports}>")
+        set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${exports}")
     endif()
     target_include_directories(${target} PRIVATE "${out_dir}")
     if(visualizers)

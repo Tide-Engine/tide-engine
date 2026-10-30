@@ -1,0 +1,70 @@
+// Tags that would take the archetypes past the limit: twelve tags added to an
+// entity read from a field, which can be any entity, would make 4,096
+// combinations of each. The first of them become presence bits in the row
+// until the rest fit; Near, which only `this` gains, still moves its entity.
+
+component Marker
+{
+    int id;
+}
+
+singleton Pick
+{
+    Entity target;
+}
+
+component T0 { }
+component T1 { }
+component T2 { }
+component T3 { }
+component T4 { }
+component T5 { }
+component T6 { }
+component T7 { }
+component T8 { }
+component T9 { }
+component T10 { }
+component T11 { }
+component Near { }
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Pick pick)
+{
+    pick.target = Spawn(Marker { id = 1 });
+    Spawn(Marker { id = 2 });
+}
+
+// On tick 1 the picked entity gains every tag; on tick 3 it loses the even ones
+system Tag(Pick pick, Time time)
+{
+    if (time.tick == 1)
+    {
+        pick.target.Add(T0);
+        pick.target.Add(T1);
+        pick.target.Add(T2);
+        pick.target.Add(T3);
+        pick.target.Add(T4);
+        pick.target.Add(T5);
+        pick.target.Add(T6);
+        pick.target.Add(T7);
+        pick.target.Add(T8);
+        pick.target.Add(T9);
+        pick.target.Add(T10);
+        pick.target.Add(T11);
+    }
+    if (time.tick == 3)
+    {
+        pick.target.Remove(T0);
+        pick.target.Remove(T2);
+        pick.target.Remove(T4);
+        pick.target.Remove(T6);
+        pick.target.Remove(T8);
+        pick.target.Remove(T10);
+    }
+}
+
+system Mark(Marker marker, Time time, without Near)
+{
+    if (time.tick == 2 && marker.id == 2) this.Add(Near);
+}

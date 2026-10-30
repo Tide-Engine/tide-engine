@@ -141,13 +141,20 @@ static bool fbx_align(fbx_buffer *s)
     return fbx_bytes(s, zeros, (4u - s->size % 4u) % 4u);
 }
 
+// A view of the bytes written since `begin`, which then end on four bytes.
+static uint32_t fbx_view(fbx_builder *b, size_t begin)
+{
+    uint32_t view = b->num_views++;
+    fbx_text(&b->views, "%s{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu}", view ? "," : "", begin, b->bin.size - begin);
+    fbx_align(&b->bin);
+    return view;
+}
+
 static uint32_t fbx_accessor(fbx_builder *b, size_t begin, uint32_t count, const char *type, uint32_t component)
 {
-    uint32_t view = b->num_views++, accessor = b->num_accessors++;
-    fbx_text(&b->views, "%s{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu}", view ? "," : "", begin, b->bin.size - begin);
+    uint32_t view = fbx_view(b, begin), accessor = b->num_accessors++;
     fbx_text(&b->accessors, "%s{\"bufferView\":%u,\"componentType\":%u,\"count\":%u,\"type\":\"%s\"}",
              accessor ? "," : "", view, component, count, type);
-    fbx_align(&b->bin);
     return accessor;
 }
 
@@ -299,6 +306,60 @@ static bool fbx_skin(fbx_builder *b, const ufbx_node *node, const ufbx_skin_defo
     return fbx_text(&b->skins, "]}");
 }
 
+// A blend channel's one shape at full weight. A channel of in-between shapes
+// (several keyframes, or one at another weight) is refused: Tide's shapes are
+// linear, one delta each.
+static bool fbx_channel_shape(fbx_builder *b, const ufbx_blend_channel *channel, const ufbx_blend_shape **out)
+{
+    *out = NULL;
+    if (channel->keyframes.count != 1u || !channel->keyframes.data[0].shape || channel->keyframes.data[0].target_weight != 1.0) {
+        return fbx_fail(b, "export each blend shape as one target at full weight, without in-between shapes",
+                        "has FBX blend shape '%.60s' with in-between shapes, which Tide doesn't read", channel->name.data);
+    }
+    if (!(channel->weight >= -FLT_MAX && channel->weight <= FLT_MAX)) return fbx_fail(b, NULL, "has a non-finite FBX blend shape weight");
+    *out = channel->keyframes.data[0].shape;
+    return true;
+}
+
+// One morph target accessor of a part: a channel's position or normal offsets
+// at the part's vertices, as a sparse accessor over zeros (none where the
+// shape moves nothing there).
+static bool fbx_target_accessor(fbx_builder *b, const ufbx_mesh *mesh, const ufbx_blend_shape *shape, const uint32_t *corners,
+                                uint32_t count, bool normals, uint32_t *accessor)
+{
+    fbx_buffer indices = {.owner=b}, values = {.owner=b};
+    uint32_t moved = 0u;
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < count; i++) {
+        const uint32_t vertex = mesh->vertex_indices.data[corners[i]];
+        const uint32_t at = ufbx_get_blend_shape_offset_index(shape, vertex);
+        if (at == UFBX_NO_INDEX) continue;
+        const ufbx_vec3_list *offsets = normals ? &shape->normal_offsets : &shape->position_offsets;
+        if (at >= offsets->count) continue;
+        const ufbx_vec3 v = offsets->data[at];
+        if (v.x == 0.0 && v.y == 0.0 && v.z == 0.0) continue;
+        ok = fbx_word(&indices, i) && fbx_number(&values, v.x) && fbx_number(&values, v.y) && fbx_number(&values, v.z);
+        moved++;
+    }
+    *accessor = b->num_accessors++;
+    if (ok && !moved) {
+        ok = fbx_text(&b->accessors, "%s{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"}", *accessor ? "," : "", count);
+    } else if (ok) {
+        size_t begin = b->bin.size;
+        ok = fbx_bytes(&b->bin, indices.data, indices.size);
+        const uint32_t index_view = fbx_view(b, begin);
+        begin = b->bin.size;
+        ok = ok && fbx_bytes(&b->bin, values.data, values.size);
+        const uint32_t value_view = fbx_view(b, begin);
+        ok = ok && fbx_text(&b->accessors, "%s{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\",\"sparse\":{\"count\":%u,"
+                            "\"indices\":{\"bufferView\":%u,\"componentType\":5125},\"values\":{\"bufferView\":%u}}}",
+                            *accessor ? "," : "", count, moved, index_view, value_view);
+    }
+    free(indices.data);
+    free(values.data);
+    return ok && !b->failed;
+}
+
 static bool fbx_skin_vertex_has_weights(fbx_builder *b, const ufbx_skin_deformer *skin, size_t index, bool *has)
 {
     *has = false;
@@ -323,7 +384,13 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
     const ufbx_skin_deformer *skin = NULL;
     bool fallback = false;
     if (b->skinned) {
-        if (mesh->blend_deformers.count) return fbx_fail(b, "export without blend shapes or morph targets", "has FBX blend shapes, which skinned models don't read yet");
+        for (size_t i = 0; i < mesh->blend_deformers.count; i++) {
+            const ufbx_blend_deformer *blend = mesh->blend_deformers.data[i];
+            for (size_t k = 0; k < blend->channels.count; k++) {
+                const ufbx_blend_shape *shape;
+                if (!fbx_channel_shape(b, blend->channels.data[k], &shape)) return false;
+            }
+        }
         if (mesh->cache_deformers.count) return fbx_fail(b, "export bone animation instead of a vertex cache", "has FBX vertex-cache deformation, which Tide doesn't read");
         if (mesh->skin_deformers.count > 1u) return fbx_fail(b, "merge the skin deformers before exporting", "has several FBX skin deformers on one mesh");
         if (mesh->skin_deformers.count) {
@@ -396,6 +463,24 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
             if (ok && mesh->vertex_tangent.exists) ok = fbx_attribute(b, &attrs, mesh, corners, count, 5u);
             if (ok && skin) ok = fbx_weights(b, &attrs, mesh, skin, corners, count, fallback);
         }
+        // Each blend channel is a morph target of every part, named after its
+        // shape (Maya's channel is "blendShape1.smile", its shape "smile").
+        fbx_buffer targets = {.owner=b};
+        for (size_t d = 0; ok && b->skinned && d < mesh->blend_deformers.count; d++) {
+            const ufbx_blend_deformer *blend = mesh->blend_deformers.data[d];
+            for (size_t k = 0; ok && k < blend->channels.count; k++) {
+                const ufbx_blend_shape *shape;
+                uint32_t position, normal;
+                ok = fbx_channel_shape(b, blend->channels.data[k], &shape)
+                  && fbx_target_accessor(b, mesh, shape, corners, count, false, &position)
+                  && fbx_text(&targets, "%s{\"POSITION\":%u", targets.size ? "," : "", position);
+                if (ok && mesh->vertex_normal.exists && shape->normal_offsets.count) {
+                    ok = fbx_target_accessor(b, mesh, shape, corners, count, true, &normal)
+                      && fbx_text(&targets, ",\"NORMAL\":%u", normal);
+                }
+                if (ok) ok = fbx_text(&targets, "}");
+            }
+        }
         if (ok) {
             size_t begin = b->bin.size;
             ok = fbx_bytes(&b->bin, indices.data, indices.size);
@@ -403,15 +488,40 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
             ok = ok && fbx_text(&b->meshes, "%s{\"attributes\":{", primitives++ ? "," : "")
                     && fbx_bytes(&b->meshes, attrs.data, attrs.size)
                     && fbx_text(&b->meshes, "},\"indices\":%u", accessor);
+            if (ok && targets.size) ok = fbx_text(&b->meshes, ",\"targets\":[") && fbx_bytes(&b->meshes, targets.data, targets.size)
+                                       && fbx_text(&b->meshes, "]");
             if (ok && part->index < node->materials.count) ok = fbx_text(&b->meshes, ",\"material\":%u", node->materials.data[part->index]->typed_id);
             if (ok) ok = fbx_text(&b->meshes, "}");
         }
         free(indices.data);
         free(attrs.data);
+        free(targets.data);
         // The next part starts with no corner numbered; this part's alone are.
         for (uint32_t i = 0; i < count; i++) map[corners[i]] = UINT32_MAX;
     }
-    if (ok) ok = fbx_text(&b->meshes, "]}");
+    if (ok) ok = fbx_text(&b->meshes, "]");
+    // The channels' names and default weights, as glTF says them for a mesh
+    size_t channels = 0u;
+    for (size_t d = 0; b->skinned && d < mesh->blend_deformers.count; d++) channels += mesh->blend_deformers.data[d]->channels.count;
+    if (ok && channels) {
+        fbx_buffer weights = {.owner=b}, names = {.owner=b};
+        for (size_t d = 0; ok && d < mesh->blend_deformers.count; d++) {
+            const ufbx_blend_deformer *blend = mesh->blend_deformers.data[d];
+            for (size_t k = 0; ok && k < blend->channels.count; k++) {
+                const ufbx_blend_channel *channel = blend->channels.data[k];
+                const ufbx_blend_shape *shape = channel->keyframes.data[0].shape;
+                const bool first = !weights.size;
+                ok = fbx_text(&weights, first ? "" : ",") && fbx_json_float(&weights, channel->weight)
+                  && fbx_text(&names, first ? "" : ",") && fbx_string(&names, shape->name.length ? shape->name : channel->name);
+            }
+        }
+        ok = ok && fbx_text(&b->meshes, ",\"weights\":[") && fbx_bytes(&b->meshes, weights.data, weights.size)
+                && fbx_text(&b->meshes, "],\"extras\":{\"targetNames\":[") && fbx_bytes(&b->meshes, names.data, names.size)
+                && fbx_text(&b->meshes, "]}");
+        free(weights.data);
+        free(names.data);
+    }
+    if (ok) ok = fbx_text(&b->meshes, "}");
     free(map);
     free(corners);
     free(triangles);
@@ -463,9 +573,13 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
         float time;
         ok = fbx_key_time(b, source_time - begin_time, flags, &time);
         if (!ok || time < 0.0f) continue;
-        if (!(time > previous)) { ok = fbx_fail(b, "move the animation keys farther apart, or shorten its time range", "has FBX animation keys too close together for float timestamps"); break; }
-        previous = time;
-        ok = fbx_number(&times, time);
+        // Keys closer than a float can tell apart are one key, the later's
+        // value (Mixamo's last key is 2e-8 s before its take's end, where
+        // the boundary sample is): its time stays, its value is replaced.
+        const bool merged = !(time > previous);
+        if (merged) values.size -= (path == 1u ? 4u : 3u) * sizeof(float);
+        else previous = time;
+        if (!merged) ok = fbx_number(&times, time);
         if (path == 1u) {
             ufbx_baked_quat_list list = {.data=(ufbx_baked_quat *)quat, .count=count};
             ufbx_quat q = boundary ? ufbx_evaluate_baked_quat(list, source_time) : quat[i-1u].value;
@@ -479,7 +593,7 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
             ufbx_vec3 v = boundary ? ufbx_evaluate_baked_vec3(list, source_time) : vec[i-1u].value;
             ok = ok && fbx_number(&values, v.x) && fbx_number(&values, v.y) && fbx_number(&values, v.z);
         }
-        keys++;
+        if (!merged) keys++;
     }
     if (ok && keys) {
         size_t begin = b->bin.size;
@@ -498,9 +612,72 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
     return ok && !b->failed;
 }
 
+// FBX rotation curves are Euler angles, and exporters write them wrapped:
+// one key at -182.72 degrees and the next at 178.20 is a turn of one degree,
+// and (179.99, 180.30, -183.12) then (0.00, 0.10, -2.96) is the same rotation
+// written as its other triple (x + 180, 180 - y, z + 180, true of every
+// Tait-Bryan order). Evaluating the curves between such keys (the 60 Hz bake
+// does) sweeps the long way, up to a full turn in a frame. So, as Maya's and
+// Blender's Euler filters do, each key is moved by whole turns to within half
+// a turn of the key before it, and where all three curves have keys at the
+// same times, takes whichever of its two triples is nearer the key before.
+// The rotation at every key is the same; what's between them takes the short way.
+static ufbx_real fbx_near_turn(const ufbx_real value, const ufbx_real previous)
+{
+    const ufbx_real step = value - previous;
+    if (!isfinite(step) || (step <= 180.0 && step >= -180.0)) return value;
+    return value - floor((step + 180.0) / 360.0) * 360.0;
+}
+
+static void fbx_unwrap_rotations(const ufbx_scene *scene)
+{
+    for (size_t l = 0; l < scene->anim_layers.count; l++) {
+        const ufbx_anim_layer *layer = scene->anim_layers.data[l];
+        for (size_t p = 0; p < layer->anim_props.count; p++) {
+            const ufbx_anim_prop *prop = layer->anim_props.data + p;
+            if (strcmp(prop->prop_name.data, UFBX_Lcl_Rotation) != 0 || !prop->anim_value) continue;
+            ufbx_anim_curve *const *curves = prop->anim_value->curves;
+            // The three axes keyed together: a key's triple can be swapped for its twin.
+            bool together = curves[0] && curves[1] && curves[2] && curves[0]->keyframes.count == curves[1]->keyframes.count
+                         && curves[0]->keyframes.count == curves[2]->keyframes.count;
+            for (size_t k = 0; together && k < curves[0]->keyframes.count; k++) {
+                together = curves[0]->keyframes.data[k].time == curves[1]->keyframes.data[k].time
+                        && curves[0]->keyframes.data[k].time == curves[2]->keyframes.data[k].time;
+            }
+            if (together) {
+                ufbx_keyframe *x = curves[0]->keyframes.data, *y = curves[1]->keyframes.data, *z = curves[2]->keyframes.data;
+                for (size_t k = 1; k < curves[0]->keyframes.count; k++) {
+                    const ufbx_real same[3] = {fbx_near_turn(x[k].value, x[k - 1u].value), fbx_near_turn(y[k].value, y[k - 1u].value),
+                                               fbx_near_turn(z[k].value, z[k - 1u].value)};
+                    const ufbx_real twin[3] = {fbx_near_turn(x[k].value + 180.0, x[k - 1u].value),
+                                               fbx_near_turn(180.0 - y[k].value, y[k - 1u].value),
+                                               fbx_near_turn(z[k].value + 180.0, z[k - 1u].value)};
+                    const ufbx_real away_same = fabs(same[0] - x[k - 1u].value) + fabs(same[1] - y[k - 1u].value) + fabs(same[2] - z[k - 1u].value);
+                    const ufbx_real away_twin = fabs(twin[0] - x[k - 1u].value) + fabs(twin[1] - y[k - 1u].value) + fabs(twin[2] - z[k - 1u].value);
+                    const bool flip = away_twin < away_same;
+                    const ufbx_real *chosen = flip ? twin : same;
+                    x[k].value = chosen[0], y[k].value = chosen[1], z[k].value = chosen[2];
+                    if (flip) { // 180 - y runs the other way: its slopes turn round
+                        y[k].left.dy = -y[k].left.dy;
+                        y[k].right.dy = -y[k].right.dy;
+                    }
+                }
+                continue;
+            }
+            for (int axis = 0; axis < 3; axis++) {
+                const ufbx_anim_curve *curve = curves[axis];
+                if (!curve) continue;
+                ufbx_keyframe *keys = curve->keyframes.data;
+                for (size_t k = 1; k < curve->keyframes.count; k++) keys[k].value = fbx_near_turn(keys[k].value, keys[k - 1u].value);
+            }
+        }
+    }
+}
+
 static bool fbx_animations(fbx_builder *b)
 {
     if (!b->skinned) return true;
+    fbx_unwrap_rotations(b->scene);
     for (size_t a = 0; a < b->scene->anim_stacks.count; a++) {
         const ufbx_anim_stack *stack = b->scene->anim_stacks.data[a];
         ufbx_bake_opts opts = {0};

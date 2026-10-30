@@ -1,4 +1,0 @@
-// expect: an array's elements are plain values, not text
-// expect: an array is its holder's own bytes, with nothing in the heap: a list holds those, 'List<string>'
-scene Main { }
-component Names { string[4] names; }

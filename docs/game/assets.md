@@ -256,11 +256,14 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 | `uv2` | `float2` | The file's second set of those, which a lightmap uses. |
 | `color` | `Color` | The vertex's color times its material's. White where the file has neither. |
 | `tangent` | `float4` or `float3` | Tangent direction in `xyz`; a `float4` also carries bitangent handedness in `w`. Missing tangents are generated only for static `Mesh<V>` layouts declaring `float4 tangent`. |
+| `joints` | `int4` | A skinned model's four heaviest bones at the vertex, heaviest first, numbered as a [`SkinnedMesh`](./animation.md) of the file numbers its `Bone`s. 0 where no bone moves it. |
+| `weights` | `float4` | Those bones' weights, which sum to 1. Zeros where no bone moves it. |
 
 - A struct has the ones it needs, in any order: `Corner` above takes no uvs, so the pack holds none.
 - **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's. A default can read another asset, even one declared later; each pack load supplies its current value and refreshes what is drawn when that value changes.
 - A field with one of those names and another type is an error at the declaration, which says the type the file's is.
 - The built-in [`Vertex3`](./3d.md) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
+- **A mesh with bones is the model at rest.** A vertex with `joints` or `weights` reads the file as a skinned model: its `position` and `normal` are where the model's rest pose puts them, as a `SkinnedMesh` of the file draws at rest, in its skeleton's space (a model in centimetres comes out in metres, as it's drawn). A vert of the game's can then skin it itself, against bones of its own: a crowd's thousands in one instanced draw, each bone's `pose.Model(bone)` times the inverse of its rest's in a list the vert reads. `[LOD]` weighs the bones as it does a skinned mesh's.
 
 Only a static `Mesh<V>` whose vertex layout declares `float4 tangent` gets a tangent-generation variant. For its primitives without authored tangents, import derives tangents from triangle UV gradients and averages them with corner-angle weights. Generated `xyz` is normalized and orthogonal to the imported normal, with handedness `w` of +1 or -1; the bitangent is `w * cross(normal, tangent.xyz)`. A vertex shared by generated corners with opposite UV handedness splits at that seam. Missing or degenerate UVs get a finite fallback frame. Authored tangents retain their existing coordinate/node-transform conversion, including authored zero and nonorthogonal values; the generated-basis guarantees do not apply to them. Generated tangents support ordinary tangent-space normal maps but do not guarantee a match to a MikkTSpace normal-map bake.
 
@@ -315,8 +318,8 @@ That's all there is to write. There are no distances to set, no levels to author
 - **It's opt-in.** A mesh without `[LOD]` is drawn as it always was, with nothing made for it.
 - **A level is fewer of the mesh's own triangles.** Each has about half the triangles of the one before, over the same vertices: none is added or moved, so the pack grows by the levels' triangles alone, about as much again as the mesh's own. Open edges stay where they are, and so do the seams where a texture or a color changes, so no hole opens and no texture tears.
 - **Static layouts with a `float4 tangent` preserve opposite handedness signs as separate seams.** Tangent `xyz` adds no simplification error metric. Other vertex layouts and skinned meshes retain their previous LOD behavior and cache keys.
-- **No level has fewer than 500 triangles.** A level only pays by the triangles it takes off a draw, and picking one costs a little for each instance. So a chain stops before it gets that small, and a mesh of under 1,000 triangles gets no levels at all: it draws exactly as if it weren't marked, with nothing picked.
-- **A draw picks the simplest level that looks the same.** Each level knows how far its surface is from the full mesh's. A draw takes the simplest one whose difference is under a pixel where the mesh is, so a mesh drawn large keeps all its detail at any distance.
+- **A mesh of under 1,000 triangles gets no levels.** Levels only pay by the triangles they take off a draw, and picking one costs a little for each instance, so such a mesh draws exactly as if it weren't marked, with nothing picked. A bigger mesh's chain goes on to levels of a few dozen triangles, and stops before one of under 64: a crowd far off draws each figure that small.
+- **A draw picks the simplest level that looks the same.** Each level knows how far its surface, and what's on it, is from the full mesh's. A normal or a color is off by as much as the patch it's off on: a bevel shaded a little differently counts for the bevel's size, not the whole mesh's. A draw takes the simplest level whose difference is under a pixel where the mesh is, so a mesh drawn large keeps all its detail at any distance.
 - **Each instance picks its own.** `Draw.Instanced` over a field of rocks draws the near ones whole and the far ones simple: one GPU draw for each level in use, the instances of each in the order the list has them. A view that runs for each entity is grouped the same way.
 - **Your code reads the full mesh.** `rock.vertices` and `rock.indices` are what they are without `[LOD]`, for the match too: a collider built from a rock's triangles is built from all of them, on every machine.
 - **It works on a [`SkinnedMesh<V>`](./animation.md) too:** `[LOD] asset SkinnedMesh<Corner> hero = "art/hero.glb";`. Its levels are made from the model at rest, weighing how each vertex follows its bones so joints keep the vertices that bend them, and a pose deforms a level as it deforms the full mesh.
@@ -352,6 +355,17 @@ It takes what `Draw.Camera` takes for a 3D camera: a position, a rotation and a 
 ::: info
 That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level or a camera to pick by, are decided. How the levels are made, the pixel a level may be off by, the two settings' names and each rule above are how it works today, and may still change. A way to say how many pixels a level may be off by, for a weak machine, isn't in the language yet.
 :::
+
+### Blend shapes to keep
+
+A skinned model's [blend shapes](./animation.md#blend-shapes) are all imported, which can be most of a pack: a head with fifty facial shapes carries fifty sets of vertex deltas. `[BlendShapes(...)]` before a `SkinnedMesh<V>` asset keeps only the shapes whose source names match one of its arguments, a name or a pattern where `*` is any run of characters:
+
+```csharp
+[BlendShapes("masculineFeminine", "default*")]
+asset List<SkinnedMesh<Corner>> parts = "sidekick/parts/*.fbx";
+```
+
+The other shapes are left out of the import, deltas and all, and the vertices keep every shape at the file's default weight as before. A pattern that matches nothing in a file is fine, as in a glob of parts where only some have a shape; `[BlendShapes()]` keeps none, and a model left with no shapes packs as it would with none in its file. It applies to every file of a list or a map. Without it, every shape is kept.
 
 ## Paths
 

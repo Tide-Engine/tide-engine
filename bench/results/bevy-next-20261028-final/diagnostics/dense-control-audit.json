@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "kind": "read-only dense-control analysis",
+  "batch": "../bevy-next-20261028-density-control",
+  "processes": 15,
+  "rounds": 5,
+  "processes_per_engine": 5,
+  "complete": true,
+  "exits_zero": 15,
+  "tide_json_ok_true": 10,
+  "shared_digest": "0x07c33fc7d6a94b2d",
+  "raw_stdout_sha256_match_records": true,
+  "raw_json_match_records": true,
+  "fixed_arguments_verified": [
+    "--threads",
+    "1",
+    "--warmup",
+    "200",
+    "--ticks",
+    "400",
+    "--count",
+    "1000000",
+    "--tagged",
+    "1",
+    "--frozen",
+    "90"
+  ],
+  "contended_processes": 0,
+  "quiet_resets": 0,
+  "asm": {
+    "baseline_object": "build/bevy-next-probes/c30_control/wide.obj",
+    "current_object": "build/release/bench/versus/CMakeFiles/versus_wide.dir/tide/versus_wide/wide.c.obj",
+    "baseline_symbol": "tide_task_Shift",
+    "current_symbol": "tide_task_Shift_slow",
+    "command": "llvm-objdump -dr --disassemble-symbols=<symbol> <object>",
+    "normalization": "Keep from symbol label onward; LF newlines; replace tide_task_Shift_slow with tide_task_Shift; trim surrounding whitespace; no trailing newline",
+    "instruction_lines": 578,
+    "disassembly_and_relocations_equal": true,
+    "normalized_disassembly_and_relocations_sha256": "5c6206fc2d637cc00c22ec4c8c814c8354210f8b1016011dd4a3a29dbc9ba00b"
+  },
+  "limitations": "No new workload, build or timing. Static identity does not isolate linked-code placement or quantify wrapper timing cost. No normalized speedup claim."
+}

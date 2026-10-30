@@ -1,5 +1,5 @@
-// The standard host with no window (tide/run.h's --capture, --frames, --script,
-// --size, --scale and --seed), on capture.tide, which draws a block for each thing a
+// The standard host with no window (tide/run.h's --capture, --record, --frames,
+// --script, --size, --scale and --seed), on capture.tide, which draws a block for each thing a
 // script's input did, and for what its match rolled: the pictures a run takes
 // are read back (png_read.mjs) and checked for those blocks, pixel by pixel.
 //
@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { readGif } from './gif_read.mjs';
 import { readPng } from './png_read.mjs';
 
 const [programArg, scratchArg, mode] = process.argv.slice(2);
@@ -73,15 +74,21 @@ if (mode === 'refused') {
     line('5 text', '`text` takes the characters');
     line('5 capture', '`capture` takes the file');
     line('5 capture-audio', '`capture-audio` takes the file');
-    line('5 captur-audio x.wav', "'captur-audio' isn't something a line does", 'capture-audio, leave, drop, rejoin or quit');
+    line('5 record', '`record` takes the file');
+    line('5 captur-audio x.wav', "'captur-audio' isn't something a line does", 'capture-audio, record, leave, drop, rejoin or quit');
     line('5', 'nothing happens');
     refused('a script that is no file', ['--script', join(scratch, 'none.txt')], "can't read the script", 'none.txt');
     refused('a run nothing ends', ['--capture', 'x.png'], 'nothing ends this run', '--frames');
     refused('a script that never quits', ['--script', script('endless.txt', ['3 key d'])], 'nothing ends this run', '`quit`');
     refused('--frames with no number', ['--frames'], '--frames takes how many frames');
+    refused('--interactive without a replay file', ['--interactive'], '--interactive takes a replay file');
+    refused('--interactive with an unreadable output folder', ['--interactive', 'missing/replay.txt'], "can't write replay");
+    refused('--interactive combined with a script', ['--interactive', 'replay.txt', '--script', 'unused.txt'],
+            '--interactive takes new actions over stdin', 'omit --script');
     refused('--data-dir with no directory', ['--data-dir'], '--data-dir takes a save directory');
     refused('--data-dir with an empty directory', ['--data-dir', ''], '--data-dir takes a nonempty save directory');
     refused('--capture-audio with no file', ['--frames', '2', '--capture-audio'], '--capture-audio takes the file');
+    refused('--record with no file', ['--frames', '2', '--record'], '--record takes the file');
     refused('--frames that is no number', ['--frames', 'many'], "not 'many'");
     refused('--size with one number', ['--frames', '2', '--size', '320'], '--size takes');
     refused('--scale without a run it is for', ['--scale', '2'], '--scale is for a run with no window');
@@ -96,12 +103,14 @@ if (mode === 'refused') {
     process.exit(failures ? 1 : 0);
 }
 
-// A whole run: every kind of input, three pictures, at twice the pixels
+// A whole run: every kind of input, three pictures and two recordings, at twice the pixels
 const play = script('play.txt', [
-    '# The mover at its start',
+    '# The mover at its start, and a recording from it',
     '5 capture start.png',
+    '5 record part.gif',
     '10 key d down',
     '12 text K7QF2M',
+    '15 record stop',
     '20 pad buttonNorth down',
     '20 pad rightStick 0 1',
     '20 pad rightTrigger 1',
@@ -125,11 +134,13 @@ const play = script('play.txt', [
     '110 pad buttonNorth up',
     '120 quit',
 ]);
-const args = ['--script', play, '--capture', join(scratch, 'last.png'), '--size', '320', '200', '--scale', '2'];
+const args = ['--script', play, '--capture', join(scratch, 'last.png'), '--record', join(scratch, 'whole.gif'), '--size', '320',
+              '200', '--scale', '2'];
 const ran = run(args);
 check(ran.status === 0, `a run with a script ends with exit code 0${ran.status === 0 ? '' : `: ${ran.status} ${ran.error || ''}\n${ran.err}`}`);
 if (ran.status !== 0) process.exit(1);
 for (const name of ['start.png', 'locked.png', 'played.png', 'last.png']) check(ran.out.includes(name), `and says it captured ${name}`);
+for (const name of ['part.gif', 'whole.gif']) check(ran.out.includes(`recorded ${join(scratch, name)}`), `and says it recorded ${name}`);
 
 // A block is `color` at its middle and one pixel in from its corners, and the
 // background just outside it. Places are in logical pixels: the pictures have
@@ -183,13 +194,48 @@ check(none(last, 300, 150), 'in the last frame, the finger lifted');
 check(none(last, 40, 100) && block(last, 80, 100, 10, cyan), "and the gamepad's button is up, its stick still pushed");
 check(block(last, 220, 180, 10, red) && block(last, 200, 40, 20, green), 'and what happened before stays');
 
-// The same run again is the same pictures, byte for byte, the match's seed
-// and its roll among what they show
+// The recordings: every second frame, from `record` to `record stop` and of
+// the whole run, the size of its pictures, each frame shown for as long as
+// it was. A frame of one is the picture taken at that frame, but for the
+// colors a frame of more than 256 has picked for it (gif.c).
+const recordings = {};
+for (const name of ['part.gif', 'whole.gif']) {
+    try {
+        recordings[name] = readGif(readFileSync(join(scratch, name)));
+    } catch (error) {
+        check(false, `${name} is a GIF: ${error.message}`);
+        process.exit(1);
+    }
+    const { width, height, loops } = recordings[name];
+    check(width === 640 && height === 400 && loops === 0, `${name} is 640 by 400 pixels, and loops (${width} by ${height})`);
+}
+const { 'part.gif': part, 'whole.gif': whole } = recordings;
+const hundredths = gif => gif.frames.reduce((sum, frame) => sum + frame.delay, 0);
+check(part.frames.length === 6 && hundredths(part) === 20,
+      `\`record\` to \`record stop\` is frames 5 to 15, every second: 6 frames, a fifth of a second (${part.frames.length}, ${hundredths(part)} hundredths)`);
+check(whole.frames.length === 60 && hundredths(whole) === 200,
+      `--record is the whole run, 120 frames: 60, 2 seconds (${whole.frames.length}, ${hundredths(whole)} hundredths)`);
+function off(frame, png) {
+    let worst = 0;
+    for (let y = 0; y < 400; y++) {
+        for (let x = 0; x < 640; x++) {
+            const a = frame.at(x, y), b = png.at(x, y);
+            for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(a[c] - b[c]));
+        }
+    }
+    return worst;
+}
+const partOff = off(part.frames[0], start), wholeOff = off(whole.frames[2], start);
+check(partOff <= 24 && wholeOff <= 24, `the recordings' frame 5 is the picture captured at it (up to ${partOff} and ${wholeOff} off)`);
+
+// The same run again is the same pictures and recordings, byte for byte, the
+// match's seed and its roll among what they show
+const files = ['start.png', 'locked.png', 'played.png', 'last.png', 'part.gif', 'whole.gif'];
 const bytes = name => readFileSync(join(scratch, name));
-const first = ['start.png', 'locked.png', 'played.png', 'last.png'].map(bytes);
+const first = files.map(bytes);
 const again = run(args);
-check(again.status === 0 && ['start.png', 'locked.png', 'played.png', 'last.png'].every((name, i) => bytes(name).equals(first[i])),
-      'a run repeats exactly: the same pictures, byte for byte');
+check(again.status === 0 && files.every((name, i) => bytes(name).equals(first[i])),
+      'a run repeats exactly: the same pictures and recordings, byte for byte');
 
 // --seed picks the match's seed. A run with one, 20 frames long: the picture,
 // its bytes, the color of the seed's block and where the roll's block is.

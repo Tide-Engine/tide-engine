@@ -1,0 +1,149 @@
+// A real caster behind the main camera, plus controlled depth tiles for
+// independent cascade-transition and tent-filter pixel oracles.
+scene Main;
+asset Render3D.Mesh3D shadowQuad = "quad.obj";
+singleton ShadowFixture
+{
+    int scenario;
+    bool built;
+    float3 lightDirection = float3(0, 0, 1);
+}
+
+local singleton ShadowProbe
+{
+    bool disabled;
+    bool shadows = true;
+    int cascades = 4;
+    int budget = 16;
+    int resolution = 256;
+    float range = 24;
+    float distance = 12;
+    Render3D.Camera camera = Render3D.Camera {
+        position = float3(0), rotation = quaternion.identity, near = 0.25, far = 80, verticalFov = 60deg
+    };
+    int viewCount;
+    int lightCount;
+    Render3D.ShadowView[16] views;
+    Render3D.LightData[4] lights;
+    Render3D.ShadowKernel[33] kernels;
+    int gpuMode;
+    int sampleCount;
+    float[48] samples;
+}
+
+system BuildShadows(mut ShadowFixture fixture)
+{
+    if (fixture.built) return;
+    fixture.built = true;
+    Spawn(Render3D.DirectionalLight { direction = fixture.lightDirection, priority = 3 });
+    // Invisible to a +Z main camera, but upstream of every visible receiver.
+    Spawn(Render3D.MeshRenderer { mesh = shadowQuad }, Render3D.Material { doubleSided = true },
+        Transform { localPosition = float3(0, 0, -2), localScale = float3(6, 6, 1) });
+    if (fixture.scenario == 1)
+    {
+        Spawn(Render3D.PointLight { castShadows = true, priority = 2, range = 20 });
+        Spawn(Render3D.SpotLight { castShadows = true, priority = 1, range = 20 });
+        Spawn(Render3D.DirectionalLight { direction = float3(1, -1, 1), priority = 0 });
+    }
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureShadows(mut Render3D.Renderer renderer, ShadowProbe probe)
+{
+    renderer.enabled = !probe.disabled;
+    renderer.shadows = probe.shadows;
+    renderer.camera = probe.camera;
+    renderer.shadowCascades = probe.cascades;
+    renderer.maxShadowMaps = probe.budget;
+    renderer.shadowResolution = probe.resolution;
+    renderer.shadowRange = probe.range;
+    renderer.shadowDistance = probe.distance;
+    renderer.shadowCenter = float3(1, 2, 3);
+    renderer.shadowExtent = 7;
+    renderer.shadowBias = 0;
+    renderer.shadowSlopeBias = 0;
+    renderer.background = Color.black;
+}
+
+[Stage(Render3D.Stages.Lights, 4)]
+view RecordShadows(Render3D.Renderer renderer, mut ShadowProbe probe)
+{
+    probe.viewCount = renderer.shadowViews.count;
+    probe.lightCount = renderer.lights.count;
+    for (var i = 0; i < probe.viewCount && i < 16; i++) probe.views[i] = renderer.shadowViews[i];
+    for (var i = 0; i < probe.lightCount && i < 4; i++) probe.lights[i] = renderer.lights[i];
+    for (var i = 0; i < 33; i++) probe.kernels[i] = Render3D.ShadowAxis(float(i) / 8 - 2);
+}
+
+struct ShadowDepthTile { float4 rect; }
+
+vert KnownShadowDepth(mut Render3D.MeshVertex vertex, out float4 clip, ShadowDepthTile tile)
+{
+    float2 center = float2(tile.rect.x * 2 + tile.rect.z - 1, 1 - tile.rect.y * 2 - tile.rect.w);
+    clip = float4(vertex.position.xy * tile.rect.zw + center, -0.99, 1);
+}
+
+[Stage(Render3D.Stages.Shadows, 2)]
+view ControlledShadowDepth(Render3D.Renderer renderer, ShadowProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready || probe.gpuMode < 2 || renderer.shadowViews.count == 0) return;
+    renderer.shadowMap.SetClip();
+    renderer.shadowMap.Clear(Color.white);
+    renderer.shadowMap.SetCull(Cull.None);
+    for (var i = 0; i < renderer.shadowViews.count; i++)
+    {
+        // Alternating solid/empty tiles distinguish the selected cascade and
+        // blending from accidentally sampling the first view at every depth.
+        if (probe.gpuMode == 2 && (i & 1) != 0) continue;
+        if (probe.gpuMode == 3 && i != 0) continue;
+        var rect = renderer.shadowViews[i].uvRect;
+        float right = probe.gpuMode == 3 ? 0 : 1;
+        renderer.shadowMap.Mesh([
+            Render3D.MeshVertex { position = float3(-1, -1, 0) },
+            Render3D.MeshVertex { position = float3(right, -1, 0) },
+            Render3D.MeshVertex { position = float3(right, 1, 0) },
+            Render3D.MeshVertex { position = float3(-1, 1, 0) }
+        ], [0, 1, 2, 0, 2, 3], float4x4.identity, KnownShadowDepth, ShadowDepthTile { rect = rect });
+    }
+    renderer.shadowMap.SetCull();
+}
+
+struct ShadowWitness { float sample; bool edge; }
+
+frag ReadShadowWitness(Vertex vertex, out Color color, Render3D.Renderer renderer, ShadowWitness witness)
+{
+    mut float visibility = 1;
+    if (witness.edge)
+    {
+        mut var view = renderer.shadowViews[0];
+        // sample is measured in atlas texels from the geometric step edge.
+        float projectedX = witness.sample * renderer.shadowTexel * 2 / view.uvRect.z;
+        view.worldToClip = default;
+        view.worldToClip.c3 = float4(projectedX, 0, 0, 1);
+        visibility = Render3D.ShadowVisibility(renderer.shadow, view, float3(0), 0, renderer.shadowTexel, false);
+    }
+    else
+        visibility = Render3D.DirectionalVisibility(renderer.shadow, renderer.shadowViews, renderer.lights[0],
+            float3(0, 0, witness.sample), witness.sample, 0, renderer.shadowTexel);
+    color = Color(visibility, visibility, visibility);
+}
+
+[Stage(Render3D.Stages.Present, 1)]
+view ShadowWitnesses(Render3D.Renderer renderer, ShadowProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready || probe.gpuMode == 0 || renderer.shadowViews.count == 0) return;
+    Draw.Screen()
+    {
+        Draw.SetBlend(Blend.Replace);
+        Draw.SetDepth();
+        Draw.SetCull();
+        for (var i = 0; i < probe.sampleCount && i < 48; i++)
+        {
+            float x = float(i * 4);
+            Draw.Mesh([Vertex { position = float2(x, 0) }, Vertex { position = float2(x + 4, 0) },
+                       Vertex { position = float2(x + 4, 8) }, Vertex { position = float2(x, 8) }],
+                [0, 1, 2, 0, 2, 3], ReadShadowWitness,
+                ShadowWitness { sample = probe.samples[i], edge = probe.gpuMode == 3 });
+        }
+    }
+}

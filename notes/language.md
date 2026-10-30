@@ -1,5 +1,230 @@
 # Language features, as tidec builds them
 
+## Arrays of text and lists (2026-10-29)
+
+The owner, after the GUI showcases hit "an array's elements are plain values,
+not text": "behind the scenes we can have a special case for arrays that point
+at strings in the heap to not slow down arrays as they are right now. lists too
+I suppose." Array elements are now any value but a grid; the plain-only rule was
+the original arrays build's pick (2026-10-06), not the owner's decision.
+
+- **Plain arrays are untouched.** The special case is keyed on `type_has_text`
+  of the element (`array_holds_heap` in codegen.c): only those arrays get
+  ownership helpers, and plain arrays keep `tide_array<n>_set`, their lanes,
+  SIMD, inputs and GPU use, and generated C as before.
+- **Storage:** text elements are `tide_text` handles (`elem_ctype`), as struct
+  fields are; lists/maps/sets their `tide_list`/`tide_map`. `tide_array<n>_get`
+  of text returns a `tide_str` via `tide_text_view`; a pointer read through
+  `tide_array<n>_ref` is viewed the same unless it's a raw place; `foreach`
+  views each element; a literal's text elements are `tide_text_temp`.
+  `array_cname` names arrays of lists and maps by the list/map index, since every
+  list is a `tide_list` in C (`List<int>[2]` and `List<string>[2]` collided).
+- **Ownership:** `gen_array_heap_helpers` emits `tide_array<n>_own`, `_release`,
+  `_assign`, `_put` (element store with `where`) and `_copy` (when lists are
+  inside), each one loop over the elements, recursing by element type through
+  `gen_heap_op`/`gen_heap_assign` (text, list, map, struct helpers, inner
+  arrays). No length limit: code size doesn't grow with N.
+- **Field paths:** `heap_path.array` makes a heap-holding array field one path,
+  like a list's. Consumers: struct own/release/assign/copy and T? release call
+  the array's helpers; memset consumers (fresh rows, heard plain, embed
+  defaults, layout defaults) zero the whole field; `gen_confirm_value` and
+  `gen_scratch_value` loop over elements (`tide_k<depth>`); heard maps the
+  path to the array type for the value codec (which already handled arrays);
+  shard singleton release; embed fixes loop per element, embedded commands
+  decode an array of text per element and zero other heap arrays. Hot reload
+  carries text as plain bytes with the heap, so arrays need nothing there.
+- **List and map helpers** treat a heap array element as a container (`held` =
+  `tide_array<n>`); map slots likewise (`gen_map_slot`); `element_copy_open`
+  copies arrays with lists.
+- **Writes:** `a[i] = v` on a heap array is `tide_array<n>_put(..., where)`
+  (where = the root holder's, `place_where`); a heap array field or local
+  assigned whole is `tide_array<n>_assign`; a field through array indexes
+  (`a[i].label = x`) goes through `gen_element_assign`, whose last store is the
+  ownership-aware assign for heap targets. check.c's `element_path_in_place`
+  allows heap targets only when every index on the path is an array's: through
+  a list or map element they're still taken out and put back (that element is
+  the list's, not the holder's). `mut` arguments from array elements remain
+  refused, as for plain arrays. Methods on a list field of a struct that's an
+  array element (`shelf.bags[0].parts.Add(x)`) stay take-out/put-back.
+- **Checker:** `array_element_ok` accepts text/lists/maps/sets/structs holding
+  them, refuses grids (and structs holding grids); `holds_text`, `holds_list`,
+  `holds_list_but_bytes`, codegen's `type_has_text`/`type_has_bytes` look
+  inside arrays, so mut parameters get their `where`, events/commands their
+  heap handling, etc.
+
+Tests: `e2e/text_arrays` (components, singletons, struct elements written whole
+and by field, arrays of lists added to and assigned, `string[2][2]`,
+`List<string[2]>`, `Map<int, string[2]>`, events, forward structs with lists,
+`List<Bag[2][3]>`, `T?` fields in array structs, text display, foreach, reads
+and writes past both ends, destroy, snapshot equality, steady heap over 250
+ticks, local state pack/unpack); `e2e/commands` `commands_carry_arrays_of_text`
+(wire bytes checked, delivered, truncation refused); errors
+`array_text_through_list_element` and `array_of_grids` replace six fixtures
+that pinned the old refusal. A sweep also compiled a `verified` view reading
+one, JSON of a struct holding one, and the `--embed` build, warning-free.
+
+## Whole cached-chunk task shortcut (2026-10-29)
+
+Split systems with an eligible retained sparse selection, an apart variant and
+32-128 bytes of accessed component data have a small private task wrapper.
+For one whole chunk, it validates the existing exact cache key and rare count,
+skips zero matches, and captures every changed component's lane pages. Every
+page must have one reference before any hash metadata changes. It then marks
+those pages stale and calls the same cached rows helper directly; private pages
+need no begin/end bookkeeping. Readonly component pages may remain shared.
+
+The original task is an explicit non-inlined fallback for shared pages, pieces,
+stale/dense selections and unsupported archetypes. Task counts, work estimates,
+queue contexts, archetype offsets, row order, scratch marks and row signatures
+stay the same. The shortcut changes no arithmetic, component/world/cache layout,
+snapshot value, hash, packed bytes, runtime API or reload contract. The native
+prefetch loop is unchanged. Benchmark evidence and validation are recorded in
+benchmarks.md and `bench/results/bevy-next-20261028-final/README.md`.
+
+## Retained sparse row selection (2026-10-28)
+
+Compiler-private follow-up to the rare-mask path: eligible match systems retain
+each chunk's sparse selection between ticks. `rows_cache_codegen.inc` emits a
+world-owned derived cache, built only by the tick's caller before
+`tide_run_systems`, never by its per-worker prepare callback or count callbacks.
+Each plan owns its exact archetype, shift and ordered presence-column/required
+flags; each chunk owns its actual row count, passing count, retained presence
+pages and the first 128 ascending uint16 row indices. Chunks have at most 2,048
+rows; only passing counts below ceil(rows/16) consume those indices, so at most
+127 are read. Task pieces find their bounded index span by binary search.
+
+Retained pages force ordinary presence writes through existing copy-on-write.
+Unchanged page identities and row counts therefore prove membership exactly,
+without a content-hash assumption. A changed filter shape, chunk count or page
+rebuilds the affected entry; a saturated page reference count leaves it invalid
+and falls back. Tasks validate the full key again and never mutate caches: a
+post-prepare replacement falls back to the existing count/filter paths. Cached
+rare rows use a separate loop whose one selection pointer replaces the existing
+presence parameters, retaining the original lane/1,000-parameter budgets.
+Apart/COW, scene, Owner, C, World-alias and task-start restrictions remain.
+
+Eligible games append one opaque cache pointer to `tide_world`. World hashes
+and component layouts are unchanged. Copy keeps the destination's owned cache,
+never the source pointer; free releases its retained pages and allocations.
+Raw packing clears the pointer and unpacking clears it immediately after
+copying the raw header, before any rejection/free path. The zero raw header
+grows by the pointer and ABI padding; layout metadata and allocation sizes keep
+using the full world size. Deltas already use their separate value header.
+
+Payloads contain no function or static-descriptor pointers. Same-layout reload
+can keep them: new code checks exact owned filter keys rather than trusting a
+system ordinal. `TIDE_ROWS_CACHE_ABI` in the generated header must change if any
+private payload structure or cleanup contract changes, forcing ordinary layout
+migration while the old build can still free its cache. Existing runtime calls
+are sufficient; there is no new runtime API, Tide syntax, arithmetic order,
+entity order, deferred timing or snapshot value. Thirty-three scoped checks per
+platform pass on native/WASI, with the 18 affected checks rebuilt after the final
+guard; 66 cross-engine comparisons and 75 native baseline hash/normalized-pack
+checks also pass. benchmarks.md records the measurements and retained probes.
+
+The native cached loop may hint the next four selected rows' component lanes
+when its needed components total 32 through 128 bytes and it changes at least
+one, only when the chunk passes fewer than ceil(rows/64) rows. Membership caching
+still uses the separate ceil(rows/16) threshold. The loop receives the existing
+selection object through its one private selection parameter, and aliases its
+indices locally. It warms only the first min(4, selected count) indices, then looks ahead
+only while that next index is inside the selected span. Each hint uses its
+lane's existing pointer and width, read/write intent from component access,
+and locality 3. `__wasm__` excludes the hint-density bool, both hint blocks and
+their loop overhead.
+This changes no body calls, arithmetic order, cache payload ABI or runtime API.
+The cache-only, broad-hint and guarded direct comparisons are linked from the
+final 240-process report, `bench/results/bevy-cache-20261028-final/README.md`.
+
+## Rare sparse row masks (2026-10-28)
+
+For the same conservative in-place eligibility as the mixed row selection
+below, a sparse-only system whose existing pass count is below one match per
+sixteen rows uses a separate private loop. Each full block of 16 rows loads exactly 16
+presence bytes per filter, compares each required column with nonzero and
+each excluded column with zero, and combines those comparison masks. SSE2 and
+ordinary WebAssembly SIMD extract one bit per row; other targets extract the
+comparison lanes with integer operations. Matching bits run in ascending order
+through a nonzero-guarded count-trailing-zeros loop. A short final block uses
+bounded scalar presence reads and shifts only by row offsets below 16.
+
+This transient loop remains the fallback when no retained selection is usable.
+The vector load is reached only when 16 actual rows remain in the task's range;
+the first table allocation may hold just four rows. No mask persists across a
+block, call or tick. The existing count scan, rows function parameter budgets,
+apart/COW copying, scene filtering and Owner/C/World/task fallbacks are unchanged.
+There is no runtime function, layout, scheduling or observable semantic change.
+
+`sparse_masks` compares four intersecting presence columns against an independent
+C model at empty/short allocations and around 16/128/2048-row boundaries. It
+checks bit-zero/bit-fifteen matches, empty blocks, ascending list writes,
+deferred removal, byte-lane updates, serial/pieced execution, snapshot
+immutability and packed restoration. The generated-C check requires bounded
+loads, guarded bit enumeration and portable extraction, and retains the apart
+and scene-filtered paths. All 18 affected native/WASI checks and 66 cross-engine
+comparisons pass; benchmarks.md records performance and retained diagnostics.
+
+## Mixed sparse row selection (2026-10-28)
+
+The Bevy comparison identified random sparse presence branches as a serial
+iteration cost. Eligible in-place mixed sparse/scene filtered system loops
+compact matching row indices in fixed blocks of 128, then execute those rows
+in their original order. The task or piece uses its existing pass count to
+choose this separate loop variant only when at least a quarter of its rows
+pass and at least a quarter are skipped; other densities retain the ordinary
+filtered loop, except sparse-only matches below one per sixteen rows, which
+use the bit loop above. There is no additional density scan or runtime signature.
+The compaction stores an index before adding its
+zero-or-one pass bit; at scan k its output index is at most k, so an all-pass
+block still writes only slots 0 through 127. The last block is bounded by the
+task's existing row range. There is no game-sized stack allocation, persistent
+index cache, speculative execution of skipped bodies or runtime entry point.
+
+Only chunk-stable sparse presence and scene membership are pre-scanned.
+Structural changes remain deferred. Ownership-filtered rows, C-calling systems,
+World alias/write paths and task starters retain their original loop. Apart
+loops still copy excluded rows unchanged, and all-pass/empty chunk handling is
+unchanged. Component layout, arithmetic, ordering, snapshots and hashes retain
+their existing contracts. This adds no language feature or user-visible API.
+
+The focused sparse_rows E2E checks all/none/mixed blocks, low/high passing
+densities, and chunk/tail
+boundaries, multiple required/excluded masks, scene inclusion/exclusion, ordered
+list writes, byte-lane updates and deferred presence removal, comparing in-place,
+shared-snapshot and pooled execution. Existing rows and sparse fixtures retain
+broader ownership, World/Owner and snapshot page checks. Validation and actual
+performance measurements are recorded in benchmarks.md after coordinator runs.
+The independent pure-update/conditional-Destroy lowering is described in
+ecs.md, Pure row updates before conditional destruction.
+
+## Shipping diagnostic metadata (2026-10-27)
+
+Owner-requested first reverse-engineering deterrent: codegen_options.strip_names
+(`tidec --strip-names`) replaces system/view profiling and extern-row labels,
+shader descriptor labels, event-chain and command diagnostics with numbered
+labels. Debug.Assert retains its condition, authored message and line number,
+but omits its copied source line and replaces its source path with a source ID.
+The private <name>.names file beside generated C maps those labels, asset IDs
+and fingerprint request ordinals back to declarations/paths. A subsequent
+unstripped generation removes an old map. Nothing copies it into game outputs.
+
+Generated asset loads and private fingerprint preflight select existing
+SHA-256 name IDs directly. The owner approved the new runtime lookup before
+generated code used it; see runtime-ownership.md and assets-and-files.md.
+Header/layout and simulation identities, pack bytes, authored strings and data
+keys are unchanged. Names required by layout/embed, model catalogs and explicit
+debug/text/JSON output are not obfuscated. The later shader-names follow-up
+(shaders.md, Shipping shader identifiers) shortens source-derived identifiers in
+shipping GLSL/WGSL while preserving its operations and bindings. This is metadata
+removal, not encryption, copy prevention or control-flow obfuscation.
+
+Coverage: release_diagnostic_names_preserve_identity_and_keep_the_map_private
+pins byte-identical headers/packs, stripped versus debug labels/source text,
+preserved authored messages and map creation/removal. tidec_release_names
+runs skinned_test.c against explicitly stripped generated code on native/WASI,
+retaining the existing SKINNED_HASH and all asset/snapshot checks. CLI artifact
+checks and combined validation are recorded in cli-and-packages.md.
+
 ## Native debugging: pinned lines, Tide-code entry lines, plumbing without debug info (2026-10-26)
 
 Line mode only (`codegen_options.line_directives`; `--no-line` output is
@@ -1280,6 +1505,55 @@ diff check pass. No determinism pin changed. Debug uses clang 23.1.2 with Node
 Linux, macOS, Android, MinGW and sanitizer coverage were not run on this Windows
 machine; CI was not dispatched.
 
+## Per-field Snap (2026-10-27)
+
+The owner approved `field.Snap()`, spelled `f.since.Snap()`, on 2026-10-27: the
+per-field counterpart of `entity.Snap()`, for a float reset along with an enum
+(Banked and Parry: the new stance drawn with `since` blended backwards to 0, a
+1.4 m pop in Parry's sword hand). Only the field skips blending, for the one
+interval ending at the tick it snapped; the rest of the type blends. The edge
+rules below are my picks, Provisional in `docs/spec.md` (Views and drawing).
+
+Built compiler-only, no runtime change:
+
+- `check_method` hands `Snap` on a field place to `check_field_snap`
+  (`names_snapped_field`): an `E_MEMBER` with a `field`, or a `BIND_FIELD`
+  name in a method. Entity-typed fields still snap their entity, singletons and
+  components keep `check_snap`, and a struct's own `Snap` method wins.
+- Refused, each with its own diagnostic (`errors/field_snap_*`): a struct's
+  field (snap the component field holding it; a struct-typed field snaps the
+  whole struct), types that don't blend, `[Snap]` fields, fields correction
+  smoothing moves (`[Position]`/`[Rotation]`, or a struct holding one: snap the
+  entity, which clears the error), types with a custom `Interpolate`, local
+  state, views and local handlers, and the input's methods. Otherwise it is a
+  write of the field: `check_writable` decides, so systems, match handlers,
+  match tasks, and functions and mut methods passed it may call it (unlike
+  `entity.Snap()`, which routines can't).
+- The field gets `snap_counted`; after checking, `check_program` appends a
+  hidden `int tide_snaps_<field>` per such field to its component or singleton
+  (before a singleton's `tide_snaps`). Codegen increments it through the
+  field's own address and `offsetof`, wrapping through uint32, and
+  `gen_blend_fields` wraps that field's blend in
+  `if (before->tide_snaps_<f> == v->tide_snaps_<f>)`. Every path calling
+  `tide_blend_<C>` (view parameters, verified joins, query rows, singleton
+  copies, correction smoothing's endpoint blends) inherits it. Fields never
+  snapped generate exactly what they did.
+- The counter is ordinary match data, so snapshots, rollback, packing and
+  deltas, hashing, host migration, shard handoff and hot reload carry it. It
+  changes the layout (and match compatibility) only of games that snap that
+  field. Like the singleton's, embed descriptors list it as a field.
+- Editors: completion offers `Snap` after a blending, non-`[Snap]`, uncorrected
+  match field in systems, handlers and routines (`snaps_alone`,
+  `changes_match`); hover has its own text (`FIELD_SNAP_DOC`).
+
+Tests: `e2e/field_snap` (a timer reset in a mut method with its sibling
+float2 blending, a struct-typed field, a singleton field, verified views and
+view query rows at the jump and the next interval, the counter in snapshots and
+the hash), eight error fixtures, and `lsp_snap`. Native debug: the new e2e,
+blend, view_corrections, view_queries, every snap error fixture and tidels.
+Web debug: field_snap and blend. The change is guarded to games that use it, so
+full suites weren't run.
+
 ## Double math and matrix completion (2026-10-20)
 
 The owner corrected the foundation's narrow scope: double trig and matrices
@@ -2000,8 +2274,10 @@ game code easier, without returning for routine language/API choices.
   existing scratch-use analysis, as ordinary records do.
   Recorded local match-event payloads still omit heap data, as recorded
   component copies already did; forwarding cannot recover omitted values.
-- `Texture.size` is a machine-local read-only int2 on CPU and GPU. Metadata-only
-  shader planning/capture and runtime contracts are in `notes/textures.md` and
+- `Texture.size` is a machine-local read-only int2 on CPU and GPU. DepthTexture
+  gains the same metadata API in the 2026-10-29 Render3D resolution follow-up,
+  including helper calls, source ordering and parallel-loop restrictions.
+  Metadata-only shader planning/capture and runtime contracts are in `notes/textures.md` and
   `notes/shaders.md`. New errors pin assignment and match access rejection.
 
 At this pass input parameters were deferred because `.down`/`.up` needed the
@@ -3178,6 +3454,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Provisional, awaiting the owner (`docs/spec.md`, Text): everything but that there's a `char` and that `text[i]` gives one. The ones most worth a look: a char converting to an int by itself and operators giving ints; `'\0'` as no character, which text shows as nothing; an index before the start reading `'\0'` where `Substring` clamps; `char(n)` of a number no character has being `'\0'`; the three escapes text's literals don't have.
 - A game can have several `settings` blocks, in any of its files, and they're one list of what it sets (the owner, 2026-10-08: a second block used to be an error by itself, which was redundant, as what clashes is two that set the same thing; `docs/spec.md`, Settings). A setting is set once among them all: a second one is the error a setting set twice in a block always was, at the second place, with a note that says where the other one is (`set_before`, `check_settings` in `compiler/src/check.c`). The blocks are in the order their files compile, and every one's settings count. That the same value twice is still an error is Claude's pick, Provisional in the spec. A package's files still have none. Editors' completion in a block leaves out what any of the game's blocks sets (`complete_settings` in `compiler/lsp/analysis.c`). Nothing in codegen changed. Tests: `compiler/tests/e2e/settings` (three blocks in two files), `compiler/tests/errors/settings_set_twice_blocks` and `settings_set_twice_files`, `lsp_settings`.
 - A plain name means what's nearest, as in C# (agreed 2026-10-05; `docs/spec.md`, Namespaces): the file's namespace, then the namespaces around it out to the global one, then the `using` namespaces, where two that both have the name are ambiguous (`lookup` in `compiler/src/check.c`). So what a game declares itself wins over what a namespace it imports has by that name. It was the other way round, `using` before the global namespace, until a game with a `Body` of its own said `using Box2D;` and got the package's, with no error. `compiler/tests/e2e/using_own` checks it, a file in a namespace of the game's own included; no other game in the repo generates other C for it (old and new tidec over every source list).
+- **The nearest namespace with a name decides, of any kind** (2026-10-30, from the Bannerlord duel: a campaign's global `void Side(...)` made `Side(i)` in the combat package's `namespace Combat`, its own enum's conversion, a call of the game's function, `'Side' takes 7 arguments, not 1`). `lookup` looked for one kind at a time out to the global namespace, and a call tries a function before a type, so a function further out won over a type nearer. Now the walk stops at the first namespace with a declaration of the name that the kind asked for couldn't share it with there (`hides_kind`, the clashes check_decls reports: a function, frag/vert, constant or alias shares a name with nothing; types and prefabs clash with each other, systems with systems; a type and a system can share one), and returns nothing, without the `using` namespaces. The callers that try kinds in turn (a call: function, then type; a name: constant, asset, function, shader) then find the nearer one. Consequence: a global declaration can't be named from code in a namespace that hides it (there's no `global::`). `compiler/tests/e2e/package_own` (a package with an enum `Side` that it converts to, a game with a global function `Side`).
 - A namespace can be a block, `namespace Combat { ... }`, for some of a file's declarations (the owner, 2026-10-07: "we should probably allow scoped namespaces, including on the same file... handy to separate concerns", then "yes build it"; `docs/spec.md`, Namespaces, where the rules beyond that are Provisional). A file can have several, the same one twice, and one inside another, whose name is inside the namespace it's written in (a file's `namespace Game;` too). What's built, and what code relies on:
   - **A block is a `unit` of its own** (`compiler/src/ast.h`), which is what kept the change small: declarations get their namespace from their unit and their code reads names through it (`decl.unit`, `decl_home`, `lookup` in `check.c`), so the checker's name index, generated C's names, the schedule's names and overrides have no rule for blocks. A block's unit has its file's `src`, a copy of its file's `usings` (complete by then: `using` comes before any declaration, and a block counts as one), `outer` (the file's unit or the block it's in), `ns` (the whole namespace), `ns_written` (the name as written at `ns_at`), and where its word and braces are (`block_at`, `open_at`, `close_at`).
   - **`program.units` has files and blocks**, a file's before its blocks', a block before those inside it. What goes through it for the namespaces there are needs nothing (`is_namespace`, the editors' completion and rename). What means a file skips a unit with `outer`: `check_units` for the `using` lines, which a block only shares. The first unit whose `src` is a file's is that file's (`doc_unit` in `compiler/lsp/analysis.c`). Nothing compares `decl.unit` to tell whether two declarations are in one file: compare `unit->src`.

@@ -1,0 +1,1068 @@
+{
+  "ok": true,
+  "checks": 66,
+  "records": [
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "1",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0x06895480ffa902c1",
+      "bevy_entity_count": 1,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "1",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0x06895480ffa902c1",
+      "bevy_entity_count": 1,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "1",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x1148fb31b02fc397",
+      "bevy_entity_count": 1,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "1",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x1148fb31b02fc397",
+      "bevy_entity_count": 1,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "1",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0xdc068fa093e76cca",
+      "bevy_entity_count": 1,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "1",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0xdc068fa093e76cca",
+      "bevy_entity_count": 1,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0xee323a64705d93fc",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0xee323a64705d93fc",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x16dff328b097314b",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x16dff328b097314b",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x7801283450356b0f",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x7801283450356b0f",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "10000",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0xc73479e9075b2554",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "10000",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0xc73479e9075b2554",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "10000",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x6d7786fc2e779a2d",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "10000",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x6d7786fc2e779a2d",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "10000",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x769953b9fa483bdf",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "particles",
+      "arguments": [
+        "--count",
+        "10000",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x769953b9fa483bdf",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "0",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0x0000000000000000",
+      "bevy_entity_count": 0,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "0",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0x0000000000000000",
+      "bevy_entity_count": 0,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "0",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x0000000000000000",
+      "bevy_entity_count": 0,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "0",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x0000000000000000",
+      "bevy_entity_count": 0,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "0",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x0000000000000000",
+      "bevy_entity_count": 0,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "0",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x0000000000000000",
+      "bevy_entity_count": 0,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0x48c6bf21912cf082",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0x48c6bf21912cf082",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x2adee2c2504439ba",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x2adee2c2504439ba",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x1d06620133c4e0f0",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "17",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x1d06620133c4e0f0",
+      "bevy_entity_count": 17,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "0",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0xd8b599b6cdf22c1b",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "0",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0xd8b599b6cdf22c1b",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "0",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x53ae462ce1709f8e",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "0",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x53ae462ce1709f8e",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "0",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x55835a16f40adc45",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "0",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x55835a16f40adc45",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "50",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0x70f8c09bf0c5009c",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 4991
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "50",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0x70f8c09bf0c5009c",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 4991
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "50",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0xbacf5f0a48c1a809",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 4991
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "50",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0xbacf5f0a48c1a809",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 4991
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "50",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x1903a15b0f7fd570",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 4991
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "50",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x1903a15b0f7fd570",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 4991
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "100",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0xbe82b81178847336",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 10000
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "100",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0xbe82b81178847336",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 10000
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "100",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0xbe82b81178847336",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 10000
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "100",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0xbe82b81178847336",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 10000
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "100",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0xbe82b81178847336",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 10000
+    },
+    {
+      "workload": "wide",
+      "arguments": [
+        "--count",
+        "10000",
+        "--tagged",
+        "1",
+        "--frozen",
+        "100",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0xbe82b81178847336",
+      "bevy_entity_count": 10000,
+      "bevy_frozen_count": 10000
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "1",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0xdd0aa3f38218f558",
+      "bevy_entity_count": 2,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "1",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0xdd0aa3f38218f558",
+      "bevy_entity_count": 2,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "1",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x9da1cc1670c55d6b",
+      "bevy_entity_count": 22,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "1",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x9da1cc1670c55d6b",
+      "bevy_entity_count": 22,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "1",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0xfee1065c8f47f270",
+      "bevy_entity_count": 100,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "1",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0xfee1065c8f47f270",
+      "bevy_entity_count": 100,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "31",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0xd504107550f2b896",
+      "bevy_entity_count": 62,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "31",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0xd504107550f2b896",
+      "bevy_entity_count": 62,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "31",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x0088e0abe4170972",
+      "bevy_entity_count": 682,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "31",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x0088e0abe4170972",
+      "bevy_entity_count": 682,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "31",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x4ad81ff23446e906",
+      "bevy_entity_count": 3065,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "31",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x4ad81ff23446e906",
+      "bevy_entity_count": 3065,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "100",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 1,
+      "digest": "0x64795ed15ced43de",
+      "bevy_entity_count": 200,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "100",
+        "--warmup",
+        "1",
+        "--ticks",
+        "1"
+      ],
+      "threads": 4,
+      "digest": "0x64795ed15ced43de",
+      "bevy_entity_count": 200,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "100",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 1,
+      "digest": "0x050b614f93a8d682",
+      "bevy_entity_count": 2198,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "100",
+        "--warmup",
+        "2",
+        "--ticks",
+        "20"
+      ],
+      "threads": 4,
+      "digest": "0x050b614f93a8d682",
+      "bevy_entity_count": 2198,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "100",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 1,
+      "digest": "0x5c3f127608914a7c",
+      "bevy_entity_count": 9986,
+      "bevy_frozen_count": 0
+    },
+    {
+      "workload": "churn",
+      "arguments": [
+        "--rate",
+        "100",
+        "--warmup",
+        "200",
+        "--ticks",
+        "40"
+      ],
+      "threads": 4,
+      "digest": "0x5c3f127608914a7c",
+      "bevy_entity_count": 9986,
+      "bevy_frozen_count": 0
+    }
+  ]
+}

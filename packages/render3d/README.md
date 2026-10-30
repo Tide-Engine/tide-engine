@@ -141,26 +141,48 @@ point, with match before local within each kind. `droppedLights` counts lights
 excluded by the limit. Configure directional components instead of the removed
 `Renderer.sun`.
 
-Shadows default on. `maxShadowMaps = 8` clamps to 0–16 shadow views, assigned in
-retained light order. Directional/spot lights cost one; point lights require six
-contiguous views together or none. A rejected shadow request still illuminates;
-later requests can use remaining capacity. `shadowNear = 0.05` (at least 0.001)
-is the point/spot near plane; a range no larger than this cannot cast shadows.
+Shadows default on. Directional lights use `shadowCascades = 4`, clamped to
+0–4. Values 1–4 fit shadow maps to slices of the camera frustum, concentrating
+detail near the camera. `shadowRange = 40` sets the farthest camera-forward
+distance receiving these shadows, limited by `camera.far`. Keep it near the
+distance your scene needs. Cascade projections use stable sphere bounds and
+texel-snapped placement, blend over the last 10% of each slice, and fade to lit
+at the final range. `shadowDistance = 40` extends their casting volumes toward
+the light so off-camera objects can still cast onto visible receivers.
+
+Set `shadowCascades = 0` for a single fixed directional volume. This mode uses
+`shadowCenter = float3(0)`, `shadowExtent = 10` (half-width/half-height) and
+`shadowDistance = 40` (total depth), in world units. Only this mode uses
+`shadowCenter` and `shadowExtent`. Spot shadows follow the cone; point shadows
+use six faces. Outside-volume receivers are unshadowed.
+
+`maxShadowMaps = 8` clamps to 0–16 shadow views, assigned in retained light
+order. A directional light needs one cell per cascade, or one in fixed mode;
+a spot needs one and a point needs six. All of a light's cells are allocated
+together or none. A rejected shadow request still illuminates; later requests
+can use remaining capacity. `shadowNear = 0.05` (at least 0.001) is the
+point/spot near plane; a range no larger than this cannot cast shadows.
 `unshadowedLights` counts retained lights requesting shadows but receiving none,
 including when `shadows = false`.
 
-Directional volumes share `shadowCenter = float3(0)`, `shadowExtent = 10`
-(half-width/half-height) and `shadowDistance = 40` (depth), in world units.
-They do not automatically follow the camera. Spot shadows follow the cone;
-point shadows use six faces. Outside-volume receivers are unshadowed.
+Edges use normalized tent filtering, with four bilinear depth comparisons and
+weights adjusted to the fractional texel position. There is no random jitter.
+Vulkan devices whose depth format cannot filter comparisons linearly retain
+the backend's nearest-comparison fallback, with reduced edge quality.
 `shadowBias = 0.0005` and `shadowSlopeBias = 0.002` are normalized comparison-depth
-offsets shared by all lights.
+offsets. Cascades scale these offsets for their world-space texel size and depth
+span; fixed, point and spot views use the offsets directly. Too little bias
+causes self-shadowing; too much separates the shadow from its caster.
 
-`shadowResolution = 1024` requests each atlas cell's pixel size, including a
+`shadowResolution = 2048` requests each atlas cell's pixel size, including a
 two-pixel gutter on every edge. The smallest square grid fitting the views clamps
-cells to `16..floor(2048 / gridSize)`, keeping the atlas at most 2048 per side.
+cells to `16..floor(atlasLimit / gridSize)`, with an atlas limit of 4096 per side
+or the device's smaller limit. One default directional light uses four 2048-pixel
+cells in a 4096-square atlas on devices supporting that size. Set a lower
+`shadowResolution` for a smaller memory and shadow-rasterization budget.
 Derived `activeShadowResolution` reports actual cell size including gutters, and
-`atlasSize` the atlas side length. With no shadow views, the atlas keeps its size (initially
+`atlasSize` the atlas side length. Gutters, filtering and cascade snapping use
+these actual dimensions on smaller devices too. With no shadow views, the atlas keeps its size (initially
 16×16), clears to far depth and reports `activeShadowResolution = 0`.
 `shadows = false` skips shadow drawing/sampling while retaining a valid sampler.
 
@@ -217,7 +239,9 @@ LOD preserves tangent signs only for static `float4 tangent` layouts, without a
 new xyz error metric; other layouts and skinned meshes retain their prior LOD
 behavior and cache keys. Generated tangents do not promise MikkTSpace bake compatibility. Height
 mapping shifts UVs with one height sample; it changes no geometry, depth or
-silhouette. Keep the scale modest, especially near grazing views.
+silhouette. With positive `heightScale`, brighter values are raised, darker
+values are recessed and `0.5` is neutral; a negative scale reverses the relief.
+Keep the scale modest, especially near grazing views.
 
 ## Skinning, vertex deformation and post-processing
 
@@ -257,7 +281,7 @@ additional game resources through ordinary shader parameters: between
 ## Current scope
 
 One camera; static and skinned mesh assets with material maps and scalar values.
-No `LightMode`, baked or area lights, cascades, environment specular,
+No `LightMode`, baked or area lights, environment specular,
 GI, probes or light baker in this slice.
 Model texture and metallic/roughness import is not automatic.
 

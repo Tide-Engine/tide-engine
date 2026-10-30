@@ -65,7 +65,7 @@ test('the summary counts installs, commands, failures, versions, platforms and b
     time += 8 * DAY;
     const builds = Array.from({ length: 10 }, (_, i) => event({ ms: (i + 1) * 1000 }));
     assert.equal(telemetry.record([...builds, event({ target: 'web', ms: 5000 }), event({ command: 'run', outcome: 'failed', error: 'game' }),
-        event({ id: other, os: 'linux', version: '0.3.0', command: 'build', outcome: 'failed', error: 'compile', ci: true }),
+        event({ id: other, os: 'linux', version: '0.3.0', command: 'build', outcome: 'failed', error: 'compile' }),
         { not: 'an event' }]), 13);
     const week = telemetry.summary(7);
     assert.equal(week.days, 7);
@@ -73,7 +73,7 @@ test('the summary counts installs, commands, failures, versions, platforms and b
     assert.equal(week.from, '2026-10-15');
     assert.equal(week.daily.length, 7);
     assert.deepEqual(week.daily.at(-1), { date: '2026-10-21', events: 13, installs: 2, failed: 2 });
-    assert.deepEqual(week.totals, { events: 13, failed: 2, installs: 2, installsToday: 2, installsWeek: 2, ci: 1 });
+    assert.deepEqual(week.totals, { events: 13, failed: 2, installs: 2, installsToday: 2, installsWeek: 2, ci: 0 });
     assert.deepEqual(week.commands, [{ command: 'build', events: 12, failed: 1, installs: 2 }, { command: 'run', events: 1, failed: 1, installs: 1 }]);
     assert.deepEqual(week.failures, [{ command: 'build', error: 'compile', events: 1 }, { command: 'run', error: 'game', events: 1 }]);
     assert.deepEqual(week.versions, [{ version: '0.4.0-nightly.3', installs: 1, events: 12 }, { version: '0.3.0', installs: 1, events: 1 }]);
@@ -87,6 +87,39 @@ test('the summary counts installs, commands, failures, versions, platforms and b
     assert.deepEqual(month.weekly[1], { from: '2026-10-08', to: '2026-10-14', installs: 1 });
     assert.equal(telemetry.summary(1).daily.length, 1);
     assert.throws(() => telemetry.summary(0), RangeError);
+});
+
+test('CI events are excluded from every usage breakdown, including historical events and CI-only ranges', (t) => {
+    let time = Date.parse('2026-10-21T15:30:00Z');
+    const telemetry = createTelemetry({ file: ':memory:', now: () => time });
+    t.after(() => telemetry.stop());
+    const ciInstall = 'fedcba9876543210fedcba9876543210';
+    time -= 8 * DAY;
+    telemetry.record([event({ command: 'run' })]);
+    time += 8 * DAY;
+    telemetry.record([event(), event({ target: 'web', ms: 5000 }), event({ command: 'run', outcome: 'failed', error: 'game' })]);
+    const ranges = [1, 7, 30];
+    const before = ranges.map((days) => telemetry.summary(days));
+    // Some CI events share a real install ID; others introduce their own ID,
+    // version, platform, command, error and target. Neither may affect usage.
+    telemetry.record([
+        event({ ci: true, ms: 0 }), event({ ci: true, ms: 86_400_000 }),
+        event({ ci: true, target: 'web', ms: 1 }),
+        event({ ci: true, id: ciInstall, os: 'macos', arch: 'arm64', version: '0.5.0-nightly.23', target: 'android' }),
+        event({ ci: true, id: ciInstall, command: 'upgrade', outcome: 'failed', error: 'network' }),
+    ]);
+    time -= 8 * DAY;
+    telemetry.record([event({ ci: true, id: ciInstall, command: 'run', outcome: 'failed', error: 'setup' })]);
+    time += 8 * DAY;
+    for (const [i, days] of ranges.entries()) {
+        const expected = before[i];
+        assert.deepEqual(telemetry.summary(days), { ...expected, totals: { ...expected.totals, ci: days === 30 ? 6 : 5 } });
+    }
+    // A day containing only CI must show zero active installs and commands.
+    time += DAY;
+    const empty = telemetry.summary(1);
+    telemetry.record([event({ ci: true, id: ciInstall })]);
+    assert.deepEqual(telemetry.summary(1), { ...empty, totals: { ...empty.totals, ci: 1 } });
 });
 
 test('received times are kept to the hour, and events go after 13 months', async (t) => {
@@ -167,7 +200,7 @@ test('POST /telemetry validates strictly, bounds requests and keeps no address',
 
 test('the admin API shows CLI usage only after sign-in', async (t) => {
     const { origin, post } = await site(t);
-    assert.equal((await post({ events: [event()] })).status, 204);
+    assert.equal((await post({ events: [event(), event({ ci: true, command: 'run', outcome: 'failed', error: 'setup' })] })).status, 204);
     const anonymous = await fetch(`${origin}/admin/api/telemetry`);
     assert.equal(anonymous.status, 401);
     const page = await fetch(`${origin}/admin/telemetry`, { redirect: 'manual' });
@@ -181,6 +214,8 @@ test('the admin API shows CLI usage only after sign-in', async (t) => {
     assert.equal(response.headers.get('cache-control'), 'private, no-store');
     const summary = await response.json();
     assert.equal(summary.totals.events, 1);
+    assert.equal(summary.totals.failed, 0);
+    assert.equal(summary.totals.ci, 1);
     assert.equal(summary.daily.length, 7);
     assert.equal((await fetch(`${origin}/admin/api/telemetry?days=5`, { headers: { cookie } })).status, 400);
     assert.equal((await fetch(`${origin}/admin/api/telemetry`, { method: 'POST', headers: { cookie, origin } })).status, 405);

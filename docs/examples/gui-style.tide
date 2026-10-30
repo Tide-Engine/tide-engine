@@ -1,0 +1,97 @@
+// A Material-inspired menu: tonal surfaces, pill buttons and soft state layers.
+scene Main { }
+
+const Color INK = Color(0.11, 0.10, 0.13);
+const Color MUTED = Color(0.29, 0.27, 0.32);
+const Color SURFACE = Color(0.99, 0.97, 1);
+const Color PRIMARY = Color(0.40, 0.31, 0.64);
+const Color TONAL = Color(0.91, 0.87, 0.98);
+
+local singleton Menu
+{
+    bool options;
+    bool music = true;
+    float volume = 0.7;
+    int played;
+}
+
+// Flat surfaces and a quiet shadow; custom buttons share this transition time.
+const GUITheme LOOK = GUITheme {
+    text = INK, panel = Color(0.95, 0.92, 0.98), control = TONAL,
+    hot = Color(0.85, 0.80, 0.94), pressed = Color(0.79, 0.73, 0.88), accent = PRIMARY,
+    radius = 20, shading = 0, borderWidth = 0,
+    shadow = Color(0.11, 0.10, 0.13, 0.10), shadowSize = 8,
+    textSize = 16, padding = 20, spacing = 10, transition = 0.15 };
+
+// Material-style state layers keep the button still as hover and press ease in.
+bool MaterialButton(Rect rect, string text, bool filled)
+{
+    var button = GUI.Control(rect);
+    var base = filled ? PRIMARY : TONAL;
+    var foreground = filled ? Color.white : PRIMARY;
+    GUI.Draw()
+    {
+        Draw.Rect(rect, 24, base);
+        Draw.Rect(rect, 24, foreground.WithAlpha(button.hover * 0.08 + button.press * 0.12));
+        if (button.focus > 0)
+            Draw.WireRoundRect(float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5),
+                               float2(rect.width + 8, rect.height + 8), 28, 2, PRIMARY.WithAlpha(button.focus));
+        Draw.Text(text, float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5),
+                  16, foreground, Anchor.MiddleCenter, Font.Bold);
+    }
+    return button.clicked;
+}
+
+view MainMenu(mut Menu menu)
+{
+    Draw.SetScreen();
+    GUI.SetTheme(LOOK);
+    Draw.Rect(Screen.rect, SURFACE);
+    var middle = Screen.width * 0.5;
+    var width = Math.Min(312.0, Screen.width - 48);
+    var left = middle - width * 0.5;
+    var top = Math.Max(24.0, (Screen.height - 360) * 0.5);
+
+    // A small brand mark leaves the title and actions room to breathe.
+    Draw.Rect(Rect(middle - 24, top, 48, 48), 16, TONAL);
+    Draw.Text("S", float2(middle, top + 24), 28, PRIMARY, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text("Skyward", float2(middle, top + 84), 36, INK, Anchor.MiddleCenter);
+    Draw.Text("A little room for adventure.", float2(middle, top + 120), 16, MUTED, Anchor.MiddleCenter);
+
+    // Settings replaces the actions, keeping a narrow embedded demo uncluttered.
+    var shown = GUI.Animate(menu.options ? 1.0 : 0.0, 0.22);
+    if (!menu.options && shown < 0.01)
+    {
+        if (MaterialButton(Rect(left, top + 164, width, 48), "Play", true)) menu.played++;
+        if (MaterialButton(Rect(left, top + 224, width, 48), "Settings", false)) menu.options = true;
+        Draw.Text("MAKE YOURSELF AT HOME", float2(middle, top + 308), 11, MUTED, Anchor.MiddleCenter);
+    }
+
+    if (shown > 0.001)
+    {
+        // One compact card, eased up into place, with ordinary themed widgets.
+        GUILayout.Area(Rect(left, top + 140 + (1 - shown) * 24, width, 188))
+        {
+            GUILayout.Label("Sound & music", 20);
+            GUILayout.Toggle("Music", menu.music);
+            GUILayout.Slider("Volume", menu.volume, 0, 1);
+            if (GUILayout.Button("Done")) menu.options = false;
+        }
+    }
+
+    // The snackbar acknowledges this example's Play action.
+    if (menu.played > 0 && !menu.options && shown < 0.01)
+    {
+        GUI.Key(menu.played)
+        {
+            var fade = GUI.Animate(1, 0.25, 0);
+            GUI.Draw()
+            {
+                var at = Rect(left, Screen.height - 88 + (1 - fade) * 8, width, 40);
+                Draw.Rect(at, 8, INK.WithAlpha(fade));
+                Draw.Text("Ready for takeoff.", float2(middle, at.y + 20), 14,
+                          SURFACE.WithAlpha(fade), Anchor.MiddleCenter);
+            }
+        }
+    }
+}

@@ -1,0 +1,332 @@
+{
+  "valid": true,
+  "rounds": 3,
+  "warmup": 200,
+  "ticks": 400,
+  "has_before": true,
+  "processes": 36,
+  "estimator": "median of process tick medians; ratios are median of paired ratios",
+  "scope": "ECS ticks only; excludes setup, snapshots, per-tick hashing, networking and rendering",
+  "cases": [
+    {
+      "count": 1000000,
+      "id": "wide-1m-1",
+      "threads": 1,
+      "frozen": 0,
+      "workload": "wide",
+      "rate": 0,
+      "tagged": 0,
+      "digest": "0x949538645cf2c1f2",
+      "tide_ms": 1.2949,
+      "bevy_ms": 2.4751,
+      "c_ms": 0.9962,
+      "tide_range_ms": [
+        1.2911,
+        1.31905
+      ],
+      "bevy_range_ms": [
+        2.4275,
+        2.4896
+      ],
+      "c_range_ms": [
+        0.97955,
+        1.06565
+      ],
+      "ratio_bevy_over_tide": 1.8874189757780218,
+      "paired_ratios": [
+        1.874662136072284,
+        1.8874189757780218,
+        1.9170474788939664
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          1.2949,
+          1.31905,
+          1.2911
+        ],
+        "Bevy": [
+          2.4275,
+          2.4896,
+          2.4751
+        ],
+        "C": [
+          0.97955,
+          0.9962,
+          1.06565
+        ],
+        "Before": [
+          1.32425,
+          1.33535,
+          1.29135
+        ],
+        "Before_C": [
+          0.96625,
+          1.0007,
+          1.01485
+        ]
+      },
+      "before_ms": 1.32425,
+      "before_range_ms": [
+        1.29135,
+        1.33535
+      ],
+      "before_c_ms": 1.0007,
+      "before_c_range_ms": [
+        0.96625,
+        1.01485
+      ],
+      "ratio_before_over_tide": 1.0123573784162845,
+      "paired_before_ratios": [
+        1.0226658429222333,
+        1.0123573784162845,
+        1.0001936333359152
+      ],
+      "paired_change_percent": [
+        -2.2163488767226736,
+        -1.2206537611862078,
+        -0.019359584930500606
+      ],
+      "change_percent": -1.2206537611862078
+    },
+    {
+      "threads": 1,
+      "count": 1000000,
+      "workload": "wide",
+      "tagged": 1,
+      "rate": 0,
+      "frozen": 50,
+      "id": "filtered-1m-1",
+      "digest": "0x5696f80210717ed3",
+      "tide_ms": 2.1446,
+      "bevy_ms": 2.51825,
+      "c_ms": 1.12085,
+      "tide_range_ms": [
+        2.13715,
+        2.17925
+      ],
+      "bevy_range_ms": [
+        2.4978,
+        2.6173
+      ],
+      "c_range_ms": [
+        1.10785,
+        1.1349
+      ],
+      "ratio_bevy_over_tide": 1.1742282943206193,
+      "paired_ratios": [
+        1.168752778232693,
+        1.1742282943206193,
+        1.201009521624412
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          2.13715,
+          2.1446,
+          2.17925
+        ],
+        "Bevy": [
+          2.4978,
+          2.51825,
+          2.6173
+        ],
+        "C": [
+          1.1349,
+          1.12085,
+          1.10785
+        ],
+        "Before": [
+          2.1586,
+          2.1683,
+          2.15285
+        ],
+        "Before_C": [
+          1.10615,
+          1.1147,
+          1.1209
+        ]
+      },
+      "before_ms": 2.1586,
+      "before_range_ms": [
+        2.15285,
+        2.1683
+      ],
+      "before_c_ms": 1.1147,
+      "before_c_range_ms": [
+        1.10615,
+        1.1209
+      ],
+      "ratio_before_over_tide": 1.0100367311606577,
+      "paired_before_ratios": [
+        1.0100367311606577,
+        1.0110510118437004,
+        0.9878857405070551
+      ],
+      "paired_change_percent": [
+        -0.9936996201241444,
+        -1.0930221832772147,
+        1.2262814408807055
+      ],
+      "change_percent": -0.9936996201241444
+    },
+    {
+      "threads": 1,
+      "count": 1000000,
+      "workload": "wide",
+      "tagged": 1,
+      "rate": 0,
+      "frozen": 95,
+      "id": "filtered-frozen95-1m-1",
+      "digest": "0xd332cbdb933b490c",
+      "tide_ms": 0.9975,
+      "bevy_ms": 0.2734,
+      "c_ms": 1.14315,
+      "tide_range_ms": [
+        0.98415,
+        1.01035
+      ],
+      "bevy_range_ms": [
+        0.2678,
+        0.39985
+      ],
+      "c_range_ms": [
+        1.13825,
+        1.17465
+      ],
+      "ratio_bevy_over_tide": 0.27408521303258143,
+      "paired_ratios": [
+        0.3957539466521502,
+        0.27211299090585783,
+        0.27408521303258143
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          1.01035,
+          0.98415,
+          0.9975
+        ],
+        "Bevy": [
+          0.39985,
+          0.2678,
+          0.2734
+        ],
+        "C": [
+          1.17465,
+          1.13825,
+          1.14315
+        ],
+        "Before": [
+          1.02775,
+          1.0208,
+          1.0794
+        ],
+        "Before_C": [
+          1.09055,
+          1.11625,
+          1.11815
+        ]
+      },
+      "before_ms": 1.02775,
+      "before_range_ms": [
+        1.0208,
+        1.0794
+      ],
+      "before_c_ms": 1.11625,
+      "before_c_range_ms": [
+        1.09055,
+        1.11815
+      ],
+      "ratio_before_over_tide": 1.037240258090738,
+      "paired_before_ratios": [
+        1.0172217548374325,
+        1.037240258090738,
+        1.0821052631578947
+      ],
+      "paired_change_percent": [
+        -1.69301873023594,
+        -3.59032131661442,
+        -7.587548638132279
+      ],
+      "change_percent": -3.59032131661442
+    },
+    {
+      "threads": 4,
+      "count": 1000000,
+      "workload": "wide",
+      "tagged": 1,
+      "rate": 0,
+      "frozen": 99,
+      "id": "filtered-frozen99-1m-4",
+      "digest": "0xa683eb7fe00d6622",
+      "tide_ms": 0.0407,
+      "bevy_ms": 0.0302,
+      "c_ms": 0.63025,
+      "tide_range_ms": [
+        0.0404,
+        0.0411
+      ],
+      "bevy_range_ms": [
+        0.0301,
+        0.0307
+      ],
+      "c_range_ms": [
+        0.61935,
+        0.6503
+      ],
+      "ratio_bevy_over_tide": 0.745049504950495,
+      "paired_ratios": [
+        0.742014742014742,
+        0.7469586374695865,
+        0.745049504950495
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          0.0407,
+          0.0411,
+          0.0404
+        ],
+        "Bevy": [
+          0.0302,
+          0.0307,
+          0.0301
+        ],
+        "C": [
+          0.6503,
+          0.61935,
+          0.63025
+        ],
+        "Before": [
+          0.0466,
+          0.0452,
+          0.0455
+        ],
+        "Before_C": [
+          0.64625,
+          0.74925,
+          0.61925
+        ]
+      },
+      "before_ms": 0.0455,
+      "before_range_ms": [
+        0.0452,
+        0.0466
+      ],
+      "before_c_ms": 0.64625,
+      "before_c_range_ms": [
+        0.61925,
+        0.74925
+      ],
+      "ratio_before_over_tide": 1.1262376237623763,
+      "paired_before_ratios": [
+        1.144963144963145,
+        1.099756690997567,
+        1.1262376237623763
+      ],
+      "paired_change_percent": [
+        -12.660944206008583,
+        -9.07079646017699,
+        -11.208791208791213
+      ],
+      "change_percent": -11.208791208791213
+    }
+  ]
+}

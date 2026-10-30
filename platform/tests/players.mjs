@@ -75,6 +75,15 @@ if (mode === 'refused') {
     line('5 leave', 2, '`leave` says whose match it is', '`5 player 2 leave`');
     line('5 drop', 0, '`drop` is for a run of several players', '--players 2');
     line('5 player 2 rejoin now', 2, "'now' is one word too many");
+    // A network made worse: what --latency, --jitter and --loss take
+    refused('--latency with no number', ['--frames', '5', '--latency'], '--latency takes how many milliseconds a datagram takes each way');
+    refused('--latency that is no number', ['--frames', '5', '--latency', 'fast'], "not 'fast'");
+    refused('a loss over everything', ['--frames', '5', '--loss', '150'], 'in percent from 0 to 100', "not '150'");
+    refused('a jitter for player 0', ['--frames', '5', '--players', '2', '--jitter', '0:5'], "not '0:5'");
+    refused("a player's latency in a run without them", ['--frames', '5', '--players', '2', '--latency', '3:80'],
+            '--latency 3:... is for player 3, and this run has 2 players');
+    refused("a player's latency in a run of one", ['--frames', '5', '--latency', '2:80'],
+            'is for one player of a run of several', '--players 2');
     check(!existsSync(join(scratch, 'x-1.png')), 'and nothing ran');
     process.exit(failures ? 1 : 0);
 }
@@ -145,6 +154,39 @@ const first = names.map(bytes);
 const again = run(args);
 check(again.status === 0 && names.every((name, i) => bytes(name).equals(first[i])),
       'a run of two repeats exactly: the same pictures from both machines, byte for byte');
+
+// The same two on a network made worse (--latency, --jitter, --loss): the
+// second joined, so it's that far from the first's server, which adds
+// nothing. Both still see both blocks end where they do, and the second's
+// ping is a slow network's.
+const slow = script('slow.txt', ['50 key d down', '60 player 2 key d down', '150 key d up', '160 player 2 key d up',
+                                 '240 capture slow.png', '241 quit']);
+const slowArgs = ['--players', '2', '--latency', '80', '--jitter', '10', '--loss', '5', '--script', slow, '--size', '320', '200'];
+const slowRan = run(slowArgs);
+check(slowRan.status === 0, `a run of two 80 ms apart ends with exit code 0${slowRan.status === 0 ? '' : `: ${slowRan.status}\n${slowRan.err}`}`);
+if (slowRan.status === 0) {
+    for (const player of [1, 2]) {
+        const png = read(`slow-${player}.png`);
+        check(block(png, 200, rows[0], 10, red) && block(png, 200, rows[1], 10, green),
+              `player ${player}'s machine sees both blocks where their 40 steps end, through the lag and the loss`);
+        check(player === 1 ? none(png, 300, 140) && none(png, 300, 100) : block(png, 300, 140, 10, yellow) && none(png, 300, 100),
+              player === 1 ? 'the first runs the server, and has no ping' : "the second's ping is the slow network's: 150 ms or more");
+    }
+    const slowBytes = [1, 2].map(player => bytes(`slow-${player}.png`));
+    const slowAgain = run(slowArgs);
+    check(slowAgain.status === 0 && [1, 2].every((player, i) => bytes(`slow-${player}.png`).equals(slowBytes[i])),
+          'and it repeats exactly: the same datagrams lost and late, the same pictures');
+}
+
+// One player's own: the third is 80 ms away, the second as near as ever
+const third = run(['--players', '3', '--latency', '3:80', '--frames', '150', '--capture', 'third.png', '--size', '320', '200']);
+check(third.status === 0, `a run of three with the third far away ends with exit code 0${third.status === 0 ? '' : `: ${third.status}\n${third.err}`}`);
+if (third.status === 0) {
+    const second = read('third-2.png'), last = read('third-3.png');
+    check(block(second, 300, 100, 10, magenta) && none(second, 300, 140), "the second's ping is the made-up network's own");
+    check(block(last, 300, 140, 10, yellow) && none(last, 300, 100), "and the third's a slow one's");
+    check(rows.every((y, i) => block(last, 40, y, 10, colors[i])), 'with all three in its match');
+}
 
 // Three: the others join in their order, so each one's row is its number's
 const three = run(['--players', '3', '--frames', '90', '--capture', 'three.png', '--size', '320', '200']);

@@ -1,5 +1,247 @@
 # `tide`, packages and the package
 
+## What packages need resolves by itself (2026-10-30)
+
+The owner, of a game that had to list `box3d` because its local `combat`
+package did ("we should include dependencies automatically its stupid not
+to"; found in the Bannerlord duel's gaps list). `packages_resolve`
+(`compiler/lsp/packages.c`) is now a worklist of `wanted` lines: the game's
+lines first, then each line a resolved package needs that nothing in the list
+is yet, with the folder its path is from (`base`), the file it's in (`where`)
+and the package that needs it (`by`). Each is checked and read as the game's
+lines were (commit, a builtin that exists, fetch, folder, `package` line,
+`tide 0.x`, no pin, no second package of a name), with errors at `where`'s
+line, so a problem in a package's need points at that package's file. Edges
+between packages go by `wanted` index and become the needs matrix the
+compile order sorts with, as before.
+
+What code relies on:
+
+- **The game's line wins.** A need matches the game's lines first
+  (`same_package`: same source, any commit, or the same folder), and is never
+  checked further: a package's line with no commit, or a different commit,
+  doesn't matter once the game lists it. This was the rule before; it's now
+  also how a game chooses between packages that disagree.
+- **Two commits of one package is an error,** at the second need's line:
+  `<B> needs <source> at <7>, and <A> needs it at <7>`, with the note that a game
+  builds one commit of each and the game's line to add (the first need's,
+  `line_text`, so a folder is written from the game's folder). No newest-wins:
+  commits have no order without the repository's history. Same commit, any
+  refs, is one package; the first line found is the one built.
+- **A package's git line needs its commit** unless the game lists that
+  package; the error says so at the package's line.
+- `package` gained `listed_in` (the file `line` is in) and `file` (its own
+  tide.packages, kept until `packages_free`): `line` points into the game's
+  file or a needing package's `file`, so both live as long as the result.
+  `tide publish`'s "outside the game's folder" error reports at `listed_in`.
+- `packages_missing`/`package_need` are gone. `tide add`, `update` and `eject`
+  write only the line they name and then resolve with reports (`resolves` in
+  `packages_cmd.c`, was `add_needed`): writing a package's needs into the game
+  would pin them there and hide the package's own later commits. `tide fetch`
+  resolves (downloading what packages need) and also downloads the `#if`-off
+  git lines of the game and of every resolved package.
+- tidels gets the same packages, as it calls `packages_resolve`.
+
+Not built: a game's line for a package of the same *name* from another source
+(an ejected `./packages/rooms` while `lobby` needs `rooms`) still clashes as
+"both called Rooms"; letting the game's win by name is a proposal for the
+owner. Ejecting a package the game doesn't list needs `tide add` first, as
+the message says.
+
+Tests: `tide_cli_packages` (`packages_test.cmake`): `add` writes one line (folder,
+git, builtin) and downloads what the package needs; a two-deep local chain
+(`outer` -> `../physics` -> `../maths`) with relative paths from each
+package's folder, alone and with the game listing all three; a missing
+folder a package needs reported at that package's `tide.packages:2`, with the
+game's file unchanged; two packages needing maths at `M1` and `M2` (a commit
+with a `Maths.Tick` system to show which built) failing with both named and
+the game's line in the note, the game's `M2` line then building `M2`, the same
+commit from both building, a package's commitless git line failing until the
+game lists it; `fetch` downloading a need without writing it, and a local
+package's `#if STEAM` git line. `tide_cli_tests`
+(`cli_packages_that_come_with_tide_are_in_one_folder`): `dice` alone resolves
+`rolls` from Dice's line, in order, with `listed_in` pointing at each file.
+
+## Interactive hidden play (2026-10-29)
+
+`run --interactive <replay.txt>` forwards the replay's absolute path and
+selects the ordinary one-shot native build/run path, retaining inherited
+stdin/stdout. The hidden runner accepts live frame-queued script input,
+explicit steps and current-frame captures, with executed actions saved for
+--script replay; contracts and platform tests are in notes/standard-host.md,
+Dynamic agent play. Existing web/Android/server checks refuse this native
+player mode before building. The help catalog, CLI reference and agent guides
+describe the protocol and provisional names. No CLI telemetry field changed.
+Run-exit dispatch/path forwarding, hidden/unsupported/missing-value checks,
+and focused help tests cover the CLI integration. Native CLI builds and docs
+production build pass. After merging the Windows sanitizer work, the affected
+CLI builds and six selected platform/CLI ASan CTests pass; final compatibility
+results are in standard-host.md.
+
+## Isolated editor tests under Windows ASan (2026-10-29)
+
+editors_test.cmake and jetbrains_test.cmake copy any clang ASan runtime DLLs
+beside their source tide executable into the scratch installation's bin.
+These two harnesses replace PATH with their fake editor directory, so inheriting
+CTest's sanitizer environment alone cannot load the runtime. Their isolated
+PATH, profiles and real CLI behavior stay unchanged. Ordinary builds with no
+ASan DLL copy nothing extra. Validation is recorded in notes/testing.md.
+
+## CLI pins select a side-by-side release (2026-10-29)
+
+Owner requested using a project's pin and asking to download a missing release,
+without replacing the main installation. `versions.c` dispatches build/run,
+schedule/shaders and add/update/eject/fetch/publish after argument validation.
+The original argv, working directory, stdio and exit code are preserved. Pin,
+help, version and installation commands describe/use the invoking installation;
+Unity package selection and the source-build `-dev` exception remain intact.
+
+The cache is Unity's `TIDE_VERSIONS` or LOCALAPPDATA/Tide/versions (Windows),
+HOME/.tide/versions (elsewhere). Missing/incomplete entries prompt [y/N]; EOF
+and decline fail without downloading. No-terminal callers fail with guidance;
+TIDE_INTERACTIVE enables prompts for callers forwarding stdin. Cached releases
+need no network. Probe --version checks the executable before forwarding to
+prevent a corrupt/misnamed cache from recursively selecting itself.
+
+`upgrade.c` shares download/checksum/unpack code with its existing upgrade path.
+Version downloads use a per-version process lock and private staging directory;
+VERSION and executable presence are checked before publishing the whole folder.
+Failures remove staging, and neither main-install files nor editor plugins are
+updated. Unity may publish the same version during download; a complete cache
+is reused. Unity itself retains its existing installer/locking policy.
+
+Tests: versions_test.mjs uses the real dispatcher and installer with local release
+archives and a compiled command fixture: matching invoking version, missing
+noninteractive entry, decline/EOF, bad checksum, wrong archive VERSION, successful
+consented installation, quoted argv and exit code, offline reuse and corrupt
+executable rejection. The driver explicitly uses a release version even when the
+engine is built as -dev. Existing package/help/run-exit/upgrade tests cover CLI
+integration and preserve upgrade behavior. The final version fixture also checks
+all nine real CLI command paths and repairs a VERSION-only cache entry.
+
+Validation: Windows Clang 23.1.2, Node 24.22.1, native debug CLI configured as
+0.5.0-nightly.26 to exercise release pin selection. Strict warning-free builds;
+the seven affected CLI CTests pass (unit/package/version/upgrade/help/run-exit/
+hidden), with the expanded version fixture passing afterward. Production docs
+build and diff checks pass; docs retain their existing allowed unstaged-example
+404s. Downloads use only local fixture releases; no user version is installed.
+This is host CLI code, shared by native/web build commands, with no WASM/runtime
+change. Actual Unity editor concurrency, Linux/macOS execution and embedded-LLVM
+packaging remain CI/follow-up coverage.
+
+
+## Shipping shaders and exports (2026-10-27)
+
+The owner requested shader identifier minification and tighter public export
+lists. Existing strip_names now also shortens the source-derived identifiers
+in emitted GLSL/WGSL, with private per-stage aliases in game.names. Contracts
+and compiler/backend regressions are in shaders.md. Readable debug/watched/
+Unity output remains the default. No generated/runtime API, pack format or
+simulation result changes.
+
+Standalone release macOS links add -no_exported_symbols beside -dead_strip,-S,-x,
+so defined global names cannot remain public. Shared/hot-reload/embed links keep
+their APIs. Android standalone release links use platform/android/game.exports:
+only ANativeActivity_onCreate is global; all other game/runtime definitions are
+local. Its entry point already has the required explicit visibility/root.
+The platform install ships that file as lib/android/game.exports, shared by
+the two ABI folders. A missing file fails the release build with reinstall
+guidance. Separately supplied game libraries are not relinked or restricted.
+The APK, generated headers and host ABI do not change. Custom code relying on
+dynamic lookup of libgame.so's former incidental exports must expose its API in
+a separate library. CMake shipping apps use the same export policy; debug and
+profiling configs retain names.
+
+exports_test.mjs cross-links real ARM64/x86_64 Android and macOS probes and
+inspects their symbol tables with LLVM: Android's one defined dynamic symbol is
+the activity; macOS has no defined public symbols. cpp_test.cmake's Android
+package case checks both actual release libraries when llvm-readobj is present.
+cache_test.mjs checks source-derived shader names in native/web debug versus
+shipping output and the private map, and checks macOS defined external symbols.
+Validation (Windows, Clang 23.1.2, Node 24.22.1, WASI SDK 24, Android NDK
+30.0.16248370): warning-free native/web builds; full native debug passes all
+2,816 enabled CTests (390.81 s), full web debug all 2,709 (722.93 s), retaining
+the existing disabled MicroDuck right-turn case. Minified callable shader pixels
+and batching pass Vulkan/OpenGL/WebGL/D3D11/WebGPU. The all-fixture check pins
+99 byte-identical SPIR-V modules plus unchanged non-name GLSL/WGSL tokens.
+Native/web installed --strip-only checks pass with actual shader sentinels and
+private maps, including split/single-file pages and debug-to-release cleanup.
+
+Both Android platform ABI libraries build and install the allowlist. The staged
+CLI passes cpp_test.cmake with WEB and ANDROID enabled: real debug/release APKs,
+C++ constructors/virtual dispatch/custom allocation, expected failure cases,
+and only the NativeActivity export in both release libgame.so files. CMake's
+x86_64 Android Duel app and ordinary console cpp test also build; the app's
+exports pass the same check. Console targets intentionally receive no activity
+allowlist. Cross-link probes pass both ARM64/x86_64 Android and macOS policies.
+
+The tide_add_game opt-in's prototype compatibility check builds BANKED and its
+tests in native/web Release against this engine, with banked_test passing on
+both. No prototype sources or deployment changed. Docs production build, Node
+syntax and diff checks pass. No deterministic expectation was changed. No Vulkan
+validation layer is installed; Android device/emulator execution, actual macOS
+game linking/runtime, other OSes and the embedded-LLVM package remain CI coverage.
+No extra workflow was dispatched and existing public demos were not redeployed.
+
+## Standalone release metadata (2026-10-27)
+
+The owner requested removing readable metadata as a first deterrent to game
+reverse engineering. generate passes strip_names for a release that is not
+watching, a library or a layout build. Native, web, Android and managed
+standalone code generation share that policy. Debug/watched/Unity generation
+keeps its existing metadata. codegen's private game.names stays in
+.tide/<configuration>/gen/; it is never copied beside the program or into a web
+page/pack. Keep it privately with the corresponding build for diagnosing IDs.
+The user-facing contract and limits are in docs/tools/cli.md. Replacing a native
+debug output removes its old PDB, natvis, LLDB script and (on macOS) dSYM; a
+cleanup failure fails the build with a message naming the remaining file.
+
+cache_test.mjs's existing stripping fixture now includes named systems/views,
+an assertion, a text asset and a skinned asset whose vertex default reads that
+text. It inspects actual native binaries and split/embedded web payloads:
+private names/source paths absent only in release, authored assertion messages
+present, the private map present only in the generation cache, and no generated
+C/headers/maps/PDB/natvis/LLDB sidecars beside the release output. The native
+fixture first builds debug at the same output path and requires its real debug
+sidecars to exist, then checks that the release removed them. Web checks
+also require no name, DWARF, source-map or external-debug custom sections; the
+Windows native check rejects COFF symbols and PE debug directories. Existing
+code/data pruning and custom-C asset preservation assertions remain. Arbitrary
+user C strings, shader text and model contents may still disclose information;
+this does not stop repackaging or behavioral cloning.
+
+Validation (Windows, Clang 23.1.2, Node 24.22.1, pinned WASI SDK 24): full native
+debug passes 2,812 enabled CTests (241.27 s), plus the new stripped-loader target.
+The full web debug run passes the other 2,706 enabled checks (591.63 s), including
+WebGL/D3D11/WebGPU. Its new target initially ran before its missing hash-pin
+compile definition was corrected and its executable built; that was an ENOENT
+setup failure, and the corrected native/WASI target passes with the existing
+SKINNED_HASH. Both suites retain the existing disabled MicroDuck right-turn case.
+Final CLI tests pass 16/16 after the sidecar fix; the staged installed CLI passes
+native/web --strip-only artifact checks, including split and single-file pages
+and actual debug-to-release output reuse. A CMake Release Duel build emits its
+private map only in its generation directory and passes a hidden --frames 2
+smoke run. Docs production build, Node syntax and diff checks pass. No hash pin,
+runtime model representation, server protocol or simulation behavior changed.
+No Vulkan validation layer is installed. Android, Linux/macOS (including dSYM
+cleanup), sanitizers and the embedded-LLVM package remain CI coverage; no extra
+CI was dispatched. This does not rebuild or redeploy existing public demos.
+
+## Web builds are a folder; `--single-file` (2026-10-27)
+
+`tide build --web` writes `.build/web/index.html` plus `index.wasm` and
+`index.pack`, which the page downloads with progress and caches by hash;
+`--single-file` (build only, refused without `--web`) is the former
+self-contained `.build/<name>.html`. A game's `shell.html` replaces the
+package's shell and its `icon.png` becomes the loader's logo and the tab's
+icon, in built and `tide run --web` pages. `tide deploy` builds its client
+single. The non-watching branch of `tide_run_web` serves a split page's two
+files, though `tide run --web` always watches today. `cache_test.mjs`'s
+stripping test checks the split files (raw, named by hash and size in the
+page) and a `--single-file` page with the same program; CI's "Try the
+package" also builds `--single-file`. Runtime, stages and the shell contract:
+`notes/web.md`, Split pages and the loader.
+
 ## Debug builds carry their debugger views (2026-10-26)
 
 Native non-release builds (`debug_views` in `build.c`) generate with
@@ -819,17 +1061,17 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - The package brings the C library for web games (wasi-libc) and for Windows games, which build for MinGW-w64 (see MinGW builds): Microsoft's C runtime can't ship with tide, and the UCRT is part of Windows, so players need nothing else. Linux games use the system's C development files, and macOS games the SDK of Apple's command-line tools (tide sets `SDKROOT`).
 - On macOS, `tide build` and `tide run` also put MoltenVK beside the game's program (`place_moltenvk`): the package's `lib/native/libMoltenVK.dylib`, of which only the slice for the game's CPU goes (`lib_universal_slice`). See `notes/rendering.md`, MoltenVK on macOS.
 - A game is a folder of `.tide` files. tide keeps its work in `<folder>/.tide/` (hidden on Windows too, and it ignores itself in git) and puts `tide build` output in `<folder>/.build/` (not hidden on Windows; it ignores itself in git too). Hidden folders are no part of a game (see Hidden folders, 2026-10-21).
-- A game's packages are what its `tide.packages` lists (`docs/packages/using-and-writing.md`, `docs/spec.md`, Packages): git repositories, each pinned to a commit, folders, and the packages that come with tide (below). No lock file: the game's file lists every package it builds with, those its packages need included, and its line wins. `compiler/lsp/packages.c` reads the file and finds each package's folder (tide and tidels share it). `compiler/cli/fetch.c` downloads a commit as its host's archive, and reads branches and tags from git's `info/refs`, with curl and tar as `tide upgrade` does, so users need no git; commits are kept once for every game (`TIDE_PACKAGES`, or `%LOCALAPPDATA%/Tide/packages` and `~/.tide/packages`). A commit unpacks in a folder of that tide's own, and its files move into the commit's folder one by one, never as a folder (`fetch_place`): Windows renames no folder while a program has anything in it open, as antivirus has each new file for a moment, and a file such a program has open still moves. So a commit's folder is whole when it has `.tide-fetched` (`packages_fetched`), which goes in last, and one without it is downloaded again; a file that's there already is that commit's, so a download goes on from one that stopped and two tides can get a commit at once. `compiler/cli/packages_cmd.c` is `tide add` and `tide update`, which only change the file's commits and add what packages need. Packages' files compile first, each package after those it needs, then the game's (`compile_inputs`), and their C with the game's. A folder with a `tide.packages` is a game or a package of its own, never part of the one around it (`folder_find_own`). Tests stand in for git hosts with `TIDE_GIT_MIRROR` (`compiler/cli/tests/packages_test.cmake`).
+- A game's packages are what its `tide.packages` lists (`docs/packages/using-and-writing.md`, `docs/spec.md`, Packages): git repositories, each pinned to a commit, folders, and the packages that come with tide (below). No lock file: the game's file lists the packages it chooses, what they need comes from their own lines, and the game's line for one wins (see What packages need resolves by itself, 2026-10-30). `compiler/lsp/packages.c` reads the file and finds each package's folder (tide and tidels share it). `compiler/cli/fetch.c` downloads a commit as its host's archive, and reads branches and tags from git's `info/refs`, with curl and tar as `tide upgrade` does, so users need no git; commits are kept once for every game (`TIDE_PACKAGES`, or `%LOCALAPPDATA%/Tide/packages` and `~/.tide/packages`). A commit unpacks in a folder of that tide's own, and its files move into the commit's folder one by one, never as a folder (`fetch_place`): Windows renames no folder while a program has anything in it open, as antivirus has each new file for a moment, and a file such a program has open still moves. So a commit's folder is whole when it has `.tide-fetched` (`packages_fetched`), which goes in last, and one without it is downloaded again; a file that's there already is that commit's, so a download goes on from one that stopped and two tides can get a commit at once. `compiler/cli/packages_cmd.c` is `tide add` and `tide update`, which only change the file's commits and add what packages need. Packages' files compile first, each package after those it needs, then the game's (`compile_inputs`), and their C with the game's. A folder with a `tide.packages` is a game or a package of its own, never part of the one around it (`folder_find_own`). Tests stand in for git hosts with `TIDE_GIT_MIRROR` (`compiler/cli/tests/packages_test.cmake`).
   - **A Unity project's Assets folder** (2026-10-21, owner) is a game whose packages include, with no lines, every folder under it whose `tide.packages` says `package Name` (`packages_unity_assets`, `add_unity_packages` in `resolve`), whose own C, headers and libraries are none (`own_files_of`), and whose package commands work from any folder of it (`command_folder`). Details and tests: notes/unity.md, The game is Assets.
   - **Adding a package preserves its whole source** (fixed 2026-10-08): local and built-in sources go directly to `append`; git source/ref/commit lines allocate the exact formatted length. The previous 1024-byte buffer silently truncated accepted sources before saving them, leaving an unusable package line after recognizing the package. `tide_cli_packages` adds a valid local source over 1200 bytes (redundant `./` parts normalize to a short real path on every OS), checks the complete saved line, runs its schedule and adds it again.
-  - **Package commands keep resolution failures** (fixed 2026-10-08): `tide add` checks a package's metadata before appending its line. After `add_needed` has appended missing dependency lines, it calls `packages_resolve` with diagnostics and returns its result, so `add` and `update` fail on missing folders, malformed package metadata or incompatible Tide versions. `packages_missing` supplies dependency lines, not resolution success; its count being zero formerly let both commands report success for an unusable graph. Automatic dependency additions and the game's chosen commits are unchanged. `tide_cli_packages` checks that malformed metadata fails before changing the game's file, missing transitive folders fail in both commands, malformed transitive metadata fails in `update`, and correcting the dependency makes `update` and `schedule` succeed.
-  - **A game pins its tide** (2026-10-25, the owner: pinning "in the tide.packages i think makes sense", with only Unity's package switching versions). `tide = 0.5.0-nightly.12` (`packages_file.pinned`, without a `v`; `packages_exact_version`: three numbers and perhaps a pre-release) in a game's `tide.packages`: `split_words` takes three words for that line alone; one more `tide` line of either kind is an error. `resolve` refuses a tide whose `tide_version_text` isn't the pin (`packages_pin_kept`), noting `tide upgrade --version <pin>` or `tide pin`, or in a Unity project (`packages_unity_assets`) `tide pin <this>` or moving the package to the pin's commit; a build of tide's own source (`-dev`) keeps any pin, as someone working on tide. A package's `tide =` is an error (only a game pins). The CLI doesn't switch versions itself. `tide pin [version]` (`tide_pin` in `packages_cmd.c`) writes `tide = <version>` in place of the file's `tide` line (`set_line`, its comment kept), or as its first line; with none given, this tide's version, refused for a `-dev` build; a package's folder is refused. Help entry `pin`, `tide_cli_run_exit_tests` stubs it. Tests: `cli_packages_pin_one_tide` (`compiler/cli/tests/packages_test.c`: the line with its `v` and a comment, five mistakes, the comparison including `-dev`), `tide_cli_packages` (by the tested tide's own `--version`, as CI's tide is a release's: pin without a version refused for `-dev` and this tide's for a release; refused for `0.5`, written over `tide 0.1` keeping its comment, again with `v0.6.0`, prepended to a file with none; a `-dev` tide scheduling a game pinned to another, a release's refusing it and scheduling it pinned to itself; a package's pin refused in a build and by `tide pin`; it first failed every CI test job, assuming `-dev`, and was checked with `-DTIDE_VERSION=0.5.0-nightly.26`), `tide_cli_help`.
+  - **Package commands keep resolution failures** (fixed 2026-10-08): `tide add` checks a package's metadata before appending its line. It then calls `packages_resolve` with diagnostics and returns its result (since 2026-10-30 it appends no dependency lines first), so `add` and `update` fail on missing folders, malformed package metadata or incompatible Tide versions. A missing-lines count of zero formerly let both commands report success for an unusable graph. `tide_cli_packages` checks that malformed metadata fails before changing the game's file, missing transitive folders fail in both commands, malformed transitive metadata fails in `update`, and correcting the dependency makes `update` and `schedule` succeed.
+  - **A game pins its tide** (2026-10-25, the owner: pinning "in the tide.packages i think makes sense", with only Unity's package switching versions). `tide = 0.5.0-nightly.12` (`packages_file.pinned`, without a `v`; `packages_exact_version`: three numbers and perhaps a pre-release) in a game's `tide.packages`: `split_words` takes three words for that line alone; one more `tide` line of either kind is an error. `resolve` refuses a tide whose `tide_version_text` isn't the pin (`packages_pin_kept`), noting `tide upgrade --version <pin>` or `tide pin`, or in a Unity project (`packages_unity_assets`) `tide pin <this>` or moving the package to the pin's commit; a build of tide's own source (`-dev`) keeps any pin, as someone working on tide. A package's `tide =` is an error (only a game pins). Superseded by the 2026-10-29 CLI version-selection entry above: project commands now select cached releases and prompt to download missing ones. `tide pin [version]` (`tide_pin` in `packages_cmd.c`) writes `tide = <version>` in place of the file's `tide` line (`set_line`, its comment kept), or as its first line; with none given, this tide's version, refused for a `-dev` build; a package's folder is refused. Help entry `pin`, `tide_cli_run_exit_tests` stubs it. Tests: `cli_packages_pin_one_tide` (`compiler/cli/tests/packages_test.c`: the line with its `v` and a comment, five mistakes, the comparison including `-dev`), `tide_cli_packages` (by the tested tide's own `--version`, as CI's tide is a release's: pin without a version refused for `-dev` and this tide's for a release; refused for `0.5`, written over `tide 0.1` keeping its comment, again with `v0.6.0`, prepended to a file with none; a `-dev` tide scheduling a game pinned to another, a release's refusing it and scheduling it pinned to itself; a package's pin refused in a build and by `tide pin`; it first failed every CI test job, assuming `-dev`, and was checked with `-DTIDE_VERSION=0.5.0-nightly.26`), `tide_cli_help`.
 - Packages that come with tide are in its installation, and a game opts into one with a line: one that doesn't list it compiles and links nothing of it. How the line is written and where the package is looked up are picks (Provisional in `docs/spec.md`, Packages, awaiting the owner). What's built, and what code relies on:
   - The line is a name alone, lower-case letters and digits after a letter (`packages_is_builtin` in `compiler/lsp/packages.c`): `box2d`. Nothing else in the file is written so, as a git source has a `/`, a folder starts with `.` or is absolute, and `package` and `tide` take a second word. It's `package_line.builtin`, apart from `local`: no commit and no `@ref`, each an error that says it's the version this tide came with.
   - The package is the folder `<name>/` of the one folder that holds them, which tide and tidels say as they start (`packages_set_builtin_folder`); until then no package comes with tide, as in tests that say nothing. In an installation that's `<root>/src/packages/`, beside `src/engine/`, as both are sources that compile with the game. tide says its own: `<root>` is the folder its `bin` is in (`install_root` in `compiler/cli/main.c`), as for `include/` and `src/engine/` (`build_setup`), so a tide built from this repo has them once `cmake --install` put them beside it, as it has the engine's files. tidels says its installation's (`installed_root` in `compiler/lsp/main.c`, the folder above its own with `include/tide/math.h`) or, in a build of the repo, the repo's `packages/` (`TIDE_SOURCE_DIR`), as its engine headers are the repo's then.
   - This repo's are in `packages/`, a folder each, which every tree installs as `src/packages/` (the top `CMakeLists.txt`; `OPTIONAL`, as there may be none), without what tide makes in a game's folder (`.tide/`, `.build/`). Not as `packages/`: where the installers put tide, an installation's `packages/` is where packages from git are kept (`packages_cache`), and `tide upgrade` replaces every folder its release has, whole. So an upgrade replaces these with `src/`, and never touches that one.
-  - Beyond that it's a folder's package: `packages_folder` gives its folder, so resolving, the build's Tide files, C and libraries, `tide run`'s watching (`game_stamp`) and tidels go as for a folder. Its `tide.packages` says `package Name` and lists what it needs, which the game's file lists too: by name, or from git, never a folder.
-  - `tide add <name>` writes the name, in lower case however it was typed, and what the package needs. `tide update` leaves such lines alone and says nothing about them. A name no package has is an error that lists those there are (`packages_builtin_names`: the folders named as one that have a `tide.packages`) and the closest (`packages_builtin_unknown`, with `suggest_close` of `compiler/src/common.c`).
+  - Beyond that it's a folder's package: `packages_folder` gives its folder, so resolving, the build's Tide files, C and libraries, `tide run`'s watching (`game_stamp`) and tidels go as for a folder. Its `tide.packages` says `package Name` and lists what it needs, which the game builds without listing: by name, or from git, never a folder.
+  - `tide add <name>` writes the name, in lower case however it was typed. `tide update` leaves such lines alone and says nothing about them. A name no package has is an error that lists those there are (`packages_builtin_names`: the folders named as one that have a `tide.packages`) and the closest (`packages_builtin_unknown`, with `suggest_close` of `compiler/src/common.c`).
   - **A package that needs a library tide doesn't have** is one of these too: `steam` (2026-10-11, `notes/lobby-steam-package.md`) calls Steamworks' library, which a game brings in its own folder. Nothing but a game that lists it compiles it, so no build without the SDK is touched, and its C stops a web or Android build with an `#error` that says what to write. Its folder is `steam`, as a hyphen (`lobby-steam`) is no part of such a line.
   - `tide_cli_tests` checks the lines and a folder of packages made up for the test (`compiler/cli/tests/packages_test.c`); `tide_cli_packages` puts tide in an installation of its own, with packages, and runs `tide add`, `update` and `schedule` there; `lsp_open_folder_with_a_package_that_comes_with_tide` checks tidels.
 - **`#if` lines in `tide.packages`** (built 2026-10-11; the owner's idea, for a Steam package in shipping builds and ours in testing: `--define STEAM`; the details are Claude's picks, Provisional in `docs/spec.md`, Packages). `packages_read` in `compiler/lsp/packages.c`. What code relies on:

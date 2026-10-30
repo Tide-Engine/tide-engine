@@ -72,7 +72,7 @@ The generated header is the API between the game and its host. Namespaced declar
   }
   ```
 
-- `TIDE_AT(w, arch0_Body, Body, row)` gives a copy of a row's component in an archetype's storage, and `TIDE_ENTITY_AT(w, arch0_Body, row)` its entity: for tests and tools that go through every entity.
+- `TIDE_AT(w, arch0_Body, Body, row)` gives a copy of a row's component in an archetype's storage, and `TIDE_ENTITY_AT(w, arch0_Body, row)` its entity: for tests and tools that go through every entity. A row an entity left is a hole until another fills it, so code that goes through rows from 0 to `w->arch0_Body.count` skips those: `if (TIDE_ROW_GONE(w, arch0_Body, row)) continue;`. `tide_world_entity_count` counts entities, not rows.
 - `tide_world_player_joined(w, player)` and `tide_world_player_left(w, player)` send `PlayerJoined` and `PlayerLeft`, handled at the end of the next tick.
 - `tide_world_copy(to, from)` and `tide_world_hash(w)`: snapshots and hashes. A snapshot shares the world's pages until one of them changes a page, so it costs the memory of what's different, and each page keeps its hash until it changes, so hashing reads what changed since the last time.
 - `tide_world_pack(w, out, capacity)` and `tide_world_unpack(w, data, size)`: the world as bytes, as hot reloading carries it over.

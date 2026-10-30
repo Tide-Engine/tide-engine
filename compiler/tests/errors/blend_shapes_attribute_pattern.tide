@@ -1,0 +1,3 @@
+// expect: a BlendShapes pattern is a text literal or a 'const string'
+[BlendShapes(3)] asset SkinnedMesh<Vertex3> head = "../e2e/fbx/shapes/shapes_ascii.fbx";
+scene Main { }

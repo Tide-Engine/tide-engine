@@ -232,6 +232,10 @@ const uint8_t *tide_pack_file_span(uint32_t offset, uint64_t bytes);
 // The entry a declaration's name has in the loaded pack, of `kind`, or NULL:
 // for a pack from another build of the game, or none loaded.
 const tide_pack_entry *tide_pack_find(const char *qualified, uint32_t kind);
+// The same lookup with the declaration's existing SHA-256 ID. Generated
+// releases use this so readable asset names need not ship in their code.
+// NULL, an unknown ID or a different kind gives NULL.
+const tide_pack_entry *tide_pack_find_id(const uint8_t name[32], uint32_t kind);
 
 // What an entry resolves to, as the value the game reads: a handle (a tagged
 // offset, for a grid's or a list's `at`, or a text's), a tide_str, or a map.
@@ -298,6 +302,7 @@ void tide_pack_clips_each(void (*fn)(const uint8_t *bytes, uint32_t size, uint64
 // another build made has where the vertex struct changed since. So code never
 // reads vertices as a struct they weren't packed as.
 const tide_pack_entry *tide_pack_find_mesh(const char *qualified, uint32_t kind, uint32_t layout);
+const tide_pack_entry *tide_pack_find_mesh_id(const uint8_t name[32], uint32_t kind, uint32_t layout);
 
 // A mesh's entry as the value the game reads: its two lists, where both
 // blocks are whole in the pack and its vertices are `vertex` bytes each, which

@@ -68,6 +68,7 @@ enum {
     H_RECIPROCAL, H_INVERSE2, H_INVERSE3, H_INVERSE4, H_INT4_LANE,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
+    H_EASE, // tide_ease(t, kind): Math.EaseIn and the rest, as tide/math.h's
     // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
     H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
     H_ROLL_BOOL, H_ROLL_FLOAT2, H_ROLL_FLOAT2_BETWEEN, H_ROLL_FLOAT3, H_ROLL_FLOAT3_BETWEEN, H_ROLL_FLOAT2_DIRECTION,
@@ -735,6 +736,25 @@ static const char *const helper_texts[H_COUNT] = {
                     "}\n",
     // A texture holds colors times their alpha, so that what's blended between two pixels is right (a clear
     // pixel's color counts for nothing). Code reads the color itself. A pixel with no alpha has none
+    // tide/math.h's tide_ease_*_f, in the same order: kind 0 in, 1 out, 2 in-out, 3 in-back, 4 out-back. One
+    // return, as ANGLE's D3D11 warns of what an early one might leave unset
+    [H_EASE] = "float tide_ease(float x, int kind) {\n"
+               "    float t = tide_saturate1(x);\n"
+               "    float u = 1.0 - t;\n"
+               "    float r = t * t * t;\n"
+               "    if (kind == 1) { r = 1.0 - u * u * u; }\n"
+               "    if (kind == 2) {\n"
+               "        float w = 2.0 - 2.0 * t;\n"
+               "        r = 1.0 - w * w * w * 0.5;\n"
+               "        if (t < 0.5) { r = 4.0 * t * t * t; }\n"
+               "    }\n"
+               "    if (kind == 3) { r = 2.70158 * t * t * t - 1.70158 * t * t; }\n"
+               "    if (kind == 4) {\n"
+               "        float b = t - 1.0;\n"
+               "        r = 1.0 + 2.70158 * b * b * b + 1.70158 * b * b;\n"
+               "    }\n"
+               "    return r;\n"
+               "}\n",
     [H_STRAIGHT] = "vec4 tide_straight(vec4 c) {\n"
                    "    if (c.a == 0.0) { return vec4(0.0); }\n"
                    "    return vec4(c.rgb / c.a, c.a);\n"
@@ -1445,6 +1465,9 @@ static void need(emit *em, const int h)
         return;
     }
     switch (h) {
+    case H_EASE:
+        need(em, family_helper(FAMILY_SATURATE, 1));
+        break;
     case H_INVERSE2:
     case H_INVERSE3:
     case H_INVERSE4:
@@ -2697,7 +2720,7 @@ static void ex_texture_size(emit *em, const expr *e);
 
 static void ex_member(emit *em, const expr *e)
 {
-    if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+    if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
         ex_texture_size(em, e);
         return;
     }
@@ -3027,6 +3050,16 @@ static void ex_math(emit *em, const expr *e)
     }
     // The compiler folds nothing here: a constant out of a function's range is an error to WGSL, not a value
     em->defuse++;
+    static const char *const eases[] = {"EaseIn", "EaseOut", "EaseInOut", "EaseInBack", "EaseOutBack"};
+    for (int k = 0; k < 5; k++) {
+        if (!str_eq_c(e->name, eases[k])) continue;
+        need(em, H_EASE);
+        sb_put(em->o, "tide_ease(");
+        put_arg(em, e, 0);
+        sb_printf(em->o, ", %d)", k);
+        em->defuse--;
+        return;
+    }
     if ((str_eq_c(e->name, "Min") || str_eq_c(e->name, "Max")) && floats) { // With one NaN, the other, as on the CPU
         put_family_call(em, e, str_eq_c(e->name, "Min") ? FAMILY_MIN : FAMILY_MAX, dim);
     } else if (str_eq_c(e->name, "Clamp") && floats) {
@@ -4160,7 +4193,18 @@ static void ex_call(emit *em, const expr *e)
         return;
     case CALL_LIST:
     case CALL_WORLD: what = "change lists or use the World: it reads fields of numbers, lists and maps, and samples grids"; break;
-    case CALL_TEXT: what = "work with text"; break;
+    case CALL_TEXT:
+        if (e->object->type.kind == TY_COLOR && str_eq_c(e->name, "WithAlpha")) { // The color with that alpha
+            sb_put(em->o, em->l == WGSL ? "vec4f((" : "vec4((");
+            ex(em, e->object);
+            sb_put(em->o, ").rgb, ");
+            ex_as(em, e->args.items[0], (type){TY_FLOAT, NULL}); // An int's a float there, as on the CPU
+            sb_put(em->o, ")");
+            return;
+        }
+        what = e->object->type.kind == TY_RECT ? "move a Rect: pass its x, y, width and height as a float4"
+                                               : "work with text";
+        break;
     default: what = "do this"; break;
     }
     refuse(em, e->at, "the GPU can't %s", what);

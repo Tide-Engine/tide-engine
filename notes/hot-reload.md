@@ -1,5 +1,12 @@
 # Hot reloading
 
+## Migration skips holes (2026-10-29)
+
+A reload's migration (`platform/src/migrate.c`) gives no row in the new world to
+a hole an entity left (notes/ecs.md, Holes): its null entity gets no location
+and its columns aren't carried, so its stale text and list handles are never
+read. The new world's tables have none.
+
 ## Reloaded libraries under a debugger (2026-10-26)
 
 Each `game-<n>` library names its own `.pdb` by absolute path, with that

@@ -43,6 +43,33 @@ A line always has its commit, and the game builds with that commit's code, whoev
 
 `tide` keeps each commit it downloads, once for every game on your machine, in `%LOCALAPPDATA%\Tide\packages` on Windows and `~/.tide/packages` elsewhere (or where the `TIDE_PACKAGES` environment variable says). A game whose packages aren't there yet, like one you just cloned, downloads them the first time `tide run` or `tide build` builds it. `tide fetch` downloads them without building, for a build that then needs no network.
 
+## Pinning Tide itself
+
+`tide pin` writes the invoking Tide's exact version into the game's `tide.packages`.
+To choose another release, use `tide pin 0.5.0-nightly.12`:
+
+```text
+tide = 0.5.0-nightly.12
+```
+
+`run`, `build`, `schedule`, `shaders`, `add`, `update`, `eject`, `fetch` and
+`publish` use that pinned release. If it is missing, Tide asks to download it,
+checks its release checksum, then continues the original command. Declining or
+ending input stops the command. Scripts with no terminal report the missing
+version; a caller that can forward an answer through stdin can set
+`TIDE_INTERACTIVE=1` to enable the prompt.
+
+Versions stay side by side in `TIDE_VERSIONS`, or by default
+`%LOCALAPPDATA%/Tide/versions` on Windows and `~/.tide/versions` elsewhere.
+Unity uses the same cache, so an installed version is reused offline. Downloading
+a project version leaves your main Tide installation and editor plugins as they
+are. `tide upgrade` still updates the invoking installation; `tide version` and
+help describe that installation. `tide pin` only changes the project's pin.
+
+Unity projects keep using the toolchain selected by their Tide Unity package.
+A Tide built from engine source (a version ending in `-dev`) keeps using that
+build for engine development, even when a game pins a release.
+
 ## Updating
 
 `tide update` moves packages to the newest commit of what they follow, and says what changed:
@@ -71,15 +98,18 @@ A line can leave its commit out, as when you write one by hand: `tide update` pu
 
 ## The packages a package needs
 
-A package can use other packages, which its own `tide.packages` lists. The game's `tide.packages` lists every package the game builds with, those its packages need included, so that one file says everything the game builds with. `tide add` and `tide update` add the lines of what's missing, and say so:
+A package can use other packages, which its own `tide.packages` lists. The game builds with them too, and with what they need in turn, each from the line of the package that needs it: a package from git at the commit that package names, a folder relative to that package's folder. The game's `tide.packages` lists only the packages it chooses.
+
+If a package's metadata or dependencies are invalid, `tide add`, `tide update` and a build report the problem, at the line of the package that needs it, and fail.
+
+When the game lists a package that one of its packages needs too, the game's line is the one it builds with, whatever commit each names. That's how a game chooses: when two packages need one from git at different commits and the game doesn't list it, nothing builds, and the error names both and the line that settles it:
 
 ```
-tide: added github.com/someone/tide-math 9f2c1e0..., which Physics needs
+tools/tide.packages:2: error: Tools needs github.com/someone/tide-math at 6e1f0a2, and Physics needs it at 9f2c1e0
+  = note: a game builds one commit of each package: list the one to build in game/tide.packages, like `github.com/someone/tide-math 9f2c1e0...`
 ```
 
-If a package's metadata or dependencies are invalid, the command reports the problem and fails.
-
-When the game and one of its packages list another package at different commits, the game's line is the one it builds with.
+Two packages needing the same commit, or the same folder, need one package.
 
 ## Packages in folders
 
@@ -101,7 +131,7 @@ box2d
 github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 ```
 
-`tide add box2d` writes that line, and the lines of what the package needs. A game that doesn't list one builds none of it: its code compiles and links only with the games that name it.
+`tide add box2d` writes that line. A game that doesn't list one builds none of it: its code compiles and links only with the games that name it.
 
 A name is lower-case letters and digits, and it's never a folder: a folder of that name beside the game is still written as a path, `./box2d`. The line has no commit and follows no branch, since the package is the version your `tide` came with: `tide upgrade` updates both, and `tide update` leaves the line alone. So two machines build the same code of it when they have the same version of `tide`. A `tide 0.3` line in the game's `tide.packages` says the oldest one the game builds with.
 

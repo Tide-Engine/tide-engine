@@ -8,12 +8,14 @@ component Enemy { string secret = "CORNER-CULLING-HIDDEN-POSITION"; }
 singleton Integration
 {
     Entity enemy;
+    VisibilityGroup group;
     bool enabled;
 }
 
 event(Spawned) Start(with Main, mut Integration integration)
 {
-    integration.enemy = Spawn(Enemy, Visibility);
+    integration.group = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
+    integration.enemy = Spawn(Enemy, Visibility { group = integration.group });
 }
 
 singleton Fixture
@@ -22,13 +24,13 @@ singleton Fixture
     CullingCache cache;
     CullingResult answer;
     CullingQuery query;
-    List<Box> boxes;
+    List<Occluder> boxes;
     List<CullingQuery> queries;
     List<CullingCache> caches;
     List<CullingResult> results;
     int action;
     int source;
-    Box replacement;
+    Occluder replacement;
     bool updated;
     bool brute;
     CullingResult cold;
@@ -39,6 +41,12 @@ system Run(mut Fixture f)
     if (f.action == 1) f.culling.Rebuild(f.boxes);
     if (f.action == 2) f.updated = f.culling.Update(f.source, f.replacement);
     if (f.action == 3) f.culling.Clear();
+    if (f.action == 8)
+    {
+        // Simulate newly introduced lookup lists after layout migration.
+        f.culling.locations.Clear();
+        f.culling.parents.Clear();
+    }
     if (f.action == 4 || f.action == 7)
     {
         f.caches.Resize(f.queries.count);
@@ -63,10 +71,10 @@ system Run(mut Fixture f)
 }
 
 [After(Run)]
-system Relevance(mut Visibility visibility, with Enemy, Fixture f, Integration integration)
+system Relevance(Fixture f, Integration integration)
 {
     if (!integration.enabled) return;
     mut Audience audience = Audience.Only(PlayerID(0));
     if (f.answer.IsVisible()) audience.Add(PlayerID(1));
-    visibility.Set<Enemy>(audience);
+    Visibility.Set(integration.group, audience);
 }

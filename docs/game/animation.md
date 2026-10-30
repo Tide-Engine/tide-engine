@@ -95,9 +95,52 @@ The optional `float4x4 transform` field follows the existing 3D instance convent
 
 A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMesh<Vertex3> hero = "art/hero.glb";` has simpler versions of the model made as the game builds, and each draw picks one by how big the character is on screen. The pose, the bones and every lookup are the full model's; only the triangles drawn change. The model's size for the pick is its size at rest. See [Levels of detail](./assets.md#levels-of-detail).
 
-An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
+An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Rotation curves are Euler angles that exporters often write wrapped (-182° then 178°, one degree apart): each key is first moved by whole turns to within half a turn of the key before it, and written as the nearer of its two equivalent triples (x + 180°, 180° − y, z + 180° is the same rotation) where all three axes are keyed together, as an Euler filter does, so resampled keys between them take the short way. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
 
-Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh, morph targets and external vertex caches. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
+Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Blend shapes (morph targets) are kept: see [Blend shapes](#blend-shapes). Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
+
+## Blend shapes
+
+A skinned model keeps its file's blend shapes (glTF morph targets, FBX blend shapes): body shapes such as `defaultHeavy`, or facial ones such as `jawOpen`. `model.Shaped(weights)` returns the model with those weights applied, computed on the CPU, and draws, samples and stores like the model itself:
+
+```csharp
+asset SkinnedMesh<Vertex3> torso = "art/torso.fbx";
+
+component Character
+{
+    float heavy;
+    float bakedHeavy = -1;
+    SkinnedMesh<Vertex3> body;
+}
+
+system Shape(mut Character character)
+{
+    if (character.heavy == character.bakedHeavy) return;
+    mut List<float> weights = [];
+    for (int i = 0; i < torso.blendShapes.count; i++)
+    {
+        torso.blendShapes.TryGetAt(i, out var shape);
+        weights.Add(shape.name == "defaultHeavy" ? character.heavy : shape.weight);
+    }
+    character.body = torso.Shaped(weights);
+    character.bakedHeavy = character.heavy;
+}
+
+view DrawCharacter(Character character)
+{
+    Draw.SkinnedMesh(character.body, float4x4.identity);
+}
+```
+
+`model.blendShapes` lists the model's shapes in order. `count`, `TryGetAt(index, out BlendShape result)` and `TryGetByName(name, out BlendShape result)` work as the animation catalog's do; a missing, empty or unnamed name returns `false` and assigns `default`. A `BlendShape` has its original `name` and `weight`, the file's default weight, which the model's vertices already have.
+
+Weight `i` of `Shaped` is shape `i`'s weight. 0 to 1 is the authored range, and other values extrapolate. A missing weight, or one that isn't a finite number, keeps the shape's default, so `model.Shaped([])` is the model as imported. Each shape whose weight differs from its default moves the vertex fields the file fills by name, `position`, `normal` and `tangent`, by its delta times the difference; other fields, such as `uv`, `color` and fields with game defaults, are copied unchanged, as are the skeleton, animations, indices and levels of detail. Shapes apply in catalog order with plain float arithmetic, so the result is the same on every machine and can be used in match code. Normals and tangents are not renormalized.
+
+Bake a character's shapes once, when its body changes, and keep the shaped model in a field: `Shaped` copies the vertices, and drawing a shaped model sends its vertices to the GPU like other models made while playing. Shapes are not animated on the GPU, and imported shape-weight animation is not read.
+
+To keep only some of a file's shapes, and so a smaller pack, write `[BlendShapes("masculineFeminine", "default*")]` before the asset: names, or patterns where `*` is any run of characters. The others aren't imported; `[BlendShapes()]` keeps none. See [Blend shapes to keep](./assets.md#blend-shapes-to-keep).
+
+In a glTF file, targets with the same name in `extras.targetNames` are one shape across all of the file's meshes, and must have the same default weight in `weights`; an unnamed target is a shape of its own, found with `TryGetAt`. POSITION, NORMAL and TANGENT targets are read, including sparse accessors. In an FBX file, each blend shape channel is a shape named after its target shape (`smile` in a channel `Blends.smile`), with the channel's default percentage as its weight. Export each channel as one target at full weight: a channel with in-between shapes is refused. The importer's own flat normals, made for a part exported without normals, don't follow shapes.
 
 ## Checked names and dynamic lookup
 
@@ -140,6 +183,11 @@ Animation Running(SkinnedMesh<Vertex3, Locomotion> model)
 The contract requires that subset; extra clips and bones remain discoverable through `TryGetByName` and `TryGetAt`. Unaliased fields match normalized source identifiers; `[Name]` matches exact source spelling. Contracts stay available through helper parameters and collection elements. A build checks an imported asset's requirements; runtime decoding checks them before returning a model.
 
 ## Animation files
+
+For offline text-to-motion generation and learned clip transitions, see
+[Tide Motion](../tools/motion.md). Its standalone native CLI exports SOMA-30 GLB
+animations and supports batches that reuse loaded models. Its bone-mapping
+retarget command exports clips for other humanoid rigs before the game imports them.
 
 A separate glTF or FBX file can supply animation clips without importing typed render geometry. For the character above:
 
@@ -187,11 +235,17 @@ Missing or ambiguous selections are build errors. An `Animation` asset takes one
 
 `pose.Sample` binds the clip to the pose's skeleton. Use a pose from the character when you also need its bone references for edits or sockets. You can also sample the source clip with `movement.run.Sample(seconds)` and pass that pose directly to `Draw.SkinnedMesh`; the draw binds it to the character.
 
-Binding matches nodes by unique exact source names and matching parent chains; source node order and default poses can differ. This supports animation-only FBX exports whose defaults are the starting pose of a take. Required source local transforms are copied directly, including the defaults of unanimated ancestors. Sampling into a target pose requires the selected clip's animated nodes and their ancestors. Drawing a source pose requires all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated target nodes keep their own rest transforms.
+Binding matches nodes by unique exact source names and matching parent chains; source node order and default poses can differ. This supports animation-only FBX exports whose defaults are the starting pose of a take. Required source local transforms are copied directly, including the defaults of unanimated ancestors. Sampling into a target pose binds the selected clip's animated nodes and their ancestors. Drawing a source pose binds all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated target nodes keep their own rest transforms.
+
+A clip may animate nodes the model lacks: those are skipped, as in Unity. So one body clip drives every part of a modular character, a hair part with only the root-to-head chain as well as a torso, and a clip's IK helpers (`ik_settings`, `ik_foot_root`) need no node in any part; a part's extra chains (a cape's bones) keep their rest. A node the model has must still have the same parent: a model's `head` below `neck_01` binds a clip's `head` only where the clip's `head` is below its `neck_01` too, so a clip node below one the model lacks is refused rather than moved relative to another parent. A clip none of whose animated nodes are in the model is another rig and is refused too.
 
 An extra unnamed identity scene root, as added by FBX importing, is ignored while its pose and relevant animation channels stay at rest. Animated wrappers or deeper unnamed ancestors cannot be bound this way.
 
-This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Missing or ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
+A named node at the top of either hierarchy is folded into the bones below it when the other side has no node with its name. Blender writes the armature object as such a node above the skeleton's top bone, carrying the object's transform: a rig in centimetres gets a scale of 0.01. That transform, animated or not, is combined with its children's. A clip edited in Blender and exported again therefore drives a character exported elsewhere with its bones where they were authored, and a character exported from Blender plays clips exported elsewhere. The folded node's scale must be uniform, and it must be above a bone that binds.
+
+When a clip doesn't bind, the first failed sample or draw for each model and clip prints the reason on the console and names the node that differs, such as `"Hips" is below "Armature" in it but below "Root" in the model`.
+
+This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
 
 ## Sample, blend and edit
 
@@ -242,11 +296,13 @@ Bytes can come from anywhere, so a small file can't ask for much. A model past a
 | Vertex influences (joint/weight sets count four a vertex each) | 8,388,608 |
 | Animation channels | 262,144 |
 | Animation key numbers (times and values) | 16,777,216 |
+| Blend shapes (morph targets of different names) | 4,096 |
+| Vertices moved by blend shapes, each shape's counted | 2,097,152 |
 | Numbers read from accessors, counted again for each part that names one | 67,108,864 |
 | JSON values in the description | 4,194,304 |
 | The file, and the decoded model | 512 MiB each |
 
-An accessor with no buffer view is zeros and takes no bytes, but counts as much as one with them. A model at every limit at once takes about 500 MiB to decode. These limits are the engine's, the same for every game, so every machine in a match refuses the same files; `SkinnedMesh` and `Animations` assets are held to them too. The numbers are provisional.
+An accessor with no buffer view is zeros and takes no bytes, but counts as much as one with them. A model at every limit at once takes about 600 MiB to decode. These limits are the engine's, the same for every game, so every machine in a match refuses the same files; `SkinnedMesh` and `Animations` assets are held to them too. The numbers are provisional.
 
 A model refused for a limit says so on the log of each machine that decoded it, naming the limit, as `tide: SkinnedMesh.Decode refused a model: it has 2,000,000 vertices, more than the 1,048,576 a decoded model holds (TIDE_SKINNED_MAX_VERTICES)`. A build-time asset past one is an error that says the same.
 
@@ -254,4 +310,4 @@ Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files
 
 Decoded vertices use your vertex struct's defaults too. Assets those defaults read have the same compatibility requirement even when the game declares no imported skinned model.
 
-glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights and baked node transforms; textures remain separate assets. Morph targets, retargeting, IK, animation events and an automatic playback controller are not implemented.
+glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights, blend shapes and baked node transforms; textures remain separate assets. Animated or GPU blend shapes, retargeting, IK, animation events and an automatic playback controller are not implemented.

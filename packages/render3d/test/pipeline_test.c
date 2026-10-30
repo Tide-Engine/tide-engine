@@ -50,7 +50,7 @@ static void atlas(const tide_local *local, const int requested)
 {
     const Render3D_Renderer *renderer = &local->Render3D_Renderer;
     const Probe *probe = &local->Probe;
-    TIDE_CHECK(renderer->atlasSize > 0 && renderer->atlasSize <= 2048);
+    TIDE_CHECK(renderer->atlasSize > 0 && renderer->atlasSize <= 4096);
     if (!probe->shadowCount) {
         TIDE_CHECK(renderer->activeShadowResolution == 0);
         return;
@@ -58,7 +58,7 @@ static void atlas(const tide_local *local, const int requested)
     int grid = 1;
     while (grid * grid < probe->shadowCount) grid++;
     int cell = requested < 16 ? 16 : requested;
-    if (cell > 2048 / grid) cell = 2048 / grid;
+    if (cell > 4096 / grid) cell = 4096 / grid;
     TIDE_CHECK(renderer->activeShadowResolution == cell);
     TIDE_CHECK(renderer->atlasSize == grid * cell);
     near1(renderer->shadowTexel, 1.0f / (float)renderer->atlasSize);

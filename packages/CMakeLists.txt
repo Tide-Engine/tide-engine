@@ -65,7 +65,27 @@ tide_add_game(tide_render3d_shadow_batches SOURCES render3d/test/shadow_batches.
 target_include_directories(tide_render3d_shadow_batches PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_render3d_shadow_batches COMMAND tide_render3d_shadow_batches)
 
+tide_add_game(tide_render3d_shadows SOURCES render3d/test/shadows.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/shadows_test.c)
+target_include_directories(tide_render3d_shadows PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_shadows PRIVATE tide_render3d)
+add_test(NAME tide_render3d_shadows COMMAND tide_render3d_shadows)
+
 if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render3d_shadows_pixels SOURCES render3d/test/shadows.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadows_pixels.c)
+    target_link_libraries(tide_render3d_shadows_pixels PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_shadows_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_shadows_pixels TARGET tide_render3d_shadows_pixels
+            WEBGPU EXPECT "ok: Render3D cascade selection" D3D11)
+    else()
+        add_test(NAME tide_render3d_shadows_pixels COMMAND tide_render3d_shadows_pixels)
+        add_test(NAME tide_render3d_shadows_pixels_opengl COMMAND tide_render3d_shadows_pixels)
+        tide_gpu_test(tide_render3d_shadows_pixels)
+        tide_gpu_test(tide_render3d_shadows_pixels_opengl OPENGL)
+    endif()
     tide_add_game(tide_render3d_post_pixels SOURCES render3d/test/post_pixels.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/post_pixels.c)
     target_link_libraries(tide_render3d_post_pixels PRIVATE tide_platform tide_render3d)

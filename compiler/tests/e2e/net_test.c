@@ -1071,6 +1071,47 @@ TIDE_TEST(net_a_session_says_when_it_next_ticks)
     finish();
 }
 
+// Played alone, the match isn't ticked twice: this machine's client runs each
+// tick as its prediction, and the server takes it from there, the world the
+// same as the server would have made it, frame after frame, as the input
+// changes (sample's moves and jumps).
+static int alone_ticks;
+
+static void alone_tick(void *w, const tide_jobs *jobs)
+{
+    alone_ticks++;
+    tide_game_api.tick(w, jobs);
+}
+
+TIDE_TEST(net_a_session_played_alone_ticks_once)
+{
+    tide_game counted = tide_game_api;
+    counted.tick = alone_tick;
+    tide_session *s = tide_session_create(&(tide_session_desc){.game = &counted, .tick_rate = 60, .sample = session_sample});
+    double t = 0.0;
+    tide_session_start(s, NULL, t);
+    for (int frame = 0; frame < 30; frame++) {
+        t += 1.0 / 60.0;
+        tide_session_update(s, t);
+    }
+    const tide_session_status before = tide_session_status_of(s);
+    TIDE_REQUIRE(before.client.state == TIDE_SESSION_CONNECTED);
+    alone_ticks = 0;
+    bool alike = true;
+    for (int frame = 0; frame < 240; frame++) {
+        t += 1.0 / 60.0;
+        tide_session_update(s, t);
+        alike &= same(tide_session_world(s), tide_session_server_world(s));
+    }
+    const tide_session_status after = tide_session_status_of(s);
+    TIDE_CHECK(after.client.state == TIDE_SESSION_CONNECTED && after.client.resyncs == 0);
+    const int confirmed = (int)(after.client.verified_tick - before.client.verified_tick);
+    TIDE_CHECK(confirmed >= 235);
+    TIDE_CHECK(alone_ticks >= confirmed && alone_ticks < confirmed + 10);
+    TIDE_CHECK(alike);
+    tide_session_destroy(s);
+}
+
 // Hot reloading (tide/host.h): another build of the same game, new code with
 // the same layout, takes over the match where it is.
 static int new_build_ticks;
@@ -1105,8 +1146,10 @@ TIDE_TEST(net_a_session_takes_a_new_build_of_its_game)
     TIDE_CHECK(after.client.state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(after.client.resyncs == 0);
     TIDE_CHECK(after.client.verified_tick >= before.client.verified_tick + 55u); // It went on from where it was
-    // Both the server and this machine's client run the new build's ticks
-    TIDE_CHECK(new_build_ticks >= 2 * (int)(after.client.verified_tick - before.client.verified_tick));
+    // This machine's client runs the new build's ticks, and the server, its
+    // player alone in the match, takes each from it rather than running it again
+    const int confirmed = (int)(after.client.verified_tick - before.client.verified_tick);
+    TIDE_CHECK(new_build_ticks >= confirmed && new_build_ticks < confirmed + 10);
     TIDE_REQUIRE(tide_session_world(s) != NULL);
     TIDE_CHECK(same(tide_session_world(s), tide_session_server_world(s)));
     tide_session_event e;

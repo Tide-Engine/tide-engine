@@ -1,5 +1,103 @@
 # Runtime written by Claude for now
 
+## GUI looks boundary (2026-10-29)
+
+Within the owner's approved GUI looks task, generated code gains the
+tide_gui_animate[_float2|_color][_from] calls (GUI.Animate) and sets
+tide_gui.seconds from the frame's length at the start of tide_frame.
+tide_control gains hover/press/focus floats and tide_gui_theme nine fields;
+tide_gui grows the motions table, so hosts, libraries and games rebuild
+together. The existing GUI temporary maintenance exception applies. Fills add
+no runtime function: they're compiler-supplied Tide code over Draw.Instanced.
+No match state, wire format or simulation arithmetic changes. Contracts,
+validation and gaps: gui.md, Looks.
+
+The desktop demo's gaps (2026-10-29, same task) add generated calls
+tide_gui_begin_target, tide_gui_begin_target_unshown, tide_gui_tween[_from],
+tide_ease_in_f, tide_ease_out_f, tide_ease_in_out_f, tide_ease_in_back_f,
+tide_ease_out_back_f, tide_render_target_logical and
+tide_render_target_valid_id, and draw helpers tide_draw_restore_to and
+tide_draw_move_gui_in. tide_gui and tide_gui_group grow fields (space,
+in_target; home, targeted, space_before), so hosts, libraries and games
+rebuild together. No match state or wire format changes; the easing functions
+are plain IEEE arithmetic usable in match code.
+
+## Private cached-chunk task shortcut (2026-10-29)
+
+The follow-up performance change is confined to compiler-generated tasks. An
+all-private whole chunk calls its existing cached rows helper after invalidating
+the same changed pages' hashes; the existing task handles every fallback. No
+runtime source, function, signature, ownership rule or persistent layout changes.
+Contracts: language.md, Whole cached-chunk task shortcut. Measurements and
+validation: benchmarks.md and its linked evidence.
+
+## Derived sparse-selection cache (2026-10-28)
+
+The selective-query performance task adds compiler-private retained selection
+plans through existing `tide_page_retain`/`release` and allocation functions.
+No runtime file, exported engine function or generated-C/runtime signature
+changes. Eligible generated worlds append an opaque derived-cache pointer;
+hashes/components keep their bytes, copies keep independent cache ownership,
+and raw save headers clear that pointer (with a small zero header-size growth).
+The generated header's cache ABI marker forces migration whenever private
+payload or cleanup layout changes; same-layout payloads own all descriptor
+metadata and contain no code addresses. Detailed contracts: language.md,
+Retained sparse row selection. Validation, measured gains and remaining Bevy
+leads are recorded in benchmarks.md and the linked raw evidence.
+
+## Conditional destruction row optimization (2026-10-28)
+
+The owner's sparse-filter/churn performance task changes only private generated
+compiler helpers: bool-returning row-update variants and validated-location
+`destroy_at`, with bounded C-stack predicates before ordinary destroy recording.
+Generated code calls the same queue/entity/table runtime functions with their
+existing contracts. No runtime entry point, persistent layout, ownership policy,
+deterministic order or hash changes. Eligibility, fallback and regression
+contracts: ecs.md, Pure row updates before conditional destruction.
+
+## Blend shapes kept by name (2026-10-27)
+
+`tide_skinned_data_keep_shapes` (`tide/skinned_data.h`, `skinned_decode.c`)
+is build-time support tidec calls for `[BlendShapes]`; generated code calls
+nothing new. Contracts and tests: assets-and-files.md.
+
+
+## Lenient separate-rig binding (2026-10-27)
+
+Owner-decided (docs/spec.md, Separate-file binding): `tide_skinned_sample_into`
+and `tide_skinned_pose_into` skip required source nodes the target lacks;
+present nodes keep the strict parent rule. No signature, generated call,
+canonical byte or world byte changes. Contracts and tests:
+assets-and-files.md, Clips skip nodes the model lacks.
+
+
+## Blend shapes (2026-10-27)
+
+Owner-decided import and CPU bake (docs/spec.md, Skinned meshes). Within the
+existing skinned maintenance exception: `tide/skinned_data.h` version 2 with
+shape tables and getters `tide_skinned_data_shape`/`_shape_delta`, and the new
+generated-C calls `tide_skinned_shape_count`, `tide_skinned_find_shape`,
+`tide_skinned_shape_name`, `tide_skinned_shape_weight` and
+`tide_skinned_shaped(data, weights, vertices, vertex_size, position_at,
+normal_at, tangent_at)` (`tide/skinned.h`, `skinned.c`). Generated code calls
+them only in programs that name `blendShapes`, `Shaped` or `BlendShape`; no
+existing function, struct, draw entry point or shader changes, and models
+without shapes keep their version 1 bytes. Contracts and tests:
+assets-and-files.md, Blend shapes.
+
+
+## Prehashed asset lookup (2026-10-27)
+
+The owner explicitly approved lookup by the pack's existing SHA-256 name ID
+and equivalent fingerprint support before generated code depended on it.
+The existing pack maintenance exception covers tide_pack_find_id and
+tide_pack_find_mesh_id (tide/pack.h, pack_load.c). Their string counterparts
+remain ordinary C convenience APIs. Pack format, model geometry/provenance,
+simulation storage and deterministic identities are unchanged. The fingerprint
+request's optional id is private compiler/emitted-loader support, not a new
+exported runtime structure. Contracts/tests: assets-and-files.md; CLI shipping
+policy and validation: cli-and-packages.md.
+
 ## Time travel's session calls (2026-10-26)
 
 Unity's time travel (notes/unity.md) extends the agent-maintained session and platform areas. Generated code calls
@@ -434,6 +532,13 @@ notes/verified-and-local-handlers.md.
 
 ## Conventional resource metadata (2026-10-18)
 
+The Render3D resolution follow-up (2026-10-29) completes DepthTexture.size by
+reusing tide_texture_size with a compiler-created TIDE_TEXTURE_DEPTH marker in
+the temporary reference's image.height. No runtime entry point, signature,
+stored resource layout, frame resolver or ownership contract changes. The
+existing temporary draw/mesh maintenance exception applies; details and tests
+are in textures.md, Depth dimensions.
+
 Within the owner's authorized API-completion pass, generated local code now
 calls `tide_texture_size(tide_texture_ref)` and borrows/restores a frame resolver
 through `tide_texture_target_pixels(tide_target_pixels_fn)`. Both live in the
@@ -545,6 +650,8 @@ The temporary-maintenance exception applies to the AI agent working on an assign
 `tide_draw_list` owns a retained texture lookup index alongside its texture array (`texture_index`, `texture_index_capacity`). `tide_draw_reset` rebuilds it when textures are pruned and compacted, `tide_draw_forget` clears it, and `tide_draw_free` releases it. Its private `skinned` pointer owns frame-local palette memoization; reset clears its entries before pruning, forgetting clears them, and freeing releases its retained capacities through private `engine/src/skinned_cache.h` lifecycle helpers. No generated runtime call changes; the C structure layout does, so hosts, libraries and generated games rebuild together.
 
 ### Runtime written by Claude for now
+
+Folded armature nodes in separate-export binding (2026-10-27): `tide_skinned_sample_into` and `tide_skinned_pose_into` fold a named top-level node absent from the other hierarchy (Blender's armature object) into its bound children's local transforms, requiring uniform scale, and print the reason for a failed binding once per model pair and clip through `tide_debug_log`. No signature, generated call, canonical byte or world byte changes. Contracts, evidence and tests are in `notes/assets-and-files.md`.
 
 Owned-animation scans and binding (2026-10-11): `channel_valid` checks the first time separately, then reduces independent adjacent-time comparisons and finite-value bit checks, allowing native/Wasm vectorization without changing interpolation arithmetic or accepted keys. Every time, value and cubic tangent remains checked before output writes; either ordering of consecutive signed zeros is invalid. Separate sample/pose binding validates both complete node tables before private little-endian node readers reuse those checks for names, parents and local TRS within the same opened models. No cache, retained pointer, generated runtime call, API, representation, world byte or allocation change is introduced. `notes/assets-and-files.md` records the failure/ownership coverage; paired measurements and remaining component-owned state costs are in `notes/benchmarks.md`.
 

@@ -87,7 +87,7 @@ foreach(argument folder source package editor file.tprefab --release --web --and
         --no-open --host --join --connect --server --strip-server-assets --anonymous --port --max-matches --max-connections
         --udp-only --shards --shard-width --shard-most --shard-journal --capture --capture-audio --microphone --frames --script
         --scale --size
-        --seed --players --data-dir --project
+        --seed --players --data-dir --project --single-file
         --server-only --bundle-only --check --preview --local-preview --nightly --stable --version setting --help -h)
     help(0 help "${argument}")
     contains("${out}" "Commands:")

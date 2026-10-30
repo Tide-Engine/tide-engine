@@ -1,0 +1,88 @@
+versus_wide: bodies of a dozen floats each fall and bounce, a tick changing half of them
+  count 1000000; kept 0; tagged 1; frozen 99; 4000 ticks timed after 200; optimized native build
+
+  ms a tick       1 thread            
+  Tide                0.378           
+  C                   1.433 0.26x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0x837ece418de2a1d2
+
+207360 samples over 13825 rounds (exit 0); 13738 in C:\Users\blenm\.t3\worktrees\PurrEngine\t3-2f0c48c7\build\release\bin\versus_wide.exe
+  elsewhere     193591 samples, 1409.16% of the program's  ntdll.dll
+  elsewhere         28 samples,    0.20% of the program's  VCRUNTIME140.dll
+  elsewhere          3 samples,    0.02% of the program's  ucrtbase.dll
+
+  innermost function (inlined code counts where it was written), % of the program's samples:
+   49.29%  shift_rows
+   25.06%  pick
+    6.30%  tide_rows_Shift_5
+    5.43%  tide_task_Shift
+    5.28%  tide_mul_f
+    3.05%  tide_function_Step
+    1.87%  tide_table_lanes_shared
+    1.85%  tide_add_f
+    0.62%  tide_table_column_mut
+    0.29%  tide_table_scatter
+    0.15%  tide_table_lanes_begin
+    0.13%  tide_table_cell
+    0.11%  setup
+    0.09%  tide_table_lanes_end
+    0.07%  run_task
+    0.07%  tide_apply_from
+    0.07%  tide_table_add
+    0.05%  tide_page_data
+    0.04%  tide_queue_next
+    0.04%  tide_table_column
+    0.02%  full_room
+    0.02%  tick
+    0.02%  tide_run_systems
+    0.01%  ??:0:0
+    0.01%  move
+
+  outermost function (what it was inlined into):
+   74.36%  move
+   16.48%  tide_rows_Shift_5
+    7.59%  tide_task_Shift
+    0.67%  tide_table_add
+    0.34%  tide_table_scatter
+    0.15%  tide_table_cell
+    0.14%  tick
+    0.11%  tide_apply_from
+    0.09%  tide_run_systems
+    0.02%  tide_entity_set_location
+    0.01%  ??:0:0
+    0.01%  tide_entities_settle
+    0.01%  tide_task_Setup
+
+  lines:
+   25.06%  pick                                     wide\wide.c:114:0
+    9.73%  shift_rows                               wide\wide.c:149:0
+    5.28%  tide_mul_f                               tide\math.h:79:0
+    5.15%  shift_rows                               wide\wide.c:136:0
+    4.86%  shift_rows                               wide\wide.c:138:0
+    4.66%  shift_rows                               wide\wide.c:150:0
+    4.13%  tide_task_Shift                          versus_wide\wide.c:1524:0
+    3.69%  shift_rows                               wide\wide.c:139:0
+    3.66%  shift_rows                               wide\wide.c:137:0
+    3.45%  shift_rows                               wide\wide.c:140:0
+    3.02%  shift_rows                               wide\wide.c:141:0
+    2.64%  shift_rows                               wide\wide.c:142:0
+    2.46%  tide_rows_Shift_5                        versus_wide\wide.c:1483:0
+    2.34%  shift_rows                               wide\wide.c:147:0
+    2.34%  tide_rows_Shift_5                        versus_wide\wide.c:1487:0
+    2.33%  tide_function_Step                       wide\wide.tide:71:0
+    2.10%  shift_rows                               wide\wide.c:144:0
+    1.87%  tide_table_lanes_shared                  tide\table.h:110:0
+    1.85%  tide_add_f                               tide\math.h:77:0
+    1.48%  shift_rows                               wide\wide.c:146:0
+    1.31%  shift_rows                               wide\wide.c:145:0
+    1.07%  tide_task_Shift                          versus_wide\wide.c:1539:0
+    0.72%  tide_function_Step                       wide\wide.tide:69:0
+    0.58%  tide_table_column_mut                    tide\table.h:204:0
+    0.55%  shift_rows                               wide\wide.c:143:0
+    0.55%  shift_rows                               wide\wide.c:135:0
+    0.36%  tide_rows_Shift_5                        versus_wide\wide.c:1469:0
+    0.30%  tide_rows_Shift_5                        versus_wide\wide.c:1472:0
+    0.28%  tide_rows_Shift_5                        versus_wide\wide.c:1462:0
+    0.23%  tide_rows_Shift_5                        versus_wide\wide.c:1464:0

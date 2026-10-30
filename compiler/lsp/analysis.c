@@ -1525,16 +1525,33 @@ void analysis_run(const analysis_file *given, const int given_count)
     // Web.Request's types are Tide's own code, a file of the game's for as long as the game names them
     const analysis_file *files = given;
     int count = given_count;
-    bool web = false;
+    // ...and so are fills', for as long as it shows one
+    bool web = false, fills = false;
     for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
-    if (web) {
-        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 1));
+    if (given_count > 0) {
+        const char **texts = arena_alloc(sizeof(char *) * (size_t)given_count);
+        size_t *lens = arena_alloc(sizeof(size_t) * (size_t)given_count);
+        for (int i = 0; i < given_count; i++) {
+            texts[i] = given[i].text;
+            lens[i] = given[i].len;
+        }
+        fills = draw_prelude_wanted(texts, lens, given_count);
+    }
+    if (web || fills) {
+        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 2));
         if (given_count > 0) memcpy(all, given, sizeof(analysis_file) * (size_t)given_count);
-        analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
-        prelude.text = web_prelude(&prelude.len);
-        all[given_count] = prelude;
+        count = given_count;
+        if (web) {
+            analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
+            prelude.text = web_prelude(&prelude.len);
+            all[count++] = prelude;
+        }
+        if (fills) {
+            analysis_file prelude = {"tide:///draw.tide", DRAW_PRELUDE_PATH, NULL, 0, NULL};
+            prelude.text = draw_prelude(&prelude.len);
+            all[count++] = prelude;
+        }
         files = all;
-        count = given_count + 1;
     }
     diag_reset();
     diag_set_sink(collect, NULL);
@@ -2455,6 +2472,11 @@ static const char *builtin_field_doc(const decl *d, const str name)
     return NULL;
 }
 
+// A field's own, `f.since.Snap()`, in match code.
+#define FIELD_SNAP_FORM "Snap()"
+#define FIELD_SNAP_DOC "This field jumped, like a timer that started over: views draw it as it is this tick, not blended from " \
+    "where it was. The rest of its component or singleton still blends; `entity.Snap()` is the whole entity's."
+
 // An entity's methods, in match code for an Entity and in local code for a LocalEntity.
 static const method_form entity_calls[] = {
     {"SetParent", "SetParent(Entity parent, bool worldPositionStays = true)",
@@ -2520,9 +2542,24 @@ static const method_form pose_calls[] = {
      "Returns a node's accumulated transform in model space, without inverse-bind offsets. Use it for sockets and hitboxes."},
 };
 
-static const method_form skinned_mesh_static_calls[] = {
+#define BLEND_SHAPES_DOC "The model's blend shapes (morph targets) in their order, with their source names and the file's default weights. " \
+    "Find one with TryGetByName or TryGetAt; Shaped(weights) applies weights in this order."
+#define BLEND_SHAPE_WEIGHT_DOC "The file's default weight for this shape, which the model's vertices already have."
+#define BLEND_SHAPED_DOC "Returns the model with these blend shape weights applied on the CPU: weight i is blendShapes' shape i, " \
+    "0 to 1 the authored range and values outside it extrapolating; a missing or non-finite weight keeps the file's default. " \
+    "Positions, normals and tangents move; other vertex fields, the skeleton, animations and indices are the model's."
+
+// Decode first: it's the type's own (SkinnedMesh<V>.Decode), the rest a model's.
+static const method_form skinned_mesh_calls[] = {
     {"Decode", "Decode(List<byte> bytes) -> SkinnedMesh<V, Contract> fails IOError",
      "Decodes a self-contained GLB from bytes with deterministic CPU math. Invalid data or a missing contract member fails with IOError.InvalidData. External resources are never fetched."},
+    {"Shaped", "Shaped(List<float> weights) -> SkinnedMesh<V, Contract>",
+     BLEND_SHAPED_DOC},
+};
+
+static const method_form blend_shape_catalog_calls[] = {
+    {"TryGetByName", "TryGetByName(string name, out BlendShape result) -> bool", "Looks up a blend shape by its exact original name. Returns false and assigns default for missing, empty or unnamed names."},
+    {"TryGetAt", "TryGetAt(int index, out BlendShape result) -> bool", "Reads a blend shape in the model's order, counting from 0: the order Shaped's weights are in. Returns false and assigns default for an index outside the catalog."},
 };
 
 // The built-in methods of what has the type `t`, or NULL: a list's, a grid's,
@@ -2537,7 +2574,8 @@ static const method_form *methods_of(const type t, size_t *count)
     if (t.decl && t.decl == A.prog->visibility) { *count = sizeof visibility_calls / sizeof visibility_calls[0]; return visibility_calls; }
     if (t.kind == TY_STRUCT && t.decl) {
         switch (t.decl->skin_kind) {
-        case SKIN_MESH: forms = skinned_mesh_static_calls; *count = sizeof skinned_mesh_static_calls / sizeof skinned_mesh_static_calls[0]; break;
+        case SKIN_MESH: forms = skinned_mesh_calls; *count = sizeof skinned_mesh_calls / sizeof skinned_mesh_calls[0]; break;
+        case SKIN_BLEND_SHAPES: forms = blend_shape_catalog_calls; *count = sizeof blend_shape_catalog_calls / sizeof blend_shape_catalog_calls[0]; break;
         case SKIN_ANIMATIONS: forms = animation_catalog_calls; *count = sizeof animation_catalog_calls / sizeof animation_catalog_calls[0]; break;
         case SKIN_BONES: forms = bone_catalog_calls; *count = sizeof bone_catalog_calls / sizeof bone_catalog_calls[0]; break;
         case SKIN_SKELETON: forms = skeleton_calls; *count = sizeof skeleton_calls / sizeof skeleton_calls[0]; break;
@@ -3692,6 +3730,10 @@ static void describe(const occurrence *o, sb *out)
             code_block(out, "Sanitize()");
             sb_put(out, "\n\nRuns on every input before the simulation reads it, including input from other "
                         "players, so systems can rely on what it guarantees.");
+        } else if (o->call == CALL_SNAP && o->object_type.kind != TY_ENTITY && o->object_type.kind != TY_LOCAL_ENTITY
+                   && o->object_type.kind != TY_SINGLETON) { // f.since.Snap(): a field's
+            code_block(out, FIELD_SNAP_FORM);
+            sb_printf(out, "\n\n%s", FIELD_SNAP_DOC);
         } else {
             // What it's called on decides: items.Clear() is a list's, e.Destroy() an entity's.
             size_t count;
@@ -3718,6 +3760,9 @@ static void describe(const occurrence *o, sb *out)
             if (d->skin_kind == SKIN_MESH && str_eq_c(o->name, "defaultPose")) {
                 sb_put(out, "\n\nMakes an owned pose with this model's authored rest transforms, including models without animation clips.");
             }
+            if (d->skin_kind == SKIN_MESH && str_eq_c(o->name, "blendShapes")) sb_put(out, "\n\n" BLEND_SHAPES_DOC);
+            if (d->skin_kind == SKIN_BLEND_SHAPE && str_eq_c(o->name, "name")) sb_put(out, "\n\nThis blend shape's original source name, empty for an unnamed one.");
+            if (d->skin_kind == SKIN_BLEND_SHAPE && str_eq_c(o->name, "weight")) sb_put(out, "\n\n" BLEND_SHAPE_WEIGHT_DOC);
             for (int i = 0; i < d->skin_catalog.count; i++) {
                 const skinned_member *m = &d->skin_catalog.items[i];
                 if (str_eq(m->name, o->name)) {
@@ -3730,7 +3775,7 @@ static void describe(const occurrence *o, sb *out)
             }
             if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "duration")) sb_put(out, "\n\nThe animation's duration in seconds.");
             if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "name")) sb_put(out, "\n\nThis animation's original source name.");
-            if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) && str_eq_c(o->name, "count")) sb_put(out, "\n\nHow many entries the immutable catalog has, including entries without checked names.");
+            if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES || d->skin_kind == SKIN_BLEND_SHAPES) && str_eq_c(o->name, "count")) sb_put(out, "\n\nHow many entries the immutable catalog has, including entries without checked names.");
         }
         if (o->object_type.decl && o->object_type.decl->query_row) {
             sb_put(out, "\n\nThe entity matched by this query row, read-only.");
@@ -3747,7 +3792,8 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, "\n\n" DEVICE_ARRAY_COUNT_DOC);
         }
         if (o->object_type.kind == TY_GRID && str_eq_c(o->name, "size")) sb_put(out, "\n\n" GRID_SIZE_FIELD_DOC);
-        if (o->object_type.kind == TY_TEXTURE && str_eq_c(o->name, "size")) sb_put(out, "\n\n" TEXTURE_SIZE_DOC);
+        if ((o->object_type.kind == TY_TEXTURE || o->object_type.kind == TY_DEPTH_TEXTURE) && str_eq_c(o->name, "size"))
+            sb_put(out, "\n\n" TEXTURE_SIZE_DOC);
         break;
     case OCC_ATTRIBUTE: {
         static const struct {
@@ -3802,6 +3848,12 @@ static void describe(const occurrence *o, sb *out)
              "`Mesh<V>` or a `SkinnedMesh<V>` (alone, or a list or a map of them). Code still reads the full mesh: "
              "`vertices` and `indices` are what they are without it. `Draw.LOD` names a level, and `Draw.LODCamera` the "
              "camera to pick through."},
+            {"BlendShapes", "[BlendShapes(\"name\", \"prefix*\")]",
+             "Keeps only the blend shapes of this skinned model whose source names match one of these: a name, or a "
+             "pattern where `*` is any run of characters. The others are left out of the import, so the pack doesn't carry "
+             "them; the vertices keep every shape at the file's default. `[BlendShapes()]` keeps none, and a pattern no "
+             "shape of a file matches is fine. It goes before an asset that's a `SkinnedMesh<V>` (alone, or a list or a "
+             "map of them); without it every shape is kept."},
             {"Json", "[Json(\"key\")]",
              "This field's key in JSON, where it isn't the field's name: `[Json(\"max_players\")] int maxPlayers;`. "
              "`Json.Read` fills the field from that key and `Json.Write` writes it under it. It goes before a struct's "
@@ -6648,6 +6700,10 @@ static type member_type(const type t, const str member)
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "animations")) return (type){TY_STRUCT, d->skin_animations};
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "skeleton")) return (type){TY_STRUCT, d->skin_skeleton};
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "defaultPose")) return (type){TY_STRUCT, A.prog->pose};
+        if (d->skin_kind == SKIN_MESH && str_eq_c(member, "blendShapes") && A.prog->blend_shapes) return (type){TY_STRUCT, A.prog->blend_shapes};
+        if (d->skin_kind == SKIN_BLEND_SHAPES && str_eq_c(member, "count")) return (type){TY_INT, NULL};
+        if (d->skin_kind == SKIN_BLEND_SHAPE && str_eq_c(member, "name")) return (type){TY_STRING, NULL};
+        if (d->skin_kind == SKIN_BLEND_SHAPE && str_eq_c(member, "weight")) return (type){TY_FLOAT, NULL};
         if (d->skin_kind == SKIN_SKELETON && str_eq_c(member, "bones")) return (type){TY_STRUCT, d->skin_bones};
         if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
         if (d->skin_kind == SKIN_ANIMATION && str_eq_c(member, "name")) return (type){TY_STRING, NULL};
@@ -6679,7 +6735,7 @@ static type member_type(const type t, const str member)
         return (type){TY_FLOAT, NULL};
     }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
-    if (t.kind == TY_TEXTURE && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
+    if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
     if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_RECORD && t.decl->array_of && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_ARRAY && str_eq_c(member, "count")) return (type){TY_INT, NULL};
@@ -6814,7 +6870,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "isCancelled", CK_PROPERTY, "bool", "True after cancellation, or for a default or stale handle.", NULL);
         return;
     }
-    if (t.kind == TY_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
         item(c, "Value", CK_PROPERTY, type_name(type_asset_reference_value(t.decl)),
              "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);
@@ -6859,6 +6915,16 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             item(c, "animations", CK_PROPERTY, "AnimationCatalog", "The immutable animation catalog: checked names where the asset or contract supplies them, and TryGetByName for exact source names.", NULL);
             item(c, "skeleton", CK_PROPERTY, "Skeleton", "The immutable node hierarchy, rest transforms and bone catalog.", NULL);
             item(c, "defaultPose", CK_PROPERTY, "Pose", "Makes an owned pose with this model's authored rest transforms, including models without animation clips.", NULL);
+            item(c, "blendShapes", CK_PROPERTY, "BlendShapes", BLEND_SHAPES_DOC, NULL);
+            sb detail = {0}, snippet = {0};
+            format_method(&skinned_mesh_calls[1], t, &detail);
+            method_snippet(&skinned_mesh_calls[1], &snippet);
+            item(c, skinned_mesh_calls[1].name, CK_METHOD, detail.data, skinned_mesh_calls[1].doc, snippet.data);
+        }
+        if (d->skin_kind == SKIN_BLEND_SHAPES) item(c, "count", CK_PROPERTY, "int", "How many blend shapes the model has: Shaped's weights are in their order.", NULL);
+        if (d->skin_kind == SKIN_BLEND_SHAPE) {
+            item(c, "name", CK_PROPERTY, "string", "This blend shape's original source name, empty for an unnamed one.", NULL);
+            item(c, "weight", CK_PROPERTY, "float", BLEND_SHAPE_WEIGHT_DOC, NULL);
         }
         if (d->skin_kind == SKIN_SKELETON) item(c, "bones", CK_PROPERTY, "Bones", "Named nodes for sockets, hitboxes and procedural pose edits.", NULL);
         if (d->skin_kind == SKIN_ANIMATION) {
@@ -7136,6 +7202,29 @@ static bool complete_in_namespace(completion *c, str ns, order_completion order)
 static const char *name_for(const decl *d);
 static type out_variable_type(int use, loc at);
 
+// Whether the field `name` of `d` can snap alone: it blends, and isn't [Snap], a [Position] or a [Rotation].
+static bool snaps_alone(const decl *d, const str name)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->hidden || f->is_local || !str_eq(f->name, name)) continue;
+        for (int k = 0; k < f->attributes.count; k++) {
+            if (str_eq_c(f->attributes.items[k].name, "Snap")) return false;
+        }
+        return !f->view_correction && type_blends(f->type);
+    }
+    return false;
+}
+
+// Whether code here changes the match: a system or a match handler, or a function or method one calls.
+static bool changes_match(const scope *sc)
+{
+    if (!sc->decl || sc->in_input) return false;
+    if (sc->decl->kind == DECL_SYSTEM) return !sc->decl->is_view && !sc->decl->is_local;
+    return (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD) && !sc->decl->is_operator
+        && !sc->decl->is_interpolate && !sc->decl->is_audio;
+}
+
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
 {
     if (dot >= 3 && DOC->toks[dot - 1].kind == T_GT) {
@@ -7144,7 +7233,7 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         if (open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh")) {
             const scope sc = scope_at(at);
             if (!is_shader(sc.decl)) {
-                const method_form *form = &skinned_mesh_static_calls[0];
+                const method_form *form = &skinned_mesh_calls[0];
                 item(c, form->name, CK_METHOD, form->form, form->doc, "Decode($1)");
             }
             return;
@@ -7348,10 +7437,19 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         complete_in_namespace(c, (str){ns.data, (int)ns.len}, ORDER_NONE);
         return;
     }
-    for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) t = member_type(t, DOC->toks[ids[k]].text);
+    type owner = {TY_ERROR, NULL};
+    for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) {
+        owner = t;
+        t = member_type(t, DOC->toks[ids[k]].text);
+    }
     // input.jump.down or input.aim.fire.down, including borrowed helper input.
     const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
     list_members(c, t, edges, &sc);
+    // f.since.: a match field that blends snaps alone, where match code changes it
+    if (n >= 2 && (owner.kind == TY_COMPONENT || owner.kind == TY_SINGLETON) && owner.decl && !owner.decl->is_local
+        && !owner.decl->interpolate && snaps_alone(owner.decl, DOC->toks[ids[0]].text) && changes_match(&sc)) {
+        item(c, "Snap", CK_METHOD, FIELD_SNAP_FORM, FIELD_SNAP_DOC, "Snap()");
+    }
 }
 
 // The current document's file: its namespace and `using`s. Its namespace
@@ -8901,6 +8999,7 @@ static out_argument out_argument_at(const int open, const int last, const loc at
             if (t.kind == TY_MAP && t.decl) found.type = t.decl->fields.items[1].type; // TryGet's: the map's value
             if (t.kind == TY_STRUCT && t.decl) {
                 if (t.decl->skin_kind == SKIN_ANIMATIONS && A.prog->animation) found.type = type_of_decl(A.prog->animation);
+                else if (t.decl->skin_kind == SKIN_BLEND_SHAPES && A.prog->blend_shape) found.type = type_of_decl(A.prog->blend_shape);
                 else if ((t.decl->skin_kind == SKIN_BONES || t.decl->skin_kind == SKIN_SKELETON) && A.prog->bone)
                     found.type = type_of_decl(A.prog->bone);
             }
@@ -9488,6 +9587,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
                  "Raw textures cannot be drawn or escape as ordinary Texture values.",
                  "Raw");
+            item(&c, "BlendShapes", CK_FUNCTION, "[BlendShapes(\"name\", \"prefix*\")]",
+                 "A SkinnedMesh<V> asset keeps only the blend shapes these names or * patterns match.", "BlendShapes(\"$1\")");
             item(&c, "LOD", CK_FUNCTION, "[LOD]",
                  "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
                  "LOD");

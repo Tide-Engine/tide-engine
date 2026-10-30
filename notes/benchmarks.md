@@ -1,5 +1,559 @@
 # Benchmarks
 
+
+## Views over wide components (2026-10-30)
+
+`bench_views` (`bench/views/`, `bench_views [frames]`) times each view of a
+frame blended halfway between two ticks, 20,000 entities: a per-entity view
+and a view's query reading one field of a 75-lane component (`Wide`) and of a
+small one, and `Far`, which hands a helper a local singleton's lists to read
+while it adds to another's (bannerlord-duel's far crowd: 25,905 matrices and
+three lists of 471). Release, this machine, quiet, ms a frame:
+
+| View | Before | After |
+|---|---|---|
+| PitchWide (per entity, wide) | 1.84-1.91 | 0.20 |
+| PitchSmall (per entity, small) | 0.24-0.25 | 0.20 |
+| QueryWide (query rows, wide) | 1.63-1.67 | 0.17 |
+| QuerySmall (query rows, small) | 0.23-0.25 | 0.16 |
+| Far (helper handed lists) | 609-625 | 1.55 |
+
+Before is the same harness with `dev` 5245298d6's tidec. What changed and why:
+notes/ecs.md, Views copy and blend only the lanes they read.
+
+## Bound Render3D correctness-smoke pixel work (2026-10-29)
+
+Nightly run `40960903022` reached the Linux WebGL browser's 120-second guard
+in `bench_render3d`, without a page result or shader diagnostic. Its previous
+run `40952236439`, already containing the shadow and height changes, passed in
+63.39 seconds. The quick workload overrides shadow resolution to 32 and selects
+zero cascades, so the new default 2048 cells/four cascades do not increase it.
+These hosted observations do not establish the cause of the individual stall.
+
+Quick mode had reduced geometry and frames while still shading 1920x1080.
+It now uses 640x360, retaining the 16:9 camera and scaling all nine sample
+coordinates to the output. All four light cases, both submission paths,
+warmup/checked frames, full native pixel equality, expanded-command equality,
+match hashes and per-frame draw/vertex/upload checks remain. Color pixel work
+is one ninth; shader, shadow cells and browser deadlines are unchanged.
+Measurement mode stays at 1920x1080, including its capture and JSON dimensions.
+Historical sources, measurement artifacts and paired-run source gates stay intact.
+
+Scoped builds pass with Clang 23.1.2 and Node 24.22.1. Both native Windows ASan
+Vulkan/OpenGL quick CTests pass with Vulkan validation enabled, as do WebGL and
+WebGPU. The local WebGL check takes 34.08 seconds before and 5.74 after; WebGPU
+takes 5.05 after. These are smoke durations, not renderer performance results.
+A bounded non-quick ASan run covers all four cases/both paths at 1920x1080,
+verifies eight JSON rows and a full-size capture, and retains exact command and
+pixel equality; its instrumented timing fields are not performance evidence.
+Other OS/browser combinations await ordinary push-triggered CI validation.
+
+## Render3D keeps its fixed shadow workload (2026-10-29)
+
+`bench/render3d/game.tide` explicitly selects `shadowCascades = 0` as Render3D
+adopts camera-fitted cascades by default. The harness keeps its fixed
+orthographic color camera, directional shadow volume and one/six/eight-view
+cases, rather than changing the amount of shadow geometry submitted with the
+package default. It still uses the current production shaders. Frozen sources
+and measurements in `bench/results/` remain unchanged; no new timing or
+cross-version pixel-equivalence result is claimed. Native Vulkan/OpenGL and web
+WebGL/WebGPU benchmark quick checks pass (two CTests per configuration). The
+historical paired runner's exact source gate remains unchanged and rejects the
+new source line; it is not evidence for comparing these shader versions.
+
+## Churn's costs, and a fill rule that lost (2026-10-29)
+
+A profile of `versus_churn` (2,000 bullets a tick, ~200k alive, one thread)
+splits Tide's time roughly: the Fly row loop and its runs about a third,
+entity-table location writes and lookups about a sixth, hole settling and
+table bookkeeping about a sixth, and the spawn path itself (queue push, row
+writes, entity creation) about a tenth. Batching spawns as events are batched
+would save at most that tenth, so it wasn't built. Tide's churn tick is
+0.33-0.40 ms against hand-written C's 0.20; Bevy's measured 0.25-0.58 across the
+day's batches.
+
+Rejected, reverted: filling arrivals into holes of chunks a system wrote this
+tick (deterministic: flagged as a system begins a chunk's lanes, cleared at
+settle) before the last chunk. Five alternating rounds against `dev` at
+c3cee6b49: churn +8.8%/+8.9% on 1/4 threads, +23.9% with a kept snapshot;
+`versus_sleep` with a moving tag +3.3%/+1.7%/+5.5% at 10/100/1,000 toggles.
+Spawns scattered across chunks cost more in random writes than the row moves
+they saved, and this tick's destroys still leave the Fly loop fragmented.
+
+## The day's changes against Bevy and this morning (2026-10-29)
+
+After tags became moving by default (notes/ecs.md, Tags move entities by
+default), with holes and lane writes: the Bevy runner against SparseSet Bevy,
+three rounds (`bench/results/bevy-now-20261029/sparseset`). Tide with a moving
+tag, 1M entities, one thread: 1.186/1.054/0.405/0.0587/0.0293/0.0058 ms at
+1/10/50/90/95/99% filtered, against SparseSet Bevy's 2.942/2.672/2.328/0.510/
+0.207/0.0472. Two retries of the table-storage batch were stopped by other
+sessions' builds (the runner refuses contended processes), so table Bevy's
+figures are the afternoon's (`bevy-holes-20261029/table`), whose Bevy binary is
+unchanged: Tide leads it 2.74x at 50% and 3.47x at 99% on one thread, 1.28x at
+50% on four (both at the memory-bandwidth wall). Particles and wide lead 1.8-3.4x.
+Churn trails this batch's Bevy 0.89x/0.74x (Tide 0.352/0.338 ms); Bevy's churn
+measured 0.25-0.58 ms across the day's batches, Tide's 0.33-0.40.
+
+This morning's `dev` (2bee50f69 binaries, sparse tags) against now, three
+alternating rounds without the quiet guard (`client-morning-vs-now.txt`):
+the sleep client with the default tag -97%/-88%/-81%/-59%/-27% at
+0/10/30/100/300 toggles a tick and +17% at 1,000; with `[Sparse]` -21% to -34%
+throughout; wide client -32%, churn client -15%, rollback -3%, particles client
+-1%, churn on a server +6%.
+
+## Lanes a system can't write (2026-10-29)
+
+Against `dev` at 1b2deaf8c (holes), five alternating rounds, release (notes/ecs.md,
+Lanes a system can't write). With a kept snapshot each tick (a client):
+`[Lasting]` wide at 1M/50% frozen -39.9% on one thread (2.40 to 1.38 ms) and
+-35.9% on four; dense wide 1M -28.3% / -9.0%; `versus_sleep` sparse tag
+-36.8%/-33.2%/-29.6% at 0/10/100 toggles and moving tag -34.5%/-15.5%/-5.4%;
+churn -7.0%, particles -3.9%, rollback -2.3%. Without snapshots the in-place
+loops are unchanged code and measured -6.4% to +4.5% with overlapping ranges.
+Thread scaling for those loops is bound by memory bandwidth (hand-written C and
+Bevy's table storage stop at the same wall), not by task splitting. Raw rows:
+`bench/results/lane-writes-20261029/paired-runs.txt`. The Bevy comparison
+before this change, with charts' data: `bench/results/bevy-holes-20261029/`.
+
+## Holes under a client's rollback (2026-10-29)
+
+Rows entities leave stay as holes (notes/ecs.md, Holes). Against `dev` before
+it, five alternating rounds, release, one thread, `versus_sleep` with 100k
+bodies 90% asleep and balanced toggles (ms per 12-tick client period): a
+`[Lasting]` tag goes 1.119 to 0.557 at 10 toggles a tick (-49.7%), 2.866 to
+0.959 at 30 (-66.4%), 5.762 to 2.163 at 100 (-62.5%), 8.517 to 4.133 at 300
+(-51.2%), 10.816 to 8.306 at 1,000 (-23.4%). A sparse tag takes 3.90-6.50 there
+and is unchanged. Moving now beats sparse up to roughly 500 toggles a tick per
+100k bodies, where it was about 30; at 1M bodies a sparse tag costs 64 ms a
+period against a moving one's 3.7-11. Particles, wide, filtered wide and
+rollback are within 2.5%. Churn without snapshots is +1% to +13% across
+batches (fragmented loops until settling, about 5% of samples in
+`tide_table_run`), with a kept snapshot -6% to -10%. Rejected policies and every
+row: `bench/results/table-holes-20261029/README.md`.
+
+## Moving tags under a client's rollback (2026-10-29)
+
+The owner asked whether toggled tags should move entities by default (as
+`[Lasting]` does) and what that costs a whole client, not just the ECS loop.
+
+Archetype check: a local tidec with the flipped default compiled all 420 source
+lists (engine games, samples, benchmarks, tests and `tide-prototypes` via
+`TIDE_EXTERNAL_DIRS`). Only Foldline changes: `Glimpse`, `LastWitness` and
+`WellFall` are added to entities read from variables, so with Box3D it passes
+1,024 archetypes and fails to compile. Every other game keeps its archetypes;
+only compiler fixtures change.
+
+`versus_sleep` / `versus_sleep_lasting` (Tide only, `bench/versus/sleep`) run a
+predicting client's period like `versus_rollback`: 12 ticks each kept in a ring
+of 16 and hashed, with a rollback of 8. Bodies of 12 floats are asleep or awake,
+and `--toggles` bodies, picked by hash, wake or fall asleep each tick. Single
+quick runs, release, one thread, 100k bodies with 90% asleep, ms a period:
+sparse/moving 6.68/0.45 with no toggles, 7.39/3.77 at 10, 7.84/7.45 at 30,
+9.10/13.19 at 100. Break-even is about 0.03-0.05% of entities toggling a tick at
+10k, 100k and 1M bodies and 50/90/99% asleep. Sparse is slow even without
+toggles, because scattered awake rows change nearly every page, which each
+snapshot then copies and each hash rereads.
+
+Each move costs about 15-25 us a tick under snapshots: filling the hole and
+appending to the destination's last chunk both copy a page per column (about
+13 cold 8 KiB pages), and the kept snapshots hold those copies, pushing the
+working set out of cache. A wakes-only variant (holes in the cold sleeping
+table) costs about 0.3 ms a period per move per tick; profiles show page
+copies, cache misses in the awake loop and rehashing. Rejected experiments,
+both reverted: 512/256-row chunks halve move cost but slow dense ticks up to
+2x; hashing 1 KiB blocks of a page with cached block hashes (only the written
+row's block rehashed) measured +13%/-6%/+1% for moving at 0/10/100 toggles and
++7%/+6% for sparse in five alternating rounds, so rehashing isn't the
+bottleneck. The default stays sparse; `[Lasting]` remains opt-in.
+
+## `[Lasting]` tags against Bevy (2026-10-29)
+
+The owner chose to keep toggled tags sparse by default and let a tag opt out
+with `[Lasting]`: its Add and Remove move the entity between archetypes (spec,
+Lasting tags; ecs.md). `versus_wide_lasting` builds `wide.tide` with `LASTING`:
+Frozen becomes `[Lasting]`, and a `Thaw` system that never runs during timing
+makes it removable. `main.c` reads both crate archetypes under `WIDE_LASTING`.
+
+Windows/Ryzen 9 7900X, release O2, Rust 1.95.0/Bevy 0.20.0. Each batch has 3
+alternating before (`[Sparse]`)/`[Lasting]`/Bevy rounds, 200 warmup/400 measured
+ticks and 81 processes. One batch uses ordinary Bevy (SparseSet Frozen), the other
+Bevy with Frozen in table storage. Before/`[Lasting]` medians at 1M serial:
+50% frozen 2.316/0.457 ms, 90% 1.307/0.060, 95% 1.036/0.030, 99% 0.097/0.0058.
+`[Lasting]` leads Bevy table storage in every case: 3.47-3.78x at 90-99% frozen,
+2.66x at 50% serial, 1.13x at 50% with four threads. It leads SparseSet Bevy 5.6-11.3x
+at 90-99%. With four threads, 50% frozen doesn't scale (0.475 against 0.457 serial),
+and that wasn't investigated. Toggle cost (row copies) and archetype growth are
+unmeasured because `Thaw` never runs. All digests match, and the e2e and quick
+tests pass on native and WASI. Tables, staging and limits:
+`bench/results/bevy-lasting-20261029/README.md`.
+
+## Packed storage abandoned and cleaned up (2026-10-29)
+
+The owner abandoned this route after the integrated transient pack/restore
+experiment passed correctness checks but lost every full-cost comparison.
+At 1M/95% frozen, ordinary/transient tick+hash medians were 6.08790/128.29755 ms;
+with a retained snapshot, 8.79705/149.76765 ms. All six cases lost, with median
+paired ratios of 16.51x--40.74x, and every paired tick hash matched.
+
+Native/WASI runtime and compiler checks passed. The real Entities replay
+performed 348 partitions across 360 ticks with matching commands, IDs,
+snapshots, serialization and view payloads. Docs/sample/prototype builds and
+bounded native starts passed; the six simulation test targets selected no
+partitions, so those were fallback compatibility checks only.
+
+The earlier resident probe and transient implementation, harnesses and archived
+sources were removed from the tracked tree. Dedicated builds were quarantined
+locally under ignored `build/_cleanup/`; staged docs pages were restored from
+the ordinary build and the editor's game manifest regenerated. The proposal
+is closed; no further packed-storage integration is planned. Source, raw
+measurements and limitations remain in Git history at commit 57df9c937. The
+results reject full-copy transient conversion, not every possible resident
+layout, and establish no new Bevy comparison. Shipping compiler/runtime code,
+hash pins and the existing successful ECS optimizations are unchanged.
+
+## Aggressive wide storage experiments (2026-10-29)
+
+The owner's request to push beyond loop changes adds isolated, handwritten
+canonical-layout prototypes using Tide's scheduler: contiguous component records,
+four-row field blocks, packed active field arrays, packed arrays with six-field
+write-back, and repacking from the original-order mirror every tick. They retain
+all frozen values and use logical ID maps. No production/compiler/runtime/game
+source, canonical format, language behavior or expected hash changes.
+
+On Windows/Ryzen 9 7900X with unchanged strict O2 floats, 1M rows/95% frozen/
+one thread, packed active arrays take 0.02870 ms versus current Tide 0.86350
+and ordinary Bevy SparseSet 0.24170. Six-field write-back costs 0.44450 ms;
+repack/update/write-back costs 1.88855. AoS roughly reaches ordinary Bevy on
+sparse updates but regresses dense throughput; AoSoA4 is adverse. A stronger
+Bevy build changes only Frozen to default Table storage, partitioning both
+sides: paired Bevy/prototype ratios are 3.52x at 95%, 3.67x at 99%, and 4.02x
+at 99% with four offered threads. This is a workload-specific storage path
+against full Bevy queries, not a shipping Tide win or a Bevy throughput ceiling.
+
+Packed storage uses about 48 MB of data and 12 MB of index arrays. A separate
+diagnostic's update-plus-1,000-membership-toggles takes 0.043892 ms, and 10,000
+toggles 0.196777; these are medians of process means with changing active work,
+not isolated mutation costs or paired Bevy results. A retained previous-state
+comparison at 95% takes prototype 1.65640 ms versus Tide 4.12580; the prototype
+deep-copies its data and has static membership, not a general COW/rollback path.
+
+There are 135 valid measured/diagnostic processes, three alternating rounds,
+200 warmup/400 measured ticks in the paired comparisons. Six initial snapshot
+attempts launched the wrong executable due to a one-element PowerShell array
+being unwrapped; all are retained and excluded, with the corrected runner and
+batch preserved. Native/WASI agree in 240 collected layout checks, and each
+passes 3,742,200 exact field comparisons under membership changes by stable ID.
+The prototype groups selected rows into fewer tasks and lacks general table/COW,
+generational lifetime, arbitrary query/event order, multiple filters, dynamic
+snapshot restore, hash/pack and reload integration. No whole-engine improvement
+or automatic production layout decision follows. Sources, all adverse controls,
+stronger Bevy comparator, raw output, identities and audit:
+`bench/results/bevy-layout-20261029/README.md`.
+
+## Sparse wide locality probes (2026-10-29)
+
+Five manually edited generated-C kernels test field traversal and explicit SIMD
+against d65b66ed4 without changing canonical storage, compiler/runtime/game
+sources or hash pins. Three axis passes, tiled at 16/64 selected rows or a whole
+chunk, do not establish a win. At 95% frozen the tiled forms regress 6.93%/7.37%
+and four gathered rows with SIMD regress 5.47% in median adjacent paired time.
+Four contiguous physical rows with masked preservation of frozen neighbors
+regress 23.02% at 95% frozen, 37.42% at 99%, and 22.18% at 99% with four threads.
+No candidate is promoted; Bevy remains faster on these sparse workloads.
+
+Windows/Ryzen 9 7900X, unchanged O2 and deterministic float flags: six batches
+(including unchanged relink control), three alternating before/probe/Bevy rounds,
+200 warmup/400 measured ticks, 144 successful processes. The unchanged relink
+control moves by about 1-2%; dense/90%-frozen/identical-particle controls also
+vary, including -8.18% at 90% despite retaining the original row path. These
+observations do not establish an isolated storage/cache-miss cause. An earlier
+nine-process control attempt interrupted by external build/test work is kept
+separately and excluded; completed batches have no detected contention.
+
+All timed logical digests agree. Native and ordinary WASM SIMD each pass 179,200
+exact twelve-lane byte comparisons against the original helper across five
+variants, 14 sizes, 32 patterns, four selected-index pieces and 20 ticks. This
+covers frozen neighbors, tails, piece boundaries and signed zeros, not general
+compiler transformation correctness or snapshot/changing-membership performance.
+Timing excludes setup/digest, per-tick hashes, snapshots, networking and rendering.
+Sources, commands, identities, adverse results, controls, validation and raw rows:
+`bench/results/bevy-locality-20261029/README.md`. No production change, full suite
+or manual CI dispatch accompanies these experimental records.
+
+## Smaller cached sparse tasks (2026-10-29)
+
+A bounded compiler-private wrapper shortcuts whole, rare cached chunks whose
+changed pages are all private. It validates the original exact cache key and
+checks every changed lane before invalidating any page hash, then calls the
+unchanged cached row helper without begin/end bookkeeping. Readonly pages may
+remain shared. The original task is a non-inlined fallback for shared pages,
+pieces, dense/stale caches and unsupported archetypes. Eligibility is restricted
+to the existing 32-128 accessed-byte range; no math, ordering, scheduling,
+component/world/cache layout, runtime API or packed byte changes. Contracts:
+language.md, Whole cached-chunk task shortcut.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged
+O2 flags/game sources/Bevy executable: five alternating adjacent triples against
+frozen `c30a131da`, 16 cases, 240 successful processes, 200 warmup/400 measured
+ticks each. Source SHA-256 codegen.c is
+`23ef9022a97ceaddb9294dd4af4ad5090d21a84dba13d8b38a70d01241eca645`;
+rows_cache_codegen.inc remains unchanged. At 99% frozen, before/current/Bevy
+median tick costs are 0.11190/0.09770/0.04730 ms serial and
+0.04540/0.04090/0.03220 ms with four offered threads. Paired Tide time falls
+12.69%/10.74%; 95%-frozen serial falls 4.79%. Bevy still leads those cases.
+
+Eight control paired medians are adverse, including 90% frozen at +5.33%.
+A separate five-round/15-process density check is adverse at +10.16%, with
+overlapping ranges and substantial unchanged C-reference variation. The old
+slow task's machine body is unchanged; attribution remains unresolved. This
+does not establish a universal speedup. The 90-process prototype/control report
+retains six variants, including noisy/adverse results; division specialization
+and loop versioning were not promoted. No batch is pooled or C-normalized.
+
+Eighteen scoped CTests pass per platform on native/WASI, 78 cross-engine checks
+pass including 95%/99% frozen, and 75 complete native raw packs/world hashes
+match the baseline byte for byte. Expanded fixtures cover multiple archetypes,
+tails, mixed references across changed components, shared readonly pages,
+stale/empty cache entries, scratch arguments, snapshots and original split paths.
+The final 23:57:51-00:02:51 UTC batch has no quiet reset or contention event.
+Timings exclude setup, final digest, per-tick hashing, retained snapshots,
+rollback, networking and rendering. Full evidence, ranges, adverse controls,
+source/binary identities, validation logs and reproduction:
+`bench/results/bevy-next-20261028-final/README.md`. Hosted validation remains
+the ordinary push-to-dev run; no extra CI dispatch was made.
+
+## Retained sparse selection (2026-10-28)
+
+The follow-up retains derived selection plans per world, keyed by exact
+archetype/chunk/filter shape, row count and retained presence-page identities.
+Holding the pages makes membership writes detach through COW; stale plans
+cannot validate by pointer reuse or a system ordinal alone. Plans are prepared
+serially before worker dispatch and read immutably during execution. Matching
+indices are reused when `pass < ceil(rows / 16)`; cached whole-chunk counts
+also avoid repeated scans at other densities. Existing alias/scene/ownership
+fallbacks remain. Native hints warm four selected rows and look four ahead
+only below `ceil(rows / 64)` matches, for 32-128 bytes of accessed component
+lanes with a changed component; WASM omits hints. No new runtime API is required;
+math, component layouts, entity IDs, deferred order and scheduling contracts
+remain unchanged.
+
+The private cache pointer adds eight zeroed bytes to the native wide world's
+raw packed header (160 to 168), so raw packs are not unchanged byte for byte.
+Cache ownership is separate across worlds and excluded from logical state,
+hashes and delta values. Unpack discards received cache pointers before failure
+cleanup. Seventy-five final baseline/current native comparisons match world
+hashes and normalized raw packs after removing that added zero header slot.
+Snapshot, membership and reload-key correctness does not establish cold cache
+construction, changing-membership or snapshot/reload performance.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged O2
+flags, game sources and Bevy executable: five adjacent alternating
+before/current/Bevy rounds, frozen baseline `66b8ddb8f`, 16 cases and 240
+successful processes with 200 warmup/400 measured ticks. This is 96,000 measured
+ECS ticks, 48,000 ECS warmup ticks and 64,000 additional measured C-reference
+ticks. Measured source SHA-256s are codegen.c
+`0342cfe8fafde011bf038d492c4705e91f934b8548f2dedefd5dd4f52f295e30`
+and rows_cache_codegen.inc
+`485acd89238f99fd406e1fe0bcc9674b4903ab3dc00825a4f45e5fb5a8db8a7d`.
+All final logical digests agree across implementations, rounds and thread budgets.
+
+At 99% frozen, before/current/Bevy median-of-process-medians is
+0.27005/0.11000/0.04865 ms serial and 0.08660/0.04525/0.03760 with four offered
+execution threads. Median paired Tide time reductions are 58.33%/45.35%.
+At 95% frozen, serial costs are 1.47770/1.14145/0.24145 ms, a 21.74% paired
+reduction; at 90% they are 1.52940/1.39450/0.91955, a 10.09% reduction.
+The 1%/10%-frozen serial observations improve by 5.62%/7.38% paired. Bevy still
+leads the selective cases. Four-thread particle and churn controls are adverse
+at +2.20%/+3.12%, with overlapping ranges. These mixed results establish no
+universal speedup or improvement at every density.
+
+Sixteen scratch variants (seven initial, nine with cached selection; 144
+processes) retain their generated sources, patches and adverse observations;
+none beats Bevy, and staging was rejected. The separate 27-process cache-only,
+27-process broad-prefetch and 27-process guarded-prefetch probes remain intact.
+Broad hints regressed 95%-frozen work, motivating the narrower hint guard.
+Their individual READMEs retain quiet resets and measurement limits; batches
+are not pooled. The final 23:11:56-23:18:01 UTC batch records no quiet reset or
+contention under the shared mutex, 15-second quiet guard and 250 ms polling.
+Desktop activity, placement, clocks and temperature remain uncontrolled.
+
+Thirty-three unique scoped optimized CTests pass per platform on native and
+WASI; all 18 affected checks pass again after the hint guard. Sixty-six final
+cross-engine checks pass. Independent fixtures cover row/math order, dynamic
+membership, copies/COW, packed restore, hostile raw headers, retained-page
+ownership and exact private cache keys. A same-layout filter reversal is tested
+through private helpers; an actual DLL filter-changing reload was not run.
+The standard migration test passes. The analyzer verifies complete triples,
+options, executable identities, Bevy samples/statistics and raw stdout hashes.
+Raw evidence, normalized-pack proof, retained probes, ranges and reproduction:
+`bench/results/bevy-cache-20261028-final/README.md`. Timings exclude setup,
+final digest, per-tick hashing, retained snapshots, rollback, networking and
+rendering. No full suites, browser/GPU, Bevy web, other OS/mobile/sanitizers or
+extra CI dispatch were run.
+
+## Rare sparse traversal (2026-10-28)
+
+The selective-query follow-up adds an in-place sparse-only loop when the
+existing pass count is below one match per sixteen rows. Bounded 16-byte
+presence comparisons form matching bits, consumed in ascending row order;
+short tails read only actual rows. SSE2 and ordinary WASM SIMD extract the
+bits directly, with scalar lane extraction elsewhere. The count scan remains;
+COW/apart, scene, Owner, C and World-alias fallbacks retain their existing
+paths. No runtime API, world layout, math, deferred order or scheduling changes.
+Contracts and independent fixture: language.md, Rare sparse row masks.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged
+O2 flags/game sources/Bevy executable: frozen baseline `a2564c773` against
+compiler source SHA-256
+`fcfc03c95da80f321c3e872d983b450b32889d60a8210a22c07040fdb81e4a03`.
+Five alternating adjacent before/current/Bevy rounds cover 16 cases and 240
+successful processes, each with 200 warmup/400 measured ticks: 96,000 measured
+ECS ticks, 48,000 ECS warmup ticks and 64,000 additional measured C-reference
+ticks. All logical digests agree across implementations, rounds and thread
+budgets. Timings still exclude setup, final digest, per-tick hashing, retained
+snapshots, rollback, networking and rendering.
+
+For 1M rows with 99% frozen, before/current/Bevy median-of-process-medians is
+0.46430/0.27090/0.04880 ms serial and 0.12660/0.08510/0.03450 ms with four
+offered execution threads. Median paired Tide time reductions are 39.50% and
+33.16%; current process medians span 0.26440-0.29630 and 0.08220-0.08690 ms.
+At 95% frozen, serial times are 1.46480/1.41225/0.22585 ms, a 4.80% paired
+reduction. Bevy remains faster in these selective cases. The 90%-frozen
+ordinary-loop control is adverse at +2.77% paired, with overlapping ranges;
+this does not establish improvement at every density.
+
+The retained 18-process probe used a broader quarter-density mask guard and
+regressed at 90% frozen by 4.22% paired, motivating the narrower threshold.
+Sampling includes C-reference work and perturbs timing; it identifies remaining
+row arithmetic and task preparation/counting without establishing cache-miss,
+bandwidth or storage-layout causes. The shared mutex, 15-second quiet guard and
+250 ms polling detect no competing work or quiet reset in the final batch.
+Desktop activity, placement, clocks and temperature remain uncontrolled.
+
+All 18 affected optimized CTests per platform pass on native and WASI. Initially
+17 passed on each; the stale four-variant parameter assertion was updated to
+check all six variants, then only that check reran. Sixty-six cross-engine
+checks pass. The new independent sparse-mask fixture covers intersecting
+presence columns, short allocations/tails, row order, deferred changes,
+serial/pieced execution, snapshots and packed restore. A standalone native
+kernel checks all 65,536 presence patterns; ARM coverage is assembly-only,
+not execution. Raw evidence, probe, ranges, diagnostics and reproduction:
+`bench/results/bevy-selective-20261028/README.md`. No full suites, browser/GPU,
+other OS/mobile/sanitizers or extra CI dispatch were run.
+
+## Sparse filtering and churn optimization (2026-10-28)
+
+Following the owner's request to optimize the Bevy comparison's weak areas,
+profiles attribute most wide work to mixed sparse-row traversal and over half
+of Tide churn work to its scalar update/destroy loop. The compiler now selects
+matching indices in bounded 128-row blocks for eligible in-place filtered rows,
+only when the existing pass count says at least a quarter pass and a quarter
+skip. Other densities retain their ordinary loop. Strictly proven numeric
+update/final-self-destroy bodies use SIMD-friendly updates/predicates followed
+by ordered destroy recording from 128 stack flags. Plain destroy reuses its
+already-checked location. No runtime entry point, world layout, math, entity ID,
+deferred order or scheduling rule changes. Contracts: language.md, Mixed sparse
+row selection; ecs.md, Pure row updates before conditional destruction.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged O2
+flags/game sources/Bevy executable: five adjacent alternating before/current/Bevy
+triples, frozen baseline aac950038, 200 warmup/400 measured ticks, 210 successful
+processes. Half-frozen 1M rows take before/current/Bevy 4.01150/2.29915/2.66665 ms
+serial and 1.17425/0.77645/1.43990 with four offered execution threads. Median
+paired Tide tick-time reductions are 42.37%/33.14%. Churn at 2,000 bullets/tick
+takes 0.57090/0.40030/0.53390 and 0.54610/0.42030/0.62120 ms, reductions
+27.22%/21.51%. All logical digests agree across implementations, rounds and
+thread budgets. CPU-only tick scope still excludes hashing, retained snapshots,
+rollback, networking and rendering.
+
+An always-compact intermediate improves half-frozen traversal but regresses
+biased masks; its 150-process batch, preliminary pairs and density diagnostics
+remain intact. The final 1/10/90/99%-frozen serial sweep retains ordinary loops
+and has paired time changes -0.07%/+0.85%/-3.67%/+10.76%. The last remains adverse
+with overlapping ranges, and Bevy is about ten times faster there. Ordinary
+filtered-loop instruction text matches the frozen baseline after debug/label
+normalization; whole-program placement/runtime costs remain uncontrolled.
+Unchanged controls also vary (serial 1M particles +7.30% paired). This is no
+universal no-regression or whole-engine speed claim.
+
+Thirty scoped native/WASI optimized CTests pass during implementation, including
+two new independent row/order/math/slot-generation/COW/pack fixtures; all 18
+affected checks per platform pass again after the density guard. Sixty-six
+cross-engine checks pass; the final analyzer verifies raw hashes, exact options,
+binary identities, Bevy samples and complete triples. The shared mutex,
+15-second quiet guard and 250 ms polling detect no competing work or quiet
+reset. Desktop activity, placement, clocks and temperature remain uncontrolled.
+Raw evidence, ranges, adverse attempts and reproduction:
+`bench/results/bevy-optimized-20261028-final/README.md`. No full suites,
+browser/GPU, other OS/mobile/sanitizers or extra CI dispatch were run.
+
+## Bevy ECS comparison (2026-10-28)
+
+The owner's request to compare Tide with Bevy adds the opt-in `bench/bevy`
+Rust comparator, pinned to Bevy ECS 0.20.0 and Cargo.lock. It ports the existing
+particles, wide-component, sparse Frozen filtering and bullet-churn workloads
+without changing game/compiler/runtime behavior. The versus harness gains
+`--json` to print its existing result format without appending to the ledger.
+Setup, final digest, snapshots, per-tick hashes, networking and rendering are
+outside the scheduled tick timing. Normal Bevy change detection remains enabled;
+its contiguous-query/bypass alternatives and whole-engine equivalence are not
+claimed. The README pins APIs, arithmetic, deferred changes and thread budgets.
+
+Windows 11 / Ryzen 9 7900X, Clang 23.1.2 and Rust 1.95.0 (LLVM 22.1.2), both O2,
+baseline x86-64 and no FMA/fast math: five alternating process rounds with 200
+warmup/400 measured ticks preserve 100 successful processes. At 1M particles,
+Tide/Bevy median-of-process-medians is 0.47430/1.16390 ms on one thread and
+0.12935/0.43320 with a four-thread execution budget; median paired Bevy/Tide
+ratios are 2.448/3.349. At 1M twelve-float components the corresponding costs
+are 1.35745/2.48685 and 0.63360/1.20025 ms. With 499,674 sparse Frozen tags,
+serial Tide is slower (4.00665/2.46325 ms), while four-thread costs are
+1.08240/1.26125. Spawning 2,000 bullets/tick, with about 199k live, favors Bevy:
+0.46690/0.35955 ms serial and 0.45600/0.39410 with four offered execution
+threads. No optimization or causal profile follows from this scoped comparison.
+
+Every timed pair and all thread budgets agree on logical-state digests. Five
+native and five WASI release CTests pass; 66 independent Bevy checks also match
+native Tide/C and WASI Tide/C across early/steady ticks and empty/full filters.
+The offline analyzer checks complete alternating pairs, options, successful exits,
+raw stdout hashes, invariant digests and contention. The shared mutex, explicit
+15-second initial quiet guard and 250 ms inventory polling detect no reset or
+competing work; desktop activity, placement, clocks and temperature are uncontrolled.
+Raw rows, ranges, paired ratios, identities, limitations and reproduction are in
+`bench/results/bevy-20261028/README.md`. No browser/GPU, Bevy web, other OS/mobile,
+sanitizer or whole-engine performance result is claimed; no CI dispatch was made.
+
+## Earth pins after projected repair delivery (2026-10-27)
+
+Run `40419145201` at `eaf260488` fails only the three Earth benchmark pins
+in all nine underlying failed jobs. Native Windows/Linux/macOS, MinGW,
+all three WASI builds, Linux sanitizers and Android agree on
+`8d679303b6836f22` (ordinary/diverge) and `1019cc68d13cf499` (split).
+The previous `e16a82074` run passed; the change starts with `d0ead429a`'s
+intentional projected repair delivery correction (notes/netcode.md).
+
+A controlled native debug link uses the current generated game, benchmark,
+compiler and other runtime objects, replacing only session.c with
+`e16a82074`'s implementation in an ignored scratch executable. It reproduces
+the old ordinary pin `2d4f30cae27728fa` at tick 273 and split pin
+`77140ad82e885ede` at tick 287. The current implementation completes joins
+sooner (maximum 0.28/0.30 s versus 0.48/0.52 s) and ends both cases at tick
+273, with no late inputs or resyncs. These are different deterministic network
+timelines, not a cross-platform math discrepancy. Historical performance
+measurements remain tied to their original implementations.
+
+Only the three expected hashes in bench/CMakeLists.txt change. The workloads,
+inputs, join/lag/resync checks, thread settings and divergence diagnostics
+retain their existing behavior. The workflow and publication gates are unchanged.
+
+Validation: warning-free native and WASI debug builds of bench_earth and
+earth_tests; all four selected CTests pass on each (63.67/67.14 seconds),
+using Clang 23.1.2 and Node 24.22.1. Native ordinary/split runs also agree
+with one thread versus the default twelve. The original run establishes
+optimized cross-platform hash agreement; the next dev run must confirm all
+corrected checks and publication. No browser or GPU coverage is needed for
+these CPU-only expected-value changes.
+
 ## Earth relief changes the simulation pins (2026-10-25)
 
 The owner requested gentle hills alongside the game-side performance pass.

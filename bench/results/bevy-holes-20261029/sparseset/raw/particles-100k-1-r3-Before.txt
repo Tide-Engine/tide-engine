@@ -1,0 +1,10 @@
+versus_particles: particles fall and bounce off the floor and the walls
+  count 100000; kept 0; 400 ticks timed after 200; optimized native build
+
+  ms a tick       1 thread            
+  Tide              0.04200           
+  C                 0.04080 1.03x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0x2e8e0f5396873956
+{"benchmark":"versus_particles","label":"stdout","date":"2026-10-29T16:01:54Z","os":"windows","arch":"x86_64","optimized":true,"compiler":"23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)","machine":"AMD Ryzen 9 7900X 12-Core Processor            ","revision":"1b2deaf8c3163ec69b41e2cde02bf3694ed2d5d1","options":{"warmup":200,"ticks":400,"split":false,"count":100000,"kept":0},"ok":true,"digest":"0x2e8e0f5396873956","runs":[{"threads":1,"ways":{"Tide":{"median_ms":0.042,"mean_ms":0.0424993},"C":{"median_ms":0.0408,"mean_ms":0.0414057}}}]}

@@ -198,6 +198,7 @@ elseif(TIDE_ANDROID)
     # the icon apps get when their game has none.
     set(TIDE_PACKAGE_LIBS lib/android/${TIDE_ANDROID_ABI})
     install(FILES "${PROJECT_SOURCE_DIR}/tools/tide-vscode/icon.png" DESTINATION lib/android COMPONENT tide)
+    install(FILES android/game.exports DESTINATION lib/android COMPONENT tide)
 elseif(NOT WIN32)
     set(TIDE_PACKAGE_LIBS lib/native)
 endif()
@@ -368,6 +369,18 @@ if(TIDE_NODE)
     add_test(NAME tide_platform_png
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/png.mjs" ${CMAKE_CROSSCOMPILING_EMULATOR}
             $<TARGET_FILE:tide_platform_png>)
+endif()
+
+# The GIF writer (src/gif.c), which recordings are written with: recordings
+# made up from numbers, decoded by the test's own reader. No window or GPU,
+# so every platform's tests run it.
+add_executable(tide_platform_gif tests/gif.c)
+target_include_directories(tide_platform_gif PRIVATE src)
+target_link_libraries(tide_platform_gif PRIVATE tide_platform)
+if(TIDE_NODE)
+    add_test(NAME tide_platform_gif
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/gif.mjs" ${CMAKE_CROSSCOMPILING_EMULATOR}
+            $<TARGET_FILE:tide_platform_gif>)
 endif()
 
 # The engine's PNG reader (engine/src/png_read.c, grid.Decode) against pictures
@@ -573,7 +586,7 @@ if(NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_texture_capacity_opengl OPENGL)
     endif()
 
-    tide_add_game(tide_platform_gpu_functions SOURCES ../compiler/tests/e2e/gpu_functions.tide NAME game HOST tests/gpu_functions.c)
+    tide_add_game(tide_platform_gpu_functions STRIP_NAMES SOURCES ../compiler/tests/e2e/gpu_functions.tide NAME game HOST tests/gpu_functions.c)
     target_link_libraries(tide_platform_gpu_functions PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_gpu_functions SHELL web/test_shell.html)
@@ -583,6 +596,18 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_gpu_functions_opengl COMMAND tide_platform_gpu_functions)
         tide_gpu_test(tide_platform_gpu_functions)
         tide_gpu_test(tide_platform_gpu_functions_opengl OPENGL)
+    endif()
+
+    tide_add_game(tide_platform_fills STRIP_NAMES SOURCES tests/fills.tide NAME game HOST tests/fills.c)
+    target_link_libraries(tide_platform_fills PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_fills SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_fills TARGET tide_platform_fills WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_platform_fills COMMAND tide_platform_fills)
+        add_test(NAME tide_platform_fills_opengl COMMAND tide_platform_fills)
+        tide_gpu_test(tide_platform_fills)
+        tide_gpu_test(tide_platform_fills_opengl OPENGL)
     endif()
 
     tide_add_game(tide_platform_float_bits SOURCES ../compiler/tests/shaders/float_bits.tide NAME game HOST tests/float_bits.c)
@@ -699,12 +724,19 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_test(NAME tide_platform_players_net COMMAND tide_platform_players_net)
     add_test(NAME tide_platform_players_net_ended COMMAND tide_platform_players_net die)
     add_test(NAME tide_platform_players_net_drop COMMAND tide_platform_players_net drop)
+    add_test(NAME tide_platform_players_net_control COMMAND tide_platform_players_net control)
+    set_tests_properties(tide_platform_players_net_control PROPERTIES TIMEOUT 60)
     set_tests_properties(tide_platform_players_net tide_platform_players_net_ended tide_platform_players_net_drop PROPERTIES TIMEOUT 60)
 
     tide_add_game(tide_platform_players SOURCES tests/players.tide)
     tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
     tide_add_game(tide_platform_players_leave SOURCES tests/players_leave.tide)
     if(TIDE_NODE)
+        add_test(NAME tide_platform_interactive
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interactive.mjs" $<TARGET_FILE:tide_platform_capture>
+                $<TARGET_FILE:tide_platform_players> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_interactive-run")
+        set_tests_properties(tide_platform_interactive PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_interactive)
         add_test(NAME tide_platform_players
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
                 $<TARGET_FILE:tide_platform_players_menu> $<TARGET_FILE:tide_platform_players_leave>
@@ -771,8 +803,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_moltenvk COMMAND tide_platform_moltenvk)
     endif()
 
-    # The cursor's lock on desktop: only a window with the focus holds it, and
-    # a test's window, hidden, never has it. It needs a desktop session, as
+    # The cursor's lock on desktop: hidden windows never hold it, regardless
+    # of focus. It needs a desktop session, as
     # tide_platform_draw does.
     add_executable(tide_platform_cursor tests/cursor.c)
     target_link_libraries(tide_platform_cursor PRIVATE tide_platform)
@@ -827,10 +859,11 @@ if(TIDE_WEB)
 
     # The standard host's debug views (tide/host.h): F7 shows the profiler where
     # they're on, by the command line or the game's setting, and nowhere else.
+    # The page's address also has --latency, --jitter and --loss in it.
     tide_add_game(tide_platform_web_debug_views SOURCES tests/debug_views.tide NAME game HOST tests/web_debug_views.c)
     target_link_libraries(tide_platform_web_debug_views PRIVATE tide_platform)
     tide_web_page(tide_platform_web_debug_views SHELL web/test_shell.html)
-    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY debug-views)
+    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY "debug-views&latency=80&jitter=10&loss=5")
 
     # ...and its stats (tide/stats.h): a drawer that a game's setting shows
     # closed, which F8, a click and a tap open and close, whose presses the

@@ -311,23 +311,23 @@ TIDE_TEST(editor_startup_refuses_global_prefab_shadowed_by_settings_namespace)
     }
 }
 
-TIDE_TEST(editor_startup_global_prefab_outranks_namespaced_scene_and_struct)
+// A scene or struct in the settings namespace hides a global prefab of its
+// name there, as any nearer declaration but a system or an asset does: the
+// bare name would mean it, so startup isn't written.
+TIDE_TEST(editor_startup_refuses_global_prefab_shadowed_by_namespaced_scene_or_struct)
 {
     const char *codes[] = {
         "scene Main;\nnamespace Config { scene Start; settings { startScene = Main; } }\n",
         "scene Main;\nnamespace Config { struct Start { int value; } settings { startScene = Main; } }\n"
     };
-    const char *expected[] = {
-        "scene Main;\nnamespace Config { scene Start; settings { startScene = Start; } }\n",
-        "scene Main;\nnamespace Config { struct Start { int value; } settings { startScene = Start; } }\n"
-    };
-    const char *names[] = {"scene-kind-precedence", "struct-kind-precedence"};
+    const char *names[] = {"scene-kind-shadow", "struct-kind-shadow"};
     const char *prefab = "prefab Start { Transform; }\n";
     for (size_t i = 0; i < sizeof codes / sizeof *codes; i++) {
         startup_fixture f = fixture(names[i], codes[i], prefab); editor_document d;
         TIDE_REQUIRE(editor_open(&d, f.file, NULL)); TIDE_REQUIRE(d.errors == 0);
-        TIDE_REQUIRE(editor_set_startup(&d)); unchanged(&f, expected[i], prefab);
-        TIDE_CHECK(d.errors == 0 && d.prog->startup == d.prefabs.items[d.active]);
+        TIDE_CHECK(!editor_set_startup(&d)); unchanged(&f, codes[i], prefab);
+        TIDE_CHECK(strstr(d.message, "global scope") != NULL);
+        TIDE_CHECK(!editor_dirty(&d) && !d.conflict);
         editor_close(&d); release(&f);
     }
 }

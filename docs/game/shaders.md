@@ -408,6 +408,7 @@ That's [Duel](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/duel)
 - Draws in a row with the same mesh, the same vert and frag and the same values are still one draw call. Other values start another.
 - With [`Draw.Instanced`](#instances-from-a-list), a frag can take both: the list's struct, which each instance has its own of, and the draw's, which they share. The two have to be different types, and neither can be the type the draw's vert [writes for its frag](#from-a-vert-to-its-frag).
 - It holds no texture to sample. A draw's image is its `Texture` argument, or a field of a component or singleton.
+- It's where an animated value goes: `Glow { amount = GUI.Animate(lit ? 1.0 : 0.0, 0.2) }`, worked out on the CPU once a frame (see [Animated values in GPU code](./gui.md#animated-values-in-gpu-code)).
 
 It's an error at the draw when its frag or vert takes a struct that nothing supplies (not the draw's vert, its instances or its values), and when the draw gives a struct neither takes.
 
@@ -720,6 +721,7 @@ float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there
 
 - **`Sample(uv)`** gives the depth as a number: 0 at the camera's near plane, 1 at its far limit, as [`this.depth`](#where-the-pixel-is) is, and 1 where nothing was drawn since the target was cleared. It's the nearest pixel's, with no filter to pick: a depth blended between two pixels would be neither's.
 - **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
+- **`size`** gives the depth image's width and height as an `int2` of physical pixels, on the CPU and GPU. It follows target resize, display scale and the device's size limit; missing or disposed depth gives `int2(0)`. Reading dimensions copies no pixels and uses no texture binding. For pixel-sized shadow offsets, use `float2 texel = 1.0 / float2(lamp.shadow.size)` after checking that the size is nonzero.
 
 `uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [12 textures](#what-the-gpu-runs).
 
@@ -1057,3 +1059,5 @@ A struct parameter that's meant as an instance's is supplied by `Draw.Instanced`
 ## Looking at what's generated
 
 `tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, instance data, vert and frag a mesh draw uses.
+
+[Shipping builds](../tools/cli.md#run-and-build) shorten identifiers derived from your function, type, field, parameter and local names. Shader entry points and renderer bindings retain their names; expressions and layouts are unchanged. The private `game.names` build map records the shortened identifiers by stage. With a custom compiler pipeline, `tidec --shaders --strip-names` shows the shortened form; `--spirv` and `--hlsl` also accept `--strip-names`.

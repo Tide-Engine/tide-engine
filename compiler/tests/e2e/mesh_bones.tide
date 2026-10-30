@@ -1,0 +1,56 @@
+// A Mesh whose vertex has 'joints' and 'weights' (docs/spec.md, Models): the model at rest, in the skeleton's
+// space, each corner with its bones as a SkinnedMesh of the file numbers them, heaviest first.
+scene Main { }
+
+struct Boned
+{
+    float3 position;
+    float3 normal;
+    int4 joints;
+    float4 weights;
+}
+
+asset Mesh<Boned> boned = "assets/mesh_bones/legs.glb";
+asset SkinnedMesh<Vertex3> legs = "assets/mesh_bones/legs.glb";
+
+singleton Seen
+{
+    int corners;
+    float3 first;
+    float3 second;
+    float3 third;
+    float3 turned;
+    int4 firstBones;
+    int4 thirdBones;
+    float4 thirdWeights;
+    int hip;                // The hip's and the knee's numbers in the skeleton
+    int knee;
+}
+
+// A bone's number, found by where it is at rest (a Bone has no number of its own)
+int NumberOf(Bone wanted)
+{
+    var rest = legs.defaultPose;
+    var at = rest.Model(wanted).c3;
+    for (int i = 0; i < legs.skeleton.bones.count; i++)
+    {
+        if (!legs.skeleton.bones.TryGetAt(i, out var bone)) continue;
+        var d = rest.Model(bone).c3 - at;
+        if (Math.Dot(d, d) < 0.000001) return i;
+    }
+    return -1;
+}
+
+event(Spawned) Look(with Main, mut Seen seen)
+{
+    seen.corners = boned.vertices.count;
+    seen.first = boned.vertices[0].position;
+    seen.second = boned.vertices[1].position;
+    seen.third = boned.vertices[2].position;
+    seen.turned = boned.vertices[0].normal;
+    seen.firstBones = boned.vertices[0].joints;
+    seen.thirdBones = boned.vertices[2].joints;
+    seen.thirdWeights = boned.vertices[2].weights;
+    if (legs.skeleton.TryGetByName("Hip", out var hip)) seen.hip = NumberOf(hip);
+    if (legs.skeleton.TryGetByName("Knee", out var knee)) seen.knee = NumberOf(knee);
+}

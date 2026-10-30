@@ -1,4 +1,5 @@
 #include "compile.h"
+#include "shader_names.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,6 +99,8 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
     bool web = false, overlay_found = false; // A file names Web.Request's types, which are Tide's own code
+    const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
+    size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
     for (int i = 0; i < count; i++) {
         source *src = NEW(source);
         src->path = inputs[i].path;
@@ -123,6 +126,8 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         src->text = text;
         diag_add_source(src);
         web |= web_prelude_wanted(text, src->len);
+        texts[i] = text;
+        lens[i] = src->len;
 
         token *toks = lex(src);
         if (!toks) return false;
@@ -136,6 +141,14 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         source *src = NEW(source);
         src->path = WEB_PRELUDE_PATH;
         src->text = web_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+    }
+    if (draw_prelude_wanted(texts, lens, count)) {
+        source *src = NEW(source);
+        src->path = DRAW_PRELUDE_PATH;
+        src->text = draw_prelude(&src->len);
         diag_add_source(src);
         token *toks = lex(src);
         if (!toks || !parse_file(prog, src, toks, false)) return false;
@@ -161,6 +174,14 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
 
     codegen_options named = *opts;
     if (!named.name) named.name = path_stem(inputs[0].path);
+    if (schedule && opts->strip_names && (opts->shaders || opts->spirv_dir || opts->hlsl_dir)) {
+        for (int i = 0; i < prog->shaders.count; i++) {
+            shader *sh = prog->shaders.items[i];
+            sh->glsl_vertex = shader_minify_names(sh->glsl_vertex, NULL);
+            sh->glsl_fragment = shader_minify_names(sh->glsl_fragment, NULL);
+            sh->wgsl = shader_minify_names(sh->wgsl, NULL);
+        }
+    }
     if (schedule && opts->spirv_dir) return write_spirv(prog, opts->spirv_dir, schedule);
     if (schedule && opts->hlsl_dir) return write_hlsl(prog, opts->hlsl_dir, schedule);
     if (opts->shader_out) {

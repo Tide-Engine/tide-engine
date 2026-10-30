@@ -91,7 +91,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 19u
+#define PROTOCOL 20u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
@@ -741,6 +741,7 @@ typedef struct connection {
     bool has_world; // It has a world to build it from: it's sent the hashes first
     bool can_start; // ...or can start the match itself to have one
     uint32_t snapshot_tick;
+    uint32_t view_start; // First authenticated tick of this connection attempt; repairs do not move it.
     uint32_t view_limit; // Latest authoritative tick advertised to this connection.
     uint32_t snapshot_number; // Each thing sent has the next number, from 1
     uint8_t snapshot_kind;    // SEND_WORLD or SEND_HASHES
@@ -751,6 +752,7 @@ typedef struct connection {
     struct shared_pack *shared; // ...is this pack's, a tick's whole world, which other players who joined in that tick are sent too
     void *hashed; // While the hashes are sent: the world they're of, to send once it says what it lacks
     double *chunk_sent;
+    uint8_t *chunk_fast; // One selective-acknowledgement retry per chunk before its timeout.
     uint32_t chunk_ack;  // It has every chunk before this one
     uint64_t chunk_mask; // ...and these after it
 
@@ -765,6 +767,8 @@ typedef struct connection {
     uint32_t repair_burst;
     double repair_last;
     double repair_stream_until;
+    uint32_t repair_pending; // Accepted request, packed after this update's authoritative ticks.
+    bool repair_pending_stream;
     // It was sent the world and needs every tick from it on, however long
     // that took: the server keeps them until it catches up (keep_needed)
     bool catching_up;
@@ -940,6 +944,9 @@ struct tide_server {
     struct injected *injected;
     uint32_t injected_count, injected_room;
     tide_player_set admitted; // Players of a sharded world it takes though closed (tide_server_admit)
+    // This machine's player, while its session updates the server: a tick it
+    // has run already as the server would is taken from it (twin_ran)
+    tide_client *twin;
 };
 
 static double resend_after(const uint32_t rtt_ms)
@@ -987,9 +994,11 @@ static void drop_snapshot(tide_server *s, connection *c)
         free(c->snapshot);
     }
     free(c->chunk_sent);
+    free(c->chunk_fast);
     c->snapshot = NULL;
     c->shared = NULL;
     c->chunk_sent = NULL;
+    c->chunk_fast = NULL;
 }
 
 static void stop_sending(tide_server *s, connection *c)
@@ -1014,7 +1023,8 @@ static void send_in_chunks(tide_server *s, connection *c, const uint8_t kind, ui
     c->snapshot_size = size;
     c->chunk_count = chunks_of(size);
     c->chunk_sent = calloc(c->chunk_count ? c->chunk_count : 1u, sizeof *c->chunk_sent);
-    if (!c->chunk_sent) tide_out_of_memory();
+    c->chunk_fast = calloc(c->chunk_count ? c->chunk_count : 1u, sizeof *c->chunk_fast);
+    if (!c->chunk_sent || !c->chunk_fast) tide_out_of_memory();
     c->chunk_ack = 0;
     c->chunk_mask = 0;
 }
@@ -1385,6 +1395,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
         c = &s->connections[player];
         const bool was_greeted = c->greeted;
         stop_sending(s, c);
+        c->repair_pending = 0;
         c->transport = transport;
         c->address = from;
         c->nonce = nonce;
@@ -1581,6 +1592,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         c->their_arrived = s->arrived;
     }
     if (echo) c->rtt_ms = millis_since(s->now, echo);
+    if (c->welcoming) c->view_start = s->tick;
     c->welcoming = false;
     if (!c->greeted) greet(s, c);
 
@@ -1601,8 +1613,11 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     const bool was_sending = c->sending;
     if (c->sending) {
         if (chunk_number == c->snapshot_number) { // About what's being sent, not something older
-            if (chunk_ack > c->chunk_ack) c->chunk_ack = chunk_ack < c->chunk_count ? chunk_ack : c->chunk_count;
-            if (chunk_ack == c->chunk_ack) c->chunk_mask = chunk_mask;
+            if (chunk_ack > c->chunk_ack) {
+                c->chunk_ack = chunk_ack < c->chunk_count ? chunk_ack : c->chunk_count;
+                c->chunk_mask = 0;
+            }
+            if (chunk_ack == c->chunk_ack) c->chunk_mask |= chunk_mask;
         }
         if (c->snapshot_kind == SEND_HASHES && lacks && lacks_number == c->snapshot_number) {
             send_lacking(s, c, lacks, lacks_size);
@@ -1614,11 +1629,16 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         if (repair_tick == c->frame_ack + 1u && repair_tick <= s->tick) {
             if (!(flags & CLIENT_REPAIR_STREAM) && repair_tick != c->repair_requested) {
                 c->repair_burst = s->now - c->repair_last <= 1.0 ? c->repair_burst + 1u : 1u;
-                c->repair_last = s->now;
                 c->repair_requested = repair_tick;
                 if (c->repair_burst >= 2u) c->repair_stream_until = s->now + 1.0;
             }
-            start_client_repair(s, c, (flags & CLIENT_REPAIR_STREAM) || s->now < c->repair_stream_until ? s->tick : repair_tick);
+            // Stream requests are recent evidence too. A failed periodic
+            // prediction probe must not restart at an old exact endpoint.
+            c->repair_last = s->now;
+            if (!c->sending) {
+                c->repair_pending = repair_tick;
+                c->repair_pending_stream = (flags & CLIENT_REPAIR_STREAM) || s->now < c->repair_stream_until;
+            }
         }
     } else if (!was_sending && newest && wants) {
         c->has_world = (flags & CLIENT_HAS_WORLD) != 0;
@@ -2428,6 +2448,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
 // Runs one tick: joins and leaves, then the inputs that arrived for it, in
 // slot order, the queued commands, then the systems. Clients do the same.
 static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size, private_journal *journal);
+static bool twin_ran(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size);
 
 static void server_tick(tide_server *s)
 {
@@ -2481,7 +2502,7 @@ static void server_tick(tide_server *s)
             const double at = (double)view.tick - 1.0 + (double)view.alpha;
             const double age = ((double)tick - at) / (double)s->desc.tick_rate;
             if (!view.valid || view.tick < 0 || !(view.alpha >= 0.0f && view.alpha <= 1.0f)
-                || at < (double)c->snapshot_tick || at > (double)c->view_limit || at > (double)tick
+                || at < (double)c->view_start || at > (double)c->view_limit || at > (double)tick
                 || !(g->max_rewind > 0.0f) || age > (double)g->max_rewind) {
                 g->set_view_time(input, (tide_view_time){0});
                 size = g->write_input(input, s->packed, max);
@@ -2535,7 +2556,7 @@ static void server_tick(tide_server *s)
         ? calloc(s->players, sizeof *journals) : NULL;
     if (g->client_state && g->tick_client_events && !journals) tide_out_of_memory();
     if (journals) g->tick_client_events(s->world, s->desc.jobs, journals);
-    else g->tick(s->world, s->desc.jobs);
+    else if (!twin_ran(s, tick, s->frame, w.size)) g->tick(s->world, s->desc.jobs);
     s->tick++;
     s->ended = g->ended && g->ended(s->world);
     patch_u64(s->frame, hash_of(g, s->world, s->desc.jobs));
@@ -2862,7 +2883,13 @@ static void send_chunks(tide_server *s, connection *c)
     uint32_t sent = 0;
     for (uint32_t i = c->chunk_ack; i < c->chunk_count && sent < CHUNKS_PER_UPDATE; i++) {
         if (i > c->chunk_ack && i - c->chunk_ack <= 64u && (c->chunk_mask >> (i - c->chunk_ack - 1u) & 1u)) continue;
-        if (c->chunk_sent[i] > 0.0 && s->now - c->chunk_sent[i] < again) continue;
+        if (c->chunk_sent[i] > 0.0 && s->now - c->chunk_sent[i] < again) {
+            // Later chunks prove the receiver reached this burst. Recover one
+            // hole promptly; reordering can cost at most one extra copy here.
+            if (c->snapshot_kind < SEND_CLIENT_WORLD || c->chunk_fast[i]
+                || i - c->chunk_ack >= 64u || !(c->chunk_mask >> (i - c->chunk_ack))) continue;
+            c->chunk_fast[i] = 1;
+        }
         const uint32_t from = i * CHUNK;
         const uint32_t size = c->snapshot_size - from < CHUNK ? c->snapshot_size - from : CHUNK;
         tide_writer w = {s->packet, TIDE_NET_MTU, 0, false, false};
@@ -3255,12 +3282,19 @@ void tide_server_update(tide_server *s, const double now)
             send_bye(s, c->transport, c->address, s->cookies[i], c->nonce);
         } else if (c->welcoming) { // Until it writes back
             send_welcome(s, c);
-        } else if (c->sending) {
-            send_welcome(s, c);
-            send_chunks(s, c);
         } else {
-            send_frames(s, c);
-            if (s->published_count) send_downloads(s, c);
+            if (c->repair_pending) {
+                const uint32_t tick = c->repair_pending_stream ? s->tick : c->repair_pending;
+                c->repair_pending = 0;
+                start_client_repair(s, c, tick);
+            }
+            if (c->sending) {
+                send_welcome(s, c);
+                send_chunks(s, c);
+            } else {
+                send_frames(s, c);
+                if (s->published_count) send_downloads(s, c);
+            }
         }
     }
     if (s->published_count) forget_published(s);
@@ -3409,6 +3443,12 @@ typedef struct catch_up {
     uint64_t time;   // ...then no more than this many nanoseconds' worth
 } catch_up;
 
+typedef struct early_chunk {
+    uint32_t index;
+    uint16_t size;
+    uint8_t bytes[CHUNK];
+} early_chunk;
+
 struct tide_client {
     tide_client_desc desc;
     tide_local_data_fn local_receive;
@@ -3481,6 +3521,10 @@ struct tide_client {
     uint8_t *snapshot;
     uint8_t *chunk_have;
     uint32_t got_number; // The last thing it had whole
+    // Unordered traffic can deliver a chunk before its WELCOME. Retain at
+    // most one send burst, authenticated but not adopted until its metadata.
+    early_chunk *early_chunks;
+    uint32_t early_number, early_count;
     bool need_snapshot;
     uint32_t repair_tick; // Exact projected endpoint pending authoritative correction; 0 otherwise.
     bool repair_stream;
@@ -3646,6 +3690,7 @@ struct tide_client {
 
 static void go_offline(tide_client *c, const tide_disconnect_reason reason)
 {
+    c->early_count = c->early_number = 0;
     if (c->state == TIDE_SESSION_OFFLINE) return;
     c->state = TIDE_SESSION_OFFLINE;
     c->reason = reason;
@@ -3993,7 +4038,24 @@ static void on_chunk(tide_client *c, tide_reader *r)
     const uint32_t index = tide_read_u32(r);
     const uint16_t size = tide_read_u16(r);
     const uint8_t *bytes = tide_read_bytes(r, size);
-    if (!bytes || !c->receiving || number != c->snapshot_number || index >= c->chunk_count || c->chunk_have[index]) return;
+    if (!bytes || r->at != r->size || !size || size > CHUNK) return;
+    if (!c->receiving || number != c->snapshot_number) {
+        if (!c->game->client_state || number <= c->got_number || (c->receiving && number < c->snapshot_number)
+            || number < c->early_number) return;
+        if (number != c->early_number) { c->early_number = number; c->early_count = 0; }
+        for (uint32_t i = 0; i < c->early_count; i++) if (c->early_chunks[i].index == index) return;
+        if (c->early_count == CHUNKS_PER_UPDATE) return;
+        if (!c->early_chunks) {
+            c->early_chunks = malloc(CHUNKS_PER_UPDATE * sizeof *c->early_chunks);
+            if (!c->early_chunks) return;
+        }
+        early_chunk *chunk = &c->early_chunks[c->early_count++];
+        chunk->index = index;
+        chunk->size = size;
+        memcpy(chunk->bytes, bytes, size);
+        return;
+    }
+    if (index >= c->chunk_count || c->chunk_have[index]) return;
     const uint32_t from = index * CHUNK;
     const uint32_t remaining = c->snapshot_size - from;
     if (size != (remaining < CHUNK ? remaining : CHUNK)) return;
@@ -4003,6 +4065,24 @@ static void on_chunk(tide_client *c, tide_reader *r)
     if (++c->chunks_had < c->chunk_count) return;
     if (c->snapshot_kind == SEND_HASHES) answer_hashes(c);
     else load_snapshot(c);
+}
+
+static void take_early_chunks(tide_client *c)
+{
+    if (!c->early_count || !c->receiving || c->snapshot_number != c->early_number) return;
+    const uint32_t count = c->early_count;
+    c->early_count = 0;
+    for (uint32_t i = 0; i < count && c->receiving; i++) {
+        const early_chunk *chunk = &c->early_chunks[i];
+        uint8_t bytes[CHUNK + 10u];
+        tide_writer w = {bytes, sizeof bytes, 0, false, false};
+        tide_write_u32(&w, c->early_number);
+        tide_write_u32(&w, chunk->index);
+        tide_write_u16(&w, chunk->size);
+        tide_write_bytes(&w, chunk->bytes, chunk->size);
+        tide_reader r = {bytes, w.size, 0, false};
+        on_chunk(c, &r);
+    }
 }
 
 static void on_server(tide_client *c, tide_reader *r)
@@ -4223,7 +4303,10 @@ static void client_receive(tide_client *c)
             if (r.failed || cookie != expected || nonce != c->nonce || (!c->welcomed && type != MSG_BYE)) continue;
         }
         switch (type) {
-        case MSG_WELCOME: if (!on_welcome(c, &r)) continue; break;
+        case MSG_WELCOME:
+            if (!on_welcome(c, &r)) continue;
+            take_early_chunks(c);
+            break;
         case MSG_CHUNK: on_chunk(c, &r); break;
         case MSG_DOWNLOAD: on_download(c, &r); break;
         case MSG_SERVER: on_server(c, &r); break;
@@ -4423,6 +4506,27 @@ static bool as_predicted(const tide_client *c, const pending_frame *f)
 static void *world_at(const tide_client *c, const uint32_t tick)
 {
     return c->worlds[tick % c->ring];
+}
+
+// A tick the server is about to run that this machine's player, alone in the
+// match, has run already, as its prediction: from the world the server has
+// (the last it confirmed), with the same input and nothing else in the frame
+// (as_predicted). It comes out the same, so the server takes it rather than
+// running the tick again: played alone, a match isn't ticked twice. Not where
+// a player sees only part of the world (client_state), or with anyone else in.
+static bool twin_ran(tide_server *s, const uint32_t tick, const uint8_t *frame, const uint32_t size)
+{
+    const tide_client *c = s->twin;
+    const tide_game *g = s->game;
+    if (!c || g->client_state || !c->predicts || c->need_snapshot || c->receiving || c->catching_up || c->repair_tick) return false;
+    if (c->verified != tick || c->ahead <= tick || tick >= c->let_go || tick >= c->input_guessed) return false;
+    for (uint32_t p = 0; p < s->players; p++) {
+        if (s->connections[p].used && !(s->connections[p].local && p == (uint32_t)c->player)) return false;
+    }
+    const pending_frame f = {.tick = tick, .data = (uint8_t *)frame, .size = size};
+    if (!as_predicted(c, &f)) return false;
+    g->copy_world(s->world, world_at(c, tick + 1u));
+    return true;
 }
 
 // Whether the server ran a frame's tick without this machine's input, which
@@ -5046,7 +5150,8 @@ static void load_snapshot(tide_client *c)
             tide_hearing_skip_to(&c->hearing, tick);
             c->first_tick = tick;
             c->verified_view = (double)tick;
-            c->presented_view = (tide_view_time){0};
+            // Sampling still refers to the last frame actually presented,
+            // until the host presents a frame from this corrected endpoint.
         }
         for (uint32_t i = 0; i < c->w.history; i++) {
             if (c->frames[i].data && c->frames[i].tick < tick) drop_frame(&c->frames[i]);
@@ -5832,6 +5937,7 @@ void tide_client_destroy(tide_client *c)
     }
     if (c->desc.transport.close) c->desc.transport.close(c->desc.transport.self);
     stop_receiving(c);
+    free(c->early_chunks);
     discard_view_correction(c);
     tide_hearing_free(&c->hearing);
     drop_base(c);
@@ -6486,7 +6592,11 @@ void tide_session_update(tide_session *s, const double now)
         s->client->local_user = s->local_user;
     } else {
         update_client(s->client, t);
-        if (s->server) tide_server_update(s->server, t);
+        if (s->server) {
+            s->server->twin = s->client;
+            tide_server_update(s->server, t);
+            s->server->twin = NULL;
+        }
         update_client(s->client, t); // What the server just sent: this machine's ticks, at once
     }
 
@@ -6927,6 +7037,7 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
         free(c->verified_world);
         c->verified_world = NULL;
         c->repair_requested = c->repair_burst = 0;
+        c->repair_pending = 0;
         c->repair_stream_until = 0.0;
     }
     free_published(s);
@@ -7012,6 +7123,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
         for (uint32_t i = 0; i < c->w.inputs; i++) c->input_tick[i] = UINT32_MAX;
         c->sampled_from = c->sampled; // None of them is left
     }
+    c->early_count = c->early_number = 0;
     stop_receiving(c); // A world it was receiving is the old build's: the server sends it again
     drop_base(c);      // ...and so is the one it would have built it from
     drop_had(c);       // ...and the one it had: every entity of its first world is heard
@@ -7041,6 +7153,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
 // what it would come to.
 static void take_server_world(tide_client *c, const tide_server *s)
 {
+    c->early_count = c->early_number = 0;
     if (c->game->client_state) {
         uint32_t size;
         uint8_t *bytes = c->game->client_state(s->world, tide_player_from_index(c->player), &size);
