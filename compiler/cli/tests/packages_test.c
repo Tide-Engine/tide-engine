@@ -291,15 +291,17 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
     packages_free(&g);
     free(game);
 
+    // What a package needs comes from its own line, which the game needn't list
     game = write_packages("builtin_needs", "dice\n");
     s = (said){0};
-    TIDE_CHECK(!packages_resolve(game, &g, NULL, say, &s));
-    TIDE_CHECK(strstr(s.text, "1: Dice needs rolls, which this file doesn't list (add this line: rolls)"));
+    TIDE_CHECK(packages_resolve(game, &g, NULL, say, &s));
+    TIDE_CHECK(s.len == 0);
+    TIDE_REQUIRE(g.count == 2);
+    TIDE_CHECK(strcmp(g.items[0].name, "Rolls") == 0 && strcmp(g.items[1].name, "Dice") == 0);
+    TIDE_CHECK(g.items[0].line->builtin && strcmp(g.items[0].line->source, "rolls") == 0);
+    TIDE_CHECK(strcmp(g.items[0].listed_in, g.items[1].file.path) == 0); // Dice's line for it
+    TIDE_CHECK(strcmp(g.items[1].listed_in, g.file.path) == 0);
     packages_free(&g);
-    package_need *needs = NULL;
-    TIDE_REQUIRE(packages_missing(game, NULL, NULL, &needs) == 1);
-    TIDE_CHECK(strcmp(needs[0].line, "rolls") == 0 && strcmp(needs[0].by, "Dice") == 0);
-    packages_free_needs(needs, 1);
     free(game);
 
     game = write_packages("builtin_unknown", "dise\nshared\n");

@@ -19707,9 +19707,12 @@ static bone_weights bone_weights_of(const uint8_t *model, const size_t size, con
 static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned, const size_t skinned_size, const bool tangents,
                         tide_mesh_levels *levels, uint8_t key[32])
 {
-    static const char plain_version[] = "tide levels of detail 2, of 500 triangles at the least";
-    static const char tangent_version[] = "tide levels of detail 3, of 500 triangles at the least, with tangent handedness seams";
-    _Static_assert(MESH_LOD_TRIANGLES_LEAST == 500, "the levels' version says the fewest triangles one has");
+    static const char plain_version[] =
+        "tide levels of detail 4, values by area, of meshes of 1000 triangles and levels of 64 at the least";
+    static const char tangent_version[] = "tide levels of detail 5, values by area, of meshes of 1000 triangles and "
+                                          "levels of 64 at the least, with tangent handedness seams";
+    _Static_assert(MESH_LOD_MESH_LEAST == 1000 && MESH_LOD_TRIANGLES_LEAST == 64,
+                   "the levels' version says the fewest triangles a mesh and a level have");
     const bool tangent_sides = tangents && !skinned;
     tide_sha256 s;
     tide_sha256_init(&s);
@@ -19727,7 +19730,8 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
         .vertices = m->vertices, .position = m->position, .normal = m->normal, .uv = m->has_uvs ? m->uv : NULL,
         .uv2 = m->has_uvs2 ? m->uv2 : NULL, .color = m->has_colors ? m->color : NULL, .index = m->index, .indices = m->indices,
         .tangent = tangent_sides ? m->tangent : NULL,
-        .apart = bones.first ? bones_apart : NULL, .user = &bones, .triangles_least = MESH_LOD_TRIANGLES_LEAST};
+        .apart = bones.first ? bones_apart : NULL, .user = &bones, .mesh_least = MESH_LOD_MESH_LEAST,
+        .triangles_least = MESH_LOD_TRIANGLES_LEAST};
     const mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
     free(bones.first), free(bones.count), free(bones.palette), free(bones.weight);
     if (made->levels == 0) return false;

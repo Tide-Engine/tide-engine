@@ -14,11 +14,14 @@
 
 #pragma STDC FP_CONTRACT OFF
 
-// What a difference of 1 in each counts as, against the mesh's whole extent:
-// a uv that slides that far is the texture gone that far over the surface.
-#define WEIGHT_NORMAL 0.5
+// What a difference of 1 in each counts as, against the size of the patch it's
+// on: a uv that slides that far is the texture gone that far over the patch,
+// and a normal turned 30 degrees, or a color off by half, over a pixel is a
+// pixel off (measured on a crowd of skinned figures, where less let the far
+// ones' shading darken).
+#define WEIGHT_NORMAL 2.0
 #define WEIGHT_UV 1.0
-#define WEIGHT_COLOR 0.5
+#define WEIGHT_COLOR 2.0
 // How much more an open edge's own line counts than a triangle's plane
 #define WEIGHT_BORDER 10.0
 // A triangle may turn this much (the cosine between where it faced and where it would) and no more
@@ -340,22 +343,23 @@ static bool weigh(maker *m, const uint32_t from, const uint32_t to, double *erro
         if (!(facing > TURN_LEAST * sqrt(dot(was, was) * dot(is, is)))) return false;
     }
     // What it costs: how far `to` is from the planes both have gathered, and how far `to`'s values are from
-    // what `from`'s vertices held
+    // what `from`'s vertices held, over the area they held it on. A value that's off by e over a patch L across
+    // shows as much as a surface off by e * L: summed by area, not averaged, so a normal turned on a buckle counts
+    // for the buckle's size and not the whole mesh's
     quadric both = m->plane[from];
     quadric_add(&both, &m->plane[to]);
     double cost = both.w > 0.0 ? quadric_at(&both, p) / both.w : 0.0;
     if (cost < 0.0) cost = 0.0;
     if (parts) {
-        double held = 0.0, weight = 0.0;
+        double held = 0.0;
         for (uint32_t i = 0; i < n; i++) {
             const uint32_t mine = m->corner_vertex[corners[i]];
             bool counted = false; // A vertex is counted once, however many corners it is
             for (uint32_t j = 0; j < i && !counted; j++) counted = m->corner_vertex[corners[j]] == mine;
             if (counted) continue;
             held += held_at(m, mine, p, targets[i] & 0x7FFFFFFFu);
-            weight += m->held[mine].w;
         }
-        if (weight > 0.0 && held > 0.0) cost += held / weight;
+        if (held > 0.0) cost += held;
     }
     if (m->source->apart) {
         double most = 0.0;
@@ -649,7 +653,8 @@ void mesh_lod_make(const mesh_lod_source *s, mesh_lod *out)
 
     uint32_t room_for = 0;
     uint32_t before = m.left;
-    while (out->levels < MESH_LOD_MOST && before >= 2u) {
+    const bool worth = m.left >= s->mesh_least; // Too few for any level to pay
+    while (worth && out->levels < MESH_LOD_MOST && before >= 2u) {
         const uint32_t aim = before / 2u;
         if (aim < s->triangles_least) break; // Too few to be worth a level
         for (;;) {

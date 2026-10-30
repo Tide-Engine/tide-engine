@@ -1,0 +1,20 @@
+// A package's code means its own namespace's names, whatever the game
+// declares globally: its enum Side is Side here, though the game has a
+// function of that name.
+namespace Combat;
+
+enum Side
+{
+    Left,
+    Right,
+}
+
+int Facing(Side s)
+{
+    return s == Side.Right ? 10 : 20;
+}
+
+int FacingOf(int i)
+{
+    return Facing(Side(i));
+}
