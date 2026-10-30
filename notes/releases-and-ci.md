@@ -1,5 +1,41 @@
 # Releases, installing and CI
 
+## Stable workflow permission guard (2026-10-30)
+
+Run 41050277648 selected release commit 9b0a2379f and failed in Version's own
+check-publish.sh before tests, tagging or release creation. No GitHub publishing
+request was rejected. The script compared only dev's workflow tree, which had
+advanced during the workflow optimization work. The selected workflows remained
+at the live release branch tip, so rejecting them solely for differing from dev
+was too strict. The earlier diagnosis that a publishing token was necessarily
+missing for this release was incorrect; the private token request was cancelled.
+
+check-publish.sh now fetches/prunes all origin branch tips and accepts a workflow
+tree matching any current branch, including release. Matching compares Git tree
+IDs, so identical workflows remain accepted across unrelated code changes.
+Historical workflow versions absent from every current branch tip retain the
+existing optional Contents/Workflows-write token path. Fetch failures fail closed,
+and deleted branch refs cannot satisfy the check. Workflow comments follow this
+contract and the unused DEFAULT_BRANCH environment inputs are removed.
+
+Five real-Git regression tests cover release after dev workflow edits, older code
+with unchanged workflows, truly historical workflows, deleted branch pruning,
+the optional token and fetch failure. The old script fails the release/dev test
+for its original reason; the corrected script passes. The corrected guard also
+accepts the exact 9b0a2379f snapshot against the live repository's release tip.
+All thirteen workflow-helper tests pass on Node 24.22.1. Actionlint passes with
+its existing concurrency.queue exception, and Bash/whitespace checks pass.
+GitHub's actual tag/release execution remains hosted validation; the existing
+release jobs and gates are unchanged.
+
+The owner explicitly approved applying this guard fix to release as well as dev,
+starting the stable build through the normal push trigger. The release patch is
+limited to the guard, regression tests/test command, workflow comments/unused
+environment inputs and these notes. No development gameplay/compiler/runtime
+changes are promoted. No extra workflow dispatch or old-run retry is requested.
+Tag-push behavior reference (a reproduced report, not a GitHub guarantee):
+https://github.com/orgs/community/discussions/151442
+
 ## Tests alongside JetBrains verification (2026-10-29)
 
 Build's eight native/web/MinGW/sanitizer test entries now depend only on
@@ -598,7 +634,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   no plugin dependencies or repositories were changed. The owner authorized
   a failed-jobs-only retry of that run, reusing successful suites and artifacts.
   JetBrains passed unchanged on that retry in 5 minutes 33 seconds.
-- Publishing uses the default `GITHUB_TOKEN` unless repository secret `TIDE_PUBLISH_TOKEN` is configured. The optional token belongs to `Tide-Engine`, selects this repository, and needs Contents and Workflows write permission: GitHub requires workflow authorization when the selected commit's workflows differ from the default branch's. Version checks that difference before building packages when the optional token is absent; Release checks again because the default branch can move during a build. This publishing token is separate from the docs site's read-only `TIDE_RELEASES_TOKEN`. Nightly retries fetch existing tag and notes refs, reject a tag for another commit, and push both refs atomically so a rejected tag leaves no new notes behind.
+- Publishing uses the default `GITHUB_TOKEN` unless repository secret `TIDE_PUBLISH_TOKEN` is configured. The optional token belongs to `Tide-Engine`, selects this repository, and needs Contents and Workflows write permission: Without that token, Version accepts workflow files present at any current branch tip, including release, and Release repeats the check because branch tips can move during a build (2026-10-30 correction above). This publishing token is separate from the docs site's read-only `TIDE_RELEASES_TOKEN`. Nightly retries fetch existing tag and notes refs, reject a tag for another commit, and push both refs atomically so a rejected tag leaves no new notes behind.
 - **All CI jobs use GitHub-hosted runners** (the owner, 2026-10-09: "move the workflows back to pure github for now, not blacksmith"). Windows' package and suites run on `windows-2025`, Linux's on `ubuntu-24.04`, and macOS's (Apple Silicon) on `macos-latest`. The supporting jobs and Docs use `ubuntu-24.04` too. Both workflows use `actions/checkout@v4`, install their tools and restore their caches on fresh checkouts. Manual triggers, suites, publishing gates and `TIDE_HIDDEN` stay as before. The former self-hosted runners' notes were removed on 2026-10-21 (git history, `bf647de4`); `.github/runner/setup-linux.sh` remains for the Linux cross build's xwin setup.
   - Validation: both workflows parse as YAML, a comparison against their previous versions confirms only runner labels, checkout actions and the runner comment changed, and `git diff --check` passes. `actionlint` 1.7.12 passes with only its unsupported existing `queue` key excluded; `queue: single` is supported by [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency). The hosted environments still need a manually requested workflow run; none was dispatched for this change.
 - Manual Build runs on `dev` and `release` finish the current run and keep only the newest pending request; a newer manual request replaces the older pending one. The Build workflow says `queue: single` explicitly in each ref's concurrency group, with `cancel-in-progress: false`. Nightlies are previews published when requested, with no nightly for every intermediate commit (the owner, 2026-10-07).
