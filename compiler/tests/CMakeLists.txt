@@ -404,6 +404,7 @@ tide_e2e_test(net)
 tide_e2e_test(view_time)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
+tide_e2e_test(net_alone_seen) # Played alone, seeing part of the world: the server's ticks, taken rather than run again
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
 tide_e2e_test(guess) # Other players' inputs, guessed: their last ones for a while, then let go, but for [Absolute] fields
 tide_e2e_test(predict) # Per-tick custom guesses and immediate action resets
