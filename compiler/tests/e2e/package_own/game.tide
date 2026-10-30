@@ -1,0 +1,19 @@
+// A game with a global function named as the package's enum.
+singleton Seen
+{
+    int facing;
+    int side;
+}
+
+int Side(int a, int b)
+{
+    return a + b;
+}
+
+scene Main { }
+
+system Look(mut Seen seen)
+{
+    seen.facing = Combat.FacingOf(1);
+    seen.side = Side(3, 4);
+}

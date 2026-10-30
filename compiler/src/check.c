@@ -437,12 +437,34 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     return find_in_folders(prog, ns, name, kind);
 }
 
+// Whether `ns` has a declaration named `name` that a `kind` of that name
+// couldn't share it with in one namespace (the clashes check_decls reports):
+// it hides any `kind` of the name further out. A type and a system can share
+// a name; a function, a frag or vert, a constant or an alias shares none.
+static bool hides_kind(const program *prog, const str ns, const str name, const name_kind kind)
+{
+    const decl_index *index = decls_by(prog, false);
+    const uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), name.ptr, (size_t)name.len);
+    const bool kind_type = kind == NAME_TYPE || kind == NAME_PREFAB;
+    const bool kind_sole = kind == NAME_FUNCTION || kind == NAME_SHADER || kind == NAME_CONST;
+    for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
+        const decl *d = prog->decls.items[i];
+        if (!str_eq(d->name, name) || !str_eq(decl_ns(d), ns)) continue;
+        const bool sole = d->kind == DECL_FUNCTION || d->kind == DECL_SHADER || d->kind == DECL_CONST || d->kind == DECL_ALIAS;
+        const bool type = is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB;
+        if (sole || kind_sole || (type && kind_type) || (d->kind == DECL_SYSTEM && kind == NAME_SYSTEM)) return true;
+    }
+    return false;
+}
+
 // What a name means as written in `from`. A qualified name (Combat.Health) is
 // exact. A plain one is looked up in the file's namespace, then its parents
 // out to the global namespace, then the `using` namespaces, as in C#: what a
 // game declares itself is what its code means, whatever a namespace it
-// imports also has by that name. If two `using` namespaces both have it,
-// *other gets the second: the name is ambiguous.
+// imports also has by that name. The nearest namespace with the name decides,
+// whatever kind it has there: a package's enum Side hides the game's global
+// function Side from the package's code. If two `using` namespaces both have
+// it, *other gets the second: the name is ambiguous.
 static decl *lookup(const program *prog, const unit *from, const str text, const name_kind kind, decl **other)
 {
     *other = NULL;
@@ -453,6 +475,7 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
     for (ns = from ? from->ns : global_ns;;) {
         decl *d = find_in(prog, ns, text, kind);
         if (d) return d;
+        if (hides_kind(prog, ns, text, kind)) return NULL;
         if (ns.len == 0) break; // The global namespace, which is around every other
         int dot = ns.len - 1;
         while (dot >= 0 && ns.ptr[dot] != '.') dot--;
