@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test nightly-notes.test.mjs cache-cleanup.test.mjs"
+    "test": "node --test nightly-notes.test.mjs cache-cleanup.test.mjs check-publish.test.mjs"
   },
   "dependencies": {
     "@semantic-release/release-notes-generator": "14.1.1",
