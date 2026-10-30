@@ -1332,6 +1332,18 @@ static bool program_hears(const program *prog)
     return false;
 }
 
+// Whether local handlers hear events the match's ticks send other than its
+// entities' lifecycle and availability (tide_game.hears_match_events)
+static bool hears_match_events(const program *prog)
+{
+    for (int i = 0; i < prog->events.count; i++) {
+        const decl *event = prog->events.items[i];
+        if (!event->listeners.count || event->is_local) continue;
+        if (event != prog->spawned && event != prog->destroyed && event != prog->shown && event != prog->hidden) return true;
+    }
+    return false;
+}
+
 // Whether the game declares events of the match's own, which tidec --embed taps (add_embed_taps in compile.c): the
 // local state has the log local handlers hear from whether or not they're tapped, so a build for another program has
 // the header, and the hash, of any other.
@@ -22309,6 +22321,7 @@ static void gen_game_api(gen *g)
     sb_put(o, "    .ended = tide_game_ended,\n");
     if (start_is_pure(prog)) sb_put(o, "    .pure_start = true,\n");
     if (prog->uses_seed) sb_put(o, "    .seeded = true,\n");
+    if (hears_match_events(prog)) sb_put(o, "    .hears_match_events = true,\n");
     sb_put(o, "    .max_players = TIDE_GAME_PLAYERS,\n"); // In the header too: the world's inputs are as many
     if (sharded(g)) sb_put(o, "    .shards = &tide_shard_api,\n");
     if (prog->command_types.count) sb_put(o, "    .check_command = tide_game_check_command,\n"

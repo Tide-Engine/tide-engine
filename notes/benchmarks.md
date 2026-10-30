@@ -1,6 +1,60 @@
 # Benchmarks
 
 
+## Pose.Sample a call at a time (2026-10-30)
+
+bannerlord-duel found sampling a clip into a pose its biggest per-fighter
+cost: 12 µs a `Sampled(clip, t)` (`mut var pose = dummy.defaultPose;
+pose.Sample(clip, t); return pose;`) on its Synty character, an FBX clip on
+the character's rig by name. Release, this machine, µs a call; before is `dev`
+19dd3fe23. The machine was busy during the final runs (the first quiet run of
+the same before binary measured 7.4 µs where these show 8.7-10.2), so ranges
+are of three alternating runs:
+
+| Work | Before | After |
+|---|---|---|
+| Synty (55 nodes), FBX idle (54 nodes, 156 bound channels of 107 keys): rest + `sample_into` from C | 8.7-10.2 | 1.36-1.45 |
+| The same, `Sampled()` 1,000 times in a view, with a `pose[bone]` read | 11.5-11.9 | 2.46-2.58 |
+| `bench_pose`: `Pose.Sample` (rest + separate clip, 192 channels of 61 keys) | 11.8-12.9 | 1.39-1.62 |
+| `bench_pose`: `Animation.Sample` on the clip's own skeleton | 8.2-9.1 | 1.44-1.51 |
+| `bench_pose`: `Sampled()` 1,000 times in a view | 16.3-16.7 | 2.92-3.08 |
+| `bench_pose`: owned copies of the bytes, planned each call | 12.2-13.9 | 11.9-12.3 |
+
+Every pose's bits are unchanged (the Synty run hashes 20,000 poses, from
+before the clip to past it, `35d1816faa96b86d` both sides). The Synty case was
+measured with a scratch game outside the repo over the duel's own FBX files,
+which aren't the engine's to commit; `bench_pose` stands in for it.
+
+Where a call's time went before, on a quiet run of the Synty case: opening and
+checking both node tables 0.5 µs; checking every key time and value of the
+clip's 157 channels 2.8 (an ordinary packed `Animation` has no load-time
+proof); binding by name (two name tables, parent chains) 1.6; rest and source
+defaults 0.25; sampling 2.3. Now the first three are done once (kept sample
+plans: notes/assets-and-files.md), and sampling lost the per-channel `memset`
+and `memcpy` calls that variable-width key decoding compiled to, a division
+per channel (channels with the same key times share one search and one `t`:
+the FBX clip's 156 channels have 6 time tracks) and some of the latency of
+normalizing each rotation twice (values first, then the normalizing in a
+loop of its own). What's left of a separate-clip call: about 0.17 µs of
+opening, the plan's lookup and the pose's copy; 0.12 for six searches;
+0.4 for 104 translations and scales; 0.5 for 52 rotations.
+
+Left for the view's `Sampled()`, outside `Pose.Sample`:
+
+- The view makes three 2.2 KB pose lists a call (the rest, the `mut var`
+  copy of it and the returned copy), so 1,000 calls grow the scratch area by
+  about 6.6 MB. When the view's scratch is let go, every piece but the first
+  slot's is freed but one spare (engine/src/text.c), so the next frame's
+  pages are new: rest + copy + sample + copy measures 1.45 µs a call with a
+  scratch reset each call and 2.9 without. A view sampling a few poses for
+  each entity, reset per entity, doesn't see this; 1,000 in one run does.
+  Copying a fresh value (`mut var pose = model.defaultPose`) and returning a
+  local could also skip their copies in generated code. Neither is changed.
+- `pose[dummy.skeleton.bones.hips]` looks the bone up by name every time
+  (`tide_skin_bone_member`: a name search, the fingerprint and the bone count,
+  each opening the model): 0.7 µs a use. A `var hips = ...bones.hips` outside
+  the loop pays it once.
+
 ## Views over wide components (2026-10-30)
 
 `bench_views` (`bench/views/`, `bench_views [frames]`) times each view of a

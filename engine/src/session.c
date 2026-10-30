@@ -2449,6 +2449,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
 // slot order, the queued commands, then the systems. Clients do the same.
 static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size, private_journal *journal);
 static bool twin_ran(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size);
+static void twin_take(tide_server *s, uint32_t tick);
 
 static void server_tick(tide_server *s)
 {
@@ -2560,6 +2561,7 @@ static void server_tick(tide_server *s)
     s->tick++;
     s->ended = g->ended && g->ended(s->world);
     patch_u64(s->frame, hash_of(g, s->world, s->desc.jobs));
+    if (g->client_state) twin_take(s, tick);
 
     keep_needed(s, tick);
     stored_frame *f = &s->frames[tick % s->w.history];
@@ -3249,6 +3251,15 @@ static void send_handover(tide_server *s)
     }
 }
 
+// The tick a server will have run to after an update at `now`, as its clock stands.
+static uint32_t server_due(const tide_server *s, const double now)
+{
+    if (!s->started || s->ended) return s->tick;
+    const uint64_t due = (uint64_t)s->clock_base + ticks_in(now - s->clock_start, s->desc.tick_rate);
+    const uint64_t most = (uint64_t)s->tick + MAX_TICKS;
+    return (uint32_t)(due < most ? due : most);
+}
+
 void tide_server_update(tide_server *s, const double now)
 {
     s->now = now;
@@ -3598,7 +3609,14 @@ struct tide_client {
     uint32_t delay;         // Ticks short of `sampled` it runs
     uint32_t delay_cap;     // The most delay it takes, so its inputs fit their ring
     bool predicts;          // It runs ticks the server hasn't confirmed (TIDE_PREDICTION_ROLLBACK)
-    double tick_cost;       // Seconds one of its predicted ticks takes, a moving mean (tide_client_desc.now_ns)
+    // While its session updates, the server on this machine (`host`) runs the
+    // ticks before `host_due`: a world after one of them this player sees only
+    // part of is taken from the server's rather than predicted (twin_take),
+    // and the ticks from `taken_from` to before `taken_to` were
+    const tide_server *host;
+    uint32_t host_due;
+    uint32_t taken_from, taken_to;
+    double tick_cost;      // Seconds one of its predicted ticks takes, a moving mean (tide_client_desc.now_ns)
     // What running ticks again costs, measured as it happens (note_tick_cost):
     // the first tick of a rollback, which has to find or make what C keeps
     // of the world again, as the last REPLAY_SAMPLES rollbacks had it (their
@@ -4591,6 +4609,53 @@ static bool room_ahead(tide_client *c)
     return true;
 }
 
+// Whether the world after `tick`, which this machine's server `s` is running
+// as its session updates, is one that this machine's player, alone in the
+// match and seeing only part of it (client_state), takes from the server
+// rather than predicting (twin_take). What the server's world projects for
+// the player is what the server confirms, whatever was in the frame, so it's
+// only that the player hasn't run the tick, and that what its local handlers
+// hear of it comes from the server too: lifecycle events, which the server
+// journals for each player, and availability, which the client finds in its
+// worlds. Not where they hear the match's own events, which only a player's
+// own run of the tick sends them (hears_match_events).
+static bool twin_takes(const tide_server *s, const tide_client *c, const uint32_t tick)
+{
+    const tide_game *g = c->game;
+    if (g != s->game || !g->client_state || (g->tick_events && (!g->tick_client_events || g->hears_match_events))) return false;
+    if (!c->predicts || !c->loaded || c->need_snapshot || c->receiving || c->catching_up || c->repair_tick) return false;
+    if (tick >= c->host_due || c->ahead != tick) return false;
+    for (uint32_t p = 0; p < s->players; p++) {
+        if (s->connections[p].used && !(s->connections[p].local && p == (uint32_t)c->player)) return false;
+    }
+    return true;
+}
+
+// ...so the next tick it would predict is the server's to run.
+static bool host_runs(const tide_client *c)
+{
+    return c->host && c->host->tick == c->ahead && twin_takes(c->host, c, c->ahead);
+}
+
+// The world after a tick the server just ran, as this machine's player sees
+// it, is the player's: played alone, a match whose player sees part of it
+// isn't ticked twice. It's what a repair would bring, so the client checks
+// it as any tick it predicted.
+static void twin_take(tide_server *s, const uint32_t tick)
+{
+    tide_client *c = s->twin;
+    if (!c || !twin_takes(s, c, tick) || !room_ahead(c)) return;
+    uint32_t size = 0;
+    uint8_t *bytes = c->game->client_state(s->world, tide_player_from_index(c->player), &size);
+    const bool ok = bytes && c->game->load_client_state(world_at(c, tick + 1u), bytes, size);
+    free(bytes);
+    if (!ok) return; // It predicts the tick after all
+    if (c->taken_to != tick) c->taken_from = tick;
+    c->taken_to = tick + 1u;
+    c->ahead = tick + 1u;
+    finish_view_rewrite(c, tick + 1u);
+}
+
 // Runs `tick` on `world`, the world before it. With local handlers that hear
 // the match, and a host that takes what they hear, the tick records what it
 // sent, and what of it the tick hadn't told them yet goes out (tide/events.h).
@@ -4760,6 +4825,7 @@ static void run_predicted(tide_client *c, const uint32_t tick)
 {
     const tide_game *g = c->game;
     void *world = world_at(c, tick + 1u);
+    if (c->taken_to > tick) c->taken_to = tick; // Its world is a prediction now
     g->copy_world(world, world_at(c, tick));
     if (g->predict_inputs) {
         tide_player_set mine = {0};
@@ -5105,6 +5171,7 @@ static void load_snapshot(tide_client *c)
     c->got_number = c->snapshot_number;
     stop_receiving(c);
     c->answered = false;
+    c->taken_from = c->taken_to = 0; // Its worlds are this one's, or are made again
     if (!ok) { // Asked for again, whole if it was built from a world of its own
         c->asset_failed = true;
         free_world(g, world);
@@ -5414,7 +5481,10 @@ static void play(tide_client *c)
             c->repair_tick = tick + 1u;
             break;
         }
-        const bool predicted = tick < c->ahead && !stale && tick < c->let_go && tick < c->input_guessed && as_predicted(c, f);
+        // One the server ran and handed over (twin_take) is its world already
+        const bool taken = tick >= c->taken_from && tick < c->taken_to;
+        const bool predicted = tick < c->ahead && !stale
+            && (taken || (tick < c->let_go && tick < c->input_guessed && as_predicted(c, f)));
         if (!predicted && c->ran_now >= c->room.most) {
             out_of_room = true;
             break;
@@ -5492,7 +5562,7 @@ static void play(tide_client *c)
     const uint32_t reached = (int64_t)c->sampled < due_in ? c->sampled : due_in > 0 ? (uint32_t)due_in : 0u;
     const uint32_t short_of = reached > c->delay ? reached - c->delay : 0u;
     const uint32_t target = short_of > c->ahead ? short_of : c->ahead;
-    for (uint32_t n = 0; c->predicts && c->ahead < target && n < 16u && room_ahead(c); n++) predict(c);
+    for (uint32_t n = 0; c->predicts && c->ahead < target && n < 16u && !host_runs(c) && room_ahead(c); n++) predict(c);
 }
 
 // Its input delay (tide_prediction): how many ticks short of the ones it has inputs for it runs.
@@ -6591,12 +6661,18 @@ void tide_session_update(tide_session *s, const double now)
         s->client->local_receive = s->local_receive;
         s->client->local_user = s->local_user;
     } else {
+        if (s->server) { // The ticks its server runs now, which the client may take rather than run (twin_take)
+            s->client->host = s->server;
+            s->client->host_due = server_due(s->server, t);
+        }
         update_client(s->client, t);
         if (s->server) {
             s->server->twin = s->client;
             tide_server_update(s->server, t);
             s->server->twin = NULL;
         }
+        s->client->host = NULL;
+        s->client->host_due = 0;
         update_client(s->client, t); // What the server just sent: this machine's ticks, at once
     }
 
@@ -7154,6 +7230,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
 static void take_server_world(tide_client *c, const tide_server *s)
 {
     c->early_count = c->early_number = 0;
+    c->taken_from = c->taken_to = 0;
     if (c->game->client_state) {
         uint32_t size;
         uint8_t *bytes = c->game->client_state(s->world, tide_player_from_index(c->player), &size);

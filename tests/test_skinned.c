@@ -1500,3 +1500,171 @@ TIDE_TEST(skinned_linear_rotation_between_opposite_signs_takes_the_short_way)
     }
     tide_scratch_reset(mark);
 }
+
+// The model as a packed SkinnedMesh and the others as packed bytes, as
+// imported Animation assets are: "Game.clip1" on.
+static uint8_t *plan_pack(const tide_list *data, const uint32_t count, size_t *size)
+{
+    tide_pack_builder b = {0};
+    uint8_t h[32];
+    uint32_t offsets[3], chars;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint32_t bytes = (uint32_t)tide_list_count(data[i]);
+        const void *flat = tide_list_at(data[i], 0, 1u);
+        tide_sha256_of(flat, bytes, h);
+        const uint32_t at = tide_pack_bytes(&b, h, flat, bytes, &chars);
+        if (i == 0u) {
+            offsets[0] = at;
+            continue;
+        }
+        char name[32];
+        snprintf(name, sizeof name, "Game.clip%u", i);
+        tide_pack_name(&b, name, TIDE_PACK_BYTES, at, bytes, chars);
+    }
+    const tide_float3 vertices[3] = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
+    const uint32_t indices[3] = {0u, 1u, 2u};
+    tide_sha256_of(vertices, sizeof vertices, h);
+    tide_pack_mesh(&b, h, vertices, sizeof vertices[0], 3u, indices, 3u, &offsets[1]);
+    const uint32_t record = tide_pack_skinned_list(&b, offsets, 1u);
+    tide_pack_name(&b, "Game.actor", TIDE_PACK_SKINNED, record, 1u, 1u);
+    return tide_pack_end(&b, size);
+}
+
+static tide_list plan_packed(const uint32_t i)
+{
+    if (i == 0u) return tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
+    char name[32];
+    snprintf(name, sizeof name, "Game.clip%u", i);
+    return (tide_list){tide_pack_handle(tide_pack_find(name, TIDE_PACK_BYTES))};
+}
+
+// Pack-held and asset-held bytes keep their sample plans; owned scratch bytes
+// plan for each call. Both give the same bits and refusals.
+TIDE_TEST(skinned_kept_sample_plans_match_plans_made_for_one_call)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw[3] = {model(), separate_model(separate_nodes), armature_model()};
+    size_t size;
+    uint8_t *pack = plan_pack(raw, 3u, &size);
+    TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+    tide_heap heap = {0};
+    tide_text_use(&heap, NULL);
+    tide_list packed[3], held[3] = {{0}};
+    for (uint32_t i = 0; i < 3u; i++) {
+        packed[i] = plan_packed(i);
+        TIDE_REQUIRE(tide_list_count(packed[i]) == tide_list_count(raw[i]));
+        tide_list_set(&held[i], packed[i], 1u, TIDE_IN_MATCH);
+    }
+    // The exact rig, separate bindings both ways, folding an armature into
+    // the model and the model's out of it, rejected bindings and clips.
+    static const struct { uint32_t target, source; int32_t clip; } pairs[] = {
+        {0, 0, 0}, {0, 0, 1}, {0, 0, 2}, {0, 0, 3}, {0, 1, 0}, {0, 1, 1}, {1, 0, 0}, {0, 2, 0},
+        {0, 2, 1}, {2, 0, 0}, {2, 0, 2}, {1, 2, 0},
+    };
+    tide_list stored = {0};
+    for (uint32_t pass = 0; pass < 2u; pass++) {
+        for (uint32_t p = 0; p < sizeof pairs / sizeof pairs[0]; p++) {
+            const uint32_t t = pairs[p].target, s = pairs[p].source;
+            const int32_t clip = pairs[p].clip;
+            for (int step = -2; step <= 10; step++) {
+                const float seconds = 0.25f * (float)step + (pass ? 0.125f : 0.0f);
+                const uint32_t at = tide_scratch_mark();
+                tide_list alone = {0}, kept = {0}, asset = {0};
+                const bool bound = tide_skinned_sample_into(raw[t], raw[s], clip, seconds, &alone, TIDE_IN_SCRATCH);
+                TIDE_CHECK(tide_skinned_sample_into(packed[t], packed[s], clip, seconds, &kept, TIDE_IN_SCRATCH) == bound);
+                TIDE_CHECK(tide_skinned_sample_into(held[t], held[s], clip, seconds, &asset, TIDE_IN_SCRATCH) == bound);
+                TIDE_CHECK(pose_hash(kept) == pose_hash(alone) && pose_hash(asset) == pose_hash(alone));
+                if (bound) {
+                    TIDE_CHECK(tide_skinned_sample_into(packed[t], packed[s], clip, seconds, &stored, TIDE_IN_MATCH));
+                    TIDE_CHECK(pose_hash(stored) == pose_hash(alone));
+                }
+                // The clip on its own skeleton
+                alone = kept = asset = (tide_list){0};
+                const bool own = tide_skinned_sample(raw[s], clip, seconds, &alone, TIDE_IN_SCRATCH);
+                TIDE_CHECK(tide_skinned_sample(packed[s], clip, seconds, &kept, TIDE_IN_SCRATCH) == own);
+                TIDE_CHECK(tide_skinned_sample(held[s], clip, seconds, &asset, TIDE_IN_SCRATCH) == own);
+                TIDE_CHECK(pose_hash(kept) == pose_hash(alone) && pose_hash(asset) == pose_hash(alone));
+                tide_scratch_reset(at);
+            }
+        }
+    }
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+    tide_pack_unload();
+    free(pack);
+    tide_scratch_reset(mark);
+}
+
+// A plan is kept for the pack it was made from: another load at the same
+// offsets, with other bytes there, plans again.
+TIDE_TEST(skinned_kept_sample_plans_follow_reloaded_packs)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list first[2] = {model(), separate_model(separate_nodes)};
+    tide_list changed = model();
+    tide_skinned_data_view view;
+    tide_skinned_channel_data channel;
+    uint8_t *bytes = tide_list_at_mut(changed, 0, 1u);
+    TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(changed), &view));
+    TIDE_REQUIRE(tide_skinned_data_channel(&view, 0u, &channel));
+    number(bytes, channel.values_at + 12u, 7.0f); // The arm's second translation key
+    number(bytes, view.node_at + 2u * TIDE_SKINNED_NODE_SIZE + 20u, 5.0f); // The hand's rest
+    const tide_list second[2] = {changed, first[1]};
+    const tide_list *loads[2] = {first, second};
+    uint32_t handles[2] = {0};
+    for (uint32_t load = 0; load < 2u; load++) {
+        size_t size;
+        uint8_t *pack = plan_pack(loads[load], 2u, &size);
+        TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+        const tide_list actor = plan_packed(0u), clip = plan_packed(1u);
+        handles[load] = actor.at;
+        for (int step = 0; step <= 8; step++) {
+            const float seconds = 0.25f * (float)step;
+            tide_list kept = {0}, alone = {0};
+            TIDE_REQUIRE(tide_skinned_sample(actor, 0, seconds, &kept, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample(loads[load][0], 0, seconds, &alone, TIDE_IN_SCRATCH));
+            TIDE_CHECK(pose_hash(kept) == pose_hash(alone));
+            kept = alone = (tide_list){0};
+            TIDE_REQUIRE(tide_skinned_sample_into(actor, clip, 0, seconds, &kept, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample_into(loads[load][0], loads[load][1], 0, seconds, &alone, TIDE_IN_SCRATCH));
+            TIDE_CHECK(pose_hash(kept) == pose_hash(alone));
+        }
+        tide_pack_unload();
+        free(pack);
+    }
+    TIDE_CHECK(handles[0] == handles[1]); // Otherwise the second load proves nothing
+    tide_scratch_reset(mark);
+}
+
+// More plans than are kept: the oldest go, and what's sampled stays right.
+TIDE_TEST(skinned_kept_sample_plans_survive_eviction)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list raw[2] = {model(), separate_model(separate_nodes)};
+    size_t size;
+    uint8_t *pack = plan_pack(raw, 2u, &size);
+    TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+    const tide_list actor = plan_packed(0u), clip = plan_packed(1u);
+    for (int32_t round = 0; round < 1200; round++) {
+        const uint32_t at = tide_scratch_mark();
+        tide_list pose = {0};
+        // Clips past the model's few are refused, and their refusals kept too.
+        TIDE_CHECK(!tide_skinned_sample(actor, 3 + round, 0.5f, &pose, TIDE_IN_SCRATCH));
+        TIDE_CHECK(!tide_skinned_sample_into(actor, clip, 2 + round, 0.5f, &pose, TIDE_IN_SCRATCH));
+        if (round % 97 == 0) {
+            const float seconds = 0.01f * (float)(round % 200);
+            tide_list kept = {0}, alone = {0};
+            TIDE_CHECK(tide_skinned_sample_into(actor, clip, round % 2, seconds, &kept, TIDE_IN_SCRATCH));
+            TIDE_CHECK(tide_skinned_sample_into(raw[0], raw[1], round % 2, seconds, &alone, TIDE_IN_SCRATCH));
+            TIDE_CHECK(pose_hash(kept) == pose_hash(alone));
+            kept = alone = (tide_list){0};
+            TIDE_CHECK(tide_skinned_sample(actor, round % 3, seconds, &kept, TIDE_IN_SCRATCH));
+            TIDE_CHECK(tide_skinned_sample(raw[0], round % 3, seconds, &alone, TIDE_IN_SCRATCH));
+            TIDE_CHECK(pose_hash(kept) == pose_hash(alone));
+        }
+        tide_scratch_reset(at);
+    }
+    tide_pack_unload();
+    free(pack);
+    tide_scratch_reset(mark);
+}

@@ -56,6 +56,16 @@ The exact 13-frame pose hash `a669d398066dafa5` is pinned after agreeing on both
 platforms. Existing skinned CPU coverage passed 62/62 on each. Private user-asset
 measurements and visual checks are recorded with the asset contract.
 
+## Kept sample plans (2026-10-30)
+
+`tide_skinned_sample` and `tide_skinned_sample_into` keep what they decide
+from a model's bytes (validity, binding, output nodes) in sample plans,
+private to `engine/src/skinned.c`. `tide/pack.h` gains
+`tide_pack_generation()`, which the runtime reads and generated code doesn't
+call; it changes on every pack load, unload and `tide_pack_mesh_updated`. No
+generated call, signature, layout, pose bit or world byte changes. Contracts
+and tests: assets-and-files.md, Kept sample plans.
+
 ## GUI looks boundary (2026-10-29)
 
 Within the owner's approved GUI looks task, generated code gains the

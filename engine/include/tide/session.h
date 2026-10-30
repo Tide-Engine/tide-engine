@@ -251,6 +251,11 @@ typedef struct tide_game {
     // players who start the match themselves (pure_start). A game without one
     // starts the same whatever the seed, and nothing is picked or sent for it.
     bool seeded;
+    // Local handlers hear events the match's ticks send other than Spawned,
+    // Destroyed, Shown and Hidden. With client_state, a player hears those
+    // only from its own run of each tick, as they aren't journaled
+    // (tick_client_events).
+    bool hears_match_events;
     // The game's settings (`settings { ... }`), 0 or NULL where it sets none
     uint32_t tick_rate;  // tickRate: what servers run its matches at, unless their desc says
     const char *title;   // title: the window's, unless the host says
