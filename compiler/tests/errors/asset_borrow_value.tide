@@ -1,4 +1,4 @@
 // expect: pass an asset collection or forward a borrowed parameter directly
-void Keep(List<Clip> values) { Debug.Log(values.count); }
+void Keep(List<Mesh<Vertex3>> values) { Debug.Log(values.count); }
 view Test() { Keep([]); }
 scene Main { }

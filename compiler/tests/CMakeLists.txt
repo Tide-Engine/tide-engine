@@ -198,6 +198,7 @@ tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a tex
 tide_e2e_test(sprites) # Draw.Sprite: a texture upright over a box in one call, each of its forms
 tide_e2e_test(asset_borrows) # Synchronous helpers borrow resource asset lists/maps without retaining the pack
 tide_e2e_test(asset_borrows_unused) # Collection signatures alone need their C types, without enabling asset loading/audio
+tide_e2e_test(resource_collections)
 tide_e2e_test(clip_values) # Scalar Clip values need their C type without assets or playback.
 tide_e2e_test(audio_listener_only) # Audio.SetListener with nothing to play still has the frame's audio list's C type
 tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Texture and Grid2<Color> assets

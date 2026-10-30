@@ -1,5 +1,42 @@
 # Language features, as tidec builds them
 
+## Resource values in collections (2026-10-30)
+
+Owner-requested completion after a sound-layer implementation worked around
+Clips being refused in lists. Lists, arrays and map values now accept Clip,
+Texture, DepthTexture, Cubemap, RenderTarget, Sound and structs holding them,
+including nested containers. Existing ownership helpers already copy these
+values and any text/lists alongside them. Clip/texture collections use normal
+helper parameters, returns and mutation rather than the old asset-only borrow.
+Only Mesh collections retain the unique borrowed-pack contract. Grids, ECS
+declarations, borrowed contexts and direct optional/result elements retain
+their existing restrictions; this is not support for every type expression.
+
+The recursive local-only checks remain. Resource collection helper signatures
+retain the transitive CPU-only marker, so GPU helpers cannot gain dynamic
+resource collection access. New resource_collection_gpu pins that boundary;
+asset_borrow_gpu continues to pin the Mesh borrow boundary.
+
+Generated resource rebinding visits arrays and live list/map elements, prepares
+packed wrappers before mutation, and selects the local heap explicitly. Sound
+collection traversals are read-only; voice identity extends the existing field
+path/entity identity by list/array positions or map insertion order. No runtime
+entry point or representation changed.
+
+resource_collections executes owned Clip parameters/returns/mutation, nested
+resource/text copies, Clip arrays and integer-keyed maps, five distinct voices
+across lists/arrays/maps/nested lists/arrays in lists, pack reload, local saved
+state restoration and pointer clearing during resource rebinding. clip_values
+now also covers list/array/struct storage without assets or audio playback.
+Old refusal fixtures now enforce local-only state or the retained Mesh borrow.
+
+Validation: 101 focused Windows ASan CTests (97 diagnostic cases and four E2E
+programs), six dependent native checks including asset usage, all nine matching
+WASI E2E programs, and the production docs build pass on Node 24.22.1. The final
+CPU-only diagnostic addition is checked separately. GPU rendering and other
+native platforms were not run; these changes introduce no shader operations.
+
+
 ## Arrays of text and lists (2026-10-29)
 
 The owner, after the GUI showcases hit "an array's elements are plain values,

@@ -263,6 +263,19 @@ An array of plain values is its holder's bytes and nothing more, so a system's l
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
 
+Lists, arrays and map values also hold `Clip`, `Texture`, `DepthTexture`, `Cubemap`, `RenderTarget`, `Sound`, and structs holding them. These collections belong in local state, just like their elements. Copies and helper parameters follow the ordinary collection rules:
+
+```csharp
+struct Layer { Clip clip; float volume; }
+local singleton Mixer
+{
+    List<Layer> layers;
+    Clip[2] accents;
+}
+```
+
+Playing `Sound` elements are collected automatically each frame. Their voices follow list/array positions; map voices follow insertion order. Rendering references inside collections are rebound on reload as ordinary resource fields are. Grids, ECS declarations and borrowed contexts still cannot be collection elements; mesh asset collections keep their borrowed lifetime.
+
 ## Changing an element where it is
 
 A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A missing map key is added when its value is written this way. Through arrays alone, text and lists are written where they are too, as an array is its holder's own bytes: `menu.tabs[1] = "Sound"`, `shelf.bags[0].label = "Tools"`, `log.lines[2] += "!"`, `menu.logs[0].Add("x")`. Text or a collection reached through a list's element or a map's value, and anything in a list or a map inside the struct element, is still taken out, changed and put back (`mut var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.

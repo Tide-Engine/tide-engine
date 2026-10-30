@@ -21535,53 +21535,96 @@ static bool resource_fields(const decl *d)
 static bool resource_type(const type t)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET) return true;
-    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) return resource_fields(t.decl);
+    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
+        || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return resource_fields(t.decl);
     return false;
+}
+
+// Container storage is already owned. Visit its live values without copying them.
+// A scope per container keeps index/pointer names independent at every depth.
+static const char *gen_resource_elements(gen *g, const type t, const char *at, const char *pad, const bool writing)
+{
+    sb *o = &g->c;
+    const type e = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
+    sb_printf(o, "%s{\n", pad);
+    if (writing && t.kind == TY_LIST)
+        sb_printf(o, "%stide_list_prepare(&(%s), sizeof(%s), TIDE_IN_LOCAL);\n", pad, at, c_type(e));
+    if (writing && t.kind == TY_MAP)
+        sb_printf(o, "%stide_list_prepare(&(%s).entries, sizeof(tide_map%d_entry), TIDE_IN_LOCAL);\n", pad, at, t.decl->index);
+    sb_printf(o, "%sfor (int32_t tide_ri = 0; tide_ri < ", pad);
+    if (t.kind == TY_ARRAY) sb_printf(o, "%d", t.decl->array_length);
+    else sb_printf(o, "%s(%s)", t.kind == TY_MAP ? "tide_map_entries" : "tide_list_count", at);
+    sb_printf(o, "; tide_ri++) {\n");
+    // Resolve the address before introducing tide_rp, which may occur in `at`.
+    if (t.kind == TY_ARRAY) sb_printf(o, "%s%svoid *tide_next = &(%s).at[tide_ri];\n", pad, writing ? "" : "const ", at);
+    else if (t.kind == TY_LIST) sb_printf(o, "%s%svoid *tide_next = tide_list_at%s(%s, tide_ri, sizeof(%s));\n", pad, writing ? "" : "const ", writing ? "_mut" : "", at, c_type(e));
+    else {
+        sb_printf(o, "%s%stide_map%d_entry *tide_entry = tide_map_entry%s(%s, tide_ri, &tide_map%d_kind);\n", pad,
+                  writing ? "" : "const ", t.decl->index, writing ? "_mut" : "", at, t.decl->index);
+        sb_printf(o, "%sif (!tide_map_live(tide_entry)) continue;\n%s%svoid *tide_next = &tide_entry->value;\n", pad, pad, writing ? "" : "const ");
+    }
+    sb_printf(o, "%sif (!tide_next) continue;\n", pad);
+    sb_printf(o, "%s{ %s%s *tide_rp = tide_next;\n", pad, writing ? "" : "const ", c_type(e));
+    return "(*tide_rp)";
+}
+
+static void gen_resource_fields(gen *g, const decl *d, const char *path, const char *pad);
+
+static void gen_resource_value(gen *g, const type t, const char *at, const char *pad)
+{
+    sb *o = &g->c;
+    if (t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) {
+        const type e = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
+        const char *element = gen_resource_elements(g, t, at, pad, true);
+        gen_resource_value(g, e, element, pad);
+        sb_printf(o, "%s} } }\n", pad);
+        return;
+    }
+    if (t.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
+        sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
+        sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
+        sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s = tide_cubemap_recreate(%s);\n",
+                  pad, at, at, pad, at, at);
+        sb_printf(o, "%s}\n", pad);
+        return;
+    }
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) {
+        const bool texture = t.kind != TY_RENDER_TARGET; // A target's color, or its depth
+        sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at, texture ? "target.id" : "id");
+        if (texture) {
+            // Its size, its scale and whether it follows the window come with it
+            sb_printf(o, "%s    tide_render_target target = %s.target;\n", pad, at);
+            sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(target);\n", pad);
+            sb_printf(o, "%s    else target = tide_render_target_recreate(target);\n", pad);
+            if (t.kind == TY_DEPTH_TEXTURE) sb_printf(o, "%s    %s = tide_render_target_depth(target);\n", pad, at);
+            else // ...and how it's sampled
+                sb_printf(o, "%s    %s = tide_texture_sampled(tide_render_target_color(target), tide_texture_sampling(%s));\n",
+                          pad, at, at);
+        } else {
+            sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s);\n", pad, pad, at);
+            sb_printf(o, "%s        %s = tide_render_target_resolve(%s);\n%s    } else %s = tide_render_target_recreate(%s);\n",
+                      pad, at, at, pad, at, at);
+        }
+        sb_printf(o, "%s} ", pad);
+        // A Texture of the pack's or of a grid is a name, which the build that takes over reads as this one
+        // did; one of C's own pixels, or of a target that isn't the game's, is nothing there
+        if (t.kind == TY_TEXTURE)
+            sb_printf(o, "else if (%s.target.id || %s.image.pixels) memset(&%s, 0, sizeof %s);\n", at, at, at, at);
+        else if (texture) sb_printf(o, "else memset(&%s, 0, sizeof %s);\n", at, at);
+        else sb_printf(o, "else if (%s.id != TIDE_RENDER_WINDOW) memset(&%s, 0, sizeof %s);\n", at, at, at);
+    } else {
+        gen_resource_fields(g, t.decl, at, pad);
+    }
 }
 
 static void gen_resource_fields(gen *g, const decl *d, const char *path, const char *pad)
 {
-    sb *o = &g->c;
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
         if (!resource_type(f->type)) continue;
         sb at = {0};
         sb_printf(&at, "%s.%s", path, field_cname(f));
-        if (f->type.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
-            sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at.data);
-            sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at.data);
-            sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s = tide_cubemap_recreate(%s);\n",
-                      pad, at.data, at.data, pad, at.data, at.data);
-            sb_printf(o, "%s}\n", pad);
-            continue;
-        }
-        if (f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE || f->type.kind == TY_RENDER_TARGET) {
-            const bool texture = f->type.kind != TY_RENDER_TARGET; // A target's color, or its depth
-            sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at.data, texture ? "target.id" : "id");
-            if (texture) {
-                // Its size, its scale and whether it follows the window come with it
-                sb_printf(o, "%s    tide_render_target target = %s.target;\n", pad, at.data);
-                sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(target);\n", pad);
-                sb_printf(o, "%s    else target = tide_render_target_recreate(target);\n", pad);
-                if (f->type.kind == TY_DEPTH_TEXTURE) sb_printf(o, "%s    %s = tide_render_target_depth(target);\n", pad, at.data);
-                else // ...and how it's sampled
-                    sb_printf(o, "%s    %s = tide_texture_sampled(tide_render_target_color(target), tide_texture_sampling(%s));\n",
-                              pad, at.data, at.data);
-            } else {
-                sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s);\n", pad, pad, at.data);
-                sb_printf(o, "%s        %s = tide_render_target_resolve(%s);\n%s    } else %s = tide_render_target_recreate(%s);\n",
-                          pad, at.data, at.data, pad, at.data, at.data);
-            }
-            sb_printf(o, "%s} ", pad);
-            // A Texture of the pack's or of a grid is a name, which the build that takes over reads as this one
-            // did; one of C's own pixels, or of a target that isn't the game's, is nothing there
-            if (f->type.kind == TY_TEXTURE)
-                sb_printf(o, "else if (%s.target.id || %s.image.pixels) memset(&%s, 0, sizeof %s);\n", at.data, at.data, at.data, at.data);
-            else if (texture) sb_printf(o, "else memset(&%s, 0, sizeof %s);\n", at.data, at.data);
-            else sb_printf(o, "else if (%s.id != TIDE_RENDER_WINDOW) memset(&%s, 0, sizeof %s);\n", at.data, at.data, at.data);
-        } else {
-            gen_resource_fields(g, f->type.decl, at.data, pad);
-        }
+        gen_resource_value(g, f->type, at.data, pad);
     }
 }
 
@@ -21594,8 +21637,9 @@ static bool sound_fields(const program *prog, const decl *d);
 static bool sound_type(const program *prog, const type t)
 {
     if (t.kind == TY_STRUCT && t.decl == prog->sound) return true;
-    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) return sound_fields(prog, t.decl);
-    return false; // A list or a map can't hold a Clip, so not a Sound
+    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
+        || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return sound_fields(prog, t.decl);
+    return false;
 }
 
 static bool sound_fields(const program *prog, const decl *d)
@@ -21614,22 +21658,40 @@ static uint64_t sound_id(const char *path)
     return h ? h : 1u;
 }
 
-static void gen_sound_fields(gen *g, const decl *d, const char *path, const char *named, const char *entity, const char *pad)
+static void gen_sound_fields(gen *g, const decl *d, const char *path, const char *named, const char *entity, const char *pad);
+
+static void gen_sound_value(gen *g, const type t, const char *at, const char *named, const char *entity, const char *pad)
 {
     sb *o = &g->c;
+    if (t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) {
+        const type e = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
+        const char *element = gen_resource_elements(g, t, at, pad, false);
+        sb_printf(o, "%suint64_t tide_parent = %s%s%s;\n", pad, entity ? "tide_sound_entity(" : "", entity ? entity : "0", entity ? ")" : "");
+        sb_printf(o, "%s{ uint64_t tide_sound_index = tide_parent ^ ((uint64_t)(%s) * UINT64_C(0x9E3779B97F4A7C15));\n", pad,
+                  t.kind == TY_MAP ? "tide_entry->tide_order" : "tide_ri + 1");
+        sb name = {0};
+        sb_printf(&name, "%s[]", named);
+        gen_sound_value(g, e, element, name.data,
+                        "((tide_entity){(uint32_t)(tide_sound_index >> 32), (uint32_t)tide_sound_index})", pad);
+        sb_printf(o, "%s} } } }\n", pad);
+    } else if (t.kind == TY_STRUCT && t.decl == g->prog->sound) {
+        sb_printf(o, "%sif (%s.playing) tide_sound_voice(l->tide_audio, &%s, UINT64_C(0x%016llx)%s%s%s);\n", pad, at, at,
+                  (unsigned long long)sound_id(named), entity ? " ^ tide_sound_entity(" : "", entity ? entity : "",
+                  entity ? ")" : "");
+    } else {
+        gen_sound_fields(g, t.decl, at, named, entity, pad);
+    }
+}
+
+static void gen_sound_fields(gen *g, const decl *d, const char *path, const char *named, const char *entity, const char *pad)
+{
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
         if (!sound_type(g->prog, f->type)) continue;
         sb at = {0}, name = {0};
         sb_printf(&at, "%s.%s", path, field_cname(f));
         sb_printf(&name, "%s.%s", named, field_cname(f));
-        if (f->type.kind == TY_STRUCT && f->type.decl == g->prog->sound) {
-            sb_printf(o, "%sif (%s.playing) tide_sound_voice(l->tide_audio, &%s, UINT64_C(0x%016llx)%s%s%s);\n", pad, at.data, at.data,
-                      (unsigned long long)sound_id(name.data), entity ? " ^ tide_sound_entity(" : "", entity ? entity : "",
-                      entity ? ")" : "");
-        } else {
-            gen_sound_fields(g, f->type.decl, at.data, name.data, entity, pad);
-        }
+        gen_sound_value(g, f->type, at.data, name.data, entity, pad);
     }
 }
 
@@ -21781,6 +21843,7 @@ static void gen_rebind_resources(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     sb_put(o, "void tide_local_rebind_resources(tide_local *l, const bool same_memory)\n{\n    (void)l;\n    (void)same_memory;\n");
+    if (world_heap(prog, true)) sb_put(o, "    tide_text_use(NULL, &l->heap);\n");
     if (prog->uses_resident) sb_put(o, "    tide_residents_adopt(&l->tide_residents); // The arenas the last build left, at their addresses\n");
     gen_reset_io_tables(g, "l", "    ", true);
     gen_reset_worker_tables(g, "l", "    ", true);

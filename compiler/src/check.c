@@ -1776,21 +1776,8 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
     case TY_STRUCT:
-        if (holds_render_resource(t)) {
-            diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
-            return false;
-        }
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP:
         return true;
-    case TY_TEXTURE: // An asset's glob of images: nothing writes one, and each is a value
-        if (asset) return true;
-        diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
-        diag_note("but for an asset's: 'asset List<Texture> frames = \"art/run_*.png\";'");
-        return false;
-    case TY_CLIP: // The same for an asset's glob of sounds
-        if (asset) return true;
-        diag_error(at, "a list or a map can't hold a Clip, including inside a struct");
-        diag_note("but for an asset's: 'asset List<Clip> hits = \"sfx/hit_*.wav\";'");
-        return false;
     case TY_MESH: // An asset's glob of mesh files
         if (asset) return true;
         diag_error(at, "a %s can't hold a Mesh: one is the pack's own, which nothing keeps", key ? "map" : "list");
@@ -1807,9 +1794,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
             diag_note("declare each cube as an asset of its own: 'asset Cubemap sky = \"art/sky_??.png\";'");
             return false;
         }
-        // Other contexts retain the ordinary unsupported-element diagnostic.
-        diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
-        return false;
+        return true;
     default:
         diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in a list, keep their Entity");
@@ -2411,7 +2396,8 @@ static bool reaches_long_array(const type t)
 
 // What an array's elements can be: values an array keeps side by side in the
 // bytes of whatever holds it. Text, lists, maps and sets are their handles
-// there, kept in the heap as a struct's fields' are; grids and resources never.
+// there, kept in the heap as a struct's fields' are. Resource handles retain
+// their ordinary local-only rules; grids are never copied.
 static bool array_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
@@ -2427,18 +2413,15 @@ static bool array_element_ok(const type t, const loc at)
             diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
             return false;
         }
-        if (holds_render_resource(t)) {
-            diag_error(at, "an array can't hold rendering resources, including inside a struct");
-            return false;
-        }
         return true;
-    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: return true;
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
         return false;
     default:
-        diag_error(at, "an array's elements are plain values, like numbers, enums, vectors and structs of them, not %s", type_name(t));
+        diag_error(at, "an array holds copyable values, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in an array, keep their Entity");
         return false;
     }
@@ -15096,8 +15079,6 @@ static void check_fields(checker *c, const decl *d)
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
                 diag_note("Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component "
                           "or singleton");
-            } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
-                diag_error(at, "containers can't hold rendering resources, including inside a struct");
             }
         }
         if (holds_heap(f->type)) {
@@ -15372,6 +15353,8 @@ static void check_signature(checker *c, decl *m)
                                                         : "a task can't return a Mesh: it's the pack's own memory, which is read within a frame");
         m->return_type = T_ERR;
     }
+    if (holds_render_resource(m->return_type) && (holds_heap(m->return_type) || m->return_type.kind == TY_ARRAY))
+        m->borrows_asset_collections = true;
     if (holds_render_resource(m->return_type) || holds_callable(m->return_type)) {
         m->render_resources = true;
         m->render_resources_at = m->return_type_at;
@@ -15442,6 +15425,8 @@ static void check_signature(checker *c, decl *m)
                 m->gpu_only_reads = TY_GRID;
             }
         }
+        if (holds_render_resource(p->type) && (holds_heap(p->type) || p->type.kind == TY_ARRAY))
+            m->borrows_asset_collections = true;
         if (holds_render_resource(p->type) || holds_callable(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
@@ -20120,7 +20105,7 @@ static void check_render_resource_calls(const checker *c)
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
         if (site->from->kind == DECL_SHADER && site->to->borrows_asset_collections) {
-            diag_error(site->call->at, "'" STR_FMT "' borrows asset collections, which synchronous CPU helpers read",
+            diag_error(site->call->at, "'" STR_FMT "' uses resource collections, which CPU helpers read",
                        STR_ARG(site->to->name));
             diag_note("select an individual resource in CPU code and pass it to the draw");
         }

@@ -58,7 +58,7 @@ bool type_is_numeric(type t);
 // byte, int or long.
 bool type_is_integer(type t);
 
-// An immutable asset glob's resource references, borrowed by synchronous helpers.
+// An immutable mesh asset collection, borrowed by synchronous helpers.
 bool type_is_asset_collection(type t);
 
 // The model value a checked Asset<T> resolves, without acquiring ownership.

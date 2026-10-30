@@ -1,5 +1,17 @@
 # Hot reloading
 
+## Resource collection rebinding (2026-10-30)
+
+Generated local resource rebinding follows arrays and live list/map values,
+including nested structs/containers. It selects the local heap before traversal
+and prepares packed list wrappers before writes. Each resource uses its existing
+adopt/recreate/clear rules. No migration runtime, layout or resource API changes.
+resource_collections checks saved-local restoration, pack reload, and clearing
+external texture pointers inside lists and arrays with no heap context active,
+on Windows ASan and WASI. Detailed contracts: language.md, Resource values in
+collections.
+
+
 ## Migration skips holes (2026-10-29)
 
 A reload's migration (`platform/src/migrate.c`) gives no row in the new world to
