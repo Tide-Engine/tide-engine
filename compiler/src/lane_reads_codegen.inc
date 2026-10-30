@@ -27,6 +27,16 @@ typedef struct reads_root {
     const field *binding;
 } reads_root;
 
+// Whether a name's parameter is `p`. A view's frags and verts get what they
+// read that the view doesn't take as more parameters after the view's code is
+// checked (bind_views), which can move the parameters: the code's names then
+// point at the copy from before, the same parameter by its name and type.
+static bool same_param(const param *named, const param *p)
+{
+    return named == p
+        || (named && p && str_eq(named->name, p->name) && named->type.kind == p->type.kind && named->type.decl == p->type.decl);
+}
+
 static writes_place reads_place_of(const expr *e, const reads_root *root)
 {
     const writes_place none = {false, 0, 0, false};
@@ -37,7 +47,7 @@ static writes_place reads_place_of(const expr *e, const reads_root *root)
     }
     switch (e->kind) {
     case E_NAME:
-        if (!root->param || e->bind != BIND_PARAM || e->param != root->param) return none;
+        if (!root->param || e->bind != BIND_PARAM || !same_param(e->param, root->param)) return none;
         return (writes_place){true, 0, type_layout(root->param->type).size, false};
     case E_MEMBER: {
         const writes_place p = reads_place_of(e->object, root);
@@ -272,7 +282,7 @@ static void stmt_query_uses(const stmt *s, query_uses *u);
 static void expr_query_uses(const expr *e, query_uses *u)
 {
     if (!e) return;
-    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param == u->q) u->named++;
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && same_param(e->param, u->q)) u->named++;
     expr_query_uses(e->object, u);
     expr_query_uses(e->lhs, u);
     expr_query_uses(e->rhs, u);
@@ -297,7 +307,9 @@ static void expr_query_uses(const expr *e, query_uses *u)
 static void stmt_query_uses(const stmt *s, query_uses *u)
 {
     if (!s) return;
-    if (s->kind == S_FOREACH && s->query == u->q && s->value && s->value->kind == E_NAME && s->value->param == u->q) u->looped++;
+    if (s->kind == S_FOREACH && same_param(s->query, u->q) && s->value && s->value->kind == E_NAME && same_param(s->value->param, u->q)) {
+        u->looped++;
+    }
     for (int i = 0; i < s->stmts.count; i++) stmt_query_uses(s->stmts.items[i], u);
     for (int i = 0; i < s->cases.count; i++) {
         for (int k = 0; k < s->cases.items[i].labels.count; k++) expr_query_uses(s->cases.items[i].labels.items[k], u);
@@ -321,7 +333,7 @@ static void stmt_query_uses(const stmt *s, query_uses *u)
 static void stmt_row_reads(const stmt *s, const param *q, const field *binding, byte_writes *r, int *reached)
 {
     if (!s || r->all) return;
-    if (s->kind == S_FOREACH && s->query == q) {
+    if (s->kind == S_FOREACH && same_param(s->query, q)) {
         const reads_root root = {NULL, s, binding};
         stmt_reads(s->then_stmt, &root, r);
         (*reached)++;

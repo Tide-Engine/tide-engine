@@ -10,7 +10,7 @@ run once per entity, both in the generated C:
   argument holding lists (the receiver too) whenever any `mut` argument held
   a list, whatever its type: `KeepFar(mut FarCrowd crowd, FarSkins skins, ...)`
   copied all of `FarSkins` (four lists, one of 25,905 matrices, 1.7 MB) into
-  the scratch area for each fighter, about 30 µs a call, 337 ms a frame in the
+  the scratch area for each fighter, about 30 Âµs a call, 337 ms a frame in the
   army. Now it copies only when a Set through the world could change it, or a
   `mut` argument or `mut` receiver holds lists and one of the two types can
   hold the other (`value_contains_type` either way, as `indirect_value`
@@ -47,6 +47,18 @@ run once per entity, both in the generated C:
     whole), views that start tasks, and components past 1,024 lanes or 4 KiB.
   - The duel's `DrawFighter` reads 183 of `Fighter`'s 308 bytes (its pose
     helpers read most fields); before the local-field rule it was all 308.
+- **Correction (nightly.62)**: the analysis knew a parameter by its address,
+  and `bind_views` (codegen) adds a `tide_bound<n>` parameter to a view for
+  what its frags and verts read that it doesn't take, after its code was
+  checked. When that grew the view's parameters past their room (eight to
+  nine), they moved, and the code's names still pointed at the copy from
+  before (the arena keeps it): nothing matched, the view seemed to read
+  nothing of its component, and the lanes it read were never copied.
+  bannerlord-duel's campaign `Figures` (eight parameters, frags reading
+  singletons) read `party.doing` and `party.at` as garbage and drew no
+  figures. The analysis now knows a parameter by name and type too
+  (`same_param`; a wrong match can only add reads). `view_reads`' `Figures`
+  is that shape and fails without it.
 - **Tests**: `view_reads` (a component of about twenty lanes: fields, a struct's field, a
   helper handed it whole, a field that jumped alone, `[Snap]`, a component that
   jumped whole, query rows, a `mut` view with local fields read through a

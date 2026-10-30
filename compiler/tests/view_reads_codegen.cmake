@@ -14,7 +14,7 @@ function(body_of start output)
     set(${output} "${body}" PARENT_SCOPE)
 endfunction()
 # Views that read some of Wide gather and blend only that
-foreach(view IN ITEMS ReadSome Marked)
+foreach(view IN ITEMS ReadSome Marked Figures)
     body_of("static void tide_run_view_${view}(" body)
     if(NOT body MATCHES "tide_gather_some_Wide" OR NOT body MATCHES "tide_blend_some_Wide\\(&tide_v0, tide_prev_some_Wide")
         message(FATAL_ERROR "${view} reads a few of Wide's fields, yet copies all of it")

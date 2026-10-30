@@ -38,6 +38,8 @@ TIDE_TEST(view_reads_some_lanes_see_what_a_whole_read_sees)
     TIDE_CHECK(s->hopX == 1000.0f); // Jumped whole: as it is
     TIDE_CHECK(s->localX == 5.0f && s->marks == 1 && s->spotX == 0.5f);
     TIDE_CHECK(local.Counts.kept == 7 && local.Counts.counted == 1); // The list as the call began, not with what it added
+    // Eight parameters and one more for its frag: at (3, 4) then (4, 6) and (5, 8), a quarter of the way
+    TIDE_CHECK(local.Figured.drawn == 1 && local.Figured.moving && local.Figured.atX == 4.25f && local.Figured.atY == 6.5f);
 
     frame(&before, 0.5f);
     TIDE_CHECK(s->x == 6.0f && s->wholeX == 6.0f && s->queryX == 6.0f && s->localX == 6.0f);

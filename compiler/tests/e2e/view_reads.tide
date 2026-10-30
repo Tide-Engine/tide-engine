@@ -10,6 +10,8 @@ struct Pair
     float b;
 }
 
+enum Doing { Idle, Moving, Waiting }
+
 component Wide
 {
     float x;
@@ -27,6 +29,8 @@ component Wide
     float spare5;
     float spare6;
     float spare7;
+    Doing doing = Doing.Moving;
+    float2 at = float2(3, 4);
     local int marks;        // A view's own, beside the match's fields
     local float2 spot;      // ...read through a member of it
 }
@@ -61,7 +65,7 @@ scene Main { }
 event(Spawned) Setup(with Main)
 {
     Spawn(Wide { since = 0.5, radius = 1, spare3 = 9 });
-    Spawn(Wide { x = 500 }, Hops);
+    Spawn(Wide { x = 500, doing = Doing.Waiting }, Hops);
 }
 
 system Move(Time time, mut Wide w)
@@ -73,6 +77,7 @@ system Move(Time time, mut Wide w)
     w.since += 0.25;
     w.radius += 1;
     w.steps += 1;
+    w.at += float2(1, 2);
     if (time.tick == 1)
     {
         w.since = 50;
@@ -180,4 +185,61 @@ view Shelve(mut Shelf shelf, mut Bag bag, mut Counts counts)
     Keep(bag, shelf);
     counts.kept = bag.got[bag.got.count - 1];
     counts.counted = Count(shelf.items, shelf);
+}
+
+// A view of eight parameters whose frag reads a singleton the view doesn't
+// take: the engine hands it over as one more parameter (bind_views), which
+// moved the view's parameters after its code was checked, so its code named
+// them where they had been. Reading an enum and a float2 of Wide through them
+// read lanes that were never copied (the campaign's Figures, nightly.62).
+struct Corner
+{
+    float2 position;
+    Color color = Color.white;
+}
+
+singleton Paint
+{
+    float fade = 0.5;
+}
+
+local singleton Flat
+{
+    List<Corner> corners;
+    List<int> faces;
+}
+
+local singleton Figured
+{
+    bool moving;
+    float atX;
+    float atY;
+    float t;
+    int drawn;
+}
+
+local singleton One { int a; }
+local singleton Two { int a; }
+local singleton Three { int a; }
+local singleton Four { int a; }
+
+frag Tinted(Corner vertex, out Color color, Paint paint)
+{
+    color = vertex.color * paint.fade;
+}
+
+view Figures(Wide w, mut Figured fig, mut Flat flat, Time time, One one, Two two, Three three, Four four)
+{
+    if (flat.faces.count == 0)
+    {
+        flat.corners = [Corner { }, Corner { position = float2(1, 0) }, Corner { position = float2(0, 1) }];
+        flat.faces = [0, 1, 2];
+    }
+    if (w.doing == Doing.Waiting) return;
+    fig.moving = w.doing == Doing.Moving;
+    fig.atX = w.at.x;
+    fig.atY = w.at.y;
+    fig.t = time.t;
+    fig.drawn += 1 + one.a + two.a + three.a + four.a;
+    Draw.Mesh(flat.corners, flat.faces, Tinted);
 }
