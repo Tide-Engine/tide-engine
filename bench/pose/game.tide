@@ -20,6 +20,7 @@ asset Animation idle = "clip.gltf";
 local singleton Bench
 {
     int calls;
+    int mode; // 0 Sampled(), 1 copying 40 bones by index, 2 Model of a bone 33 deep
     float seconds;
     float sum;
 }
@@ -34,12 +35,30 @@ Pose Sampled(Animation clip, float seconds)
 
 view SampleMany(mut Bench bench)
 {
-    var middle = character.skeleton.bones.middle;
+    var bones = character.skeleton.bones;
+    var middle = bones.middle;
+    var rest = character.defaultPose;
+    mut var copy = character.defaultPose;
     mut float sum = 0;
     for (int i = 0; i < bench.calls; i++)
     {
-        var pose = Sampled(idle, bench.seconds + float(i) * 0.001);
-        sum += pose[middle].position.y;
+        if (bench.mode == 0)
+        {
+            var pose = Sampled(idle, bench.seconds + float(i) * 0.001);
+            sum += pose[middle].position.y;
+        }
+        else if (bench.mode == 1)
+        {
+            for (int b = 0; b < 40; b++)
+            {
+                bones.TryGetAt(b + 1, out var bone);
+                copy[bone] = rest[bone];
+            }
+        }
+        else
+        {
+            sum += rest.Model(bones.middle).c3.y;
+        }
     }
-    bench.sum = sum;
+    bench.sum = sum + copy[middle].position.y;
 }

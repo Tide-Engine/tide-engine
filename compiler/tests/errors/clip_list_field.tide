@@ -1,8 +1,7 @@
-// expect: a list or a map can't hold a Clip, including inside a struct
-// expect: but for an asset's: 'asset List<Clip> hits = "sfx/hit_*.wav";'
+// expect: 'Queue' can't hold rendering resources in match state
 asset Clip beep = "../e2e/assets/beep.wav";
 
-local singleton Queue
+singleton Queue
 {
     List<Clip> clips;
 }

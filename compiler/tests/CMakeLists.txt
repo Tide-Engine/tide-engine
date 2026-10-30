@@ -198,12 +198,14 @@ tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a tex
 tide_e2e_test(sprites) # Draw.Sprite: a texture upright over a box in one call, each of its forms
 tide_e2e_test(asset_borrows) # Synchronous helpers borrow resource asset lists/maps without retaining the pack
 tide_e2e_test(asset_borrows_unused) # Collection signatures alone need their C types, without enabling asset loading/audio
+tide_e2e_test(resource_collections)
 tide_e2e_test(clip_values) # Scalar Clip values need their C type without assets or playback.
 tide_e2e_test(audio_listener_only) # Audio.SetListener with nothing to play still has the frame's audio list's C type
 tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Texture and Grid2<Color> assets
 tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/texture assets
 tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
+tide_e2e_test(mesh_values)
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(mesh_bones) # A Mesh with joints and weights: the model at rest, with its skeleton's bones

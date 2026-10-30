@@ -1,3 +1,0 @@
-// expect: a borrowed asset collection is read-only
-void Keep(in List<Clip> values) { Debug.Log(values.count); }
-scene Main { }

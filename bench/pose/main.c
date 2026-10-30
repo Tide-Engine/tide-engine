@@ -1,8 +1,9 @@
 // Sampling a separate animation export into a model's pose: the cost of a call
 // to tide_skinned_sample_into (Pose.Sample), tide_skinned_sample
 // (Animation.Sample) and the game's Sampled() in a view, best of several
-// batches. Each run first checks that kept sample plans (the pack's bytes)
-// give the same bits as plans made for one call (owned copies of the bytes).
+// batches; and a view indexing a pose and asking its Model. Each run first
+// checks that kept sample plans (the pack's bytes) give the same bits as
+// plans made for one call (owned copies of the bytes).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,12 +90,13 @@ static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
 
-// The view's 1000 Sampled() calls, best of `frames` frames.
-static double best_view(const int frames)
+// The view's 1000 calls of a mode, best of `frames` frames.
+static double best_view(const int mode, const int frames)
 {
     double best = 1e30;
     for (int f = 0; f < frames; f++) {
         local.Bench.calls = CALLS;
+        local.Bench.mode = mode;
         local.Bench.seconds = (float)f / 60.0f;
         tide_draw_reset(&draw);
         tide_gui_begin(&gui, &devices, tide_f2(640, 360), NULL);
@@ -142,7 +144,9 @@ int main(const int argc, char **argv)
     printf("Animation.Sample (its own skeleton): %.3f us a call; owned bytes: %.3f us\n",
            best_call(1, model, clip, batches), best_call(1, owned_model, owned_clip, batches));
     tide_scratch_reset(mark);
-    printf("Sampled() in a view, 1000 a frame: %.3f us a call\n", best_view(frames));
+    printf("Sampled() in a view, 1000 a frame: %.3f us a call\n", best_view(0, frames));
+    printf("copy[bone] = rest[bone] for 40 bones by index: %.3f us for the 40\n", best_view(1, frames));
+    printf("rest.Model(bones.middle), 33 deep, its Bone by name: %.3f us a call\n", best_view(2, frames));
     tide_draw_free(&draw);
     tide_local_free(&local);
     tide_world_free(&world);

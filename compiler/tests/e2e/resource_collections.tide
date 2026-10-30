@@ -1,0 +1,53 @@
+asset Clip hit = "assets/beep.wav";
+asset Texture image = "assets/run/1.png";
+scene Main;
+struct Layer { Clip clip; string name; List<Texture> images; }
+local singleton Saved
+{
+    List<Clip> clips;
+    Clip[2] pair;
+    List<Layer> layers;
+    Map<int, Clip> sounds;
+    List<Sound> voices;
+    Sound[2] fixedVoices;
+    Map<string, Sound> namedVoices;
+    List<Texture> images;
+    List<List<Texture>> nestedImages;
+    Map<int, Texture> mappedImages;
+    List<List<Sound>> nestedVoices;
+    List<Sound[2]> voiceArrays;
+    Texture[2] pictures;
+    List<RenderTarget> targets;
+    List<DepthTexture> depths;
+    List<Cubemap> cubes;
+    int checks;
+}
+List<Clip> Copy(List<Clip> clips) { return clips; }
+void Add(mut List<Clip> clips) { clips.Add(hit); }
+view Exercise(mut Saved saved)
+{
+    saved.clips = Copy([hit]);
+    Add(saved.clips);
+    saved.pair = [saved.clips[0], saved.clips[1]];
+    saved.layers = [Layer { clip = hit, name = "hit", images = [image] }];
+    saved.sounds[7] = hit;
+    saved.images = [image];
+    saved.pictures = [image, image];
+    saved.nestedImages = [[image]];
+    saved.mappedImages[3] = image;
+    saved.nestedVoices = [[Sound { clip = hit, playing = true }]];
+    saved.voiceArrays = [[Sound { clip = hit, playing = true }, default]];
+    saved.voices = [Sound { clip = hit, playing = true }];
+    saved.fixedVoices = [Sound { clip = hit, playing = true }, default];
+    saved.namedVoices["hit"] = Sound { clip = hit, playing = true };
+    saved.targets = [default];
+    saved.depths = [default];
+    saved.cubes = [default];
+    var copy = saved.layers;
+    saved.layers.Clear();
+    Debug.Assert(copy[0].name == "hit");
+    Debug.Assert(copy[0].images[0].size.x == image.size.x);
+    _ = saved.sounds[7];
+    _ = saved.clips[99];
+    saved.checks++;
+}

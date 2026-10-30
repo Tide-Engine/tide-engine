@@ -56,6 +56,91 @@ static void close_model(model_seen *m)
     tide_list_unflatten(m->list, m->bytes, 1u, false, m->copied);
 }
 
+// A model's bytes that can't change while its key stays the same: a block
+// within the pack file's bytes (with the pack's generation), or an owned
+// asset copy, named by the SHA-256 of what's in it.
+typedef struct model_key {
+    uint32_t kind, at;
+    uint64_t generation;
+    uint8_t id[32];
+} model_key;
+
+enum { KEY_NONE, KEY_PACK, KEY_ASSET };
+
+// The key a model's bytes would have, without opening them: a pack block's
+// still needs checking to lie within the file's bytes (key_of).
+static bool quick_key(const tide_list data, model_key *out)
+{
+    memset(out, 0, sizeof *out);
+    if (tide_pack_holds(data.at)) {
+        // Generated code never writes the pack, and the runtime's writes
+        // (loads, geometry defaults) change its generation.
+        out->kind = KEY_PACK;
+        out->at = data.at;
+        out->generation = tide_pack_generation();
+        return true;
+    }
+    const tide_asset_data *asset = tide_asset_list(data);
+    if (!asset) return false;
+    out->kind = KEY_ASSET;
+    memcpy(out->id, asset->id, sizeof out->id);
+    return true;
+}
+
+static bool key_of(const tide_list data, const model_seen *m, model_key *out)
+{
+    // Blocks laid out past the file's bytes are left out.
+    return quick_key(data, out)
+        && (out->kind != KEY_PACK || tide_pack_file_span(data.at & 0x3FFFFFFFu, (uint64_t)sizeof(tide_block) + m->view.size));
+}
+
+// What a model's header says, kept on each thread for bytes with a key:
+// indexing a Pose and its Model check the model on every use.
+typedef struct model_facts {
+    model_key key;
+    uint32_t nodes, size, node_at;
+    int32_t valid; // nodes_valid: 0 until asked, then 1 or -1
+    uint64_t fingerprint;
+    uint8_t skeleton_hash[32];
+} model_facts;
+
+enum { MODEL_FACTS = 16 };
+static TIDE_THREAD_LOCAL model_facts facts_seen[MODEL_FACTS];
+
+static uint64_t fingerprint_of(const tide_skinned_data_view *v)
+{
+    const uint64_t hash = tide_hash(v->skeleton_hash, sizeof v->skeleton_hash);
+    return hash ? hash : 1u;
+}
+
+// NULL when the bytes have no key or don't open: callers then look at them
+// as they would without this.
+static TIDE_THREAD_LOCAL model_facts *facts_last; // The last one found, checked first
+
+static model_facts *known_model(const tide_list data)
+{
+    model_facts *last = facts_last;
+    if (last && last->key.kind == KEY_PACK && last->key.at == data.at && tide_pack_holds(data.at)
+        && last->key.generation == tide_pack_generation()) return last;
+    model_key key;
+    if (!quick_key(data, &key)) return NULL;
+    uint32_t word;
+    memcpy(&word, key.kind == KEY_PACK ? (const void *)&key.at : (const void *)key.id, sizeof word);
+    model_facts *f = &facts_seen[(word * 2654435761u) >> 28];
+    if (f->key.kind && memcmp(&f->key, &key, sizeof key) == 0) return facts_last = f;
+    model_seen m;
+    if (!open_model(data, &m)) return NULL;
+    const bool kept = key_of(data, &m, &key);
+    if (kept) {
+        *f = (model_facts){.key = key, .nodes = m.view.nodes, .size = m.view.size, .node_at = m.view.node_at,
+                           .fingerprint = fingerprint_of(&m.view)};
+        memcpy(f->skeleton_hash, m.view.skeleton_hash, sizeof f->skeleton_hash);
+    }
+    close_model(&m);
+    if (kept) facts_last = f;
+    return kept ? f : NULL;
+}
+
 typedef struct skeleton_identity {
     uint32_t nodes;
     uint8_t hash[32];
@@ -178,22 +263,35 @@ bool tide_skinned_valid(const tide_list data)
 
 uint64_t tide_skinned_fingerprint(const tide_list data)
 {
+    const model_facts *f = known_model(data);
+    if (f) return f->fingerprint;
     model_seen m;
     if (!open_model(data, &m)) return 0;
-    const uint64_t hash = tide_hash(m.view.skeleton_hash, sizeof m.view.skeleton_hash);
+    const uint64_t hash = fingerprint_of(&m.view);
     close_model(&m);
-    return hash ? hash : 1u;
+    return hash;
 }
 
 bool tide_skinned_compatible(const tide_list a, const tide_list b)
 {
     skeleton_identity first, second;
+    const model_facts *fa = known_model(a);
+    if (fa) {
+        // Looking up b can replace the same bounded cache slot. Preserve a's
+        // identity before the second lookup, rather than comparing b to itself.
+        first.nodes = fa->nodes;
+        memcpy(first.hash, fa->skeleton_hash, sizeof first.hash);
+        const model_facts *fb = known_model(b);
+        if (fb) return first.nodes == fb->nodes && memcmp(first.hash, fb->skeleton_hash, sizeof first.hash) == 0;
+    }
     return read_identity(a, &first) && read_identity(b, &second) && first.nodes == second.nodes
         && memcmp(first.hash, second.hash, sizeof first.hash) == 0;
 }
 
 int32_t tide_skinned_bone_count(const tide_list data)
 {
+    const model_facts *f = known_model(data);
+    if (f) return (int32_t)f->nodes;
     model_seen m;
     if (!open_model(data, &m)) return 0;
     const int32_t count = (int32_t)m.view.nodes;
@@ -212,9 +310,37 @@ int32_t tide_skinned_animation_count(const tide_list data)
 
 enum { NAMED_BONE, NAMED_ANIMATION, NAMED_SHAPE };
 
+// Names found, kept on each thread for models with a key: a rig's members
+// (`bones.head`) are looked up by name each time they're read. A name is
+// matched by its bytes, so a slot another name took only misses.
+typedef struct name_seen {
+    model_key key;
+    int32_t kind, found;
+    uint32_t length;
+    char name[40];
+} name_seen;
+
+enum { NAMES_SEEN = 64 };
+static TIDE_THREAD_LOCAL name_seen names_seen[NAMES_SEEN];
+
+static int32_t search_name(const tide_list data, const tide_str name, const int kind);
+
 static int32_t find_name(const tide_list data, const tide_str name, const int kind)
 {
     if (!name.ptr || name.bytes <= 0) return -1;
+    const model_facts *f = (size_t)name.bytes <= sizeof names_seen[0].name ? known_model(data) : NULL;
+    if (!f) return search_name(data, name, kind);
+    name_seen *seen = &names_seen[(tide_hash(name.ptr, (size_t)name.bytes) ^ (uint64_t)kind) & (NAMES_SEEN - 1u)];
+    if (seen->kind == kind && seen->length == (uint32_t)name.bytes && memcmp(&seen->key, &f->key, sizeof f->key) == 0
+        && memcmp(seen->name, name.ptr, (size_t)name.bytes) == 0) return seen->found;
+    const int32_t found = search_name(data, name, kind);
+    *seen = (name_seen){.key = f->key, .kind = kind, .found = found, .length = (uint32_t)name.bytes};
+    memcpy(seen->name, name.ptr, (size_t)name.bytes);
+    return found;
+}
+
+static int32_t search_name(const tide_list data, const tide_str name, const int kind)
+{
     model_seen m;
     if (!open_model(data, &m)) return -1;
     int32_t found = -1;
@@ -892,16 +1018,6 @@ typedef struct plan_fold {
     tide_bone_transform rest;
 } plan_fold;
 
-// A model's bytes that can't change while its key stays the same: a block
-// within the pack file's bytes (with the pack's generation), or an owned
-// asset copy, named by the SHA-256 of what's in it.
-typedef struct model_key {
-    uint32_t kind, at;
-    uint64_t generation;
-    uint8_t id[32];
-} model_key;
-
-enum { KEY_NONE, KEY_PACK, KEY_ASSET };
 enum { PLAN_OWN = 1, PLAN_INTO };
 
 typedef struct plan_key {
@@ -922,26 +1038,6 @@ typedef struct sample_plan {
     plan_channel *channel;
     plan_fold *fold;
 } sample_plan;
-
-static bool key_of(const tide_list data, const model_seen *m, model_key *out)
-{
-    memset(out, 0, sizeof *out);
-    if (tide_pack_holds(data.at)) {
-        // Generated code never writes the pack, and the runtime's writes
-        // (loads, geometry defaults) change its generation. Blocks laid out
-        // past the file's bytes are left out.
-        if (!tide_pack_file_span(data.at & 0x3FFFFFFFu, (uint64_t)sizeof(tide_block) + m->view.size)) return false;
-        out->kind = KEY_PACK;
-        out->at = data.at;
-        out->generation = tide_pack_generation();
-        return true;
-    }
-    const tide_asset_data *asset = tide_asset_list(data);
-    if (!asset) return false;
-    out->kind = KEY_ASSET;
-    memcpy(out->id, asset->id, sizeof out->id);
-    return true;
-}
 
 // tide_skinned_sample's checks, then its channels onto the model's own nodes.
 static bool plan_own(const tide_list data, const tide_skinned_data_view *v, const int32_t animation, sample_plan *p)
@@ -1621,15 +1717,61 @@ static tide_float4x4 *global_matrices(const tide_skinned_data_view *v, const tid
     return global;
 }
 
+// A bone's model matrix: its ancestors' locals multiplied from the root down,
+// as global_matrices does for every node (each depends only on its
+// ancestors). The model's nodes are valid; false for a pose of another count.
+static bool chain_model(const tide_skinned_data_view *v, const tide_list transforms, const uint32_t bone, tide_float4x4 *out)
+{
+    if (tide_list_count(transforms) != (int32_t)v->nodes) return false;
+    uint32_t few[64], depth = 0;
+    uint32_t *chain = few;
+    for (uint32_t i = bone;; i = draw_word(v->data + v->node_at + (size_t)i * TIDE_SKINNED_NODE_SIZE)) {
+        if (depth == 64u && chain == few) {
+            chain = tide_scratch_memory((size_t)v->nodes * sizeof *chain);
+            memcpy(chain, few, sizeof few);
+        }
+        chain[depth++] = i;
+        if (i == 0u) break;
+    }
+    tide_list_cache cache = {0};
+    tide_float4x4 global = tide_identity_f4x4();
+    for (uint32_t k = depth; k-- > 0;) {
+        const tide_bone_transform *local = tide_list_cached_at(&cache, transforms, (int32_t)chain[k], sizeof *local);
+        if (!local) return false;
+        const tide_float4x4 matrix = tide_trs_f4x4(local->position, local->rotation, local->scale);
+        global = k == depth - 1u ? matrix : tide_mul_f4x4(global, matrix);
+    }
+    *out = global;
+    return true;
+}
+
 tide_float4x4 tide_skinned_model(const tide_list data, const tide_list transforms, const int32_t bone)
 {
     tide_float4x4 out = tide_identity_f4x4();
-    model_seen m;
-    if (bone < 0 || !open_model(data, &m)) return out;
+    if (bone < 0) return out;
+    model_facts *f = known_model(data);
     const uint32_t mark = tide_scratch_mark();
+    if (f && f->key.kind == KEY_PACK) {
+        // Known bytes in the pack: no need to open them again.
+        if (!f->valid) {
+            model_seen m;
+            if (!open_model(data, &m)) return out;
+            f->valid = nodes_valid(&m.view) ? 1 : -1;
+            close_model(&m);
+        }
+        const tide_skinned_data_view v = {.data = tide_pack_span((data.at & 0x3FFFFFFFu) + (uint32_t)sizeof(tide_block), f->size),
+                                          .size = f->size, .nodes = f->nodes, .node_at = f->node_at};
+        tide_float4x4 global;
+        if (v.data && (uint32_t)bone < v.nodes && f->valid > 0 && chain_model(&v, transforms, (uint32_t)bone, &global)) out = global;
+        tide_scratch_reset(mark);
+        return out;
+    }
+    model_seen m;
+    if (!open_model(data, &m)) return out;
     if ((uint32_t)bone < m.view.nodes) {
-        const tide_float4x4 *global = global_matrices(&m.view, transforms, false, NULL);
-        if (global) out = global[bone];
+        if (f && !f->valid) f->valid = nodes_valid(&m.view) ? 1 : -1;
+        tide_float4x4 global;
+        if ((f ? f->valid > 0 : nodes_valid(&m.view)) && chain_model(&m.view, transforms, (uint32_t)bone, &global)) out = global;
     }
     tide_scratch_reset(mark);
     close_model(&m);

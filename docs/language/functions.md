@@ -134,7 +134,7 @@ Functions work from their parameters, constants and the functions they call; met
 
 A helper can `Set<T>` beside either a read-only or mutable component parameter. A read-only parameter keeps its captured value; setting the current entity replaces its active `mut T` parameter immediately. This follows through synchronous helper chains, including when the mutable parameter is passed by reference to another helper. Ordinary value parameters and explicit copies keep their own values. Later world reads see the Set immediately, while subsequent edits to the mutable parameter retain normal write-back timing.
 
-Resource asset collections can be borrowed by synchronous CPU functions and methods with ordinary read-only parameters: `List<Clip>`, `List<Texture>`, `List<Mesh<V>>`, and their `Map<string, T>` equivalents.
+Clip and texture collections are ordinary local values. Functions can read them, return copies, and change caller variables through `mut` or `out`, as with other lists and maps.
 
 ```csharp
 asset List<Clip> hits = "sfx/hit_*.wav";
@@ -147,7 +147,7 @@ Clip Pick(List<Clip> clips, int index)
 view HitSound() { Audio.Play(Pick(hits, 0)); }
 ```
 
-Pass the asset directly, or forward a borrowed parameter through further helpers. Count, indexing, `foreach` and read-only collection methods work as usual; passing copies no collection. Elements keep their ordinary value rules, so a helper can return a selected clip, texture or mesh. The collection borrow itself cannot be stored, returned, optional, mutated or retained by an async declaration, and has no default. Externs, operators, audio declarations and GPU code take no such borrow. Texture and clip collections remain local code's; mesh geometry retains its existing match-read rules.
+Mesh collections (`List<Mesh<V>>`, `Mesh<V>[N]`, and map values) contain stable IDs and use the same parameter, return, mutation and task-storage rules as ordinary values. A read-only call can borrow the collection storage; copying it copies IDs or shares immutable ID storage until a write. Geometry is resolved from the current pack only when read.
 
 Large read-only values can use borrowed storage in generated CPU helpers when the compiler proves it safe, avoiding repeated stack copies. They retain value semantics: overlapping mutable arguments, later argument effects and C calls still preserve the captured value. This needs no annotation or reference syntax.
 

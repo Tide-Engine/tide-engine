@@ -58,7 +58,7 @@ bool type_is_numeric(type t);
 // byte, int or long.
 bool type_is_integer(type t);
 
-// An immutable asset glob's resource references, borrowed by synchronous helpers.
+// A raw imported mesh collection; ordinary Mesh values use checked reference structs.
 bool type_is_asset_collection(type t);
 
 // The model value a checked Asset<T> resolves, without acquiring ownership.

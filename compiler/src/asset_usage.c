@@ -373,7 +373,10 @@ static void declaration(asset_usage *w, const decl *d)
     if (w->server && d->asset_ref_of) {
         for (int i = 0; i < w->prog->assets.count; i++) {
             const decl *asset = w->prog->assets.items[i];
-            if (type_asset_reference_accepts(d, asset->return_type)) use_asset(w, asset);
+            type value = asset->return_type;
+            if (value.kind == TY_LIST || value.kind == TY_MAP)
+                value = value.decl->fields.items[value.kind == TY_MAP ? 1 : 0].type;
+            if (type_asset_reference_accepts(d, value)) use_asset(w, asset);
         }
     }
     value_type(w, d->return_type);

@@ -65,6 +65,101 @@ Final review also corrected relative URL profile references to ignore slashes
 inside query/fragment text when selecting the profile URL's parent; the focused
 cache/import fixture exercises parent-relative and root-relative model URLs.
 
+## Static mesh values keep stable IDs (2026-10-30)
+
+Owner-approved follow-up: ordinary Mesh<V> lists/arrays should use the existing
+asset-ID machinery internally, sharing large geometry and borrowing it on access.
+This supersedes the Mesh collection/field/async restrictions recorded below.
+
+Non-import Mesh<V> types and expressions canonicalize to the existing checked
+Asset<Mesh<V>> struct (one hidden long). Explicit Asset spelling denotes the
+same type; Value is identity for static meshes. vertices/indices resolve the ID
+through the generated typed resolver, and Draw's existing two-list expansion
+uses that path. Match/local fields, lists, arrays, maps, nested structs and task
+state use ordinary ownership, padding, snapshots, hashes and codecs. Geometry
+members remain immutable. Skinned Value semantics and worker restrictions stay
+as before. A generated equality helper avoids C self-comparison warnings when
+comparing a handle with its Value.
+
+Imported declarations retain raw TY_MESH/tide_mesh_lists for pack building and
+loading. Glob imports add private generic list/map metadata entries named by a
+SHA-256 lookup of qualified-name + #mesh-values. Values are 64-bit IDs; geometry
+blocks remain shared and unchanged. Singular IDs keep the existing positive
+63-bit qualified-name FNV identity. Glob IDs additionally hash a zero separator
+and the authored file key. All static/skinned singular and static glob IDs are
+sorted and checked for collisions before code generation.
+
+Each load clears compiler-private geometry caches and binds actual pack rows
+by their metadata IDs. Compiled ID switches resolve those cached two-list
+handles. Reordering the glob/pack rows therefore cannot change a retained
+selection. Unknown/removed IDs read empty geometry. Metadata map records use
+the ordinary generated handle-map layout (24-byte rows, ID at offset 16); raw
+mesh map records retain their original value at offset 12. Builder allocation
+is reused with compile-time size checks and byte copies. No runtime function,
+raw mesh pack kind, geometry format or engine ABI changed. Server asset pruning
+retains matching glob domains as well as singular assets for received IDs.
+
+mesh_values pins eight-byte scalar IDs and sixteen-byte pairs, ordinary Mesh
+annotations/aliases, nested lists/arrays/structs, maps, mutable/return helpers,
+copy independence, snapshot/pack equality, task waits, unknown IDs, and a
+replacement pack whose raw mesh rows and ID metadata are reversed. Existing
+asset_meshes, LOD, mesh_bones, alias_assets, asset_references, no-asset signatures,
+skinned references and asset-usage checks retain their drawing/import/reload
+coverage. Old refusal fixtures are removed or updated to the handle diagnostics.
+
+Validation: ten affected E2E programs pass on Windows ASan and WASI, plus the
+native asset-usage target. The 2,117-case diagnostic sweep had six old expectations;
+two obsolete errors were removed and the other four corrected cases pass (2,115
+remaining cases). The 264-case LSP sweep had two stale resource-collection
+expectations from the preceding completion; both corrected cases pass, along
+with mesh/reference/alias checks after direct-member/type-tree updates. The
+production docs build passes on Node 24.22.1. GPU backends and other native
+platforms remain CI coverage.
+
+
+## Resource values in collections (2026-10-30)
+
+Owner-requested completion after a sound-layer implementation worked around
+Clips being refused in lists. Lists, arrays and map values now accept Clip,
+Texture, DepthTexture, Cubemap, RenderTarget, Sound and structs holding them,
+including nested containers. Existing ownership helpers already copy these
+values and any text/lists alongside them. Clip/texture collections use normal
+helper parameters, returns and mutation rather than the old asset-only borrow.
+Only Mesh collections retain the unique borrowed-pack contract. Grids, ECS
+declarations, borrowed contexts and direct optional/result elements retain
+their existing restrictions; this is not support for every type expression.
+
+The recursive local-only checks remain. Resource collection helper signatures
+retain the transitive CPU-only marker, so GPU helpers cannot gain dynamic
+resource collection access. New resource_collection_gpu pins that boundary;
+asset_borrow_gpu continues to pin the Mesh borrow boundary.
+
+Generated resource rebinding visits arrays and live list/map elements, prepares
+packed wrappers before mutation, and selects the local heap explicitly. Sound
+collection traversals are read-only; voice identity extends the existing field
+path/entity identity by list/array positions or map insertion order. No runtime
+entry point or representation changed.
+
+resource_collections executes owned Clip parameters/returns/mutation, nested
+resource/text copies, Clip arrays and integer-keyed maps, five distinct voices
+across lists/arrays/maps/nested lists/arrays in lists, pack reload, local saved
+state restoration and pointer clearing during resource rebinding. clip_values
+now also covers list/array/struct storage without assets or audio playback.
+Old refusal fixtures now enforce local-only state or the retained Mesh borrow.
+
+Validation: 101 focused Windows ASan CTests (97 diagnostic cases and four E2E
+programs), six dependent native checks including asset usage, all nine matching
+WASI E2E programs, and the production docs build pass on Node 24.22.1. The final
+CPU-only diagnostic addition passes both the resource and Mesh boundary cases. GPU rendering and other
+native platforms were not run; these changes introduce no shader operations.
+
+Merged current dev retargeting work; the only conflict was this notes preamble,
+resolved by retaining both entries. The four resource/container E2E programs
+and incoming retargeting fixture rebuild and pass on native ASan and WASI.
+Three GPU boundary diagnostics pass, including a helper constructing its own
+Clip list. Existing Mesh/grid restrictions describe current missing lifetime
+mechanisms, not a permanent language decision against borrowed collections.
+
 ## Standalone humanoid pose retargeting (2026-10-30)
 
 Owner-approved automatic-plus-manual runtime retargeting is independent of
@@ -2772,9 +2867,9 @@ are recorded with the networking/editor changes after validation completes.
 Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
 fixture plus 10,000 visible PublicState rows with empty owned fields produced
 1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
-2.12Ã¢â‚¬â€œ2.92 ms per recipient canonical hash after changing every added row's integer
-column; unchanged worlds measured 2.22Ã¢â‚¬â€œ3.54 ms. Full-world hashes measured
-4.19Ã¢â‚¬â€œ9.76 us with that column dirty and 2.57Ã¢â‚¬â€œ11.11 us unchanged. These operations
+2.12ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“3.54 ms. Full-world hashes measured
+4.19ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“9.76 us with that column dirty and 2.57ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“11.11 us unchanged. These operations
 do different work: full-world hashing reuses cached page hashes and only rehashes
 the changed integer-column pages, whereas recipient hashing currently traverses
 and serializes every permitted logical value and allocates the temporary byte
@@ -3594,7 +3689,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Provisional, awaiting the owner (`docs/spec.md`, Text): everything but that there's a `char` and that `text[i]` gives one. The ones most worth a look: a char converting to an int by itself and operators giving ints; `'\0'` as no character, which text shows as nothing; an index before the start reading `'\0'` where `Substring` clamps; `char(n)` of a number no character has being `'\0'`; the three escapes text's literals don't have.
 - A game can have several `settings` blocks, in any of its files, and they're one list of what it sets (the owner, 2026-10-08: a second block used to be an error by itself, which was redundant, as what clashes is two that set the same thing; `docs/spec.md`, Settings). A setting is set once among them all: a second one is the error a setting set twice in a block always was, at the second place, with a note that says where the other one is (`set_before`, `check_settings` in `compiler/src/check.c`). The blocks are in the order their files compile, and every one's settings count. That the same value twice is still an error is Claude's pick, Provisional in the spec. A package's files still have none. Editors' completion in a block leaves out what any of the game's blocks sets (`complete_settings` in `compiler/lsp/analysis.c`). Nothing in codegen changed. Tests: `compiler/tests/e2e/settings` (three blocks in two files), `compiler/tests/errors/settings_set_twice_blocks` and `settings_set_twice_files`, `lsp_settings`.
 - A plain name means what's nearest, as in C# (agreed 2026-10-05; `docs/spec.md`, Namespaces): the file's namespace, then the namespaces around it out to the global one, then the `using` namespaces, where two that both have the name are ambiguous (`lookup` in `compiler/src/check.c`). So what a game declares itself wins over what a namespace it imports has by that name. It was the other way round, `using` before the global namespace, until a game with a `Body` of its own said `using Box2D;` and got the package's, with no error. `compiler/tests/e2e/using_own` checks it, a file in a namespace of the game's own included; no other game in the repo generates other C for it (old and new tidec over every source list).
-- **Inside a namespace its own names win; a package doesn't see the game's globals** (2026-10-30, from the Bannerlord duel). First a campaign's global `void Side(...)` made `Side(i)` in the combat package's `namespace Combat`, its own enum's conversion, a call of the game's function (`'Side' takes 7 arguments, not 1`): `lookup` looked for one kind at a time out to the global namespace, and a call tries a function before a type. The first fix (nightly.62) stopped the walk at any namespace with a declaration of the name that couldn't share it with the kind asked for, the global one included, which broke the duel three other ways: the game's global `void Box(...)` hid Box3D's component `Box` (through `using`) from Combat's `Spawn(..., Box { ... })`; the game's `command(...) Shake(...)` handler hid Combat's function `Shake` from the game's own call; and its global `Color Lit(...)` hid Combat's frag `Lit` from `Draw.SkinnedMesh(..., Lit, ...)` (the frag lookup came back empty and the name was read as the function, `Callable…`). What's built now, in `lookup` (`compiler/src/check.c`): in a namespace other than the global one, a declaration of the name in the *role* asked for (`same_role`: types with prefabs, scenes and aliases; systems; values, which are functions, constants, assets and frags/verts; and for a function's lookup, an enum, since a call is a conversion too) hides the name further out (`hides_kind`); the global namespace has a name only of the kind asked for, as before; and code in a package's file (`source.package`) looks in its `using` namespaces before the game's global declarations (`games_own`: not built in, not a prelude's `<tide>/` file, from a file of no package; packages declare nothing global, and an override in place counts as its package's through `decl_home`). Skipping the game's globals altogether in package code broke render3d: a game's function handed to its frag as a `Func` (`material.coverage = SkinningCoverage`) is looked up by name in the frag's own code, and the preludes' declarations (`WebResponse`) carry no `builtin`. The callers that try kinds in turn (a call: function, then type; a name: constant, asset, function, shader) find the nearer one. A global declaration can't be named from code in a namespace that hides it (there's no `global::`). The tide-editor's startup check follows the type role (`startup_name_visible`, `notes/editors.md`). `compiler/tests/e2e/package_own`: packages Shapes (component `Box`) and Combat (enum `Side`, function `Shake`, frag `Lit`, `using Shapes;`, spawning a `Box`), Shapes also has a component `Wheel` that Combat spawns, which nightly.59 got wrong too; a game with global functions `Side`, `Box` and `Lit`, a component `Wheel` and a command handler `Shake` that calls and draws Combat's; nightly.62's tidec gives the duel's three errors on it. The duel's campaign before it renamed round .62 (bannerlord-duel 1990651) builds with no error.
+- **Inside a namespace its own names win; a package doesn't see the game's globals** (2026-10-30, from the Bannerlord duel). First a campaign's global `void Side(...)` made `Side(i)` in the combat package's `namespace Combat`, its own enum's conversion, a call of the game's function (`'Side' takes 7 arguments, not 1`): `lookup` looked for one kind at a time out to the global namespace, and a call tries a function before a type. The first fix (nightly.62) stopped the walk at any namespace with a declaration of the name that couldn't share it with the kind asked for, the global one included, which broke the duel three other ways: the game's global `void Box(...)` hid Box3D's component `Box` (through `using`) from Combat's `Spawn(..., Box { ... })`; the game's `command(...) Shake(...)` handler hid Combat's function `Shake` from the game's own call; and its global `Color Lit(...)` hid Combat's frag `Lit` from `Draw.SkinnedMesh(..., Lit, ...)` (the frag lookup came back empty and the name was read as the function, `Callableâ€¦`). What's built now, in `lookup` (`compiler/src/check.c`): in a namespace other than the global one, a declaration of the name in the *role* asked for (`same_role`: types with prefabs, scenes and aliases; systems; values, which are functions, constants, assets and frags/verts; and for a function's lookup, an enum, since a call is a conversion too) hides the name further out (`hides_kind`); the global namespace has a name only of the kind asked for, as before; and code in a package's file (`source.package`) looks in its `using` namespaces before the game's global declarations (`games_own`: not built in, not a prelude's `<tide>/` file, from a file of no package; packages declare nothing global, and an override in place counts as its package's through `decl_home`). Skipping the game's globals altogether in package code broke render3d: a game's function handed to its frag as a `Func` (`material.coverage = SkinningCoverage`) is looked up by name in the frag's own code, and the preludes' declarations (`WebResponse`) carry no `builtin`. The callers that try kinds in turn (a call: function, then type; a name: constant, asset, function, shader) find the nearer one. A global declaration can't be named from code in a namespace that hides it (there's no `global::`). The tide-editor's startup check follows the type role (`startup_name_visible`, `notes/editors.md`). `compiler/tests/e2e/package_own`: packages Shapes (component `Box`) and Combat (enum `Side`, function `Shake`, frag `Lit`, `using Shapes;`, spawning a `Box`), Shapes also has a component `Wheel` that Combat spawns, which nightly.59 got wrong too; a game with global functions `Side`, `Box` and `Lit`, a component `Wheel` and a command handler `Shake` that calls and draws Combat's; nightly.62's tidec gives the duel's three errors on it. The duel's campaign before it renamed round .62 (bannerlord-duel 1990651) builds with no error.
 - A namespace can be a block, `namespace Combat { ... }`, for some of a file's declarations (the owner, 2026-10-07: "we should probably allow scoped namespaces, including on the same file... handy to separate concerns", then "yes build it"; `docs/spec.md`, Namespaces, where the rules beyond that are Provisional). A file can have several, the same one twice, and one inside another, whose name is inside the namespace it's written in (a file's `namespace Game;` too). What's built, and what code relies on:
   - **A block is a `unit` of its own** (`compiler/src/ast.h`), which is what kept the change small: declarations get their namespace from their unit and their code reads names through it (`decl.unit`, `decl_home`, `lookup` in `check.c`), so the checker's name index, generated C's names, the schedule's names and overrides have no rule for blocks. A block's unit has its file's `src`, a copy of its file's `usings` (complete by then: `using` comes before any declaration, and a block counts as one), `outer` (the file's unit or the block it's in), `ns` (the whole namespace), `ns_written` (the name as written at `ns_at`), and where its word and braces are (`block_at`, `open_at`, `close_at`).
   - **`program.units` has files and blocks**, a file's before its blocks', a block before those inside it. What goes through it for the namespaces there are needs nothing (`is_namespace`, the editors' completion and rename). What means a file skips a unit with `outer`: `check_units` for the `using` lines, which a block only shares. The first unit whose `src` is a file's is that file's (`doc_unit` in `compiler/lsp/analysis.c`). Nothing compares `decl.unit` to tell whether two declarations are in one file: compare `unit->src`.

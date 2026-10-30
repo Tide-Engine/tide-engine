@@ -24,9 +24,11 @@ identity. No existing runtime signature or canonical format is changed.
 Sampling, compression, named resource limits, approximation boundaries,
 profile/cache integration and tests are recorded in assets-and-files.md,
 Profile assets and retargeted animation baking. The seven focused C fixtures
-pass native ASan, including immutable caller/snapshot state, complete truncated
-source coverage and scale rejection. Web and compiler integration validation
-are pending the root's final run at this checkpoint.
+pass native ASan and WASM as part of the 25/25 combined retarget filter,
+including immutable caller/snapshot state, complete truncated source coverage
+and scale rejection. Private native/WASM comparisons agree over all 1,181 bake
+samples and every node. Final compiler/build/editor integration coverage is
+recorded in notes/tide-programs.md.
 
 ## Humanoid retargeting boundary (2026-10-30)
 
@@ -115,15 +117,27 @@ forged specialization metadata. All 25 tests in the combined retarget filter
 fixtures) pass native ASan and WASM with the new pinned bits. Release timings and
 old/new geometric error measurements are recorded in assets-and-files.md.
 
-## Kept sample plans (2026-10-30)
+## Kept sample plans and model facts (2026-10-30)
 
 `tide_skinned_sample` and `tide_skinned_sample_into` keep what they decide
 from a model's bytes (validity, binding, output nodes) in sample plans,
 private to `engine/src/skinned.c`. `tide/pack.h` gains
 `tide_pack_generation()`, which the runtime reads and generated code doesn't
-call; it changes on every pack load, unload and `tide_pack_mesh_updated`. No
+call; it changes on every pack load, unload and `tide_pack_mesh_updated`.
+The same day, keyed models' facts and looked-up names are kept per thread
+for Pose indexing and Model, and Model multiplies only a bone's ancestors. No
 generated call, signature, layout, pose bit or world byte changes. Contracts
-and tests: assets-and-files.md, Kept sample plans.
+and tests: assets-and-files.md, Kept sample plans and model facts.
+
+Merge review found a same-slot lifetime bug in the new compatibility fast path:
+looking up the second model can replace the first model's cache slot, making
+two different skeletons compare equal. `tide_skinned_compatible` now copies
+the first node count and skeleton hash before the second lookup. This preserves
+the identity checks used by Pose blending and HumanoidRig reference-pose edits;
+it changes no ABI or arithmetic. The regression
+`skinned_known_model_compatibility_survives_cache_collisions` packs 33 distinct
+identities against the 16-slot cache and checks every packed, asset-held, mixed
+and owned pairing, including equal identities held through different handles.
 
 ## GUI looks boundary (2026-10-29)
 

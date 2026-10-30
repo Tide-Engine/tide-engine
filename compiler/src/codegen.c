@@ -749,6 +749,63 @@ static uint64_t asset_reference_id(const decl *d)
     return id ? id : 1;
 }
 
+typedef struct mesh_reference_pack_entry {
+    int64_t order;
+    uint32_t key, padding;
+    int64_t id;
+} mesh_reference_pack_entry;
+
+typedef struct mesh_geometry_pack_entry {
+    int64_t order;
+    uint32_t key;
+    tide_mesh_lists value;
+} mesh_geometry_pack_entry;
+
+_Static_assert(sizeof(mesh_reference_pack_entry) == sizeof(mesh_geometry_pack_entry), "mesh metadata reuses map allocation");
+
+typedef struct mesh_identity { uint64_t id; const decl *asset; } mesh_identity;
+static int mesh_identity_compare(const void *a, const void *b)
+{
+    const uint64_t x = ((const mesh_identity *)a)->id, y = ((const mesh_identity *)b)->id;
+    return x < y ? -1 : x > y;
+}
+
+static uint64_t mesh_item_id(const decl *asset, const int item)
+{
+    uint64_t id = UINT64_C(14695981039346656037);
+    for (int i = 0; i < asset->qualified.len; i++) id = (id ^ (uint8_t)asset->qualified.ptr[i]) * UINT64_C(1099511628211);
+    id = (id ^ 0u) * UINT64_C(1099511628211);
+    const char *key = asset->asset->items[item].key;
+    for (; *key; key++) id = (id ^ (uint8_t)*key) * UINT64_C(1099511628211);
+    id &= INT64_MAX;
+    return id ? id : 1;
+}
+
+static bool mesh_collection(const decl *asset)
+{
+    const type t = asset->return_type;
+    return (t.kind == TY_LIST || t.kind == TY_MAP)
+        && t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type.kind == TY_MESH;
+}
+
+static const char *mesh_refs_name(const decl *asset)
+{
+    sb name = {0};
+    sb_printf(&name, "%s#mesh-values", str_to_cstr(asset->qualified));
+    return name.data;
+}
+
+// Sidecar metadata uses the existing generic pack entries, with no geometry copy.
+static void gen_mesh_refs_lookup(sb *o, const decl *asset)
+{
+    const char *name = mesh_refs_name(asset);
+    uint8_t id[32];
+    tide_sha256_of(name, strlen(name), id);
+    sb_put(o, "tide_pack_find_id((const uint8_t[]){");
+    for (int i = 0; i < 32; i++) sb_printf(o, "%s%u", i ? "," : "", (unsigned)id[i]);
+    sb_printf(o, "}, %s)", asset->return_type.kind == TY_MAP ? "TIDE_PACK_MAP" : "TIDE_PACK_LIST");
+}
+
 // A name for generated code, unique in the program: tide_<what><n>.
 static const char *made_up(gen *g, const char *what)
 {
@@ -2825,8 +2882,11 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         return;
     }
     if (lt.kind == TY_STRUCT && lt.decl->asset_ref_of && (op == T_EQ || op == T_NE)) {
-        sb_put(o, "(("); gen_expr(g, o, l); sb_put(o, ").id ");
-        sb_put(o, op == T_EQ ? "== (" : "!= ("); gen_expr(g, o, r); sb_put(o, ").id)");
+        sb_put(o, op == T_EQ ? "tide_asset_equal_id((" : "!tide_asset_equal_id((");
+        gen_expr(g, o, l);
+        sb_put(o, ").id, (");
+        gen_expr(g, o, r);
+        sb_put(o, ").id)");
         return;
     }
     if (lt.kind == TY_STRUCT && lt.decl == g->prog->audience && (op == T_EQ || op == T_NE)) {
@@ -3739,11 +3799,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         return;
     }
     if (e->bind == BIND_ASSET) { // Its global, set as the pack is loaded
-        if (e->asset_reference) {
+        if (e->asset_reference || (e->type.kind == TY_STRUCT && e->type.decl->asset_ref_of
+            && e->constant->return_type.kind == TY_MESH)) {
             sb_printf(o, "((%s){.id = INT64_C(%llu)})", c_type(e->type), (unsigned long long)asset_reference_id(e->constant));
             return;
         }
-        sb_put(o, asset_cname(e->constant));
+        sb_printf(o, "%s%s", asset_cname(e->constant), mesh_collection(e->constant) ? "_refs" : "");
         return;
     }
     if (e->prefab_reference) {
@@ -4026,6 +4087,17 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (is_optional_field(e) && e != g->raw_place) {
             gen_optional_read(g, o, e);
+            break;
+        }
+        if (e->asset_ref_value && e->object->type.decl->asset_ref_of->kind == DECL_MESH) {
+            gen_expr(g, o, e->object);
+            break;
+        }
+        if (e->mesh_part && e->object->type.kind == TY_STRUCT && e->object->type.decl->asset_ref_of
+            && e->object->type.decl->asset_ref_of->kind == DECL_MESH) {
+            sb_printf(o, "tide_resolve_%s(", c_type(e->object->type));
+            gen_expr(g, o, e->object);
+            sb_printf(o, ").%s", e->mesh_part == 1 ? "vertices" : "indices");
             break;
         }
         if (e->asset_ref_value) {
@@ -19469,6 +19541,7 @@ static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
+    if (prog->asset_refs.count) sb_put(o, "TIDE_HELPER bool tide_asset_equal_id(const int64_t a, const int64_t b) { return a == b; }\n\n");
     if (!prog->assets.count && g->opts->server) {
         sb_put(o, "bool tide_assets_load(const uint8_t *bytes, const size_t size)\n"
                   "{ (void)bytes; (void)size; return true; }\n\n");
@@ -19478,6 +19551,11 @@ static void gen_assets(gen *g)
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         sb_printf(o, "static %s %s __attribute__((unused)); // " STR_FMT "\n", asset_ctype(d->return_type), asset_cname(d), STR_ARG(d->qualified));
+        if (mesh_collection(d)) {
+            sb_printf(o, "static %s %s_refs;\nstatic tide_mesh_lists %s_geometry[%d];\n",
+                      d->return_type.kind == TY_MAP ? "tide_map" : "tide_list", asset_cname(d), asset_cname(d),
+                      d->asset && d->asset->count ? d->asset->count : 1);
+        }
         if (g->opts->strip_names) {
             uint8_t id[32];
             tide_sha256_of(d->qualified.ptr, (size_t)d->qualified.len, id);
@@ -19492,6 +19570,13 @@ static void gen_assets(gen *g)
         sb_printf(o, "\nTIDE_HELPER %s tide_resolve_%s(const %s ref)\n{\n    switch (ref.id) {\n", c_type(value), type_cname(ref), type_cname(ref));
         for (int a = 0; a < prog->assets.count; a++) {
             const decl *asset = prog->assets.items[a];
+            if (value.kind == TY_MESH && mesh_collection(asset)
+                && asset->return_type.decl->fields.items[asset->return_type.kind == TY_MAP ? 1 : 0].type.decl == value.decl) {
+                for (int k = 0; asset->asset && k < asset->asset->count; k++)
+                    sb_printf(o, "    case INT64_C(%llu): return %s_geometry[%d];\n",
+                              (unsigned long long)mesh_item_id(asset, k), asset_cname(asset), k);
+                continue;
+            }
             if (!type_asset_reference_accepts(ref, asset->return_type)) continue;
             sb_printf(o, "    case INT64_C(%llu): return ", (unsigned long long)asset_reference_id(asset));
             if (value.kind == TY_MESH) sb_printf(o, "%s;\n", asset_cname(asset));
@@ -19573,6 +19658,34 @@ static void gen_assets(gen *g)
                 sb_printf(o, "    %s = tide_texture_sampled(%s, %uu);\n", asset_cname(d), asset_cname(d), born);
             else sb_printf(o, "    tide_pack_sample_textures(e, %uu);\n", born);
         }
+    }
+    for (int a = 0; a < prog->assets.count; a++) {
+        const decl *d = prog->assets.items[a];
+        if (!mesh_collection(d)) continue;
+        const char *name = asset_cname(d);
+        const bool map = d->return_type.kind == TY_MAP;
+        sb_put(o, "    e = ");
+        gen_mesh_refs_lookup(o, d);
+        sb_printf(o, ";\n    %s_refs = %s;\n    memset(%s_geometry, 0, sizeof %s_geometry);\n",
+                  name, map ? "tide_pack_map_of(e)" : "(tide_list){tide_pack_handle(e)}", name, name);
+        sb_put(o, "    {\n");
+        if (map) sb_put(o, "      typedef struct { int64_t order; tide_text key; tide_mesh_lists value; } tide_raw_mesh_entry;\n"
+                          "      typedef struct { int64_t order; tide_text key; uint32_t pad; int64_t id; } tide_ref_mesh_entry;\n");
+        sb_printf(o, "      for (int32_t k = 0; k < %s(%s); k++) {\n", map ? "tide_map_entries" : "tide_list_count", name);
+        if (map) {
+            sb_printf(o, "        const tide_raw_mesh_entry *raw = tide_list_at(%s.entries, k, sizeof *raw);\n"
+                         "        const tide_ref_mesh_entry *ref = tide_list_at(%s_refs.entries, k, sizeof *ref);\n"
+                         "        if (!raw || !ref || raw->order <= 0 || ref->order <= 0) continue;\n"
+                         "        const tide_mesh_lists geometry = raw->value;\n        switch (ref->id) {\n", name, name);
+        } else {
+            sb_printf(o, "        const tide_mesh_lists *raw = tide_list_at(%s, k, sizeof *raw);\n"
+                         "        const int64_t *ref = tide_list_at(%s_refs, k, sizeof *ref);\n"
+                         "        if (!raw || !ref) continue;\n        const tide_mesh_lists geometry = *raw;\n        switch (*ref) {\n", name, name);
+        }
+        for (int k = 0; d->asset && k < d->asset->count; k++)
+            sb_printf(o, "        case INT64_C(%llu): %s_geometry[%d] = geometry; break;\n",
+                      (unsigned long long)mesh_item_id(d, k), name, k);
+        sb_put(o, "        default: break;\n        }\n      }\n    }\n");
     }
     // A vertex default can read an asset declared after its mesh. All globals
     // must name the new pack, with declared sampling applied, before any default
@@ -20046,6 +20159,24 @@ static void build_pack(gen *g)
                 const uint32_t at = skinned ? tide_pack_skinned_list(&b, meshes, (uint32_t)v->count)
                                            : tide_pack_mesh_list(&b, meshes, (uint32_t)v->count);
                 tide_pack_name(&b, qualified, kind, at, (uint32_t)v->count, laid);
+            }
+            if (!skinned) {
+                uint32_t metadata_index = 0;
+                const uint32_t metadata = v->is_map
+                    ? tide_pack_mesh_map(&b, names, meshes, (uint32_t)v->count, &metadata_index)
+                    : tide_pack_mesh_list(&b, meshes, (uint32_t)v->count);
+                // Both packed records have 24 bytes; handle values put their int64 at offset 16.
+                uint8_t *data = b.region + metadata + sizeof(tide_block);
+                for (int k = 0; k < v->count; k++) {
+                    const uint64_t id = mesh_item_id(d, k);
+                    if (v->is_map) {
+                        uint8_t *entry = data + (size_t)k * sizeof(mesh_reference_pack_entry);
+                        memset(entry + offsetof(mesh_reference_pack_entry, padding), 0, sizeof(uint32_t));
+                        memcpy(entry + offsetof(mesh_reference_pack_entry, id), &id, sizeof id);
+                    } else memcpy(data + (size_t)k * sizeof id, &id, sizeof id);
+                }
+                tide_pack_name(&b, mesh_refs_name(d), v->is_map ? TIDE_PACK_MAP : TIDE_PACK_LIST,
+                               metadata, v->is_map ? metadata_index : (uint32_t)v->count, v->is_map ? (uint32_t)v->count : 0);
             }
             free(meshes);
             free(names);
@@ -21571,53 +21702,96 @@ static bool resource_fields(const decl *d)
 static bool resource_type(const type t)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET) return true;
-    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) return resource_fields(t.decl);
+    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
+        || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return resource_fields(t.decl);
     return false;
+}
+
+// Container storage is already owned. Visit its live values without copying them.
+// A scope per container keeps index/pointer names independent at every depth.
+static const char *gen_resource_elements(gen *g, const type t, const char *at, const char *pad, const bool writing)
+{
+    sb *o = &g->c;
+    const type e = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
+    sb_printf(o, "%s{\n", pad);
+    if (writing && t.kind == TY_LIST)
+        sb_printf(o, "%stide_list_prepare(&(%s), sizeof(%s), TIDE_IN_LOCAL);\n", pad, at, c_type(e));
+    if (writing && t.kind == TY_MAP)
+        sb_printf(o, "%stide_list_prepare(&(%s).entries, sizeof(tide_map%d_entry), TIDE_IN_LOCAL);\n", pad, at, t.decl->index);
+    sb_printf(o, "%sfor (int32_t tide_ri = 0; tide_ri < ", pad);
+    if (t.kind == TY_ARRAY) sb_printf(o, "%d", t.decl->array_length);
+    else sb_printf(o, "%s(%s)", t.kind == TY_MAP ? "tide_map_entries" : "tide_list_count", at);
+    sb_printf(o, "; tide_ri++) {\n");
+    // Resolve the address before introducing tide_rp, which may occur in `at`.
+    if (t.kind == TY_ARRAY) sb_printf(o, "%s%svoid *tide_next = &(%s).at[tide_ri];\n", pad, writing ? "" : "const ", at);
+    else if (t.kind == TY_LIST) sb_printf(o, "%s%svoid *tide_next = tide_list_at%s(%s, tide_ri, sizeof(%s));\n", pad, writing ? "" : "const ", writing ? "_mut" : "", at, c_type(e));
+    else {
+        sb_printf(o, "%s%stide_map%d_entry *tide_entry = tide_map_entry%s(%s, tide_ri, &tide_map%d_kind);\n", pad,
+                  writing ? "" : "const ", t.decl->index, writing ? "_mut" : "", at, t.decl->index);
+        sb_printf(o, "%sif (!tide_map_live(tide_entry)) continue;\n%s%svoid *tide_next = &tide_entry->value;\n", pad, pad, writing ? "" : "const ");
+    }
+    sb_printf(o, "%sif (!tide_next) continue;\n", pad);
+    sb_printf(o, "%s{ %s%s *tide_rp = tide_next;\n", pad, writing ? "" : "const ", c_type(e));
+    return "(*tide_rp)";
+}
+
+static void gen_resource_fields(gen *g, const decl *d, const char *path, const char *pad);
+
+static void gen_resource_value(gen *g, const type t, const char *at, const char *pad)
+{
+    sb *o = &g->c;
+    if (t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) {
+        const type e = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
+        const char *element = gen_resource_elements(g, t, at, pad, true);
+        gen_resource_value(g, e, element, pad);
+        sb_printf(o, "%s} } }\n", pad);
+        return;
+    }
+    if (t.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
+        sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
+        sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
+        sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s = tide_cubemap_recreate(%s);\n",
+                  pad, at, at, pad, at, at);
+        sb_printf(o, "%s}\n", pad);
+        return;
+    }
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) {
+        const bool texture = t.kind != TY_RENDER_TARGET; // A target's color, or its depth
+        sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at, texture ? "target.id" : "id");
+        if (texture) {
+            // Its size, its scale and whether it follows the window come with it
+            sb_printf(o, "%s    tide_render_target target = %s.target;\n", pad, at);
+            sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(target);\n", pad);
+            sb_printf(o, "%s    else target = tide_render_target_recreate(target);\n", pad);
+            if (t.kind == TY_DEPTH_TEXTURE) sb_printf(o, "%s    %s = tide_render_target_depth(target);\n", pad, at);
+            else // ...and how it's sampled
+                sb_printf(o, "%s    %s = tide_texture_sampled(tide_render_target_color(target), tide_texture_sampling(%s));\n",
+                          pad, at, at);
+        } else {
+            sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s);\n", pad, pad, at);
+            sb_printf(o, "%s        %s = tide_render_target_resolve(%s);\n%s    } else %s = tide_render_target_recreate(%s);\n",
+                      pad, at, at, pad, at, at);
+        }
+        sb_printf(o, "%s} ", pad);
+        // A Texture of the pack's or of a grid is a name, which the build that takes over reads as this one
+        // did; one of C's own pixels, or of a target that isn't the game's, is nothing there
+        if (t.kind == TY_TEXTURE)
+            sb_printf(o, "else if (%s.target.id || %s.image.pixels) memset(&%s, 0, sizeof %s);\n", at, at, at, at);
+        else if (texture) sb_printf(o, "else memset(&%s, 0, sizeof %s);\n", at, at);
+        else sb_printf(o, "else if (%s.id != TIDE_RENDER_WINDOW) memset(&%s, 0, sizeof %s);\n", at, at, at);
+    } else {
+        gen_resource_fields(g, t.decl, at, pad);
+    }
 }
 
 static void gen_resource_fields(gen *g, const decl *d, const char *path, const char *pad)
 {
-    sb *o = &g->c;
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
         if (!resource_type(f->type)) continue;
         sb at = {0};
         sb_printf(&at, "%s.%s", path, field_cname(f));
-        if (f->type.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
-            sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at.data);
-            sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at.data);
-            sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s = tide_cubemap_recreate(%s);\n",
-                      pad, at.data, at.data, pad, at.data, at.data);
-            sb_printf(o, "%s}\n", pad);
-            continue;
-        }
-        if (f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE || f->type.kind == TY_RENDER_TARGET) {
-            const bool texture = f->type.kind != TY_RENDER_TARGET; // A target's color, or its depth
-            sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at.data, texture ? "target.id" : "id");
-            if (texture) {
-                // Its size, its scale and whether it follows the window come with it
-                sb_printf(o, "%s    tide_render_target target = %s.target;\n", pad, at.data);
-                sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(target);\n", pad);
-                sb_printf(o, "%s    else target = tide_render_target_recreate(target);\n", pad);
-                if (f->type.kind == TY_DEPTH_TEXTURE) sb_printf(o, "%s    %s = tide_render_target_depth(target);\n", pad, at.data);
-                else // ...and how it's sampled
-                    sb_printf(o, "%s    %s = tide_texture_sampled(tide_render_target_color(target), tide_texture_sampling(%s));\n",
-                              pad, at.data, at.data);
-            } else {
-                sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s);\n", pad, pad, at.data);
-                sb_printf(o, "%s        %s = tide_render_target_resolve(%s);\n%s    } else %s = tide_render_target_recreate(%s);\n",
-                          pad, at.data, at.data, pad, at.data, at.data);
-            }
-            sb_printf(o, "%s} ", pad);
-            // A Texture of the pack's or of a grid is a name, which the build that takes over reads as this one
-            // did; one of C's own pixels, or of a target that isn't the game's, is nothing there
-            if (f->type.kind == TY_TEXTURE)
-                sb_printf(o, "else if (%s.target.id || %s.image.pixels) memset(&%s, 0, sizeof %s);\n", at.data, at.data, at.data, at.data);
-            else if (texture) sb_printf(o, "else memset(&%s, 0, sizeof %s);\n", at.data, at.data);
-            else sb_printf(o, "else if (%s.id != TIDE_RENDER_WINDOW) memset(&%s, 0, sizeof %s);\n", at.data, at.data, at.data);
-        } else {
-            gen_resource_fields(g, f->type.decl, at.data, pad);
-        }
+        gen_resource_value(g, f->type, at.data, pad);
     }
 }
 
@@ -21630,8 +21804,9 @@ static bool sound_fields(const program *prog, const decl *d);
 static bool sound_type(const program *prog, const type t)
 {
     if (t.kind == TY_STRUCT && t.decl == prog->sound) return true;
-    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) return sound_fields(prog, t.decl);
-    return false; // A list or a map can't hold a Clip, so not a Sound
+    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
+        || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return sound_fields(prog, t.decl);
+    return false;
 }
 
 static bool sound_fields(const program *prog, const decl *d)
@@ -21650,22 +21825,40 @@ static uint64_t sound_id(const char *path)
     return h ? h : 1u;
 }
 
-static void gen_sound_fields(gen *g, const decl *d, const char *path, const char *named, const char *entity, const char *pad)
+static void gen_sound_fields(gen *g, const decl *d, const char *path, const char *named, const char *entity, const char *pad);
+
+static void gen_sound_value(gen *g, const type t, const char *at, const char *named, const char *entity, const char *pad)
 {
     sb *o = &g->c;
+    if (t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) {
+        const type e = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
+        const char *element = gen_resource_elements(g, t, at, pad, false);
+        sb_printf(o, "%suint64_t tide_parent = %s%s%s;\n", pad, entity ? "tide_sound_entity(" : "", entity ? entity : "0", entity ? ")" : "");
+        sb_printf(o, "%s{ uint64_t tide_sound_index = tide_parent ^ ((uint64_t)(%s) * UINT64_C(0x9E3779B97F4A7C15));\n", pad,
+                  t.kind == TY_MAP ? "tide_entry->tide_order" : "tide_ri + 1");
+        sb name = {0};
+        sb_printf(&name, "%s[]", named);
+        gen_sound_value(g, e, element, name.data,
+                        "((tide_entity){(uint32_t)(tide_sound_index >> 32), (uint32_t)tide_sound_index})", pad);
+        sb_printf(o, "%s} } } }\n", pad);
+    } else if (t.kind == TY_STRUCT && t.decl == g->prog->sound) {
+        sb_printf(o, "%sif (%s.playing) tide_sound_voice(l->tide_audio, &%s, UINT64_C(0x%016llx)%s%s%s);\n", pad, at, at,
+                  (unsigned long long)sound_id(named), entity ? " ^ tide_sound_entity(" : "", entity ? entity : "",
+                  entity ? ")" : "");
+    } else {
+        gen_sound_fields(g, t.decl, at, named, entity, pad);
+    }
+}
+
+static void gen_sound_fields(gen *g, const decl *d, const char *path, const char *named, const char *entity, const char *pad)
+{
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
         if (!sound_type(g->prog, f->type)) continue;
         sb at = {0}, name = {0};
         sb_printf(&at, "%s.%s", path, field_cname(f));
         sb_printf(&name, "%s.%s", named, field_cname(f));
-        if (f->type.kind == TY_STRUCT && f->type.decl == g->prog->sound) {
-            sb_printf(o, "%sif (%s.playing) tide_sound_voice(l->tide_audio, &%s, UINT64_C(0x%016llx)%s%s%s);\n", pad, at.data, at.data,
-                      (unsigned long long)sound_id(name.data), entity ? " ^ tide_sound_entity(" : "", entity ? entity : "",
-                      entity ? ")" : "");
-        } else {
-            gen_sound_fields(g, f->type.decl, at.data, name.data, entity, pad);
-        }
+        gen_sound_value(g, f->type, at.data, name.data, entity, pad);
     }
 }
 
@@ -21817,6 +22010,7 @@ static void gen_rebind_resources(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     sb_put(o, "void tide_local_rebind_resources(tide_local *l, const bool same_memory)\n{\n    (void)l;\n    (void)same_memory;\n");
+    if (world_heap(prog, true)) sb_put(o, "    tide_text_use(NULL, &l->heap);\n");
     if (prog->uses_resident) sb_put(o, "    tide_residents_adopt(&l->tide_residents); // The arenas the last build left, at their addresses\n");
     gen_reset_io_tables(g, "l", "    ", true);
     gen_reset_worker_tables(g, "l", "    ", true);
@@ -23465,19 +23659,22 @@ bool codegen(program *prog, const codegen_options *opts)
     name_program(&g);
     select_indirect_params(prog);
     collect_borrows(&g);
-    if (prog->asset_refs.count) for (int i = 0; i < prog->assets.count; i++) {
-        const decl *a = prog->assets.items[i];
-        if (a->return_type.kind != TY_MESH
-            && !(a->return_type.kind == TY_STRUCT && a->return_type.decl->skin_kind == SKIN_MESH)) continue;
-        for (int j = 0; j < i; j++) {
-            const decl *b = prog->assets.items[j];
-            if ((b->return_type.kind == TY_MESH
-                 || (b->return_type.kind == TY_STRUCT && b->return_type.decl->skin_kind == SKIN_MESH))
-                && asset_reference_id(a) == asset_reference_id(b)) {
-                diag_error(a->at, "asset reference identity clashes with '" STR_FMT "'; rename one asset", STR_ARG(b->qualified));
-                return false;
-            }
-        }
+    VEC(mesh_identity) identities = {0};
+    for (int i = 0; i < prog->assets.count; i++) {
+        const decl *asset = prog->assets.items[i];
+        if (mesh_collection(asset)) {
+            for (int k = 0; asset->asset && k < asset->asset->count; k++)
+                vec_push(identities, ((mesh_identity){mesh_item_id(asset, k), asset}));
+        } else if (asset->return_type.kind == TY_MESH
+                   || (asset->return_type.kind == TY_STRUCT && asset->return_type.decl->skin_kind == SKIN_MESH))
+            vec_push(identities, ((mesh_identity){asset_reference_id(asset), asset}));
+    }
+    if (identities.count > 1) qsort(identities.items, (size_t)identities.count, sizeof *identities.items, mesh_identity_compare);
+    for (int i = 1; i < identities.count; i++) {
+        if (identities.items[i].id != identities.items[i - 1].id) continue;
+        diag_error(identities.items[i].asset->at, "asset reference identity clashes with '" STR_FMT "'; rename one asset",
+                   STR_ARG(identities.items[i - 1].asset->qualified));
+        return false;
     }
     collect_tasks(&g);
     for (int i = 0; i < g.tasks.count; i++) {

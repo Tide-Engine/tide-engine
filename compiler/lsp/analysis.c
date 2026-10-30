@@ -503,7 +503,9 @@ static void type_tree(const type_ref *r, const type t)
             const type part = t.kind == TY_STRUCT && t.decl && t.decl->callable && i < t.decl->call_types.count
                 ? t.decl->call_types.items[i]
                 : t.kind == TY_STRUCT && t.decl && t.decl->task_handle && i == 0 ? t.decl->task_value
-                : t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && i == 0 ? type_asset_reference_value(t.decl)
+                : t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && i == 0
+                    ? str_eq_c(r->name, "Mesh") && t.decl->asset_ref_of->kind == DECL_MESH
+                        ? t.decl->asset_ref_of->fields.items[0].type : type_asset_reference_value(t.decl)
                 : t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
                 ? i == 0 ? t.decl->skin_vertex : t.decl->skin_contract ? (type){TY_STRUCT, t.decl->skin_contract} : (type){TY_ERROR, NULL}
                 : holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
@@ -1755,7 +1757,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the cube its call names. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
-    case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. A local, a parameter and a result pass one on; no field keeps one.";
+    case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. Fields, lists, arrays, maps, parameters and results keep a stable 8-byte asset ID; geometry stays shared and resolves on access.";
     case TY_CLIP: return "A sound of the game's pack, this machine's to play: an `asset Clip` by its name, or a copy of one. `Audio.Play(clip[, position][, volume[, pitch]])` plays it once, from views, local handlers and the functions they call; a `Sound` field keeps one playing. The match can't use it.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -6755,6 +6757,11 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle
         && (str_eq_c(member, "isRunning") || str_eq_c(member, "isCompleted") || str_eq_c(member, "isCancelled")))
         return (type){TY_BOOL, NULL};
+    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && t.decl->asset_ref_of->kind == DECL_MESH) {
+        if (str_eq_c(member, "Value")) return t;
+        if (str_eq_c(member, "vertices")) return list_type(t.decl->asset_ref_of->fields.items[0].type);
+        if (str_eq_c(member, "indices")) return list_type((type){TY_INT, NULL});
+    }
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && str_eq_c(member, "Value")) return type_asset_reference_value(t.decl);
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
         const decl *d = t.decl;
@@ -6934,6 +6941,12 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     }
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
+        if (t.decl->asset_ref_of->kind == DECL_MESH) {
+            sb vertices = {0};
+            sb_printf(&vertices, "List<%s>", type_name(t.decl->asset_ref_of->fields.items[0].type));
+            item(c, "vertices", CK_PROPERTY, vertices.data, "The current asset's vertices, read-only; the mesh value stores only its ID.", NULL);
+            item(c, "indices", CK_PROPERTY, "List<int>", "The current asset's triangle indices, read-only.", NULL);
+        }
         item(c, "Value", CK_PROPERTY, type_name(type_asset_reference_value(t.decl)),
              "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);
         return;
@@ -8920,6 +8933,8 @@ static const decl *mesh_vertex(const scope *sc, const int first, const int last)
     }
     const type t = names_type(sc, first, last);
     if (t.kind == TY_MESH && t.decl) return t.decl->fields.items[0].type.decl; // A Mesh asset's
+    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && t.decl->asset_ref_of->kind == DECL_MESH)
+        return t.decl->asset_ref_of->fields.items[0].type.decl;
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH) return t.decl->skin_vertex.decl;
     if (t.kind != TY_LIST || !t.decl || t.decl->fields.items[0].type.kind != TY_STRUCT) return NULL;
     return t.decl->fields.items[0].type.decl;
@@ -11884,7 +11899,9 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const type model = args.count > 0 ? names_type(&sc, args.first[0], args.last[0]) : (type){0};
     // A Mesh asset where the vertices go: it's its indices too, and always 3D
     const bool whole = args.count > 0 && args.first[0] <= args.last[0] && DOC->toks[args.first[0]].kind == T_IDENT
-                    && (model.kind == TY_MESH || (instanced && model.kind == TY_STRUCT && model.decl
+                    && (model.kind == TY_MESH || (model.kind == TY_STRUCT && model.decl && model.decl->asset_ref_of
+                                                 && model.decl->asset_ref_of->kind == DECL_MESH)
+                        || (instanced && model.kind == TY_STRUCT && model.decl
                                                  && model.decl->skin_kind == SKIN_MESH));
     const bool three_d = skinned || whole || (drawn ? vertex_is_3d(drawn)
                                          : args.count > 2 && mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM);
