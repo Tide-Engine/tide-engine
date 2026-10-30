@@ -1,5 +1,21 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Compact vertex counts (2026-10-30)
+
+The stats drawer formats vertices with decimal K/M/B/T/P/E suffixes, rounded
+to one decimal with trailing zeroes omitted (123.5K, 97M, 4.3B). Values below
+1,000 remain exact. Rounding promotes to the next suffix at its boundary,
+so 999,950 shows 1M. Integer arithmetic covers the full uint64 range without
+overflow. Only presentation in engine/src/stats.c changed; submitted geometry
+counting and the host/runtime interfaces retain their contracts.
+
+Validation: all 13 stats drawer tests pass on Windows ASan and WebAssembly
+under Node 24.22.1, including rendered text, suffix/rounding boundaries, zero,
+values above 32 bits and UINT64_MAX. The docs production build passes with
+the existing unstaged-example 404 messages. Builds used TIDE_PLATFORM=OFF
+and no external prototypes; no GPU/browser or other OS tests were needed
+for this text-formatting change. User documentation: docs/tools/cli.md, Stats.
+
 ## Dynamic agent play (2026-10-29)
 
 The owner requested agents that can inspect rendered games and queue input

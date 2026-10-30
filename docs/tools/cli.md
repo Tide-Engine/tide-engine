@@ -250,6 +250,8 @@ The list is two columns, a label on the left and its value on the right, in four
 | `renderer` | What draws: Vulkan, OpenGL 3.3, OpenGL ES 3, WebGPU or WebGL 2 |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
+Vertex counts use decimal suffixes: `123.5K` for thousands, `97M` for millions and `4.3B` for billions, continuing with `T`, `P` and `E` for larger counts. Counts below 1,000 stay exact; larger counts round to one decimal, with trailing zeroes omitted.
+
 Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
 
 A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game, unless the frame rate in a corner is what you want them to have.

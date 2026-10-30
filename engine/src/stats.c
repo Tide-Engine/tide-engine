@@ -326,6 +326,35 @@ static void group(tide_stats *s, const uint32_t from)
     if (from > 1 && from < s->line_count) s->lines[from].gap = true;
 }
 
+// Decimal counts, rounded to a tenth with trailing zeroes omitted.
+static void count_line(tide_stats *s, const char *label, const uint64_t count)
+{
+    if (count < 1000) {
+        line(s, label, "%llu", (unsigned long long)count);
+        return;
+    }
+    const char suffixes[] = "KMBTPE";
+    uint64_t unit = 1000;
+    unsigned suffix = 0;
+    while (suffix < sizeof suffixes - 2 && count / unit >= 1000) {
+        unit *= 1000;
+        suffix++;
+    }
+    uint64_t tenth = unit / 10;
+    uint64_t rounded = count / tenth + (count % tenth >= tenth / 2);
+    if (rounded >= 10000 && suffix < sizeof suffixes - 2) {
+        unit *= 1000;
+        suffix++;
+        tenth = unit / 10;
+        rounded = count / tenth + (count % tenth >= tenth / 2);
+    }
+    if (rounded % 10) {
+        line(s, label, "%llu.%u%c", (unsigned long long)(rounded / 10), (unsigned)(rounded % 10), suffixes[suffix]);
+    } else {
+        line(s, label, "%llu%c", (unsigned long long)(rounded / 10), suffixes[suffix]);
+    }
+}
+
 // The three systems that took longest on average, each in its row. Ones
 // measured below the clock's resolution have a line too, so rows don't come
 // and go.
@@ -368,7 +397,7 @@ static void fill(tide_stats *s, const tide_stats_values *v)
         } else {
             line(s, "draw calls", "%u", (unsigned)v->draw_calls);
         }
-        line(s, "vertices", "%llu", (unsigned long long)v->vertices);
+        count_line(s, "vertices", v->vertices);
     }
     if (v->match) {
         const uint32_t from = s->line_count;
