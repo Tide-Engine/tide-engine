@@ -256,11 +256,14 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 | `uv2` | `float2` | The file's second set of those, which a lightmap uses. |
 | `color` | `Color` | The vertex's color times its material's. White where the file has neither. |
 | `tangent` | `float4` or `float3` | Tangent direction in `xyz`; a `float4` also carries bitangent handedness in `w`. Missing tangents are generated only for static `Mesh<V>` layouts declaring `float4 tangent`. |
+| `joints` | `int4` | A skinned model's four heaviest bones at the vertex, heaviest first, numbered as a [`SkinnedMesh`](./animation.md) of the file numbers its `Bone`s. 0 where no bone moves it. |
+| `weights` | `float4` | Those bones' weights, which sum to 1. Zeros where no bone moves it. |
 
 - A struct has the ones it needs, in any order: `Corner` above takes no uvs, so the pack holds none.
 - **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's. A default can read another asset, even one declared later; each pack load supplies its current value and refreshes what is drawn when that value changes.
 - A field with one of those names and another type is an error at the declaration, which says the type the file's is.
 - The built-in [`Vertex3`](./3d.md) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
+- **A mesh with bones is the model at rest.** A vertex with `joints` or `weights` reads the file as a skinned model: its `position` and `normal` are where the model's rest pose puts them, as a `SkinnedMesh` of the file draws at rest, in its skeleton's space (a model in centimetres comes out in metres, as it's drawn). A vert of the game's can then skin it itself, against bones of its own: a crowd's thousands in one instanced draw, each bone's `pose.Model(bone)` times the inverse of its rest's in a list the vert reads. `[LOD]` weighs the bones as it does a skinned mesh's.
 
 Only a static `Mesh<V>` whose vertex layout declares `float4 tangent` gets a tangent-generation variant. For its primitives without authored tangents, import derives tangents from triangle UV gradients and averages them with corner-angle weights. Generated `xyz` is normalized and orthogonal to the imported normal, with handedness `w` of +1 or -1; the bitangent is `w * cross(normal, tangent.xyz)`. A vertex shared by generated corners with opposite UV handedness splits at that seam. Missing or degenerate UVs get a finite fallback frame. Authored tangents retain their existing coordinate/node-transform conversion, including authored zero and nonorthogonal values; the generated-basis guarantees do not apply to them. Generated tangents support ordinary tangent-space normal maps but do not guarantee a match to a MikkTSpace normal-map bake.
 

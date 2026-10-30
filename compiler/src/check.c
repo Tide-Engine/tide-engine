@@ -14145,7 +14145,9 @@ static bool mesh_vertex_ok(const decl *vertex, const loc at)
         const char *is;
     } filled[] = {{"normal", TY_FLOAT3, TY_FLOAT3, "a float3"}, {"uv", TY_FLOAT2, TY_FLOAT2, "a float2"},
                   {"uv2", TY_FLOAT2, TY_FLOAT2, "a float2"},   {"color", TY_COLOR, TY_COLOR, "a Color"},
-                  {"tangent", TY_FLOAT4, TY_FLOAT3, "a float4, its last number the side its bitangent is on"}};
+                  {"tangent", TY_FLOAT4, TY_FLOAT3, "a float4, its last number the side its bitangent is on"},
+                  {"joints", TY_INT4, TY_INT4, "an int4, the bones its weights are of"},
+                  {"weights", TY_FLOAT4, TY_FLOAT4, "a float4, its bones' weights"}};
     const int dims = vertex_dims(vertex, at, true);
     if (dims == 0) return false;
     if (dims != 3) {
@@ -14161,8 +14163,8 @@ static bool mesh_vertex_ok(const decl *vertex, const loc at)
                 || f->type.kind == TY_ERROR) continue;
             diag_error(at, "a mesh file's '%s' is %s, and '" STR_FMT "." STR_FMT "' is %s", filled[k].name, filled[k].is,
                        STR_ARG(vertex->name), STR_ARG(f->name), type_name(f->type));
-            diag_note("a Mesh asset fills its vertex's 'position', 'normal', 'uv', 'uv2', 'color' and 'tangent' from the file, by "
-                      "those names; a field of any other name keeps its default");
+            diag_note("a Mesh asset fills its vertex's 'position', 'normal', 'uv', 'uv2', 'color', 'tangent', 'joints' and "
+                      "'weights' from the file, by those names; a field of any other name keeps its default");
             return false;
         }
     }
@@ -14175,6 +14177,16 @@ static decl *asset_mesh_vertex(const type t)
     const type inner = t.kind == TY_LIST ? list_element(t) : t.kind == TY_MAP ? map_value(t) : t;
     return inner.kind == TY_MESH ? mesh_vertex(inner).decl
          : inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH ? inner.decl->skin_vertex.decl : NULL;
+}
+
+// A Mesh whose vertex has 'joints' or 'weights' is read as a skinned model is,
+// for its skin: its vertices are the same, and each has its bones and weights.
+static bool mesh_wants_skin(const decl *vertex)
+{
+    for (int f = 0; vertex && f < vertex->fields.count; f++) {
+        if (str_eq_c(vertex->fields.items[f].name, "joints") || str_eq_c(vertex->fields.items[f].name, "weights")) return true;
+    }
+    return false;
 }
 
 #include "skinned_catalogs.inc"
@@ -14286,6 +14298,9 @@ static void check_asset_decl(checker *c, decl *k)
                     || mesh_vertex_ok(asset_mesh_vertex(k->return_type), k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at);
     k->asset_kind = kind;
     k->asset_many = many;
+    // How its files are read: a Mesh with bones, as a skinned model is
+    const asset_kind read = typed && fills && kind == ASSET_MESH && mesh_wants_skin(asset_mesh_vertex(k->return_type))
+                          ? ASSET_SKINNED : kind;
     for (int a = 0; a < k->attributes.count; a++) {
         attribute *attr = &k->attributes.items[a];
         if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
@@ -14330,14 +14345,14 @@ static void check_asset_decl(checker *c, decl *k)
     if (typed && fills && valid) {
         if (catalog) {
             asset_value *combined = NEW(asset_value);
-            combined->kind = kind;
+            combined->kind = read;
             combined->paths_only = c->prog->asset_metadata_only;
             VEC(asset_match) matches = {0};
             for (int i = 0; i < k->asset_paths.count; i++) {
                 const expr *path = k->asset_paths.items[i];
                 asset_value *v = c->prog->asset_metadata_only
-                    ? asset_resolve_paths(k->unit->src->path, path->text, kind, true, false, path->at, c->prog->game_folder)
-                    : asset_resolve(k->unit->src->path, path->text, kind, true, false, path->at, c->prog->game_folder);
+                    ? asset_resolve_paths(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder)
+                    : asset_resolve(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder);
                 if (!v) { valid = false; continue; }
                 for (int n = 0; n < v->count; n++) {
                     bool duplicate = false;
@@ -14352,10 +14367,10 @@ static void check_asset_decl(checker *c, decl *k)
             combined->items = matches.items;
             combined->count = matches.count;
             if (valid) k->asset = combined;
-        } else if (!c->prog->asset_metadata_only || (kind != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
+        } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
             const expr *path = k->asset_paths.items[0];
-            k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
-            if (k->asset && kind == ASSET_MESH && !c->prog->asset_metadata_only) {
+            k->asset = asset_resolve(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
+            if (k->asset && read == ASSET_MESH && !c->prog->asset_metadata_only) {
                 const decl *vertex = asset_mesh_vertex(k->return_type);
                 bool tangents = false;
                 for (int f = 0; f < vertex->fields.count; f++) {

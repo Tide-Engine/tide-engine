@@ -1,0 +1,13 @@
+// expect: a mesh file's 'joints' is an int4, the bones its weights are of, and 'Corner.joints' is float4
+struct Corner
+{
+    float3 position;
+    float4 joints;
+    float4 weights;
+}
+
+asset Mesh<Corner> legs = "../e2e/assets/mesh_bones/legs.glb";
+
+scene Main
+{
+}

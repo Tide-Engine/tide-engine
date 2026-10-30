@@ -12,6 +12,7 @@
 #include "tide/skinned_data.h"
 
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -18947,12 +18948,12 @@ static const decl *asset_vertex(const type t)
 }
 
 // Which of a mesh file's values a vertex's field is filled from, by its name: 0 for a field no file fills.
-enum { FILL_NONE, FILL_POSITION, FILL_NORMAL, FILL_UV, FILL_UV2, FILL_COLOR, FILL_TANGENT };
+enum { FILL_NONE, FILL_POSITION, FILL_NORMAL, FILL_UV, FILL_UV2, FILL_COLOR, FILL_TANGENT, FILL_JOINTS, FILL_WEIGHTS };
 
 static int mesh_fills(const field *f)
 {
-    static const char *const names[] = {"", "position", "normal", "uv", "uv2", "color", "tangent"};
-    for (int i = FILL_POSITION; i <= FILL_TANGENT; i++) {
+    static const char *const names[] = {"", "position", "normal", "uv", "uv2", "color", "tangent", "joints", "weights"};
+    for (int i = FILL_POSITION; i <= FILL_WEIGHTS; i++) {
         if (str_eq_c(f->name, names[i])) return i;
     }
     return FILL_NONE;
@@ -19633,10 +19634,124 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
     return true;
 }
 
-static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, const bool lod, const bool skinned,
-                      uint32_t offsets[2])
+// A Mesh's 'joints' or 'weights' (docs/spec.md, Models), from its skinned model's bytes: each vertex's four
+// heaviest bones, the heaviest first, as the bones of the model's skeleton (what a SkinnedMesh of the file numbers
+// a Bone), and their weights, which sum to 1. A vertex no bone moves has no weight at all, and bone 0.
+static void fill_bones(const asset_match *item, uint8_t *bytes, const int stride, const int at, const uint32_t vertices,
+                       const bool joints)
 {
-    const mesh_file *m = &item->mesh;
+    tide_skinned_data_view view;
+    if (!item->skinned || !tide_skinned_data_open(item->skinned, item->skinned_size, &view)) return;
+    for (uint32_t v = 0; v < vertices; v++) {
+        tide_skinned_vertex_data vertex;
+        if (!tide_skinned_data_vertex(&view, v, &vertex)) continue;
+        int32_t bone[4] = {0, 0, 0, 0};
+        float weight[4] = {0, 0, 0, 0};
+        for (uint32_t i = 0; i < vertex.influences; i++) {
+            tide_skinned_influence_data influence;
+            tide_skinned_palette_data palette;
+            if (!tide_skinned_data_influence(&view, vertex.first_influence + i, &influence)
+                || !tide_skinned_data_palette(&view, influence.palette, &palette) || !(influence.weight > 0.0f)) continue;
+            int slot = 4;
+            while (slot > 0 && weight[slot - 1] < influence.weight) slot--; // Heaviest first; a tie keeps the order
+            if (slot == 4) continue;
+            for (int k = 3; k > slot; k--) bone[k] = bone[k - 1], weight[k] = weight[k - 1];
+            bone[slot] = (int32_t)palette.node;
+            weight[slot] = influence.weight;
+        }
+        const float sum = weight[0] + weight[1] + weight[2] + weight[3];
+        for (int k = 0; k < 4 && sum > 0.0f; k++) weight[k] /= sum;
+        memcpy(bytes + (size_t)v * (size_t)stride + (size_t)at, joints ? (const void *)bone : (const void *)weight, 16u);
+    }
+}
+
+// Column-major 4x4s: a times b.
+static void mat_mul(const float a[16], const float b[16], float out[16])
+{
+    float r[16];
+    for (int c = 0; c < 4; c++) {
+        for (int row = 0; row < 4; row++) {
+            r[c * 4 + row] = a[0 * 4 + row] * b[c * 4 + 0] + a[1 * 4 + row] * b[c * 4 + 1] + a[2 * 4 + row] * b[c * 4 + 2]
+                           + a[3 * 4 + row] * b[c * 4 + 3];
+        }
+    }
+    memcpy(out, r, sizeof r);
+}
+
+// A Mesh with bones is the model at rest (docs/spec.md, Models): each vertex where its bones' rest pose puts it,
+// in the skeleton's space, as a SkinnedMesh of the file draws at rest, so a pose's bones' model matrices against
+// their rest's move it. A skinned model's own vertices are in its bind space instead (a file in centimetres, say).
+// False, leaving `rested` alone, for bytes that aren't a model of that many vertices.
+static bool rest_mesh(const asset_match *item, const mesh_file *m, mesh_file *rested)
+{
+    tide_skinned_data_view view;
+    if (!item->skinned || !tide_skinned_data_open(item->skinned, item->skinned_size, &view) || view.vertices != m->vertices) return false;
+    float(*model)[16] = calloc(view.nodes ? view.nodes : 1u, sizeof *model);
+    if (!model) abort();
+    for (uint32_t n = 0; n < view.nodes; n++) { // Parents come first
+        tide_skinned_node_data node;
+        float local[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        if (tide_skinned_data_node(&view, n, &node)) {
+            const float x = node.rotation[0], y = node.rotation[1], z = node.rotation[2], w = node.rotation[3];
+            const float r[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w),
+                                2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w),
+                                2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)};
+            for (int c = 0; c < 3; c++) {
+                for (int row = 0; row < 3; row++) local[c * 4 + row] = r[c * 3 + row] * node.scale[c];
+            }
+            local[12] = node.position[0], local[13] = node.position[1], local[14] = node.position[2];
+        }
+        if (n > 0 && node.parent >= 0 && (uint32_t)node.parent < n) mat_mul(model[node.parent], local, model[n]);
+        else memcpy(model[n], local, sizeof local);
+    }
+    *rested = *m;
+    rested->position = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
+    rested->normal = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
+    if (!rested->position || !rested->normal) abort();
+    for (uint32_t v = 0; v < m->vertices; v++) {
+        const float *p = m->position + (size_t)v * 3u, *nrm = m->normal + (size_t)v * 3u;
+        float at[3] = {0, 0, 0}, turned[3] = {0, 0, 0}, weights = 0.0f;
+        tide_skinned_vertex_data vertex;
+        for (uint32_t i = 0; tide_skinned_data_vertex(&view, v, &vertex) && i < vertex.influences; i++) {
+            tide_skinned_influence_data influence;
+            tide_skinned_palette_data palette;
+            if (!tide_skinned_data_influence(&view, vertex.first_influence + i, &influence)
+                || !tide_skinned_data_palette(&view, influence.palette, &palette) || palette.node >= view.nodes
+                || !(influence.weight > 0.0f)) continue;
+            float skin[16];
+            mat_mul(model[palette.node], palette.inverse_bind, skin);
+            for (int row = 0; row < 3; row++) {
+                at[row] += influence.weight * (skin[row] * p[0] + skin[4 + row] * p[1] + skin[8 + row] * p[2] + skin[12 + row]);
+                turned[row] += influence.weight * (skin[row] * nrm[0] + skin[4 + row] * nrm[1] + skin[8 + row] * nrm[2]);
+            }
+            weights += influence.weight;
+        }
+        if (!(weights > 0.0f)) { // No bone moves it: where it is
+            memcpy(at, p, sizeof at), memcpy(turned, nrm, sizeof turned), weights = 1.0f;
+        }
+        const float length = sqrtf(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]);
+        for (int row = 0; row < 3; row++) {
+            rested->position[(size_t)v * 3u + row] = at[row] / weights;
+            rested->normal[(size_t)v * 3u + row] = length > 0.0f ? turned[row] / length : nrm[row];
+        }
+    }
+    free(model);
+    // Another mesh than the file's own, to the pack and to the levels' cache
+    static const char kind[] = "tide mesh with bones, at rest";
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    tide_sha256_add(&h, kind, sizeof kind);
+    tide_sha256_add(&h, m->hash, sizeof m->hash);
+    tide_sha256_end(&h, rested->hash);
+    return true;
+}
+
+static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, const bool lod, const bool skinned,
+                      const bool rest, uint32_t offsets[2])
+{
+    mesh_file rested;
+    const bool moved = rest && rest_mesh(item, &item->mesh, &rested);
+    const mesh_file *m = moved ? &rested : &item->mesh;
     int *pad = arena_alloc(sizeof(int) * (size_t)(vertex->fields.count + 1));
     const layout whole = decl_layout_padded(vertex, pad);
     uint8_t *bytes = calloc(m->vertices ? m->vertices : 1u, (size_t)whole.size);
@@ -19660,6 +19775,8 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
         }
         const size_t take = (size_t)size < each * sizeof(float) ? (size_t)size : each * sizeof(float); // A float3 tangent: its xyz
         for (uint32_t v = 0; from && v < m->vertices; v++) memcpy(bytes + (size_t)v * (size_t)whole.size + (size_t)at, from + (size_t)v * each, take);
+        const int fill = mesh_fills(f);
+        if ((fill == FILL_JOINTS || fill == FILL_WEIGHTS) && skinned) fill_bones(item, bytes, whole.size, at, m->vertices, fill == FILL_JOINTS);
         at += size;
     }
     // Shared, and told by the draw list, by what's in the file and how this struct lays it out
@@ -19678,6 +19795,7 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
     tide_sha256_end(&s, content);
     tide_pack_mesh_levels(b, content, bytes, (uint32_t)whole.size, m->vertices, m->index, m->indices, has ? &levels : NULL, offsets);
     free(bytes);
+    if (moved) free(rested.position), free(rested.normal);
 }
 
 static void note_watched(void *user, const char *path)
@@ -19724,12 +19842,14 @@ static void build_pack(gen *g)
         const uint32_t kind = asset_pack_kind(t);
         const decl *vertex = asset_vertex(t);
         if ((v->kind == ASSET_MESH || v->kind == ASSET_SKINNED) && vertex) {
-            const bool skinned = v->kind == ASSET_SKINNED;
+            // A Mesh with bones (its vertex's 'joints' or 'weights') is read as a skinned model, and packed as a Mesh
+            const bool skinned = kind == TIDE_PACK_SKINNED || kind == TIDE_PACK_SKINNEDS || kind == TIDE_PACK_SKINNED_MAP;
+            const bool weighted = v->kind == ASSET_SKINNED;
             const int stride = skinned ? 3 : 2;
             const uint32_t laid = mesh_layout_number(g, vertex);
             if (!v->many) {
                 uint32_t at[3];
-                pack_mesh(g, &b, &v->items[0], vertex, d->lod, skinned, at + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[0], vertex, d->lod, weighted, weighted && !skinned, at + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
@@ -19743,7 +19863,7 @@ static void build_pack(gen *g)
             uint32_t *names = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
             if (!meshes || !names) abort();
             for (int k = 0; k < v->count; k++) {
-                pack_mesh(g, &b, &v->items[k], vertex, d->lod, skinned, meshes + stride * k + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[k], vertex, d->lod, weighted, weighted && !skinned, meshes + stride * k + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
