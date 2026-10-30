@@ -1,5 +1,41 @@
 # Runtime written by Claude for now
 
+## Sampler constants and scratch lifetime follow-up (2026-10-30)
+
+Within the approved animation performance task, retained immutable sample
+plans now fold unique single-key channels into their starting pose, including
+folded wrapper locals. The value uses the sampler's existing key reader and
+final quaternion normalization. A channel is eligible only when no other
+channel writes the same destination node/path; all duplicate writers retain
+their original per-frame order. Mutable/unkeyed models retain the existing
+per-call path and complete validation. Canonical cubic tracks require at least
+two keys, so this folding applies to STEP and LINEAR single-key tracks only.
+Plan keys, bounded cache ownership, pack-generation invalidation, refusals,
+public API, world storage and exact sampled bits are unchanged.
+
+`plan_apply` now reclaims its temporary arrays when the output is proven flat
+scratch storage sized before its mark. Other scratch outputs keep the prior
+conservative lifetime rule because writes can copy chunks after that mark.
+This prevents large channel/group arrays accumulating across samples in one
+view. The 192-channel stack threshold remains: a measured 256-channel trial
+was slower and was reverted. The cold `plan_constants` helper stays out of
+line; `sampled_value` is forced inline so its new preparation-time caller does
+not introduce a call per channel in the hot loop. Release object disassembly
+confirms no `sampled_value` symbol/call, while preparation retains its helper.
+No interpolation or normalization expression was changed.
+
+Two focused tests compare retained packed/asset plans to the unchanged mutable
+path across single keys, mixed interpolation, duplicate order, signed zeros,
+non-unit rotations, nonfinite clocks, folded wrappers and snapshot-preserving
+heap outputs. A 300-channel/300-group fixture exercises both temporary-array
+spill paths and checks stable scratch marks plus exact pose hashes across
+repeated sampling. Full native ASan and WASM suites pass: 2,906 and 2,794
+enabled tests respectively, with one preexisting disabled MicroDuck test on
+each. Every existing deterministic hash pin is unchanged. Final paired
+measurements and the separate, approximately unchanged cold-load cost are in
+assets-and-files.md and `bench/results/retarget-playback-20261030/`. The related
+generated fresh-pose and redundant Clamp-duration fixes are in language.md.
+
 ## Owned runtime-baked animations (2026-10-30)
 
 The owner approved `map.Bake(animation, target.skeleton, sampleRate = 60)`

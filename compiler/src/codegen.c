@@ -2399,6 +2399,12 @@ static bool takes_where(const param *p)
 static bool is_fresh(const expr *e)
 {
     if (e->kept) return true; // Read before its statement, into a copy of its own
+    // defaultPose and Skeleton.RestPose() construct the same independent pose;
+    // the former is spelled as a member, rather than a method call.
+    if (e->skin_operation == SKIN_OP_REST_POSE) return true;
+    // Only the selected arm runs. Both arms must already supply an owned value;
+    // a conditional containing a borrowed place retains the ordinary copy.
+    if (e->kind == E_CONDITIONAL) return is_fresh(e->lhs) && is_fresh(e->rhs);
     if (e->kind == E_METHOD && e->call == CALL_WORLD) return false; // world.Get<Health>(e): out of that entity's row
     return e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_LIST || e->kind == E_LITERAL || e->kind == E_DEFAULT;
 }

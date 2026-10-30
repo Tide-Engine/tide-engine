@@ -1,0 +1,114 @@
+diff --git a/compiler/src/codegen.c b/compiler/src/codegen.c
+index 4ddb05d91..ada775b00 100644
+--- a/compiler/src/codegen.c
++++ b/compiler/src/codegen.c
+@@ -2399,6 +2399,12 @@ static bool takes_where(const param *p)
+ static bool is_fresh(const expr *e)
+ {
+     if (e->kept) return true; // Read before its statement, into a copy of its own
++    // defaultPose and Skeleton.RestPose() construct the same independent pose;
++    // the former is spelled as a member, rather than a method call.
++    if (e->skin_operation == SKIN_OP_REST_POSE) return true;
++    // Only the selected arm runs. Both arms must already supply an owned value;
++    // a conditional containing a borrowed place retains the ordinary copy.
++    if (e->kind == E_CONDITIONAL) return is_fresh(e->lhs) && is_fresh(e->rhs);
+     if (e->kind == E_METHOD && e->call == CALL_WORLD) return false; // world.Get<Health>(e): out of that entity's row
+     return e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_LIST || e->kind == E_LITERAL || e->kind == E_DEFAULT;
+ }
+diff --git a/compiler/src/skinned_adapters.inc b/compiler/src/skinned_adapters.inc
+index 85f03c437..1c96efde8 100644
+--- a/compiler/src/skinned_adapters.inc
++++ b/compiler/src/skinned_adapters.inc
+@@ -147,11 +147,11 @@ static void gen_skinned_adapters(gen *g)
+                  "    %s v = {.data = data};\n    (void)tide_skinned_rest(data, &v.transforms, TIDE_IN_SCRATCH);\n    return v;\n}\n"
+                  "TIDE_HELPER %s tide_skin_animation_sample(%s animation, float seconds, int32_t playback)\n{\n"
+                  "    %s v = {.data = animation.data};\n"
+-                 "    seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
++                 "    if (playback == 1) seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
+                  "    (void)tide_skinned_sample(animation.data, animation.index, seconds, &v.transforms, TIDE_IN_SCRATCH);\n    return v;\n}\n"
+                  "TIDE_HELPER void tide_skin_pose_sample(%s *v, %s animation, float seconds, int32_t playback, uint32_t where)\n{\n"
+                  "    if (!v) return;\n"
+-                 "    seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
++                 "    if (playback == 1) seconds = tide_skin_seconds(seconds, tide_skinned_animation_duration(animation.data, animation.index), playback);\n"
+                  "    (void)tide_skinned_sample_into(v->data, animation.data, animation.index, seconds, &v->transforms, where);\n}\n"
+                  "TIDE_HELPER void tide_skin_pose_blend(%s *v, %s other, float weight, uint32_t where)\n{\n"
+                  "    if (!v || !tide_skinned_compatible(v->data, other.data)) return;\n"
+diff --git a/engine/src/skinned.c b/engine/src/skinned.c
+index caca71ab6..71b14ff14 100644
+--- a/engine/src/skinned.c
++++ b/engine/src/skinned.c
+@@ -660,8 +660,8 @@ static tide_float4 linear_rotation(const tide_float4 a, const tide_float4 b, con
+ 
+ // Only the values interpolation reads are decoded. A rotation is normalized
+ // `normalize` more times (tide_normalize_q) to finish it.
+-static tide_float4 sampled_value(const tide_skinned_data_view *v, const tide_skinned_channel_data *c, const key_clock *k,
+-                                 uint32_t *normalize)
++static inline __attribute__((always_inline)) tide_float4 sampled_value(const tide_skinned_data_view *v,
++                                 const tide_skinned_channel_data *c, const key_clock *k, uint32_t *normalize)
+ {
+     const bool rotation = c->path == TIDE_SKINNED_ROTATION, cubic = c->interpolation == TIDE_SKINNED_CUBICSPLINE;
+     const uint32_t width = rotation ? 16u : 12u;
+@@ -1169,6 +1169,43 @@ static bool plan_bound(const tide_skinned_data_view *target, const tide_skinned_
+     return true;
+ }
+ 
++// A single-key channel always writes the same value, including its final
++// rotation normalization. Bake unique writers into the initial pose once;
++// duplicate node/path channels keep their original per-call write order.
++static __attribute__((noinline)) void plan_constants(sample_plan *p, const tide_skinned_data_view *source)
++{
++    bool any = false;
++    for (uint32_t i = 0; i < p->channels; i++) any |= p->channel[i].channel.keys == 1u;
++    if (!any) return;
++    const size_t slots = ((size_t)p->nodes + p->folded) * 3u;
++    uint32_t *writers = tide_scratch_memory(slots * sizeof *writers);
++    memset(writers, 0, slots * sizeof *writers);
++    for (uint32_t i = 0; i < p->channels; i++) {
++        const plan_channel *c = &p->channel[i];
++        const uint32_t node = c->to < 0 ? p->nodes + (uint32_t)(-1 - c->to) : (uint32_t)c->to;
++        writers[(size_t)node * 3u + c->channel.path]++;
++    }
++    uint32_t count = 0;
++    for (uint32_t i = 0; i < p->channels; i++) {
++        const plan_channel c = p->channel[i];
++        const uint32_t node = c.to < 0 ? p->nodes + (uint32_t)(-1 - c.to) : (uint32_t)c.to;
++        if (c.channel.keys != 1u || writers[(size_t)node * 3u + c.channel.path] != 1u) {
++            p->channel[count++] = c;
++            continue;
++        }
++        const key_clock k = {.held = true};
++        uint32_t more;
++        tide_float4 value = sampled_value(source, &c.channel, &k, &more);
++        const uint32_t normalize = c.channel.path == TIDE_SKINNED_ROTATION ? more + 1u : 0u;
++        for (uint32_t n = 0; n < normalize; n++) value = tide_normalize_q((tide_quaternion){value}).value;
++        tide_bone_transform *to = c.to < 0 ? &p->folded_initial[-1 - c.to] : &p->initial[c.to];
++        if (c.channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
++        else if (c.channel.path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
++        else to->rotation = (tide_quaternion){value};
++    }
++    p->channels = count;
++}
++
+ // A scratch plan in one allocation of its own.
+ static sample_plan *plan_keep(const sample_plan *p)
+ {
+@@ -1278,8 +1315,9 @@ static void plan_apply(const sample_plan *p, const tide_skinned_data_view *sourc
+         if (f->inner) local = fold_out(f->rest, local);
+         *to = local;
+     }
+-    // Writes into a scratch output can copy its shared chunks after the mark.
+-    if (where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
++    // Flat scratch storage was sized before the mark, so only temporary
++    // sampling arrays follow it. Other scratch writes may copy shared chunks.
++    if (flat || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
+ }
+ 
+ // Kept plans, shared by every thread: a few ways for each set, the least
+@@ -1371,6 +1409,7 @@ static sample_plan *plan_for(const uint32_t mode, const tide_list target_data, c
+                            : plan_bound(&target->view, &source->view, animation, &made);
+     }
+     if (!made.valid) made.nodes = made.channels = made.folded = made.folds = 0;
++    if (keyed && made.valid) plan_constants(&made, &source->view);
+     p = plan_keep(&made);
+     atomic_init(&p->refs, 1u);
+     if (keyed && p->valid) plan_groups(p, &source->view);

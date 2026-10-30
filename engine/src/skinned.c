@@ -660,8 +660,8 @@ static tide_float4 linear_rotation(const tide_float4 a, const tide_float4 b, con
 
 // Only the values interpolation reads are decoded. A rotation is normalized
 // `normalize` more times (tide_normalize_q) to finish it.
-static tide_float4 sampled_value(const tide_skinned_data_view *v, const tide_skinned_channel_data *c, const key_clock *k,
-                                 uint32_t *normalize)
+static inline __attribute__((always_inline)) tide_float4 sampled_value(const tide_skinned_data_view *v,
+                                 const tide_skinned_channel_data *c, const key_clock *k, uint32_t *normalize)
 {
     const bool rotation = c->path == TIDE_SKINNED_ROTATION, cubic = c->interpolation == TIDE_SKINNED_CUBICSPLINE;
     const uint32_t width = rotation ? 16u : 12u;
@@ -1169,6 +1169,43 @@ static bool plan_bound(const tide_skinned_data_view *target, const tide_skinned_
     return true;
 }
 
+// A single-key channel always writes the same value, including its final
+// rotation normalization. Bake unique writers into the initial pose once;
+// duplicate node/path channels keep their original per-call write order.
+static __attribute__((noinline)) void plan_constants(sample_plan *p, const tide_skinned_data_view *source)
+{
+    bool any = false;
+    for (uint32_t i = 0; i < p->channels; i++) any |= p->channel[i].channel.keys == 1u;
+    if (!any) return;
+    const size_t slots = ((size_t)p->nodes + p->folded) * 3u;
+    uint32_t *writers = tide_scratch_memory(slots * sizeof *writers);
+    memset(writers, 0, slots * sizeof *writers);
+    for (uint32_t i = 0; i < p->channels; i++) {
+        const plan_channel *c = &p->channel[i];
+        const uint32_t node = c->to < 0 ? p->nodes + (uint32_t)(-1 - c->to) : (uint32_t)c->to;
+        writers[(size_t)node * 3u + c->channel.path]++;
+    }
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < p->channels; i++) {
+        const plan_channel c = p->channel[i];
+        const uint32_t node = c.to < 0 ? p->nodes + (uint32_t)(-1 - c.to) : (uint32_t)c.to;
+        if (c.channel.keys != 1u || writers[(size_t)node * 3u + c.channel.path] != 1u) {
+            p->channel[count++] = c;
+            continue;
+        }
+        const key_clock k = {.held = true};
+        uint32_t more;
+        tide_float4 value = sampled_value(source, &c.channel, &k, &more);
+        const uint32_t normalize = c.channel.path == TIDE_SKINNED_ROTATION ? more + 1u : 0u;
+        for (uint32_t n = 0; n < normalize; n++) value = tide_normalize_q((tide_quaternion){value}).value;
+        tide_bone_transform *to = c.to < 0 ? &p->folded_initial[-1 - c.to] : &p->initial[c.to];
+        if (c.channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
+        else if (c.channel.path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
+        else to->rotation = (tide_quaternion){value};
+    }
+    p->channels = count;
+}
+
 // A scratch plan in one allocation of its own.
 static sample_plan *plan_keep(const sample_plan *p)
 {
@@ -1278,8 +1315,9 @@ static void plan_apply(const sample_plan *p, const tide_skinned_data_view *sourc
         if (f->inner) local = fold_out(f->rest, local);
         *to = local;
     }
-    // Writes into a scratch output can copy its shared chunks after the mark.
-    if (where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
+    // Flat scratch storage was sized before the mark, so only temporary
+    // sampling arrays follow it. Other scratch writes may copy shared chunks.
+    if (flat || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
 }
 
 // Kept plans, shared by every thread: a few ways for each set, the least
@@ -1371,6 +1409,7 @@ static sample_plan *plan_for(const uint32_t mode, const tide_list target_data, c
                            : plan_bound(&target->view, &source->view, animation, &made);
     }
     if (!made.valid) made.nodes = made.channels = made.folded = made.folds = 0;
+    if (keyed && made.valid) plan_constants(&made, &source->view);
     p = plan_keep(&made);
     atomic_init(&p->refs, 1u);
     if (keyed && p->valid) plan_groups(p, &source->view);

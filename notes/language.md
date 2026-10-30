@@ -1,5 +1,40 @@
 # Language features, as tidec builds them
 
+## Fresh pose and conditional value copies (2026-10-30)
+
+Performance review found generated playback helpers copying the result of
+`model.defaultPose` before editing it, then copying a conditional whose selected
+arm already returned an owned Pose. `is_fresh` now recognizes SKIN_OP_REST_POSE:
+the property uses the same constructor as the already-fresh Skeleton.RestPose
+method. It also recognizes a conditional only when both arms recursively meet
+the existing freshness rules. Exactly one arm executes, with normal authored
+effect order; a mixed fresh/borrowed conditional still takes its ordinary copy.
+No ownership representation, arithmetic, API or local-return rule changes.
+In the measured 55-node target, these two redundant copies each moved 2,200
+transform bytes plus allocation metadata per sample. The copy when returning a
+local Pose remains; no general escape or move analysis is introduced.
+
+Sampling adapters now query clip duration only for Playback.Loop. Clamp and
+unknown playback enum values pass seconds directly to the sampler, as before,
+without an otherwise unused model-open/clip lookup. Loop wrapping and all
+sampling arithmetic remain unchanged.
+
+`value_fresh` compares constructor scratch allocation with the runtime rest-pose
+operation for both defaultPose and a pure conditional of helper calls. It also
+covers nested conditional branch effects, ordinary/mixed borrowed Pose copies,
+an escaped helper-local Pose, list and nested-struct isolation, persistent
+ownership, snapshots and serialization. Generic heap-valued conditionals use
+the same proof, so native and WASM compiler suites are included in validation.
+The full native ASan suite passes all 2,906 enabled tests, including 61 GPU and
+29 safety checks. The full web suite passes all 2,794 enabled tests, including
+22 WebGPU, 10 D3D11 and 24 safety checks. Both retain the pre-existing disabled
+MicroDuck case. Existing exact world/pose hash pins remain unchanged. Final
+paired measurements, unchanged harness, raw runs, identities and methodology
+are archived in `bench/results/retarget-playback-20261030/README.md`; the combined
+compiler/runtime changes reduce the 1,000-pose batch cost by about 48% for baked
+playback and 26% for live retargeting. Smaller batches have lower gains, as the
+archive details. These changes add no API or language semantics.
+
 ## Dynamic retarget baking (2026-10-30)
 
 Owner-approved `mapping.Bake(source, target[, sampleRate])` is an instance

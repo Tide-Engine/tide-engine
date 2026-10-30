@@ -1,0 +1,96 @@
+asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
+asset SkinnedMesh<Vertex3> animated = "skinned/model.glb";
+struct Held { List<int> values; }
+singleton Probe
+{
+    int ticks;
+    int checks;
+    int passed;
+    int firstFailure;
+    int branch;
+    Pose saved;
+    List<int> values;
+}
+scene Main { }
+extern void MeasureFreshStart();
+extern bool MeasureFreshEnd();
+void Expect(mut Probe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+Pose NewPose(mut Probe p, int branch)
+{
+    p.branch = p.branch * 10 + branch;
+    return character.defaultPose;
+}
+Pose QuietPose() { return character.skeleton.RestPose(); }
+Pose Escaped(mut Probe p)
+{
+    mut var value = character.defaultPose;
+    value[character.skeleton.bones.arm].position.x = 13;
+    p.saved = value;
+    return value;
+}
+List<int> Values(int value) { return [value]; }
+bool SamePosition(float3 a, float3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+system Verify(mut Probe p)
+{
+    var bone = character.skeleton.bones.arm;
+    MeasureFreshStart();
+    mut var fresh = character.defaultPose;
+    Expect(p, MeasureFreshEnd());
+    var original = fresh[bone].position.x;
+    fresh[bone].position.x = 7;
+    Expect(p, character.defaultPose[bone].position.x == original);
+    mut var copy = fresh;
+    copy[bone].position.x = 8;
+    Expect(p, copy[bone].position.x == 8 && fresh[bone].position.x == 7);
+
+    MeasureFreshStart();
+    mut var pure = p.ticks % 2 == 0 ? QuietPose() : QuietPose();
+    Expect(p, MeasureFreshEnd());
+    pure[bone].position.x = 12;
+    Expect(p, pure[bone].position.x == 12 && fresh[bone].position.x == 7);
+
+    p.branch = 0;
+    MeasureFreshStart();
+    mut var selected = p.ticks % 3 == 0 ? NewPose(p, 1)
+        : p.ticks % 3 == 1 ? NewPose(p, 2) : NewPose(p, 3);
+    Expect(p, MeasureFreshEnd());
+    Expect(p, p.branch == p.ticks % 3 + 1);
+    selected[bone].position.x = 9;
+    Expect(p, fresh[bone].position.x == 7 && character.defaultPose[bone].position.x == original);
+
+    // A borrowed arm still requires an independent result, including when it
+    // sits beneath another conditional with fresh alternatives.
+    mut var mixed = p.ticks % 2 == 0 ? fresh : NewPose(p, 4);
+    mixed[bone].position.x = 10;
+    Expect(p, mixed[bone].position.x == 10 && fresh[bone].position.x == 7);
+    mut var nestedMixed = p.ticks % 2 == 0 ? (p.ticks % 3 == 0 ? fresh : selected) : NewPose(p, 5);
+    nestedMixed[bone].position.x = 11;
+    Expect(p, nestedMixed[bone].position.x == 11 && fresh[bone].position.x == 7 && selected[bone].position.x == 9);
+    mut var escaped = p.ticks % 2 == 0 ? Escaped(p) : Escaped(p);
+    escaped[bone].position.x = 14;
+    Expect(p, escaped[bone].position.x == 14 && p.saved[bone].position.x == 13);
+
+    p.values = [21];
+    mut var values = p.ticks % 2 == 0 ? Values(1) : Values(2);
+    values[0] = 3;
+    Expect(p, values[0] == 3 && p.values[0] == 21);
+    mut var mixedValues = p.ticks % 2 == 0 ? p.values : Values(4);
+    mixedValues[0] = 5;
+    Expect(p, mixedValues[0] == 5 && p.values[0] == 21);
+    mut var held = p.ticks % 2 == 0 ? Held { values = p.values } : Held { values = p.values };
+    held.values[0] = 6;
+    Expect(p, held.values[0] == 6 && p.values[0] == 21);
+    var arm = animated.skeleton.bones.arm;
+    var clamp = animated.animations.move.Sample(5);
+    var unknown = animated.animations.move.Sample(5, Playback(999));
+    Expect(p, SamePosition(unknown[arm].position, clamp[arm].position));
+    mut var into = animated.defaultPose;
+    into.Sample(animated.animations.move, 5, Playback(-1));
+    Expect(p, SamePosition(into[arm].position, clamp[arm].position));
+    p.ticks++;
+}

@@ -1,5 +1,53 @@
 # Benchmarks
 
+## Retargeted playback temporary costs (2026-10-30)
+
+The owner's request to reduce all three animation paths keeps the retarget
+solver, baker and sampling arithmetic unchanged. Retained immutable sample
+plans fold unique single-key channels into their initial pose with the same
+rotation normalization; duplicate writers retain their ordering. Flat scratch
+sampling releases its temporary arrays. Generated code recognizes fresh
+default poses and conditionals with two fresh branches, and avoids a duration
+lookup for non-looping playback. Contracts are in assets-and-files.md and
+language.md.
+
+Windows/Ryzen 9 7900X, release O2, the same private UE4 Kubold idle clip and
+Synty character (89 source/55 target nodes): three adjacent alternating pairs
+against frozen `e7b32f297` use unchanged agent-written C/Tide harnesses. All
+task builds/tests ended before timing; no CPU quiet guard or clock monitoring
+was used, and other desktop activity remained uncontrolled. Each process takes
+nine round means, each Tide round averaging ten frames. These are medians of
+three process statistics, not pooled frame medians:
+
+| Public Tide path | 100 calls, before / after (us per pose) | 1,000 calls, before / after (ms per batch) | Median paired reduction at 1,000 |
+| --- | ---: | ---: | ---: |
+| Build-time baked | 0.688900 / 0.435400 | 1.676230 / 0.868360 | 47.98% |
+| Live sample and retarget | 4.552600 / 4.185800 | 7.163840 / 5.268320 | 26.46% |
+| Stored runtime Bake | 0.718900 / 0.453100 | 1.699460 / 0.886390 | 47.78% |
+
+The live path improves less with few calls sharing a view: 3.55% paired at one
+and 8.49% at 100. Its source-sampling scratch falls 8,624 to 5,136 bytes per C
+call; combined sampling/retargeting falls 11,200 to 7,712. The C baked-sampling
+control improves 26.74%, but raw sampling, retarget-only, combined sampling,
+Auto/Create and the older offline bake have small adverse paired medians with
+overlapping ranges. This is not a retarget solver arithmetic speedup.
+
+The first generated frame (map creation, Bake and first sample, after asset
+loading and C controls) is 30.4332 / 29.7465 ms with overlapping ranges; no
+cold-load gain is claimed. The timed work excludes drawing, skinning, IK and
+gameplay. All six processes exit zero with zero harness failures; the harness
+checks API success and baked/stored-bake hips sums, while separate correctness
+tests cover full pose bits and ownership. Complete native/web suites pass
+2,906/2,794 enabled tests with the same preexisting disabled MicroDuck test.
+
+[Saved evidence](../bench/results/retarget-playback-20261030/README.md) includes
+every final and intermediate log, the adverse raw-sampling/inlining investigation,
+process ranges and paired ratios, immutable baseline/candidate identities, the
+exact measured production diff and the asset-free harness. Licensed inputs,
+packs and generated asset data stay private. Baseline generated C/library
+identities were not preserved and are not claimed. No web timing, full-game
+FPS or universal animation speedup follows from this workload.
+
 
 ## Pose.Sample, indexing and Model a call at a time (2026-10-30)
 

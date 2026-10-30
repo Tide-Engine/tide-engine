@@ -1673,6 +1673,115 @@ static tide_list plan_packed(const uint32_t i)
     return (tide_list){tide_pack_handle(tide_pack_find(name, TIDE_PACK_BYTES))};
 }
 
+TIDE_TEST(skinned_kept_single_keys_preserve_modes_duplicate_order_and_folded_nodes)
+{
+    const uint32_t mark = tide_scratch_mark();
+    for (uint32_t reversed = 0; reversed < 2u; reversed++) {
+        const uint32_t variant_mark = tide_scratch_mark();
+        tide_list raw[3] = {sampling_intervals_model(), armature_model(), model()};
+        for (uint32_t source = 0; source < 2u; source++) {
+            uint8_t *bytes = tide_list_at_mut(raw[source], 0, 1u);
+            tide_skinned_data_view view;
+            TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(raw[source]), &view));
+            for (uint32_t c = 0; c < view.channels; c++) {
+                // Keep a changing scale beside a later single-key scale for
+                // the same node. Cubic tracks require at least two keys;
+                // their original interpolation remains beside the constants.
+                if (source == 0u && c == 8u) continue;
+                tide_skinned_channel_data channel_data;
+                TIDE_REQUIRE(tide_skinned_data_channel(&view, c, &channel_data));
+                if (channel_data.interpolation == TIDE_SKINNED_CUBICSPLINE) continue;
+                word(bytes, view.channel_at + c * TIDE_SKINNED_CHANNEL_SIZE + 12u, 1u);
+            }
+            if (source == 0u && reversed) {
+                uint8_t saved[TIDE_SKINNED_CHANNEL_SIZE];
+                uint8_t *a = bytes + view.channel_at + 8u * TIDE_SKINNED_CHANNEL_SIZE;
+                uint8_t *b = a + TIDE_SKINNED_CHANNEL_SIZE;
+                memcpy(saved, a, sizeof saved); memcpy(a, b, sizeof saved); memcpy(b, saved, sizeof saved);
+            }
+            TIDE_REQUIRE(tide_skinned_valid(raw[source]));
+        }
+        size_t size;
+        uint8_t *pack = plan_pack(raw, 3u, &size);
+        TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+        tide_heap heap = {0}, snapshot = {0};
+        tide_text_use(&heap, NULL);
+        tide_list held[3];
+        for (uint32_t i = 0; i < 3u; i++) {
+            held[i] = plan_packed(i); tide_skinned_own(&held[i], TIDE_IN_MATCH);
+        }
+        tide_list stored = {0};
+        TIDE_REQUIRE(tide_skinned_rest(held[2], &stored, TIDE_IN_MATCH));
+        tide_heap_copy(&snapshot, &heap);
+        const uint64_t snapshot_hash = tide_heap_hash(0, &snapshot);
+        const float seconds[] = {-1.0f, -0.0f, 0.0f, 0.125f, 0.25f, 0.375f, 0.73f, 1.99f, 3.0f,
+                                  tide_f_from_bits(0x7fc00000u), tide_f_from_bits(0x7f800000u), tide_f_from_bits(0xff800000u)};
+        for (uint32_t s = 0; s < 2u; s++) for (uint32_t t = 0; t < sizeof seconds / sizeof seconds[0]; t++) {
+            const uint32_t sample_mark = tide_scratch_mark();
+            tide_list alone = {0}, kept = {0}, asset = {0};
+            TIDE_REQUIRE(tide_skinned_sample(raw[s], 0, seconds[t], &alone, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample(plan_packed(s), 0, seconds[t], &kept, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample(held[s], 0, seconds[t], &asset, TIDE_IN_SCRATCH));
+            TIDE_CHECK(pose_hash(kept) == pose_hash(alone) && pose_hash(asset) == pose_hash(alone));
+            alone = kept = asset = (tide_list){0};
+            TIDE_REQUIRE(tide_skinned_sample_into(raw[2], raw[s], 0, seconds[t], &alone, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample_into(plan_packed(2), plan_packed(s), 0, seconds[t], &kept, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample_into(held[2], held[s], 0, seconds[t], &asset, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample_into(held[2], held[s], 0, seconds[t], &stored, TIDE_IN_MATCH));
+            TIDE_CHECK(pose_hash(kept) == pose_hash(alone) && pose_hash(asset) == pose_hash(alone)
+                       && pose_hash(stored) == pose_hash(alone) && tide_heap_hash(0, &snapshot) == snapshot_hash);
+            tide_scratch_reset(sample_mark);
+        }
+        tide_text_use(NULL, NULL); tide_heap_free(&heap); tide_heap_free(&snapshot);
+        tide_pack_unload(); free(pack); tide_scratch_reset(variant_mark);
+    }
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(skinned_sampling_large_temporary_arrays_do_not_accumulate_in_scratch)
+{
+    const uint32_t mark = tide_scratch_mark();
+    tide_list raw = model();
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(tide_list_at(raw, 0, 1u), (size_t)tide_list_count(raw), &view));
+    uint32_t at = view.size;
+    tide_list_resize(&raw, (int32_t)(at + 20000u), 1u, TIDE_IN_SCRATCH);
+    uint8_t *bytes = tide_list_at_mut(raw, 0, 1u);
+    const uint32_t clips = table(bytes, &at, 48u, 1u, TIDE_SKINNED_CLIP_SIZE);
+    const uint32_t channels = table(bytes, &at, 56u, 300u, TIDE_SKINNED_CHANNEL_SIZE);
+    const uint32_t keys = at;
+    word(bytes, clips, view.string_at + 10u); word(bytes, clips + 4u, 6u);
+    word(bytes, clips + 8u, 0u); word(bytes, clips + 12u, 300u); number(bytes, clips + 16u, 5.0f);
+    for (uint32_t c = 0; c < 300u; c++) {
+        const uint32_t record = channels + c * TIDE_SKINNED_CHANNEL_SIZE;
+        const uint32_t path = c % 3u, width = path == TIDE_SKINNED_ROTATION ? 4u : 3u;
+        word(bytes, record, c % 3u); word(bytes, record + 4u, path);
+        word(bytes, record + 8u, TIDE_SKINNED_LINEAR); word(bytes, record + 12u, 2u);
+        word(bytes, record + 16u, at); number(bytes, at, 0.0f); number(bytes, at + 4u, 2.0f + (float)c * 0.01f); at += 8u;
+        word(bytes, record + 20u, at);
+        for (uint32_t k = 0; k < 2u; k++) for (uint32_t n = 0; n < width; n++) {
+            number(bytes, at, n == 3u ? 1.0f : (float)(c + k + n + 1u) * 0.03125f); at += 4u;
+        }
+    }
+    word(bytes, 80u, keys); word(bytes, 84u, at - keys); word(bytes, 8u, at);
+    tide_list_resize(&raw, (int32_t)at, 1u, TIDE_IN_SCRATCH);
+    TIDE_REQUIRE(tide_skinned_valid(raw));
+    size_t size; uint8_t *pack = plan_pack(&raw, 1u, &size);
+    TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+    const tide_list packed = plan_packed(0u);
+    tide_list alone = {0}, kept = {0};
+    TIDE_REQUIRE(tide_skinned_sample(raw, 0, 0.0f, &alone, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_sample(packed, 0, 0.0f, &kept, TIDE_IN_SCRATCH));
+    const uint32_t retained = tide_scratch_mark();
+    for (uint32_t i = 0; i < 40u; i++) {
+        const float seconds = (float)i * 0.125f;
+        TIDE_REQUIRE(tide_skinned_sample(raw, 0, seconds, &alone, TIDE_IN_SCRATCH));
+        TIDE_REQUIRE(tide_skinned_sample(packed, 0, seconds, &kept, TIDE_IN_SCRATCH));
+        TIDE_CHECK(tide_scratch_mark() == retained && pose_hash(kept) == pose_hash(alone));
+    }
+    tide_pack_unload(); free(pack); tide_scratch_reset(mark);
+}
+
 // Pack-held and asset-held bytes keep their sample plans; owned scratch bytes
 // plan for each call. Both give the same bits and refusals.
 TIDE_TEST(skinned_kept_sample_plans_match_plans_made_for_one_call)

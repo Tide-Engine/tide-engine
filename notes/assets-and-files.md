@@ -1,5 +1,68 @@
 # Assets and local files
 
+## Animation sampling performance follow-up (2026-10-30)
+
+The owner's follow-up asked for substantially lower build-baked, runtime-baked
+and live-retargeted batch costs. The shared sampler now prepares the value of
+each unique single-key STEP/LINEAR channel once in its retained immutable plan
+and copies it with the starting pose. Duplicate destination/path writers keep
+their original order and per-frame evaluation. The actual baked idle clip has
+41 channels: 17 single-key channels and 24 changing channels with 123 keys.
+The raw source has 205 channels, which spills past the retained 192-channel
+stack threshold. Temporary spill arrays are now reclaimed after each sample
+when the output's flat scratch storage was allocated before the temporary mark.
+Cache lifetime, failure behavior and exact arithmetic are unchanged; the
+ownership proof and focused regression coverage are in runtime-ownership.md.
+
+The generated-code changes also recognize independently constructed default
+poses and fresh conditional results without extra copies, and ask for clip
+duration only for Loop playback: the sampler already clamps ordinary playback.
+Their value/alias contracts and tests are recorded in language.md. These are
+internal changes; there is no public API, canonical format or algorithm-version
+change. Release assembly was inspected to keep channel interpolation inline:
+an accidental out-of-line call per channel caused a measured raw-sampling
+regression, which explicit inlining removed. The 256-channel stack experiment
+was reverted after measurement. Earlier measurements below remain the
+historical public-Bake baseline.
+
+Final paired release measurements used clang 23 on Ryzen 9 7900X and the same
+89-source/55-target-node idle fixture, after the correctness suites completed.
+Three before/after processes ran in order B1, A1, A2, B2, B3, A3, with nine
+rounds per process; the table reports medians of the three process medians.
+For 1,000 poses, microseconds per pose is numerically equal to milliseconds
+per batch. Runtime Bake is stored before playback timing.
+
+| Tide playback path | 100 calls, microseconds/pose before → after | 1,000-call batch, milliseconds before → after | Batch reduction |
+| --- | ---: | ---: | ---: |
+| Build-time baked | 0.6889 → 0.4354 | 1.67623 → 0.86836 | 48.20% |
+| Stored runtime Bake | 0.7189 → 0.4531 | 1.69946 → 0.88639 | 47.84% |
+| Live sample and retarget | 4.5526 → 4.1858 | 7.16384 → 5.26832 | 26.46% |
+
+C baked sampling measured 0.524 → 0.383867 microseconds per pose. Raw C sampling
+measured 1.329733 → 1.355767; the three-process ranges overlap (before
+1.276633–1.3513, after 1.277067–1.414367). Combined C sampling/retargeting was
+essentially unchanged at 4.2059 → 4.202267 microseconds. These compare equivalent
+animation work, with no drawing, skinning, IK or gameplay. Raw rounds and
+reproduction details are in `bench/results/retarget-playback-20261030/`.
+
+Complete native ASan validation passed 2,906 enabled tests in 127.42 seconds,
+including 61 GPU and 29 safety checks. Complete WASM validation passed 2,794
+enabled tests in 373.97 seconds, including 22 WebGPU, 10 D3D11 and 24 safety
+checks. Each retains one preexisting disabled MicroDuck test. The new sampler
+fixtures pass in these suites, and every existing deterministic hash pin is
+unchanged.
+
+The one-time map/Bake/first-sample measurement was 30.4332 → 29.7465 ms,
+approximately unchanged; this pass targets recurring playback. Read-only audit
+identified extra work outside the
+C Auto/Create timing: the first generated HumanoidRig.Auto reference-pose
+copies call `tide_list_copy`, whose packed-list check eagerly materializes the
+complete model through `tide_asset_pack`. That copies/hashes the payload and
+validates its geometry/influences too, before returning the borrowed pack
+handle. It is a plausible substantial contributor to the cold-frame gap,
+not a measured phase attribution. Shared list ownership is unchanged; isolating
+those phases is needed before claiming how much of the load time it explains.
+
 ## Baking dynamically loaded animations (2026-10-30)
 
 The approved `RetargetMap.Bake` instance method accepts an Animation or
@@ -56,8 +119,10 @@ in a local Animation before steady-state timing:
 | Live sample and retarget | 4.296400 | 7.032780 | 7.032780 |
 | Stored runtime Bake | 0.703400 | 1.661290 | 1.661290 |
 
-Runtime-baked and build-time-baked pose/bone checksums are identical for
-1, 100 and 1,000 calls; every run reports `FAILURES 0`. This measures animation
+Runtime-baked and build-time-baked sampled hips-position sums match for
+1, 100 and 1,000 calls with a starting time of 0.2 seconds; every run reports
+`FAILURES 0`. Separate native/WASM deterministic fixtures check complete pose
+and world-state parity. This benchmark measures animation
 work without drawing, skinning, IK or gameplay. The first frame, including
 map creation, Bake and the first sample, took 29.4236, 29.4824 and 29.7660 ms
 (median 29.4824 ms). That is combined cold load work, not a measurement of

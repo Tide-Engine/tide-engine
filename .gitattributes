@@ -71,3 +71,6 @@ bench/results/transform-corrections-*/** -text -whitespace
 
 # Cross-engine benchmark raw stdout retains its SHA-256 across checkouts.
 bench/results/bevy-*/** -text -whitespace
+
+# Private-rig playback evidence retains its captured bytes across checkouts.
+bench/results/retarget-playback-20261030/** -text -whitespace
