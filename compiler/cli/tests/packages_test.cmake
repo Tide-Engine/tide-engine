@@ -50,6 +50,15 @@ function(tide dir)
     endforeach()
 endfunction()
 
+# That the file is `want` and nothing else.
+function(expect_exact path want)
+    file(READ "${path}" text)
+    string(REPLACE "\r\n" "\n" text "${text}")
+    if(NOT text STREQUAL want)
+        message(FATAL_ERROR "${path} should be:\n${want}\nand is:\n${text}")
+    endif()
+endfunction()
+
 function(expect_file path)
     file(READ "${path}" text)
     string(REPLACE "\r\n" "\n" text "${text}") # file(WRITE) writes "\r\n" on Windows
@@ -103,7 +112,7 @@ system Integrate(mut Body body)
 }
 ")
 # A game in the package's folder, to try it: not one of the package's files.
-file(WRITE "${games}/physics/example/tide.packages" "..\n../../maths\n")
+file(WRITE "${games}/physics/example/tide.packages" "..\n")
 file(WRITE "${games}/physics/example/main.tide" "using Physics;\n\nscene Main { }\n\nevent(Spawned) Setup(with Main)\n{\n    Spawn(Body { });\n}\n")
 file(WRITE "${games}/game/main.tide" "using Physics;
 
@@ -120,9 +129,9 @@ system Fall(mut Body body)
 }
 ")
 
-# tide add puts the package in, and what it needs.
-tide("${games}/game" ARGS add ../physics EXPECT "added Physics, from ../physics" "added ../maths, which Physics needs")
-expect_file("${games}/game/tide.packages" "../physics\n../maths\n")
+# tide add puts the package in, and nothing of what it needs: that's the package's own line's.
+tide("${games}/game" ARGS add ../physics EXPECT "added Physics, from ../physics" WITHOUT "maths" "Maths")
+expect_exact("${games}/game/tide.packages" "../physics\n")
 tide("${games}/game" ARGS add ../physics EXPECT "Physics is in tide.packages already")
 # Packages' files come first, each after those it needs.
 tide("${games}/game" ARGS schedule . EXPECT "stage 1  Physics.Integrate" "stage 2  Fall")
@@ -143,10 +152,16 @@ endif()
 tide("${games}/long-source" ARGS schedule . EXPECT "long-source: 0 systems")
 tide("${games}/long-source" ARGS add "${long_source}" EXPECT "Maths is in tide.packages already")
 
+# What a package needs builds from its own line, relative to its folder, and so
+# does what that needs: Outer needs ../physics, which needs ../maths.
+file(WRITE "${games}/outer/tide.packages" "package Outer\n../physics\n")
+file(WRITE "${games}/outer/main.tide" "namespace Outer;\n\nsystem Push(mut Physics.Body body)\n{\n    body.velocity.x += 1;\n}\n")
+file(WRITE "${games}/game/tide.packages" "../outer\n")
+tide("${games}/game" ARGS schedule . EXPECT "stage 1  Physics.Integrate" "Outer.Push" "Fall")
+file(WRITE "${games}/game/tide.packages" "../physics\n../maths\n../outer\n")
+tide("${games}/game" ARGS schedule . EXPECT "stage 1  Physics.Integrate" "Outer.Push" "Fall")
+
 # What's wrong with a game's packages.
-file(WRITE "${games}/game/tide.packages" "../physics\n")
-tide("${games}/game" ARGS schedule . FAILS
-    EXPECT "tide.packages:1: error: Physics needs ../maths, which this file doesn't list" "add this line: ../maths")
 file(WRITE "${games}/game/tide.packages" "../physics\n../maths\n../nothing\n")
 file(MAKE_DIRECTORY "${games}/nothing")
 tide("${games}/game" ARGS schedule . FAILS EXPECT "tide.packages:3: error: ../nothing isn't a package: it has no tide.packages")
@@ -170,13 +185,13 @@ if(NOT unchanged STREQUAL "# Keep the game's file.\n")
     message(FATAL_ERROR "adding invalid package metadata changed tide.packages: ${unchanged}")
 endif()
 
-# Dependency lines are still added automatically, but an unusable package
-# graph must fail with its diagnostic, in add and in update alike.
+# An unusable package graph fails with its diagnostic, at the line of the
+# package that needs what's wrong, in add and in update alike.
 file(WRITE "${games}/dependencies/main.tide" "scene Main { }\n")
 file(WRITE "${games}/parent/tide.packages" "package Parent\n../child\n")
 tide("${games}/dependencies" ARGS add ../parent FAILS
-    EXPECT "added ../child, which Parent needs" "tide.packages:2: error: ../child isn't a folder")
-expect_file("${games}/dependencies/tide.packages" "../parent\n../child\n")
+    EXPECT "parent/tide.packages:2: error: ../child isn't a folder" WITHOUT "Parent needs")
+expect_exact("${games}/dependencies/tide.packages" "../parent\n")
 tide("${games}/dependencies" ARGS add ../parent FAILS
     EXPECT "Parent is in tide.packages already" "tide.packages:2: error: ../child isn't a folder")
 tide("${games}/dependencies" ARGS update FAILS EXPECT "tide.packages:2: error: ../child isn't a folder")
@@ -241,11 +256,16 @@ set(P1 "2222222222222222222222222222222222222222")
 set(P2 "3333333333333333333333333333333333333333")
 set(P3 "4444444444444444444444444444444444444444")
 set(N1 "5555555555555555555555555555555555555555")
+set(M2 "6666666666666666666666666666666666666666")
 
 set(src "${WORK}/sources")
 file(WRITE "${src}/maths/tide.packages" "package Maths\n")
 file(COPY "${games}/maths/step.tide" DESTINATION "${src}/maths")
 commit(github.com/test/maths ${M1} "${src}/maths")
+# A later Maths, with a system that says which one a game built
+file(WRITE "${src}/maths/tick.tide" "namespace Maths;\n\nsingleton Ticks\n{\n    int count;\n}\n\nsystem Tick(mut Ticks ticks)\n{\n    ticks.count += 1;\n}\n")
+commit(github.com/test/maths ${M2} "${src}/maths")
+file(REMOVE "${src}/maths/tick.tide")
 repository(github.com/test/maths refs/heads/main ${M1})
 
 # Physics in a folder of its repository, needing Maths from git.
@@ -267,9 +287,32 @@ file(COPY "${games}/game/main.tide" DESTINATION "${game}")
 tide("${game}" ARGS add https://github.com/test/nothing.git FAILS EXPECT "github.com/test/nothing isn't a package")
 tide("${game}" ARGS add github.com/test/physics//packages/physics@v1
     EXPECT "downloading github.com/test/physics at 3333333333" "added Physics, at 3333333 (v1.1.0)"
-           "added github.com/test/maths ${M1}, which Physics needs")
-expect_file("${game}/tide.packages" "github.com/test/physics//packages/physics@v1 ${P2}\n" "github.com/test/maths ${M1}\n")
+           "downloading github.com/test/maths at 1111111111" WITHOUT "which Physics needs")
+expect_exact("${game}/tide.packages" "github.com/test/physics//packages/physics@v1 ${P2}\n")
 tide("${game}" ARGS schedule . EXPECT "Physics.Integrate" "Physics.Settle")
+
+# The game's line for a package wins over a package's, whatever its commit.
+# Two packages needing one at different commits can't both be met: an error
+# naming both, until the game lists the one to build. The same commit is one.
+file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\n../tools\n")
+file(WRITE "${WORK}/tools/tide.packages" "package Tools\ngithub.com/test/maths ${M2}\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tools/tide.packages:2: error: Tools needs github.com/test/maths at 6666666, and Physics needs it at 1111111"
+           "a game builds one commit of each package: list the one to build in"
+           "like `github.com/test/maths ${M1}`")
+file(APPEND "${game}/tide.packages" "github.com/test/maths ${M2}\n")
+tide("${game}" ARGS schedule . EXPECT "downloading github.com/test/maths at 6666666666" "Maths.Tick" "Physics.Integrate")
+file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\n../tools\n")
+file(WRITE "${WORK}/tools/tide.packages" "package Tools\ngithub.com/test/maths ${M1}\n")
+tide("${game}" ARGS schedule . EXPECT "Physics.Integrate" WITHOUT "Maths.Tick")
+# A package's line from git needs its commit, unless the game lists that package
+file(WRITE "${WORK}/tools/tide.packages" "package Tools\ngithub.com/test/maths\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tools/tide.packages:2: error: github.com/test/maths has no commit to build with"
+           "a package names the commit of each package it needs from git")
+file(APPEND "${game}/tide.packages" "github.com/test/maths ${M1}\n")
+tide("${game}" ARGS schedule . EXPECT "Physics.Integrate")
+file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics@v1 ${P2}\n")
 
 # tide update moves a line to the newest commit of what it follows, keeping
 # what's around it.
@@ -302,15 +345,15 @@ file(REMOVE "${stopped}/.tide-fetched" "${stopped}/packages/physics/body.tide")
 tide("${game}" ARGS schedule . EXPECT "downloading github.com/test/physics at 2222222222" "Physics.Integrate")
 tide("${game}" ARGS schedule . EXPECT "Physics.Integrate")
 
-# tide fetch downloads what the game lists and this machine doesn't have,
-# each at its commit, and builds nothing: a build after it needs no network.
-# It adds the lines of what they need, as tide add does.
+# tide fetch downloads what the game builds with, what its packages need
+# included, and this machine doesn't have, each at its commit, and builds
+# nothing: a build after it needs no network. It writes nothing in the file.
 file(REMOVE_RECURSE "${WORK}/cache")
 file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\n")
 tide("${game}" ARGS fetch
-    EXPECT "downloading github.com/test/physics at 2222222222" "added github.com/test/maths ${M1}, which Physics needs"
-           "downloading github.com/test/maths at 1111111111" "the game's 2 packages are on this machine")
-expect_file("${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\ngithub.com/test/maths ${M1}\n")
+    EXPECT "downloading github.com/test/physics at 2222222222" "downloading github.com/test/maths at 1111111111"
+           "the game's 2 packages are on this machine" WITHOUT "added")
+expect_exact("${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\n")
 tide("${game}" ARGS fetch EXPECT "the game's 2 packages are on this machine" WITHOUT "downloading" "added")
 # From here, with no host to download from
 set(ENV{TIDE_GIT_MIRROR} "${WORK}/no-mirror")
@@ -378,8 +421,10 @@ system Count(mut Die die)
 
 # tide add writes the name alone, in lower case however it's typed, and adds
 # what the package needs.
-tide("${game}" ARGS add Dice EXPECT "added Dice, which comes with tide" "added rolls, which Dice needs")
-expect_file("${game}/tide.packages" "dice\nrolls\n")
+tide("${game}" ARGS add Dice EXPECT "added Dice, which comes with tide" WITHOUT "rolls")
+expect_exact("${game}/tide.packages" "dice\n")
+tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
+file(APPEND "${game}/tide.packages" "rolls\n")
 tide("${game}" ARGS add dice EXPECT "Dice is in tide.packages already, on line 1" WITHOUT "tide update")
 tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
 
@@ -417,11 +462,8 @@ tide("${game}" ARGS schedule . FAILS
     EXPECT "tide.packages:1: error: a package that comes with tide follows no branch or version")
 tide("${game}" ARGS add rolls@v1 FAILS EXPECT "a package that comes with tide follows no branch or version")
 
-# What it needs, the game lists, and it names that as a game does.
-file(WRITE "${game}/tide.packages" "dice\n")
-tide("${game}" ARGS schedule . FAILS
-    EXPECT "tide.packages:1: error: Dice needs rolls, which this file doesn't list" "add this line: rolls")
-file(WRITE "${game}/tide.packages" "dice\nrolls\nlonely\n")
+# What it needs, it names as a game does.
+file(WRITE "${game}/tide.packages" "lonely\n")
 tide("${game}" ARGS schedule . FAILS
     EXPECT "a package that comes with tide can't use a folder on this machine (../rolls)")
 
@@ -552,6 +594,12 @@ tide("${game}" ARGS fetch EXPECT "the game's 1 package is on this machine")
 if(NOT EXISTS "${WORK}/cache/github.com/test/maths/${M1}/.tide-fetched")
     message(FATAL_ERROR "tide fetch left a package an #if leaves out of this build to another build's network")
 endif()
+# A package's lines that another build has, too
+file(WRITE "${game}/../conditions-kit/tide.packages" "package Kit\n#if STEAM\ngithub.com/test/maths ${M1}\n#endif\n")
+file(WRITE "${game}/tide.packages" "../conditions-kit\n")
+file(REMOVE_RECURSE "${WORK}/cache/github.com/test/maths")
+tide("${game}" ARGS fetch EXPECT "downloading github.com/test/maths at 1111111111" "the game's 1 package is on this machine")
+file(WRITE "${game}/tide.packages" "#if STEAM\ngithub.com/test/maths ${M1}\n#endif\n")
 tide("${game}" ARGS eject maths EXPECT "Maths is the game's own now, in packages/maths")
 expect_file("${game}/tide.packages" "#if STEAM\n./packages/maths\n#endif\n")
 
