@@ -7,6 +7,7 @@
 #include "common.h"
 #include "mesh_files.h"
 #include "tide/png.h"
+#include "tide/skinned_data.h"
 
 // The files an `asset` declaration resolves to (docs/spec.md, Assets): found
 // from the declaring file, read, hashed and, for a Grid2<Color>, decoded, so
@@ -65,6 +66,13 @@ typedef struct asset_value {
 asset_value *asset_resolve(const char *declaring, str path, asset_kind kind, bool many, bool is_map, loc at, const char *game_folder);
 asset_value *asset_resolve_paths(const char *declaring, str path, asset_kind kind, bool many, bool is_map, loc at,
                                  const char *game_folder);
+// [Parts]: the skinned models asset_resolve reads until this is called again
+// keep only the parts `keep` accepts (tide_skinned_data_decode_parts). Each is
+// read for its declaration, outside the file's own cache. NULL keeps all.
+void asset_choose_parts(tide_skinned_keep_part_fn keep, void *user);
+// A name against a [BlendShapes] or [Parts] pattern: * is any run of
+// characters (none too), everything else itself.
+bool asset_name_matches(str pattern, const char *name, uint32_t length);
 // Select a lazily cached generated-tangent copy for a static float4-tangent
 // consumer. Other declarations and editor metadata retain the canonical mesh.
 bool asset_mesh_tangents(asset_value *value, loc at);

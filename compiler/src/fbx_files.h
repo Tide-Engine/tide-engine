@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "tide/skinned_data.h"
+
 // ---------------------------------------------------------------------------
 // Limits: what an FBX file's bytes can ask of a conversion. A file can be
 // anyone's (an asset's URL), so a small hostile file mustn't take the tools'
@@ -54,3 +56,9 @@ bool fbx_file_is(const uint8_t *data, size_t size, const char *name);
 // Failure leaves both outputs empty.
 bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned,
                      uint8_t **out, size_t *out_size, char why[256], char note[256]);
+// The same keeping only the parts `keep` accepts ([Parts]): a part is a node
+// holding a mesh, by name (a geometry helper's, its parent's). The others'
+// meshes and skins are left out before anything of them is read or checked;
+// every node stays. Refused when none is kept. NULL keeps all.
+bool fbx_file_to_glb_parts(const uint8_t *data, size_t size, bool skinned, tide_skinned_keep_part_fn keep, void *keep_user,
+                           uint8_t **out, size_t *out_size, char why[256], char note[256]);

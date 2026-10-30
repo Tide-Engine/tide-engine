@@ -546,3 +546,93 @@ TIDE_TEST(skinned_shapes_kept_by_name_rewrite_the_model_as_the_decoder_would)
     free(glb);
     free(plain_glb);
 }
+
+// [Parts]: a model of a body and a hat on one skeleton, each with a skin of
+// its own, the hat under a group node and animated. Keeping one part leaves
+// out the other's mesh, its skin's palettes, its nodes and their channels, and
+// keeps every bone; keeping all is the whole model's bytes.
+static bool keep_parts(void *user, const char *name, const uint32_t length)
+{
+    const char *const *names = user;
+    for (; *names; names++) if (!strcmp(*names, "*") || (strlen(*names) == length && !memcmp(*names, name, length))) return true;
+    return false;
+}
+
+static uint8_t *parted_model(size_t *size)
+{
+    gltf_maker m = {0};
+    const uint32_t triangle[] = {0, 1, 2};
+    const uint32_t indices = maker_indices(&m, triangle, 3u);
+    const float body[] = {0, 0, 0, 1, 0, 0, 0, 1, 0}, hat[] = {0, 2, 0, 1, 2, 0, 0, 3, 0};
+    const uint32_t b = maker_floats(&m, body, 3u, 3u), h = maker_floats(&m, hat, 3u, 3u);
+    const uint8_t joints[12] = {0};
+    const uint32_t joint_view = maker_bytes(&m, joints, sizeof joints);
+    maker_add(m.accessors, &m.accessors_size, sizeof m.accessors,
+              ",{\"bufferView\":%u,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"}", joint_view);
+    const uint32_t j = m.accessor_count++;
+    const float weights[] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    const uint32_t w = maker_floats(&m, weights, 3u, 4u);
+    const float identity[] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    const uint32_t bind_view = maker_bytes(&m, identity, sizeof identity);
+    maker_add(m.accessors, &m.accessors_size, sizeof m.accessors,
+              ",{\"bufferView\":%u,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"}", bind_view);
+    const uint32_t ibm = m.accessor_count++;
+    const float times[] = {0, 1}, moves[] = {0, 0, 0, 1, 0, 0}, turns[] = {0, 0, 0, 1, 0, 0, 0, 1};
+    const uint32_t t = maker_floats(&m, times, 2u, 1u), mv = maker_floats(&m, moves, 2u, 3u), tu = maker_floats(&m, turns, 2u, 4u);
+    char rest[4096];
+    snprintf(rest, sizeof rest,
+             "\"nodes\":[{\"name\":\"root\",\"children\":[1,3,5]},{\"name\":\"hips\",\"children\":[2]},{\"name\":\"hand\"},"
+             "{\"name\":\"Body\",\"mesh\":0,\"skin\":0},{\"name\":\"spare\"},{\"name\":\"Group\",\"children\":[6]},"
+             "{\"name\":\"Hat\",\"mesh\":1,\"skin\":1}],"
+             "\"skins\":[{\"joints\":[1],\"inverseBindMatrices\":%u},{\"joints\":[1,2],\"inverseBindMatrices\":%u}],"
+             "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":%u,\"JOINTS_0\":%u,\"WEIGHTS_0\":%u},\"indices\":%u}]},"
+             "{\"primitives\":[{\"attributes\":{\"POSITION\":%u,\"JOINTS_0\":%u,\"WEIGHTS_0\":%u},\"indices\":%u}]}],"
+             "\"animations\":[{\"name\":\"Bob\",\"samplers\":[{\"input\":%u,\"output\":%u},{\"input\":%u,\"output\":%u}],"
+             "\"channels\":[{\"sampler\":0,\"target\":{\"node\":6,\"path\":\"translation\"}},"
+             "{\"sampler\":1,\"target\":{\"node\":1,\"path\":\"rotation\"}}]}]",
+             ibm, ibm, b, j, w, indices, h, j, w, indices, t, mv, t, tu);
+    return maker_glb(&m, rest, size);
+}
+
+TIDE_TEST(skinned_parts_keep_their_meshes_skins_and_every_bone)
+{
+    size_t size;
+    uint8_t *glb = parted_model(&size), *whole = NULL, *kept = NULL;
+    uint32_t whole_size = 0, kept_size = 0;
+    char why[256], note[256];
+    TIDE_REQUIRE(tide_skinned_data_decode(glb, size, false, NULL, NULL, &whole, &whole_size, why, note));
+    // Every part kept: the whole model, byte for byte
+    static const char *const all[] = {"*", NULL}, *const body[] = {"Body", NULL}, *const hat[] = {"Hat", NULL};
+    static const char *const none[] = {"Cape", NULL};
+    TIDE_REQUIRE(tide_skinned_data_decode_parts(glb, size, NULL, NULL, keep_parts, (void *)all, &kept, &kept_size, why, note));
+    TIDE_CHECK(kept_size == whole_size && !memcmp(kept, whole, whole_size));
+    tide_skinned_data_free(kept);
+    // The body: its mesh and skin; the group and hat gone, the spare node and every bone kept
+    TIDE_REQUIRE(tide_skinned_data_decode_parts(glb, size, NULL, NULL, keep_parts, (void *)body, &kept, &kept_size, why, note));
+    TIDE_REQUIRE(tide_skinned_data_validate(kept, kept_size));
+    tide_skinned_data_view v;
+    TIDE_REQUIRE(tide_skinned_data_open(kept, kept_size, &v));
+    TIDE_CHECK(v.vertices == 3 && v.palettes == 1 && v.nodes == 6 && v.channels == 1);
+    static const char *const body_nodes[] = {"", "root", "hips", "hand", "Body", "spare"};
+    for (uint32_t i = 0; i < v.nodes; i++) {
+        tide_skinned_node_data n;
+        TIDE_REQUIRE(tide_skinned_data_node(&v, i, &n));
+        TIDE_CHECK(n.name_length == strlen(body_nodes[i]) && !memcmp(n.name, body_nodes[i], n.name_length));
+    }
+    for (uint32_t k = 0; k < v.vertices; k++) { // The body's, below the hat
+        tide_skinned_vertex_data vertex;
+        TIDE_REQUIRE(tide_skinned_data_vertex(&v, k, &vertex));
+        TIDE_CHECK(vertex.position[1] < 2.0f);
+    }
+    tide_skinned_data_free(kept);
+    // The hat: under its group, with both skins' bones
+    TIDE_REQUIRE(tide_skinned_data_decode_parts(glb, size, NULL, NULL, keep_parts, (void *)hat, &kept, &kept_size, why, note));
+    TIDE_REQUIRE(tide_skinned_data_validate(kept, kept_size) && tide_skinned_data_open(kept, kept_size, &v));
+    TIDE_CHECK(v.vertices == 3 && v.palettes == 2 && v.nodes == 7 && v.channels == 2);
+    tide_skinned_data_free(kept);
+    // None kept: refused, saying the parts there are
+    TIDE_CHECK(!tide_skinned_data_decode_parts(glb, size, NULL, NULL, keep_parts, (void *)none, &kept, &kept_size, why, note) && !kept);
+    TIDE_CHECK(strstr(why, "keeps none of its parts; it has 'Body', 'Hat'") != NULL);
+    tide_skinned_data_free(whole);
+    free(glb);
+}

@@ -171,6 +171,20 @@ writePair("shapes", "inbetween", shaped(true));
 writePair("shapes", "repeated", shaped(false, "same"));
 writePair("shapes", "renamed", shaped(false, "other"));
 
+// Two parts on the rig, as an outfit pack has them: the skinned Triangle, and a Hat under a Group, its own
+// geometry with no skin. [Parts] keeps one and leaves the other's mesh and nodes out.
+function parted() {
+    const tree = document(true);
+    const objects = tree.find(n => n.name === "Objects").children, connections = tree.find(n => n.name === "Connections").children;
+    const hat = geometry();
+    hat.props = [1100n, "Geometry::Hat", "Mesh"];
+    hat.children.find(n => n.name === "Vertices").props = [array("d", [0, 3, 0, 1, 3, 0, 0, 4, 0])];
+    objects.push(hat, model(2200n, "Group", "Null", [0, 0, 0]), model(2100n, "Hat", "Mesh", [0, 0, 0]));
+    connections.push(connect(2200n, 0n), connect(2100n, 2200n), connect(1100n, 2100n), connect(3000n, 2100n));
+    return tree;
+}
+writePair("parts", "parts", parted());
+
 // SkinningType "Blend", as 3ds Max and Unreal write it, with a dual-quaternion weight for each vertex: all
 // zero is linear skinning, the rig as "Linear" says it; any other is refused.
 function blended(weight) {

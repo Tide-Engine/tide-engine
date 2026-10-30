@@ -1,5 +1,71 @@
 # Assets and local files
 
+## [Parts], and retargeting past non-uniform helpers (2026-10-30)
+
+The owner took both recommendations from the entry below: an asset attribute
+choosing a model's parts, and retargeting that ignores non-uniform scale where
+no role needs it. Rules are my picks, Provisional in the spec.
+
+- **`[Parts("Body_Full_LOD0", "GreatHelm_*")]`** (`check_parts_attribute`,
+  `decl.part_patterns`, matched by `asset_name_matches`, now shared with
+  `[BlendShapes]`). `check_asset_decl` sets `asset_choose_parts` around its
+  `asset_resolve`; `read_item` then decodes the file for that declaration into
+  the arena, never into the file's skin cache (which holds the whole file for
+  other declarations). FBX: `fbx_file_to_glb_parts` skips unkept parts in
+  `fbx_mesh` before reading or checking anything of them (a part is a node
+  holding a mesh, a geometry helper's name being its parent's), and
+  `fbx_drop_parts`/`fbx_drop_below` leave nodes out of the written GLB through
+  `node_index` (scene root, children, skin joints and fallback nodes, animation
+  channels all remapped; a channel of a node left out is dropped). glTF:
+  `tide_skinned_data_decode_parts` (build-time only) skips unkept mesh nodes in
+  `place_geometry`, gives skins no kept part uses no palettes (`read_skins`),
+  and `drop_parts`/`drop_below` leave nodes out in `order_node` (remap
+  UINT32_MAX; their channels skipped). The FBX GLB goes to the decoder
+  unfiltered: its parts were already chosen.
+- **Which nodes go**, bottom up: a node is left out when it isn't needed, every
+  child of it is left out, and it holds a part left out or is a group (has
+  children). Needed: a part kept, a skin's joint that isn't itself a part left
+  out (FBX: a bone, and the joints of kept parts' skins). So a node left out
+  never has a child kept (the first version dropped by subtree and could leave
+  `root` out above kept bones: the decoder test caught it under ASan), and
+  sockets and empties holding no part stay.
+- **Measured on the Medieval Civilians & Soldiers Complete FBX** (175 MB, 676
+  parts, 1,431 nodes): `[Parts("Body_Full_LOD0", "GreatHelm_LOD0",
+  "Gambeson_LOD0")]` gives 35,346 vertices and 147 nodes and builds in about 4 s
+  (the whole file was past four decoder limits). With a profile whose reference
+  has the same `"parts"`, Kubold's longsword idle and attack bake through
+  `[Retarget]` and play on it.
+- **Profiles:** a `reference` may have `"parts"`, a non-empty list of patterns
+  (`read_profile`, `profile_part_kept`): its model is read as `[Parts]` reads
+  it, so the rig is that model's skeleton and the bake's output its exact one.
+- **Non-uniform scale in retargeting** (`engine/src/retarget.c`). `open_rig`
+  accepts any finite positive scale and marks nodes at or below a non-uniform
+  one (`rig_node.free_scale`). Auto keeps its matches; `read_roles` refuses a
+  required role there (`UnsupportedScale`, the console naming the role) and
+  unmaps an optional one; Create refuses when a needed source node or a needed
+  or driven target node is marked. Apply checks uniform scale only on needed
+  (or driven) nodes, positive finite scale elsewhere, and bounds the unneeded
+  ones' positions by their largest scale component (`bounding_scale`, which is
+  the old `scale.x` for uniform scale, so every uniform rig computes the same
+  bits: no pin moved). The plan's layout is unchanged. Found with the pack:
+  its parts' FBX geometry helpers have scales like (1.06, 1.08, 1.68).
+  The profile error for scale now says "positive scale" (non-finite or not
+  positive), naming the bone.
+
+Tests: `skinned_parts_keep_their_meshes_skins_and_every_bone`
+(tests/test_skinned_shapes.c: a body and a hat under a group, each skinned;
+all kept is the whole model's bytes; each kept leaves the other's mesh,
+palettes, nodes and channel out and keeps the spare node and bones; none kept
+is refused naming both), `fbx_parts_keep_their_meshes_and_every_bone`
+(`fbx_make.mjs`'s `parts/`, ASCII and binary), three `[Parts]` declarations in
+`e2e/fbx_assets.tide` (its pin moved with its check count, 25 to 28), five
+`parts_attribute_*` diagnostics, `lsp_levels_of_detail` (offered, hover,
+misuse, misspelling), and `retarget_non_uniform_scale_where_no_role_needs_it`
+(an odd helper on the target and a noisy IK node on the source give the same
+output bits as without them, the helper's local untouched; a required role
+under one refuses, an optional one is left out). `retarget_asset_scale` is now
+a bake whose target LeftHand is scaled, refused `UnsupportedScale`.
+
 ## A bought character pack's FBX, and which bone is which (2026-10-30, bugs)
 
 From bannerlord-duel's notes/gaps.md: The Tales Factory's "Medieval Civilians
@@ -41,15 +107,13 @@ every clothing part, each at LOD0..LOD5, on one UE4-mannequin skeleton.
   `ik_foot_r` and its end have scale (99.9934, 100, 99.9995), 6.6e-5 apart,
   past `retarget.c`'s 1e-5 uniformity tolerance (Blender's decomposition of a
   0.01-scaled armature). The profile's error now names the first such bone and
-  its scale (`read_profile`, `humanoid_assets.c`); the rule is unchanged.
+  its scale (`read_profile`, `humanoid_assets.c`); the rule changed after, in
+  the entry above.
 - **The whole Complete FBX isn't one model:** 1,059,522 vertices (all parts,
   all LODs; 2.1 million once parts with shapes split corners), 565 MB decoded,
   past `TIDE_SKINNED_MAX_VERTICES`, `_READS`, `_SHAPE_DELTAS` and `_BYTES`.
   Bringing such a pack in needs its parts chosen at import (a Unity prefab
-  enables a few renderers of it). Not built: a part filter on the asset (as
-  `[BlendShapes]` filters shapes) is the owner's decision; until then the parts
-  go through a modelling tool, whose armature must be exported in the nodes'
-  pose (see above).
+  enables a few renderers of it): `[Parts]`, above.
 - **Bone.** `$"{bone}"` (and Pose, Skeleton, BoneTransform, Animation) made C
   that didn't compile: the engine's skinned structs aren't `prog->decls`, so
   `gen_show_helpers` never wrote their `tide_text_` functions. It now walks

@@ -1,5 +1,13 @@
 # Runtime written by Claude for now
 
+## Parts and non-uniform retarget scale (2026-10-30)
+
+Under the skinned/retarget maintenance exceptions: `tide_skinned_data_decode_parts`
+(build-time; `tide/skinned_data.h`) decodes keeping chosen parts, and
+`retarget.c` accepts non-uniform scale on nodes the transfer doesn't need. No
+generated call or plan layout changed; uniform rigs give the same bits.
+Details: assets-and-files.md, [Parts], and retargeting past non-uniform helpers.
+
 ## Compressed pack images alone (2026-10-30)
 
 Under the pack and drawing maintenance exceptions: a pack texture block may be

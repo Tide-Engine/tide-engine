@@ -655,6 +655,34 @@ static const uint8_t *read_side(void *user, const char *path, size_t *size)
     return f->data;
 }
 
+static tide_skinned_keep_part_fn parts_keep;
+static void *parts_user;
+
+void asset_choose_parts(const tide_skinned_keep_part_fn keep, void *user)
+{
+    parts_keep = keep;
+    parts_user = user;
+}
+
+bool asset_name_matches(const str pattern, const char *name, const uint32_t length)
+{
+    int p = 0, star = -1;
+    uint32_t n = 0, resume = 0;
+    while (n < length) {
+        if (p < pattern.len && pattern.ptr[p] == '*') {
+            star = p++;
+            resume = n;
+        } else if (p < pattern.len && pattern.ptr[p] == name[n]) {
+            p++, n++;
+        } else if (star >= 0) {
+            p = star + 1;
+            n = ++resume;
+        } else return false;
+    }
+    while (p < pattern.len && pattern.ptr[p] == '*') p++;
+    return p == pattern.len;
+}
+
 // Whether the files a mesh was read with are as they were then.
 static bool sides_same(const read_file *f)
 {
@@ -810,6 +838,43 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             item->data = f->sound_data;
             item->size = f->sound_size;
         }
+    } else if ((kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) && parts_keep) {
+        // Some of its parts, for this declaration: decoded here, never into the file's cache, which has all of them
+        char *folder = asset_path_folder(path);
+        side_reader sides = {folder, NULL, 0};
+        uint8_t *bytes = NULL, *fbx_glb = NULL;
+        uint32_t size = 0;
+        size_t fbx_glb_size = 0;
+        char why[256], note[256];
+        const bool is_fbx = fbx_file_is(f->data, f->len, key);
+        bool ok = !is_fbx || fbx_file_to_glb_parts(f->data, f->len, true, parts_keep, parts_user, &fbx_glb, &fbx_glb_size, why, note);
+        // An FBX's parts were chosen as it was converted (its helpers' names are their parents'): its GLB keeps all of it
+        if (ok) ok = tide_skinned_data_decode_parts(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len, read_side, &sides,
+                                                    is_fbx ? NULL : parts_keep, parts_user, &bytes, &size, why, note);
+        free(fbx_glb);
+        free(folder);
+        if (!ok) {
+            for (int i = 0; i < sides.count; i++) free(sides.sides[i].path);
+            free(sides.sides);
+            if (!asset_skinned_format_diagnostic(key, why, at)) {
+                diag_error(at, "'%s' %s", key, why);
+                if (note[0]) diag_note("%s", note);
+            }
+            return false;
+        }
+        uint8_t *copy = arena_alloc(size ? size : 1u);
+        memcpy(copy, bytes, size);
+        item->skinned = copy;
+        item->skinned_size = size;
+        item->mesh = skin_geometry(bytes, size); // Lives as the compiler does, as the arena's copy
+        tide_skinned_data_free(bytes);
+        item->side_count = sides.count;
+        item->sides = arena_alloc(sizeof(char *) * (size_t)(sides.count ? sides.count : 1));
+        for (int i = 0; i < sides.count; i++) {
+            item->sides[i] = str_to_cstr(str_from(sides.sides[i].path));
+            free(sides.sides[i].path);
+        }
+        free(sides.sides);
     } else if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION) {
         const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
         if (f->skin_tried && !sides_same(&sides_check)) forget_skin(f);

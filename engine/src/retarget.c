@@ -50,6 +50,10 @@ typedef struct rig_node {
     tide_quaternion rotation;
     tide_float3 position;
     float scale;
+    // At or below a node of non-uniform scale (a part's geometry helper, an
+    // exporter's noisy IK bone): its global isn't a uniform TRS, so it can't
+    // be a role or a node the transfer needs, but it doesn't refuse the rig
+    bool free_scale;
 } rig_node;
 
 typedef struct rig_seen {
@@ -88,6 +92,20 @@ static bool uniform(const tide_float3 scale)
 static bool valid_local(const tide_bone_transform t)
 {
     return finite3(t.position) && finiteq(t.rotation) && uniform(t.scale);
+}
+
+// A local of a node the transfer doesn't need: its scale may be non-uniform, but positive and finite
+static bool valid_free_local(const tide_bone_transform t)
+{
+    return finite3(t.position) && finiteq(t.rotation) && finite3(t.scale)
+        && t.scale.x > 0.0f && t.scale.y > 0.0f && t.scale.z > 0.0f;
+}
+
+// The scale a bound on a node's descendants' positions multiplies by: its
+// uniform scale, as ever, or for a non-uniform one its largest
+static float bounding_scale(const tide_float3 scale)
+{
+    return uniform(scale) ? scale.x : tide_cmax_f3(scale);
 }
 
 static tide_bone_transform node_local(const tide_skinned_node_data *n)
@@ -137,8 +155,10 @@ static int32_t open_rig(const tide_list data, const tide_list reference, const b
             if (!local) return TIDE_RETARGET_INVALID_REFERENCE_POSE;
             n->local = *local;
         } else n->local = node_local(&n->info);
-        if (!uniform(n->local.scale)) return TIDE_RETARGET_UNSUPPORTED_SCALE;
-        if (!valid_local(n->local)) return TIDE_RETARGET_INVALID_REFERENCE_POSE;
+        if (!finite3(n->local.scale) || !(n->local.scale.x > 0.0f && n->local.scale.y > 0.0f && n->local.scale.z > 0.0f))
+            return TIDE_RETARGET_UNSUPPORTED_SCALE;
+        if (!valid_free_local(n->local)) return TIDE_RETARGET_INVALID_REFERENCE_POSE;
+        n->free_scale = !uniform(n->local.scale) || (i && r->nodes[n->info.parent].free_scale);
         n->rotation = normalized(n->local.rotation);
         n->position = n->local.position;
         n->scale = n->local.scale.x;
@@ -482,6 +502,13 @@ static int32_t read_roles(const rig_seen *r, const tide_list bones, const tide_l
             return refusal(TIDE_RETARGET_MISSING_BONE, side, role, "is missing; assign rig[HumanoidBone] explicitly");
         if (roles[role] >= 0) for (int other = 0; other < role; other++) if (roles[other] == roles[role])
             return refusal(TIDE_RETARGET_INVALID_RIG, side, role, "shares a bone with another role; assign different bones or leave the optional role unmapped");
+        // A bone under non-uniform scale can't be transferred to or from: an optional role there is left out
+        if (roles[role] >= 0 && r->nodes[roles[role]].free_scale) {
+            if (role_required(role))
+                return refusal(TIDE_RETARGET_UNSUPPORTED_SCALE, side, role, "is at or below a node of non-uniform scale; "
+                               "give that node uniform scale in the export, or assign another bone");
+            roles[role] = -1;
+        }
     }
     for (int role = 0; role < TIDE_HUMANOID_COUNT; role++) if (roles[role] >= 0) {
         int parent = parent_role(role);
@@ -861,8 +888,18 @@ int32_t tide_retarget_create(const tide_list source_data,
             targets[targets[i].parent].needed = 1;
         for (uint32_t i = target.view.nodes; i-- > 0;) if (targets[i].needed && targets[i].parent >= 0)
             targets[targets[i].parent].needed = 1;
-        tide_list_set(plan, tide_list_from(bytes, (int32_t)size, 1u), 1u, where);
-        *root_scale = ratio;
+        // Nodes under non-uniform scale are fine where the transfer neither reads nor writes them
+        for (uint32_t i = 0; !error && i < actual.view.nodes; i++) if (sources[i].needed && actual.nodes[i].free_scale)
+            error = refusal(TIDE_RETARGET_UNSUPPORTED_SCALE, "source", -1, "moves a bone at or below a node of non-uniform scale; "
+                            "give that node uniform scale in the export");
+        for (uint32_t i = 0; !error && i < target.view.nodes; i++)
+            if ((targets[i].needed || targets[i].mode) && target.nodes[i].free_scale)
+                error = refusal(TIDE_RETARGET_UNSUPPORTED_SCALE, "target", -1, "moves a bone at or below a node of non-uniform scale; "
+                                "give that node uniform scale in the export");
+        if (!error) {
+            tide_list_set(plan, tide_list_from(bytes, (int32_t)size, 1u), 1u, where);
+            *root_scale = ratio;
+        }
         free(bytes);
     }
     free(exported);
@@ -981,7 +1018,7 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
         valid = (i ? record.parent >= 0 && (uint32_t)record.parent < i : record.parent == -1)
             && local && tide_is_finite_f(record.scale) && record.scale > 0.0f
             && tide_abs_f(local->scale.x - record.scale) <= record.scale * 0.00001f
-            && valid_local(*local);
+            && (record.needed ? valid_local(*local) : valid_free_local(*local));
         if (!valid) break;
         {
             if (record.needed < 0 || record.needed > 1
@@ -989,7 +1026,7 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
                 || ((int32_t)i == header.source_hips && !record.needed)) { valid = false; break; }
             if (!record.needed) {
                 const float parent_scale = record.parent < 0 ? 1.0f : sg[record.parent].scale;
-                sg[i].scale = parent_scale * local->scale.x;
+                sg[i].scale = parent_scale * bounding_scale(local->scale);
                 valid = tide_is_finite_f(sg[i].scale) && sg[i].scale > 0.0f;
                 const float translation = tide_cmax_f3(tide_abs_f3(tide_mul_f3(tide_f3_splat(parent_scale), local->position)));
                 bounds[i] = (record.parent < 0 ? 0.0f : bounds[record.parent]) + 16.0f * translation;
@@ -1005,8 +1042,9 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
         bounds[i] = tide_cmax_f3(tide_abs_f3(sg[i].position));
     }
     if (valid && full_source) for (uint32_t i = 0; valid && i < header.source_count; i++) {
-        const tide_bone_transform *local = tide_list_view_at(&reads, i, sizeof *local);
-        valid = compose_global(*local, sources[i].parent, sg, &sg[i]);
+        tide_bone_transform local = *(const tide_bone_transform *)tide_list_view_at(&reads, i, sizeof local);
+        local.scale.x = bounding_scale(local.scale); // Only unneeded nodes' differ: what they bound, not what they are
+        valid = compose_global(local, sources[i].parent, sg, &sg[i]);
     }
     const float radians = tide_radians_f(heading_degrees);
     const tide_quaternion extra = tide_axisangle_q(header.up, radians);
@@ -1015,7 +1053,8 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
     for (uint32_t i = 0; valid && i < header.target_count; i++) {
         const retarget_target record = targets[i];
         valid = (i ? record.parent >= 0 && (uint32_t)record.parent < i : record.parent == -1)
-            && record.mode >= TRANSFER_NONE && record.mode <= TRANSFER_TWIST && valid_local(record.local)
+            && record.mode >= TRANSFER_NONE && record.mode <= TRANSFER_TWIST
+            && (record.needed || record.mode ? valid_local(record.local) : valid_free_local(record.local))
             && tide_is_finite_f(record.fraction) && record.fraction >= 0.0f && record.fraction <= 1.0f
             && finiteq(record.inverse_a) && finiteq(record.inverse_b) && finiteq(record.aligned) && finite3(record.axis);
         if (!valid) break;
@@ -1067,7 +1106,7 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
         }
         if (!record.needed) {
             const float parent_scale = record.parent < 0 ? 1.0f : tg[record.parent].scale;
-            tg[i].scale = parent_scale * locals[i].scale.x;
+            tg[i].scale = parent_scale * bounding_scale(locals[i].scale);
             valid = tide_is_finite_f(tg[i].scale) && tg[i].scale > 0.0f;
             const float translation = tide_cmax_f3(tide_abs_f3(tide_mul_f3(tide_f3_splat(parent_scale), locals[i].position)));
             target_bounds[i] = (record.parent < 0 ? 0.0f : target_bounds[record.parent]) + 16.0f * translation;
@@ -1077,8 +1116,11 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
             target_bounds[i] = tide_cmax_f3(tide_abs_f3(tg[i].position));
         }
     }
-    if (valid && full_target) for (uint32_t i = 0; valid && i < header.target_count; i++)
-        valid = compose_global(locals[i], targets[i].parent, tg, &tg[i]);
+    if (valid && full_target) for (uint32_t i = 0; valid && i < header.target_count; i++) {
+        tide_bone_transform local = locals[i];
+        local.scale.x = bounding_scale(local.scale);
+        valid = compose_global(local, targets[i].parent, tg, &tg[i]);
+    }
     if (valid) {
         tide_list_prepare(out, sizeof *locals, where);
         tide_list_resize(out, (int32_t)header.target_count, sizeof *locals, where);

@@ -106,6 +106,11 @@ typedef struct shape_build {
 
 typedef struct decoded {
     gltf *g;
+    // [Parts]: which mesh nodes are kept, by name (NULL: all), and how many were
+    tide_skinned_keep_part_fn keep_part;
+    void *keep_user;
+    uint32_t parts_kept;
+    uint8_t *dropped; // Source nodes left out with the parts: all of their subtree holds parts left out (drop_parts)
     tide_skinned_node_data *nodes;
     uint32_t node_count, source_nodes;
     int32_t *parents;
@@ -327,6 +332,11 @@ static bool node_transform(reader *r, const jnode *json, tide_skinned_node_data 
 static bool order_node(decoded *d, uint32_t source, uint32_t depth)
 {
     if (d->visiting[source] == 2u) return true;
+    if (d->dropped && d->dropped[source]) { // Its subtree is all dropped too, so nothing kept has it for a parent
+        d->remap[source] = UINT32_MAX;
+        d->visiting[source] = 2u;
+        return true;
+    }
     if (d->visiting[source] == 1u || depth > 256u) return fail(d->g->r, NULL, "has a node inside itself, or a hierarchy deeper than 256 nodes");
     d->visiting[source] = 1u;
     const int32_t parent = d->parents[source];
@@ -345,6 +355,57 @@ static bool order_node(decoded *d, uint32_t source, uint32_t depth)
     multiply(d->world + (size_t)n->parent * 16u, own, d->world + (size_t)index * 16u);
     d->visiting[source] = 2u;
     return true;
+}
+
+// Whether a node's mesh is one of the parts kept: all are, unless [Parts] chose
+static bool part_kept(const decoded *d, const jnode *node)
+{
+    if (!d->keep_part) return true;
+    const jnode *name = jget(node, "name");
+    return name && name->kind == J_STRING && d->keep_part(d->keep_user, name->text, name->length);
+}
+
+// With parts chosen, the nodes left out with the parts: a node holding a part
+// left out, or a group whose children all are, so long as no part kept, no
+// skin's joint and no child kept is it or under it. A pack of every outfit's
+// parts would otherwise give each pose all of their nodes; bones, sockets and
+// empties holding no part stay. A node left out has every child left out.
+static bool drop_below(decoded *d, const jnode *nodes, const uint32_t i, const uint8_t *needed, const uint8_t *parts,
+                       const uint32_t depth)
+{
+    if (depth > 256u) return false; // Kept: ordering refuses a hierarchy that deep anyway
+    const jnode *children = jget(nodes->items[i], "children");
+    bool all = true;
+    for (uint32_t k = 0; k < jcount(children); k++) {
+        int64_t child;
+        if (!jwhole(children->items[k], &child) || child >= d->source_nodes) { all = false; continue; }
+        all = drop_below(d, nodes, (uint32_t)child, needed, parts, depth + 1u) && all;
+    }
+    d->dropped[i] = !needed[i] && all && (parts[i] || jcount(children));
+    return d->dropped[i];
+}
+
+static void drop_parts(decoded *d)
+{
+    const jnode *nodes = jget(d->g->root, "nodes"), *skins = jget(d->g->root, "skins");
+    const uint32_t n = d->source_nodes;
+    uint8_t *needed = zeroed(n, 1u), *parts = zeroed(n, 1u);
+    for (uint32_t i = 0; i < n; i++) {
+        if (!jget(nodes->items[i], "mesh")) continue;
+        if (part_kept(d, nodes->items[i])) needed[i] = 1u;
+        else parts[i] = 1u;
+    }
+    // Skins' joints are bones, except a part left out that's its own skin's joint
+    for (uint32_t s = 0; s < jcount(skins); s++) {
+        const jnode *joints = jget(skins->items[s], "joints");
+        for (uint32_t k = 0; k < jcount(joints); k++) {
+            int64_t joint;
+            if (jwhole(joints->items[k], &joint) && joint < n && !parts[joint]) needed[joint] = 1u;
+        }
+    }
+    d->dropped = zeroed(n, 1u);
+    for (uint32_t i = 0; i < n; i++) if (d->parents[i] < 0) drop_below(d, nodes, i, needed, parts, 0u);
+    free(needed), free(parts);
 }
 
 static bool read_nodes(decoded *d)
@@ -371,6 +432,7 @@ static bool read_nodes(decoded *d)
             d->parents[child] = (int32_t)i;
         }
     }
+    if (d->keep_part) drop_parts(d);
     for (uint32_t i = 0; i < d->source_nodes; i++) if (!order_node(d, i, 0u)) return false;
     return true;
 }
@@ -385,17 +447,34 @@ static bool palette(decoded *d, uint32_t node, const float matrix[16], uint32_t 
     return true;
 }
 
+
 static bool read_skins(decoded *d)
 {
     const jnode *skins = jget(d->g->root, "skins");
     d->skin_count = jcount(skins);
     if (d->skin_count > TIDE_SKINNED_MAX_SKINS) return PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_SKINS, "skins", d->skin_count);
     d->skins = zeroed(d->skin_count, sizeof *d->skins);
+    // With parts chosen, only the skins of the parts kept have palettes: the
+    // others would be in every draw's palette for nothing
+    uint8_t *wanted = NULL;
+    if (d->keep_part) {
+        wanted = zeroed(d->skin_count, 1u);
+        const jnode *nodes = jget(d->g->root, "nodes");
+        for (uint32_t i = 0; i < jcount(nodes); i++) {
+            const int64_t skin_index = jwhole_or(nodes->items[i], "skin", -1);
+            if (jget(nodes->items[i], "mesh") && skin_index >= 0 && skin_index < d->skin_count && part_kept(d, nodes->items[i]))
+                wanted[skin_index] = 1u;
+        }
+    }
     uint8_t *used = zeroed(d->source_nodes, 1u); // A skin's joints so far: cleared again after each skin
     bool ok = true;
     for (uint32_t i = 0; ok && i < d->skin_count; i++) {
         const jnode *json = skins->items[i], *joints = jget(json, "joints");
         skin *s = d->skins + i;
+        if (wanted && !wanted[i]) { // No part kept uses it: no palettes, and nothing names its joints
+            s->first = d->palette_count, s->count = 0u;
+            continue;
+        }
         s->first = d->palette_count, s->count = jcount(joints);
         if (!s->count || s->count > d->source_nodes) {
             ok = fail(d->g->r, NULL, "has a skin with no joints or more joints than nodes");
@@ -441,6 +520,7 @@ static bool read_skins(decoded *d)
         free(matrices);
     }
     free(used);
+    free(wanted);
     return ok;
 }
 
@@ -817,7 +897,8 @@ static bool place_geometry(decoded *d, uint32_t source, uint8_t *placed, uint32_
     placed[source] = 1u;
     const jnode *json = jitem(jget(d->g->root, "nodes"), source);
     const jnode *mesh = jget(json, "mesh");
-    if (mesh) {
+    if (mesh && part_kept(d, json)) {
+        d->parts_kept++;
         int64_t index;
         const jnode *model = jwhole(mesh, &index) ? jitem(jget(d->g->root, "meshes"), index) : NULL;
         const jnode *primitives = jget(model, "primitives");
@@ -852,7 +933,7 @@ static bool read_geometry(decoded *d)
         }
     } else if (d->source_nodes) {
         for (uint32_t i = 0; ok && i < d->source_nodes; i++) if (d->parents[i] < 0) ok = place_geometry(d, i, placed, 0u);
-    } else {
+    } else if (!d->keep_part) { // No nodes, so no part has a name to keep
         const jnode *meshes = jget(d->g->root, "meshes");
         for (uint32_t i = 0; ok && i < jcount(meshes); i++) {
             const jnode *primitives = jget(meshes->items[i], "primitives");
@@ -860,6 +941,19 @@ static bool read_geometry(decoded *d)
         }
     }
     free(placed);
+    if (ok && d->keep_part && !d->parts_kept) {
+        // Say some of the parts it has, so the names can be written
+        char parts[160] = "";
+        size_t used = 0;
+        const jnode *nodes = jget(d->g->root, "nodes");
+        for (uint32_t i = 0; i < jcount(nodes) && used < sizeof parts - 40u; i++) {
+            const jnode *name = jget(nodes->items[i], "name");
+            if (!jget(nodes->items[i], "mesh") || !name || name->kind != J_STRING || !name->length) continue;
+            used += (size_t)snprintf(parts + used, sizeof parts - used, "%s'%.32s'", used ? ", " : "", name->text);
+        }
+        ok = fail(d->g->r, used ? "its parts are the nodes holding meshes, by name" : NULL, "keeps none of its parts%s%s",
+                  used ? "; it has " : "", parts);
+    }
     return ok;
 }
 
@@ -907,6 +1001,7 @@ static bool read_animations(decoded *d)
                 break;
             }
             const uint32_t node = d->remap[source];
+            if (node == UINT32_MAX) continue; // A node left out with the parts
             if (seen[(size_t)node * 3u + path] || jget(jitem(jget(d->g->root, "nodes"), source), "matrix")) {
                 ok = fail(d->g->r, NULL, "has repeated animation channels or animates a node declared with a matrix");
                 break;
@@ -1107,7 +1202,7 @@ static bool encode(decoded *d, uint8_t **out, uint32_t *out_size)
 
 static void decoded_free(decoded *d)
 {
-    free(d->nodes), free(d->parents), free(d->remap), free(d->visiting), free(d->world), free(d->skins);
+    free(d->nodes), free(d->parents), free(d->remap), free(d->visiting), free(d->world), free(d->skins), free(d->dropped);
     free(d->palettes), free(d->vertices), free(d->indices), free(d->influences), free(d->clips), free(d->channels), free(d->keys);
     for (uint32_t i = 0; i < d->shape_count; i++) free(d->shapes[i].deltas);
     for (uint32_t i = 0; i < d->mesh_count; i++) free(d->mesh_shapes[i]);
@@ -1115,6 +1210,7 @@ static void decoded_free(decoded *d)
 }
 
 static bool decode_model(const void *input, size_t size, bool runtime, tide_skinned_side_fn side, void *user,
+                         const tide_skinned_keep_part_fn keep_part, void *keep_user,
                          uint8_t **out, uint32_t *out_size, char why[256], char note[256], bool *limited)
 {
     if (!out || !out_size || !why || !note) return false;
@@ -1191,7 +1287,7 @@ static bool decode_model(const void *input, size_t size, bool runtime, tide_skin
             ok = fail(&r, "embed all resources in the GLB", "has an external image in a runtime model");
         }
     }
-    decoded d = {.g = &g};
+    decoded d = {.g = &g, .keep_part = keep_part, .keep_user = keep_user};
     if (ok) ok = read_nodes(&d) && read_skins(&d) && read_geometry(&d) && read_animations(&d) && encode(&d, out, out_size);
     decoded_free(&d);
     for (uint32_t i = 0; i < allocated_buffers; i++) free(g.buffers[i].own);
@@ -1204,7 +1300,7 @@ bool tide_skinned_data_decode(const void *input, const size_t size, const bool r
                               uint8_t **out, uint32_t *out_size, char why[256], char note[256])
 {
     bool limited = false;
-    const bool ok = decode_model(input, size, runtime, side, user, out, out_size, why, note, &limited);
+    const bool ok = decode_model(input, size, runtime, side, user, NULL, NULL, out, out_size, why, note, &limited);
     // SkinnedMesh.Decode's IOError says no more than InvalidData: a limit's
     // refusal goes on this machine's log too, naming the limit, so a model
     // refused for its size is known for what it is. Other refusals stay
@@ -1212,6 +1308,14 @@ bool tide_skinned_data_decode(const void *input, const size_t size, const bool r
     // refusal in its diagnostic.
     if (!ok && runtime && limited) fprintf(stderr, "tide: SkinnedMesh.Decode refused a model: it %s\n", why);
     return ok;
+}
+
+bool tide_skinned_data_decode_parts(const void *input, const size_t size, const tide_skinned_side_fn side, void *user,
+                                    const tide_skinned_keep_part_fn keep, void *keep_user,
+                                    uint8_t **out, uint32_t *out_size, char why[256], char note[256])
+{
+    bool limited = false;
+    return decode_model(input, size, false, side, user, keep, keep_user, out, out_size, why, note, &limited);
 }
 
 void tide_skinned_data_free(uint8_t *bytes)

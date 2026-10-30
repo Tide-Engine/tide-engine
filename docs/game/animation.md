@@ -140,6 +140,17 @@ Bake a character's shapes once, when its body changes, and keep the shaped model
 
 To keep only some of a file's shapes, and so a smaller pack, write `[BlendShapes("masculineFeminine", "default*")]` before the asset: names, or patterns where `*` is any run of characters. The others aren't imported; `[BlendShapes()]` keeps none. See [Blend shapes to keep](./assets.md#blend-shapes-to-keep).
 
+### Parts of a file
+
+Character packs often ship every outfit piece, at every level of detail, on one skeleton in one file, where a game wears a few of them. `[Parts(...)]` before a `SkinnedMesh<V>` asset keeps only the parts it names: a part is a node holding a mesh, written by its name or a pattern where `*` is any run of characters.
+
+```csharp
+[Parts("Body_Full_LOD0", "GreatHelm_LOD0", "Gambeson_LOD0")]
+asset SkinnedMesh<Vertex3> knight = "art/MedievalCivil&Soldier_Complete.FBX";
+```
+
+The other parts' meshes and skins are left out before they're read, so a file far past what one model can hold imports as the few parts it's asked for. Their nodes go with them, but every bone stays, and so do sockets and empty nodes that hold no part. An FBX geometry helper's mesh is its parent node's part. A file whose parts none of the patterns match is an error that names some of the parts it has. To retarget onto such a model, give its humanoid profile's `reference` the same list as `"parts"` (below), so the rig is that model's skeleton.
+
 In a glTF file, targets with the same name in `extras.targetNames` are one shape across all of the file's meshes, and must have the same default weight in `weights`; an unnamed target is a shape of its own, found with `TryGetAt`. POSITION, NORMAL and TANGENT targets are read, including sparse accessors. In an FBX file, each blend shape channel is a shape named after its target shape (`smile` in a channel `Blends.smile`), with the channel's default percentage as its weight. Export each channel as one target at full weight: a channel with in-between shapes is refused. The importer's own flat normals, made for a part exported without normals, don't follow shapes.
 
 ## Checked names and dynamic lookup
@@ -276,7 +287,10 @@ overrides automatic assignments where needed:
 }
 ```
 
-Reference paths are relative to the profile. To use a calibration clip instead
+Reference paths are relative to the profile. For a model imported with
+[`[Parts]`](#parts-of-a-file), write the same patterns in the reference,
+`"reference": { "file": "../art/pack.fbx", "pose": "rest", "parts": ["Body_LOD0", "Helmet*"] }`,
+so the rig is the skeleton the model has. To use a calibration clip instead
 of rest transforms, write `"reference": { "file": "reference.fbx", "clip":
 "T-Pose", "seconds": 0 }`. The clip name is exact and unambiguous, and seconds
 must lie within its duration. The calibration file may be separate from the
@@ -403,7 +417,10 @@ Preparation returns `RetargetError.InvalidRig`, `MissingBone`, `AmbiguousBone`,
 `InvalidReferencePose`, `IncompatibleSkeleton` or `UnsupportedScale` on failure.
 The console gives the failing role or skeleton detail. Required uncertain roles
 need a manual assignment. References must have finite transforms and positive
-uniform local scale; malformed hierarchies and ambiguous correspondence are
+scale. A node of non-uniform scale (an exporter's geometry helper, or an IK bone
+a little off uniform) is fine where no role is at or below it and the transfer
+needs nothing under it; a required role there gives `UnsupportedScale`, and an
+optional one is left out. Malformed hierarchies and ambiguous correspondence are
 rejected.
 
 These mutable settings remain available on a prepared map:
