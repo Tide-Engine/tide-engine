@@ -148,11 +148,10 @@ typedef struct physics {
     int64_t stamp;
     tide_resident state; // Box3D's state, as pages of the world's (tide/resident.h)
     bool moved;
-    uint8_t unused_too[3];
+    uint8_t unused_too[7];
     tide_list gone;
     tide_map owners;
     tide_list gone_shapes;
-    uint8_t unused_maps[4];
     tide_map parts;
     tide_map sensors;
     tide_map joints;
@@ -164,13 +163,12 @@ typedef struct physics {
     tide_list pending;
     tide_list history;
     tide_list colliders;
-    uint8_t collider_padding[4];
     tide_map collider_index;
     tide_list free_colliders;
     tide_list pending_hulls;
     tide_list topology;
     bool topology_changed;
-    uint8_t topology_padding[3];
+    uint8_t topology_padding[7];
     int64_t shard_moves; // Shards.moves as the last tick had it
     tide_map copies;     // Other shards' bodies near this one's border, by entity...
     tide_map copy_of;    // ...and whose each copy is
@@ -178,8 +176,8 @@ typedef struct physics {
 } physics;
 
 _Static_assert(sizeof(body) == 176 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
-                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 376 && offsetof(physics, moved) == 88
-                   && offsetof(physics, shard_moves) == 296 && offsetof(physics, copies) == 304,
+                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 480 && offsetof(physics, moved) == 88
+                   && offsetof(physics, shard_moves) == 376 && offsetof(physics, copies) == 384,
                "box3d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 12
@@ -187,9 +185,9 @@ _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) ==
                    && offsetof(physics, contact_speed) == 24 && offsetof(physics, bounce_speed) == 28
                    && offsetof(physics, hit_speed) == 32 && offsetof(physics, sleeping) == 36
                    && offsetof(physics, bodies) == 40 && offsetof(physics, shapes) == 44 && offsetof(physics, stamp) == 48
-                   && offsetof(physics, state) == 56 && offsetof(physics, moved) == 88 && offsetof(physics, gone) == 92
-                   && offsetof(physics, owners) == 96 && offsetof(physics, gone_shapes) == 120
-                   && offsetof(physics, parts) == 128 && offsetof(physics, sensors) == 152,
+                   && offsetof(physics, state) == 56 && offsetof(physics, moved) == 88 && offsetof(physics, gone) == 96
+                   && offsetof(physics, owners) == 104 && offsetof(physics, gone_shapes) == 136
+                   && offsetof(physics, parts) == 144 && offsetof(physics, sensors) == 176,
                "Physics's fields aren't where box3d.tide lays them out any more");
 
 // A body's place and speeds are 13 floats side by side in its component: its
@@ -1320,9 +1318,10 @@ typedef struct mesh_collider {
     tide_float3 scale, offset;
     float friction, bounce;
     int32_t cache;
+    uint8_t padding[4];
 } mesh_collider;
 typedef struct part { tide_entity of; int64_t box, sphere, capsule, mesh, hull, height_field, body; } part;
-_Static_assert(sizeof(mesh_collider) == 44 && sizeof(part) == 64, "mesh component ABI changed");
+_Static_assert(sizeof(mesh_collider) == 56 && sizeof(part) == 64, "mesh component ABI changed");
 
 static int64_t attach_mesh_component(const int64_t on, const mesh_collider *m)
 {
@@ -2376,7 +2375,7 @@ typedef struct collider {
     int64_t category, mask;
 } collider;
 typedef struct hull_geometry { tide_float3 points[128]; tide_float4 planes[128]; int32_t count, faces; } hull_geometry;
-_Static_assert(sizeof(collider) == 192 && offsetof(physics, pending) == 240, "historical scene ABI changed");
+_Static_assert(sizeof(collider) == 192 && offsetof(physics, pending) == 288, "historical scene ABI changed");
 
 static b3Vec3 scene_vec(const tide_float3 p) { return vec(p); }
 static tide_float3 scene_float(const b3Vec3 p) { return float3(p); }
@@ -2576,8 +2575,8 @@ void b3t_capture_history(tide_rows *rows, physics *p)
 
 // Geometry was captured by the physics step; identity/Snap metadata is final
 // only after the tick's queued changes have applied.
-typedef struct history_frame { int32_t tick; tide_list colliders, hulls; } history_frame;
-_Static_assert(sizeof(history_frame) == 12, "history frame ABI changed");
+typedef struct history_frame { int32_t tick; uint8_t padding[4]; tide_list colliders, hulls; } history_frame;
+_Static_assert(sizeof(history_frame) == 24, "history frame ABI changed");
 static void seal_history(void *context, const tide_entities *entities)
 {
     physics *p = context;
@@ -2891,7 +2890,7 @@ int64_t b3t_copy_hull(const int64_t on, const tide_float3 *vertices, const int32
                       const tide_float3 offset, const float density, const float friction, const float bounce, const bool sensor)
 {
     note('U', &on, sizeof on);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const hull_collider s = {.vertices = tide_list_from(vertices, count, sizeof *vertices), .scale = scale, .offset = offset,
                              .density = density, .friction = friction, .bounce = bounce, .sensor = sensor};
     const int64_t made = live_hull(on, 0, &s);
@@ -2904,7 +2903,7 @@ int64_t b3t_copy_height(const int64_t on, const float *heights, const int32_t he
                         const float minimum, const float maximum, const float friction, const float bounce)
 {
     note('E', &on, sizeof on);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const height_collider s = {.heights = tide_list_from(heights, height_count, sizeof *heights),
                                .holes = tide_list_from(holes, hole_count, sizeof *holes), .columns = columns, .rows = rows,
                                .scale = scale, .minimum = minimum, .maximum = maximum, .friction = friction, .bounce = bounce};

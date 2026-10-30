@@ -48,7 +48,7 @@ static double batch(const int kind, const int round, const int calls)
 {
     const uint64_t start = tide_time_now_ns();
     for (int i = 0; i < calls; i++) {
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         const float seconds = (float)((round * calls + i) % 2000) * 0.00073f;
         tide_list output = {0}, source = {0};
         bool okay;

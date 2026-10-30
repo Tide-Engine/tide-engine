@@ -30,7 +30,7 @@ static bool parity_sample(const tide_list model, const tide_skinned_data_view *v
                            const ufbx_scene *source, const float seconds, double *worst)
 {
     bool ok = false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list pose = {0};
     ufbx_evaluate_opts opts = {0};
     opts.evaluate_skinning = true;
@@ -110,7 +110,7 @@ TIDE_TEST(fbx_runtime_skin_matches_maya_export_with_animated_scale_and_offset_ta
     TIDE_CHECK(scene && scene->anim_stacks.count == 1u);
     if (scene && scene->anim_stacks.count == 1u) {
         TIDE_CHECK(scene->anim_stacks.data[0]->time_begin > 0.0);
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         const tide_list model = tide_list_from(canonical, (int32_t)canonical_size, 1u);
         const float duration = tide_skinned_animation_duration(model, 0);
         double worst = 0.0;

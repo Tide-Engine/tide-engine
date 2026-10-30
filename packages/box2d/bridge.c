@@ -135,6 +135,7 @@ typedef struct physics {
     bool moved;
     uint8_t unused2[3];
     int32_t dropped;
+    uint8_t unused3[4];
     tide_list image;
     tide_list gone;
     tide_list shed;
@@ -152,7 +153,7 @@ typedef struct physics {
     tide_map fixtures;
     tide_list topology;
     bool topology_changed;
-    uint8_t topology_padding[3];
+    uint8_t topology_padding[7];
     int64_t shard_moves; // Shards.moves as the last tick had it
     tide_map copies;     // Other shards' bodies near this one's border, by entity...
     tide_map copy_of;    // ...and whose each copy is
@@ -161,7 +162,7 @@ typedef struct physics {
 
 _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 336 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 256,
+                   && sizeof(physics) == 440 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 336,
                "box2d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 8
@@ -171,8 +172,8 @@ _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) ==
                    && offsetof(physics, bodies) == 36 && offsetof(physics, shapes) == 40
                    && offsetof(physics, stamp) == 48 && offsetof(physics, size) == 56
                    && offsetof(physics, moved) == 60 && offsetof(physics, dropped) == 64
-                   && offsetof(physics, image) == 68 && offsetof(physics, gone) == 72 && offsetof(physics, shed) == 76
-                   && offsetof(physics, owners) == 80 && offsetof(physics, parts) == 104 && offsetof(physics, sensors) == 128,
+                   && offsetof(physics, image) == 72 && offsetof(physics, gone) == 80 && offsetof(physics, shed) == 88
+                   && offsetof(physics, owners) == 96 && offsetof(physics, parts) == 128 && offsetof(physics, sensors) == 160,
                "Physics's fields aren't where box2d.tide lays them out any more");
 
 // A body's four bools are side by side in its component: one field of four
@@ -1962,7 +1963,7 @@ typedef struct collider {
     int32_t group;
     uint8_t filter_padding[4];
 } collider;
-_Static_assert(sizeof(collider) == 152 && offsetof(physics, pending) == 192, "historical scene ABI changed");
+_Static_assert(sizeof(collider) == 152 && offsetof(physics, pending) == 240, "historical scene ABI changed");
 
 static b2Vec2 scene_vec(const tide_float2 p) { return (b2Vec2){p.x, p.y}; }
 static tide_float2 scene_float(const b2Vec2 p) { return (tide_float2){p.x, p.y}; }
@@ -2072,8 +2073,8 @@ void b2t_capture_history(tide_rows *rows, physics *p)
 
 // Geometry was captured by the physics step; identity/Snap metadata is final
 // only after the tick's queued changes have applied.
-typedef struct history_frame { int32_t tick; tide_list colliders; } history_frame;
-_Static_assert(sizeof(history_frame) == 8, "history frame ABI changed");
+typedef struct history_frame { int32_t tick; uint8_t padding[4]; tide_list colliders; } history_frame;
+_Static_assert(sizeof(history_frame) == 16, "history frame ABI changed");
 static void seal_history(void *context, const tide_entities *entities)
 {
     physics *p = context;

@@ -663,7 +663,7 @@ namespace Tide.Game
 
         // Tide's singleton Extras, as the game's C lays it out
         [global::Tide.TideType("Extras")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 64)]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 72)]
         public unsafe partial struct Value
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideEntityId bonus;
@@ -671,7 +671,7 @@ namespace Tide.Game
             [global::System.Runtime.InteropServices.FieldOffset(16)] public global::Tide.TideEntityId tossed;
             [global::System.Runtime.InteropServices.FieldOffset(24)] public global::Tide.TideText said;
             [global::System.Runtime.InteropServices.FieldOffset(32)] public global::Tide.TideMap speakers;
-            [global::System.Runtime.InteropServices.FieldOffset(56)] public global::Tide.TideGrid board;
+            [global::System.Runtime.InteropServices.FieldOffset(64)] public global::Tide.TideGrid board;
         }
     }
 }
@@ -697,7 +697,7 @@ namespace Tide.Game
 
         // Tide's singleton Room, as the game's C lays it out
         [global::Tide.TideType("Room")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 40)]
         public unsafe partial struct Value
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public int arrivals;
@@ -734,11 +734,11 @@ namespace Tide.Game
 
         // Tide's struct Plates, as the game's C lays it out
         [global::Tide.TideType("Plates")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 8)]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 16)]
         public unsafe partial struct Value
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideList corners;
-            [global::System.Runtime.InteropServices.FieldOffset(4)] public global::Tide.TideList faces;
+            [global::System.Runtime.InteropServices.FieldOffset(8)] public global::Tide.TideList faces;
         }
     }
 }
@@ -840,13 +840,13 @@ namespace Tide.Game.UnityEngine
 
         // Tide's singleton UnityEngine.LoadedScenes, as the game's C lays it out
         [global::Tide.TideType("UnityEngine.LoadedScenes")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 40)]
         public unsafe partial struct Value
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideMap loaded;
-            [global::System.Runtime.InteropServices.FieldOffset(24)] public uint opener;
-            [global::System.Runtime.InteropServices.FieldOffset(28)] public bool heard;
-            [global::System.Runtime.InteropServices.FieldOffset(29)] public bool opened;
+            [global::System.Runtime.InteropServices.FieldOffset(32)] public uint opener;
+            [global::System.Runtime.InteropServices.FieldOffset(36)] public bool heard;
+            [global::System.Runtime.InteropServices.FieldOffset(37)] public bool opened;
         }
     }
 }
@@ -854,7 +854,7 @@ namespace Tide.Game
 {
     // Tide's singleton tide_hierarchy
     [global::Tide.TideType("tide_hierarchy")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 24)]
+    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
     public unsafe partial struct tide_hierarchy
     {
         [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideMap nodes;
@@ -980,7 +980,7 @@ namespace Tide.Game
 
         // Tide's command Say, as the game's C lays it out
         [global::Tide.TideType("Say")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 4)]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 8)]
         public unsafe partial struct Value
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideText text;

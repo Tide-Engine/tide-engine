@@ -252,7 +252,7 @@ void tide_shard_bytes_done(const tide_list l, const uint8_t *flat, const bool co
 void tide_shard_bytes_set(tide_list *l, const void *data, const uint32_t size, const uint32_t where)
 {
     if (size > INT32_MAX) tide_out_of_memory();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list from = tide_list_from(data, (int32_t)size, 1);
     tide_list_set(l, from, 1, where);
     tide_scratch_reset(mark);

@@ -73,7 +73,7 @@ TIDE_TEST(double_text_and_json_roundtrip_all_exponents_and_boundary_values)
             const uint64_t bits = (negative << 63) | (exponent << 52)
                                 | (next_bits(&state) & UINT64_C(0x000FFFFFFFFFFFFF));
             const double value = tide_d_from_bits(bits);
-            const uint32_t mark = tide_scratch_mark();
+            const uint64_t mark = tide_scratch_mark();
             const tide_str text = tide_str_add_double(TIDE_STR_EMPTY, value, 0);
             double parsed;
             TIDE_REQUIRE(tide_str_parse_double(text, &parsed));
@@ -85,7 +85,7 @@ TIDE_TEST(double_text_and_json_roundtrip_all_exponents_and_boundary_values)
             tide_scratch_reset(mark);
         }
     }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     TIDE_CHECK(tide_str_eq(tide_str_add_double(TIDE_STR_EMPTY, DBL_MAX, ('F' << 8) | 17),
                           tide_str_from_cstr("179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368.00000000000000000")));
     TIDE_CHECK(tide_str_eq(tide_json_add_double(TIDE_STR_EMPTY, -0.0), tide_str_from_cstr("-0")));
@@ -125,7 +125,7 @@ TIDE_TEST(crossplatform_double_arithmetic_geometry_and_text)
         hash = hash_double(hash, n.z);
         hash = hash_double(hash, tide_hash_d3(v));
         if (i % 19 == 0 && tide_is_finite_d(a)) {
-            const uint32_t mark = tide_scratch_mark();
+            const uint64_t mark = tide_scratch_mark();
             const tide_str text = tide_str_add_double(TIDE_STR_EMPTY, a, 0);
             for (int k = 0; k < text.bytes; k++) hash = (hash ^ (uint8_t)text.ptr[k]) * UINT64_C(0x100000001B3);
             double value;

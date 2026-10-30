@@ -1,5 +1,18 @@
 # Textures and how they are sampled
 
+## A grid's Texture keeps a 64-bit handle (2026-10-30)
+
+A grid's handle is 64 bits now (notes/ecs.md, 64-bit handles), which
+`image.version` can't hold beside the cells, the shifts and the sampling bits.
+`tide_texture_of_grid` (`tide/mesh.h`) keeps the handle's low 32 bits where
+they were and its high 32 in `image.width`, which nothing reads of a grid's
+Texture (its size is the grid's: `tide_texture_size`, `see_grid`);
+`tide_texture_grid` puts them back together. The 48-byte `tide_texture_ref`
+is unchanged. The draw list's ids for lists, maps and grids of numbers
+(`numbers_id`, `engine/src/mesh.c`) are a 63-bit mix of the handle and the
+layout, where they were the 32-bit handle beside the layout, and a mesh made
+along the way is `tide_handle_of(TIDE_IN_SCRATCH, 0)`, no world's handle.
+
 ## Packs keep compressed images alone (2026-10-30)
 
 bannerlord-duel (notes/gaps.md) found its web pack going from 32 to 231 MB with

@@ -29,14 +29,14 @@ static bool open_model(const tide_list data, model_seen *m)
     memset(m, 0, sizeof *m);
     int32_t count;
     if (tide_pack_holds(data.at)) {
-        const uint32_t offset = tide_handle_offset(data.at);
+        const uint64_t offset = tide_handle_offset(data.at);
         const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
         if (!header) return false;
         tide_block block;
         memcpy(&block, header, sizeof block);
         if (block.a != block.b || block.a > INT32_MAX) return false;
         count = (int32_t)block.a;
-        m->bytes = (void *)tide_pack_span(offset + (uint32_t)sizeof(tide_block), block.a);
+        m->bytes = (void *)tide_pack_span(offset + sizeof(tide_block), block.a);
         if (!m->bytes) return false;
     } else {
         count = tide_list_count(data);
@@ -64,12 +64,12 @@ void tide_skinned_own(tide_list *data, const uint32_t where)
     if (tide_pack_holds(data->at)) {
         // Unlike list ownership's trusted pack path, this boundary also sees
         // failed/invalid model values. Check the complete byte-list span first.
-        const uint32_t offset = tide_handle_offset(data->at);
+        const uint64_t offset = tide_handle_offset(data->at);
         const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
         tide_block block = {0};
         if (header) memcpy(&block, header, sizeof block);
         if (!header || block.a != block.b || block.a > INT32_MAX
-            || !tide_pack_span(offset + (uint32_t)sizeof block, block.a)) {
+            || !tide_pack_span(offset + sizeof block, block.a)) {
             data->at = 0;
             return;
         }
@@ -85,7 +85,7 @@ void tide_skinned_own(tide_list *data, const uint32_t where)
     }
     if (!asset) { tide_list_own(data, 1u, where); return; }
     // The payload has been copied before heap allocation can move source pages.
-    const uint32_t at = tide_heap_alloc(heap, 32u);
+    const uint64_t at = tide_heap_alloc(heap, 32u);
     tide_asset_use(heap, asset, at);
     tide_block *block = tide_heap_write(heap, at);
     block->a = asset->count;
@@ -99,7 +99,8 @@ void tide_skinned_own(tide_list *data, const uint32_t where)
 // within the pack file's bytes (with the pack's generation), or an owned
 // asset copy, named by the SHA-256 of what's in it.
 typedef struct model_key {
-    uint32_t kind, at;
+    uint32_t kind;
+    tide_handle at;
     uint64_t generation;
     uint8_t id[32];
 } model_key;
@@ -1257,7 +1258,7 @@ static void plan_apply(const sample_plan *p, const tide_skinned_data_view *sourc
                        tide_list *transforms, const uint32_t where)
 {
     tide_list_resize(transforms, (int32_t)p->nodes, sizeof(tide_bone_transform), where);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_bone_transform *flat = scratch_transforms(*transforms, p->nodes);
     tide_list_cache cache = {0};
     if (flat) memcpy(flat, p->initial, (size_t)p->nodes * sizeof *flat);
@@ -1394,7 +1395,7 @@ static sample_plan *plan_for(const uint32_t mode, const tide_list target_data, c
     sample_plan *p = keyed ? plan_find(&key) : NULL;
     if (p && p->target_size == target->view.size && p->source_size == source->view.size) return p;
     plan_release(p);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     sample_plan made;
     memset(&made, 0, sizeof made);
     made.key = key;
@@ -1456,7 +1457,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
     model_seen target, source;
     if (!open_model(target_data, &target)) return false;
     if (!open_model(source_data, &source)) { close_model(&target); return false; }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     char why[400] = "";
     bool valid = nodes_valid(&target.view) && nodes_valid(&source.view) && tide_list_count(source_transforms) == (int32_t)source.view.nodes;
     const bool exact = valid && target.view.nodes == source.view.nodes
@@ -1521,7 +1522,7 @@ bool tide_skinned_blend(const tide_list a, const tide_list b, const float weight
     if (!out) return false;
     const int32_t count = tide_list_count(a);
     if (count < 0 || count != tide_list_count(b)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_bone_transform *made = tide_scratch_memory((size_t)count * sizeof *made);
     const float t = tide_saturate_f(weight);
     tide_list_cache ac = {0}, bc = {0};
@@ -1828,7 +1829,7 @@ tide_float4x4 tide_skinned_model(const tide_list data, const tide_list transform
     tide_float4x4 out = tide_identity_f4x4();
     if (bone < 0) return out;
     model_facts *f = known_model(data);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     if (f && f->key.kind == KEY_PACK) {
         // Known bytes in the pack: no need to open them again.
         if (!f->valid) {
@@ -1837,7 +1838,7 @@ tide_float4x4 tide_skinned_model(const tide_list data, const tide_list transform
             f->valid = nodes_valid(&m.view) ? 1 : -1;
             close_model(&m);
         }
-        const tide_skinned_data_view v = {.data = tide_pack_span(tide_handle_offset(data.at) + (uint32_t)sizeof(tide_block), f->size),
+        const tide_skinned_data_view v = {.data = tide_pack_span(tide_handle_offset(data.at) + sizeof(tide_block), f->size),
                                           .size = f->size, .nodes = f->nodes, .node_at = f->node_at};
         tide_float4x4 global;
         if (v.data && (uint32_t)bone < v.nodes && f->valid > 0 && chain_model(&v, transforms, (uint32_t)bone, &global)) out = global;
@@ -1939,7 +1940,7 @@ bool tide_draw_skinned_data(tide_draw_list *draw, const tide_list data, const ti
     memset(info, 0, 3u * sizeof *info);
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     uint64_t version, identity;
     const bool packed = tide_pack_skinned_proof(data, &identity, &version);
     bool valid = packed || tide_skinned_data_validate(m.view.data, m.view.size);
@@ -2083,7 +2084,7 @@ bool tide_draw_skinned_atlas(tide_draw_list *draw, const tide_list data, const t
     if (!tide_pack_skinned_proof(data, &identity, &version)) return tide_draw_skinned_data(draw, data, transforms, textures, info);
     model_seen m;
     if (!draw || !open_model(data, &m)) return false;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const uint64_t pixels = (uint64_t)m.view.vertices + ((uint64_t)m.view.influences + 1u) / 2u;
     bool valid = m.view.palettes && m.view.palettes <= TIDE_LIST_DATA_MOST / 4u
         && pixels > 0u && pixels <= TIDE_LIST_DATA_MOST;
@@ -2226,7 +2227,7 @@ static bool draw_skinned_rest(tide_draw_list *draw, const tide_list data, const 
     if (rest && rest->version == version && skin_rest_cached(draw, rest, atlas, textures, info, &palette_bad)) return true;
     // Only the first capture needs authored TRS. Existing draw capture owns
     // those values and model dependencies before this scratch scope ends.
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list transforms = {0};
     const bool capture_atlas = atlas && !palette_bad;
     const bool valid = tide_skinned_rest(data, &transforms, TIDE_IN_SCRATCH)
@@ -2271,7 +2272,7 @@ static void prepare_atlas_poses(void *context, const uint32_t thread)
             const uint8_t *nodes = c->bytes + model->bytes;
             const uint8_t *palettes = nodes + (size_t)model->nodes * TIDE_SKINNED_NODE_SIZE;
             const tide_bone_transform *trs = (const tide_bone_transform *)(const void *)(c->bytes + pose->bytes);
-            const uint32_t mark = tide_scratch_mark();
+            const uint64_t mark = tide_scratch_mark();
             tide_float4x4 *global = tide_scratch_memory((size_t)model->nodes * sizeof *global);
             // Captured tables were fully validated while their pack proof
             // was current. Only these owned bytes and exact current TRS are

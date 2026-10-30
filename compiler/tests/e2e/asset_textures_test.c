@@ -72,7 +72,7 @@ static void frame(void)
         const tide_draw_texture *t = &draw.textures[i];
         if (t->space != TIDE_PIXELS_GRID) continue;
         if (t->width == 8) cells_texture = i + 1u;
-        else if (tide_pack_holds((uint32_t)t->id)) glass_texture = i + 1u;
+        else if (tide_pack_holds(t->id)) glass_texture = i + 1u;
         else if (t->pixels[3] == 0) bare_texture = i + 1u; // Its first cell is clear
         else paint_texture = i + 1u;
     }

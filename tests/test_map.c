@@ -328,7 +328,7 @@ TIDE_TEST(map_cursor_reads_change_no_map_heap_or_scratch_state)
     for (int32_t key = 0; key < 50; key++) remove_key(&world.scores, key, TIDE_IN_MATCH);
     const tide_map before = world.scores;
     const uint64_t hash = tide_heap_hash(0, &world.heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     int64_t order = 0;
     int32_t next = 0, seen = 0;
     while (tide_map_next(world.scores, &kind, &order, &next) >= 0) seen++;

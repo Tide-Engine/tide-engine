@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 7u
+#define TIDE_EMBED_ABI 8u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {

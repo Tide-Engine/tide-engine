@@ -19,7 +19,7 @@ static uint8_t *asset_pack(size_t *size, uint8_t *values)
     tide_sha256_of(values, ASSET_BYTES, id);
     tide_pack_builder builder = {0};
     uint32_t chars;
-    const uint32_t at = tide_pack_bytes(&builder, id, values, ASSET_BYTES, &chars);
+    const uint64_t at = tide_pack_bytes(&builder, id, values, ASSET_BYTES, &chars);
     tide_pack_name(&builder, "bytes", TIDE_PACK_BYTES, at, ASSET_BYTES, 0);
     return tide_pack_end(&builder, size);
 }
@@ -62,8 +62,8 @@ TIDE_TEST(asset_lists_share_immutable_values_detach_and_survive_pack_unload)
     const tide_list source = packed_bytes();
     for (uint32_t i = 0; i < 100u; i++) tide_list_set(&lists[i], source, 1u, TIDE_IN_MATCH);
     TIDE_CHECK(heap.used < 8192u);
-    const uint32_t kept_at = lists[0].at;
-    const uint32_t kept_used = heap.used;
+    const tide_handle kept_at = lists[0].at;
+    const uint64_t kept_used = heap.used;
     for (uint32_t i = 0; i < 100u; i++) tide_list_set(&lists[0], source, 1u, TIDE_IN_MATCH);
     TIDE_CHECK(lists[0].at == kept_at && heap.used == kept_used && !heap.pending);
     const void *shared = tide_list_at(lists[0], 0, 1u);

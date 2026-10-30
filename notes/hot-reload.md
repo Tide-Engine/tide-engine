@@ -1,5 +1,14 @@
 # Hot reloading
 
+## Migration's empty heap (2026-10-30)
+
+With 64-bit handles (notes/ecs.md) a packed heap's numbers are `uint64_t`, so
+the empty heap a migration writes for a world that had none is the asset
+dictionary's count and 26 `uint64_t` (`empty_heap` in `platform/src/migrate.c`).
+Fields holding text, lists, maps, sets and grids still carry over as plain
+bytes with the heap; a build before the change and one after have different
+layouts, which a reload migrates or starts over by the usual rules.
+
 ## Resource collection rebinding (2026-10-30)
 
 Generated local resource rebinding follows arrays and live list/map values,

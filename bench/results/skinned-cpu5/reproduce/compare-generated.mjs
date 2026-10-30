@@ -6,7 +6,7 @@ const [beforeFile,afterFile,root,output]=process.argv.slice(2);
 if(!output)throw new Error('Usage: compare-generated.mjs <before-game.c> <after-game.c> <checkout> <snapshot>');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const assert=(ok,message)=>{if(!ok)throw new Error(message);};
-const oldAdapter=`    const uint32_t tide_skin_mark = tide_scratch_mark();
+const oldAdapter=`    const uint64_t tide_skin_mark = tide_scratch_mark();
     tide_list tide_skin_transforms = tide_pose_transforms;
     if (tide_default_pose) {
         if (!tide_skinned_rest(tide_model_data, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }
@@ -16,7 +16,7 @@ const oldAdapter=`    const uint32_t tide_skin_mark = tide_scratch_mark();
     }
     if (!tide_draw_skinned_atlas(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }
 `;
-const newAdapter=`    const uint32_t tide_skin_mark = tide_scratch_mark();
+const newAdapter=`    const uint64_t tide_skin_mark = tide_scratch_mark();
     if (tide_default_pose) {
         if (!tide_draw_skinned_rest_atlas(tide_draw, tide_model_data, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }
     } else {

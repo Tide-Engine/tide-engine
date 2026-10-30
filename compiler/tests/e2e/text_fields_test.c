@@ -70,7 +70,7 @@ TIDE_TEST(text_fields_reuse_their_memory)
     // Once the names stop growing, every tick's new text reuses released blocks.
     tide_world_init(&world, 1.0f);
     for (int i = 0; i < 50; i++) tide_world_tick(&world);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     for (int i = 0; i < 200; i++) tide_world_tick(&world);
     TIDE_CHECK(world.heap.used == used);
     const Named cat = tide_get_Named(&world, (tide_entity){1, 1});

@@ -329,7 +329,7 @@ static void gen_embed_heard(gen *g)
         sb_printf(o, "TIDE_HELPER void tide_embed_heard_%s(const %s *value, const bool verified, const tide_entity target, "
                      "const uint32_t tick)\n{\n    %s v = *value;\n", name, name, name);
         if (fix) {
-            sb_printf(o, "    const uint32_t mark = tide_scratch_mark();\n    tide_embed_fix_%s(&v, &tide_embed_heard_store);\n"
+            sb_printf(o, "    const uint64_t mark = tide_scratch_mark();\n    tide_embed_fix_%s(&v, &tide_embed_heard_store);\n"
                          "    tide_scratch_reset(mark);\n", name);
         }
         sb_printf(o, "    const uint32_t value_bytes = ((uint32_t)sizeof v + 7u) & ~7u;\n"
@@ -389,7 +389,7 @@ static void gen_embed(gen *g)
         sb_printf(o, "    tide_text_use(%s, %s);\n", world_heap(prog, false) ? "(tide_heap *)(uintptr_t)&w->heap" : "NULL",
                   world_heap(prog, true) ? "(tide_heap *)(uintptr_t)&l->heap" : "NULL");
     }
-    sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n    uint32_t places = w->entities.next_unused;\n");
+    sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n    uint32_t places = w->entities.next_unused;\n");
     if (sharded(g)) { // Every world the frame drew: the host gave the others again (tide_frame_shards)
         sb_put(o, "    const float home_alpha = alpha;\n"
                   "    tide_view_home = (tide_view_worlds){.current = w, .previous = previous, .alpha = alpha};\n"
@@ -565,7 +565,7 @@ static void gen_embed(gen *g)
                   "// A command's text field, its entry made the scratch area's text: false for one that isn't there or isn't UTF-8\n"
                   "TIDE_HELPER bool tide_embed_command_text(const uint8_t *tail, const uint32_t size, tide_text *field)\n{\n"
                   "    const uint8_t *bytes;\n    uint32_t length;\n"
-                  "    if (!tide_embed_tail(tail, size, field->at, &bytes, &length)) return false;\n"
+                  "    if (field->at > UINT32_MAX || !tide_embed_tail(tail, size, (uint32_t)field->at, &bytes, &length)) return false;\n"
                   "    *field = (tide_text){0};\n    if (!length) return true;\n"
                   "    const char *text = (const char *)bytes;\n"
                   "    if (!tide_utf8_valid(text, (int32_t)length)) return false;\n"
@@ -574,7 +574,7 @@ static void gen_embed(gen *g)
                   "// ...and a list field of `element`-byte elements side by side\n"
                   "TIDE_HELPER bool tide_embed_command_list(const uint8_t *tail, const uint32_t size, tide_list *field, const uint32_t element)\n{\n"
                   "    const uint8_t *bytes;\n    uint32_t length;\n"
-                  "    if (!tide_embed_tail(tail, size, field->at, &bytes, &length) || length % element) return false;\n"
+                  "    if (field->at > UINT32_MAX || !tide_embed_tail(tail, size, (uint32_t)field->at, &bytes, &length) || length % element) return false;\n"
                   "    *field = length ? tide_list_from(bytes, (int32_t)(length / element), element) : (tide_list){0};\n"
                   "    return true;\n}\n\n");
     }
@@ -590,7 +590,7 @@ static void gen_embed(gen *g)
             sb_printf(o, "        if (size < sizeof(%s)) return false;\n        %s v;\n        memcpy(&v, value, sizeof v);\n"
                          "        const uint8_t *tail = (const uint8_t *)value + sizeof v;\n"
                          "        const uint32_t tail_size = size - (uint32_t)sizeof v;\n        (void)tail;\n        (void)tail_size;\n"
-                         "        const uint32_t mark = tide_scratch_mark();\n        bool ok = true;\n", name, name);
+                         "        const uint64_t mark = tide_scratch_mark();\n        bool ok = true;\n", name, name);
             path_list paths = {0};
             text_paths(d, "", &paths);
             for (int i = 0; i < paths.count; i++) {
@@ -641,7 +641,7 @@ static void gen_embed(gen *g)
         sb_printf(o, "    if (strcmp(scene, \"%s\") == 0) {\n        s->scene = %d;\n", layout_name(t), i);
         path_list paths = {0};
         text_paths(d, "", &paths);
-        if (paths.count) sb_put(o, "        const uint32_t mark = tide_scratch_mark();\n");
+        if (paths.count) sb_put(o, "        const uint64_t mark = tide_scratch_mark();\n");
         sb_printf(o, "        s->value.%s = ", type_cname(d));
         gen_value(g, o, d, NULL, 0);
         sb_put(o, ";\n");
@@ -665,7 +665,7 @@ static void gen_embed(gen *g)
                   STR_ARG(d->qualified), name);
         path_list paths = {0};
         text_paths(d, "", &paths);
-        if (paths.count) sb_put(o, "        const uint32_t mark = tide_scratch_mark();\n");
+        if (paths.count) sb_put(o, "        const uint64_t mark = tide_scratch_mark();\n");
         sb_printf(o, "        %s v = ", name);
         gen_value(g, o, d, NULL, 0);
         sb_put(o, ";\n");
@@ -681,7 +681,7 @@ static void gen_embed(gen *g)
                   STR_ARG(d->qualified), name);
         path_list paths = {0};
         text_paths(d, "", &paths);
-        if (paths.count) sb_put(o, "        const uint32_t mark = tide_scratch_mark();\n");
+        if (paths.count) sb_put(o, "        const uint64_t mark = tide_scratch_mark();\n");
         sb_printf(o, "        %s v = ", name);
         gen_value(g, o, d, NULL, 0);
         sb_put(o, ";\n");

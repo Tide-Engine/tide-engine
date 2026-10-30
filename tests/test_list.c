@@ -48,7 +48,7 @@ TIDE_TEST(list_world_lists_grow_in_their_heap)
     TIDE_CHECK(at(world.scores, 0) == 42 && at(world.scores, 1) == 0);
 
     tide_heap_flush(&world.heap);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     tide_list_clear(&world.scores, sizeof(int32_t));
     for (int32_t i = 0; i < 100; i++) add(&world.scores, i, TIDE_IN_MATCH);
     TIDE_CHECK(world.heap.used == used);
@@ -60,7 +60,7 @@ TIDE_TEST(list_world_lists_grow_in_their_heap)
 TIDE_TEST(list_copies_are_their_own)
 {
     start();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     add(&world.scores, 1, TIDE_IN_MATCH);
     add(&world.scores, 2, TIDE_IN_MATCH);
     tide_list copy = tide_list_copy(world.scores, sizeof(int32_t));
@@ -185,7 +185,7 @@ TIDE_TEST(list_resize_in_a_world)
     TIDE_CHECK(counts_up(world.scores, 0, 3 * per + 5, 0) && zeros(world.scores, 3 * per + 5, 9 * per));
     number(world.scores);
     tide_heap_flush(&world.heap);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
 
     tide_list_resize(&world.scores, 4 * per, size, TIDE_IN_MATCH);
     TIDE_CHECK(tide_list_count(world.scores) == 4 * per && counts_up(world.scores, 0, 4 * per, 0));
@@ -248,7 +248,7 @@ TIDE_TEST(list_resize_in_the_scratch_area)
 {
     start();
     const uint32_t size = sizeof(int32_t);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     memset(tide_scratch_memory(1u << 16), 0xEE, 1u << 16); // What a list made next finds there
     tide_scratch_reset(mark);
 
@@ -295,7 +295,7 @@ TIDE_TEST(list_out_makes_the_list)
     make(&world.scores, TIDE_IN_MATCH, (uint32_t)(5 * per + 3), 7, (uint32_t)(5 * per + 3));
     TIDE_CHECK(tide_list_count(world.scores) == 5 * per + 3 && counts_up(world.scores, 0, 5 * per + 3, 7) && chunked(world.scores));
     tide_heap_flush(&world.heap);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     make(&world.scores, TIDE_IN_MATCH, (uint32_t)(2 * per), 50, (uint32_t)(2 * per));
     TIDE_CHECK(tide_list_count(world.scores) == 2 * per && counts_up(world.scores, 0, 2 * per, 50));
     TIDE_CHECK((tide_block_at(world.scores.at)->b & ~TIDE_LIST_CHUNKED) == 2u);
@@ -337,11 +337,11 @@ TIDE_TEST(list_out_makes_the_list)
     TIDE_CHECK(tide_list_count(world.scores) == 0);
     tide_list_out_begin(&out, 16);
     TIDE_CHECK(tide_list_out_room(&out, 0) == NULL);
-    TIDE_CHECK(tide_list_out_room(&out, 0x10000000u) == NULL);
+    TIDE_CHECK(tide_list_out_room(&out, 0x80000000u) == NULL); // Past INT32_MAX, what a list holds
     tide_list_out_end(&out, &world.other, TIDE_IN_MATCH);
     TIDE_CHECK(world.other.at == 0);
 
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list local = {0};
     make(&local, TIDE_IN_SCRATCH, 50, 5, 50);
     TIDE_CHECK(tide_handle_where(local.at) == TIDE_IN_SCRATCH && tide_list_count(local) == 50 && counts_up(local, 0, 50, 5));
@@ -413,7 +413,7 @@ TIDE_TEST(list_out_writes_what_differs)
 static const tide_page *page_of(const tide_heap *heap, const tide_list l, const int32_t i)
 {
     uint32_t place;
-    const uint32_t chunk = tide_list_chunk(tide_heap_block(heap, tide_handle_offset(l.at)), (uint32_t)i, sizeof(int32_t), &place);
+    const uint64_t chunk = tide_list_chunk(tide_heap_block(heap, tide_handle_offset(l.at)), (uint32_t)i, sizeof(int32_t), &place);
     return heap->page[chunk >> TIDE_HEAP_PAGE_SHIFT];
 }
 
@@ -537,14 +537,14 @@ TIDE_TEST(list_out_keeps_what_it_holds)
     tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
     TIDE_CHECK(tide_list_count(world.scores) == 9 && counts_up(world.scores, 0, 6, 40) && at(world.scores, 6) == 0);
     TIDE_CHECK(counts_up(world.scores, 7, 9, 70));
-    patch(&world.scores, TIDE_IN_MATCH, 0x7FFFFFFFu, 0, 1, 3);
+    patch(&world.scores, TIDE_IN_MATCH, 0x80000000u, 0, 1, 3); // Past INT32_MAX, what a list holds
     TIDE_CHECK(tide_list_count(world.scores) == 9 && at(world.scores, 0) == 3 && at(world.scores, 1) == 41);
     patch(&world.scores, TIDE_IN_MATCH, 0, 0, 4, 1);
     TIDE_CHECK(tide_list_count(world.scores) == 0);
     patch(&world.other, TIDE_IN_MATCH, 5, 1, 2, 8);
     TIDE_CHECK(tide_list_count(world.other) == 5 && at(world.other, 0) == 0 && counts_up(world.other, 1, 3, 8) && zeros(world.other, 3, 5));
 
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     memset(tide_scratch_memory(1u << 16), 0xEE, 1u << 16);
     tide_scratch_reset(mark);
     tide_list local = {0};

@@ -66,7 +66,7 @@ static bool cells_are(const tide_heap *heap, const tide_list l, const int count,
 
 static bool chunked(const tide_heap *heap, const tide_list l)
 {
-    return l.at && (tide_heap_block(heap, l.at & 0x3FFFFFFFu)->b & TIDE_LIST_CHUNKED);
+    return l.at && (tide_heap_block(heap, tide_handle_offset(l.at))->b & TIDE_LIST_CHUNKED);
 }
 
 static Blob blob_of(const tide_world *w, const int seed)
@@ -101,7 +101,7 @@ TIDE_TEST(lists_out_from_empty_to_a_few_to_chunks_and_back)
     TIDE_CHECK(world.Store.image.at == 0);
     run(&world, 1, 100, 1, 0);
     TIDE_CHECK(world.Store.said == 100 && bytes_are(&world.heap, world.Store.image, 100, 1, -1));
-    TIDE_CHECK(!chunked(&world.heap, world.Store.image) && world.Store.image.at >> 30 == TIDE_IN_MATCH);
+    TIDE_CHECK(!chunked(&world.heap, world.Store.image) && tide_handle_where(world.Store.image.at) == TIDE_IN_MATCH);
     run(&world, 1, BIG, 2, 0);
     TIDE_CHECK(world.Store.said == BIG && bytes_are(&world.heap, world.Store.image, BIG, 2, -1));
     TIDE_CHECK(chunked(&world.heap, world.Store.image));
@@ -109,7 +109,7 @@ TIDE_TEST(lists_out_from_empty_to_a_few_to_chunks_and_back)
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, BIG + 50000, 3, -1));
     run(&world, 1, 200000, 4, 0);
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, 200000, 4, -1));
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     run(&world, 1, 40, 5, 0);
     TIDE_CHECK(bytes_are(&world.heap, world.Store.image, 40, 5, -1));
     run(&world, 1, 0, 0, 0);
@@ -283,7 +283,7 @@ TIDE_TEST(lists_out_in_the_local_world)
     const uint64_t before = tide_world_hash(&world);
     show(1, 100, 1);
     TIDE_CHECK(local.Displayed.said == 100 && bytes_are(&local.heap, local.Displayed.image, 100, 1, -1));
-    TIDE_CHECK(local.Displayed.image.at >> 30 == TIDE_IN_LOCAL);
+    TIDE_CHECK(tide_handle_where(local.Displayed.image.at) == TIDE_IN_LOCAL);
     show(1, BIG, 2);
     TIDE_CHECK(bytes_are(&local.heap, local.Displayed.image, BIG, 2, -1) && chunked(&local.heap, local.Displayed.image));
     show(1, 30, 3);

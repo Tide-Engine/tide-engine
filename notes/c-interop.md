@@ -1,5 +1,15 @@
 # C: lists C makes, jobs, systems written in C
 
+## Handles C sees are 64 bits (2026-10-30)
+
+A text, list or grid field is a `tide_handle` (8 bytes) and a map or set 32
+(notes/ecs.md, 64-bit handles, What C changes). C that leaves them alone, as
+`extern system` C and extern functions do, changes only by the structs it
+mirrors: a C struct copying a Tide type's layout takes the generated header's
+padding and size (the physics packages' bridges did). A scratch mark is a
+`uint64_t`, and offsets the heap, the scratch area and the pack builder give
+are 64 bits.
+
 ## Component visibility and C systems (2026-10-15)
 
 A component targeted by `Visibility.Set<T>`/`Reset<T>` acquires compiler-generated

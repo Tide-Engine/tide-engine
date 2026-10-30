@@ -133,15 +133,15 @@ static void gen_workers(gen *g)
                   "    const tide_heap *heap = tide_heap_read(tide_handle_where(value.at));\n"
                   "    const uint64_t bytes = sizeof(*source) + (uint64_t)source->room * sizeof(tide_grid_record) + (uint64_t)source->slots * sizeof(uint32_t);\n"
                   "    if (bytes > UINT32_MAX - sizeof(tide_block)) tide_out_of_memory();\n"
-                  "    const uint32_t at = tide_heap_alloc(target, (uint32_t)bytes);\n"
+                  "    const uint64_t at = tide_heap_alloc(target, (uint32_t)bytes);\n"
                   "    void *directory = tide_heap_write(target, at) + 1;\n"
                   "    source = tide_grid_dir_of(value);\n"
                   "    memcpy(directory, source, (size_t)bytes);\n"
                   "    const uint32_t chunk_bytes = tide_grid_chunk_bytes(shape);\n"
                   "    const uint32_t records = source->records;\n"
                   "    for (uint32_t i = 0; i < records; i++) {\n"
-                  "        const uint32_t original = tide_grid_records(tide_grid_dir_of(value))[i].block;\n"
-                  "        const uint32_t cells = tide_heap_alloc(target, chunk_bytes - (uint32_t)sizeof(tide_block));\n"
+                  "        const uint64_t original = tide_grid_records(tide_grid_dir_of(value))[i].block;\n"
+                  "        const uint64_t cells = tide_heap_alloc(target, chunk_bytes - (uint32_t)sizeof(tide_block));\n"
                   "        void *data = tide_heap_write(target, cells);\n"
                   "        memcpy(data, tide_grid_chunk_at(heap, original), chunk_bytes);\n"
                   "        tide_grid_dir *copy = (tide_grid_dir *)(void *)(tide_heap_write(target, at) + 1);\n"
@@ -160,7 +160,7 @@ static void gen_workers(gen *g)
         sb_printf(o, "static void tide_worker_release_%s(void *context)\n{\n    tide_worker_%s *v = context;\n    tide_heap_free(&v->input_heap);\n    tide_heap_free(&v->output_heap);\n    free(v);\n}\n\n", id, id);
         sb_printf(o, "static void tide_worker_run_%s(void *context)\n{\n    tide_worker_%s *v = context;\n", id, id);
         sb_put(o, "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
-                  "    const uint32_t mark = tide_scratch_mark();\n    tide_text_use(&v->input_heap, &v->output_heap);\n"
+                  "    const uint64_t mark = tide_scratch_mark();\n    tide_text_use(&v->input_heap, &v->output_heap);\n"
                   "    const tide_jobs *previous = tide_worker_enter(v->jobs);\n");
         if (fn->result.kind == TY_STRING) sb_put(o, "    v->result = tide_text_temp(");
         else if (fn->result.kind != TY_VOID) sb_put(o, "    v->result = ");
@@ -182,7 +182,7 @@ static void gen_workers(gen *g)
         sb_printf(o, "TIDE_HELPER void tide_worker_begin_%s(tide_local *local, uint32_t ticket", id);
         for (int k = 0; k < fn->params.count; k++) sb_printf(o, ", %s input%d", c_type(fn->params.items[k].type), k);
         sb_printf(o, ")\n{\n    const uint64_t began = tide_worker_transfer_begin(local->tide_workers);\n    tide_worker_%s *v = tide_alloc_zeroed(1, sizeof *v);\n", id);
-        sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n"
+        sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n"
                   "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                   "    v->jobs = local->tide_worker_jobs;\n");
         for (int k = 0; k < fn->params.count; k++) {

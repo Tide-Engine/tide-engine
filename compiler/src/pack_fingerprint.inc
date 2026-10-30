@@ -26,26 +26,26 @@ typedef struct tide_asset_fingerprint_request {
 
 typedef struct tide_asset_fp_region {
     const uint8_t *bytes;
-    uint32_t size;
+    uint64_t size;
 } tide_asset_fp_region;
 
 typedef struct tide_asset_fp_map_row {
     int64_t order;
-    uint32_t key, value;
+    tide_handle key, value;
 } tide_asset_fp_map_row;
 typedef struct tide_asset_fp_mesh_row {
     int64_t order;
-    uint32_t key;
+    tide_handle key;
     tide_mesh_lists value;
 } tide_asset_fp_mesh_row;
 typedef struct tide_asset_fp_skinned_row {
     int64_t order;
-    uint32_t key;
+    tide_handle key;
     tide_skinned_lists value;
 } tide_asset_fp_skinned_row;
-_Static_assert(sizeof(tide_asset_fp_map_row) == 16u && sizeof(tide_asset_fp_mesh_row) == 24u
-               && sizeof(tide_asset_fp_skinned_row) == 24u && offsetof(tide_asset_fp_map_row, value) == 12u
-               && offsetof(tide_asset_fp_mesh_row, value) == 12u && offsetof(tide_asset_fp_skinned_row, value) == 12u,
+_Static_assert(sizeof(tide_asset_fp_map_row) == 24u && sizeof(tide_asset_fp_mesh_row) == 32u
+               && sizeof(tide_asset_fp_skinned_row) == 40u && offsetof(tide_asset_fp_map_row, value) == 16u
+               && offsetof(tide_asset_fp_mesh_row, value) == 16u && offsetof(tide_asset_fp_skinned_row, value) == 16u,
                "asset fingerprint rows must follow the pack's map ABI");
 
 static const uint8_t *tide_asset_fp_span(const tide_asset_fp_region *r, const uint64_t at, const uint64_t size)
@@ -66,16 +66,23 @@ static uint32_t tide_asset_fp_u32(const uint8_t *bytes)
     return word;
 }
 
-static bool tide_asset_fp_handle(const tide_asset_fp_region *r, const uint32_t handle, uint32_t *offset)
+static uint64_t tide_asset_fp_u64(const uint8_t *bytes)
 {
-    const uint32_t at = handle & 0x3fffffffu;
+    uint64_t word;
+    memcpy(&word, bytes, sizeof word);
+    return word;
+}
+
+static bool tide_asset_fp_handle(const tide_asset_fp_region *r, const tide_handle handle, uint64_t *offset)
+{
+    const uint64_t at = tide_handle_offset(handle);
     if (tide_handle_where(handle) != TIDE_IN_SCRATCH || at < TIDE_PACK_BASE || at - TIDE_PACK_BASE >= r->size
         || ((at - TIDE_PACK_BASE) & 15u)) return false;
     *offset = at - TIDE_PACK_BASE;
     return true;
 }
 
-static bool tide_asset_fp_block(const tide_asset_fp_region *r, const uint32_t at, tide_block *block)
+static bool tide_asset_fp_block(const tide_asset_fp_region *r, const uint64_t at, tide_block *block)
 {
     const uint8_t *bytes = (at & 15u) ? NULL : tide_asset_fp_span(r, at, sizeof *block);
     if (!bytes) return false;
@@ -83,7 +90,7 @@ static bool tide_asset_fp_block(const tide_asset_fp_region *r, const uint32_t at
     return true;
 }
 
-static bool tide_asset_fp_flat(const tide_asset_fp_region *r, const uint32_t at, const uint32_t stride,
+static bool tide_asset_fp_flat(const tide_asset_fp_region *r, const uint64_t at, const uint32_t stride,
                                uint32_t *count, const uint8_t **data)
 {
     tide_block b;
@@ -94,7 +101,7 @@ static bool tide_asset_fp_flat(const tide_asset_fp_region *r, const uint32_t at,
     return true;
 }
 
-static bool tide_asset_fp_text(const tide_asset_fp_region *r, const uint32_t at, tide_sha256 *hash,
+static bool tide_asset_fp_text(const tide_asset_fp_region *r, const uint64_t at, tide_sha256 *hash,
                                uint32_t *length, uint32_t *chars)
 {
     tide_block b;
@@ -109,7 +116,7 @@ static bool tide_asset_fp_text(const tide_asset_fp_region *r, const uint32_t at,
     return true;
 }
 
-static bool tide_asset_fp_grid(const tide_asset_fp_region *r, const uint32_t at,
+static bool tide_asset_fp_grid(const tide_asset_fp_region *r, const uint64_t at,
                                const tide_grid_shape *shape, tide_sha256 *hash)
 {
     tide_block b;
@@ -174,7 +181,7 @@ static bool tide_asset_fp_leaf_kind(const uint32_t kind)
         || kind == TIDE_PACK_TEXTURE || kind == TIDE_PACK_CLIP;
 }
 
-static bool tide_asset_fp_leaf(const tide_asset_fp_region *r, const uint32_t at, const uint32_t kind,
+static bool tide_asset_fp_leaf(const tide_asset_fp_region *r, const uint64_t at, const uint32_t kind,
                                const tide_asset_fingerprint_desc *desc, tide_sha256 *hash)
 {
     tide_asset_fp_word(hash, kind);
@@ -183,11 +190,11 @@ static bool tide_asset_fp_leaf(const tide_asset_fp_region *r, const uint32_t at,
         // handles. Recurse only into bytes, never another arbitrary list.
         uint32_t count;
         const uint8_t *sources;
-        if (!tide_asset_fp_flat(r, at, sizeof(uint32_t), &count, &sources)) return false;
+        if (!tide_asset_fp_flat(r, at, sizeof(tide_handle), &count, &sources)) return false;
         tide_asset_fp_word(hash, count);
         for (uint32_t i = 0; i < count; i++) {
-            uint32_t source;
-            if (!tide_asset_fp_handle(r, tide_asset_fp_u32(sources + (size_t)i * sizeof(uint32_t)), &source)
+            uint64_t source;
+            if (!tide_asset_fp_handle(r, tide_asset_fp_u64(sources + (size_t)i * sizeof(tide_handle)), &source)
                 || !tide_asset_fp_leaf(r, source, TIDE_PACK_BYTES, desc, hash)) return false;
         }
         return true;
@@ -232,17 +239,18 @@ static bool tide_asset_fp_leaf(const tide_asset_fp_region *r, const uint32_t at,
     return false;
 }
 
-static bool tide_asset_fp_versioned(const tide_asset_fp_region *r, const uint32_t at, const uint32_t stride,
+static bool tide_asset_fp_versioned(const tide_asset_fp_region *r, const uint64_t at, const uint32_t stride,
                                     uint32_t *count, const uint8_t **data)
 {
     tide_block b;
     if (!tide_asset_fp_flat(r, at, stride, count, data) || !tide_asset_fp_block(r, at, &b)
-        || (uint64_t)sizeof b + (uint64_t)*count * stride > b.next) return false;
-    const uint8_t *trailer = tide_asset_fp_span(r, (uint64_t)at + b.next, 16u);
-    return trailer && tide_asset_fp_u32(trailer + sizeof(uint64_t)) == stride;
+        || (uint64_t)sizeof b + (uint64_t)*count * stride > tide_block_next(&b)) return false;
+    // Its version, an element's bytes and its levels, 8 bytes each (pack.c's versioned_list)
+    const uint8_t *trailer = tide_asset_fp_span(r, at + tide_block_next(&b), 24u);
+    return trailer && tide_asset_fp_u64(trailer + sizeof(uint64_t)) == stride;
 }
 
-static bool tide_asset_fp_mesh(const tide_asset_fp_region *r, const uint32_t vertices, const uint32_t indices,
+static bool tide_asset_fp_mesh(const tide_asset_fp_region *r, const uint64_t vertices, const uint64_t indices,
                                const tide_asset_fingerprint_desc *desc, tide_sha256 *hash,
                                uint32_t *vertex_count, uint32_t *index_count)
 {
@@ -263,10 +271,10 @@ static bool tide_asset_fp_mesh(const tide_asset_fp_region *r, const uint32_t ver
 static bool tide_asset_fp_model(const tide_asset_fp_region *r, const uint8_t *row, const bool skinned,
                                 const tide_asset_fingerprint_desc *desc, tide_sha256 *hash)
 {
-    uint32_t data = 0, vertices, indices;
-    if (skinned && !tide_asset_fp_handle(r, tide_asset_fp_u32(row), &data)) return false;
-    if (!tide_asset_fp_handle(r, tide_asset_fp_u32(row + (skinned ? 4u : 0u)), &vertices)
-        || !tide_asset_fp_handle(r, tide_asset_fp_u32(row + (skinned ? 8u : 4u)), &indices)) return false;
+    uint64_t data = 0, vertices, indices;
+    if (skinned && !tide_asset_fp_handle(r, tide_asset_fp_u64(row), &data)) return false;
+    if (!tide_asset_fp_handle(r, tide_asset_fp_u64(row + (skinned ? 8u : 0u)), &vertices)
+        || !tide_asset_fp_handle(r, tide_asset_fp_u64(row + (skinned ? 16u : 8u)), &indices)) return false;
     uint32_t vertex_count, index_count;
     if (!tide_asset_fp_mesh(r, vertices, indices, desc, hash, &vertex_count, &index_count)) return false;
     if (skinned) {
@@ -308,16 +316,16 @@ static bool tide_asset_fp_map(const tide_asset_fp_region *r, const tide_pack_ent
     for (uint32_t i = 0; i < count; i++) {
         const uint8_t *row = rows + (size_t)i * stride;
         int64_t order;
-        uint32_t key;
+        uint64_t key;
         memcpy(&order, row, sizeof order);
-        if (order != (int64_t)i + 1 || !tide_asset_fp_handle(r, tide_asset_fp_u32(row + 8u), &key)
+        if (order != (int64_t)i + 1 || !tide_asset_fp_handle(r, tide_asset_fp_u64(row + 8u), &key)
             || !tide_asset_fp_text(r, key, hash, NULL, NULL)) return false;
         tide_asset_fp_word(hash, (uint32_t)order);
         if (mesh || skinned) {
-            if (!tide_asset_fp_model(r, row + 12u, skinned, desc, hash)) return false;
+            if (!tide_asset_fp_model(r, row + 16u, skinned, desc, hash)) return false;
         } else {
-            uint32_t value;
-            if (!tide_asset_fp_handle(r, tide_asset_fp_u32(row + 12u), &value)
+            uint64_t value;
+            if (!tide_asset_fp_handle(r, tide_asset_fp_u64(row + 16u), &value)
                 || !tide_asset_fp_leaf(r, value, leaf, desc, hash)) return false;
         }
     }
@@ -356,7 +364,7 @@ static bool tide_asset_fp_entry(const tide_asset_fp_region *r, const tide_pack_e
         const bool skinned = e.kind == TIDE_PACK_SKINNED || e.kind == TIDE_PACK_SKINNEDS;
         const bool mesh = e.kind == TIDE_PACK_MESH_LIST;
         const uint32_t stride = skinned ? (uint32_t)sizeof(tide_skinned_lists)
-                                       : mesh ? (uint32_t)sizeof(tide_mesh_lists) : (uint32_t)sizeof(uint32_t);
+                                       : mesh ? (uint32_t)sizeof(tide_mesh_lists) : (uint32_t)sizeof(tide_handle);
         const uint32_t leaf = e.kind == TIDE_PACK_CUBEMAP ? TIDE_PACK_TEXTURE : desc->leaf_kind;
         uint32_t count;
         const uint8_t *rows;
@@ -370,8 +378,8 @@ static bool tide_asset_fp_entry(const tide_asset_fp_region *r, const tide_pack_e
                 const uint8_t *row = rows + (size_t)i * stride;
                 if (mesh || skinned) ok = tide_asset_fp_model(&region, row, skinned, desc, &hash);
                 else {
-                    uint32_t at;
-                    ok = tide_asset_fp_handle(&region, tide_asset_fp_u32(row), &at)
+                    uint64_t at;
+                    ok = tide_asset_fp_handle(&region, tide_asset_fp_u64(row), &at)
                         && tide_asset_fp_leaf(&region, at, leaf, desc, &hash);
                 }
             }
@@ -399,8 +407,8 @@ static bool tide_asset_fingerprints(const uint8_t *bytes, const size_t size,
     memcpy(&h, bytes, sizeof h);
     const uint64_t table_end = (uint64_t)sizeof h + (uint64_t)h.entries * sizeof(tide_pack_entry);
     if (memcmp(h.magic, TIDE_PACK_MAGIC, sizeof h.magic) || h.version != TIDE_PACK_VERSION
-        || table_end > h.region_at || (h.region_at & 15u) || h.region_size > TIDE_PACK_BASE
-        || (uint64_t)h.region_at + h.region_size != size || count > h.entries) return false;
+        || table_end > h.region_at || (h.region_at & 15u) || h.region_size > size
+        || h.region_at != size - h.region_size || count > h.entries) return false;
     if (!count) return true;
 
     uint64_t slots = 8u;

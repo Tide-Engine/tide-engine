@@ -275,7 +275,7 @@ static uint32_t raw_packet(uint8_t *data, const uint8_t kind, const uint64_t coo
 {
     tide_writer w = {data, TIDE_NET_MTU, 0, false, false};
     tide_write_u16(&w, 0x5449u);
-    tide_write_u8(&w, 20u); // PROTOCOL
+    tide_write_u8(&w, 21u); // PROTOCOL
     tide_write_u8(&w, kind);
     tide_write_u64(&w, cookie);
     tide_write_u32(&w, attempts[1]);

@@ -50,7 +50,7 @@ static void gen_client_hierarchy_codec(gen *g)
               "        if (!tide_entity_alive(&w->entities, at) || count == w->entities.next_unused) {\n"
               "            *rotation = q;\n            return result;\n        }\n        count++;\n    }\n"
               "    if ((uint64_t)count * sizeof(tide_entity) > SIZE_MAX) { *rotation = q; return result; }\n"
-              "    const uint32_t mark = tide_scratch_mark();\n"
+              "    const uint64_t mark = tide_scratch_mark();\n"
               "    tide_entity *chain = tide_scratch_memory((size_t)count * sizeof *chain);\n"
               "    tide_entity at = e;\n"
               "    for (uint32_t i = 0; i < count; i++) { chain[i] = at; at = tide_parent_of(w, at); }\n"

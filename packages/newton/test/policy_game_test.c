@@ -109,7 +109,7 @@ static void policy_check_no_assistance(const tide_world *world, int seat)
  * list values in this world's heap before handing them to the public setter. */
 static bool policy_seed(tide_world *world, tide_entity entity, const float *action, const float *filtered)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_text_use(&world->heap, NULL);
     DuckPolicyState state = tide_get_DuckPolicyState(world, entity);
     tide_list_set(&state.action, action ? tide_list_from(action, POLICY_JOINTS, sizeof(float)) : (tide_list){0},
@@ -393,7 +393,7 @@ TIDE_TEST(microduck_policy_high_back_emf_preserves_raw_motor_and_pwm_order)
     }
     /* Bypass this tick's NN update so the independent target/velocity fixture
      * reaches the public Drive -> Motors path exactly as prescribed. */
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_text_use(&world.heap, NULL);
     tide_list_set(&duck.targets, tide_list_from(target, POLICY_JOINTS, sizeof(float)), sizeof(float), TIDE_IN_MATCH);
     TIDE_REQUIRE(tide_set_Duck(&world, entity, duck));
@@ -448,7 +448,7 @@ TIDE_TEST(microduck_policy_friction_uses_applied_history_and_reset_clears_it)
     const Duck duck = tide_get_Duck(&world, entity);
     DuckPolicyState state = tide_get_DuckPolicyState(&world, entity);
     float raw[POLICY_JOINTS] = {3};
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_text_use(&world.heap, NULL);
     tide_list_set(&state.motor, tide_list_from(raw, POLICY_JOINTS, sizeof(float)), sizeof(float), TIDE_IN_MATCH);
     state.cadence = 1; state.status = 1; state.previousMotorLoad = 3;

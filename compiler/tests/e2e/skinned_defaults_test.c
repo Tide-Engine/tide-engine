@@ -132,7 +132,7 @@ static uint8_t *pack_with_source_position(void)
         if (e->kind != TIDE_PACK_SKINNED || memcmp(e->name, named, sizeof named)) continue;
         tide_skinned_lists model;
         memcpy(&model, bytes + h->region_at + e->offset + sizeof(tide_block), sizeof model);
-        const uint32_t at = (model.vertices.at & 0x3fffffffu) - TIDE_PACK_BASE;
+        const uint64_t at = tide_handle_offset(model.vertices.at) - TIDE_PACK_BASE;
         SkinCorner *vertices = (SkinCorner *)(void *)(bytes + h->region_at + at + sizeof(tide_block));
         vertices[0].position.x += 17.0f;
         return bytes;

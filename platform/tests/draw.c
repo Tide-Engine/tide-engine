@@ -379,7 +379,7 @@ static void resident_pack_textures(void)
         pixels[i] = 255, pixels[i + 1] = 0, pixels[i + 2] = 0, pixels[i + 3] = 255;
     }
     tide_pack_builder pack = {0};
-    const uint32_t block = tide_pack_texture(&pack, hash, 32, 32, pixels);
+    const uint64_t block = tide_pack_texture(&pack, hash, 32, 32, pixels);
     tide_pack_name(&pack, "resident", TIDE_PACK_TEXTURE, block, 0, 0);
     size_t size;
     uint8_t *bytes = tide_pack_end(&pack, &size);
@@ -466,7 +466,7 @@ static void compressed_pack_textures(void)
             blocks[i + (alpha ? 8u : 0u) + 1u] = alpha ? 0x80 : 0xF8;
         }
         tide_pack_builder pack = {0};
-        const uint32_t block = tide_pack_texture_blocks(&pack, hash, 128, 128, alone ? NULL : pixels,
+        const uint64_t block = tide_pack_texture_blocks(&pack, hash, 128, 128, alone ? NULL : pixels,
             (tide_texture_blocks){blocks, format, levels, compressed_bytes});
         free(blocks);
         tide_pack_name(&pack, "compressed", TIDE_PACK_TEXTURE, block, 0, 0);
@@ -3568,7 +3568,7 @@ static void changed_textures(void)
 {
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid_set(&changing_colors, tide_grid_new(2, 80, 48, 0), &changing_color_cells, TIDE_IN_LOCAL);
     tide_grid_set(&changing_floats, tide_grid_new(2, 80, 48, 0), &changing_float_cells, TIDE_IN_LOCAL);
     for (int32_t y = 0; y < 48; y++) {
@@ -3971,7 +3971,7 @@ static void transient_data_textures(void)
         tide_draw_set_screen(&extra);
         uint32_t active = 0;
         uint64_t bytes = 0, uploaded = 0;
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         for (uint32_t place = 0; place < cells; place++) {
             const uint32_t cell = phase & 1u ? cells - 1u - place : place;
             if (phase == 4u || (phase == 3u && (cell & 1u))) continue;
@@ -4014,7 +4014,7 @@ static void transient_data_textures(void)
     tide_draw_reset(&extra);
     tide_draw_clear(&extra, background);
     tide_draw_set_screen(&extra);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     for (uint32_t cell = cells / 2u; cell < cells; cell++) transient_data_cell(&extra, cell, 89u, 2u);
     tide_scratch_reset(mark);
     const uint64_t before = tide_platform_gpu_written();
@@ -4083,7 +4083,7 @@ static void bench_lights_drawn(const tide_list lights, const bool whole)
 static void bench_kept(void)
 {
     bench_keep();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const uint32_t turn = bench_turn++;
     if (bench_kind == 8) { // A brush of 8 by 8 cells, somewhere else each frame
         tide_grid_cache cache = {0};

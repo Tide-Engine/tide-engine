@@ -50,11 +50,11 @@ void tide_asset_pool_release(tide_asset_pool *pool)
     free(pool);
 }
 
-static void append(tide_asset_entry *entry, const uint32_t block)
+static void append(tide_asset_entry *entry, const uint64_t block)
 {
     if (entry->users == entry->room) {
         const uint32_t room = entry->room ? entry->room * 2u : 4u;
-        uint32_t *blocks = tide_alloc((size_t)room * sizeof *blocks);
+        uint64_t *blocks = tide_alloc((size_t)room * sizeof *blocks);
         if (entry->users) memcpy(blocks, entry->blocks, (size_t)entry->users * sizeof *blocks);
         free(entry->blocks);
         entry->blocks = blocks;
@@ -71,7 +71,7 @@ static tide_asset_entry copied(const tide_asset_entry entry)
     return made;
 }
 
-static void remove_block(tide_asset_entry *entry, const uint32_t block)
+static void remove_block(tide_asset_entry *entry, const uint64_t block)
 {
     for (uint32_t i = 0; i < entry->users; i++) {
         if (entry->blocks[i] != block) continue;
@@ -80,7 +80,7 @@ static void remove_block(tide_asset_entry *entry, const uint32_t block)
     }
 }
 
-static void lease(tide_asset_pool *pool, const tide_asset_data *data, const uint32_t block, const bool add)
+static void lease(tide_asset_pool *pool, const tide_asset_data *data, const uint64_t block, const bool add)
 {
     const uint64_t id = tide_hash(data->id, sizeof data->id);
     const uint64_t hash = tide_hash_more(id, &block, sizeof block);
@@ -88,7 +88,7 @@ static void lease(tide_asset_pool *pool, const tide_asset_data *data, const uint
     else { pool->leases -= hash; pool->descriptors--; }
 }
 
-static tide_asset_pool *changed(const tide_asset_pool *was, tide_asset_data *data, const uint32_t block, const int change)
+static tide_asset_pool *changed(const tide_asset_pool *was, tide_asset_data *data, const uint64_t block, const int change)
 {
     uint32_t count = was ? was->count : 0u;
     const tide_asset_entry *old = was ? entry_of((tide_asset_pool *)(uintptr_t)was, data->id) : NULL;
@@ -151,7 +151,7 @@ tide_asset_data *tide_asset_find(const tide_heap *heap, const uint8_t id[32])
     return data;
 }
 
-void tide_asset_use(tide_heap *heap, tide_asset_data *data, const uint32_t block)
+void tide_asset_use(tide_heap *heap, tide_asset_data *data, const uint64_t block)
 {
     tide_asset_pool *pool = heap->assets;
     tide_asset_entry *entry = pool ? entry_of(pool, data->id) : NULL;
@@ -163,7 +163,7 @@ void tide_asset_use(tide_heap *heap, tide_asset_data *data, const uint32_t block
     replace(heap, changed(pool, data, block, 1));
 }
 
-void tide_asset_drop(tide_heap *heap, const uint8_t id[32], const uint32_t block)
+void tide_asset_drop(tide_heap *heap, const uint8_t id[32], const uint64_t block)
 {
     tide_asset_pool *pool = heap->assets;
     tide_asset_entry *entry = pool ? entry_of(pool, id) : NULL;
@@ -187,7 +187,7 @@ static void identity(const void *bytes, const uint32_t count, const uint32_t ele
     tide_sha256_end(&hash, out);
 }
 
-static tide_asset_data *make(const void *bytes, const uint32_t count, const uint32_t element, const uint32_t pack_at)
+static tide_asset_data *make(const void *bytes, const uint32_t count, const uint32_t element, const uint64_t pack_at)
 {
     tide_asset_data *data = tide_alloc_zeroed(1, sizeof *data + (size_t)count * element);
     data->refs = 1;
@@ -226,12 +226,12 @@ tide_asset_data *tide_asset_model(const void *bytes, const uint32_t count)
 tide_asset_data *tide_asset_pack(const tide_list list, const uint32_t element)
 {
     if (!tide_pack_holds(list.at) || !element) return NULL;
-    const uint32_t offset = tide_handle_offset(list.at);
+    const uint64_t offset = tide_handle_offset(list.at);
     const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
     if (!header) return NULL;
     tide_block block;
     memcpy(&block, header, sizeof block);
-    if (!block.a || block.a > INT32_MAX || block.b != block.a || (uint64_t)block.a * element > 0x40000000u) return NULL;
+    if (!block.a || block.a > INT32_MAX || block.b != block.a || (uint64_t)block.a * element > SIZE_MAX / 2u) return NULL;
     const uint8_t *bytes = tide_pack_span(offset + sizeof(tide_block), (uint64_t)block.a * element);
     if (!bytes) return NULL;
     while (atomic_flag_test_and_set_explicit(&pack_lock, memory_order_acquire)) {}
@@ -279,13 +279,16 @@ const void *tide_list_asset_at(const tide_list list, const int32_t i, const uint
                ? data->bytes + (size_t)(uint32_t)i * element : NULL;
 }
 
+// An entry's bytes before its payload, as packed: its ID, count, element's bytes, users and pack place.
+#define ASSET_HEAD (32u + 3u * 4u + 8u)
+
 uint32_t tide_asset_packed_size(const tide_heap *heap)
 {
     uint64_t bytes = 4;
     const tide_asset_pool *pool = heap->assets;
     for (uint32_t i = 0; pool && i < pool->slots; i++) {
         const tide_asset_data *data = pool->entries[i].data;
-        if (data) bytes += 48u + (uint64_t)data->count * data->element + (uint64_t)pool->entries[i].users * 4u;
+        if (data) bytes += ASSET_HEAD + (uint64_t)data->count * data->element + (uint64_t)pool->entries[i].users * 8u;
     }
     if (bytes > UINT32_MAX) tide_out_of_memory();
     return (uint32_t)bytes;
@@ -309,43 +312,44 @@ void tide_asset_pack_heap(const tide_heap *heap, tide_writer *writer, const bool
         tide_write_u32(writer, data->element);
         tide_write_u32(writer, entry.users);
         const bool from_base = base && tide_asset_find(base, data->id) != NULL;
-        tide_write_u32(writer, from_base ? UINT32_MAX : reference ? data->pack_at : 0u);
+        tide_write_u64(writer, from_base ? UINT64_MAX : reference ? data->pack_at : 0u);
         if (!reference && !from_base) tide_write_bytes(writer, data->bytes, data->count * data->element);
-        for (uint32_t j = 0; j < entry.users; j++) tide_write_u32(writer, entry.blocks[j]);
+        for (uint32_t j = 0; j < entry.users; j++) tide_write_u64(writer, entry.blocks[j]);
     }
 }
 
 bool tide_asset_unpack_heap(tide_heap *heap, tide_reader *reader, const tide_heap *base)
 {
     const uint32_t count = tide_read_u32(reader);
-    if (count > (reader->size - reader->at) / 48u) return false;
+    if (count > (reader->size - reader->at) / ASSET_HEAD) return false;
     for (uint32_t i = 0; i < count; i++) {
         const uint8_t *id = tide_read_bytes(reader, 32);
         const uint32_t elements = tide_read_u32(reader);
         const uint32_t element = tide_read_u32(reader);
         const uint32_t users = tide_read_u32(reader);
-        const uint32_t at = tide_read_u32(reader);
+        const uint64_t at = tide_read_u64(reader);
         const uint64_t bytes = (uint64_t)elements * element;
-        if (reader->failed || !elements || elements > INT32_MAX || !element || bytes > 0x40000000u || !users || users > 0x40000000u / 64u) return false;
+        if (reader->failed || !elements || elements > INT32_MAX || !element || bytes > SIZE_MAX / 2u || !users
+            || users > (reader->size - reader->at) / 8u) return false;
         tide_asset_data *data;
-        if (at == UINT32_MAX) {
+        if (at == UINT64_MAX) {
             data = base ? tide_asset_find(base, id) : NULL;
             if (!data || data->count != elements || data->element != element) return false;
             tide_asset_retain(data);
         } else if (at) {
-            if (at < TIDE_PACK_BASE || at >= 0x40000000u) return false;
+            if (at < TIDE_PACK_BASE || at > TIDE_HANDLE_OFFSET) return false;
             data = tide_asset_pack((tide_list){tide_handle_of(TIDE_IN_SCRATCH, at)}, element);
             if (!data || data->count != elements || memcmp(data->id, id, 32) != 0) return false;
             tide_asset_retain(data);
         } else {
-            const uint8_t *source = tide_read_bytes(reader, (uint32_t)bytes);
+            const uint8_t *source = bytes <= reader->size - reader->at ? tide_read_bytes(reader, (uint32_t)bytes) : NULL;
             if (!source) return false;
             data = make(source, elements, element, 0);
             if (memcmp(data->id, id, 32) != 0) { tide_asset_release(data); return false; }
         }
         if (tide_asset_find(heap, data->id)) { tide_asset_release(data); return false; }
-        if (users > (reader->size - reader->at) / 4u) { tide_asset_release(data); return false; }
-        for (uint32_t j = 0; j < users; j++) tide_asset_use(heap, data, tide_read_u32(reader));
+        if (users > (reader->size - reader->at) / 8u) { tide_asset_release(data); return false; }
+        for (uint32_t j = 0; j < users; j++) tide_asset_use(heap, data, tide_read_u64(reader));
         tide_asset_release(data);
     }
     tide_asset_settle(heap);
@@ -390,11 +394,11 @@ void tide_asset_origin_set(tide_heap *heap, const uint32_t page, const tide_asse
     origins->pages[page] = origin;
 }
 
-void tide_asset_origin_clear(tide_heap *heap, const uint32_t block)
+void tide_asset_origin_clear(tide_heap *heap, const uint64_t block)
 {
-    const uint32_t page = block >> TIDE_HEAP_PAGE_SHIFT;
+    const uint64_t page = block >> TIDE_HEAP_PAGE_SHIFT;
     if (!heap->origins || page >= heap->origins->room || !heap->origins->pages[page].data) return;
-    tide_asset_origin_set(heap, page, (tide_asset_origin){0});
+    tide_asset_origin_set(heap, (uint32_t)page, (tide_asset_origin){0});
 }
 
 const tide_asset_origin *tide_asset_origin_page(const tide_heap *heap, const uint32_t page)
@@ -410,14 +414,14 @@ void tide_asset_origin_list(tide_heap *heap, const tide_list list, tide_asset_da
     if (!(block->b & TIDE_LIST_CHUNKED)) return;
     const uint32_t per = TIDE_LIST_CHUNK / data->element;
     const uint32_t chunks = block->b & ~TIDE_LIST_CHUNKED;
-    const uint32_t *directory = (const uint32_t *)(const void *)(block + 1);
+    const uint64_t *directory = (const uint64_t *)(const void *)(block + 1);
     for (uint32_t k = 0; k < chunks; k++) {
         const uint64_t first = (uint64_t)k * per * data->element;
         const uint64_t length = (uint64_t)data->count * data->element;
         if (first >= length) break;
         const uint32_t left = (uint32_t)(length - first);
         const uint32_t count = left < per * data->element ? left : per * data->element;
-        tide_asset_origin_set(heap, directory[k] >> TIDE_HEAP_PAGE_SHIFT, (tide_asset_origin){data, (uint32_t)first, count});
+        tide_asset_origin_set(heap, (uint32_t)(directory[k] >> TIDE_HEAP_PAGE_SHIFT), (tide_asset_origin){data, (uint32_t)first, count});
     }
 }
 
@@ -435,7 +439,7 @@ bool tide_asset_origin_bytes(const tide_asset_origin *origin, void *bytes, const
     if (!origin || size != 1u << TIDE_HEAP_PAGE_SHIFT || origin->count > TIDE_LIST_CHUNK
         || (uint64_t)origin->first + origin->count > (uint64_t)origin->data->count * origin->data->element) return false;
     memset(bytes, 0, size);
-    tide_block header = {.size_class = TIDE_HEAP_PAGE_SHIFT - 4u};
+    tide_block header = {.link = tide_block_link(TIDE_HEAP_PAGE_SHIFT - 4u, 0)};
     memcpy(bytes, &header, sizeof header);
     memcpy((uint8_t *)bytes + sizeof header, origin->data->bytes + origin->first, origin->count);
     return true;
@@ -449,33 +453,34 @@ bool tide_asset_validate_heap(const tide_heap *heap)
     const tide_asset_pool *pool = heap->assets;
     if (!pool || !pool->count) return true; // Ordinary heaps retain their existing unpack path.
     if (pool && pool->count > heap->used / 64u) return false;
-    const uint32_t cells = (heap->used + 15u) / 16u;
-    uint8_t *released = tide_alloc_zeroed((cells + 7u) / 8u + 1u, 1u);
+    const uint64_t cells = (heap->used + 15u) / 16u;
+    if ((cells + 7u) / 8u + 1u > SIZE_MAX) return false;
+    uint8_t *released = tide_alloc_zeroed((size_t)((cells + 7u) / 8u + 1u), 1u);
     bool ok = true;
     for (uint32_t chain = 0; ok && chain <= TIDE_HEAP_CLASSES; chain++) {
-        uint32_t at = chain == TIDE_HEAP_CLASSES ? heap->pending : heap->free[chain];
+        uint64_t at = chain == TIDE_HEAP_CLASSES ? heap->pending : heap->free[chain];
         while (at) {
             if (at < 16u || at % 16u || at > heap->used || heap->used - at < sizeof(tide_block)) { ok = false; break; }
-            const uint32_t cell = at / 16u;
+            const uint64_t cell = at / 16u;
             const uint8_t bit = (uint8_t)(1u << (cell % 8u));
             if (released[cell / 8u] & bit) { ok = false; break; }
             released[cell / 8u] |= bit;
-            at = tide_heap_block(heap, at)->next;
+            at = tide_block_next(tide_heap_block(heap, at));
         }
     }
     for (uint32_t i = 0; ok && pool && i < pool->slots; i++) {
         const tide_asset_entry entry = pool->entries[i];
         for (uint32_t j = 0; ok && entry.data && j < entry.users; j++) {
-            const uint32_t at = entry.blocks[j];
+            const uint64_t at = entry.blocks[j];
             if (at < 16u || at % 16u || at > heap->used || heap->used - at < 64u) { ok = false; break; }
-            const uint32_t cell = at / 16u;
+            const uint64_t cell = at / 16u;
             const uint8_t bit = (uint8_t)(1u << (cell % 8u));
             if (released[cell / 8u] & bit) { ok = false; break; }
             released[cell / 8u] |= bit;
             const tide_page *page = heap->page[at >> TIDE_HEAP_PAGE_SHIFT];
-            if (64u > page->size - (at - (page->first << TIDE_HEAP_PAGE_SHIFT))) { ok = false; break; }
+            if (64u > page->size - (at - ((uint64_t)page->first << TIDE_HEAP_PAGE_SHIFT))) { ok = false; break; }
             const tide_block *block = tide_heap_block(heap, at);
-            if (block->size_class != 2u || block->b != TIDE_LIST_ASSET || block->a != entry.data->count
+            if (tide_block_class(block) != 2u || block->b != TIDE_LIST_ASSET || block->a != entry.data->count
                 || memcmp(block + 1, entry.data->id, 32) != 0) ok = false;
         }
     }

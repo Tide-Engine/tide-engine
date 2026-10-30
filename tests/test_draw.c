@@ -974,7 +974,7 @@ TIDE_TEST(draw_grids_are_textures)
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}}; // As tidec makes Grid2<Color>'s
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid grid = {0};
     tide_grid_set(&grid, tide_grid_new(2, 40, 33, 0), &colors, TIDE_IN_LOCAL);
     const tide_color red = {1.0f, 0.0f, 0.0f, 1.0f}, half = {0.5f, 2.0f, -1.0f, 0.25f};
@@ -1081,7 +1081,7 @@ TIDE_TEST(draw_textures_say_what_changed)
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid grid = {0};
     tide_grid_set(&grid, tide_grid_new(2, 100, 70, 0), &colors, TIDE_IN_LOCAL); // Four chunks across, three down
     const tide_color red = {1.0f, 0.0f, 0.0f, 1.0f}, blue = {0.0f, 0.0f, 1.0f, 1.0f};
@@ -1268,7 +1268,7 @@ TIDE_TEST(draw_textures_kept_are_the_textures_made_anew)
     static const tide_grid_shape ints = {sizeof(int32_t), 3u, {4u, 4u, 2u}};
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_grid paint = {0}, blocks = {0};
     tide_grid_set(&paint, tide_grid_new(2, 90, 70, 0), &colors, TIDE_IN_LOCAL);
     tide_grid_set(&blocks, tide_grid_new(3, 40, 0, 9), &ints, TIDE_IN_LOCAL); // No size along y: its chunks say where it is
@@ -1598,7 +1598,7 @@ TIDE_TEST(draw_lists_are_meshes_3d)
 {
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list vertices = {0}, big = {0};
     for (int i = 0; i < 4; i++) {
         *(tide_vertex3 *)tide_list_add(&vertices, sizeof(tide_vertex3), TIDE_IN_LOCAL) = cube_corners[i];
@@ -1697,7 +1697,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
     static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
     tide_heap heap = {0};
     tide_text_use(NULL, &heap);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     tide_grid grid = {0};
@@ -1752,7 +1752,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
 // merges with ordinary shader draws only while the shared inputs match.
 TIDE_TEST(draw_shaded_instances_are_copied_and_batched)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     static const tide_shader shader = {
@@ -1808,7 +1808,7 @@ TIDE_TEST(draw_shaded_instances_are_copied_and_batched)
 
 TIDE_TEST(draw_twelve_textures_keep_high_slots_through_batching_and_append)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     const tide_float4x4 transform = tide_identity_f4x4();
@@ -1847,7 +1847,7 @@ TIDE_TEST(draw_twelve_textures_keep_high_slots_through_batching_and_append)
 // that many copies, while empty or invalid meshes draw none.
 TIDE_TEST(draw_shaded_instances_without_payload)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     static const tide_shader shader = {.vertex_size = sizeof(tide_vertex3)};
@@ -1870,7 +1870,7 @@ TIDE_TEST(draw_shaded_instances_without_payload)
 // explicit draws can join. C descriptors without an id still use identity.
 TIDE_TEST(draw_shaded_instances_merge_by_shader_id)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
     const tide_shader first = {.id = 7, .vertex_size = sizeof(tide_vertex3)};

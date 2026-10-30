@@ -86,7 +86,7 @@ TIDE_TEST(fbx_poses_survive_snapshots_serialization_and_repeated_sampling)
     TIDE_CHECK(same(&world, &copy));
     printf("    FBX match hash: %llu\n", (unsigned long long)tide_world_hash(&world));
     TIDE_CHECK(tide_world_hash(&world) == FBX_HASH);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     for (int i = 0; i < 100; i++) tide_world_tick(&world);
     TIDE_CHECK(world.heap.used == used);
     tide_world_free(&copy);

@@ -92,19 +92,19 @@ static uint8_t *cache_pack(const tide_list data, const bool alias, size_t *size)
     const uint32_t bytes = (uint32_t)tide_list_count(data);
     const void *flat = tide_list_at(data, 0, 1u);
     uint8_t hash[32];
-    uint32_t offsets[3];
+    uint64_t offsets[3];
     if (alias) {
         const uint32_t carrier_bytes = bytes + (uint32_t)sizeof(tide_block);
         uint8_t *carrier = tide_alloc(carrier_bytes);
         const tide_block header = {.a = bytes, .b = bytes};
         memcpy(carrier, &header, sizeof header);
         memcpy(carrier + sizeof header, flat, bytes);
-        uint32_t writable[2];
+        uint64_t writable[2];
         const uint32_t indices[3] = {0u, 0u, 0u};
         tide_sha256_of(carrier, carrier_bytes, hash);
         tide_pack_mesh(&b, hash, carrier, carrier_bytes, 1u, indices, 3u, writable);
         tide_pack_name(&b, "Game.writable", TIDE_PACK_MESH, writable[0], writable[1], 1u);
-        offsets[0] = writable[0] + (uint32_t)sizeof(tide_block);
+        offsets[0] = writable[0] + sizeof(tide_block);
         free(carrier);
     } else {
         uint32_t chars;
@@ -115,7 +115,7 @@ static uint8_t *cache_pack(const tide_list data, const bool alias, size_t *size)
     const uint32_t indices[3] = {0u, 1u, 2u};
     tide_sha256_of(vertices, sizeof vertices, hash);
     tide_pack_mesh(&b, hash, vertices, sizeof vertices[0], 3u, indices, 3u, &offsets[1]);
-    const uint32_t record = tide_pack_skinned_list(&b, offsets, 1u);
+    const uint64_t record = tide_pack_skinned_list(&b, offsets, 1u);
     tide_pack_name(&b, "Game.actor", TIDE_PACK_SKINNED, record, 1u, 1u);
     return tide_pack_end(&b, size);
 }
@@ -143,7 +143,7 @@ static bool zero_outputs(const uint32_t textures[2], const int32_t info[3])
 
 TIDE_TEST(skinned_draw_cache_captures_edits_chunked_ownership_and_snapshots)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(128u, 0.0f);
     TIDE_REQUIRE(tide_skinned_valid(raw));
     size_t size;
@@ -201,7 +201,7 @@ TIDE_TEST(skinned_draw_cache_captures_edits_chunked_ownership_and_snapshots)
 
 TIDE_TEST(skinned_draw_cache_survives_scratch_reuse_reset_forget_and_slot_changes)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f);
     size_t size;
     uint8_t *bytes = cache_pack(raw, false, &size);
@@ -210,10 +210,10 @@ TIDE_TEST(skinned_draw_cache_survives_scratch_reuse_reset_forget_and_slot_change
     tide_draw_list draw = {0};
     uint32_t first[2], second[2], again[2];
     int32_t info[3];
-    const uint32_t reused = tide_scratch_mark();
+    const uint64_t reused = tide_scratch_mark();
     tide_list pose = {0};
     TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH));
-    const uint32_t handle = pose.at;
+    const tide_handle handle = pose.at;
     TIDE_REQUIRE(tide_draw_skinned_data(&draw, data, pose, first, info));
     tide_scratch_reset(reused);
     pose = (tide_list){0};
@@ -244,7 +244,7 @@ TIDE_TEST(skinned_draw_cache_survives_scratch_reuse_reset_forget_and_slot_change
 
 TIDE_TEST(skinned_draw_cache_checks_pack_replacement_and_inverse_bind_identity)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f), changed = cache_model(3u, 8.0f);
     TIDE_REQUIRE(tide_skinned_compatible(raw, changed));
     size_t first_size, next_size;
@@ -252,7 +252,7 @@ TIDE_TEST(skinned_draw_cache_checks_pack_replacement_and_inverse_bind_identity)
     uint8_t *next_pack = cache_pack(changed, false, &next_size);
     TIDE_REQUIRE(first_pack && next_pack && tide_pack_load(first_pack, first_size));
     tide_list data = packed_model(), pose = {0};
-    const uint32_t handle = data.at;
+    const tide_handle handle = data.at;
     TIDE_REQUIRE(tide_skinned_rest(data, &pose, TIDE_IN_SCRATCH));
     tide_draw_list draw = {0};
     uint32_t first[2], next[2];
@@ -276,7 +276,7 @@ TIDE_TEST(skinned_draw_cache_checks_pack_replacement_and_inverse_bind_identity)
 
 TIDE_TEST(skinned_draw_cache_rechecks_invalidated_proof_and_owned_models)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f);
     size_t size;
     uint8_t *bytes = cache_pack(raw, true, &size);
@@ -344,7 +344,7 @@ static void expected_palette(const tide_list data, const tide_list pose, tide_fl
 
 TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(128u, 0.0f);
     size_t size;
     uint8_t *bytes = cache_pack(raw, false, &size);
@@ -375,7 +375,7 @@ TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
     TIDE_CHECK(tide_heap_hash(1u, &snapshot) == snapshot_hash);
     TIDE_REQUIRE(tide_draw_skinned_atlas(&other, data, pose, again, repeated));
     TIDE_CHECK(other.textures[again[0] - 1u].id != draw.textures[textures[0][0] - 1u].id);
-    const uint32_t reused = tide_scratch_mark();
+    const uint64_t reused = tide_scratch_mark();
     tide_list scratch_pose = {0};
     TIDE_REQUIRE(tide_skinned_rest(data, &scratch_pose, TIDE_IN_SCRATCH));
     last = tide_list_at_mut(scratch_pose, 127, sizeof *last);
@@ -430,7 +430,7 @@ static void atlas_pool_all(void *self, void (*work)(void *, uint32_t), void *con
 
 TIDE_TEST(skinned_atlas_grows_splits_and_prepares_through_jobs)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model_palettes(128u, 2048u, 0.0f);
     TIDE_REQUIRE(tide_skinned_valid(raw));
     size_t size;
@@ -495,7 +495,7 @@ static void atlas_command(tide_draw_list *draw, const tide_list vertices, const 
 
 TIDE_TEST(skinned_atlas_append_preserves_two_source_frame_snapshots)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f);
     size_t size;
     uint8_t *bytes = cache_pack(raw, false, &size);
@@ -542,7 +542,7 @@ TIDE_TEST(skinned_atlas_append_preserves_two_source_frame_snapshots)
 
 TIDE_TEST(skinned_atlas_rechecks_proof_and_keeps_immediate_owned_fallback)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f);
     size_t size;
     uint8_t *bytes = cache_pack(raw, true, &size);
@@ -589,7 +589,7 @@ TIDE_TEST(skinned_atlas_rechecks_proof_and_keeps_immediate_owned_fallback)
 
 TIDE_TEST(skinned_explicit_captures_recheck_model_identity_across_equal_and_changed_reloads)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(128u, 0.0f), changed = cache_model(128u, 8.0f);
     size_t first_size, next_size;
     uint8_t *first_pack = cache_pack(raw, false, &first_size);
@@ -635,7 +635,7 @@ TIDE_TEST(skinned_explicit_captures_recheck_model_identity_across_equal_and_chan
 
 TIDE_TEST(skinned_rest_capture_reuses_owned_rest_after_edits_growth_and_slot_changes)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f);
     size_t size;
     uint8_t *bytes = cache_pack(raw, false, &size);
@@ -660,7 +660,8 @@ TIDE_TEST(skinned_rest_capture_reuses_owned_rest_after_edits_growth_and_slot_cha
                            : tide_draw_skinned_data(&draw[atlas], data, pose, next, info));
         TIDE_CHECK(next[0] != first[0] || info[3] != first_info[3]);
         tide_draw_prepare(&draw[atlas], NULL);
-        const uint32_t textures = draw[atlas].texture_count, scratch = tide_scratch_mark();
+        const uint32_t textures = draw[atlas].texture_count;
+        const uint64_t scratch = tide_scratch_mark();
         for (uint32_t i = 0; i < 100u; i++) {
             memset(info, 0, sizeof info);
             TIDE_REQUIRE(atlas ? tide_draw_skinned_rest_atlas(&draw[atlas], data, next, info)
@@ -728,12 +729,12 @@ TIDE_TEST(skinned_rest_capture_reuses_owned_rest_after_edits_growth_and_slot_cha
 
 TIDE_TEST(skinned_rest_capture_keeps_append_snapshots_and_rechecks_reloaded_tokens)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f), changed = cache_model(3u, 8.0f);
     size_t sizes[2];
     uint8_t *packs[2] = {cache_pack(raw, false, &sizes[0]), cache_pack(changed, false, &sizes[1])};
     TIDE_REQUIRE(packs[0] && packs[1] && tide_pack_load(packs[0], sizes[0]));
-    const uint32_t handle = packed_model().at;
+    const tide_handle handle = packed_model().at;
     const tide_float3 points[3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
     const uint32_t corners[3] = {0u, 1u, 2u};
     const tide_list vertices = tide_list_from(points, 3, sizeof *points), indices = tide_list_from(corners, 3, sizeof *corners);
@@ -804,7 +805,7 @@ TIDE_TEST(skinned_rest_capture_keeps_append_snapshots_and_rechecks_reloaded_toke
 
 TIDE_TEST(skinned_rest_capture_rechecks_invalidated_proof_and_owned_fallback)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list raw = cache_model(3u, 0.0f);
     size_t size;
     uint8_t *bytes = cache_pack(raw, true, &size);

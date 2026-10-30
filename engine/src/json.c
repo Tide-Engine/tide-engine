@@ -642,7 +642,7 @@ bool tide_json_text(tide_json *j, tide_text *v)
     if (written > 0) {
         if (!spend(j, written + (uint32_t)sizeof(tide_block) + 1u)) return false;
         // A block as text in the scratch area has (tide_text_temp): its bytes and characters, the text, a NUL
-        uint32_t at;
+        tide_handle at;
         tide_block *b = tide_scratch_block(written + 1u, "text", &at);
         uint8_t *out = (uint8_t *)(b + 1);
         uint32_t bytes, chars;

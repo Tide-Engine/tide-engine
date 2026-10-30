@@ -1,5 +1,12 @@
 # The Box2D package
 
+## Layouts with 64-bit handles (2026-10-30)
+
+Lists and maps in `box2d.tide`'s types are 8 and 32 bytes (notes/ecs.md,
+64-bit handles): the bridge's `physics` is 440 bytes (`image` at 72, `pending`
+at 240, `shard_moves` at 336), `history_frame` 16, `chain_shape` 24,
+`fixture_record` 48, `fixture_entry` 24 with no padding now.
+
 ## Sharded worlds (2026-10-23)
 
 As Box3D's (`notes/box3d.md`, Sharded worlds): `Physics` with `[Native]` state, `Body.position` deciding where a body is, `[Native]` handles (`Body.id`, `Part`'s shapes, `Joint.id` and `configuration`), departures dropped through `tide_shard_moves_now` in `b2t_topology` and `Begin` (bodies, fixtures and sensors this shard doesn't own), and `CopyBodies` with `b2t_copy`, `b2t_copy_box`, `b2t_copy_circle` and `b2t_drop_copy`. `DropCopies` runs after `Begin` opens Box2D's world (offset 3). `Physics` is 312 bytes; world-hash pins changed (packages and Towers), body and image pins didn't. Test: `tide_box2d_shards`.

@@ -59,7 +59,7 @@ static bool is_pattern(const tide_str s, const int32_t count, const char *tail)
 TIDE_TEST(scratch_big_lists_are_whole)
 {
     start();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list copy = tide_list_copy(world.numbers, sizeof(uint32_t));
     TIDE_CHECK(tide_handle_where(copy.at) == TIDE_IN_SCRATCH);
     TIDE_CHECK(tide_list_count(copy) == BIG_COUNT);
@@ -92,7 +92,7 @@ TIDE_TEST(scratch_big_lists_are_whole)
 
 TIDE_TEST(scratch_big_text_is_whole)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const int32_t n = 100000;
     tide_str s = TIDE_STR_EMPTY;
     for (int32_t i = 0; i < n; i++) s = tide_str_add_cstr(s, "0123456789abcdef");
@@ -121,7 +121,7 @@ TIDE_TEST(scratch_big_text_is_whole)
 TIDE_TEST(scratch_results_are_the_same_whatever_came_first)
 {
     start();
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const uint32_t befores[] = {0u, TIDE_SCRATCH_BYTES - 100u, TIDE_SCRATCH_BYTES - 17u, TIDE_SCRATCH_BYTES + 5u,
                                 2u * TIDE_SCRATCH_BYTES + TIDE_SCRATCH_BYTES / 2u};
     for (size_t k = 0; k < sizeof befores / sizeof befores[0]; k++) {
@@ -144,8 +144,8 @@ TIDE_TEST(scratch_results_are_the_same_whatever_came_first)
 TIDE_TEST(scratch_pieces_go_back_with_the_mark)
 {
     start();
-    const uint32_t mark = tide_scratch_mark();
-    uint32_t first = 0;
+    const uint64_t mark = tide_scratch_mark();
+    tide_handle first = 0;
     for (int round = 0; round < 50; round++) {
         const tide_list copy = tide_list_copy(world.numbers, sizeof(uint32_t));
         if (round == 0) first = copy.at;
@@ -156,7 +156,7 @@ TIDE_TEST(scratch_pieces_go_back_with_the_mark)
     }
 
     const tide_list copy = tide_list_copy(world.numbers, sizeof(uint32_t));
-    const uint32_t inner = tide_scratch_mark();
+    const uint64_t inner = tide_scratch_mark();
     char *more = tide_scratch_memory(2u * TIDE_SCRATCH_BYTES);
     memset(more, 1, 2u * TIDE_SCRATCH_BYTES);
     tide_scratch_reset(inner);
@@ -165,7 +165,7 @@ TIDE_TEST(scratch_pieces_go_back_with_the_mark)
     const uint32_t most = 3u * TIDE_SCRATCH_BYTES - 32u;
     char *again = tide_scratch_memory(most);
     memset(again, 2, most);
-    const uint32_t after = tide_scratch_mark();
+    const uint64_t after = tide_scratch_mark();
     TIDE_CHECK(((uintptr_t)again & 15u) == 0 && wrong(copy, BIG_COUNT) == 0);
     char *small = tide_scratch_memory(5u);
     TIDE_CHECK(small == again + most);

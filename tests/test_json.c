@@ -84,7 +84,7 @@ TIDE_TEST(json_floats_read_back_from_what_text_shows)
 {
     // Every float's shortest text reads back as that float: a sweep over exponents and mantissas, with the
     // platform's strtof beside it, which rounds text this short correctly everywhere.
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     for (uint32_t bits = 1u; bits < 0x7F800000u; bits += 0x000F0F1Fu) {
         float v;
         memcpy(&v, &bits, sizeof v);
@@ -139,7 +139,7 @@ static tide_json reading(const char *text)
 
 TIDE_TEST(json_reader_takes_each_kind_and_fails_for_good)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_json j = reading(" [ true , false,null, -12 ,3.0 , 2.5e0, \"a\\u00e9\\ud83d\\ude00\\n\" ,\"\\u20ac\", \"x\" ] ");
     bool b = false;
     int64_t n = 0;
@@ -298,7 +298,7 @@ TIDE_TEST(json_reads_bytes_wherever_a_list_keeps_them)
     tide_heap_free(&world.heap);
     memset(&world, 0, sizeof world);
     tide_text_use(&world.heap, NULL);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     static const char small[] = "{\"a\":[1,2,3]}";
     tide_json j;
     tide_json_begin_bytes(&j, tide_list_from(small, (int32_t)strlen(small), 1u));
@@ -343,7 +343,7 @@ TIDE_TEST(json_reads_bytes_wherever_a_list_keeps_them)
 
 TIDE_TEST(json_writes_text_that_is_always_json)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, text_of("")), "\"\""));
     TIDE_CHECK(is(tide_json_add_text(text_of("x="), text_of("a\"b\\c/d")), "x=\"a\\\"b\\\\c/d\""));
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, text_of("\b\f\n\r\t\x01\x1F\x7F")), "\"\\b\\f\\n\\r\\t\\u0001\\u001f\x7F\""));
@@ -387,7 +387,7 @@ static tide_str piece(const tide_list pieces, const int32_t i)
 
 TIDE_TEST(text_splits_and_goes_to_bytes_and_back)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list parts = tide_str_split(text_of("a,b,,c"), text_of(","));
     TIDE_CHECK(tide_list_count(parts) == 4 && is(piece(parts, 0), "a") && is(piece(parts, 1), "b") && is(piece(parts, 2), ""));
     TIDE_CHECK(is(piece(parts, 3), "c") && is(piece(parts, 4), "(none)"));

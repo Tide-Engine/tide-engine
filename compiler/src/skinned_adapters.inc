@@ -248,7 +248,7 @@ static void gen_skinned_adapters(gen *g)
             if (catalog) {
                 sb_put(o, "    const int32_t count = source.data.at ? 1 : tide_list_count(source.sources);\n"
                           "    if (count <= 0) { tide_debug_log(\"tide: RetargetMap.Bake: the source catalog contains no animations\"); return result; }\n"
-                          "    const uint32_t mark = tide_scratch_mark();\n    tide_list sources = {0};\n"
+                          "    const uint64_t mark = tide_scratch_mark();\n    tide_list sources = {0};\n"
                           "    tide_retarget_bake_budget budget = {0};\n"
                           "    for (int32_t i = 0; i < count; i++) {\n"
                           "        uint8_t *baked = NULL;\n        uint32_t size = 0;\n"

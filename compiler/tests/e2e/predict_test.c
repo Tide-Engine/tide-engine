@@ -37,7 +37,7 @@ TIDE_TEST(predict_adjusts_guesses_and_preserves_samples_and_snapshots)
     const uint64_t hash = tide_world_hash(&snapshot);
     tide_player_set keep = {0};
     tide_players_add(&keep, 0);
-    const uint32_t scratch = tide_scratch_mark();
+    const uint64_t scratch = tide_scratch_mark();
     TIDE_REQUIRE(tide_game_api.predict_inputs != NULL);
     TIDE_CHECK(tide_game_api.predict_inputs(&world, &keep));
     TIDE_CHECK(world.inputs[0].jump && world.inputs[0].dash && world.inputs[0].fade == 5.0f);

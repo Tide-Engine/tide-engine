@@ -53,15 +53,15 @@ uint16_t tide_half_from_float(const float value)
 // (`heap` is NULL): NULL otherwise. A grid's own blocks always are. What a
 // Texture kept past its grid names may be anything, so nothing is read of it
 // that this didn't give.
-static const uint8_t *span(const tide_heap *heap, const uint32_t offset, const uint64_t bytes)
+static const uint8_t *span(const tide_heap *heap, const uint64_t offset, const uint64_t bytes)
 {
     if (!heap) return tide_pack_span(offset, bytes);
-    if (!offset || (uint64_t)offset + bytes > heap->used || offset >> TIDE_HEAP_PAGE_SHIFT >= heap->pages) return NULL;
+    if (!offset || offset > heap->used || bytes > heap->used - offset || offset >> TIDE_HEAP_PAGE_SHIFT >= heap->pages) return NULL;
     const tide_page *p = heap->page[offset >> TIDE_HEAP_PAGE_SHIFT];
     if (!p) return NULL;
     const uint64_t first = (uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT;
-    if (offset < first || (uint64_t)offset + bytes > first + p->size) return NULL;
-    return (const uint8_t *)tide_page_data(p) + (offset - first);
+    if (offset < first || offset + bytes > first + p->size) return NULL;
+    return (const uint8_t *)tide_page_data(p) + (size_t)(offset - first);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,14 +148,14 @@ static bool see_grid(const tide_grid g, const tide_grid_shape *s, grid_seen *v)
     // The confirmed world's too: only its pages' hashes are asked of it, which it keeps
     v->heap = (tide_heap *)(uintptr_t)tide_heap_read(tide_handle_where(g.at));
     if (!v->heap && !tide_pack_holds(g.at)) return false;
-    const uint32_t at = tide_handle_offset(g.at);
+    const uint64_t at = tide_handle_offset(g.at);
     const uint8_t *block = span(v->heap, at, sizeof(tide_block) + sizeof(tide_grid_dir));
     if (!block) return false;
     memcpy(&v->dir, block + sizeof(tide_block), sizeof v->dir);
     const tide_grid_dir *dir = &v->dir;
     if (dir->dims != dims || dir->size[0] < 0 || dir->size[1] < 0 || dir->size[2] < 0 || dir->records > dir->room) return false;
     v->records = (const tide_grid_record *)(const void *)
-        span(v->heap, at + (uint32_t)(sizeof(tide_block) + sizeof(tide_grid_dir)), (uint64_t)dir->records * sizeof(tide_grid_record));
+        span(v->heap, at + sizeof(tide_block) + sizeof(tide_grid_dir), (uint64_t)dir->records * sizeof(tide_grid_record));
     return !dir->records || v->records;
 }
 
@@ -310,7 +310,7 @@ static void grid_cells(tide_draw_list *d, const uint32_t slot, uint8_t *pixels, 
         tide_draw_texture_changed(d, slot, 0, 0, width, height);
     }
     if (!kept) memset(pixels, 0, row * (size_t)height);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     uint8_t *made = kept ? tide_scratch_memory(((size_t)1 << s->shift[0]) * w->bytes) : NULL;
     uint64_t found = 0, had = 0;
     for (uint32_t r = 0; r < v->dir.records; r++) {
@@ -471,7 +471,7 @@ static uint64_t list_version(const tide_list l, const uint32_t size)
     }
     tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(tide_handle_where(l.at));
     if (!heap) return tide_hash_end(h);
-    const uint32_t block = tide_handle_offset(l.at);
+    const uint64_t block = tide_handle_offset(l.at);
     const tide_block *b = tide_heap_block(heap, block);
     if (!(b->b & TIDE_LIST_CHUNKED)) {
         const uint64_t page = tide_heap_block_hash(heap, block);
@@ -479,8 +479,8 @@ static uint64_t list_version(const tide_list l, const uint32_t size)
     }
     // In chunks, a page each: where they are, and what's in each
     const uint32_t chunks = b->b & ~TIDE_LIST_CHUNKED;
-    const uint32_t *at = (const uint32_t *)(const void *)(b + 1);
-    h = tide_hash_more(h, at, (size_t)chunks * sizeof(uint32_t));
+    const uint64_t *at = (const uint64_t *)(const void *)(b + 1);
+    h = tide_hash_more(h, at, (size_t)chunks * sizeof(uint64_t));
     for (uint32_t i = 0; i < chunks; i++) {
         const uint64_t page = tide_heap_block_hash(heap, at[i]);
         h = tide_hash_more(h, &page, sizeof page);
@@ -511,11 +511,11 @@ static void list_numbers(tide_draw_list *d, const uint32_t slot, int32_t *to, co
     const bool chunked = heap && b && (b->b & TIDE_LIST_CHUNKED) && size <= TIDE_LIST_CHUNK;
     const uint32_t per = chunked ? TIDE_LIST_CHUNK / size : elements;
     const uint32_t runs = (elements + per - 1u) / per;
-    const uint32_t *chunks = chunked ? (const uint32_t *)(const void *)(b + 1) : NULL;
+    const uint64_t *chunks = chunked ? (const uint64_t *)(const void *)(b + 1) : NULL;
     // A chunk's hash is kept only while each write here keeps it: a list with no chunks keeps none, so that one
     // that comes to have chunks again finds none from before
     uint64_t *parts = tide_draw_texture_parts(d, slot, chunked ? runs : 0u);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     int32_t *made = kept ? tide_scratch_memory((size_t)stride * sizeof *made) : NULL;
     for (uint32_t r = 0; r < runs; r++) {
         const uint32_t first = r * per, count = per < elements - first ? per : elements - first;
@@ -561,9 +561,14 @@ static uint64_t numbers_kind(const uint32_t what, const uint32_t size, const uin
 
 // Whose numbers a texture's are: the list's or the grid's place and how they're laid out, so that two
 // layouts of one list are two textures.
-static uint64_t numbers_id(const uint32_t at, const uint32_t layout)
+// What a world's list, map or grid of numbers is to the draw list: its place
+// and how its elements are read, mixed into 63 bits. The top bit is a list
+// made along the way's (UINT64_C(1) << 63 with its version).
+static uint64_t numbers_id(const tide_handle at, const uint32_t layout)
 {
-    return (uint64_t)(layout & 0x7FFFFFFFu) << 32 | at;
+    uint64_t h = tide_hash_more(TIDE_HASH_START, &at, sizeof at);
+    h = tide_hash_end(tide_hash_more(h, &layout, sizeof layout));
+    return h & ~(UINT64_C(1) << 63);
 }
 
 uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint32_t element_size, const uint32_t words,
@@ -649,7 +654,7 @@ uint32_t tide_draw_map_data(tide_draw_list *d, const tide_map map, const uint32_
     } else if (out) {
         // A key that's added or removed moves the entries after it and what the index says of them, so it's all
         // made again, apart, and the rows that came out otherwise are the texture's
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         uint8_t *fresh = tide_scratch_memory(bytes);
         memset(fresh, 0, bytes);
         map_numbers((int32_t *)(void *)fresh, map, entry_size, entries, stride, key_word, slots, write);
@@ -776,7 +781,7 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
     uint64_t version = list_version(vertices, sizeof(tide_vertex3));
     const uint64_t index_version = list_version(indices, sizeof(uint32_t));
     version = tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version));
-    const uint64_t scratch = (uint64_t)TIDE_IN_SCRATCH << 32; // Past every list's place
+    const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0); // No world's list's place
     const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
     const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
     bool fill;
@@ -814,7 +819,7 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
     const uint64_t index_version = list_version(indices, sizeof(uint32_t));
     version = tide_hash_more(version, &index_version, sizeof index_version);
     version = tide_hash_end(tide_hash_more(version, &size, sizeof size));
-    const uint64_t scratch = (uint64_t)TIDE_IN_SCRATCH << 32;
+    const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
     const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
     const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
     bool fill;

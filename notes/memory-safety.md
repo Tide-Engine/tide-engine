@@ -1,5 +1,27 @@
 # No Tide code can corrupt memory
 
+## 64-bit handles (2026-10-30)
+
+Handles are 64 bits (notes/ecs.md, 64-bit handles); what checks them is as
+strict as before, with its arithmetic 64 bits wide, and a few bounds are new
+where the wider limits would otherwise have let received bytes ask for more:
+
+- A received heap (`tide_heap_unpack`) must have the bytes it says it handed
+  out (`used`) before any page is made, and a page from bytes or a delta takes
+  no more places than the biggest block's (8,192), where `LIMIT` alone
+  allowed 1 GiB a page before and 64 TiB now. A delta's heap may say only as
+  many pages past its base's as it has bytes left (`tide_heap_unpack_delta`).
+- The asset dictionary's pack places are checked against the handle's offset
+  range and then by `tide_asset_pack`'s span; raw payloads must fit the
+  reader before they're read, and users are bounded by the bytes left.
+- The pack loader's header and span checks are the same with no 64-bit
+  overflow: `region_size <= size` and `region_at == size - region_size`,
+  `at <= size && bytes <= size - at`.
+- A command's text or list field from Unity is refused unless its high word is
+  zero (`tide_embed_command_text`, `_list`).
+- `tide_scratch_at` reads the pack's region from `tide_pack_memory` past
+  `TIDE_PACK_BASE`, NULL with no pack loaded, as the slots it had were.
+
 ## Holes keep stale bytes nothing reads (2026-10-29)
 
 A hole an entity left (notes/ecs.md, Holes) keeps its row's old bytes,

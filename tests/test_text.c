@@ -22,7 +22,7 @@ static tide_str i(const int32_t v, const int32_t format)
 
 TIDE_TEST(text_floats_shortest)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     TIDE_CHECK(is(f(0.0f, 0), "0"));
     TIDE_CHECK(is(f(-0.0f, 0), "0"));
     TIDE_CHECK(is(f(1.0f, 0), "1"));
@@ -47,7 +47,7 @@ TIDE_TEST(text_floats_shortest)
 TIDE_TEST(text_floats_read_back)
 {
     // Every text reads back as the same float: a sweep over exponents and mantissas.
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     for (uint32_t bits = 1u; bits < 0x7F800000u; bits += 0x00F0F0F1u) {
         float v;
         memcpy(&v, &bits, sizeof v);
@@ -63,7 +63,7 @@ TIDE_TEST(text_floats_read_back)
 
 TIDE_TEST(text_floats_fixed)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const int32_t f2 = TIDE_FORMAT('F', 2);
     TIDE_CHECK(is(f(1.5f, f2), "1.50"));
     TIDE_CHECK(is(f(2.675f, f2), "2.67")); // 2.67499995... as a float
@@ -79,7 +79,7 @@ TIDE_TEST(text_floats_fixed)
 
 TIDE_TEST(text_ints)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     TIDE_CHECK(is(i(0, 0), "0"));
     TIDE_CHECK(is(i(-42, 0), "-42"));
     TIDE_CHECK(is(i(INT32_MIN, 0), "-2147483648"));
@@ -94,7 +94,7 @@ TIDE_TEST(text_ints)
 
 TIDE_TEST(text_joining)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_str x = tide_str_add(TIDE_STR_EMPTY, tide_str_from_cstr("ab"));
     const tide_str y = x; // Grows in place below: y keeps its own length
     x = tide_str_add_cstr(x, "c");
@@ -114,7 +114,7 @@ TIDE_TEST(text_joining)
 
 TIDE_TEST(text_characters)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_str word = tide_str_from_cstr("h\xC3\xA9llo");
     TIDE_CHECK(word.chars == 5 && word.bytes == 6);
     TIDE_CHECK(is(tide_str_substring(word, 1, 2), "\xC3\xA9l"));
@@ -221,7 +221,7 @@ TIDE_TEST(text_chars_of_bytes_that_are_none)
 
 TIDE_TEST(text_chars_joined_and_searched)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     TIDE_CHECK(tide_char_of('a') == 'a' && tide_char_of(0x10FFFF) == 0x10FFFF && tide_char_of(0xD7FF) == 0xD7FF && tide_char_of(0xE000) == 0xE000);
     TIDE_CHECK(tide_char_of(-1) == 0 && tide_char_of(0x110000) == 0 && tide_char_of(0xD800) == 0 && tide_char_of(0xDFFF) == 0
                && tide_char_of(INT32_MIN) == 0 && tide_char_of(INT32_MAX) == 0);
@@ -303,7 +303,7 @@ TIDE_TEST(text_search_periods_and_counted_bytes)
 
 TIDE_TEST(text_search_long_repeated_prefix)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const int32_t bytes = 1024 * 1024, count = 16 * 1024;
     char *text = malloc((size_t)bytes);
     char *needle = malloc((size_t)count);
@@ -328,7 +328,7 @@ TIDE_TEST(text_search_long_repeated_prefix)
 
 TIDE_TEST(text_replace_keeps_nonoverlapping_matches)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     TIDE_CHECK(is(tide_str_replace(tide_str_from_cstr("aaaaa"), tide_str_from_cstr("aa"), tide_str_from_cstr("b")), "bba"));
     TIDE_CHECK(is(tide_str_replace(tide_str_from_cstr("aaaa"), tide_str_from_cstr("aa"), TIDE_STR_EMPTY), ""));
     TIDE_CHECK(is(tide_str_replace(tide_str_from_cstr("unchanged"), TIDE_STR_EMPTY, tide_str_from_cstr("x")), "unchanged"));

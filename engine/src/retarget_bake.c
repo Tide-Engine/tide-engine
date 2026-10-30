@@ -63,7 +63,7 @@ static bool open_model(tide_list data, bake_model *m, char why[256])
     *m = (bake_model){.list = data};
     int32_t size;
     if (tide_pack_holds(data.at)) {
-        const uint32_t at = data.at & 0x3fffffffu;
+        const uint64_t at = tide_handle_offset(data.at);
         tide_block block;
         const void *header = tide_pack_span(at, sizeof block);
         if (!header) return fail(why, "retarget bake needs complete canonical skeleton bytes");
@@ -71,7 +71,7 @@ static bool open_model(tide_list data, bake_model *m, char why[256])
         if (block.a != block.b || block.a > TIDE_SKINNED_MAX_BYTES)
             return fail(why, "retarget bake received an invalid canonical byte-list descriptor");
         size = (int32_t)block.a;
-        m->bytes = (void *)tide_pack_span(at + (uint32_t)sizeof block, block.a);
+        m->bytes = (void *)tide_pack_span(at + sizeof block, block.a);
     } else {
         size = tide_list_count(data);
         if (size < (int32_t)TIDE_SKINNED_HEADER_SIZE || size > (int32_t)TIDE_SKINNED_MAX_BYTES)
@@ -373,7 +373,7 @@ bool tide_retarget_bake_with_budget(tide_list source_data, int32_t clip_index, t
         || !tide_is_finite_f(settings->root_offset.z) || !tide_is_finite_f(settings->heading_degrees)
         || !tide_is_finite_f(settings->spine_distribution) || !tide_is_finite_f(settings->twist_distribution))
         return fail(why, "retarget bake requires finite settings, nonnegative rootScale and positive sampleRate (or 0 for 60 Hz)");
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_model source = {0}, target = {0};
     bake_output b = {.prior_bytes = budget->bytes};
     bool valid = open_model(source_data, &source, why) && open_model(target_data, &target, why);
@@ -414,7 +414,7 @@ bool tide_retarget_bake_with_budget(tide_list source_data, int32_t clip_index, t
             tide_list_resize(&retargeted, (int32_t)target.view.nodes, sizeof(tide_bone_transform), TIDE_IN_SCRATCH);
         }
         for (uint32_t frame = 0; valid && frame < set.count; frame++) {
-            const uint32_t frame_mark = tide_scratch_mark();
+            const uint64_t frame_mark = tide_scratch_mark();
             valid = tide_skinned_sample(source_data, (int32_t)index, times[frame], &sampled, TIDE_IN_SCRATCH)
                 && tide_retarget_apply(plan, source_data, sampled, target_data,
                     settings->root_scale, settings->root_offset, settings->heading_degrees,

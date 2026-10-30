@@ -740,7 +740,7 @@ TIDE_TEST(migrate_a_games_defaults_are_its_declared_ones)
     TIDE_REQUIRE(t->size == sizeof(Unit));
     Unit u;
     memset(&u, 0xFF, sizeof u);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     t->defaults(&u);
     TIDE_CHECK(tide_scratch_mark() == mark); // The borrowed default text is gone again
     TIDE_CHECK(u.position.x == 0.0f && u.position.y == 0.0f);

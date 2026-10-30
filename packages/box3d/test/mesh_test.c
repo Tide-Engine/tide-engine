@@ -7,10 +7,10 @@
 void b3t_check(bool enabled, bool whenever);
 void b3t_forget(void);
 
-_Static_assert(sizeof(Box3D_MeshCollider) == 44 && offsetof(Box3D_MeshCollider, vertices) == 0 &&
-    offsetof(Box3D_MeshCollider, indices) == 4 && offsetof(Box3D_MeshCollider, scale) == 8 &&
-    offsetof(Box3D_MeshCollider, offset) == 20 && offsetof(Box3D_MeshCollider, friction) == 32 &&
-    offsetof(Box3D_MeshCollider, bounce) == 36 && sizeof(Box3D_Part) == 64 && offsetof(Box3D_Part, mesh) == 32,
+_Static_assert(sizeof(Box3D_MeshCollider) == 56 && offsetof(Box3D_MeshCollider, vertices) == 0 &&
+    offsetof(Box3D_MeshCollider, indices) == 8 && offsetof(Box3D_MeshCollider, scale) == 16 &&
+    offsetof(Box3D_MeshCollider, offset) == 28 && offsetof(Box3D_MeshCollider, friction) == 40 &&
+    offsetof(Box3D_MeshCollider, bounce) == 44 && sizeof(Box3D_Part) == 64 && offsetof(Box3D_Part, mesh) == 32,
     "mesh bridge must match the generated component layout");
 
 static bool set_mesh(tide_world *w, tide_entity e, Box3D_MeshCollider mesh)
@@ -128,7 +128,7 @@ TIDE_TEST(box3d_mesh_contacts_preserve_concavity_and_replay)
         TIDE_CHECK(tide_get_Falling(&w, e).gap ? b.position.y < -10 : b.position.y >= 0.24f && b.position.y <= 0.27f);
     }
     printf("  mesh simulation sequence: %016llx\n", (unsigned long long)sequence);
-    TIDE_CHECK(sequence == UINT64_C(0x7d99add0c304bfc6));
+    TIDE_CHECK(sequence == UINT64_C(0x271969b81c11eeb0));
     tide_world_copy(&decoded, &saved);
     for (int i = 0; i < 110; i++) tide_world_tick(&decoded);
     TIDE_CHECK(tide_world_hash(&decoded) == tide_world_hash(&w));
@@ -151,7 +151,7 @@ TIDE_TEST(box3d_mesh_reads_chunked_source_lists)
         vertices[i + 2] = (tide_float3){x + 1, 0, 2};
         indices[i] = i; indices[i + 1] = i + 1; indices[i + 2] = i + 2;
     }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const Box3D_MeshCollider mesh = {.vertices = tide_list_from(vertices, count, sizeof *vertices),
         .indices = tide_list_from(indices, count, sizeof *indices), .scale = {1, 1, 1}, .friction = 0.6f};
     TIDE_CHECK(set_mesh(&w, tagged(&w, tide_has_Floor), mesh));
@@ -174,7 +174,7 @@ TIDE_TEST(box3d_mesh_rejects_nonfinite_geometry_and_materials)
         if (kind == 1) vertices[1].y = INFINITY;
         if (kind == 2) vertices[2].z = 1e30f;
         const int32_t indices[] = {0, 1, 2};
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         Box3D_MeshCollider mesh = {.vertices = tide_list_from(vertices, 3, sizeof *vertices),
             .indices = tide_list_from(indices, 3, sizeof *indices), .scale = {1, 1, 1}, .friction = 0.6f};
         if (kind == 3) mesh.scale.x = NAN;

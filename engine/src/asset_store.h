@@ -6,7 +6,8 @@
 // Immutable list payloads. IDs describe element layout, count and exact bytes;
 // neither pack offsets nor pointers enter simulation storage.
 typedef struct tide_asset_data {
-    uint32_t refs, count, element, pack_at;
+    uint32_t refs, count, element;
+    uint64_t pack_at; // Its block's place in the pack's region, as a handle's offset: 0 for none
     uint8_t id[32];
     uint64_t version;
     bool skinned, nonnegative;
@@ -16,7 +17,7 @@ typedef struct tide_asset_data {
 typedef struct tide_asset_entry {
     tide_asset_data *data;
     uint32_t users, room;
-    uint32_t *blocks; // Descriptor offsets, outside pages; grids reuse headers as cells.
+    uint64_t *blocks; // Descriptor offsets, outside pages; grids reuse headers as cells.
 } tide_asset_entry;
 
 typedef struct tide_asset_pool {
@@ -36,8 +37,8 @@ tide_asset_data *tide_asset_pack(tide_list list, uint32_t element);
 tide_asset_data *tide_asset_model(const void *bytes, uint32_t count);
 tide_asset_data *tide_asset_find(const tide_heap *heap, const uint8_t id[32]);
 tide_asset_data *tide_asset_list(tide_list list);
-void tide_asset_use(tide_heap *heap, tide_asset_data *data, uint32_t block);
-void tide_asset_drop(tide_heap *heap, const uint8_t id[32], uint32_t block);
+void tide_asset_use(tide_heap *heap, tide_asset_data *data, uint64_t block);
+void tide_asset_drop(tide_heap *heap, const uint8_t id[32], uint64_t block);
 void tide_asset_pool_retain(tide_asset_pool *pool);
 void tide_asset_pool_release(tide_asset_pool *pool);
 void tide_asset_settle(tide_heap *heap);
@@ -62,7 +63,7 @@ typedef struct tide_asset_origins {
 } tide_asset_origins;
 void tide_asset_origins_retain(tide_asset_origins *origins);
 void tide_asset_origins_release(tide_asset_origins *origins);
-void tide_asset_origin_clear(tide_heap *heap, uint32_t block);
+void tide_asset_origin_clear(tide_heap *heap, uint64_t block);
 void tide_asset_origin_set(tide_heap *heap, uint32_t page, tide_asset_origin origin);
 void tide_asset_origin_list(tide_heap *heap, tide_list list, tide_asset_data *data);
 const tide_asset_origin *tide_asset_origin_page(const tide_heap *heap, uint32_t page);

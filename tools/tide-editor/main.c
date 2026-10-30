@@ -659,7 +659,7 @@ static int frame(void *user, float seconds)
         }
     }
     tide_platform_poll(&e->devices);
-    const uint32_t scratch = tide_scratch_mark();
+    const uint64_t scratch = tide_scratch_mark();
     const arena_mark mark = arena_checkpoint();
     const tide_float2 size = tide_platform_screen_size();
     tide_draw_reset(&e->draw); tide_draw_set_screen(&e->draw);

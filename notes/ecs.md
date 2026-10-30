@@ -1,5 +1,84 @@
 # ECS and simulation state
 
+## 64-bit handles: built (2026-10-30)
+
+As designed below; what differs from the design or follows from it, and what
+holds it:
+
+- **Lists stop at their count, not at 1 GiB.** A list's elements were capped at
+  1 GiB of bytes, the offsets' reach; now a list grows to INT32_MAX elements
+  (its count is an `int`) as memory allows, so `list.Resize(int.MaxValue)` on
+  a list of ints asks for 8 GiB and, where that isn't there, ends the program
+  as running out of memory does, where it was left as it was. The `lists`
+  safety fixture's sizes line no longer tries it. A block side by side in a
+  world's heap is still 128 MiB at most; one in the scratch area is as big as
+  memory (`tide_scratch_block` takes a `uint64_t`).
+- **Heap.** `LIMIT` is 2^46 (64 TiB, the 32-bit page indices' reach); received
+  heaps are bounded by their bytes (notes/memory-safety.md, 64-bit handles).
+- **Scratch area.** The slot table grows by doubling from 64 slots; the pack
+  is read past `TIDE_PACK_BASE` from `tide_pack_memory`.
+- **Generated C.** `type_layout` gives text, lists and grids {8, 8}, maps and
+  sets {32, 8}, raw meshes {16, 8}; marks are `uint64_t` (`tide_mark`, the
+  `const uint64_t tide_mark` parameter of row tasks); the few emitted locals
+  that held a handle or a heap offset (`tide_blend_grid_snapshot`,
+  `tide_worker_grid_capture`, retargeting assets' `base`) are `tide_handle`
+  or `uint64_t`; the mesh-glob metadata row (`tide_ref_mesh_entry`) lost the
+  pad it had after a 4-byte key. Every generated game was checked with clang's
+  `-Wshorten-64-to-32` for narrowing from a 64-bit value, as were the engine,
+  compiler and platform sources (all of which had none before).
+- **C that mirrors layouts.** Box2D's, Box3D's and Newton's bridges
+  (notes/box2d.md, box3d.md, newton.md). Box3D's live-shape "source" skipped
+  its list handles as 4 bytes each (`(const char *)s + 4`), so with 8 the
+  material bytes it compares moved under a hull's `offset`:
+  `box3d_invalid_live_geometry_disables_and_can_be_repaired` caught it; it
+  skips `sizeof(tide_list)` now.
+- **Unity.** The Sample's `com.tide.game/schema.json` and the test fixture
+  `compiler/cli/tests/unity_rules_physics/schema.json` came from `tide unity`
+  runs of the old layout. They were laid out again by a script that applies C's
+  rules to each field (text, lists and grids 8, maps 32, the rest as they were;
+  defaults moved with their fields), checked first against schemas the old and
+  the new tidec give the same games (platform/tests/embed.tide and the
+  `nested` e2e game: identical but for the hash). Their `hash` is the old one,
+  so the Sample's package is written again at its first real build. The
+  Sample's `TideGame.cs` is what `unity_code.c` writes from it.
+- **Tests that changed with the formats** (a helper agent converted most of
+  the C tests by hand-checked rules): the pack tests (`tests/test_pack.c`,
+  `pack_fingerprint_test.c`: 64-bit builder offsets, forged `link`s,
+  `tide_pack_region_size`, 24-byte trailers), the list limits
+  (`tests/test_list.c`), lane numbers of a component with text and a list
+  (`rows_test.c`: a handle's high word stays the same zero, so only its low
+  lane is written apart), the embed packet's map keys (`embed.c`), an empty
+  pack as C (48 bytes: a 40-byte header to 16), mesh value swaps
+  (`mesh_values_test.c`, 16-byte elements), grid textures' handles
+  (`textures_test.c`), and `uint32_t` copies of handles in Earth's and the
+  assets' tests.
+- **Pins that moved** (world, page or physics-image hashes, and one size),
+  each new value the same natively (Windows ASan) and on the web (WASI and
+  browsers), as the shared pins say: `compiler/tests/CMakeLists.txt`'s
+  `NESTED_HASH`, `ARRAYS_HASH`, `FBX_HASH`, `SKINNED_HASH`, `CHARS_HASH`,
+  `JSON_HASH`, `OPTIONAL_FIELDS_HASH`; `assets_same.h`'s
+  `ASSETS_EMPTY_WORLD_HASH`; `DECODE_WORLD_HASH`; the `rows`, `rolls`,
+  `crossplatform_text` and `retargeting_dynamic` worlds; Sumo's and Towers'
+  match and replay hashes; Box2D's and Box3D's world, sequence and image
+  hashes (stack, sleep, course, kit, complete, joints, mesh); Newton's robot
+  and microduck worlds; `bench_sand`, `bench_gallery` and `bench_earth`'s
+  `--expect`s; an empty pack as C, 32 bytes to 48. The image hashes moved as
+  the packages' C state holds records of Tide types with lists. Pins of games
+  that hold no text, lists, maps or grids in the match didn't move (the
+  crossplatform math and randomness pins among them), and nor did the asset
+  fingerprints (`tidec_pack_fingerprint`).
+- **Validation**: native `sanitize` 2,910 tests and web 2,798, all passing;
+  CI runs the other platforms.
+- **Measured** (notes/benchmarks.md, 64-bit handles, before and after): the
+  versus programs, views, Sand and Gallery within -3% to +3% of before in
+  release; worlds a few hundred bytes a megabyte bigger in memory, and the
+  same on the wire.
+- **Not done**: the world as bytes (`tide_world_pack`, `tide_reader`) still
+  counts in `uint32_t`, so a world packed whole stays under 4 GiB, a limit of
+  the serialization rather than of handles; a pack's file entry and a text are
+  still at most 4 GiB each (`tide_pack_bytes` takes a `uint32_t`). Neither was
+  asked for.
+
 ## 64-bit handles: design (2026-10-30)
 
 The owner's decision ("Full 64-bit handles"), knowing it changes every layout
@@ -23,8 +102,8 @@ before. Considered and not taken: keeping 32 bits and counting offsets in
 the scratch area's text is only 4-aligned).
 
 - **Heap** (`tide/heap.h`): offsets, `used`, `free[]` and `pending` are 64 bits.
-  It stops at 2^56 bytes (`LIMIT`), which memory reaches first; page indices
-  (`pages`, `room`, `tide_page.first`) stay 32 bits, 2^32 places of 16 KiB.
+  Page indices (`pages`, `room`, `tide_page.first`) stay 32 bits, so it stops
+  at 2^32 places of 16 KiB, 64 TiB (`LIMIT`), which memory reaches first.
   A block's header stays 16 bytes: `link` (its size class in the low 8 bits,
   above them the next block of a free or pending list, or a pack block's
   trailer distance, which `next` held), then `a` and `b` as they were,
@@ -64,7 +143,7 @@ asset dictionary's descriptor locations and pack offsets are 64 bits (its
 `UINT32_MAX` "same as the base" mark becomes `UINT64_MAX`). Commands and
 inputs carry text and list bytes, never handles, and recipient (visibility)
 state encodes values, not offsets: neither changes but by struct sizes.
-Generated headers say `Heap ABI: ... (2)`; the Unity embed ABI goes up, as
+Generated headers say `Heap ABI: ... 64-bit handles (1)`; the Unity embed ABI goes up (8), as
 its C# mirrors change (`TideText`, `TideList`, `TideGrid` hold a `ulong`,
 `TideMap` is 32 bytes).
 

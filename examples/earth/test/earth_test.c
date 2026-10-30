@@ -207,7 +207,7 @@ TIDE_TEST(earth_ground_detail_is_seamless_and_cached)
         }
     }
     const uint64_t id = texture->id, version = texture->version;
-    const uint32_t mesh = local.Land.shown.at;
+    const tide_handle mesh = local.Land.shown.at;
     draw_world(NULL, player(0));
     bool kept = false;
     for (uint32_t i = 0; i < draw.texture_count; i++) {
@@ -449,7 +449,7 @@ TIDE_TEST(earth_hills_match_the_drawn_surface_and_stay_gentle)
         }
     }
     TIDE_CHECK(tide_list_count(local.Land.chunks) <= 2048);
-    const uint32_t terrain = local.Land.shown.at, plants = local.Flora.plants.at;
+    const tide_handle terrain = local.Land.shown.at, plants = local.Flora.plants.at;
     local.Pilot.look = local.Pilot.facing = (tide_float3){0, -up.z, up.y};
     draw_world(NULL, player(0));
     TIDE_CHECK(local.Land.shown.at == terrain);

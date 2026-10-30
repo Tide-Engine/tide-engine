@@ -195,6 +195,11 @@ void tide_delta_number(tide_delta_writer *d, const uint32_t v)
     tide_write_varint(&d->bytes, v);
 }
 
+void tide_delta_number64(tide_delta_writer *d, const uint64_t v)
+{
+    tide_write_varint64(&d->bytes, v);
+}
+
 // Whether the receiver lacks the next region, by what it said.
 static bool lacks_next(tide_delta_writer *d)
 {
@@ -247,7 +252,7 @@ void tide_delta_asset_region(tide_delta_writer *d, const void *now, const uint32
         tide_write_varint(&d->bytes, relative ? 1u : 0u);
         if (relative) {
             tide_write_bytes(&d->bytes, origin->data->id, 32);
-            tide_write_u32(&d->bytes, origin->data->pack_at);
+            tide_write_u64(&d->bytes, origin->data->pack_at);
             tide_write_u32(&d->bytes, origin->data->element);
             tide_write_u32(&d->bytes, origin->first);
             tide_write_u32(&d->bytes, origin->count);
@@ -292,6 +297,11 @@ bool tide_delta_open(tide_delta_reader *d, const uint8_t *data, const uint32_t s
 uint32_t tide_delta_get_number(tide_delta_reader *d)
 {
     return tide_read_varint(&d->bytes);
+}
+
+uint64_t tide_delta_get_number64(tide_delta_reader *d)
+{
+    return tide_read_varint64(&d->bytes);
 }
 
 // Whether the next region is the same as the base's; else its bytes are next.
@@ -362,11 +372,11 @@ tide_page *tide_delta_asset_page(tide_delta_reader *d, const uint32_t size, cons
     uint8_t baseline[1u << TIDE_HEAP_PAGE_SHIFT];
     if (mode == 1u) {
         const uint8_t *id = tide_read_bytes(&d->bytes, 32);
-        const uint32_t at = tide_read_u32(&d->bytes);
+        const uint64_t at = tide_read_u64(&d->bytes);
         const uint32_t element = tide_read_u32(&d->bytes);
         const uint32_t first = tide_read_u32(&d->bytes);
         const uint32_t count = tide_read_u32(&d->bytes);
-        if (d->bytes.failed || at < TIDE_PACK_BASE || at >= 0x40000000u) return NULL;
+        if (d->bytes.failed || at < TIDE_PACK_BASE || at > TIDE_HANDLE_OFFSET) return NULL;
         tide_asset_data *data = tide_asset_pack((tide_list){tide_handle_of(TIDE_IN_SCRATCH, at)}, element);
         if (!data || memcmp(data->id, id, 32) != 0) return NULL;
         const tide_asset_origin relative = {data, first, count};

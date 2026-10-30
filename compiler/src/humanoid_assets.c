@@ -181,7 +181,7 @@ static bool read_profile(asset_match *item, const jnode *root, loc at, const cha
     add_dependencies(item, model);
     tide_skinned_data_view view;
     if (!tide_skinned_data_open(model->skinned, model->skinned_size, &view)) return profile_error(item, at, "reference model is invalid");
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list data = tide_list_from(model->skinned, (int32_t)model->skinned_size, 1);
     tide_list transforms = {0}, bones = {0}, status = {0};
     bool ok = false;
@@ -378,7 +378,7 @@ bool humanoid_asset_bake(asset_match *item, int32_t clip, const asset_match *sou
     add_dependencies(item, target);
     const char *cache = bake_cache_path(item, clip, source, target, &settings, automatic_scale, game_folder);
     if (bake_cache_read(cache, item)) return true;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list actual = tide_list_from(item->skinned, (int32_t)item->skinned_size, 1);
     const tide_list sd = tide_list_from(s->data, (int32_t)s->size, 1), td = tide_list_from(t->data, (int32_t)t->size, 1);
     const tide_list sp = tide_list_from(s->pose, (int32_t)s->nodes, sizeof(tide_bone_transform));

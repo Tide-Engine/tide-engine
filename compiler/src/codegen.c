@@ -751,19 +751,22 @@ static uint64_t asset_reference_id(const decl *d)
     return id ? id : 1;
 }
 
+// A row of a generated Map<string, long>, which a mesh glob's metadata is, and
+// of the map of meshes it's made from in its place (tide_pack_mesh_map).
 typedef struct mesh_reference_pack_entry {
     int64_t order;
-    uint32_t key, padding;
+    tide_handle key;
     int64_t id;
 } mesh_reference_pack_entry;
 
 typedef struct mesh_geometry_pack_entry {
     int64_t order;
-    uint32_t key;
+    tide_handle key;
     tide_mesh_lists value;
 } mesh_geometry_pack_entry;
 
-_Static_assert(sizeof(mesh_reference_pack_entry) == sizeof(mesh_geometry_pack_entry), "mesh metadata reuses map allocation");
+_Static_assert(sizeof(mesh_reference_pack_entry) <= sizeof(mesh_geometry_pack_entry) && sizeof(int64_t) <= sizeof(tide_mesh_lists),
+               "mesh metadata reuses map allocation");
 
 typedef struct mesh_identity { uint64_t id; const decl *asset; } mesh_identity;
 static int mesh_identity_compare(const void *a, const void *b)
@@ -8395,7 +8398,7 @@ static void gen_header(gen *g)
     sb_put(o, "#pragma once\n\n// Session ABI: simulation identity (15), input prediction (1), visibility (1), players (16), client hashes (2), rewind (1).\n\n");
     // Maps' entry representation is opaque in public structs, but must still distinguish builds.
     if (prog->maps.count) sb_put(o, "// Map ABI: signed 64-bit insertion order (2).\n\n");
-    if (prog->uses_heap) sb_put(o, "// Heap ABI: retained immutable asset lists (1).\n\n");
+    if (prog->uses_heap) sb_put(o, "// Heap ABI: retained immutable asset lists (1), 64-bit handles (1).\n\n");
     // The build's symbols its #if conditions read: in the header, so in the game's hash
     int symbols = 0;
     const lex_symbol *read = lex_symbols_read(&symbols);
@@ -10540,14 +10543,14 @@ static void gen_blend_helpers(gen *g)
                   "    if (!source) return (tide_grid){0};\n"
                   "    const uint64_t bytes = sizeof(*source) + (uint64_t)source->room * sizeof(tide_grid_record) + (uint64_t)source->slots * sizeof(uint32_t);\n"
                   "    if (bytes > UINT32_MAX - sizeof(tide_block)) tide_out_of_memory();\n"
-                  "    uint32_t at = 0;\n"
+                  "    tide_handle at = 0;\n"
                   "    tide_block *block = tide_scratch_block((uint32_t)bytes, \"interpolated grid\", &at);\n"
                   "    tide_grid_dir *copy = (tide_grid_dir *)(void *)(block + 1);\n"
                   "    memcpy(copy, source, (size_t)bytes);\n"
                   "    const tide_heap *heap = tide_heap_read(tide_handle_where(value.at));\n"
                   "    const uint32_t chunk_bytes = tide_grid_chunk_bytes(shape);\n"
                   "    for (uint32_t i = 0; i < source->records; i++) {\n"
-                  "        uint32_t cells_at = 0;\n"
+                  "        tide_handle cells_at = 0;\n"
                   "        tide_block *cells = tide_scratch_block(chunk_bytes - (uint32_t)sizeof(tide_block), \"interpolated grid cells\", &cells_at);\n"
                   "        memcpy(cells, tide_grid_chunk_at(heap, tide_grid_records(source)[i].block), chunk_bytes);\n"
                   "        tide_grid_records(copy)[i].block = tide_handle_offset(cells_at);\n"
@@ -11219,7 +11222,7 @@ static void gen_local_fields(gen *g)
         path_list paths = {0};
         text_paths(part, "", &paths);
         sb_printf(o, "TIDE_HELPER void tide_fresh_%s(%s *v)\n{\n", type, type);
-        if (paths.count) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+        if (paths.count) sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n");
         sb_put(o, "    *v = ");
         gen_value(g, o, part, NULL, 0);
         sb_put(o, ";\n");
@@ -11236,7 +11239,7 @@ static void gen_local_fields(gen *g)
             sb_printf(o, "    %s *v = tide_attached_cell(&l->%s, %s, row);\n", type, table, columns);
         }
         if (has_defaults(part)) {
-            if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+            if (text) sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n");
             sb_put(o, "    *v = ");
             gen_value(g, o, part, NULL, 0);
             sb_put(o, ";\n");
@@ -13939,7 +13942,7 @@ static void gen_par_steps(gen *g, const decl *sys)
             g->par_flat = flat_list_loop(s);
             if (g->par_flat) sb_printf(o, "    const %s *restrict const tide_in = tide_cx->input;\n"
                                          "    const int32_t tide_count = tide_cx->count;\n    (void)tide_in;\n    (void)tide_count;\n", element);
-            sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    int32_t tide_x0, tide_x1;\n");
+            sb_put(o, "    const uint64_t tide_mark = tide_scratch_mark();\n    int32_t tide_x0, tide_x1;\n");
             sb_printf(o, "    %s *restrict const tide_wout = tide_par_list_task(tide_pl, tide_task, &tide_x0, &tide_x1);\n", element);
             sb_printf(o, "    const int32_t tide_o0 = tide_pl->offset, tide_lo = tide_o0 + tide_x0 * %d;\n", s->block[0]);
             sb_put(o, "    (void)tide_wout;\n    (void)tide_lo;\n");
@@ -13953,7 +13956,7 @@ static void gen_par_steps(gen *g, const decl *sys)
             continue;
         }
         if (!s->windowed) sb_put(o, "    tide_par_cache tide_pc = {{0, 0, 0}, NULL};\n");
-        sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n");
+        sb_put(o, "    const uint64_t tide_mark = tide_scratch_mark();\n");
         // Its blocks are numbered from its first one, which starts at tide_o:
         // block k's place, tide_o + k * its size, is a cell's, never past an
         // int. tide_o is a copy of its own, like the bounds below: what a
@@ -15375,7 +15378,7 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
     for (int i = 0; i < event->handlers.count; i++) {
         if (event->handlers.items[i]->is_local == local) text |= touches_text(event->handlers.items[i]);
     }
-    const char *mark = prog->uses_text && text ? "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n" : "";
+    const char *mark = prog->uses_text && text ? "    const uint64_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n" : "";
     const bool split = !local && !g->opts->editor_prefab && event_runs(prog, event);
     if (split) {
         sb_printf(o, "// " STR_FMT "'s handlers, in the order they run, for its target where it is (TIDE_ARCHETYPE_NONE: nowhere)\n",
@@ -15481,7 +15484,7 @@ static void gen_local_singleton_defaults(gen *g, const decl *d, const char *pad)
         return;
     }
     const bool text = decl_has_text(d);
-    if (text) sb_printf(o, "%s{\n%sconst uint32_t tide_fresh_mark = tide_scratch_mark();\n", pad, pad);
+    if (text) sb_printf(o, "%s{\n%sconst uint64_t tide_fresh_mark = tide_scratch_mark();\n", pad, pad);
     sb_printf(o, "%sl->%s = ", pad, name);
     gen_value(g, o, d, NULL, 0);
     sb_put(o, ";\n");
@@ -15547,7 +15550,7 @@ static void gen_forget(gen *g)
     sb_put(o, "    const bool all = l->tide_forget != 0u;\n");
     sb_put(o, "    if (!all && drawn == l->tide_kept_drawn && confirmed == l->tide_kept_verified) return; // No tick since\n");
     sb_put(o, "    l->tide_kept_drawn = drawn;\n    l->tide_kept_verified = confirmed;\n    l->tide_forget = 0u;\n");
-    if (prog->uses_text) sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
+    if (prog->uses_text) sb_put(o, "    const uint64_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
     bool singletons = false;
     for (int i = 0; i < prog->local_parts.count; i++) {
         const decl *part = prog->local_parts.items[i];
@@ -15633,7 +15636,7 @@ static void gen_heard(gen *g)
         sb_printf(o, "static void tide_let_go_%s(tide_local *l, const uint32_t row)\n{\n", type);
         sb_printf(o, "    tide_attached *a = &l->%s;\n", fields_table(part));
         sb_printf(o, "    const tide_entity e = tide_attached_entity(a, %s, row);\n    (void)e;\n", columns);
-        if (prog->uses_text) sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
+        if (prog->uses_text) sb_put(o, "    const uint64_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
         sb_printf(o, "    %s *v = tide_attached_cell(a, %s, row);\n    (void)v;\n", type, columns);
         gen_forgotten_calls(g, part, "    ", "e", "v");
         if (decl_has_text(part)) sb_printf(o, "    tide_release_%s(v, TIDE_IN_LOCAL);\n", type);
@@ -15648,7 +15651,7 @@ static void gen_heard(gen *g)
                      "static void tide_query_reset_%s(tide_local *l, const uint32_t row, const uint32_t born)\n{\n"
                      "    tide_attached *a = &l->%s;\n"
                      "    const tide_entity e = tide_attached_entity(a, %s, row);\n    (void)e;\n"
-                     "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                     "    const uint64_t tide_mark = tide_scratch_mark();\n"
                      "    %s *v = tide_attached_cell(a, %s, row);\n", type, fields_table(part), columns, type, columns);
         gen_forgotten_calls(g, part, "    ", "e", "v");
         if (decl_has_text(part)) sb_printf(o, "    tide_release_%s(v, TIDE_IN_LOCAL);\n", type);
@@ -15675,7 +15678,7 @@ static void gen_heard(gen *g)
         // As a view's rows name their entity (gen_row_fields)
         sb_put(o, "    const tide_entity tide_ent[1] = {tide_r->target};\n    const uint32_t tide_i = 0;\n"
                   "    (void)tide_ent;\n    (void)tide_i;\n");
-        if (prog->uses_text) sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
+        if (prog->uses_text) sb_put(o, "    const uint64_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
         g->row_born = "tide_r->born";
         for (int k = 0; k < event->listeners.count; k++) {
             const decl *h = event->listeners.items[k];
@@ -15753,7 +15756,7 @@ static void gen_heard(gen *g)
                   "    tide_heap captured = {0};\n"
                   "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
                   "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
-                  "    const uint32_t captured_mark = tide_scratch_mark();\n"
+                  "    const uint64_t captured_mark = tide_scratch_mark();\n"
                   "    tide_text_use(&captured, saved_local);\n"
                   "    uint64_t budget = SIZE_MAX;\n"
                   "    bool valid = true;\n"
@@ -16302,7 +16305,7 @@ static void gen_task_pass(gen *g, const bool local)
         sb_put(o, "        }\n    }\n");
     }
     sb_put(o, "    qsort(tide_due_list, tide_count, sizeof(tide_due), tide_due_compare);\n");
-    sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n");
+    sb_put(o, "    const uint64_t tide_mark = tide_scratch_mark();\n");
     if (g->prog->task_slots[local]) {
         sb_printf(o, "    const int32_t tide_slots = tide_list_count(%s->%s.slots);\n", w, task_store_name(g, local));
         sb_put(o, "    if ((uint64_t)(uint32_t)tide_slots + 1u > SIZE_MAX / sizeof(uint32_t)) tide_out_of_memory();\n"
@@ -16765,7 +16768,7 @@ static void gen_sample(gen *g)
     if (g->prog->uses_text) {
         sb_printf(o, "static %s tide_input_sample_body(%s);\n\n", name, params);
         sb_printf(o, "%s tide_input_sample(%s)\n{\n"
-                     "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                     "    const uint64_t tide_mark = tide_scratch_mark();\n"
                      "    const %s input = tide_input_sample_body(tide_dev, tide_l);\n"
                      "    tide_scratch_reset(tide_mark);\n    return input;\n}\n\n", name, params, name);
     }
@@ -16818,7 +16821,7 @@ static void gen_sanitize(gen *g)
     if (g->prog->uses_text) {
         sb_printf(o, "static %s tide_input_sanitize_body(%s tide_self);\n\n", type_cname(input), type_cname(input));
         sb_printf(o, "static %s tide_input_sanitize(%s input)\n{\n"
-                     "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                     "    const uint64_t tide_mark = tide_scratch_mark();\n"
                      "    input = tide_input_sanitize_body(input);\n"
                      "    tide_scratch_reset(tide_mark);\n    return input;\n}\n\n", type_cname(input), type_cname(input));
     }
@@ -16843,7 +16846,7 @@ static void gen_predict(gen *g)
     if (g->prog->uses_text) {
         sb_printf(o, "static %s tide_input_predict_body(%s tide_self);\n\n", type_cname(input), type_cname(input));
         sb_printf(o, "static %s tide_input_predict(%s input)\n{\n"
-                     "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                     "    const uint64_t tide_mark = tide_scratch_mark();\n"
                      "    input = tide_input_predict_body(input);\n"
                      "    tide_scratch_reset(tide_mark);\n    return input;\n}\n\n", type_cname(input), type_cname(input));
     }
@@ -17737,7 +17740,7 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
     sb *o = &g->c;
     const program *prog = g->prog;
     const bool staged = !world_reads_own_writes(sys);
-    sb_printf(o, "(tide_world *tide_w%s, const uint32_t tide_from, const uint32_t tide_to", g->prog->uses_text ? ", const uint32_t tide_mark" : "");
+    sb_printf(o, "(tide_world *tide_w%s, const uint32_t tide_from, const uint32_t tide_to", g->prog->uses_text ? ", const uint64_t tide_mark" : "");
     gen_rows_columns(g, sys, a, apart, ROWS_PARAMS, selection == ROWS_CACHED);
     sb_printf(o, ")\n{\n    (void)tide_w;\n    (void)tide_ent;\n%s%s", g->prog->uses_text ? "    (void)tide_mark;\n" : "",
               arch_scene_column(g, a) ? "    (void)tide_scn;\n" : "");
@@ -18827,7 +18830,7 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
             }
             sb_printf(o, "            const tide_entity *tide_ent = tide_table_column(tide_t, %s, tide_c, 0);\n", columns);
             if (arch_scene_column(g, a)) sb_printf(o, "            const tide_entity *tide_scn = tide_table_column(tide_t, %s, tide_c, 1);\n", columns);
-            if (prog->uses_text) sb_put(o, "            const uint32_t tide_mark = tide_scratch_mark();\n");
+            if (prog->uses_text) sb_put(o, "            const uint64_t tide_mark = tide_scratch_mark();\n");
             sb_printf(o, "            tide_rows_%s_%d(tide_w%s, 0u, tide_cached->pass", name, rows[a].place_cached,
                       prog->uses_text ? ", tide_mark" : "");
             gen_rows_columns(g, sys, a, false, ROWS_ARGS, true);
@@ -18931,7 +18934,7 @@ static void gen_system_run(gen *g, const decl *sys)
                 if (binding->mode == PARAM_READ) confirmed_mark |= blend_reads_heap(binding->type.decl);
             }
         }
-        if (confirmed_mark) sb_put(o, "    const uint32_t tide_confirmed_mark = tide_scratch_mark();\n");
+        if (confirmed_mark) sb_put(o, "    const uint64_t tide_confirmed_mark = tide_scratch_mark();\n");
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
             if (!view_copies(p)) continue;
@@ -18954,7 +18957,7 @@ static void gen_system_run(gen *g, const decl *sys)
             if (p->type.kind != TY_COMPONENT || !has_fields_ptr(p) || attaches_first(p)) continue;
             const decl *part = local_part_of(p->type);
             if (heap_defaults(part) && !fresh_mark) {
-                sb_put(o, "    const uint32_t tide_fresh_mark = tide_scratch_mark(); // Their text and lists are borrowed\n");
+                sb_put(o, "    const uint64_t tide_fresh_mark = tide_scratch_mark(); // Their text and lists are borrowed\n");
                 fresh_mark = true;
             }
             sb_printf(o, "    const %s tide_fresh%d = ", type_cname(part), i);
@@ -18982,7 +18985,7 @@ static void gen_system_run(gen *g, const decl *sys)
                 sb_printf(&hook, "{ %s}", fill.data);
             }
             g->row_queries = hook.data;
-            sb_put(o, "    const uint32_t tide_qmark = tide_scratch_mark();\n");
+            sb_put(o, "    const uint64_t tide_qmark = tide_scratch_mark();\n");
         }
         g->blending = sys;
     } else {
@@ -19029,7 +19032,7 @@ static void gen_system_run(gen *g, const decl *sys)
     }
 
     if (prog->uses_text) {
-        sb_printf(o, "    %suint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n", queries ? "" : "const ");
+        sb_printf(o, "    %suint64_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n", queries ? "" : "const ");
     }
     if (!sys->per_entity) {
         if (queries) sb_printf(o, "    %s\n", g->row_queries);
@@ -19699,7 +19702,7 @@ static void gen_assets(gen *g)
                 sb_printf(o, "    %s = (%s){0};\n", asset_cname(d), c_type(d->return_type));
                 continue;
             }
-            sb_printf(o, "    %s = (%s){0};\n    if (e) { const uint32_t base = tide_pack_handle(e) + (uint32_t)sizeof(tide_block);\n"
+            sb_printf(o, "    %s = (%s){0};\n    if (e) { const tide_handle base = tide_pack_handle(e) + sizeof(tide_block);\n"
                          "        %s = (%s){.data = {base + %uu}, .referencePose = {.data = {base + %uu}, .transforms = {base + %uu}},"
                          " .bones = {base + %uu}, .status = {base + %uu}};\n    }\n",
                       asset_cname(d), c_type(d->return_type), asset_cname(d), c_type(d->return_type),
@@ -19726,7 +19729,7 @@ static void gen_assets(gen *g)
                   name, map ? "tide_pack_map_of(e)" : "(tide_list){tide_pack_handle(e)}", name, name);
         sb_put(o, "    {\n");
         if (map) sb_put(o, "      typedef struct { int64_t order; tide_text key; tide_mesh_lists value; } tide_raw_mesh_entry;\n"
-                          "      typedef struct { int64_t order; tide_text key; uint32_t pad; int64_t id; } tide_ref_mesh_entry;\n");
+                          "      typedef struct { int64_t order; tide_text key; int64_t id; } tide_ref_mesh_entry;\n");
         sb_printf(o, "      for (int32_t k = 0; k < %s(%s); k++) {\n", map ? "tide_map_entries" : "tide_list_count", name);
         if (map) {
             sb_printf(o, "        const tide_raw_mesh_entry *raw = tide_list_at(%s.entries, k, sizeof *raw);\n"
@@ -19792,14 +19795,14 @@ static uint8_t channel_byte(const float v, const float alpha)
 }
 
 // One item of an asset into the pack: its block's offset.
-static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
+static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
                           const bool compress, uint32_t *extra)
 {
     *extra = 0;
     if (kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION || kind == ASSET_HUMANOID) {
         uint8_t hash[32];
         tide_sha256_of(item->skinned, item->skinned_size, hash);
-        const uint32_t at = tide_pack_bytes(b, hash, item->skinned, item->skinned_size, extra);
+        const uint64_t at = tide_pack_bytes(b, hash, item->skinned, item->skinned_size, extra);
         return kind == ASSET_ANIMATIONS ? tide_pack_list(b, &at, 1u) : at;
     }
     if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
@@ -19820,7 +19823,7 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
             : texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
         // Blocks are the image then, with no RGBA beside them: a device without them decodes them
         if (compressed.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
-        const uint32_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
+        const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
                                                     compressed.pixels ? NULL : rgba, compressed);
         free((void *)(uintptr_t)compressed.pixels);
         free(rgba);
@@ -20078,7 +20081,7 @@ static bool rest_mesh(const asset_match *item, const mesh_file *m, mesh_file *re
 }
 
 static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, const bool lod, const bool skinned,
-                      const bool rest, uint32_t offsets[2])
+                      const bool rest, uint64_t offsets[2])
 {
     mesh_file rested;
     const bool moved = rest && rest_mesh(item, &item->mesh, &rested);
@@ -20179,7 +20182,7 @@ static void build_pack(gen *g)
             const int stride = skinned ? 3 : 2;
             const uint32_t laid = mesh_layout_number(g, vertex);
             if (!v->many) {
-                uint32_t at[3];
+                uint64_t at[3];
                 pack_mesh(g, &b, &v->items[0], vertex, d->lod, weighted, weighted && !skinned, at + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
@@ -20190,8 +20193,8 @@ static void build_pack(gen *g)
                 } else tide_pack_name(&b, qualified, kind, at[0], at[1], laid);
                 continue;
             }
-            uint32_t *meshes = malloc(sizeof(uint32_t) * (size_t)stride * (size_t)(v->count ? v->count : 1));
-            uint32_t *names = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
+            uint64_t *meshes = malloc(sizeof(uint64_t) * (size_t)stride * (size_t)(v->count ? v->count : 1));
+            uint64_t *names = malloc(sizeof(uint64_t) * (size_t)(v->count ? v->count : 1));
             if (!meshes || !names) abort();
             for (int k = 0; k < v->count; k++) {
                 pack_mesh(g, &b, &v->items[k], vertex, d->lod, weighted, weighted && !skinned, meshes + stride * k + (skinned ? 1 : 0));
@@ -20208,30 +20211,37 @@ static void build_pack(gen *g)
                 names[k] = tide_pack_string(&b, hash, v->items[k].key, (uint32_t)strlen(v->items[k].key), &chars);
             }
             if (v->is_map) {
-                uint32_t index;
-                const uint32_t at = skinned ? tide_pack_skinned_map(&b, names, meshes, (uint32_t)v->count, &index)
+                uint64_t index;
+                const uint64_t at = skinned ? tide_pack_skinned_map(&b, names, meshes, (uint32_t)v->count, &index)
                                            : tide_pack_mesh_map(&b, names, meshes, (uint32_t)v->count, &index);
                 tide_pack_name(&b, qualified, kind, at, index, laid);
             } else {
-                const uint32_t at = skinned ? tide_pack_skinned_list(&b, meshes, (uint32_t)v->count)
+                const uint64_t at = skinned ? tide_pack_skinned_list(&b, meshes, (uint32_t)v->count)
                                            : tide_pack_mesh_list(&b, meshes, (uint32_t)v->count);
                 tide_pack_name(&b, qualified, kind, at, (uint32_t)v->count, laid);
             }
             if (!skinned) {
-                uint32_t metadata_index = 0;
-                const uint32_t metadata = v->is_map
+                uint64_t metadata_index = 0;
+                const uint64_t metadata = v->is_map
                     ? tide_pack_mesh_map(&b, names, meshes, (uint32_t)v->count, &metadata_index)
                     : tide_pack_mesh_list(&b, meshes, (uint32_t)v->count);
-                // Both packed records have 24 bytes; handle values put their int64 at offset 16.
+                // Made again in their place as a map's rows of a long (order, key, id: the id at 16) or a list's
+                // longs, row by row from the first, each no further on than the mesh record it's made from; the
+                // block's bytes past them are zeros
                 uint8_t *data = b.region + metadata + sizeof(tide_block);
+                const size_t made = v->is_map ? sizeof(mesh_reference_pack_entry) : sizeof(int64_t);
+                const size_t was = v->is_map ? sizeof(mesh_geometry_pack_entry) : sizeof(tide_mesh_lists);
                 for (int k = 0; k < v->count; k++) {
-                    const uint64_t id = mesh_item_id(d, k);
+                    const int64_t id = (int64_t)mesh_item_id(d, k);
                     if (v->is_map) {
-                        uint8_t *entry = data + (size_t)k * sizeof(mesh_reference_pack_entry);
-                        memset(entry + offsetof(mesh_reference_pack_entry, padding), 0, sizeof(uint32_t));
-                        memcpy(entry + offsetof(mesh_reference_pack_entry, id), &id, sizeof id);
-                    } else memcpy(data + (size_t)k * sizeof id, &id, sizeof id);
+                        mesh_reference_pack_entry row = {0};
+                        memcpy(&row.order, data + (size_t)k * was + offsetof(mesh_geometry_pack_entry, order), sizeof row.order);
+                        memcpy(&row.key, data + (size_t)k * was + offsetof(mesh_geometry_pack_entry, key), sizeof row.key);
+                        row.id = id;
+                        memcpy(data + (size_t)k * made, &row, sizeof row);
+                    } else memcpy(data + (size_t)k * made, &id, sizeof id);
                 }
+                memset(data + (size_t)v->count * made, 0, (size_t)v->count * (was - made));
                 tide_pack_name(&b, mesh_refs_name(d), v->is_map ? TIDE_PACK_MAP : TIDE_PACK_LIST,
                                metadata, v->is_map ? metadata_index : (uint32_t)v->count, v->is_map ? (uint32_t)v->count : 0);
             }
@@ -20240,13 +20250,14 @@ static void build_pack(gen *g)
             continue;
         }
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
-            uint32_t faces[6], extra;
+            uint64_t faces[6];
+            uint32_t extra;
             for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, false, &extra);
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
             continue;
         }
         if (v->kind == ASSET_ANIMATIONS && t.kind == TY_STRUCT) {
-            uint32_t *sources = arena_alloc(sizeof *sources * (size_t)v->count);
+            uint64_t *sources = arena_alloc(sizeof *sources * (size_t)v->count);
             for (int n = 0; n < v->count; n++) {
                 uint8_t hash[32];
                 uint32_t chars;
@@ -20259,13 +20270,13 @@ static void build_pack(gen *g)
         }
         if (!v->many) {
             uint32_t extra;
-            const uint32_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, true, &extra);
+            const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, true, &extra);
             tide_pack_name(&b, qualified, kind, at,
                            v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
             continue;
         }
-        uint32_t *offsets = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
-        uint32_t *keys = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
+        uint64_t *offsets = malloc(sizeof(uint64_t) * (size_t)(v->count ? v->count : 1));
+        uint64_t *keys = malloc(sizeof(uint64_t) * (size_t)(v->count ? v->count : 1));
         if (!offsets || !keys) abort();
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
@@ -20281,11 +20292,11 @@ static void build_pack(gen *g)
                                     : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES
                                     : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : v->kind == ASSET_CLIP ? TIDE_PACK_CLIP : TIDE_PACK_GRID;
         if (v->is_map) {
-            uint32_t index;
-            const uint32_t at = tide_pack_map(&b, keys, offsets, (uint32_t)v->count, &index);
+            uint64_t index;
+            const uint64_t at = tide_pack_map(&b, keys, offsets, (uint32_t)v->count, &index);
             tide_pack_name(&b, qualified, kind, at, index, (uint32_t)v->count); // TIDE_PACK_MAP, or TIDE_PACK_TEXTURES
         } else {
-            const uint32_t at = tide_pack_list(&b, offsets, (uint32_t)v->count);
+            const uint64_t at = tide_pack_list(&b, offsets, (uint32_t)v->count);
             tide_pack_name(&b, qualified, TIDE_PACK_LIST, at, (uint32_t)v->count, element_kind);
         }
         free(offsets);
@@ -20353,7 +20364,7 @@ static void gen_api(gen *g)
         if (has_defaults(d)) {
             // Defaults with text, lists or grids are made in the scratch area, which
             // the world's own copy leaves as it was
-            if (decl_has_text(d)) sb_put(o, "    {\n    const uint32_t tide_mark = tide_scratch_mark();\n");
+            if (decl_has_text(d)) sb_put(o, "    {\n    const uint64_t tide_mark = tide_scratch_mark();\n");
             sb_printf(o, "    w->%s = ", type_cname(d));
             gen_value(g, o, d, NULL, 0);
             sb_put(o, ";\n");
@@ -20539,7 +20550,7 @@ static void gen_api(gen *g)
         decl *d = prog->singletons.items[i];
         if (!d->is_local) continue;
         if (has_defaults(d)) {
-            if (decl_has_text(d)) sb_put(o, "    {\n    const uint32_t tide_mark = tide_scratch_mark();\n");
+            if (decl_has_text(d)) sb_put(o, "    {\n    const uint64_t tide_mark = tide_scratch_mark();\n");
             sb_printf(o, "    local->%s = ", type_cname(d));
             gen_value(g, o, d, NULL, 0);
             sb_put(o, ";\n");
@@ -21617,7 +21628,7 @@ static void gen_commands_api(gen *g)
               "    local->tide_outgoing_count = 0;\n}\n\n");
     sb_printf(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size, uint32_t *channel)\n{\n"
                  "    if (!data || size < 10u || size > %s) return false;\n", most);
-    if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+    if (text) sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n");
     sb_put(o, "    bool ok = false;\n    tide_entity target;\n    switch ((uint32_t)data[0] | ((uint32_t)data[1] << 8u)) {\n");
     for (int k = 0; k < prog->command_types.count; k++) {
         const decl *d = prog->command_types.items[k];
@@ -21688,7 +21699,7 @@ static void gen_commands_api(gen *g)
         sb_put(o, "    const uint32_t was = tide_game_command_sequence(w, sender, channel);\n"
                   "    if (was == UINT32_MAX || sequence != was + 1u) return false;\n");
     }
-    if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+    if (text) sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n");
     if (prog->uses_heap) sb_put(o, "    tide_text_use(&w->heap, NULL);\n");
     sb_put(o, "    tide_entity target;\n    bool ok = false;\n"
               "    switch ((uint32_t)data[0] | ((uint32_t)data[1] << 8u)) {\n");
@@ -22290,7 +22301,7 @@ static void gen_client_event_check(gen *g)
                   "    tide_heap captured = {0};\n"
                   "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
                   "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
-                  "    const uint32_t mark = tide_scratch_mark();\n"
+                  "    const uint64_t mark = tide_scratch_mark();\n"
                   "    tide_text_use(&captured, saved_local);\n"
                   "    const bool ok = tide_game_check_client_events_inner(data, size, build, count);\n"
                   "    tide_heap_free(&captured);\n    tide_scratch_reset(mark);\n"
@@ -22885,7 +22896,7 @@ static void gen_layout(gen *g)
         path_list paths = {0};
         text_paths(d, "", &paths);
         sb_printf(o, "static void tide_layout_defaults%d(void *value)\n{\n", i);
-        if (paths.count) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+        if (paths.count) sb_put(o, "    const uint64_t mark = tide_scratch_mark();\n");
         sb_printf(o, "    *(%s *)value = ", name);
         gen_value(g, o, d, NULL, 0);
         sb_put(o, ";\n");
@@ -23133,7 +23144,7 @@ static void gen_shader_skin(sb *o, const shader *sh)
     sb_printf(o, "    uint32_t tide_skin_textures[2];\n    int32_t tide_skin_info[%d];\n",
               sh->skin_base_at >= 0 ? 4 : 3);
     sb_put(o,
-              "    const uint32_t tide_skin_mark = tide_scratch_mark();\n"
+              "    const uint64_t tide_skin_mark = tide_scratch_mark();\n"
               "    if (tide_default_pose) {\n");
     sb_printf(o, "        if (!%s(tide_draw, tide_model_data, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); %s; }\n",
               sh->skin_base_at >= 0 ? "tide_draw_skinned_rest_atlas" : "tide_draw_skinned_rest_data", sh->instanced ? "continue" : "return");
@@ -23494,7 +23505,7 @@ static void gen_shaders(gen *g)
             if (!sh->skinned) {
                 sb_put(o, "    const uint64_t tide_bytes = (uint64_t)(uint32_t)tide_count * sizeof tide_instance;\n"
                           "    if (tide_bytes > UINT32_MAX) tide_out_of_memory();\n"
-                          "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                          "    const uint64_t tide_mark = tide_scratch_mark();\n"
                           "    void *tide_instances = tide_scratch_memory((size_t)tide_bytes);\n");
             }
             bool reads_item = sh->instance_pose || (sh->dims == 3 && (!sh->instance_type || sh->instance_transform));

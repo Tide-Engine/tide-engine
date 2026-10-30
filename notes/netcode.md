@@ -1,5 +1,19 @@
 # Netcode: sessions, prediction, commands
 
+## Protocol 21: 64-bit handles (2026-10-30)
+
+`PROTOCOL` is 21 (`engine/src/session.c`, and the tests that write it by hand:
+`tests/test_commands.c`, `test_session_packets.c`, `test_session_view_time.c`,
+`packages/voice/test/voice_test.c`). Text, list, map, set and grid handles are
+64 bits (notes/ecs.md, 64-bit handles), so every layout holding one, every page
+and so every world hash changed: two builds on either side would connect and
+then disagree. On the wire, deltas carry a handle column's zero high words as
+runs of zeros, and the heap's numbers as varints (`tide_delta_number64`); raw
+world bytes carry the heap's numbers and the asset dictionary's places as
+`uint64_t`. Commands, inputs and recipient state carry values, never handles,
+so they change only by the sizes of structs. Received heaps are checked at
+least as strictly as before (notes/memory-safety.md, 64-bit handles).
+
 ## A match played alone ticks once (2026-10-30)
 
 A session that hosts its own match runs a server and this machine's client in one process, and each ran every tick: the client its prediction, the server the same tick with the same input. A game played alone paid for its simulation twice (a battle of 20000 fighters in the Bannerlord duel's tools/army: 11.9 ms a tick, 23.8 ms a frame at 60 ticks a second). Now, while `tide_session_update` updates its server, the server knows this machine's client (`tide_server.twin`), and a tick the client has run already as the server would is taken from it (`twin_ran`, a copy of its world) rather than run again: 11.4 ms a frame. Only when that's certain to be the same world: no recipient projections (`client_state`), no other player connected, the client predicting with nothing to catch up, repair or get again, its verified tick the one the server is about to run (so the world it ran from is the server's, checked by hash) and the frame as it predicted it (`as_predicted`: its own input and nothing else, no joins, leaves, commands or shard messages). Anything else, the server ticks as before. The client goes on hashing and confirming as it did.

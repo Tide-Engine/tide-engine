@@ -37,6 +37,9 @@ typedef struct tide_mesh_lists {
 // Grid2<float> to a Texture. It names the grid, by where its directory is
 // and how its cells are laid out, and is sampled as `sampling` says
 // (tide_sampling_bits). The default Texture for a grid of any other cells.
+// `image.version` has the handle's low 32 bits, the cells and the chunks'
+// shifts; `image.width`, which a grid's texture has no other use for, the
+// handle's high 32 bits.
 //
 // It's the grid for as long as the grid is there. One that outlives its grid
 // (the entity it was a field of is gone, the match is another) names whatever
@@ -49,9 +52,10 @@ static inline tide_texture_ref tide_texture_of_grid(const tide_grid grid, const 
     if (shape->dims != 2u || (!colors && shape->cell != sizeof(float)) || shape->shift[0] > 15u || shape->shift[1] > 15u) {
         return (tide_texture_ref){0};
     }
-    const uint64_t named = (uint64_t)grid.at | (uint64_t)(colors ? 1u : 2u) << 32 | (uint64_t)shape->shift[0] << 40
+    const uint64_t named = (uint64_t)(uint32_t)grid.at | (uint64_t)(colors ? 1u : 2u) << 32 | (uint64_t)shape->shift[0] << 40
                          | (uint64_t)shape->shift[1] << 48;
-    return tide_texture_sampled((tide_texture_ref){.image = {.height = TIDE_TEXTURE_GRID, .version = named}}, sampling);
+    const int32_t high = (int32_t)(uint32_t)(grid.at >> 32);
+    return tide_texture_sampled((tide_texture_ref){.image = {.width = high, .height = TIDE_TEXTURE_GRID, .version = named}}, sampling);
 }
 
 // The grid a texture names, with its cells' shape: false for a texture that's
@@ -62,7 +66,7 @@ static inline bool tide_texture_grid(const tide_texture_ref texture, tide_grid *
     const uint64_t named = texture.image.version;
     const uint32_t cells = (uint32_t)(named >> 32) & 255u;
     if (cells != 1u && cells != 2u) return false;
-    *grid = (tide_grid){(uint32_t)named};
+    *grid = (tide_grid){(tide_handle)(uint32_t)texture.image.width << 32 | (uint32_t)named};
     *shape = (tide_grid_shape){.cell = cells == 1u ? (uint32_t)sizeof(tide_color) : (uint32_t)sizeof(float), .dims = 2u,
                                .shift = {(uint32_t)(named >> 40) & 15u, (uint32_t)(named >> 48) & 15u, 0u}};
     return true;

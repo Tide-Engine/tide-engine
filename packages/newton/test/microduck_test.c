@@ -20,7 +20,7 @@
 #define DUCK_OBSERVATIONS 44
 /* Manual-controller world, including the released actor schema and fixed
  * 174-sphere model and centered free-root coordinates. Native/WASI agree. */
-#define DUCK_HASH UINT64_C(0x90ed0aaf9bb442c8)
+#define DUCK_HASH UINT64_C(0x61f70554b54d4972)
 
 /* These are the original manual-controller/contact regressions. The released
  * actor has its own policy_game_test host; keep its default out of these

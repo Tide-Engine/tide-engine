@@ -517,7 +517,8 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
 
     // The new world's bytes (see tide_world_pack): its struct, the entities, the
     // tables, an empty queue, the tasks and the heap as it was
-    const uint32_t empty_heap = (uint32_t)(sizeof(uint32_t) * (3u + TIDE_HEAP_CLASSES));
+    // Its asset dictionary's count, then what it's handed out, its free lists and what's pending (tide_heap_pack)
+    const uint32_t empty_heap = (uint32_t)(sizeof(uint32_t) + sizeof(uint64_t) * (2u + TIDE_HEAP_CLASSES));
     uint64_t size = tw->size + (ok ? tide_entities_packed_size(&old.entities) : 0u) + 4u;
     for (uint32_t k = 0; k < tw->archetype_count; k++) size += 4u + (uint64_t)counts[k] * row_size(to_layout, &tw->archetypes[k]);
     for (uint32_t k = 0; ok && k < tw->task_count; k++) {

@@ -18,7 +18,7 @@ TIDE_TEST(animation_lookup_owns_outputs_resets_failures_and_preserves_snapshots)
     TIDE_REQUIRE(world.Probe.checks == 24 && world.Probe.passed == world.Probe.checks);
     tide_world_copy(&snapshot, &world);
     const uint64_t hash = tide_world_hash(&snapshot);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     tide_pack_unload();
     for (int i = 0; i < 32; i++) tide_world_tick(&world);
     TIDE_CHECK(world.Probe.passed == world.Probe.checks && tide_world_hash(&snapshot) == hash);

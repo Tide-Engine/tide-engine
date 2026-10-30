@@ -5,7 +5,7 @@ index 17a66812..20e2c8c2 100644
 @@ -2577,14 +2577,16 @@ TIDE_HELPER void tide_shade_1(tide_draw_list *tide_draw, tide_list tide_vertices
      uint32_t tide_skin_textures[2];
      int32_t tide_skin_info[4];
-     const uint32_t tide_skin_mark = tide_scratch_mark();
+     const uint64_t tide_skin_mark = tide_scratch_mark();
 -    tide_list tide_skin_transforms = tide_pose_transforms;
      if (tide_default_pose) {
 -        if (!tide_skinned_rest(tide_model_data, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }

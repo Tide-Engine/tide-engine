@@ -72,7 +72,7 @@ static int parallel_palettes(void)
     uint32_t first[2] = {0};
     int failures = 0;
     for (uint32_t i = 0; i < 2048u; i++) {
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         tide_list pose = {0};
         uint32_t textures[2];
         int32_t info[4];

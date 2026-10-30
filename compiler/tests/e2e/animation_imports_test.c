@@ -46,7 +46,7 @@ TIDE_TEST(animation_imports_authenticate_every_source_and_keep_the_old_pack)
     tide_skinned_data_view view;
     TIDE_REQUIRE(tide_skinned_data_open(source, (size_t)tide_list_count(*sources), &view));
     const tide_pack_header *header = (const tide_pack_header *)(const void *)tide_game_pack;
-    const size_t at = header->region_at + (sources->at & 0x3fffffffu) - TIDE_PACK_BASE + sizeof(tide_block);
+    const size_t at = header->region_at + tide_handle_offset(sources->at) - TIDE_PACK_BASE + sizeof(tide_block);
     uint8_t *changed = malloc(tide_game_pack_size);
     TIDE_REQUIRE(changed != NULL);
     memcpy(changed, tide_game_pack, tide_game_pack_size);

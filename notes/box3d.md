@@ -1,5 +1,13 @@
 # The Box3D package
 
+## Layouts with 64-bit handles (2026-10-30)
+
+Lists and maps in `box3d.tide`'s types are 8 and 32 bytes (notes/ecs.md,
+64-bit handles), so the bridge's mirrors changed with them: `physics` is 480
+bytes (`gone` at 96, `pending` at 288, `shard_moves` at 376), `mesh_collider`,
+`hull_collider` and `height_collider` 56, `shape_record` 40, `history_frame`
+24, each with its padding written out as the generated header has it.
+
 ## Smooth hulls within Box3D's limits (2026-10-25)
 
 Reported by the PINFALL prototype (tide-prototypes `notes/pinfall.md`): a

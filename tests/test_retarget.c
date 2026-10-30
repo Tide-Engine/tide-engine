@@ -190,7 +190,7 @@ static bool apply(const prepared *p, const tide_list input, tide_list *out)
 
 TIDE_TEST(retarget_auto_matches_mixamo_synty_chains_and_finger_suffixes)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.5f, true);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -214,7 +214,7 @@ TIDE_TEST(retarget_auto_matches_mixamo_synty_chains_and_finger_suffixes)
 
 TIDE_TEST(retarget_calibrates_a_pose_and_bone_axes_preserving_target_lengths)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false);
     test_rig target = humanoid(true, 2, TIDE_PI_F / 6.0f, false);
     const int32_t arm = target.role[TIDE_HUMANOID_LEFT_UPPER_ARM];
@@ -249,7 +249,7 @@ TIDE_TEST(retarget_calibrates_a_pose_and_bone_axes_preserving_target_lengths)
 
 TIDE_TEST(retarget_twist_helpers_do_not_distribute_elbow_swing)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 1, 0, true);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -273,7 +273,7 @@ TIDE_TEST(retarget_twist_helpers_do_not_distribute_elbow_swing)
 
 TIDE_TEST(retarget_root_controls_and_unrelated_target_bones)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0, false);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -290,7 +290,7 @@ TIDE_TEST(retarget_root_controls_and_unrelated_target_bones)
 
 TIDE_TEST(retarget_reference_body_facing_calibrates_rotation_and_travel)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     test_rig source = humanoid(false, 1, 0, false);
     const test_rig target = humanoid(true, 2, 0, false);
     source.nodes[0].local.rotation = tide_axisangle_q(tide_f3(0, 1, 0), TIDE_PI_F * 0.5f);
@@ -309,7 +309,7 @@ TIDE_TEST(retarget_reference_body_facing_calibrates_rotation_and_travel)
 
 TIDE_TEST(retarget_different_spine_counts_distribute_between_semantic_anchors)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false);
     test_rig target = humanoid(true, 1, 0, false);
     const int32_t inserted = target.role[TIDE_HUMANOID_CHEST];
@@ -338,7 +338,7 @@ TIDE_TEST(retarget_different_spine_counts_distribute_between_semantic_anchors)
 
 TIDE_TEST(retarget_auto_ignores_mesh_aliases_and_handles_toe_and_mitten_chains)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     test_rig source = humanoid(true, 1, 0, false);
     const int32_t geometry = add_node(&source, "GEO", 0, tide_f3(0, 0, 0));
     add_node(&source, "mannequin_geo_pelvis", geometry, tide_f3(0, 0, 0));
@@ -362,7 +362,7 @@ TIDE_TEST(retarget_auto_ignores_mesh_aliases_and_handles_toe_and_mitten_chains)
 
 TIDE_TEST(retarget_optional_reference_fingers_may_be_absent_from_actual_export)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, false);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -415,7 +415,7 @@ static test_rig animation_export(const test_rig *reference, const bool changed_d
 
 TIDE_TEST(retarget_reference_is_independent_of_animation_defaults_order_and_wrappers)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, false);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -438,7 +438,7 @@ TIDE_TEST(retarget_reference_is_independent_of_animation_defaults_order_and_wrap
 
 TIDE_TEST(retarget_missing_ambiguous_manual_and_invalid_references_are_atomic)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     test_rig source = humanoid(false, 1, 0, false);
     const test_rig target = humanoid(true, 1, 0, false);
     prepared p;
@@ -480,7 +480,7 @@ TIDE_TEST(retarget_missing_ambiguous_manual_and_invalid_references_are_atomic)
 
 TIDE_TEST(retarget_invalid_input_leaves_pose_and_heap_unchanged)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, true);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -501,11 +501,11 @@ TIDE_TEST(retarget_invalid_input_leaves_pose_and_heap_unchanged)
         TIDE_CHECK(transform_hash(output) == before_pose && tide_heap_hash(TIDE_HASH_START, &heap) == before_heap);
     }
     TIDE_CHECK(!tide_retarget_apply(kept_map, p.target, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
-    TIDE_CHECK(!tide_retarget_apply((tide_list){0xbffffffcu}, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
+    TIDE_CHECK(!tide_retarget_apply((tide_list){tide_handle_of(TIDE_IN_SCRATCH, TIDE_HANDLE_OFFSET - 3u)}, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
     const int32_t length = tide_list_count(p.map);
     const void *bytes = tide_list_at(p.map, 0, 1u);
     for (int32_t cut = 0; cut < length; cut++) {
-        const uint32_t cut_mark = tide_scratch_mark();
+        const uint64_t cut_mark = tide_scratch_mark();
         const tide_list truncated = tide_list_from(bytes, cut, 1u);
         TIDE_CHECK(!tide_retarget_apply(truncated, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
         tide_scratch_reset(cut_mark);
@@ -524,7 +524,7 @@ TIDE_TEST(retarget_invalid_input_leaves_pose_and_heap_unchanged)
 
 TIDE_TEST(retarget_crossplatform_pose_bits)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 1.7f, 0.43f, true);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -547,21 +547,21 @@ TIDE_TEST(retarget_crossplatform_pose_bits)
 
 TIDE_TEST(retarget_reuses_scratch_output_without_retaining_staging)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, false);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
     tide_list output = {0};
     TIDE_REQUIRE(apply(&p, p.source_pose, &output));
     const uint64_t expected = transform_hash(output);
-    const uint32_t settled = tide_scratch_mark();
+    const uint64_t settled = tide_scratch_mark();
     for (int i = 0; i < 40; i++) {
         TIDE_REQUIRE(apply(&p, p.source_pose, &output));
         TIDE_CHECK(tide_scratch_mark() == settled);
         TIDE_CHECK(transform_hash(output) == expected);
     }
     tide_list alias = tide_list_copy(p.source_pose, sizeof(tide_bone_transform));
-    const uint32_t alias_mark = tide_scratch_mark();
+    const uint64_t alias_mark = tide_scratch_mark();
     TIDE_REQUIRE(apply(&p, alias, &alias));
     TIDE_CHECK(tide_scratch_mark() == alias_mark);
     TIDE_CHECK(transform_hash(alias) == expected);
@@ -570,7 +570,7 @@ TIDE_TEST(retarget_reuses_scratch_output_without_retaining_staging)
 
 TIDE_TEST(retarget_chunked_lists_keep_pose_bits_and_copy_on_write)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0.4f, true);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -614,7 +614,7 @@ TIDE_TEST(retarget_chunked_lists_keep_pose_bits_and_copy_on_write)
     TIDE_CHECK(tide_block_at(output.at)->b & TIDE_LIST_CHUNKED);
     TIDE_CHECK(tide_block_at(plan.at)->b & TIDE_LIST_CHUNKED);
     tide_heap_copy(&snapshot, &heap);
-    const uint32_t before = tide_scratch_mark();
+    const uint64_t before = tide_scratch_mark();
     TIDE_REQUIRE(tide_retarget_apply(plan, p.source, input, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_MATCH));
     TIDE_CHECK(tide_scratch_mark() == before);
     TIDE_CHECK(transform_hash(output) == transform_hash(expected));
@@ -629,7 +629,7 @@ TIDE_TEST(retarget_chunked_lists_keep_pose_bits_and_copy_on_write)
 
 TIDE_TEST(retarget_large_unused_positions_keep_full_validation_fallback)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false);
     test_rig target = humanoid(true, 2, 0.4f, false);
     prepared p;
@@ -671,7 +671,7 @@ TIDE_TEST(retarget_large_unused_positions_keep_full_validation_fallback)
 
 TIDE_TEST(retarget_local_calibration_handles_nonunit_and_signed_quaternions)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     test_rig source = humanoid(false, 1, 0, false);
     const test_rig target = humanoid(true, 1.3f, 0.4f, false);
     source.nodes[0].local.rotation = tide_axisangle_q(tide_f3(0, 1, 0), 0.8f);
@@ -697,7 +697,7 @@ TIDE_TEST(retarget_local_calibration_handles_nonunit_and_signed_quaternions)
 
 TIDE_TEST(retarget_rejects_forged_specializations_before_writing)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, .4f, false);
     prepared p;
     TIDE_REQUIRE(prepare(&source, &target, &p));
@@ -713,10 +713,10 @@ TIDE_TEST(retarget_rejects_forged_specializations_before_writing)
         {136u + 12u * (uint32_t)source.role[TIDE_HUMANOID_HIPS] + 8u, 0u}
     };
     for (uint32_t i = 0; i < sizeof edits / sizeof edits[0]; i++) {
-        const uint32_t mutation_mark = tide_scratch_mark();
+        const uint64_t mutation_mark = tide_scratch_mark();
         tide_list corrupt = tide_list_copy(p.map, 1u);
         memcpy(tide_list_at_mut(corrupt, (int32_t)edits[i].offset, 1u), &edits[i].bits, sizeof edits[i].bits);
-        const uint32_t staged = tide_scratch_mark();
+        const uint64_t staged = tide_scratch_mark();
         TIDE_CHECK(!tide_retarget_apply(corrupt, p.source, p.source_pose, p.target, p.scale, tide_f3(0, 0, 0), 0, 1, 1, &output, TIDE_IN_SCRATCH));
         TIDE_CHECK(tide_scratch_mark() == staged);
         TIDE_CHECK(transform_hash(output) == before);

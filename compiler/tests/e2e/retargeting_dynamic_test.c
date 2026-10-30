@@ -54,12 +54,12 @@ TIDE_TEST(retargeting_dynamic_owned_bakes_survive_inputs_pack_and_snapshots)
     TIDE_CHECK(same(&world, &copy));
     for (int i = 0; i < 12; i++) { tick(&world); tick(&copy); }
     TIDE_CHECK(same(&world, &copy) && world.Probe.passed == world.Probe.checks);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     for (int i = 0; i < 60; i++) tick(&world);
     TIDE_CHECK(world.heap.used == used && world.Probe.passed == world.Probe.checks);
     TIDE_CHECK(tide_scratch_mark() == 0);
     printf("    baked world hash: %llu\n", (unsigned long long)tide_world_hash(&world));
-    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(6273408732930949875));
+    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(5865658933047019493));
     tide_world_free(&copy);
     tide_world_free(&world);
 }

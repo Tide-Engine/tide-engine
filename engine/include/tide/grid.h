@@ -48,7 +48,8 @@ static inline uint32_t tide_grid_chunk_bytes(const tide_grid_shape *s)
 
 typedef struct tide_grid_record {
     int32_t chunk[3]; // Its position, in chunks
-    uint32_t block;   // Its cells
+    uint32_t unused;  // Zero
+    uint64_t block;   // Its cells
 } tide_grid_record;
 
 typedef struct tide_grid_dir {
@@ -135,8 +136,8 @@ static inline uint64_t tide_grid_cells_about(const tide_grid g, const tide_grid_
 
 // A chunk's cells, to read: they start where its block does. With no heap,
 // the grid is the pack's (tide/pack.h), whose chunks are in the scratch
-// area's slots.
-static inline const uint8_t *tide_grid_chunk_at(const tide_heap *heap, const uint32_t block)
+// area's offsets.
+static inline const uint8_t *tide_grid_chunk_at(const tide_heap *heap, const uint64_t block)
 {
     return heap ? (const uint8_t *)tide_heap_block(heap, block) : (const uint8_t *)tide_scratch_at(block);
 }
@@ -187,7 +188,7 @@ typedef struct tide_grid_cache {
 } tide_grid_cache;
 
 // Whether the cache holds the chunk of `g` at (cx, cy, cz), still where it was.
-static inline bool tide_grid_cache_holds(const tide_grid_cache *c, const uint32_t at, const int32_t cx, const int32_t cy,
+static inline bool tide_grid_cache_holds(const tide_grid_cache *c, const tide_handle at, const int32_t cx, const int32_t cy,
                                          const int32_t cz)
 {
     return c->at == at && c->at && c->chunk[0] == cx && c->chunk[1] == cy && c->chunk[2] == cz

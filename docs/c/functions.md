@@ -284,7 +284,7 @@ int WriteImage(tide_list_out *image)
 }
 ```
 
-- `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill. What's in it is unspecified. Asking again gives memory for the new count, and the earlier one is no longer good, so C that finds it needs more asks again and starts over. It's NULL for no elements, and for more than a list holds (1 GiB of them).
+- `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill. What's in it is unspecified. Asking again gives memory for the new count, and the earlier one is no longer good, so C that finds it needs more asks again and starts over. It's NULL for no elements, and for more than a list holds (2,147,483,647 of them).
 - `tide_list_out_count(out, count)` says how many of those elements, from the first, the list has once C returns: at most the room last asked for. Never called, the list is empty.
 
 Once C returns, the list is exactly those elements, however many it had: more, fewer or none. The memory is the engine's, kept from one call to the next, so C neither frees it nor keeps it.
@@ -389,7 +389,7 @@ Nothing is copied to read: an array is the match's own memory. Writing is asked 
 - An array to write has what's there in it, and is the field from then on: read through it too. An array of the same field that was asked for to read before it may no longer be the one the run writes.
 - Every array is good until C returns, and no longer.
 
-A field that holds text, a list, a map, a set or a grid is a handle into the match's memory: C leaves those as they are.
+A field that holds text, a list, a map, a set or a grid is a handle into the match's memory (`tide_handle`, 8 bytes, two columns; a map or a set is 32 bytes): C leaves those as they are.
 
 A call that can't be answered stops the program, saying which function it was, in which system, and what to write instead: a component the system doesn't take, an offset that isn't a 4-byte field's, an array to write of a component that isn't `mut`.
 

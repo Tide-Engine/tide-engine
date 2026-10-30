@@ -280,7 +280,7 @@ static const uint8_t *section(const uint8_t *p, const uint32_t size, const uint3
 }
 
 // The text or list a packet's handle names, in its STRINGS.
-static const uint8_t *strings_entry(const uint8_t *p, const uint32_t size, const uint32_t handle, uint32_t *length)
+static const uint8_t *strings_entry(const uint8_t *p, const uint32_t size, const tide_handle handle, uint32_t *length)
 {
     uint32_t count = 0;
     const uint8_t *entries = section(p, size, TIDE_PACKET_STRINGS, 0, &count, NULL);
@@ -774,12 +774,13 @@ TIDE_TEST(embed_containers)
     uint32_t handle;
     memcpy(&handle, &shelf.counts, sizeof handle);
     const uint8_t *counts = strings_entry(p, size, handle, &length);
-    TIDE_REQUIRE(counts && length == 8u + 8u + 2u * 4u && u32_at(counts, 0) == 2u);
+    TIDE_REQUIRE(counts && length == 8u + 2u * sizeof(tide_text) + 2u * 4u && u32_at(counts, 0) == 2u);
     tide_text key;
     memcpy(&key, counts + 8u + sizeof key, sizeof key);
     const uint8_t *pears = strings_entry(p, size, key.at, &length);
     TIDE_CHECK(pears && length == 5u && memcmp(pears, "pears", 5) == 0);
-    TIDE_CHECK(u32_at(counts, 16) == 2u && u32_at(counts, 20) == 5u);
+    const uint32_t values = 8u + 2u * (uint32_t)sizeof(tide_text);
+    TIDE_CHECK(u32_at(counts, values) == 2u && u32_at(counts, values + 4u) == 5u);
     // Set<int>: count, 0, keys
     memcpy(&handle, &shelf.ids, sizeof handle);
     const uint8_t *ids = strings_entry(p, size, handle, &length);

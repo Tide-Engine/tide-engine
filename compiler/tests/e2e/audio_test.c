@@ -170,7 +170,7 @@ TIDE_TEST(audio_a_clip_follows_the_pack_thats_loaded)
     uint8_t *wav = tide_wav_encode(stereo, 10, 8000, &wav_size);
     uint8_t content[32] = {9, 8, 7};
     tide_pack_builder b = {0};
-    const uint32_t at = tide_pack_clip(&b, content, wav, (uint32_t)wav_size);
+    const uint64_t at = tide_pack_clip(&b, content, wav, (uint32_t)wav_size);
     tide_pack_name(&b, "beep", TIDE_PACK_CLIP, at, (uint32_t)wav_size, 0);
     size_t size;
     uint8_t *bytes = tide_pack_end(&b, &size);

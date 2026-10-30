@@ -89,13 +89,19 @@ def _block(valobj, at):
     """The address of the block a handle names (tide_block_at), or None."""
     if not at:
         return None
-    offset = at & 0x3FFFFFFF
-    where = at >> 30
+    offset = at & TIDE_HANDLE_OFFSET
+    where = at >> TIDE_WHERE_SHIFT
     if where == TIDE_IN_SCRATCH:
-        slots = _thread_local(valobj, "tide_scratch_slots")
-        if slots is None:
+        process = valobj.GetProcess()
+        if offset >= TIDE_PACK_BASE:  # The pack's region (tide_pack_memory)
+            pack = _thread_local(valobj, "tide_pack_memory")
+            base = pack.GetValueAsUnsigned() if pack is not None else 0
+            return base + (offset - TIDE_PACK_BASE) if base else None
+        slots = _thread_local(valobj, "tide_scratch_slots")  # A table of slots, which grows
+        table = slots.GetValueAsUnsigned() if slots is not None else 0
+        if not table:
             return None
-        base = slots.GetChildAtIndex(offset >> TIDE_SCRATCH_SHIFT).GetValueAsUnsigned()
+        base = _pointer(process, table + (offset >> TIDE_SCRATCH_SHIFT) * process.GetAddressByteSize())
         return base + (offset & (TIDE_SCRATCH_BYTES - 1)) if base else None
     page = _heap_page(valobj, where, offset)
     if page is None:
@@ -115,10 +121,10 @@ def _element(valobj, at, block, index, size):
     if b & TIDE_LIST_CHUNKED == 0:
         return block + header + index * size
     per = TIDE_LIST_CHUNK // size
-    chunk = _read(valobj.GetProcess(), block + header + (index // per) * 4, 4)
+    chunk = _read(valobj.GetProcess(), block + header + (index // per) * 8, 8)
     if chunk is None:
         return None
-    page = _heap_page(valobj, at >> 30, chunk)
+    page = _heap_page(valobj, at >> TIDE_WHERE_SHIFT, chunk)
     if page is None:
         return None
     return page[0] + (chunk - page[1]) + header + (index % per) * size

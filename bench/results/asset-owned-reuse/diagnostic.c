@@ -116,7 +116,7 @@ int main(int argc, char **argv)
     for (uint32_t round = 0; round < 150u; round++) {
         tide_heap_copy(&kept, &heap);
         const uint64_t kept_hash = tide_heap_hash(TIDE_HASH_START, &kept);
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         uint64_t a = tide_time_now_ns();
         if (!edit) for (uint32_t i = 0; i < 64u; i++) {
             const tide_list value = copy(mutable_copy ? source : asset, size);

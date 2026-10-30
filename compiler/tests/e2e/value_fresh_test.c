@@ -7,7 +7,7 @@
 
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
-static uint32_t mark, expected;
+static uint64_t mark, expected;
 
 void MeasureFreshStart(void)
 {

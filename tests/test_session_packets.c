@@ -142,7 +142,7 @@ static tide_writer packet_begin(packet_peer *p, uint8_t type)
 {
     tide_writer w = {p->data, sizeof p->data, 0, false, false};
     tide_write_u16(&w, 0x5449u);
-    tide_write_u8(&w, 20u); // PROTOCOL
+    tide_write_u8(&w, 21u); // PROTOCOL
     tide_write_u8(&w, type);
     if (type != 1u) {
         tide_write_u64(&w, p->cookie);

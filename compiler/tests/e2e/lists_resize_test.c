@@ -42,7 +42,7 @@ static bool bytes_are(const tide_world *w, const int filled, const int count)
 
 static uint32_t chunks(const tide_world *w, const tide_list l)
 {
-    const tide_block *b = tide_heap_block(&w->heap, l.at & 0x3FFFFFFFu);
+    const tide_block *b = tide_heap_block(&w->heap, tide_handle_offset(l.at));
     return l.at && (b->b & TIDE_LIST_CHUNKED) ? b->b & ~TIDE_LIST_CHUNKED : 0u;
 }
 
@@ -79,7 +79,7 @@ TIDE_TEST(lists_resize_snapshots_and_chunks)
     tide_world_copy(&snapshot, &world);
     tide_world_copy(&twin, &world);
     const uint64_t before = tide_world_hash(&snapshot);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
 
     run(&world, 1, BIG);
     run(&twin, 0, BIG);
@@ -128,7 +128,8 @@ TIDE_TEST(lists_resize_lets_go_of_text)
     run(&world, 0, 0);
     run(&world, 3, 0);
     run(&world, 4, 6000);
-    TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 6000 && chunks(&world, world.Store.names) == 2);
+    // 8-byte texts, 2,046 to a chunk
+    TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 6000 && chunks(&world, world.Store.names) == 3);
     run(&world, 3, 10);
     TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 10 && chunks(&world, world.Store.names) == 1);
     const tide_text *ninth = tide_list_read(&world.heap, world.Store.names, 9, sizeof(tide_text));
@@ -137,7 +138,7 @@ TIDE_TEST(lists_resize_lets_go_of_text)
     TIDE_CHECK(name.bytes == 6 && memcmp(name.ptr, "name 9", 6) == 0);
     run(&world, 3, 0);
     run(&world, 4, 6000);
-    const uint32_t used = world.heap.used;
+    const uint64_t used = world.heap.used;
     run(&world, 3, 10);
     run(&world, 3, 0);
     run(&world, 4, 6000);
@@ -152,7 +153,7 @@ TIDE_TEST(lists_resize_in_the_local_world)
     const uint64_t before = tide_world_hash(&world);
     show(10);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 10 && local.Displayed.sum == 1);
-    TIDE_CHECK(local.Displayed.numbers.at >> 30 == TIDE_IN_LOCAL);
+    TIDE_CHECK(tide_handle_where(local.Displayed.numbers.at) == TIDE_IN_LOCAL);
     show(50000);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 50000 && local.Displayed.sum == 2);
     show(20);

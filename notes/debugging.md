@@ -1,5 +1,16 @@
 # Debugging Tide code in native debuggers
 
+## Views of 64-bit handles (2026-10-30)
+
+The natvis expressions (`view_block`, `view_list_items` and maps' items in
+`compiler/src/debug_views_codegen.inc`) and `debug_views.py` read handles as
+64 bits: where from bit `TIDE_WHERE_SHIFT`, the offset under
+`TIDE_HANDLE_OFFSET`, a chunk's offset from the list's 8-byte directory
+entries, the scratch area's slots through the `tide_scratch_slots` pointer (a
+table that grows) and the pack's region from `tide_pack_memory` past
+`TIDE_PACK_BASE`. The LLDB script gets those constants from tidec, as it got
+the others.
+
 ## Optimized CLI debugging (2026-10-30)
 
 CLI --release now retains -g, CodeView/PDB, natvis/LLDB visualizers and macOS

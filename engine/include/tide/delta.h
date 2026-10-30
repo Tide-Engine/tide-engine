@@ -57,6 +57,7 @@ void tide_delta_begin(tide_delta_writer *d, bool base, const uint8_t *need, uint
 
 // A part's number.
 void tide_delta_number(tide_delta_writer *d, uint32_t v);
+void tide_delta_number64(tide_delta_writer *d, uint64_t v); // ...of 64 bits, a varint as small as the 32-bit one's
 
 // The next region: `size` bytes of `now`, and the base's region in its place
 // (NULL when the base has none there), `same` when it's known to be the same
@@ -84,6 +85,7 @@ typedef struct tide_delta_reader {
 bool tide_delta_open(tide_delta_reader *d, const uint8_t *data, uint32_t size, bool base, uint64_t *hash);
 
 uint32_t tide_delta_get_number(tide_delta_reader *d);
+uint64_t tide_delta_get_number64(tide_delta_reader *d);
 
 // The next region, `size` bytes into `out` (zeros), from the base's region in
 // its place (NULL for none).

@@ -31,14 +31,16 @@ TIDE_TEST(mesh_collections_keep_ids_across_snapshots_packing_and_reload)
     memcpy(replacement, tide_game_pack, tide_game_pack_size);
     tide_pack_header header;
     memcpy(&header, replacement, sizeof header);
-    const uint32_t offsets[] = {geometry->offset, ids->offset};
+    const uint64_t offsets[] = {geometry->offset, ids->offset};
+    // Their two elements swapped: a mesh's two lists, and an ID
+    const size_t element[] = {sizeof(tide_mesh_lists), sizeof(int64_t)};
     for (unsigned i = 0; i < 2; i++) {
         const size_t at = (size_t)header.region_at + offsets[i] + sizeof(tide_block);
-        TIDE_REQUIRE(at + 16 <= tide_game_pack_size);
-        uint8_t held[8];
-        memcpy(held, replacement + at, 8);
-        memcpy(replacement + at, replacement + at + 8, 8);
-        memcpy(replacement + at + 8, held, 8);
+        TIDE_REQUIRE(at + 2u * element[i] <= tide_game_pack_size);
+        uint8_t held[sizeof(tide_mesh_lists)];
+        memcpy(held, replacement + at, element[i]);
+        memcpy(replacement + at, replacement + at + element[i], element[i]);
+        memcpy(replacement + at + element[i], held, element[i]);
     }
     TIDE_REQUIRE(tide_assets_load(replacement, tide_game_pack_size));
     free(replacement);

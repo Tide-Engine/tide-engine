@@ -277,7 +277,7 @@ TIDE_TEST(crossplatform_numbers_from_text)
         const bool read = tide_str_parse_float((tide_str){text, n, n}, &value);
         h = hash_int(hash_float(h, value), read ? 1 : 0);
     }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     int finite = 0;
     int back = 0;
     for (int i = 0; i < SAMPLES; i++) {

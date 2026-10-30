@@ -41,7 +41,7 @@ static tide_io_error finish_flush(const tide_io *io, const uint32_t ticket)
 
 TIDE_TEST(io_native_files_and_directories)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     TIDE_REQUIRE(io && io->persistent_data_path[0] && io->temporary_cache_path[0]);
     char folder[80];
@@ -137,7 +137,7 @@ TIDE_TEST(io_native_files_and_directories)
 
 TIDE_TEST(io_native_data_directory_override)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     char folder[80];
 #ifdef _WIN32
@@ -177,7 +177,7 @@ TIDE_TEST(io_native_data_directory_override)
 
 TIDE_TEST(io_path_helpers)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     TIDE_CHECK(tide_str_eq(tide_path_combine(text("a/b/"), text("c.txt")), text("a/b/c.txt")));
     TIDE_CHECK(tide_str_eq(tide_path_combine(text("a"), text("/other")), text("/other")));
     TIDE_CHECK(tide_str_eq(tide_path_combine(text("C:\\root"), text("next")), text("C:/root/next")));
@@ -198,7 +198,7 @@ TIDE_TEST(io_path_helpers)
 #ifdef _WIN32
 TIDE_TEST(io_native_flush_failure_survives_a_forgotten_waiter)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     char name[80];
     snprintf(name, sizeof name, "locked-flush-%lu.txt", (unsigned long)GetCurrentProcessId());
@@ -226,7 +226,7 @@ TIDE_TEST(io_native_flush_failure_survives_a_forgotten_waiter)
 #ifndef _WIN32
 TIDE_TEST(io_recursive_delete_does_not_follow_directory_links)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     char folder[80];
     snprintf(folder, sizeof folder, "links-test-%ld", (long)getpid());
@@ -246,7 +246,7 @@ TIDE_TEST(io_recursive_delete_does_not_follow_directory_links)
 
 TIDE_TEST(io_flush_only_opens_directories_that_changed)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     char folder[80];
     snprintf(folder, sizeof folder, "above-test-%ld", (long)getpid());

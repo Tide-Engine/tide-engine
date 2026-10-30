@@ -8,7 +8,7 @@ void b3t_check(bool enabled, bool whenever);
 void b3t_forget(void);
 
 _Static_assert(sizeof(Box3D_Joint) == 120 && offsetof(Box3D_Joint, id) == 88 &&
-               offsetof(Box3D_Joint, force) == 96 && sizeof(Box3D_Physics) == 376,
+               offsetof(Box3D_Joint, force) == 96 && sizeof(Box3D_Physics) == 480,
                "joint native layout must match generated layout");
 
 static tide_entity at(tide_list list, int index)
@@ -109,7 +109,7 @@ TIDE_TEST(box3d_joints_snapshot_canonical_restore_and_replay)
         tide_world_tick(&restored);
         TIDE_CHECK(tide_world_hash(&restored) == hash);
     }
-    TIDE_CHECK(sequence == UINT64_C(0x78bf7bb3c89f806a));
+    TIDE_CHECK(sequence == UINT64_C(0x466483ea68b43f02));
     printf("  joint sequence: %016llx\n", (unsigned long long)sequence);
     for (int i = 0; i < 90; i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved) == tide_world_hash(&w));

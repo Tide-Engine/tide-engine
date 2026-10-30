@@ -215,7 +215,7 @@ try {
     r = await build(["--pack-c"]);
     check(r.code === 0, `the plain build failed:\n${r.said}`);
     check(!existsSync(join(r.out, "game.pack")), "a game with no assets has no pack");
-    check(readFileSync(join(r.out, "game_pack.c"), "utf8").includes("tide_game_pack_size = 32;"), "...and an empty pack as C: its header alone");
+    check(readFileSync(join(r.out, "game_pack.c"), "utf8").includes("tide_game_pack_size = 48;"), "...and an empty pack as C: its header alone, to 16 bytes");
     console.log("ok");
 } finally {
     server.close();

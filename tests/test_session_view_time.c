@@ -357,7 +357,7 @@ static tide_writer repair_header(repair_peer *p, uint8_t *bytes, uint8_t type)
 {
     tide_writer w = {bytes, TIDE_NET_MTU, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 20); // PROTOCOL
+    tide_write_u8(&w, 21); // PROTOCOL
     tide_write_u8(&w, type);
     if (type != 1) {
         tide_write_u64(&w, p->cookie);

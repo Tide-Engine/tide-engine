@@ -20,7 +20,7 @@ static uint32_t chunk_class(const tide_grid_shape *s)
     return c;
 }
 
-static tide_grid_dir *dir_at(tide_heap *heap, const uint32_t block)
+static tide_grid_dir *dir_at(tide_heap *heap, const uint64_t block)
 {
     return (tide_grid_dir *)(void *)(tide_heap_write(heap, block) + 1);
 }
@@ -36,7 +36,7 @@ static int32_t chunks_along(const int32_t size, const uint32_t shift)
 }
 
 // A grid's directory in `heap`, with its size and no chunks: its block.
-static uint32_t new_dir(tide_heap *heap, const int32_t size[3], const tide_grid_shape *s)
+static uint64_t new_dir(tide_heap *heap, const int32_t size[3], const tide_grid_shape *s)
 {
     tide_grid_dir head = {{size[0], size[1], s->dims == 3 ? size[2] : 0}, s->dims, 0, 8u, 16u, 0, {1, 1, 1}, 0};
     const bool sized = size[0] > 0 && size[1] > 0 && (s->dims == 2 || size[2] > 0);
@@ -48,7 +48,7 @@ static uint32_t new_dir(tide_heap *heap, const int32_t size[3], const tide_grid_
             head.slots = (uint32_t)total;
         }
     }
-    const uint32_t block = tide_heap_alloc(heap, dir_bytes(head.room, head.slots));
+    const uint64_t block = tide_heap_alloc(heap, dir_bytes(head.room, head.slots));
     tide_grid_dir *d = dir_at(heap, block);
     *d = head;
     return block;
@@ -70,9 +70,9 @@ static void insert(tide_grid_dir *d, const uint32_t index)
 
 // Room for one more chunk: the directory grows into a new block, its old
 // one released. Returns the directory's block.
-static uint32_t make_room(tide_grid *g, tide_heap *heap)
+static uint64_t make_room(tide_grid *g, tide_heap *heap)
 {
-    const uint32_t block = OFFSET(g->at);
+    const uint64_t block = OFFSET(g->at);
     const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, block) + 1);
     if (d->records < d->room) return block;
     const uint32_t room = d->room * 2u;
@@ -80,7 +80,7 @@ static uint32_t make_room(tide_grid *g, tide_heap *heap)
     if (!d->flat) {
         while (slots < room * 2u) slots *= 2u;
     }
-    const uint32_t grown = tide_heap_alloc(heap, dir_bytes(room, slots));
+    const uint64_t grown = tide_heap_alloc(heap, dir_bytes(room, slots));
     tide_grid_dir *to = dir_at(heap, grown);
     d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, block) + 1); // The heap may have moved on to another page
     *to = *d;
@@ -99,13 +99,13 @@ static uint8_t *add_chunk(tide_grid *g, tide_heap *heap, const int32_t cx, const
                           const void *cells, const tide_grid_shape *s)
 {
     const uint32_t bytes = tide_grid_chunk_bytes(s);
-    const uint32_t chunk = tide_heap_alloc(heap, bytes - (uint32_t)sizeof(tide_block));
+    const uint64_t chunk = tide_heap_alloc(heap, bytes - (uint32_t)sizeof(tide_block));
     uint8_t *to = (uint8_t *)tide_heap_write(heap, chunk);
     if (cells) memcpy(to, cells, bytes);
     else memset(to, 0, sizeof(tide_block)); // Its header is cells now; the rest was zero
-    const uint32_t block = make_room(g, heap);
+    const uint64_t block = make_room(g, heap);
     tide_grid_dir *d = dir_at(heap, block);
-    tide_grid_records(d)[d->records] = (tide_grid_record){{cx, cy, cz}, chunk};
+    tide_grid_records(d)[d->records] = (tide_grid_record){{cx, cy, cz}, 0u, chunk};
     insert(d, d->records++);
     __atomic_add_fetch(&heap->moves, 1u, __ATOMIC_RELAXED); // A cache that found no chunk here is out of date
     return (uint8_t *)tide_heap_write(heap, chunk); // Making room can give the heap another page
@@ -134,7 +134,7 @@ void *tide_grid_poke_slow(tide_grid *g, const int32_t x, const int32_t y, const 
 
 tide_grid tide_grid_new(const uint32_t dims, const int32_t x, const int32_t y, const int32_t z)
 {
-    uint32_t at = 0;
+    tide_handle at = 0;
     tide_block *b = tide_scratch_block((uint32_t)sizeof(tide_grid_dir), "a grid", &at);
     tide_grid_dir *d = (tide_grid_dir *)(void *)(b + 1);
     *d = (tide_grid_dir){{x > 0 ? x : 0, y > 0 ? y : 0, dims == 3 && z > 0 ? z : 0}, dims, 0, 0, 0, 0, {1, 1, 1}, 0};
@@ -182,9 +182,9 @@ void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t wher
     tide_grid_dir *d = dir_at(heap, OFFSET(g->at));
     const uint32_t c = chunk_class(s);
     for (uint32_t i = 0; i < d->records; i++) {
-        const uint32_t chunk = tide_grid_records(d)[i].block;
+        const uint64_t chunk = tide_grid_records(d)[i].block;
         tide_block *b = tide_heap_write(heap, chunk); // Its header back, for the heap to free it
-        *b = (tide_block){c, 0, 0, 0};
+        *b = (tide_block){tide_block_link(c, 0), 0, 0};
         tide_heap_release(heap, chunk);
         d = dir_at(heap, OFFSET(g->at));
     }

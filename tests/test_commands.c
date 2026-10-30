@@ -294,7 +294,7 @@ static void command_raw(uint32_t nonce, uint32_t sequence, const uint8_t *data, 
     uint8_t packet[TIDE_NET_MTU];
     tide_writer w = {packet, sizeof packet, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 20); // PROTOCOL
+    tide_write_u8(&w, 21); // PROTOCOL
     tide_write_u8(&w, 9); // MSG_COMMAND: no sender supplied by the packet
     tide_write_u64(&w, tide_client_status_of(command_clients[0]).cookie);
     tide_write_u32(&w, nonce);

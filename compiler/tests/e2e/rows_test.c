@@ -102,8 +102,8 @@ TIDE_TEST(rows_are_the_same_on_every_platform)
     TIDE_CHECK(world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 4990 && world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.chunks == 3);
     TIDE_CHECK(world.arch2_Owner_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 10);
     TIDE_CHECK(world.arch1_Spark.count > 100);
-    if (tide_world_hash(&world) != UINT64_C(0x0be24710edabca94)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
-    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0x0be24710edabca94));
+    if (tide_world_hash(&world) != UINT64_C(0xda6b56b7c7ee87e4)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
+    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0xda6b56b7c7ee87e4));
     TIDE_CHECK(tide_world_hash(&world) == plain[TICKS - 1]);
     tide_world_free(&world);
 }
@@ -176,12 +176,14 @@ static void pages_stay(const tide_jobs *jobs)
         for (uint32_t lane = 0; lane < 7; lane++) TIDE_CHECK(shared(chunk, STILL + lane));
         // Body: Move changes every body's position
         TIDE_CHECK(!shared(chunk, BODY) && !shared(chunk, BODY + 1));
-        // Label: Weigh changes its hits and its weight
-        TIDE_CHECK(!shared(chunk, LABEL) && !shared(chunk, LABEL + 3));
+        // Label: Weigh changes its hits and its weight (lanes 0 and 6: its name and its list are a handle each,
+        // two lanes, after 4 bytes of padding)
+        TIDE_CHECK(!shared(chunk, LABEL) && !shared(chunk, LABEL + 6));
     }
-    // ...and its name and its list are Rename's to change, for the frozen: the second chunk has none
-    TIDE_CHECK(shared(1, LABEL + 1) && shared(1, LABEL + 2));
-    TIDE_CHECK(!shared(0, LABEL + 1) && !shared(0, LABEL + 2));
+    // ...and its name and its list are Rename's to change, for the frozen: the second chunk has none. A handle's high
+    // word is the same zero before and after, so only its low word's lane is the table's own
+    TIDE_CHECK(shared(1, LABEL + 2) && shared(1, LABEL + 4));
+    TIDE_CHECK(!shared(0, LABEL + 2) && !shared(0, LABEL + 4));
     // Cargo, which Shift changes unless the entity is frozen: the first
     // chunk's all are, so Shift took none of its pages, and Thaw, which is
     // for the frozen and changes nothing in an odd tick, wrote them all as

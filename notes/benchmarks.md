@@ -1,5 +1,35 @@
 # Benchmarks
 
+## 64-bit handles, before and after (2026-10-30)
+
+What widening handles to 64 bits (notes/ecs.md, 64-bit handles) cost, in
+release on the Ryzen 9 7900X (Windows 11, Clang 23): `run.ps1 -Label
+handles64 -Rounds 3 -Before <cc77c23a0's binaries>`, each program from both
+builds in turn, no competing work in any run (rows `handles64-before-r*` and
+`handles64-after-r*` in `bench/results/versus.jsonl`, `sand.jsonl`,
+`gallery.jsonl`); `bench_views 60` five rounds alternating. Medians, ms a tick
+(a period for rollback, a frame for views), one thread:
+
+| | Before | After | |
+| --- | ---: | ---: | ---: |
+| versus_buckets (lists of lists, 4,096) | 0.0568 | 0.0571 | +0.5% |
+| versus_lookup, 16,384 keys, 1,024 changes | 1.106 | 1.103 | -0.3% |
+| versus_lookup, steady | 1.120 | 1.102 | -1.6% |
+| versus_rollback (100,000 movers, a list of notes) | 1.476 | 1.488 | +0.8% |
+| versus_sand / life (grids, 1024²) | 0.951 / 0.416 | 0.950 / 0.417 | 0% |
+| versus_wide / particles / systems | 1.194 / 0.435 / 0.0635 | 1.159 / 0.438 / 0.0638 | -3% / +0.7% / +0.5% |
+| versus_churn / events | 0.338 / 0.437 | 0.329 / 0.438 | -3% / 0% |
+| bench_views PitchWide / PitchSmall / QueryWide / QuerySmall / Far | 0.202 / 0.196 / 0.168 / 0.163 / 1.543 | 0.205 / 0.199 / 0.169 / 0.163 / 1.557 | +0 to +2% |
+| bench_sand client update, simulate (ms a second) | 0.238, 13.5 | 0.239, 13.5 | 0% |
+| bench_gallery client update, simulate, snapshot | 0.0617, 1.496, 0.623 | 0.0638, 1.530, 0.643 | +2 to +3% |
+
+All within the runs' spread but Gallery's client, whose snapshots and ticks
+copy pages of canvases' lists and whose handles are now twice as wide; its
+world is 9.06 MB in memory where it was 9.05, and Sand's 75.1 KB where it was
+74.9. What goes on the wire didn't change: Sand's world 11.1 KB as sent either
+way and its server 168.6 KB a second before, 169.3 after; Gallery's world
+4.41 MB as sent either way. Twelve threads show the same.
+
 ## Retargeted playback temporary costs (2026-10-30)
 
 The owner's request to reduce all three animation paths keeps the retarget

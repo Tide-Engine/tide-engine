@@ -388,19 +388,19 @@ static ctype *parse_ctype(game *g, const char *s, size_t n)
         for (int i = 0; i < count && i < 2; i++) {
             if (!args[i] || args[i]->kind == CK_UNKNOWN) return t;
         }
-        if (name == 4 && strncmp(s, "List", 4) == 0 && count == 1) {
+        if (name == 4 && strncmp(s, "List", 4) == 0 && count == 1) { // A handle: 8 bytes (tide/text.h)
             t->kind = CK_LIST;
-            t->size = 4;
-        } else if (name == 3 && strncmp(s, "Set", 3) == 0 && count == 1) {
+            t->size = 8;
+        } else if (name == 3 && strncmp(s, "Set", 3) == 0 && count == 1) { // tide_map
             t->kind = CK_SET;
-            t->size = 24;
+            t->size = 32;
         } else if (name == 3 && strncmp(s, "Map", 3) == 0 && count == 2) {
             t->kind = CK_MAP;
-            t->size = 24;
+            t->size = 32;
             t->value = args[1];
         } else if (name == 5 && (strncmp(s, "Grid2", 5) == 0 || strncmp(s, "Grid3", 5) == 0) && count == 1) {
             t->kind = CK_GRID;
-            t->size = 4;
+            t->size = 8;
             t->dims = s[4] - '0';
         } else {
             return t;
@@ -418,7 +418,7 @@ static ctype *parse_ctype(game *g, const char *s, size_t n)
     }
     if ((n == 6 && strncmp(s, "string", 6) == 0)) {
         t->kind = CK_STRING;
-        t->size = 4;
+        t->size = 8;
     } else if ((n == 6 && strncmp(s, "Entity", 6) == 0) || (n == 11 && strncmp(s, "LocalEntity", 11) == 0)) {
         t->kind = CK_ENTITY;
         t->size = 8;

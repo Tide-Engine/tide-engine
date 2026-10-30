@@ -128,14 +128,14 @@ static int32_t open_rig(const tide_list data, const tide_list reference, const b
     r->data = data;
     int32_t count;
     if (tide_pack_holds(data.at)) {
-        const uint32_t offset = data.at & 0x3fffffffu;
+        const uint64_t offset = tide_handle_offset(data.at);
         tide_block block;
         const void *span = tide_pack_span(offset, sizeof block);
         if (!span) return TIDE_RETARGET_INVALID_RIG;
         memcpy(&block, span, sizeof block);
         if (block.a != block.b || block.a > INT32_MAX) return TIDE_RETARGET_INVALID_RIG;
         count = (int32_t)block.a;
-        r->bytes = (void *)tide_pack_span(offset + (uint32_t)sizeof block, block.a);
+        r->bytes = (void *)tide_pack_span(offset + sizeof block, block.a);
     } else {
         count = tide_list_count(data);
         if (count < (int32_t)TIDE_SKINNED_HEADER_SIZE) return TIDE_RETARGET_INVALID_RIG;
@@ -912,14 +912,14 @@ static bool identity_matches(const tide_list data, const uint32_t count, const u
     int32_t size;
     const void *bytes;
     if (tide_pack_holds(data.at)) {
-        const uint32_t at = data.at & 0x3fffffffu;
+        const uint64_t at = tide_handle_offset(data.at);
         tide_block block;
         const void *span = tide_pack_span(at, sizeof block);
         if (!span) return false;
         memcpy(&block, span, sizeof block);
         if (block.a != block.b || block.a > INT32_MAX) return false;
         size = (int32_t)block.a;
-        bytes = tide_pack_span(at + (uint32_t)sizeof block, block.a);
+        bytes = tide_pack_span(at + sizeof block, block.a);
     } else {
         size = tide_list_count(data);
         bytes = tide_list_at(data, 0, 1u);
@@ -971,14 +971,14 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
     int32_t bytes;
     const uint8_t *packed = NULL;
     if (tide_pack_holds(plan.at)) {
-        const uint32_t at = plan.at & 0x3fffffffu;
+        const uint64_t at = tide_handle_offset(plan.at);
         tide_block block;
         const void *span = tide_pack_span(at, sizeof block);
         if (!span || at % _Alignof(retarget_header)) return false;
         memcpy(&block, span, sizeof block);
         if (block.a != block.b || block.a > INT32_MAX) return false;
         bytes = (int32_t)block.a;
-        packed = tide_pack_span(at + (uint32_t)sizeof block, block.a);
+        packed = tide_pack_span(at + sizeof block, block.a);
         if (!packed) return false;
     } else bytes = tide_list_count(plan);
     const size_t maximum = sizeof(retarget_header) + (size_t)(TIDE_SKINNED_MAX_NODES + 1u) * (sizeof(retarget_source) + sizeof(retarget_target));
@@ -1003,7 +1003,7 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
     if (!valid) { tide_list_unflatten(plan, (void *)flat, 1u, false, copied); return false; }
     const retarget_source *sources = (const retarget_source *)(flat + sizeof header);
     const retarget_target *targets = (const retarget_target *)(sources + header.source_count);
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     global_transform *sg = tide_scratch_memory((size_t)header.source_count * sizeof *sg);
     global_transform *tg = tide_scratch_memory((size_t)header.target_count * sizeof *tg);
     tide_bone_transform *locals = tide_scratch_memory((size_t)header.target_count * sizeof *locals);
@@ -1136,7 +1136,7 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
     // Only a newly allocated scratch output can outlive this staging mark.
     // Reusing a destination retains no workspace, even inside a long handler.
     const bool retained = valid && tide_handle_where(out->at) == TIDE_IN_SCRATCH
-        && (out->at & 0x3fffffffu) >= mark;
+        && tide_handle_offset(out->at) >= mark;
     if (!retained) tide_scratch_reset(mark);
     tide_list_unflatten(plan, (void *)flat, 1u, false, copied);
     return valid;

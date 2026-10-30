@@ -283,7 +283,7 @@ TIDE_TEST(cornerculling_combined_coverage_gaps_masks_and_budget)
     q.maxSubdivisions = 32;
     TIDE_CHECK(ask(&w, q).status == CornerCulling_Status_Occluded);
     TIDE_CHECK(w.Fixture.answer.occluder == -1 && w.Fixture.cache.candidate == 0);
-    const uint32_t used = w.heap.used;
+    const uint64_t used = w.heap.used;
     for (int i = 0; i < 32; i++) TIDE_CHECK(ask(&w, q).status == CornerCulling_Status_Occluded);
     TIDE_CHECK(w.heap.used == used && tide_scratch_mark() == 0);
     box rounded[] = {staggered[0], staggered[1]};
@@ -637,7 +637,7 @@ TIDE_TEST(cornerculling_snapshots_replay_packing_and_scalar_query_storage)
     update(&w, 0, wall(0, 0, 0, 0.5f, 4, 4, 0));
     TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
     TIDE_CHECK(tide_world_hash(&snapshot) == hash);
-    const uint32_t used = snapshot.heap.used;
+    const uint64_t used = snapshot.heap.used;
     for (int i = 0; i < 64; i++) {
         tide_world_tick(&snapshot); tide_world_tick(&loaded);
         TIDE_CHECK(snapshot.Fixture.answer.status == CornerCulling_Status_Occluded);
@@ -834,7 +834,7 @@ TIDE_TEST(cornerculling_performance_player_matrix_and_handwritten_baseline)
             rebuild(&w, boxes, blockers);
             for (int i = 0; i < 4; i++) batch(&w);
             TIDE_CHECK(occluded_results(&w) == players * players / 2);
-            const uint32_t used = w.heap.used;
+            const uint64_t used = w.heap.used;
             double samples[9], cold[9], reference[9];
             for (int sample = 0; sample < 9; sample++) {
                 const uint64_t start = tide_time_now_ns();
@@ -949,7 +949,7 @@ TIDE_TEST(cornerculling_performance_shapes_and_combined_proofs)
         rebuild(&w, boxes, count);
         for (int i = 0; i < 4; i++) batch(&w);
         TIDE_REQUIRE(occluded_results(&w) == 90);
-        const uint32_t used = w.heap.used;
+        const uint64_t used = w.heap.used;
         double samples[9];
         for (int sample = 0; sample < 9; sample++) {
             const uint64_t start = tide_time_now_ns();

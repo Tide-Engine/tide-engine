@@ -129,7 +129,7 @@ TIDE_TEST(assets_draw_and_are_sampled)
     }
     TIDE_REQUIRE(hero >= 0 && small >= 0);
     TIDE_CHECK(draw.texture_count == 2); // One copy of each, however many draws
-    TIDE_CHECK(tide_pack_holds((uint32_t)draw.textures[hero].id));
+    TIDE_CHECK(tide_pack_holds(draw.textures[hero].id));
     const uint8_t *pixels = draw.textures[hero].pixels;
     TIDE_CHECK(pixels[(2 * 8 + 1) * 4] == 30 && pixels[(2 * 8 + 1) * 4 + 1] == 80 && pixels[(2 * 8 + 1) * 4 + 2] == 100);
     TIDE_CHECK(pixels[(5 * 8 + 7) * 4 + 3] == 0);

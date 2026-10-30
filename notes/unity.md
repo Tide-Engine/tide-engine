@@ -1,5 +1,20 @@
 # Unity as a front end
 
+## Embed ABI 8: 8-byte handle slots (2026-10-30)
+
+Text, list and grid fields are 8 bytes in the game's C and a map or a set 32
+(notes/ecs.md, 64-bit handles), so the view packet's component bytes, which
+follow the game's layout, changed: `TIDE_EMBED_ABI` and `TideLibrary.Abi` are
+8. `TideText`, `TideList` and `TideGrid` keep their `uint handle` (the
+packet's place) in the first 4 of 8 bytes, the rest an unused zero word, and
+`TideMap` is 32 bytes; `unity_code.c` sizes them 8 and 32. A command's text or
+list field from C# is refused when its high word isn't zero
+(`tide_embed_command_text`, `_list`). The Sample's `com.tide.game/schema.json`
+and `compiler/cli/tests/unity_rules_physics/schema.json` were laid out again for
+the new sizes by a script (notes/ecs.md, 64-bit handles: built), keeping their
+old `hash`, and the Sample's `TideGame.cs` written again from it; its first
+real `tide unity` build writes both as the build has them.
+
 ## Development overrides belong to the editor launch (2026-10-26)
 
 Owner decision, replacing the persistent override introduced below: normal use

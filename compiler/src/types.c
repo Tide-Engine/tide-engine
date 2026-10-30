@@ -184,8 +184,10 @@ layout type_layout(const type t)
     if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
-    if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){24, 8}; // tide_map: two lists, count, padding and insertion order
-    if (t.kind == TY_MESH) return (layout){8, 4};                     // tide_mesh_lists: two lists
+    // Text, lists and grids are a handle each (tide_handle: 64 bits, see tide/text.h)
+    if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_GRID) return (layout){8, 8};
+    if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){32, 8}; // tide_map: two lists, count, padding and insertion order
+    if (t.kind == TY_MESH) return (layout){16, 8};                    // tide_mesh_lists: two lists
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);
         return (layout){saturated((int64_t)e.size * t.decl->array_length), e.align};

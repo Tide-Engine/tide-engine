@@ -70,16 +70,36 @@ static int view_size(const type t)
     return type_layout(t).size;
 }
 
-// The block a handle `at` names (tide_block_at), as an expression.
-static char *view_block(const char *at)
+// Where a handle `at` (an expression) says its block is, and its offset there
+// (tide_handle_where, tide_handle_offset), as expressions.
+static char *view_where(const char *at)
 {
     sb b = {0};
+    sb_printf(&b, "((%s) >> %u)", at, TIDE_WHERE_SHIFT);
+    return b.data;
+}
+
+static char *view_offset(const char *at)
+{
+    sb b = {0};
+    sb_printf(&b, "((%s) & 0x%llXULL)", at, (unsigned long long)TIDE_HANDLE_OFFSET);
+    return b.data;
+}
+
+// The block a handle `at` names (tide_block_at), as an expression: the pack's
+// region, a scratch slot, or a page of a world's heap.
+static char *view_block(const char *at)
+{
+    const char *where = view_where(at), *offset = view_offset(at);
+    sb b = {0};
     sb_printf(&b,
-              "((%s) >> 30 == %u ? (tide_block*)(tide_scratch_slots[((%s) & 0x3FFFFFFFu) >> %u] + (((%s) & 0x3FFFFFFFu) & 0x%Xu))"
-              " : (tide_block*)((char*)(tide_world_heaps[(%s) >> 30]->page[((%s) & 0x3FFFFFFFu) >> %u] + 1)"
-              " + (((%s) & 0x3FFFFFFFu) - (tide_world_heaps[(%s) >> 30]->page[((%s) & 0x3FFFFFFFu) >> %u]->first << %u))))",
-              at, TIDE_IN_SCRATCH, at, TIDE_SCRATCH_SHIFT, at, TIDE_SCRATCH_BYTES - 1u, at, at, TIDE_HEAP_PAGE_SHIFT, at,
-              at, at, TIDE_HEAP_PAGE_SHIFT, TIDE_HEAP_PAGE_SHIFT);
+              "(%s == %u ? (tide_block*)(%s >= 0x%llXULL ? tide_pack_memory + (%s - 0x%llXULL)"
+              " : tide_scratch_slots[%s >> %u] + (%s & 0x%Xu))"
+              " : (tide_block*)((char*)(tide_world_heaps[%s]->page[%s >> %u] + 1)"
+              " + (%s - ((unsigned long long)tide_world_heaps[%s]->page[%s >> %u]->first << %u))))",
+              where, TIDE_IN_SCRATCH, offset, (unsigned long long)TIDE_PACK_BASE, offset, (unsigned long long)TIDE_PACK_BASE,
+              offset, TIDE_SCRATCH_SHIFT, offset, TIDE_SCRATCH_BYTES - 1u, where, offset, TIDE_HEAP_PAGE_SHIFT, offset, where,
+              offset, TIDE_HEAP_PAGE_SHIFT, TIDE_HEAP_PAGE_SHIFT);
     return b.data;
 }
 
@@ -95,8 +115,8 @@ static void view_list_items(sb *o, const char *at, const char *ctype, const int 
     sb_put(o, "\">");
     xml_printf(o, "((%s*)(%s + 1))[%s]", ctype, blk, index);
     sb_put(o, "</ValueNode>\n          <ValueNode>");
-    xml_printf(o, "*(%s*)((char*)(tide_world_heaps[(%s) >> 30]->page[((unsigned int*)(%s + 1))[%s / %u] >> %u] + 1) + %u + (%s %% %u) * %d)",
-               ctype, at, blk, index, per, TIDE_HEAP_PAGE_SHIFT, (unsigned)sizeof(tide_block), index, per, size);
+    xml_printf(o, "*(%s*)((char*)(tide_world_heaps[%s]->page[((unsigned long long*)(%s + 1))[%s / %u] >> %u] + 1) + %u + (%s %% %u) * %d)",
+               ctype, view_where(at), blk, index, per, TIDE_HEAP_PAGE_SHIFT, (unsigned)sizeof(tide_block), index, per, size);
     sb_put(o, "</ValueNode>\n");
 }
 
@@ -164,8 +184,8 @@ static void natvis_field(sb *o, const field *f, const char *path)
         const decl entry_decl = map_entry_decl(t.decl);
         const int size = decl_layout(&entry_decl).size;
         const unsigned per = TIDE_LIST_CHUNK / (unsigned)(size > 0 ? size : 1);
-        sb_printf(&ed, "((%s->b & 0x%Xu) == 0 ? ((%s*)(%s + 1)) + i : (%s*)((char*)(tide_world_heaps[(%s) >> 30]->page[((unsigned int*)(%s + 1))[i / %u] >> %u] + 1) + %u + (i %% %u) * %d))",
-                  blk, TIDE_LIST_CHUNKED, entry.data, blk, entry.data, at.data, blk, per, TIDE_HEAP_PAGE_SHIFT,
+        sb_printf(&ed, "((%s->b & 0x%Xu) == 0 ? ((%s*)(%s + 1)) + i : (%s*)((char*)(tide_world_heaps[%s]->page[((unsigned long long*)(%s + 1))[i / %u] >> %u] + 1) + %u + (i %% %u) * %d))",
+                  blk, TIDE_LIST_CHUNKED, entry.data, blk, entry.data, view_where(at.data), blk, per, TIDE_HEAP_PAGE_SHIFT,
                   (unsigned)sizeof(tide_block), per, size);
         sb_put(o, "      <Synthetic Name=\"");
         xml_put(o, name.data);
@@ -438,10 +458,12 @@ static void write_lldb(const gen *g, sb *o)
     sb_put(o, "# Load it with `command script import <this file>`, as the editors' debug configurations do.\n\n");
     sb_putn(o, (const char *)tide_debug_views_py, tide_debug_views_py_size);
     sb_printf(o, "\n# The runtime's layout of heaps and lists (tide/text.h, tide/heap.h, tide/list.h)\n"
-                 "TIDE_IN_SCRATCH = %u\nTIDE_SCRATCH_SHIFT = %u\nTIDE_SCRATCH_BYTES = %u\nTIDE_HEAP_PAGE_SHIFT = %u\n"
+                 "TIDE_IN_SCRATCH = %u\nTIDE_WHERE_SHIFT = %u\nTIDE_HANDLE_OFFSET = 0x%llX\nTIDE_PACK_BASE = 0x%llX\n"
+                 "TIDE_SCRATCH_SHIFT = %u\nTIDE_SCRATCH_BYTES = %u\nTIDE_HEAP_PAGE_SHIFT = %u\n"
                  "TIDE_LIST_CHUNKED = 0x%X\nTIDE_LIST_ASSET = 0x%X\nTIDE_LIST_CHUNK = %u\n",
-              TIDE_IN_SCRATCH, TIDE_SCRATCH_SHIFT, TIDE_SCRATCH_BYTES, TIDE_HEAP_PAGE_SHIFT, TIDE_LIST_CHUNKED,
-              TIDE_LIST_ASSET, (unsigned)TIDE_LIST_CHUNK);
+              TIDE_IN_SCRATCH, TIDE_WHERE_SHIFT, (unsigned long long)TIDE_HANDLE_OFFSET, (unsigned long long)TIDE_PACK_BASE,
+              TIDE_SCRATCH_SHIFT, TIDE_SCRATCH_BYTES, TIDE_HEAP_PAGE_SHIFT, TIDE_LIST_CHUNKED, TIDE_LIST_ASSET,
+              (unsigned)TIDE_LIST_CHUNK);
     sb_put(o, "\n# The game's own types: their fields that C's types don't say enough about\nTIDE_TYPES = {\n");
     const view_types types = view_collect(g);
     for (int i = 0; i < types.count; i++) {

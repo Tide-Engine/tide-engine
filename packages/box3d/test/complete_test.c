@@ -13,8 +13,8 @@
 void b3t_check(bool on, bool whenever);
 void b3t_forget(void);
 
-_Static_assert(sizeof(Box3D_Physics) == 376 && sizeof(Box3D_Collider) == 192 &&
-    sizeof(Box3D_HullGeometry) == 3592 && sizeof(Box3D_ShapeRecord) == 32 && sizeof(Box3D_Part) == 64,
+_Static_assert(sizeof(Box3D_Physics) == 480 && sizeof(Box3D_Collider) == 192 &&
+    sizeof(Box3D_HullGeometry) == 3592 && sizeof(Box3D_ShapeRecord) == 40 && sizeof(Box3D_Part) == 64,
     "live collider, history and native bookkeeping ABIs must agree");
 
 static const Observed_local *probe(tide_world *w, tide_local *local)
@@ -145,7 +145,7 @@ TIDE_TEST(box3d_invalid_live_geometry_disables_and_can_be_repaired)
         TIDE_CHECK(!probe(&w,&local)->hull);
         hull.scale=(tide_float3){1,1,1}; hull.offset=(tide_float3){0}; hull.density=1000;
         const tide_float3 points[]={{-1,0,-1},{1,0,-1},{0,0,1},{0,2,0}};
-        const uint32_t mark=tide_scratch_mark();
+        const uint64_t mark=tide_scratch_mark();
         Box3D_HullCollider current=tide_get_Box3D_HullCollider(&w,w.Objects.hull);
         tide_list_release(&current.vertices,TIDE_IN_MATCH);
         hull.vertices=tide_list_from(points,4,sizeof *points);
@@ -227,7 +227,7 @@ TIDE_TEST(box3d_complete_snapshot_replay)
     tide_world w={0}, saved={0}; start(&w); tide_world_copy(&saved,&w);
     uint64_t sequence=0;
     for (int i=0;i<100;i++) { tide_world_tick(&w); const uint64_t h=tide_world_hash(&w); sequence=tide_hash_more(sequence,&h,sizeof h); }
-    TIDE_CHECK(sequence==UINT64_C(0x21553e0b1cff694e));
+    TIDE_CHECK(sequence==UINT64_C(0xbea54f757805175b));
     printf("  complete sequence: %016llx\n",(unsigned long long)sequence);
     for (int i=0;i<100;i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved)==tide_world_hash(&w));

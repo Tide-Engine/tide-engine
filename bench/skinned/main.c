@@ -78,7 +78,7 @@ static bool verify_gpu_clip(const tide_list data)
 {
     gpu_position_error = gpu_normal_error = 0.0f;
     for (int32_t sample = 0; sample < CLIP_FRAMES * 4; sample++) {
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         tide_list pose = {0};
         if (!tide_skinned_sample(data, 0, (float)sample / 240.0f, &pose, TIDE_IN_SCRATCH)) return false;
         const tide_list exact = tide_skinned_palette(data, pose);
@@ -345,7 +345,7 @@ static bool prepare_gpu_clip(void)
         *(int32_t *)tide_list_at_mut(local.GpuClip.indices, (int32_t)i, sizeof(int32_t)) = (int32_t)index;
     }
     for (int32_t frame = 0; frame < CLIP_FRAMES; frame++) {
-        const uint32_t mark = tide_scratch_mark();
+        const uint64_t mark = tide_scratch_mark();
         tide_list pose = {0};
         if (!tide_skinned_sample(model.data, 0, (float)frame / 60.0f, &pose, TIDE_IN_SCRATCH)) return false;
         const tide_list palette = tide_skinned_palette(model.data, pose);

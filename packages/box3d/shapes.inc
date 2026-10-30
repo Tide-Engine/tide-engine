@@ -5,6 +5,7 @@ typedef struct shape_record {
     int64_t body, shape;
     tide_list source;
     int32_t kind;
+    uint8_t padding[4];
 } shape_record;
 typedef struct shape_slots { int32_t slot[6]; } shape_slots;
 typedef struct shape_entry { int64_t order; tide_entity key; shape_slots value; } shape_entry;
@@ -15,7 +16,7 @@ typedef struct shape_change {
     bool sensor;
     uint8_t padding[3];
 } shape_change;
-_Static_assert(sizeof(shape_record) == 32 && sizeof(shape_entry) == 40 && sizeof(shape_change) == 40,
+_Static_assert(sizeof(shape_record) == 40 && sizeof(shape_entry) == 40 && sizeof(shape_change) == 40,
                "live collider ABI changed");
 static physics *shape_physics; // Only between BeginShapes and the end of this tick
 static shape_change *shape_changes;
@@ -181,7 +182,7 @@ static void source_save(shape_record *r, const shape_source *s)
             memcpy(bytes + offset, data, size); offset += size; i += n;
         }
     }
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list copy = tide_list_from(bytes, (int32_t)total, 1);
     tide_list_set(&r->source, copy, 1, TIDE_IN_MATCH);
     tide_scratch_reset(mark);
@@ -249,9 +250,9 @@ static int64_t live_primitive(int64_t on, int64_t old, int kind, const void *dat
     return old;
 }
 
-typedef struct hull_collider { tide_list vertices; tide_float3 scale, offset; float density, friction, bounce; bool sensor; uint8_t padding[3]; int32_t cache; } hull_collider;
+typedef struct hull_collider { tide_list vertices; tide_float3 scale, offset; float density, friction, bounce; bool sensor; uint8_t padding[3]; int32_t cache; uint8_t padding_end[4]; } hull_collider;
 typedef struct height_collider { tide_list heights, holes; int32_t columns, rows; tide_float3 scale; float minimum, maximum, friction, bounce; int32_t cache; } height_collider;
-_Static_assert(sizeof(hull_collider) == 48 && sizeof(height_collider) == 48, "new collider ABI changed");
+_Static_assert(sizeof(hull_collider) == 56 && sizeof(height_collider) == 56, "new collider ABI changed");
 
 static int64_t live_hull(int64_t on, int64_t old, const hull_collider *s)
 {
@@ -332,21 +333,22 @@ static int32_t live_shape(physics *p, tide_entity entity, int64_t on, int kind, 
         const mesh_collider *s = data;
         source.lists[0] = s->vertices; source.sizes[0] = sizeof(tide_float3);
         source.lists[1] = s->indices; source.sizes[1] = sizeof(int32_t);
-        source.header_size = offsetof(mesh_collider,cache) - 8;
-        memcpy(header, (const char *)s+8, source.header_size);
+        // What isn't its two lists' handles, to the cache
+        source.header_size = offsetof(mesh_collider,cache) - 2 * sizeof(tide_list);
+        memcpy(header, (const char *)s + 2 * sizeof(tide_list), source.header_size);
         if (tide_list_count(s->vertices) > 65536 || tide_list_count(s->indices) > 3*65536) acceptable = false;
     } else if (kind == 4) {
         const hull_collider *s = data;
         source.lists[0] = s->vertices; source.sizes[0] = sizeof(tide_float3);
-        source.header_size = offsetof(hull_collider,padding)-4;
-        memcpy(header, (const char *)s+4, source.header_size);
+        source.header_size = offsetof(hull_collider,padding) - sizeof(tide_list);
+        memcpy(header, (const char *)s + sizeof(tide_list), source.header_size);
         if (tide_list_count(s->vertices) > 65536) acceptable = false;
     } else {
         const height_collider *s = data;
         source.lists[0] = s->heights; source.sizes[0] = sizeof(float);
         source.lists[1] = s->holes; source.sizes[1] = 1;
-        source.header_size = offsetof(height_collider,cache)-8;
-        memcpy(header, (const char *)s+8, source.header_size);
+        source.header_size = offsetof(height_collider,cache) - 2 * sizeof(tide_list);
+        memcpy(header, (const char *)s + 2 * sizeof(tide_list), source.header_size);
         if (tide_list_count(s->heights) > 65536 || tide_list_count(s->holes) > 65536) acceptable = false;
     }
     for (int j = 0; j < 2; j++) {

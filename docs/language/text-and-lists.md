@@ -458,9 +458,9 @@ Choose a name below and add a score. A missing name joins the map; removing and 
 
 ## Where they live
 
-A world keeps the text, lists and maps in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, up to 1 GiB, and one text in it is 128 MiB at most.
+A world keeps the text, lists and maps in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, as far as memory goes, and one text in it is 128 MiB at most.
 
-Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, up to 1 GiB on each thread, and a list stops growing at 1 GiB of elements. A heap or a scratch area that's full ends the program, as running out of memory does.
+Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, on each thread, and a list stops growing at 2,147,483,647 elements. Running out of memory ends the program. On the web, everything shares WebAssembly's 4 GiB.
 
 An input can't hold text or dynamic collections: what players send every tick is plain data, including vectors, structs and fixed-length arrays (see [Input](../game/input.md)).
 

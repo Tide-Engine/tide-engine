@@ -9,9 +9,9 @@ typedef struct collision_filter { int64_t category, mask; int32_t group; uint8_t
 typedef struct capsule { tide_float2 a, b; float radius, density, friction, bounce; bool sensor; uint8_t padding[3]; } capsule;
 typedef struct polygon_shape { tide_float2 points[8]; int32_t count; float radius, density, friction, bounce; bool sensor; uint8_t padding[3]; } polygon_shape;
 typedef struct segment_shape { tide_float2 a, b; float friction, bounce; bool sensor; uint8_t padding[3]; } segment_shape;
-typedef struct chain_shape { tide_list points; float friction, bounce; bool loop; uint8_t padding[3]; } chain_shape;
+typedef struct chain_shape { tide_list points; float friction, bounce; bool loop; uint8_t padding[7]; } chain_shape;
 _Static_assert(sizeof(fixture) == 32 && sizeof(collision_filter) == 24 && sizeof(capsule) == 36 &&
-    sizeof(polygon_shape) == 88 && sizeof(segment_shape) == 28 && sizeof(chain_shape) == 16, "fixture ABI changed");
+    sizeof(polygon_shape) == 88 && sizeof(segment_shape) == 28 && sizeof(chain_shape) == 24, "fixture ABI changed");
 
 static b2ChainId chain_of(int64_t id)
 {
@@ -438,10 +438,10 @@ void b2t_check_bodies(tide_rows *rows, physics *p)
 }
 
 typedef struct fixture_record { fixture state; tide_list shapes, source; } fixture_record;
-typedef struct fixture_entry { int64_t order; tide_entity key; tide_list shapes; uint8_t padding[4]; } fixture_entry;
+typedef struct fixture_entry { int64_t order; tide_entity key; tide_list shapes; } fixture_entry;
 typedef struct fixture_change { tide_entity entity; fixture state; int32_t kind; bool sensor; uint8_t padding[3]; } fixture_change;
 typedef struct pending_fixture { fixture_change change; uint8_t source[64]; uint32_t size; } pending_fixture;
-_Static_assert(sizeof(fixture_record) == 40 && sizeof(fixture_entry) == 24 && sizeof(fixture_change) == 48, "fixture record ABI changed");
+_Static_assert(sizeof(fixture_record) == 48 && sizeof(fixture_entry) == 24 && sizeof(fixture_change) == 48, "fixture record ABI changed");
 static uint32_t fixture_entity_hash(const void *key) { return tide_map_hash_bytes(key, sizeof(tide_entity)); }
 static bool fixture_entity_equal(const void *a, const void *b) { return memcmp(a, b, sizeof(tide_entity)) == 0; }
 static const tide_map_kind fixture_map_kind = {sizeof(fixture_entry), offsetof(fixture_entry, key), fixture_entity_hash, fixture_entity_hash, fixture_entity_equal};

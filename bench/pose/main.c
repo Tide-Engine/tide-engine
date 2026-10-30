@@ -39,12 +39,12 @@ static bool same_pose(const tide_list a, const tide_list b)
 // its end.
 static bool check(const tide_list model, const tide_list clip)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list owned_model = owned_copy(model), owned_clip = owned_copy(clip);
     bool same = true;
     for (int step = -60; same && step <= 300; step++) {
         const float seconds = (float)step / 240.0f;
-        const uint32_t at = tide_scratch_mark();
+        const uint64_t at = tide_scratch_mark();
         tide_list kept = {0}, alone = {0};
         same = tide_skinned_sample_into(model, clip, 0, seconds, &kept, TIDE_IN_SCRATCH)
             && tide_skinned_sample_into(owned_model, owned_clip, 0, seconds, &alone, TIDE_IN_SCRATCH) && same_pose(kept, alone);
@@ -69,7 +69,7 @@ static double best_call(const int kind, const tide_list model, const tide_list c
     for (int batch = 0; batch < batches; batch++) {
         const uint64_t began = tide_time_now_ns();
         for (int i = 0; i < CALLS; i++) {
-            const uint32_t mark = tide_scratch_mark();
+            const uint64_t mark = tide_scratch_mark();
             const float seconds = (float)(batch * CALLS + i) * 0.00073f;
             tide_list pose = {0};
             if (kind == 0) {
@@ -137,7 +137,7 @@ int main(const int argc, char **argv)
     }
     puts("pose: kept and single-call plans sample the same bits");
     const int batches = quick ? 1 : 20, frames = quick ? 2 : 30;
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     const tide_list owned_model = owned_copy(model), owned_clip = owned_copy(clip);
     printf("Pose.Sample (rest + separate clip): %.3f us a call; owned bytes, planned each call: %.3f us\n",
            best_call(0, model, clip, batches), best_call(0, owned_model, owned_clip, batches));

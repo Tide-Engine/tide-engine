@@ -413,7 +413,7 @@ static tide_list floats_of(const float *values, int32_t count)
 
 TIDE_TEST(skinned_shapes_bake_weights_on_the_cpu)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     size_t size;
     uint8_t *glb = shaped_model(&size, "", "[\"\",\"smile\"]");
     uint8_t *bytes = NULL;

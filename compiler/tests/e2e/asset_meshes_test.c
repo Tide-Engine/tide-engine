@@ -446,7 +446,7 @@ TIDE_TEST(mesh_assets_missing_from_the_pack_read_as_empty)
     static const float old_vertices[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
     static const uint32_t old_indices[3] = {0, 1, 2};
     uint8_t content[32] = {7};
-    uint32_t blocks[2];
+    uint64_t blocks[2];
     tide_pack_mesh(&b, content, old_vertices, 12u, 3u, old_indices, 3u, blocks);
     tide_pack_name(&b, "quad", TIDE_PACK_MESH, blocks[0], blocks[1], 0x12345678u);
     size_t size;

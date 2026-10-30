@@ -75,6 +75,7 @@ typedef struct physics {
     tide_float3 gravity;
     int32_t substeps;
     int32_t status;
+    uint8_t padding[4];
     tide_list bodies;
     tide_list joints;
     tide_list colliders;
@@ -102,11 +103,11 @@ _Static_assert(sizeof(body_state) == 116 && sizeof(nt_body) == 120 &&
                    sizeof(joint_state) == 152 && sizeof(nt_joint) == 152 &&
                    sizeof(collider_state) == 88 && sizeof(nt_collider) == 88,
                "Newton's Tide/native record sizes changed");
-_Static_assert(sizeof(physics) == 104 && offsetof(physics, gravity) == 0 &&
+_Static_assert(sizeof(physics) == 144 && offsetof(physics, gravity) == 0 &&
                    offsetof(physics, substeps) == 12 && offsetof(physics, status) == 16 &&
-                   offsetof(physics, bodies) == 20 && offsetof(physics, joints) == 24 &&
-                   offsetof(physics, colliders) == 28 && offsetof(physics, body_indices) == 32 &&
-                   offsetof(physics, joint_indices) == 56 && offsetof(physics, collider_indices) == 80,
+                   offsetof(physics, bodies) == 24 && offsetof(physics, joints) == 32 &&
+                   offsetof(physics, colliders) == 40 && offsetof(physics, body_indices) == 48 &&
+                   offsetof(physics, joint_indices) == 80 && offsetof(physics, collider_indices) == 112,
                "newton.tide's Physics layout changed");
 _Static_assert(sizeof(simulation_time) == 16 && offsetof(simulation_time, dt) == 0 &&
                    offsetof(simulation_time, tick) == 4 && offsetof(simulation_time, t) == 8 &&

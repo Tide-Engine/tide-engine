@@ -13,7 +13,7 @@
 
 #define DT (1.0f / 120.0f)
 /* Includes joint friction/load state; observed on native/WASI debug/release. */
-#define ROBOT_HASH UINT64_C(0x122d2b87150ba000)
+#define ROBOT_HASH UINT64_C(0xdb03cf766090d75e)
 
 static Controls action(uint32_t tick, int seat)
 {

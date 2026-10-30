@@ -139,10 +139,10 @@ static bool same_rotation(tide_quaternion a, tide_quaternion b)
 
 TIDE_TEST(retarget_bake_preserves_target_identity_names_and_calibrated_constants)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, true));
     uint8_t *bytes = NULL; uint32_t size = 0; char why[256];
-    const uint32_t before = tide_scratch_mark();
+    const uint64_t before = tide_scratch_mark();
     TIDE_REQUIRE(tide_retarget_bake(f.source, -1, f.target, f.plan, &f.settings, &bytes, &size, why));
     TIDE_CHECK(tide_scratch_mark() == before && !why[0]);
     TIDE_REQUIRE(tide_skinned_data_validate(bytes, size));
@@ -179,7 +179,7 @@ TIDE_TEST(retarget_bake_preserves_target_identity_names_and_calibrated_constants
 
 TIDE_TEST(retarget_bake_keeps_authored_keys_steps_and_quaternion_continuity)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, false));
     f.settings.sample_rate = 4;
     uint8_t *bytes = NULL; uint32_t size = 0; char why[256];
@@ -224,7 +224,7 @@ TIDE_TEST(retarget_bake_keeps_authored_keys_steps_and_quaternion_continuity)
 
 TIDE_TEST(retarget_bake_selected_constant_and_zero_duration_clips)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, false));
     uint8_t *bytes = NULL; uint32_t size = 0; char why[256];
     f.settings.sample_rate = 0;
@@ -243,7 +243,7 @@ TIDE_TEST(retarget_bake_selected_constant_and_zero_duration_clips)
 
 TIDE_TEST(retarget_bake_skeleton_strips_payload_and_owns_its_bytes)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     tide_list source = make_model(1, true);
     uint8_t *bytes = NULL; uint32_t size = 0; char why[256];
     TIDE_REQUIRE(tide_retarget_bake_skeleton(source, &bytes, &size, why));
@@ -259,10 +259,10 @@ TIDE_TEST(retarget_bake_skeleton_strips_payload_and_owns_its_bytes)
 
 TIDE_TEST(retarget_bake_refusals_leave_outputs_and_scratch_unchanged)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, false));
     uint8_t sentinel = 19, *bytes = &sentinel; uint32_t size = 123; char why[256];
-    const uint32_t before = tide_scratch_mark();
+    const uint64_t before = tide_scratch_mark();
     const int bad_indices[] = {-2, 2, INT32_MAX};
     for (uint32_t i = 0; i < sizeof bad_indices / sizeof *bad_indices; i++) {
         TIDE_CHECK(!tide_retarget_bake(f.source, bad_indices[i], f.target, f.plan, &f.settings, &bytes, &size, why));
@@ -283,7 +283,7 @@ TIDE_TEST(retarget_bake_refusals_leave_outputs_and_scratch_unchanged)
 
 TIDE_TEST(retarget_bake_rejects_cut_models_invalid_keys_and_animated_scale)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, false));
     bool copied = false;
     uint8_t *flat = tide_list_flatten(f.source, 1, false, &copied);
@@ -292,9 +292,9 @@ TIDE_TEST(retarget_bake_rejects_cut_models_invalid_keys_and_animated_scale)
     tide_list_unflatten(f.source, flat, 1, false, copied);
     uint8_t sentinel = 17, *bytes = &sentinel; uint32_t size = 99; char why[256];
     for (uint32_t cut = 0; cut < full; cut++) {
-        const uint32_t cut_mark = tide_scratch_mark();
+        const uint64_t cut_mark = tide_scratch_mark();
         tide_list partial = tide_list_from(saved, (int32_t)cut, 1);
-        const uint32_t before = tide_scratch_mark();
+        const uint64_t before = tide_scratch_mark();
         TIDE_CHECK(!tide_retarget_bake(partial, 0, f.target, f.plan, &f.settings, &bytes, &size, why));
         TIDE_CHECK(bytes == &sentinel && size == 99 && tide_scratch_mark() == before);
         tide_scratch_reset(cut_mark);
@@ -303,7 +303,7 @@ TIDE_TEST(retarget_bake_rejects_cut_models_invalid_keys_and_animated_scale)
     const uint32_t bad_places[] = {20, 72, channels, channels + 12, channels + 16, channels + 20, keys + 4};
     for (uint32_t i = 0; i < sizeof bad_places / sizeof *bad_places; i++) {
         const uint32_t saved_word = read_word(saved + bad_places[i]); word(saved + bad_places[i], UINT32_MAX);
-        const uint32_t before = tide_scratch_mark();
+        const uint64_t before = tide_scratch_mark();
         tide_list bad = tide_list_from(saved, (int32_t)full, 1);
         TIDE_CHECK(!tide_retarget_bake(bad, 0, f.target, f.plan, &f.settings, &bytes, &size, why));
         TIDE_CHECK(bytes == &sentinel && size == 99);
@@ -329,7 +329,7 @@ TIDE_TEST(retarget_bake_rejects_cut_models_invalid_keys_and_animated_scale)
 
 TIDE_TEST(retarget_bake_borrows_owned_inputs_and_keeps_snapshot_bytes)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, true));
     tide_heap heap = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
@@ -340,7 +340,7 @@ TIDE_TEST(retarget_bake_borrows_owned_inputs_and_keeps_snapshot_bytes)
     const uint64_t hash = tide_heap_hash(0, &heap);
     tide_heap_copy(&snapshot, &heap);
     uint8_t *bytes = NULL; uint32_t size = 0; char why[256];
-    const uint32_t before = tide_scratch_mark();
+    const uint64_t before = tide_scratch_mark();
     TIDE_REQUIRE(tide_retarget_bake(source, 0, target, plan, &f.settings, &bytes, &size, why));
     TIDE_CHECK(tide_scratch_mark() == before && tide_heap_hash(0, &heap) == hash && tide_heap_hash(0, &snapshot) == hash);
     TIDE_CHECK(!tide_retarget_bake(source, 0, target, (tide_list){0}, &f.settings, &bytes, &size, why));
@@ -354,11 +354,11 @@ TIDE_TEST(retarget_bake_borrows_owned_inputs_and_keeps_snapshot_bytes)
 
 TIDE_TEST(retarget_bake_catalog_budget_accumulates_and_failures_publish_nothing)
 {
-    const uint32_t mark = tide_scratch_mark();
+    const uint64_t mark = tide_scratch_mark();
     bake_fixture f; TIDE_REQUIRE(fixture(&f, false));
     tide_retarget_bake_budget budget = {0};
     uint8_t *first = NULL, *second = NULL; uint32_t first_size = 0, second_size = 0; char why[256];
-    const uint32_t before = tide_scratch_mark();
+    const uint64_t before = tide_scratch_mark();
     TIDE_REQUIRE(tide_retarget_bake_with_budget(f.source, 0, f.target, f.plan, &f.settings,
                                               &budget, &first, &first_size, why));
     const tide_retarget_bake_budget one = budget;

@@ -1,5 +1,31 @@
 # Assets and local files
 
+## Pack format 3: 64-bit offsets and handles (2026-10-30)
+
+`TIDE_PACK_VERSION` is 3 (notes/ecs.md, 64-bit handles). The header's region
+place and size and each entry's offset and size are `uint64_t`
+(`tide_pack_header` 40 bytes, `tide_pack_entry` 56), the builder's sizes and
+every offset it takes or gives are 64 bits, and `past_handles` is gone: a pack
+holds what memory does (wasm32's 4 GiB on the web). Handles in the region are
+8 bytes, tagged from `TIDE_PACK_BASE` (2^61): a glob's list is a block of them,
+a text map's row is order, key, value (24 bytes, value at 16), a mesh map's 32
+and a skinned map's 40 (value at 16), `tide_mesh_lists` 16 and
+`tide_skinned_lists` 24. A versioned list's trailer (`versioned_list`, a
+mesh's vertices or indices) is 24 bytes after its elements: version, an
+element's bytes and 1 + its levels block's place, 8 each (`VERSIONED_TRAILER`
+in `pack_load.c`). A block's trailer distance (textures with blocks, versioned
+lists) is its header's `tide_block_next`. At load the region is one allocation
+of whole 1 MiB slots, and `tide_scratch_at` reads it from `tide_pack_memory`,
+which `tide_pack_use` sets, where each thread mapped it into its slots before;
+`tide_pack_region_slots` is `tide_pack_region_size` (bytes). The loader's
+checks are those of before with 64-bit arithmetic (`region_at` and
+`region_size` against the file's size without overflow, each handle inside the
+region, `tide_pack_span` without overflow). tidec's mesh-glob metadata
+(`mesh_reference_pack_entry`, a Map<string, long>'s 24-byte rows) is now made
+in the place of the 32-byte mesh rows it comes from, row by row from the
+first, the rest zeroed. `pack_fingerprint.inc` reads the new layout; the
+fingerprints it gives didn't change, as they hash content, not handles.
+
 ## [Parts], and retargeting past non-uniform helpers (2026-10-30)
 
 The owner took both recommendations from the entry below: an asset attribute

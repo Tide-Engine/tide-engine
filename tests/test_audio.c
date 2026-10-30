@@ -39,7 +39,7 @@ TIDE_TEST(audio_prepare_keeps_entries_when_the_clip_cache_grows)
             tide_sound_free(&decoded);
             uint8_t content[32];
             tide_sha256_of(wav, size, content);
-            const uint32_t at = tide_pack_clip(&builder, content, wav, (uint32_t)size);
+            const uint64_t at = tide_pack_clip(&builder, content, wav, (uint32_t)size);
             char name[32];
             snprintf(name, sizeof name, "sound%u", i);
             tide_pack_name(&builder, name, TIDE_PACK_CLIP, at, (uint32_t)size, 0);
@@ -123,7 +123,7 @@ static void add_clip(tide_pack_builder *builder, const char *name, const uint8_t
 {
     uint8_t content[32];
     tide_sha256_of(file, size, content);
-    const uint32_t at = tide_pack_clip(builder, content, file, size);
+    const uint64_t at = tide_pack_clip(builder, content, file, size);
     tide_pack_name(builder, name, TIDE_PACK_CLIP, at, size, 0);
 }
 
