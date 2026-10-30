@@ -13,7 +13,7 @@
 #include "tide/page.h"
 #include "tide/sha256.h"
 
-#define OFFSET(at) ((at) & 0x3FFFFFFFu)
+#define OFFSET(at) tide_handle_offset(at)
 
 // How many UTF-8 characters `n` bytes are: those that don't continue one.
 static uint32_t utf8_chars(const void *data, const uint32_t n)
@@ -27,7 +27,7 @@ static uint32_t utf8_chars(const void *data, const uint32_t n)
 // A tagged offset into the region.
 static uint32_t tagged(const uint32_t offset)
 {
-    return TIDE_IN_SCRATCH << 30 | (TIDE_PACK_BASE + offset);
+    return tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE + offset);
 }
 
 // ---------------------------------------------------------------------------

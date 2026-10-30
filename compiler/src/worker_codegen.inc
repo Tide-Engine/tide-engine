@@ -130,7 +130,7 @@ static void gen_workers(gen *g)
         sb_put(o, "TIDE_HELPER tide_grid tide_worker_grid_capture(tide_grid value, const tide_grid_shape *shape, tide_heap *target, uint32_t where)\n{\n"
                   "    const tide_grid_dir *source = tide_grid_dir_of(value);\n"
                   "    if (!source) return (tide_grid){0};\n"
-                  "    const tide_heap *heap = tide_heap_read(value.at >> 30);\n"
+                  "    const tide_heap *heap = tide_heap_read(tide_handle_where(value.at));\n"
                   "    const uint64_t bytes = sizeof(*source) + (uint64_t)source->room * sizeof(tide_grid_record) + (uint64_t)source->slots * sizeof(uint32_t);\n"
                   "    if (bytes > UINT32_MAX - sizeof(tide_block)) tide_out_of_memory();\n"
                   "    const uint32_t at = tide_heap_alloc(target, (uint32_t)bytes);\n"
@@ -147,7 +147,7 @@ static void gen_workers(gen *g)
                   "        tide_grid_dir *copy = (tide_grid_dir *)(void *)(tide_heap_write(target, at) + 1);\n"
                   "        tide_grid_records(copy)[i].block = cells;\n"
                   "    }\n"
-                  "    return (tide_grid){where << 30 | at};\n}\n\n");
+                  "    return (tide_grid){tide_handle_of(where, at)};\n}\n\n");
     }
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *fn = g->prog->decls.items[i];

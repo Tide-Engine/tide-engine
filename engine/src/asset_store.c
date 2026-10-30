@@ -226,7 +226,7 @@ tide_asset_data *tide_asset_model(const void *bytes, const uint32_t count)
 tide_asset_data *tide_asset_pack(const tide_list list, const uint32_t element)
 {
     if (!tide_pack_holds(list.at) || !element) return NULL;
-    const uint32_t offset = list.at & 0x3FFFFFFFu;
+    const uint32_t offset = tide_handle_offset(list.at);
     const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
     if (!header) return NULL;
     tide_block block;
@@ -266,7 +266,7 @@ void tide_asset_pack_clear(void)
 tide_asset_data *tide_asset_list(const tide_list list)
 {
     const tide_block *block = tide_block_at(list.at);
-    const tide_heap *heap = list.at ? tide_heap_read(list.at >> 30) : NULL;
+    const tide_heap *heap = list.at ? tide_heap_read(tide_handle_where(list.at)) : NULL;
     if (!heap || !block || block->b != TIDE_LIST_ASSET) return NULL;
     tide_asset_data *data = tide_asset_find(heap, (const uint8_t *)(block + 1));
     return data && data->count == block->a ? data : NULL;
@@ -301,7 +301,7 @@ void tide_asset_pack_heap(const tide_heap *heap, tide_writer *writer, const bool
         const tide_asset_data *data = entry.data;
         bool reference = false;
         if (references && data->pack_at && tide_pack_file_span(data->pack_at, sizeof(tide_block) + (uint64_t)data->count * data->element)) {
-            tide_asset_data *now = tide_asset_pack((tide_list){TIDE_IN_SCRATCH << 30 | data->pack_at}, data->element);
+            tide_asset_data *now = tide_asset_pack((tide_list){tide_handle_of(TIDE_IN_SCRATCH, data->pack_at)}, data->element);
             reference = now && memcmp(now->id, data->id, 32) == 0;
         }
         tide_write_bytes(writer, data->id, 32);
@@ -334,7 +334,7 @@ bool tide_asset_unpack_heap(tide_heap *heap, tide_reader *reader, const tide_hea
             tide_asset_retain(data);
         } else if (at) {
             if (at < TIDE_PACK_BASE || at >= 0x40000000u) return false;
-            data = tide_asset_pack((tide_list){TIDE_IN_SCRATCH << 30 | at}, element);
+            data = tide_asset_pack((tide_list){tide_handle_of(TIDE_IN_SCRATCH, at)}, element);
             if (!data || data->count != elements || memcmp(data->id, id, 32) != 0) return false;
             tide_asset_retain(data);
         } else {
@@ -405,8 +405,8 @@ const tide_asset_origin *tide_asset_origin_page(const tide_heap *heap, const uin
 
 void tide_asset_origin_list(tide_heap *heap, const tide_list list, tide_asset_data *data)
 {
-    if (!data || !list.at || list.at >> 30 == TIDE_IN_SCRATCH) return;
-    const tide_block *block = tide_heap_block(heap, list.at & 0x3FFFFFFFu);
+    if (!data || !list.at || tide_handle_where(list.at) == TIDE_IN_SCRATCH) return;
+    const tide_block *block = tide_heap_block(heap, tide_handle_offset(list.at));
     if (!(block->b & TIDE_LIST_CHUNKED)) return;
     const uint32_t per = TIDE_LIST_CHUNK / data->element;
     const uint32_t chunks = block->b & ~TIDE_LIST_CHUNKED;
@@ -426,7 +426,7 @@ bool tide_asset_origin_reference(const tide_asset_origin *origin)
     if (!origin || !origin->data->pack_at) return false;
     const tide_asset_data *data = origin->data;
     if (!tide_pack_file_span(data->pack_at, sizeof(tide_block) + (uint64_t)data->count * data->element)) return false;
-    const tide_asset_data *now = tide_asset_pack((tide_list){TIDE_IN_SCRATCH << 30 | data->pack_at}, data->element);
+    const tide_asset_data *now = tide_asset_pack((tide_list){tide_handle_of(TIDE_IN_SCRATCH, data->pack_at)}, data->element);
     return now && memcmp(now->id, data->id, 32) == 0;
 }
 

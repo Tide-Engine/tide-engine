@@ -38,7 +38,7 @@ TIDE_TEST(list_world_lists_grow_in_their_heap)
     TIDE_CHECK(tide_list_count(world.scores) == 100);
     TIDE_CHECK(at(world.scores, 0) == 0 && at(world.scores, 99) == 99);
     TIDE_CHECK(at(world.scores, 100) == -999 && at(world.scores, -1) == -999);
-    TIDE_CHECK(world.scores.at >> 30 == TIDE_IN_MATCH);
+    TIDE_CHECK(tide_handle_where(world.scores.at) == TIDE_IN_MATCH);
 
     tide_list_remove_at(&world.scores, 10, sizeof(int32_t));
     TIDE_CHECK(tide_list_count(world.scores) == 99 && at(world.scores, 10) == 11);
@@ -67,10 +67,10 @@ TIDE_TEST(list_copies_are_their_own)
     add(&copy, 3, TIDE_IN_SCRATCH);
     *(int32_t *)tide_list_at_mut(copy, 0, sizeof(int32_t)) = 9;
     TIDE_CHECK(tide_list_count(world.scores) == 2 && at(world.scores, 0) == 1);
-    TIDE_CHECK(tide_list_count(copy) == 3 && at(copy, 0) == 9 && copy.at >> 30 == TIDE_IN_SCRATCH);
+    TIDE_CHECK(tide_list_count(copy) == 3 && at(copy, 0) == 9 && tide_handle_where(copy.at) == TIDE_IN_SCRATCH);
 
     tide_list_set(&world.other, copy, sizeof(int32_t), TIDE_IN_MATCH);
-    TIDE_CHECK(world.other.at >> 30 == TIDE_IN_MATCH);
+    TIDE_CHECK(tide_handle_where(world.other.at) == TIDE_IN_MATCH);
     tide_scratch_reset(mark);
     TIDE_CHECK(tide_list_count(world.other) == 3 && at(world.other, 2) == 3);
 
@@ -78,7 +78,7 @@ TIDE_TEST(list_copies_are_their_own)
     world.other = tide_list_from(three, 3, sizeof(int32_t));
     tide_list_own(&world.other, sizeof(int32_t), TIDE_IN_MATCH);
     tide_scratch_reset(mark);
-    TIDE_CHECK(world.other.at >> 30 == TIDE_IN_MATCH && at(world.other, 1) == 8);
+    TIDE_CHECK(tide_handle_where(world.other.at) == TIDE_IN_MATCH && at(world.other, 1) == 8);
 
     tide_list_release(&world.other, TIDE_IN_MATCH);
     TIDE_CHECK(world.other.at == 0 && world.heap.pending != 0);
@@ -254,7 +254,7 @@ TIDE_TEST(list_resize_in_the_scratch_area)
 
     tide_list local = {0};
     tide_list_resize(&local, 100, size, TIDE_IN_SCRATCH);
-    TIDE_CHECK(tide_list_count(local) == 100 && zeros(local, 0, 100) && local.at >> 30 == TIDE_IN_SCRATCH);
+    TIDE_CHECK(tide_list_count(local) == 100 && zeros(local, 0, 100) && tide_handle_where(local.at) == TIDE_IN_SCRATCH);
     number(local);
     tide_list_resize(&local, 40, size, TIDE_IN_SCRATCH);
     tide_list_resize(&local, 3000, size, TIDE_IN_SCRATCH);
@@ -267,10 +267,10 @@ TIDE_TEST(list_resize_in_the_scratch_area)
     number(world.scores);
     tide_list borrowed = world.scores;
     tide_list_resize(&borrowed, 5000, size, TIDE_IN_SCRATCH);
-    TIDE_CHECK(borrowed.at >> 30 == TIDE_IN_SCRATCH && tide_list_count(borrowed) == 5000 && counts_up(borrowed, 0, 5000, 0));
+    TIDE_CHECK(tide_handle_where(borrowed.at) == TIDE_IN_SCRATCH && tide_list_count(borrowed) == 5000 && counts_up(borrowed, 0, 5000, 0));
     borrowed = world.scores;
     tide_list_resize(&borrowed, 25000, size, TIDE_IN_SCRATCH);
-    TIDE_CHECK(borrowed.at >> 30 == TIDE_IN_SCRATCH && counts_up(borrowed, 0, 20000, 0) && zeros(borrowed, 20000, 25000));
+    TIDE_CHECK(tide_handle_where(borrowed.at) == TIDE_IN_SCRATCH && counts_up(borrowed, 0, 20000, 0) && zeros(borrowed, 20000, 25000));
     TIDE_CHECK(tide_list_count(world.scores) == 20000 && counts_up(world.scores, 0, 20000, 0));
     tide_scratch_reset(mark);
 }
@@ -291,7 +291,7 @@ TIDE_TEST(list_out_makes_the_list)
     const int32_t per = (int32_t)(TIDE_LIST_CHUNK / sizeof(int32_t));
     make(&world.scores, TIDE_IN_MATCH, 10, 100, 10);
     TIDE_CHECK(tide_list_count(world.scores) == 10 && counts_up(world.scores, 0, 10, 100) && !chunked(world.scores));
-    TIDE_CHECK(world.scores.at >> 30 == TIDE_IN_MATCH);
+    TIDE_CHECK(tide_handle_where(world.scores.at) == TIDE_IN_MATCH);
     make(&world.scores, TIDE_IN_MATCH, (uint32_t)(5 * per + 3), 7, (uint32_t)(5 * per + 3));
     TIDE_CHECK(tide_list_count(world.scores) == 5 * per + 3 && counts_up(world.scores, 0, 5 * per + 3, 7) && chunked(world.scores));
     tide_heap_flush(&world.heap);
@@ -344,7 +344,7 @@ TIDE_TEST(list_out_makes_the_list)
     const uint32_t mark = tide_scratch_mark();
     tide_list local = {0};
     make(&local, TIDE_IN_SCRATCH, 50, 5, 50);
-    TIDE_CHECK(local.at >> 30 == TIDE_IN_SCRATCH && tide_list_count(local) == 50 && counts_up(local, 0, 50, 5));
+    TIDE_CHECK(tide_handle_where(local.at) == TIDE_IN_SCRATCH && tide_list_count(local) == 50 && counts_up(local, 0, 50, 5));
     make(&local, TIDE_IN_SCRATCH, 400000, 2, 400000);
     TIDE_CHECK(tide_list_count(local) == 400000 && counts_up(local, 0, 400000, 2));
     make(&local, TIDE_IN_SCRATCH, 4, 1, 4);
@@ -354,7 +354,7 @@ TIDE_TEST(list_out_makes_the_list)
     make(&world.scores, TIDE_IN_MATCH, 30000, 0, 30000);
     tide_list named = world.scores;
     make(&named, TIDE_IN_SCRATCH, 10, 77, 10);
-    TIDE_CHECK(named.at >> 30 == TIDE_IN_SCRATCH && counts_up(named, 0, 10, 77));
+    TIDE_CHECK(tide_handle_where(named.at) == TIDE_IN_SCRATCH && counts_up(named, 0, 10, 77));
     TIDE_CHECK(tide_list_count(world.scores) == 30000 && counts_up(world.scores, 0, 30000, 0));
     tide_scratch_reset(mark);
 }
@@ -413,7 +413,7 @@ TIDE_TEST(list_out_writes_what_differs)
 static const tide_page *page_of(const tide_heap *heap, const tide_list l, const int32_t i)
 {
     uint32_t place;
-    const uint32_t chunk = tide_list_chunk(tide_heap_block(heap, l.at & 0x3FFFFFFFu), (uint32_t)i, sizeof(int32_t), &place);
+    const uint32_t chunk = tide_list_chunk(tide_heap_block(heap, tide_handle_offset(l.at)), (uint32_t)i, sizeof(int32_t), &place);
     return heap->page[chunk >> TIDE_HEAP_PAGE_SHIFT];
 }
 
@@ -550,7 +550,7 @@ TIDE_TEST(list_out_keeps_what_it_holds)
     tide_list local = {0};
     make(&local, TIDE_IN_SCRATCH, 50, 5, 50);
     patch(&local, TIDE_IN_SCRATCH, 3000, 60, 4, -1);
-    TIDE_CHECK(local.at >> 30 == TIDE_IN_SCRATCH && tide_list_count(local) == 3000 && counts_up(local, 0, 50, 5));
+    TIDE_CHECK(tide_handle_where(local.at) == TIDE_IN_SCRATCH && tide_list_count(local) == 3000 && counts_up(local, 0, 50, 5));
     TIDE_CHECK(zeros(local, 50, 60) && counts_up(local, 60, 64, -1) && zeros(local, 64, 3000));
     patch(&local, TIDE_IN_SCRATCH, 20, 18, 9, 33);
     TIDE_CHECK(tide_list_count(local) == 20 && counts_up(local, 0, 18, 5) && counts_up(local, 18, 20, 33));
@@ -559,7 +559,7 @@ TIDE_TEST(list_out_keeps_what_it_holds)
         const uint32_t to = round == 0 ? 30000u : round == 1 ? 31000u : 12000u;
         tide_list named = world.scores;
         patch(&named, TIDE_IN_SCRATCH, to, 10, 5, -9);
-        TIDE_CHECK(named.at >> 30 == TIDE_IN_SCRATCH && tide_list_count(named) == (int32_t)to);
+        TIDE_CHECK(tide_handle_where(named.at) == TIDE_IN_SCRATCH && tide_list_count(named) == (int32_t)to);
         TIDE_CHECK(counts_up(named, 0, 10, 0) && counts_up(named, 10, 15, -9) && counts_up(named, 15, to < 30000u ? (int32_t)to : 30000, 15));
         TIDE_CHECK(zeros(named, 30000, (int32_t)to));
         TIDE_CHECK(tide_list_count(world.scores) == 30000 && counts_up(world.scores, 0, 30000, 0));

@@ -9,7 +9,7 @@
 // heap only reads a header to free a block, so a chunk gets its header back
 // just before it's released.
 
-#define OFFSET(at) ((at) & 0x3FFFFFFFu)
+#define OFFSET(at) tide_handle_offset(at)
 #define FLAT_MOST (1u << 16) // Chunks a grid with a size on every axis lists by index, at most
 
 // The heap's class for a chunk's block: 16 << class bytes, as many as its cells or more.
@@ -89,7 +89,7 @@ static uint32_t make_room(tide_grid *g, tide_heap *heap)
     memcpy(tide_grid_records(to), tide_grid_records(d), d->records * sizeof(tide_grid_record));
     for (uint32_t i = 0; i < to->records; i++) insert(to, i);
     tide_heap_release(heap, block);
-    g->at = (g->at & ~0x3FFFFFFFu) | grown;
+    g->at = tide_handle_of(tide_handle_where(g->at), grown);
     return grown;
 }
 
@@ -115,11 +115,11 @@ void *tide_grid_poke_slow(tide_grid *g, const int32_t x, const int32_t y, const 
                           const bool make, const uint32_t where)
 {
     tide_heap *heap = tide_heap_of(where);
-    if (!heap || (g->at && g->at >> 30 != where)) return NULL; // The scratch area's, or another world's
+    if (!heap || (g->at && tide_handle_where(g->at) != where)) return NULL; // The scratch area's, or another world's
     if (!g->at) {
         if (!make) return NULL;
         const int32_t open[3] = {0, 0, 0};
-        g->at = where << 30 | new_dir(heap, open, s);
+        g->at = tide_handle_of(where, new_dir(heap, open, s));
     }
     const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g->at)) + 1);
     if (!tide_grid_inside(d, x, y, s->dims == 3 ? z : 0)) return NULL;
@@ -145,19 +145,19 @@ void tide_grid_own(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
 {
     tide_heap *heap = tide_heap_of(where);
     if (!heap || !g->at) return;
-    if (g->at >> 30 != TIDE_IN_SCRATCH) { // Only made grids are copied in; anything else starts over, empty
+    if (tide_handle_where(g->at) != TIDE_IN_SCRATCH) { // Only made grids are copied in; anything else starts over, empty
         g->at = 0;
         return;
     }
     int32_t size[3];
     tide_grid_size(*g, size);
-    g->at = where << 30 | new_dir(heap, size, s);
+    g->at = tide_handle_of(where, new_dir(heap, size, s));
 }
 
 void tide_grid_release(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
 {
     tide_heap *heap = tide_heap_of(where);
-    if (heap && g->at && g->at >> 30 == where) {
+    if (heap && g->at && tide_handle_where(g->at) == where) {
         tide_grid_clear(g, s, where);
         tide_heap_release(heap, OFFSET(g->at));
     }
@@ -178,7 +178,7 @@ void tide_grid_set(tide_grid *to, const tide_grid value, const tide_grid_shape *
 void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
 {
     tide_heap *heap = tide_heap_of(where);
-    if (!heap || !g->at || g->at >> 30 != where) return;
+    if (!heap || !g->at || tide_handle_where(g->at) != where) return;
     tide_grid_dir *d = dir_at(heap, OFFSET(g->at));
     const uint32_t c = chunk_class(s);
     for (uint32_t i = 0; i < d->records; i++) {
@@ -196,10 +196,10 @@ void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t wher
 tide_grid tide_grid_copy_from(const tide_heap *heap, const tide_grid g, const tide_grid_shape *s, const uint32_t where)
 {
     tide_heap *to = tide_heap_of(where);
-    if (!to || !heap || to == heap || !g.at || g.at >> 30 == TIDE_IN_SCRATCH) return (tide_grid){0};
+    if (!to || !heap || to == heap || !g.at || tide_handle_where(g.at) == TIDE_IN_SCRATCH) return (tide_grid){0};
     // The source's directory stays put: what's made goes in the other heap
     const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
-    tide_grid out = {where << 30 | new_dir(to, d->size, s)};
+    tide_grid out = {tide_handle_of(where, new_dir(to, d->size, s))};
     for (uint32_t i = 0; i < d->records; i++) {
         const tide_grid_record r = tide_grid_records(d)[i];
         (void)add_chunk(&out, to, r.chunk[0], r.chunk[1], r.chunk[2], tide_grid_chunk_at(heap, r.block), s);
@@ -210,7 +210,7 @@ tide_grid tide_grid_copy_from(const tide_heap *heap, const tide_grid g, const ti
 const void *tide_grid_read(const tide_heap *heap, const tide_grid g, const int32_t x, const int32_t y, const int32_t z,
                            const tide_grid_shape *s)
 {
-    if (!g.at || g.at >> 30 == TIDE_IN_SCRATCH) return NULL;
+    if (!g.at || tide_handle_where(g.at) == TIDE_IN_SCRATCH) return NULL;
     const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
     if (!d->records || !tide_grid_inside(d, x, y, s->dims == 3 ? z : 0)) return NULL;
     const uint32_t i = tide_grid_find(d, x >> s->shift[0], y >> s->shift[1], s->dims == 3 ? z >> s->shift[2] : 0);
@@ -297,7 +297,7 @@ void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, co
                     const int32_t offset[3])
 {
     *l = (tide_par_loop){.grid = g, .shape = s, .where = where};
-    if (!g->at || g->at >> 30 != where) return; // Not a world's: nothing to go through
+    if (!g->at || tide_handle_where(g->at) != where) return; // Not a world's: nothing to go through
     const tide_heap *heap = tide_heap_of(where);
     const tide_grid_dir *d = dir_of(heap, *g);
     int64_t side[3];
@@ -895,7 +895,7 @@ static bool enter_layer(tide_grid_rows *r, uint32_t i)
 void tide_grid_rows_begin(tide_grid_rows *r, const tide_grid g, const tide_grid_shape *s)
 {
     *r = (tide_grid_rows){.done = true};
-    if (!g.at || (!tide_heap_read(g.at >> 30) && !tide_pack_holds(g.at))) return; // Empty, or the scratch area's
+    if (!g.at || (!tide_heap_read(tide_handle_where(g.at)) && !tide_pack_holds(g.at))) return; // Empty, or the scratch area's
     const tide_grid_dir *d = tide_grid_dir_of(g); // A world's, or the pack's (tide/pack.h)
     bool open = false;
     for (uint32_t a = 0; a < 3; a++) {

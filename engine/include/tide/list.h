@@ -34,7 +34,7 @@
 // chunk, not the whole list. Growing adds chunks, without moving elements.
 
 typedef struct tide_list {
-    uint32_t at; // 0: empty. Otherwise its block's offset, and where in the top two bits
+    tide_handle at; // 0: empty. Otherwise its block's offset, and where in the top two bits
 } tide_list;
 
 // Bytes of elements in a chunk: a heap block of a page, less its header.
@@ -52,7 +52,7 @@ void tide_list_prepare_borrowed(tide_list *l, uint32_t size, uint32_t where);
 static inline void tide_list_prepare(tide_list *l, const uint32_t size, const uint32_t where)
 {
     if (!l || !l->at) return;
-    if (l->at >> 30 == TIDE_IN_SCRATCH) {
+    if (tide_handle_where(l->at) == TIDE_IN_SCRATCH) {
         if (!tide_pack_holds(l->at)) return;
     } else {
         const tide_block *b = tide_block_at(l->at);
@@ -91,12 +91,12 @@ static inline uint32_t tide_list_chunk(const tide_block *b, const uint32_t i, co
 static inline void *tide_list_at(const tide_list l, const int32_t i, const uint32_t size)
 {
     if (!l.at) return NULL;
-    const uint32_t offset = l.at & 0x3FFFFFFFu;
-    if (l.at >> 30 == TIDE_IN_SCRATCH) {
+    const uint32_t offset = tide_handle_offset(l.at);
+    if (tide_handle_where(l.at) == TIDE_IN_SCRATCH) {
         tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(offset);
         return i >= 0 && (uint32_t)i < b->a ? (char *)(b + 1) + (size_t)i * size : NULL;
     }
-    const tide_heap *heap = tide_heap_read(l.at >> 30);
+    const tide_heap *heap = tide_heap_read(tide_handle_where(l.at));
     if (!heap) return NULL;
     tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
     const tide_page *p = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
@@ -135,7 +135,7 @@ typedef struct tide_list_view {
     const uint32_t *directory; // In chunks: each chunk's heap offset
     tide_page *const *pages;   // ...in this page table
     uint32_t count;            // Elements to read: 0 for none
-    uint32_t at;               // The list (its tide_list.at), 0 for none
+    tide_handle at;            // The list (its tide_list.at), 0 for none
     const tide_heap *heap;     // ...in this heap, NULL in the scratch area
     uint32_t moves;            // ...whose moves were these
     uint32_t known;            // Which of the first chunks `chunk` has found, a bit each
@@ -157,8 +157,8 @@ static inline void tide_list_view_find(tide_list_view *v, const tide_list l, con
     v->header = NULL;
     v->borrowed = false;
     if (!l.at) return;
-    const uint32_t offset = l.at & 0x3FFFFFFFu;
-    if (l.at >> 30 == TIDE_IN_SCRATCH) {
+    const uint32_t offset = tide_handle_offset(l.at);
+    if (tide_handle_where(l.at) == TIDE_IN_SCRATCH) {
         const tide_block *b = (const tide_block *)(uintptr_t)tide_scratch_at(offset);
         v->elements = (const uint8_t *)(b + 1);
         v->count = b->a;
@@ -166,7 +166,7 @@ static inline void tide_list_view_find(tide_list_view *v, const tide_list l, con
         v->borrowed = tide_pack_holds(l.at);
         return;
     }
-    const tide_heap *heap = tide_heap_read(l.at >> 30);
+    const tide_heap *heap = tide_heap_read(tide_handle_where(l.at));
     if (!heap) {
         v->at = 0u; // Nothing to hold
         return;
@@ -234,13 +234,13 @@ static inline __attribute__((always_inline)) const void *tide_list_view_at(tide_
 static inline void *tide_list_at_mut(const tide_list l, const int32_t i, const uint32_t size)
 {
     if (!l.at) return NULL;
-    const uint32_t offset = l.at & 0x3FFFFFFFu;
-    if (l.at >> 30 == TIDE_IN_SCRATCH) {
+    const uint32_t offset = tide_handle_offset(l.at);
+    if (tide_handle_where(l.at) == TIDE_IN_SCRATCH) {
         if (tide_pack_holds(l.at)) return NULL; // Prepare the value before writing a packed asset.
         tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(offset);
         return i >= 0 && (uint32_t)i < b->a ? (char *)(b + 1) + (size_t)i * size : NULL;
     }
-    tide_heap *heap = tide_heap_of(l.at >> 30);
+    tide_heap *heap = tide_heap_of(tide_handle_where(l.at));
     if (!heap) return NULL;
     const tide_page *p = heap->page[offset >> TIDE_HEAP_PAGE_SHIFT];
     const tide_block *b = (const tide_block *)(uintptr_t)((const uint8_t *)tide_page_data(p) + (offset - (p->first << TIDE_HEAP_PAGE_SHIFT)));
@@ -259,7 +259,7 @@ static inline void *tide_list_at_mut(const tide_list l, const int32_t i, const u
 // elements below the list's count as it is then, so whatever the code does to
 // the list meanwhile, it never reads where it shouldn't.
 typedef struct tide_list_cache {
-    uint32_t at;              // The list (its tide_list.at), 0 for none
+    tide_handle at;           // The list (its tide_list.at), 0 for none
     uint32_t moves;           // Its heap's moves when it was looked up
     const tide_heap *heap;    // ...that heap
     const tide_block *header; // The list's block, whose `a` is its count

@@ -121,7 +121,7 @@ static void gen_task_trace(gen *g)
             } else if (t.kind == TY_GRID) {
                 sb_printf(o, "        const tide_grid_dir *dir = tide_grid_dir_of(*v);\n"
                              "        if (dir) for (uint32_t i = 0; i < dir->records; i++) {\n"
-                             "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(v->at >> 30), tide_grid_records(dir)[i].block);\n"
+                             "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), tide_grid_records(dir)[i].block);\n"
                              "            for (uint32_t j = 0; j < tide_grid_chunk_bytes(&%s); j += sizeof(%s)) {\n", grid_shape_name(t.decl), elem_ctype(t.decl->fields.items[0].type));
                 gen_task_trace_push(g, &types, t.decl->fields.items[0].type, "cells + j");
                 sb_put(o, "            }\n        }\n");

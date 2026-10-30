@@ -102,7 +102,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
                   "        if (dir->records > 1u) qsort(records, dir->records, sizeof *records, tide_client_grid_compare);\n"
                   "        for (uint32_t i = 0; i < dir->records; i++) {\n"
                   "            tide_write_bytes(out, records[i].chunk, sizeof records[i].chunk);\n");
-        sb_printf(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(v->at >> 30), records[i].block);\n"
+        sb_printf(o, "            const uint8_t *cells = tide_grid_chunk_at(tide_heap_read(tide_handle_where(v->at)), records[i].block);\n"
                      "            for (uint32_t k = 0; k < tide_grid_chunk_bytes(&%s) / sizeof(%s); k++)\n"
                      "                tide_client_put%d(out, (const %s *)(const void *)(cells + (size_t)k * sizeof(%s)), depth + 1u);\n",
                   grid_shape_name(t.decl), elem_ctype(cell), client_codec_id(codec, cell), elem_ctype(cell), elem_ctype(cell));

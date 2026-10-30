@@ -29,7 +29,7 @@
 // nothing.
 
 typedef struct tide_grid {
-    uint32_t at; // 0: an open grid with nothing in it. Otherwise its directory's offset, and where in the top two bits
+    tide_handle at; // 0: an open grid with nothing in it. Otherwise its directory's offset, and where in the top two bits
 } tide_grid;
 
 // A grid type's cells, as generated code describes them.
@@ -149,7 +149,7 @@ static inline const void *tide_grid_peek(const tide_grid g, const int32_t x, con
     if (!d || !d->records || !tide_grid_inside(d, x, y, z)) return NULL;
     const uint32_t i = tide_grid_find(d, x >> s->shift[0], y >> s->shift[1], z >> s->shift[2]);
     if (!i) return NULL;
-    return tide_grid_chunk_at(tide_heap_read(g.at >> 30), tide_grid_records(d)[i - 1u].block) + tide_grid_place(s, x, y, z);
+    return tide_grid_chunk_at(tide_heap_read(tide_handle_where(g.at)), tide_grid_records(d)[i - 1u].block) + tide_grid_place(s, x, y, z);
 }
 
 // A cell, to change, made if `make` (a value that isn't zero) and its chunk
@@ -162,12 +162,12 @@ static inline void *tide_grid_poke(tide_grid *g, const int32_t x, const int32_t 
                                    const bool make, const uint32_t where)
 {
     const tide_grid_dir *d = tide_grid_dir_of(*g);
-    if (!d || !d->records || !tide_grid_inside(d, x, y, z) || g->at >> 30 != where) {
+    if (!d || !d->records || !tide_grid_inside(d, x, y, z) || tide_handle_where(g->at) != where) {
         return tide_grid_poke_slow(g, x, y, z, s, make, where);
     }
     const uint32_t i = tide_grid_find(d, x >> s->shift[0], y >> s->shift[1], z >> s->shift[2]);
     if (!i) return tide_grid_poke_slow(g, x, y, z, s, make, where);
-    tide_heap *heap = tide_heap_of(g->at >> 30);
+    tide_heap *heap = tide_heap_of(tide_handle_where(g->at));
     return (uint8_t *)tide_heap_write(heap, tide_grid_records(d)[i - 1u].block) + tide_grid_place(s, x, y, z);
 }
 
@@ -177,7 +177,7 @@ static inline void *tide_grid_poke(tide_grid *g, const int32_t x, const int32_t 
 // released a block since (tide_heap.moves), so whatever else the code calls,
 // changing the grid too, it never reads or writes where it shouldn't.
 typedef struct tide_grid_cache {
-    uint32_t at;            // The grid (its tide_grid.at), 0 for none
+    tide_handle at;         // The grid (its tide_grid.at), 0 for none
     uint32_t moves;         // Its heap's moves when the chunk was looked up
     const tide_heap *heap;  // ...that heap, which stays the same while a function runs
     int32_t chunk[3];       // The chunk, in chunks
@@ -206,7 +206,7 @@ static inline const void *tide_grid_cached_peek(tide_grid_cache *c, const tide_g
 {
     const int32_t cx = x >> s->shift[0], cy = y >> s->shift[1], cz = z >> s->shift[2];
     if (!tide_grid_cache_holds(c, g.at, cx, cy, cz)) {
-        const tide_heap *heap = tide_heap_read(g.at >> 30);
+        const tide_heap *heap = tide_heap_read(tide_handle_where(g.at));
         // A grid of the pack (tide/pack.h) is cached too, against a heap that never moves
         const tide_heap *still = !heap && tide_pack_holds(g.at) ? &tide_pack_still : heap;
         if (!still || !g.at) return tide_grid_peek(g, x, y, z, s); // The scratch area's, or empty
@@ -232,7 +232,7 @@ static inline void *tide_grid_cached_poke(tide_grid_cache *c, tide_grid *g, cons
     }
     void *cell = tide_grid_poke(g, x, y, z, s, make, where);
     tide_heap *heap = tide_heap_of(where);
-    if (!cell || !heap || g->at >> 30 != where) {
+    if (!cell || !heap || tide_handle_where(g->at) != where) {
         *c = (tide_grid_cache){0};
         return cell;
     }

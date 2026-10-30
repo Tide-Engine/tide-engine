@@ -10535,7 +10535,7 @@ static void gen_blend_helpers(gen *g)
     g->indent = 1;
     if (prog->grids.count) {
         sb_put(o, "TIDE_HELPER tide_grid tide_blend_grid_snapshot(tide_grid value, const tide_grid_shape *shape)\n{\n"
-                  "    if (!value.at || value.at >> 30 == TIDE_IN_SCRATCH) return value;\n"
+                  "    if (!value.at || tide_handle_where(value.at) == TIDE_IN_SCRATCH) return value;\n"
                   "    const tide_grid_dir *source = tide_grid_dir_of(value);\n"
                   "    if (!source) return (tide_grid){0};\n"
                   "    const uint64_t bytes = sizeof(*source) + (uint64_t)source->room * sizeof(tide_grid_record) + (uint64_t)source->slots * sizeof(uint32_t);\n"
@@ -10544,13 +10544,13 @@ static void gen_blend_helpers(gen *g)
                   "    tide_block *block = tide_scratch_block((uint32_t)bytes, \"interpolated grid\", &at);\n"
                   "    tide_grid_dir *copy = (tide_grid_dir *)(void *)(block + 1);\n"
                   "    memcpy(copy, source, (size_t)bytes);\n"
-                  "    const tide_heap *heap = tide_heap_read(value.at >> 30);\n"
+                  "    const tide_heap *heap = tide_heap_read(tide_handle_where(value.at));\n"
                   "    const uint32_t chunk_bytes = tide_grid_chunk_bytes(shape);\n"
                   "    for (uint32_t i = 0; i < source->records; i++) {\n"
                   "        uint32_t cells_at = 0;\n"
                   "        tide_block *cells = tide_scratch_block(chunk_bytes - (uint32_t)sizeof(tide_block), \"interpolated grid cells\", &cells_at);\n"
                   "        memcpy(cells, tide_grid_chunk_at(heap, tide_grid_records(source)[i].block), chunk_bytes);\n"
-                  "        tide_grid_records(copy)[i].block = cells_at & 0x3FFFFFFFu;\n"
+                  "        tide_grid_records(copy)[i].block = tide_handle_offset(cells_at);\n"
                   "    }\n    return (tide_grid){at};\n}\n\n");
     }
     for (int i = 0; i < prog->structs.count; i++) {

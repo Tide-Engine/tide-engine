@@ -13,12 +13,12 @@
 #include "tide/skinned_data.h"
 #include "asset_store.h"
 
-#define OFFSET(at) ((at) & 0x3FFFFFFFu)
+#define OFFSET(at) tide_handle_offset(at)
 
 // A tagged offset into the region.
 static uint32_t tagged(const uint32_t offset)
 {
-    return TIDE_IN_SCRATCH << 30 | (TIDE_PACK_BASE + offset);
+    return tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE + offset);
 }
 
 
@@ -170,7 +170,7 @@ static const uint8_t *text_at(const uint8_t *region, const uint32_t size, const 
 static uint32_t place_of(const uint32_t handle, const uint32_t size)
 {
     const uint32_t offset = OFFSET(handle);
-    return handle >> 30 == TIDE_IN_SCRATCH && offset >= TIDE_PACK_BASE && offset - TIDE_PACK_BASE < size ? offset - TIDE_PACK_BASE
+    return tide_handle_where(handle) == TIDE_IN_SCRATCH && offset >= TIDE_PACK_BASE && offset - TIDE_PACK_BASE < size ? offset - TIDE_PACK_BASE
                                                                                                          : UINT32_MAX;
 }
 
@@ -978,7 +978,7 @@ bool tide_pack_list_version(const tide_list list, const uint32_t element, uint64
 {
     if (!pack.region || !tide_pack_holds(list.at)) return false;
     uint32_t count, said;
-    return versioned_at(pack.region, pack.size, (list.at & 0x3FFFFFFFu) - TIDE_PACK_BASE, &count, &said, version) && said == element;
+    return versioned_at(pack.region, pack.size, tide_handle_offset(list.at) - TIDE_PACK_BASE, &count, &said, version) && said == element;
 }
 
 // The bytes before a levels block's indices (the builder's levels_block).
@@ -987,7 +987,7 @@ enum { LEVELS_HEAD = 28 * 4 };
 bool tide_pack_list_levels(const tide_list indices, tide_mesh_levels *levels)
 {
     if (!pack.region || !tide_pack_holds(indices.at)) return false;
-    const uint32_t offset = (indices.at & 0x3FFFFFFFu) - TIDE_PACK_BASE;
+    const uint32_t offset = tide_handle_offset(indices.at) - TIDE_PACK_BASE;
     uint32_t count, said;
     uint64_t version;
     if (!versioned_at(pack.region, pack.size, offset, &count, &said, &version) || said != sizeof(uint32_t)) return false;
@@ -1157,7 +1157,7 @@ bool tide_pack_cubemap_find(const uint64_t named, int32_t *size, uint64_t *versi
 
 uint64_t tide_pack_grid_version(const tide_grid g)
 {
-    const tide_block *b = (const tide_block *)(const void *)tide_pack_span(g.at & 0x3FFFFFFFu, sizeof(tide_block));
+    const tide_block *b = (const tide_block *)(const void *)tide_pack_span(tide_handle_offset(g.at), sizeof(tide_block));
     return b ? (uint64_t)b->a | (uint64_t)b->b << 32 : 0u;
 }
 

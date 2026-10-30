@@ -1190,7 +1190,7 @@ bool tide_str_from_bytes(const tide_list bytes, tide_str *text)
     const int32_t count = tide_list_count(bytes);
     if (count <= 0) return true;
     char *to = scratch_alloc((uint32_t)count);
-    if (bytes.at >> 30 == TIDE_IN_SCRATCH) { // Side by side
+    if (tide_handle_where(bytes.at) == TIDE_IN_SCRATCH) { // Side by side
         memcpy(to, tide_list_at(bytes, 0, 1u), (size_t)count);
     } else {
         for (int32_t i = 0; i < count; i++) {
@@ -1240,8 +1240,8 @@ tide_list tide_str_split_char(const tide_str a, const int32_t separator)
 // ---------------------------------------------------------------------------
 // Text in fields
 
-#define TEXT_WHERE(at) ((at) >> 30)
-#define TEXT_OFFSET(at) ((at) & 0x3FFFFFFFu)
+#define TEXT_WHERE(at) tide_handle_where(at)
+#define TEXT_OFFSET(at) tide_handle_offset(at)
 
 TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[4]; // By `where`: the scratch area's stays NULL
 
@@ -1290,7 +1290,7 @@ tide_text tide_text_temp(const tide_str value)
     char *bytes = (char *)(b + 1);
     memcpy(bytes, value.ptr, (size_t)value.bytes);
     bytes[value.bytes] = '\0';
-    return (tide_text){TIDE_IN_SCRATCH << 30 | at};
+    return (tide_text){tide_handle_of(TIDE_IN_SCRATCH, at)};
 }
 
 // A block in `heap` holding `value`, tagged as `where`'s.
@@ -1303,7 +1303,7 @@ static uint32_t heap_copy(tide_heap *heap, const uint32_t where, const tide_str 
     char *bytes = (char *)(b + 1);
     memcpy(bytes, value.ptr, (size_t)value.bytes);
     bytes[value.bytes] = '\0';
-    return where << 30 | block;
+    return tide_handle_of(where, block);
 }
 
 void tide_text_set(tide_text *field, const tide_str value, const uint32_t where)
@@ -1350,6 +1350,6 @@ tide_block *tide_scratch_block(const uint32_t bytes, const char *what, uint32_t 
     *at = scratch_take((uint32_t)sizeof(tide_block) + bytes, 16u, what);
     tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(*at);
     *b = (tide_block){0, 0, 0, 0};
-    *at |= TIDE_IN_SCRATCH << 30;
+    *at = tide_handle_of(TIDE_IN_SCRATCH, *at);
     return b;
 }

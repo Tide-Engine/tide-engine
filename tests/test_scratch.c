@@ -61,7 +61,7 @@ TIDE_TEST(scratch_big_lists_are_whole)
     start();
     const uint32_t mark = tide_scratch_mark();
     tide_list copy = tide_list_copy(world.numbers, sizeof(uint32_t));
-    TIDE_CHECK(copy.at >> 30 == TIDE_IN_SCRATCH);
+    TIDE_CHECK(tide_handle_where(copy.at) == TIDE_IN_SCRATCH);
     TIDE_CHECK(tide_list_count(copy) == BIG_COUNT);
     TIDE_CHECK(wrong(copy, BIG_COUNT) == 0);
     TIDE_CHECK(tide_scratch_mark() - mark > BIG_COUNT * sizeof(uint32_t));
@@ -82,7 +82,7 @@ TIDE_TEST(scratch_big_lists_are_whole)
     TIDE_CHECK(((uintptr_t)raw & 15u) == 0);
     for (int32_t i = 0; i < BIG_COUNT; i++) raw[i] = value_at(i);
     const tide_list made = tide_list_from(raw, BIG_COUNT, sizeof *raw);
-    TIDE_CHECK(made.at >> 30 == TIDE_IN_SCRATCH && tide_list_count(made) == BIG_COUNT && wrong(made, BIG_COUNT) == 0);
+    TIDE_CHECK(tide_handle_where(made.at) == TIDE_IN_SCRATCH && tide_list_count(made) == BIG_COUNT && wrong(made, BIG_COUNT) == 0);
     TIDE_CHECK(wrong(copy, BIG_COUNT + 100) == 0);
 
     tide_scratch_reset(mark);
@@ -110,7 +110,7 @@ TIDE_TEST(scratch_big_text_is_whole)
 
     const tide_text temp = tide_text_temp(s);
     const tide_str back = tide_text_view(temp);
-    TIDE_CHECK(temp.at >> 30 == TIDE_IN_SCRATCH && back.ptr != s.ptr);
+    TIDE_CHECK(tide_handle_where(temp.at) == TIDE_IN_SCRATCH && back.ptr != s.ptr);
     TIDE_CHECK(back.bytes == s.bytes && back.chars == s.chars && memcmp(back.ptr, s.ptr, (size_t)s.bytes) == 0);
     const tide_str upper = tide_str_to_upper(back);
     TIDE_CHECK(upper.bytes == s.bytes && !tide_str_eq(upper, s) && tide_str_eq(tide_str_to_lower(upper), s));

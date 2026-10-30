@@ -212,7 +212,7 @@ static void gen_embed_packers(gen *g)
                      "    const int32_t head[12] = {(int32_t)s->dims, (int32_t)s->cell, (int32_t)s->shift[0], (int32_t)s->shift[1],\n"
                      "                              (int32_t)s->shift[2], d->size[0], d->size[1], d->size[2], (int32_t)d->records, 0, 0, 0};\n"
                      "    memcpy(blob, head, sizeof head);\n"
-                     "    const tide_heap *heap = tide_heap_read(g.at >> 30);\n"
+                     "    const tide_heap *heap = tide_heap_read(tide_handle_where(g.at));\n"
                      "    const tide_grid_record *records = tide_grid_records(d);\n"
                      "    for (uint32_t r = 0; r < d->records; r++) {\n"
                      "        uint8_t *at = blob + 48u + (size_t)r * each;\n"

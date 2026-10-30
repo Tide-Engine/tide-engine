@@ -29,7 +29,7 @@ static bool open_model(const tide_list data, model_seen *m)
     memset(m, 0, sizeof *m);
     int32_t count;
     if (tide_pack_holds(data.at)) {
-        const uint32_t offset = data.at & 0x3FFFFFFFu;
+        const uint32_t offset = tide_handle_offset(data.at);
         const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
         if (!header) return false;
         tide_block block;
@@ -64,7 +64,7 @@ void tide_skinned_own(tide_list *data, const uint32_t where)
     if (tide_pack_holds(data->at)) {
         // Unlike list ownership's trusted pack path, this boundary also sees
         // failed/invalid model values. Check the complete byte-list span first.
-        const uint32_t offset = data->at & 0x3FFFFFFFu;
+        const uint32_t offset = tide_handle_offset(data->at);
         const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
         tide_block block = {0};
         if (header) memcpy(&block, header, sizeof block);
@@ -91,7 +91,7 @@ void tide_skinned_own(tide_list *data, const uint32_t where)
     block->a = asset->count;
     block->b = TIDE_LIST_ASSET;
     memcpy(block + 1, asset->id, sizeof asset->id);
-    data->at = where << 30 | at;
+    data->at = tide_handle_of(where, at);
     tide_asset_release(asset);
 }
 
@@ -130,7 +130,7 @@ static bool key_of(const tide_list data, const model_seen *m, model_key *out)
 {
     // Blocks laid out past the file's bytes are left out.
     return quick_key(data, out)
-        && (out->kind != KEY_PACK || tide_pack_file_span(data.at & 0x3FFFFFFFu, (uint64_t)sizeof(tide_block) + m->view.size));
+        && (out->kind != KEY_PACK || tide_pack_file_span(tide_handle_offset(data.at), (uint64_t)sizeof(tide_block) + m->view.size));
 }
 
 // What a model's header says, kept on each thread for bytes with a key:
@@ -231,7 +231,7 @@ static tide_bone_transform *scratch_transforms(const tide_list transforms, const
 {
     // Scratch lists are contiguous. Keep this pointer only across loops that
     // cannot resize the list; existing heap/chunked outputs keep their COW path.
-    if (transforms.at >> 30 != TIDE_IN_SCRATCH || tide_list_count(transforms) != (int32_t)count) return NULL;
+    if (tide_handle_where(transforms.at) != TIDE_IN_SCRATCH || tide_list_count(transforms) != (int32_t)count) return NULL;
     return tide_list_at_mut(transforms, 0, sizeof(tide_bone_transform));
 }
 
@@ -1757,7 +1757,7 @@ static const tide_bone_transform *skin_capture_transforms(const tide_list transf
     // Actual scratch lists are contiguous and remain live through this
     // synchronous call. Retained cache/atlas captures still copy these bytes
     // before returning; heap/chunked inputs need a contiguous staging copy.
-    if (transforms.at >> 30 == TIDE_IN_SCRATCH) return tide_list_at(transforms, 0, sizeof(tide_bone_transform));
+    if (tide_handle_where(transforms.at) == TIDE_IN_SCRATCH) return tide_list_at(transforms, 0, sizeof(tide_bone_transform));
     tide_bone_transform *out = tide_scratch_memory((size_t)nodes * sizeof *out);
     tide_list_cache cache = {0};
     for (uint32_t i = 0; i < nodes; i++) {
@@ -1837,7 +1837,7 @@ tide_float4x4 tide_skinned_model(const tide_list data, const tide_list transform
             f->valid = nodes_valid(&m.view) ? 1 : -1;
             close_model(&m);
         }
-        const tide_skinned_data_view v = {.data = tide_pack_span((data.at & 0x3FFFFFFFu) + (uint32_t)sizeof(tide_block), f->size),
+        const tide_skinned_data_view v = {.data = tide_pack_span(tide_handle_offset(data.at) + (uint32_t)sizeof(tide_block), f->size),
                                           .size = f->size, .nodes = f->nodes, .node_at = f->node_at};
         tide_float4x4 global;
         if (v.data && (uint32_t)bone < v.nodes && f->valid > 0 && chain_model(&v, transforms, (uint32_t)bone, &global)) out = global;

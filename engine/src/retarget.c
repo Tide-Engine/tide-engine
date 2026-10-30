@@ -1093,7 +1093,7 @@ bool tide_retarget_apply(const tide_list plan, const tide_list source_data, cons
     }
     // Only a newly allocated scratch output can outlive this staging mark.
     // Reusing a destination retains no workspace, even inside a long handler.
-    const bool retained = valid && out->at >> 30 == TIDE_IN_SCRATCH
+    const bool retained = valid && tide_handle_where(out->at) == TIDE_IN_SCRATCH
         && (out->at & 0x3fffffffu) >= mark;
     if (!retained) tide_scratch_reset(mark);
     tide_list_unflatten(plan, (void *)flat, 1u, false, copied);

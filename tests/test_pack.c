@@ -1410,7 +1410,7 @@ TIDE_TEST(pack_skinned_verified_versions_invalidate_geometry_aliases)
     TIDE_CHECK(!tide_draw_skinned_data(&draw, aliased->data, pose, textures, info));
     tide_pack_header header;
     memcpy(&header, bytes, sizeof header);
-    const tide_list end = {TIDE_IN_SCRATCH << 30 | (TIDE_PACK_BASE + header.region_size - 4u)};
+    const tide_list end = {tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE + header.region_size - 4u)};
     TIDE_CHECK(!tide_skinned_valid(end));
     tide_draw_free(&draw);
     tide_pack_unload();
@@ -1513,8 +1513,8 @@ TIDE_TEST(pack_skinned_spans_handles_indices_and_maps_are_checked)
         {skinned_blocks[0][0] + offsetof(tide_block, a), UINT32_MAX}, // Byte count past the region.
         {skinned_blocks[0][1] + offsetof(tide_block, next), header.region_size}, // Vertex metadata outside the region.
         {skinned_blocks[0][2] + sizeof(tide_block), 2u}, // Valid vertex ID, different canonical index.
-        {skinned_single + sizeof(tide_block), TIDE_IN_SCRATCH << 30 | (TIDE_PACK_BASE + header.region_size - 8u)},
-        {skinned_single + sizeof(tide_block), TIDE_IN_MATCH << 30 | skinned_blocks[0][0]}, // A non-pack handle.
+        {skinned_single + sizeof(tide_block), tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE + header.region_size - 8u)},
+        {skinned_single + sizeof(tide_block), tide_handle_of(TIDE_IN_MATCH, skinned_blocks[0][0])}, // A non-pack handle.
         {skinned_single + offsetof(tide_block, a), UINT32_MAX}, // Record block count exceeds its bytes.
         {skinned_index + sizeof(tide_block), 3u}, // Index points past the map's rows.
         {skinned_map + sizeof(tide_block) + offsetof(skinned_prop_entry, key), UINT32_MAX}, // Key points nowhere.

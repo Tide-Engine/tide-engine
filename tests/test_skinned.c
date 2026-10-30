@@ -333,7 +333,7 @@ TIDE_TEST(skinned_own_retains_packed_models_after_unload)
     tide_heap heap = {0}; tide_text_use(&heap, NULL);
     tide_list stored = packed; tide_skinned_own(&stored, TIDE_IN_MATCH);
     TIDE_REQUIRE(tide_pack_skinned_sample_proof(stored, NULL));
-    tide_list invalid = {TIDE_IN_SCRATCH << 30 | TIDE_PACK_BASE | ((uint32_t)size - 1u)};
+    tide_list invalid = {tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE | ((uint32_t)size - 1u))};
     tide_skinned_own(&invalid, TIDE_IN_MATCH);
     TIDE_CHECK(!invalid.at);
     tide_pack_unload(); tide_scratch_reset(mark); free(pack);
@@ -699,7 +699,7 @@ TIDE_TEST(skinned_sampling_keeps_chunked_output_ownership_and_snapshots)
         // when the requested destination is scratch. Select by actual tag.
         TIDE_REQUIRE(tide_skinned_sample(data, clip, 0.75f, &stored, TIDE_IN_SCRATCH));
         TIDE_REQUIRE(tide_skinned_sample(data, clip, 0.75f, &scratch, TIDE_IN_SCRATCH));
-        TIDE_CHECK(stored.at == previous.at && stored.at >> 30 == TIDE_IN_MATCH);
+        TIDE_CHECK(stored.at == previous.at && tide_handle_where(stored.at) == TIDE_IN_MATCH);
         TIDE_CHECK(pose_hash(stored) == pose_hash(scratch));
         const tide_bone_transform *old = tide_list_read(&snapshot, previous, 1, sizeof *old);
         TIDE_REQUIRE(old);

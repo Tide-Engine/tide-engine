@@ -146,9 +146,9 @@ static bool see_grid(const tide_grid g, const tide_grid_shape *s, grid_seen *v)
         return false;
     }
     // The confirmed world's too: only its pages' hashes are asked of it, which it keeps
-    v->heap = (tide_heap *)(uintptr_t)tide_heap_read(g.at >> 30);
+    v->heap = (tide_heap *)(uintptr_t)tide_heap_read(tide_handle_where(g.at));
     if (!v->heap && !tide_pack_holds(g.at)) return false;
-    const uint32_t at = g.at & 0x3FFFFFFFu;
+    const uint32_t at = tide_handle_offset(g.at);
     const uint8_t *block = span(v->heap, at, sizeof(tide_block) + sizeof(tide_grid_dir));
     if (!block) return false;
     memcpy(&v->dir, block + sizeof(tide_block), sizeof v->dir);
@@ -463,15 +463,15 @@ static uint64_t list_version(const tide_list l, const uint32_t size)
     const int32_t count = tide_list_count(l);
     uint64_t h = tide_hash_more(TIDE_HASH_START, &count, sizeof count);
     if (count <= 0) return tide_hash_end(h);
-    if (l.at >> 30 == TIDE_IN_SCRATCH) {
+    if (tide_handle_where(l.at) == TIDE_IN_SCRATCH) {
         // A mesh of the pack's says what's in it (tide_pack_mesh): its file's hash, with no vertex read
         uint64_t packed;
         if (tide_pack_list_version(l, size, &packed)) return tide_hash_end(tide_hash_more(h, &packed, sizeof packed));
         return tide_hash_end(tide_hash_more(h, tide_list_at(l, 0, size), (size_t)count * size));
     }
-    tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(l.at >> 30);
+    tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(tide_handle_where(l.at));
     if (!heap) return tide_hash_end(h);
-    const uint32_t block = l.at & 0x3FFFFFFFu;
+    const uint32_t block = tide_handle_offset(l.at);
     const tide_block *b = tide_heap_block(heap, block);
     if (!(b->b & TIDE_LIST_CHUNKED)) {
         const uint64_t page = tide_heap_block_hash(heap, block);
@@ -506,7 +506,7 @@ static void list_numbers(tide_draw_list *d, const uint32_t slot, int32_t *to, co
     }
     *used = filled;
     // A world's big list is in chunks, a page each, whose hashes say which changed. Any other is all in one place
-    tide_heap *heap = list.at >> 30 == TIDE_IN_SCRATCH ? NULL : (tide_heap *)(uintptr_t)tide_heap_read(list.at >> 30);
+    tide_heap *heap = tide_handle_where(list.at) == TIDE_IN_SCRATCH ? NULL : (tide_heap *)(uintptr_t)tide_heap_read(tide_handle_where(list.at));
     const tide_block *b = tide_block_at(list.at);
     const bool chunked = heap && b && (b->b & TIDE_LIST_CHUNKED) && size <= TIDE_LIST_CHUNK;
     const uint32_t per = chunked ? TIDE_LIST_CHUNK / size : elements;
@@ -587,7 +587,7 @@ uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint
     const uint64_t kind = numbers_kind(0x4C495354u, element_size, words, 0, layout);
     const uint64_t version = tide_hash_end(tide_hash_more(list_version(list, element_size), &kind, sizeof kind));
     // One made along the way is what's in it, wherever it is in the scratch area
-    const uint64_t id = list.at >> 30 == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1 : numbers_id(list.at, layout);
+    const uint64_t id = tide_handle_where(list.at) == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1 : numbers_id(list.at, layout);
     uint8_t *out;
     bool kept;
     const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_LIST, id, version, width, height, TIDE_TEXELS_INTS, kind,
@@ -636,7 +636,7 @@ uint32_t tide_draw_map_data(tide_draw_list *d, const tide_map map, const uint32_
     // Its entries say all of it: the CPU's index only follows from them. As a map's numbers, and no list's
     const uint64_t kind = numbers_kind(0x4D415053u, entry_size, words, key_word, layout);
     const uint64_t version = tide_hash_end(tide_hash_more(list_version(map.entries, entry_size), &kind, sizeof kind));
-    const uint64_t id = map.entries.at >> 30 == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1
+    const uint64_t id = tide_handle_where(map.entries.at) == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1
                                                                 : numbers_id(map.entries.at, layout);
     uint8_t *out;
     bool kept;
@@ -761,7 +761,7 @@ uint32_t tide_draw_grid_data(tide_draw_list *d, const tide_grid g, const tide_gr
 static void mesh_levels(tide_draw_list *d, const uint32_t mesh, const tide_list indices)
 {
     tide_mesh_levels levels;
-    if (indices.at >> 30 == TIDE_IN_SCRATCH && tide_pack_list_levels(indices, &levels)) tide_draw_mesh_levels(d, mesh, &levels);
+    if (tide_handle_where(indices.at) == TIDE_IN_SCRATCH && tide_pack_list_levels(indices, &levels)) tide_draw_mesh_levels(d, mesh, &levels);
 }
 
 static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const tide_list indices)
@@ -777,8 +777,8 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
     const uint64_t index_version = list_version(indices, sizeof(uint32_t));
     version = tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version));
     const uint64_t scratch = (uint64_t)TIDE_IN_SCRATCH << 32; // Past every list's place
-    const uint64_t id = vertices.at >> 30 == TIDE_IN_SCRATCH ? scratch : vertices.at;
-    const uint64_t other = indices.at >> 30 == TIDE_IN_SCRATCH ? scratch : indices.at;
+    const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
+    const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
     bool fill;
     const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_LISTS, id, other, version, &fill);
     if (fill) {
@@ -815,8 +815,8 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
     version = tide_hash_more(version, &index_version, sizeof index_version);
     version = tide_hash_end(tide_hash_more(version, &size, sizeof size));
     const uint64_t scratch = (uint64_t)TIDE_IN_SCRATCH << 32;
-    const uint64_t id = vertices.at >> 30 == TIDE_IN_SCRATCH ? scratch : vertices.at;
-    const uint64_t other = indices.at >> 30 == TIDE_IN_SCRATCH ? scratch : indices.at;
+    const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
+    const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
     bool fill;
     const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_BYTES, id, other, version, &fill);
     if (fill) {

@@ -27,7 +27,7 @@ static uint8_t *asset_pack(size_t *size, uint8_t *values)
 static tide_list packed_bytes(void)
 {
     const tide_pack_entry *entry = tide_pack_find("bytes", TIDE_PACK_BYTES);
-    return (tide_list){TIDE_IN_SCRATCH << 30 | TIDE_PACK_BASE | entry->offset};
+    return (tide_list){tide_handle_of(TIDE_IN_SCRATCH, TIDE_PACK_BASE | entry->offset)};
 }
 
 static uint8_t *delta(const tide_heap *heap, const tide_heap *base, const uint8_t *need,
@@ -142,7 +142,7 @@ TIDE_TEST(asset_lists_transfer_references_sparse_patches_and_full_fallback)
     tide_heap_free(&back);
     free(spoiled);
     tide_heap_copy(&snapshot, &heap);
-    ((uint8_t *)(tide_heap_write(&snapshot, list.at & 0x3FFFFFFFu) + 1))[0] ^= 1u;
+    ((uint8_t *)(tide_heap_write(&snapshot, tide_handle_offset(list.at)) + 1))[0] ^= 1u;
     uint32_t bad_size;
     uint8_t *bad = delta(&snapshot, NULL, NULL, 0, true, &bad_size);
     TIDE_CHECK(!undelta(&back, NULL, bad, bad_size));

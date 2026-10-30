@@ -69,7 +69,7 @@ static uint32_t tide_asset_fp_u32(const uint8_t *bytes)
 static bool tide_asset_fp_handle(const tide_asset_fp_region *r, const uint32_t handle, uint32_t *offset)
 {
     const uint32_t at = handle & 0x3fffffffu;
-    if (handle >> 30 != TIDE_IN_SCRATCH || at < TIDE_PACK_BASE || at - TIDE_PACK_BASE >= r->size
+    if (tide_handle_where(handle) != TIDE_IN_SCRATCH || at < TIDE_PACK_BASE || at - TIDE_PACK_BASE >= r->size
         || ((at - TIDE_PACK_BASE) & 15u)) return false;
     *offset = at - TIDE_PACK_BASE;
     return true;

@@ -219,8 +219,30 @@ tide_str tide_str_typed(const tide_typed *typed);
 // Heap text never changes once it's written: changing a field writes new text
 // and releases the old, so a copy made before still reads the old text.
 
+// A handle: a block's tagged offset, where the block is (TIDE_IN_*) in its top
+// two bits and its offset there in the rest. 0 is no block. The text, lists,
+// maps, sets and grids of fields hold one each (`at`).
+typedef uint32_t tide_handle;
+#define TIDE_WHERE_SHIFT 30u
+#define TIDE_HANDLE_OFFSET ((tide_handle)0x3FFFFFFFu)
+
+// Where a handle's block is (TIDE_IN_*), its offset there, and the handle of
+// an offset there.
+static inline uint32_t tide_handle_where(const tide_handle at)
+{
+    return (uint32_t)(at >> TIDE_WHERE_SHIFT);
+}
+static inline tide_handle tide_handle_offset(const tide_handle at)
+{
+    return at & TIDE_HANDLE_OFFSET;
+}
+static inline tide_handle tide_handle_of(const uint32_t where, const tide_handle offset)
+{
+    return (tide_handle)where << TIDE_WHERE_SHIFT | offset;
+}
+
 typedef struct tide_text {
-    uint32_t at; // 0: empty. Otherwise the block's offset, and where in the top two bits
+    tide_handle at; // 0: empty. Otherwise the block's offset, and where in the top two bits
 } tide_text;
 
 // Where memory is, for `where` arguments, and in the top two bits of a
@@ -240,9 +262,9 @@ typedef struct tide_text {
 // itself stops short of it while a pack is loaded.
 #define TIDE_PACK_BASE (1u << 29)
 
-static inline bool tide_pack_holds(const uint32_t at)
+static inline bool tide_pack_holds(const tide_handle at)
 {
-    return at >> 30 == TIDE_IN_SCRATCH && (at & 0x3FFFFFFFu) >= TIDE_PACK_BASE;
+    return tide_handle_where(at) == TIDE_IN_SCRATCH && tide_handle_offset(at) >= TIDE_PACK_BASE;
 }
 
 // The heap a grid of the pack's cache names (tide_grid_cached_peek): one
@@ -291,9 +313,9 @@ static inline const tide_heap *tide_heap_read(const uint32_t where)
 
 // A tagged offset from a value copied out of the confirmed world, where it
 // said TIDE_IN_MATCH, as that world's own does: the same block, read there.
-static inline uint32_t tide_confirmed(const uint32_t at)
+static inline tide_handle tide_confirmed(const tide_handle at)
 {
-    return at && at >> 30 == TIDE_IN_MATCH ? at | TIDE_IN_VERIFIED << 30 : at;
+    return at && tide_handle_where(at) == TIDE_IN_MATCH ? tide_handle_of(TIDE_IN_VERIFIED, at) : at;
 }
 
 // Reading: a view of the text, which lasts until the running code is done.
@@ -328,25 +350,25 @@ void *tide_scratch_memory(size_t bytes);
 // aligned: its header, and `at` gets its tagged offset. `what` ("a list") is
 // for the message when it can't be made: the area grows as it needs, so that's
 // only when memory, or the offsets' 30 bits, run out, which ends the program.
-tide_block *tide_scratch_block(uint32_t bytes, const char *what, uint32_t *at);
+tide_block *tide_scratch_block(uint32_t bytes, const char *what, tide_handle *at);
 
 // A tagged offset's block, or NULL for 0: to read, and to change (a world's
 // is made its own, apart from its snapshots: see tide/page.h).
-static inline tide_block *tide_block_at(const uint32_t at)
+static inline tide_block *tide_block_at(const tide_handle at)
 {
     if (!at) return NULL;
-    const uint32_t offset = at & 0x3FFFFFFFu;
-    if (at >> 30 == TIDE_IN_SCRATCH) return (tide_block *)(uintptr_t)tide_scratch_at(offset);
-    const tide_heap *heap = tide_heap_read(at >> 30);
+    const tide_handle offset = tide_handle_offset(at);
+    if (tide_handle_where(at) == TIDE_IN_SCRATCH) return (tide_block *)(uintptr_t)tide_scratch_at(offset);
+    const tide_heap *heap = tide_heap_read(tide_handle_where(at));
     return heap ? tide_heap_block(heap, offset) : NULL;
 }
 
-static inline tide_block *tide_block_write(const uint32_t at)
+static inline tide_block *tide_block_write(const tide_handle at)
 {
     if (!at) return NULL;
-    const uint32_t offset = at & 0x3FFFFFFFu;
-    if (at >> 30 == TIDE_IN_SCRATCH) return (tide_block *)(uintptr_t)tide_scratch_at(offset);
-    tide_heap *heap = tide_heap_of(at >> 30);
+    const tide_handle offset = tide_handle_offset(at);
+    if (tide_handle_where(at) == TIDE_IN_SCRATCH) return (tide_block *)(uintptr_t)tide_scratch_at(offset);
+    tide_heap *heap = tide_heap_of(tide_handle_where(at));
     return heap ? tide_heap_write(heap, offset) : NULL;
 }
 

@@ -367,7 +367,7 @@ tide_page *tide_delta_asset_page(tide_delta_reader *d, const uint32_t size, cons
         const uint32_t first = tide_read_u32(&d->bytes);
         const uint32_t count = tide_read_u32(&d->bytes);
         if (d->bytes.failed || at < TIDE_PACK_BASE || at >= 0x40000000u) return NULL;
-        tide_asset_data *data = tide_asset_pack((tide_list){TIDE_IN_SCRATCH << 30 | at}, element);
+        tide_asset_data *data = tide_asset_pack((tide_list){tide_handle_of(TIDE_IN_SCRATCH, at)}, element);
         if (!data || memcmp(data->id, id, 32) != 0) return NULL;
         const tide_asset_origin relative = {data, first, count};
         if (!tide_asset_origin_reference(&relative) || !tide_asset_origin_bytes(&relative, baseline, size)) return NULL;
