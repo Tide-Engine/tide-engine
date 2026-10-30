@@ -321,6 +321,43 @@ static bool fbx_channel_shape(fbx_builder *b, const ufbx_blend_channel *channel,
     return true;
 }
 
+static ufbx_string fbx_channel_name(const ufbx_blend_channel *channel)
+{
+    const ufbx_blend_shape *shape = channel->keyframes.data[0].shape;
+    return shape->name.length ? shape->name : channel->name;
+}
+
+// Whether a mesh's channel k of deformer d repeats an earlier channel of the
+// mesh exactly: its name, its offsets, and a default weight of zero, so
+// leaving it out changes neither the rest geometry nor what the name moves.
+// The Tales Factory's Medieval Civilians & Soldiers has one such (its
+// DaggerSheath's MK_Armor02); any other repeated name is still refused.
+static bool fbx_channel_repeats(const ufbx_mesh *mesh, const size_t d, const size_t k)
+{
+    const ufbx_blend_channel *channel = mesh->blend_deformers.data[d]->channels.data[k];
+    if (channel->weight != 0.0) return false;
+    const ufbx_string name = fbx_channel_name(channel);
+    const ufbx_blend_shape *shape = channel->keyframes.data[0].shape;
+    for (size_t e = 0; e <= d; e++) {
+        const ufbx_blend_deformer *blend = mesh->blend_deformers.data[e];
+        for (size_t j = 0; j < (e == d ? k : blend->channels.count); j++) {
+            const ufbx_blend_channel *other = blend->channels.data[j];
+            const ufbx_string other_name = fbx_channel_name(other);
+            const ufbx_blend_shape *was = other->keyframes.data[0].shape;
+            const size_t n = shape->num_offsets;
+            if (other->weight != 0.0 || other_name.length != name.length || memcmp(other_name.data, name.data, name.length)
+                || was->num_offsets != n || was->offset_vertices.count != shape->offset_vertices.count
+                || was->position_offsets.count != shape->position_offsets.count || was->normal_offsets.count != shape->normal_offsets.count) continue;
+            if ((!n || (!memcmp(was->offset_vertices.data, shape->offset_vertices.data, shape->offset_vertices.count * sizeof *shape->offset_vertices.data)
+                        && !memcmp(was->position_offsets.data, shape->position_offsets.data, shape->position_offsets.count * sizeof *shape->position_offsets.data)
+                        && (!shape->normal_offsets.count
+                            || !memcmp(was->normal_offsets.data, shape->normal_offsets.data, shape->normal_offsets.count * sizeof *shape->normal_offsets.data)))))
+                return true;
+        }
+    }
+    return false;
+}
+
 // One morph target accessor of a part: a channel's position or normal offsets
 // at the part's vertices, as a sparse accessor over zeros (none where the
 // shape moves nothing there).
@@ -365,6 +402,7 @@ static bool fbx_skin_vertex_has_weights(fbx_builder *b, const ufbx_skin_deformer
     *has = false;
     if (index >= skin->vertices.count) return true;
     const ufbx_skin_vertex *v = skin->vertices.data + index;
+    if (skin->skinning_method == UFBX_SKINNING_METHOD_BLENDED_DQ_LINEAR && v->dq_weight != 0.0) return fbx_fail(b, "export using linear blend skinning", "blends FBX dual-quaternion skinning into some vertices");
     if ((uint64_t)v->weight_begin + v->num_weights > skin->weights.count) return fbx_fail(b, NULL, "has an FBX skin vertex outside its weight data");
     uint32_t positive = 0u;
     for (uint32_t i = 0; i < v->num_weights; i++) {
@@ -399,7 +437,12 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
                                       (uint64_t)b->skin_vertices + mesh->num_vertices);
             b->skin_vertices += mesh->num_vertices;
             skin = mesh->skin_deformers.data[0];
-            if (skin->skinning_method != UFBX_SKINNING_METHOD_LINEAR && skin->skinning_method != UFBX_SKINNING_METHOD_RIGID) return fbx_fail(b, "export using linear blend skinning", "uses FBX dual-quaternion or other unsupported skinning");
+            // 3ds Max and Unreal write SkinningType "Blend" with a dual-quaternion
+            // weight for each vertex; where every weight is zero that's linear
+            // skinning (fbx_skin_vertex_has_weights refuses any other).
+            if (skin->skinning_method != UFBX_SKINNING_METHOD_LINEAR && skin->skinning_method != UFBX_SKINNING_METHOD_RIGID
+                && skin->skinning_method != UFBX_SKINNING_METHOD_BLENDED_DQ_LINEAR)
+                return fbx_fail(b, "export using linear blend skinning", "uses FBX dual-quaternion skinning");
             for (size_t i = 0; i < mesh->num_vertices; i++) {
                 bool has;
                 if (!fbx_skin_vertex_has_weights(b, skin, i, &has)) return false;
@@ -469,6 +512,7 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
         for (size_t d = 0; ok && b->skinned && d < mesh->blend_deformers.count; d++) {
             const ufbx_blend_deformer *blend = mesh->blend_deformers.data[d];
             for (size_t k = 0; ok && k < blend->channels.count; k++) {
+                if (fbx_channel_repeats(mesh, d, k)) continue;
                 const ufbx_blend_shape *shape;
                 uint32_t position, normal;
                 ok = fbx_channel_shape(b, blend->channels.data[k], &shape)
@@ -502,17 +546,19 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
     if (ok) ok = fbx_text(&b->meshes, "]");
     // The channels' names and default weights, as glTF says them for a mesh
     size_t channels = 0u;
-    for (size_t d = 0; b->skinned && d < mesh->blend_deformers.count; d++) channels += mesh->blend_deformers.data[d]->channels.count;
+    for (size_t d = 0; b->skinned && d < mesh->blend_deformers.count; d++) {
+        for (size_t k = 0; k < mesh->blend_deformers.data[d]->channels.count; k++) channels += !fbx_channel_repeats(mesh, d, k);
+    }
     if (ok && channels) {
         fbx_buffer weights = {.owner=b}, names = {.owner=b};
         for (size_t d = 0; ok && d < mesh->blend_deformers.count; d++) {
             const ufbx_blend_deformer *blend = mesh->blend_deformers.data[d];
             for (size_t k = 0; ok && k < blend->channels.count; k++) {
+                if (fbx_channel_repeats(mesh, d, k)) continue;
                 const ufbx_blend_channel *channel = blend->channels.data[k];
-                const ufbx_blend_shape *shape = channel->keyframes.data[0].shape;
                 const bool first = !weights.size;
                 ok = fbx_text(&weights, first ? "" : ",") && fbx_json_float(&weights, channel->weight)
-                  && fbx_text(&names, first ? "" : ",") && fbx_string(&names, shape->name.length ? shape->name : channel->name);
+                  && fbx_text(&names, first ? "" : ",") && fbx_string(&names, fbx_channel_name(channel));
             }
         }
         ok = ok && fbx_text(&b->meshes, ",\"weights\":[") && fbx_bytes(&b->meshes, weights.data, weights.size)

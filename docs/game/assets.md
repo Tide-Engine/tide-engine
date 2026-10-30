@@ -128,9 +128,9 @@ For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and r
 
 Ordinary color `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled colors can differ slightly from the source, especially around sharp color changes or faint transparency.
 
-On supported GPUs, a full mip chain takes roughly one eighth of RGBA memory for BC1, or one quarter for BC3. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. Unsupported devices use the exact RGBA fallback.
+A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes the image's largest level to RGBA as it uploads it, so it shows the same compressed colors.
 
-The pack currently includes both representations, so this reduces GPU memory and upload bytes while increasing pack size. Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
+Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
 
 The renderer keeps recently hidden pack images in a bounded GPU cache, avoiding another upload when they return soon. This is whole-image residency; mip streaming and virtual textures aren't built yet.
 

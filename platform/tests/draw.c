@@ -443,12 +443,15 @@ static void compressed_pack_textures(void)
     const int32_t indices[] = {0, 1, 2, 0, 2, 3};
     const tide_list corners = tide_list_from(vertices, 4, sizeof *vertices);
     const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
-    for (uint32_t alpha = 0; alpha < 2; alpha++) {
+    // Each format beside its RGBA, then as its blocks alone (as tidec packs it), which a device without them decodes
+    for (uint32_t run = 0; run < 4; run++) {
+        const uint32_t alpha = run & 1u;
+        const bool alone = run >= 2u;
         const uint32_t format = alpha ? TIDE_BLOCKS_BC3 : TIDE_BLOCKS_BC1;
         uint32_t levels, compressed_bytes;
         expect(tide_texture_blocks_size(128, 128, format, &levels, &compressed_bytes), "compressed fixture size is valid");
         uint8_t pixels[128 * 128 * 4], hash[32] = {41};
-        hash[1] = (uint8_t)alpha;
+        hash[1] = (uint8_t)run;
         for (uint32_t i = 0; i < sizeof pixels; i += 4u) {
             pixels[i] = alpha ? 128 : 255, pixels[i + 1] = 0, pixels[i + 2] = 0, pixels[i + 3] = alpha ? 128 : 255;
         }
@@ -463,7 +466,7 @@ static void compressed_pack_textures(void)
             blocks[i + (alpha ? 8u : 0u) + 1u] = alpha ? 0x80 : 0xF8;
         }
         tide_pack_builder pack = {0};
-        const uint32_t block = tide_pack_texture_blocks(&pack, hash, 128, 128, pixels,
+        const uint32_t block = tide_pack_texture_blocks(&pack, hash, 128, 128, alone ? NULL : pixels,
             (tide_texture_blocks){blocks, format, levels, compressed_bytes});
         free(blocks);
         tide_pack_name(&pack, "compressed", TIDE_PACK_TEXTURE, block, 0, 0);
@@ -478,6 +481,9 @@ static void compressed_pack_textures(void)
         const tide_texture_blocks captured = tide_pack_texture_blocks_find(image.image.version & TIDE_TEXTURE_NAME);
         expect(captured.bytes == compressed_bytes && captured.levels == levels && captured.format == format,
                "the loaded pack exposes a complete validated compressed mip chain");
+        tide_texture exact;
+        expect(tide_pack_texture_find(image.image.version & TIDE_TEXTURE_NAME, &exact) && (exact.pixels == NULL) == alone,
+               "an image of blocks alone has no RGBA");
         tide_draw_forget(&list);
         tide_draw_reset(&list);
         tide_draw_clear(&list, background);
@@ -497,7 +503,7 @@ static void compressed_pack_textures(void)
             if (frame == 0) {
                 first_sent = sent;
                 first_memory = tide_platform_gpu_memory();
-                expect(sent == compressed_bytes || sent == sizeof pixels, "BC upload uses blocks or the exact RGBA fallback");
+                expect(sent == compressed_bytes || sent == sizeof pixels, "BC upload uses blocks, or RGBA: exact, or the blocks decoded");
                 expect(first_memory - base_memory == sent, "GPU memory accounts the complete uploaded representation");
                 printf("BC%u fixture: %llu upload bytes, %llu GPU bytes; RGBA base %zu\n", format,
                        (unsigned long long)sent, (unsigned long long)(first_memory - base_memory), sizeof pixels);

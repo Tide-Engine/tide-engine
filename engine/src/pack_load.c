@@ -33,6 +33,7 @@ typedef struct packed_texture {
     uint32_t offset;
     int32_t width, height; // An image's; a clip's (`clip`) has its file's size in `width`
     bool clip;
+    bool blocks_only; // An image of GPU blocks with no RGBA beside them (texture_at)
 } packed_texture;
 
 // An entry of a map from text to clips, as generated code lays it out.
@@ -136,10 +137,21 @@ static bool texture_at(const uint8_t *region, const uint32_t size, const uint32_
     memcpy(&b, region + offset, sizeof b);
     memcpy(wide, region + offset + sizeof b, sizeof wide);
     if (wide[0] <= 0 || wide[1] <= 0) return false;
-    const uint64_t bytes = (uint64_t)wide[0] * (uint64_t)wide[1] * 4u;
-    if ((uint64_t)offset + sizeof b + sizeof wide + bytes > size) return false;
     *t = (packed_texture){.version = (uint64_t)b.a | (uint64_t)b.b << 32, .offset = offset, .width = wide[0], .height = wide[1]};
-    return true;
+    // Blocks alone: their trailer straight after the size, and the block's
+    // payload exactly that (with RGBA, `next` counts its bytes too, never 0)
+    uint32_t metadata[4], levels, bytes;
+    if (b.next && (uint64_t)offset + sizeof b + sizeof wide + sizeof metadata <= size) {
+        memcpy(metadata, region + offset + sizeof b + sizeof wide, sizeof metadata);
+        if (metadata[0] == TIDE_TEXTURE_BLOCK_MAGIC && tide_texture_blocks_size(wide[0], wide[1], metadata[1], &levels, &bytes)
+            && metadata[2] == levels && metadata[3] == bytes && b.next == sizeof wide + sizeof metadata + (uint64_t)bytes
+            && (uint64_t)offset + sizeof b + b.next <= size) {
+            t->blocks_only = true;
+            return true;
+        }
+    }
+    const uint64_t rgba = (uint64_t)wide[0] * (uint64_t)wide[1] * 4u;
+    return (uint64_t)offset + sizeof b + sizeof wide + rgba <= size;
 }
 
 // A text block's bytes, or NULL with none for one that isn't whole in the region.
@@ -652,7 +664,7 @@ static void note_cubes(void)
         for (uint32_t face = 0; face < TIDE_CUBE_FACES && whole; face++) {
             packed_texture t;
             const uint32_t at = place_of(handles[face], pack.size);
-            whole = at != UINT32_MAX && texture_at(pack.region, pack.size, at, &t) && t.width == t.height
+            whole = at != UINT32_MAX && texture_at(pack.region, pack.size, at, &t) && !t.blocks_only && t.width == t.height
                  && (face == 0 || t.width == cube.size);
             if (!whole) break;
             cube.size = t.width;
@@ -1100,7 +1112,7 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
     if (!named || !pack.texture_places) return false;
     const packed_texture *t = texture_place(named);
     if (t->named != named || t->clip) return false;
-    *image = (tide_texture){.pixels = pack.region + t->offset + sizeof(tide_block) + 2u * sizeof(int32_t),
+    *image = (tide_texture){.pixels = t->blocks_only ? NULL : pack.region + t->offset + sizeof(tide_block) + 2u * sizeof(int32_t),
                             .width = t->width, .height = t->height, .version = t->version};
     return true;
 }
@@ -1110,7 +1122,7 @@ tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
     if (!named || !pack.texture_places) return (tide_texture_blocks){0};
     const packed_texture *t = texture_place(named);
     if (t->named != named || t->clip) return (tide_texture_blocks){0};
-    const uint64_t rgba_bytes = (uint64_t)(uint32_t)t->width * (uint32_t)t->height * 4u;
+    const uint64_t rgba_bytes = t->blocks_only ? 0u : (uint64_t)(uint32_t)t->width * (uint32_t)t->height * 4u;
     const uint64_t trailer_at = (uint64_t)t->offset + sizeof(tide_block) + 8u + rgba_bytes;
     tide_block block;
     memcpy(&block, pack.region + t->offset, sizeof block);

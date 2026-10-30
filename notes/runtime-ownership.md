@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Compressed pack images alone (2026-10-30)
+
+Under the pack and drawing maintenance exceptions: a pack texture block may be
+its GPU blocks with no RGBA (`texture_at`; `tide_pack_texture_find` gives NULL
+pixels; `tide_pack_texture_blocks_find`), and `tide_texture_blocks_decode`
+(inline in `tide/texture_blocks.h`) decodes their largest level where the
+platform can't upload them (`texture_for`). Generated code calls nothing new;
+C reading a pack image's pixels must allow NULL for a compressed one. Details:
+textures.md.
+
 ## Sampler constants and scratch lifetime follow-up (2026-10-30)
 
 Within the approved animation performance task, retained immutable sample

@@ -2552,12 +2552,17 @@ static const method_form animation_catalog_calls[] = {
     {"TryGetAt", "TryGetAt(int index, out Animation result) -> bool", "Reads an animation in source order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
+#define BONE_INDEX_DOC "This bone's place in its skeleton, counting from 0: skeleton.bones.TryGetAt(index, out bone) gives it back. Its name is skeleton.NameOf(bone)."
+#define BONE_NAME_OF_DOC "This skeleton's original source name for the bone, or empty text for a bone of another skeleton or a default Bone."
+
 static const method_form bone_catalog_calls[] = {
+    {"NameOf", "NameOf(Bone bone) -> string", BONE_NAME_OF_DOC},
     {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
     {"TryGetAt", "TryGetAt(int index, out Bone result) -> bool", "Reads a skeleton node in skeleton order, counting from 0. Returns false and assigns default for an index outside the catalog."},
 };
 
 static const method_form skeleton_calls[] = {
+    {"NameOf", "NameOf(Bone bone) -> string", BONE_NAME_OF_DOC},
     {"RestPose", "RestPose() -> Pose", "Makes an owned pose with this skeleton's authored rest transforms."},
     {"TryGetByName", "TryGetByName(string name, out Bone result) -> bool", "Looks up a skeleton node by its exact original name. Returns false and assigns default for missing, empty or ambiguous names."},
 };
@@ -3853,6 +3858,7 @@ static void describe(const occurrence *o, sb *out)
                 }
             }
             if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "duration")) sb_put(out, "\n\nThe animation's duration in seconds.");
+            if (d->skin_kind == SKIN_BONE && str_eq_c(o->name, "index")) sb_put(out, "\n\n" BONE_INDEX_DOC);
             if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "name")) sb_put(out, "\n\nThis animation's original source name.");
             if ((d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_POSE) && str_eq_c(o->name, "skeleton"))
                 sb_put(out, "\n\nThis value's source skeleton. Use the actual animation skeleton when preparing RetargetMap.Create; its authored defaults are not necessarily a neutral reference pose.");
@@ -6796,6 +6802,7 @@ static type member_type(const type t, const str member)
         if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
         if (d->skin_kind == SKIN_ANIMATION && str_eq_c(member, "name")) return (type){TY_STRING, NULL};
         if (d->skin_kind == SKIN_ANIMATION && str_eq_c(member, "duration")) return (type){TY_FLOAT, NULL};
+        if (d->skin_kind == SKIN_BONE && str_eq_c(member, "index")) return (type){TY_INT, NULL};
         if (d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) {
             for (int i = 0; i < d->skin_catalog.count; i++) {
                 if (str_eq(d->skin_catalog.items[i].name, member)) {
@@ -7021,6 +7028,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             item(c, "weight", CK_PROPERTY, "float", BLEND_SHAPE_WEIGHT_DOC, NULL);
         }
         if (d->skin_kind == SKIN_SKELETON) item(c, "bones", CK_PROPERTY, "Bones", "Named nodes for sockets, hitboxes and procedural pose edits.", NULL);
+        if (d->skin_kind == SKIN_BONE) item(c, "index", CK_PROPERTY, "int", BONE_INDEX_DOC, NULL);
         if (d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_POSE)
             item(c, "skeleton", CK_PROPERTY, "Skeleton", "This value's source skeleton, including animation-only exports. Use it when preparing RetargetMap.Create.", NULL);
         if (d->skin_kind == SKIN_ANIMATION) {

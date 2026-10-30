@@ -3806,12 +3806,20 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
             gpu_written += t->compressed.bytes;
             resident_mips = true;
         } else g->texture = take_data_texture(t);
-        if (g->texture && !resident_mips) gpu->texture_write(g->texture, t->pixels);
+        // A pack image that's only blocks, on a device that can't sample them: their first level, decoded
+        const void *pixels = t->pixels;
+        uint8_t *decoded = NULL;
+        if (!resident_mips && !pixels && t->compressed.pixels) {
+            decoded = tide_alloc((size_t)t->width * (size_t)t->height * 4u);
+            if (tide_texture_blocks_decode(t->compressed, t->width, t->height, decoded)) pixels = decoded;
+        }
+        if (g->texture && !resident_mips) gpu->texture_write(g->texture, pixels);
         else if (!g->texture) {
             // A grid of floats' cells are one float of 16 bits a pixel
             g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
-                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+                                      t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, pixels);
         }
+        free(decoded);
         if (!resident_mips) gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     }
     if (count) g->mipped = resident_mips; // Uploaded blocks already contain every mip.

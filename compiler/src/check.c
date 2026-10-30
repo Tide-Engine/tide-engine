@@ -8633,9 +8633,14 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
     const bool comparison = op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE;
     if (t.decl && t.decl->asset_ref_of) {
         diag_note("asset references compare with '==' and '!=' between the same Asset<T> type");
-    } else if (t.decl && t.decl->builtin && t.decl->fields.count) { // Random, Vertex: nowhere to declare an operator
-        diag_note("%s is the engine's, and has no operators: work with its fields, like 'a." STR_FMT " %s b." STR_FMT "'",
-                  type_name(t), STR_ARG(t.decl->fields.items[0].name), op_symbol(op), STR_ARG(t.decl->fields.items[0].name));
+    } else if (t.decl && t.decl->builtin) { // Random, Vertex: nowhere to declare an operator
+        const field *shown = NULL;
+        for (int i = 0; !shown && i < t.decl->fields.count; i++) {
+            if (!t.decl->fields.items[i].hidden) shown = &t.decl->fields.items[i];
+        }
+        if (shown) diag_note("%s is the engine's, and has no operators: work with its fields, like 'a." STR_FMT " %s b." STR_FMT "'",
+                             type_name(t), STR_ARG(shown->name), op_symbol(op), STR_ARG(shown->name));
+        else diag_note("%s is the engine's, and has no operators", type_name(t));
     } else if (unary) {
         diag_note("declare it in the struct, like '%s operator %s(%s value)'", type_name(t), op_symbol(op), type_name(t));
     } else if (op == T_EQ || op == T_NE) {
@@ -8775,6 +8780,9 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     }
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
         && l.decl == prog->visibility_group && r.decl == prog->visibility_group) return T_BOOL_;
+    // Two bones are equal when they're the same bone of the same skeleton
+    if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT && l.decl->skin_kind == SKIN_BONE
+        && r.decl->skin_kind == SKIN_BONE) return T_BOOL_;
     // Two audiences are equal when they have the same players
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
         && l.decl == prog->audience && r.decl == prog->audience) return T_BOOL_;

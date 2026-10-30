@@ -115,6 +115,13 @@ system CheckAndAnimate(mut Probe p)
         Expect(p, Same3(pose[hand].position, float3(-9, 2, 3)) && Same3(pose[hand].scale, float3(1)));
         Bone missing = default;
         Expect(p, Same3(pose[missing].position, float3(0)) && Same3(Math.Transform(pose.Model(missing), float3(0)), float3(0)));
+        // A bone's name, place and identity, and what text shows of the engine's values
+        Expect(p, hero.skeleton.NameOf(hand) == "Arm" && hero.skeleton.bones.NameOf(hand) == "Arm" && hero.skeleton.NameOf(missing) == "");
+        Expect(p, hero.skeleton.bones.TryGetAt(hand.index, out var again) && again == hand && hand != missing && !(hand == missing));
+        Expect(p, hero.skeleton.TryGetByName("Arm", out var arm) && arm == hand && missing.index == 0);
+        Expect(p, $"{hand}" == $"Bone {{ index = {hand.index} }}" && $"{missing}" == "Bone { index = 0 }");
+        Expect(p, $"{hero.animations.move}" == "Animation { name = \"Move\" }" && $"{pose}" == "Pose { }");
+        Expect(p, $"{pose[hand]}" == "BoneTransform { position = (-9, 2, 3), rotation = (0, 0, 0, 1), scale = (1, 1, 1) }");
 
         p.order = 0;
         pose.Sample(seconds: StampSeconds(p), playback: StampPlayback(p), animation: StampClip(p));

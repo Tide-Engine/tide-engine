@@ -261,7 +261,7 @@ endif()
 # Stored decoded Animation bytes now use immutable model descriptors. Native
 # ASan and WASM agree on this intentional ownership/hash change; pose bits stay
 # unchanged and the fixture checks snapshot and serialized-value equivalence.
-target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=18284937891356215991ull)
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=3716259767306771187ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume

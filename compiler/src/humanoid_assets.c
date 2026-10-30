@@ -4,6 +4,7 @@
 #include "tide/skinned_data.h"
 #include "tide/sha256.h"
 #include <float.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -188,7 +189,25 @@ static bool read_profile(asset_match *item, const jnode *root, loc at, const cha
         t->scale = tide_mul_f3(t->scale, tide_f3_splat(scale));
     }
     if (!tide_humanoid_auto(data, transforms, &bones, &status, 0)) {
-        snprintf(why, sizeof why, "reference transforms must be finite with positive uniform scale"); ok = false; goto done;
+        snprintf(why, sizeof why, "reference transforms must be finite with positive uniform scale");
+        // Name the first bone that isn't, as retarget.c's valid_local judges
+        for (int32_t i = 0; i < tide_list_count(transforms); i++) {
+            const tide_bone_transform *t = tide_list_at(transforms, i, sizeof *t);
+            const float x = t->scale.x, y = t->scale.y, z = t->scale.z;
+            const float p[] = {t->position.x, t->position.y, t->position.z, t->rotation.value.x, t->rotation.value.y,
+                               t->rotation.value.z, t->rotation.value.w, x, y, z};
+            bool fine = x > 0.0f && fabsf(x - y) <= x * 0.00001f && fabsf(x - z) <= x * 0.00001f;
+            for (int k = 0; k < 10; k++) fine = fine && isfinite(p[k]);
+            tide_skinned_node_data node;
+            if (fine || !tide_skinned_data_node(&view, (uint32_t)i, &node)) continue;
+            const int length = (int)(node.name_length > 60u ? 60u : node.name_length);
+            if (x > 0.0f && isfinite(x) && isfinite(y) && isfinite(z) && !(fabsf(x - y) <= x * 0.00001f && fabsf(x - z) <= x * 0.00001f))
+                snprintf(why, sizeof why, "reference transforms must be finite with positive uniform scale; '%.*s' has scale (%g, %g, %g)",
+                         length, node.name ? node.name : "", (double)x, (double)y, (double)z);
+            else snprintf(why, sizeof why, "reference transforms must be finite with positive uniform scale; '%.*s' hasn't", length, node.name ? node.name : "");
+            break;
+        }
+        ok = false; goto done;
     }
     const jnode *mapping = jget(root, "bones");
     if (mapping && !object_keys(mapping, roles, TIDE_HUMANOID_COUNT, why)) { ok = false; goto done; }

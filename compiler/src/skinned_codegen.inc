@@ -140,6 +140,20 @@ static void gen_skin_expr(gen *g, sb *o, const expr *e)
         // field names unless [Name] supplied an exact alias.
         return;
     }
+    if (op == SKIN_OP_BONE_INDEX) {
+        sb_put(o, "(");
+        gen_expr(g, o, e->object);
+        sb_put(o, ").index");
+        return;
+    }
+    if (op == SKIN_OP_BONE_NAME) {
+        sb_put(o, "tide_skin_bone_name(");
+        gen_skin_data(g, o, e->object);
+        sb_put(o, ", ");
+        gen_expr(g, o, e->args.items[0]);
+        sb_put(o, ")");
+        return;
+    }
     if (op == SKIN_OP_ANIMATION_COUNT || op == SKIN_OP_BONE_COUNT) {
         sb_put(o, op == SKIN_OP_ANIMATION_COUNT ? "tide_skin_catalog_count(" : "tide_skinned_bone_count(");
         if (op == SKIN_OP_ANIMATION_COUNT) gen_skin_catalog(g, o, e->object);

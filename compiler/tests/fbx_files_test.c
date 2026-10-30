@@ -312,6 +312,80 @@ TIDE_TEST(fbx_blend_shapes_become_shapes_and_in_betweens_are_refused)
     }
 }
 
+// A channel repeating an earlier one of its mesh exactly is left out, so the
+// model is the one without it; repeating a name with other offsets is refused.
+TIDE_TEST(fbx_blend_shape_channels_repeated_exactly_are_one_shape)
+{
+    static const char *const kinds[] = {"ascii", "binary"};
+    for (uint32_t i = 0; i < 2; i++) {
+        char name[64];
+        size_t plain_size, same_size, other_size;
+        snprintf(name, sizeof name, "shapes/shapes_%s.fbx", kinds[i]);
+        uint8_t *plain = fixture(name, &plain_size);
+        snprintf(name, sizeof name, "shapes/repeated_%s.fbx", kinds[i]);
+        uint8_t *same = fixture(name, &same_size);
+        snprintf(name, sizeof name, "shapes/renamed_%s.fbx", kinds[i]);
+        uint8_t *other = fixture(name, &other_size);
+        TIDE_REQUIRE(plain && same && other);
+        uint8_t *a = NULL, *b = NULL;
+        uint32_t a_size = 0, b_size = 0;
+        TIDE_REQUIRE(decode(plain, plain_size, &a, &a_size));
+        TIDE_REQUIRE(decode(same, same_size, &b, &b_size));
+        TIDE_CHECK(a_size == b_size && memcmp(a, b, a_size) == 0);
+        uint8_t *glb = NULL, *model = NULL;
+        size_t glb_size = 0;
+        uint32_t model_size = 0;
+        char why[256], note[256];
+        TIDE_REQUIRE(fbx_file_to_glb(other, other_size, true, &glb, &glb_size, why, note));
+        TIDE_CHECK(!tide_skinned_data_decode(glb, glb_size, false, NULL, NULL, &model, &model_size, why, note) && !model);
+        TIDE_CHECK(strstr(why, "two morph targets named 'jawOpen'") != NULL);
+        free(glb);
+        tide_skinned_data_free(a);
+        tide_skinned_data_free(b);
+        free(plain);
+        free(same);
+        free(other);
+    }
+}
+
+// SkinningType "Blend" whose dual-quaternion weights are all zero is linear
+// skinning: the same model as the rig saying "Linear". A vertex blending in
+// dual-quaternion skinning is refused.
+TIDE_TEST(fbx_blend_skinning_without_dual_quaternion_weights_is_linear)
+{
+    static const char *const kinds[] = {"ascii", "binary"};
+    for (uint32_t i = 0; i < 2; i++) {
+        char name[64];
+        size_t linear_size, blend_size, dq_size;
+        snprintf(name, sizeof name, "models/rig_%s.fbx", kinds[i]);
+        uint8_t *linear = fixture(name, &linear_size);
+        snprintf(name, sizeof name, "skin/blend_%s.fbx", kinds[i]);
+        uint8_t *blend = fixture(name, &blend_size);
+        snprintf(name, sizeof name, "skin/dualquaternion_%s.fbx", kinds[i]);
+        uint8_t *dq = fixture(name, &dq_size);
+        TIDE_REQUIRE(linear && blend && dq);
+        uint8_t *a = NULL, *b = NULL;
+        uint32_t a_size = 0, b_size = 0;
+        TIDE_REQUIRE(decode(linear, linear_size, &a, &a_size));
+        TIDE_REQUIRE(decode(blend, blend_size, &b, &b_size));
+        TIDE_CHECK(a_size == b_size && memcmp(a, b, a_size) == 0);
+        uint8_t *glb = NULL;
+        size_t glb_size = 0;
+        char why[256], note[256];
+        TIDE_CHECK(!fbx_file_to_glb(dq, dq_size, true, &glb, &glb_size, why, note) && !glb);
+        TIDE_CHECK(strstr(why, "blends FBX dual-quaternion skinning") && strstr(note, "linear blend skinning"));
+        // A static mesh reads its rest geometry whatever its skinning is.
+        mesh_file mesh = {0};
+        TIDE_CHECK(read_mesh(dq, dq_size, name, &mesh));
+        mesh_file_free(&mesh);
+        tide_skinned_data_free(a);
+        tide_skinned_data_free(b);
+        free(linear);
+        free(blend);
+        free(dq);
+    }
+}
+
 // Euler rotation keys written wrapped (179 then -179 degrees about z) are a
 // two-degree turn; the 60 Hz bake between them must not sweep back through 0.
 TIDE_TEST(fbx_wrapped_euler_rotation_keys_bake_the_short_way)

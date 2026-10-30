@@ -54,9 +54,13 @@ static void gen_skinned_adapters(gen *g)
                  "    return tide_skin_animation_at(data, tide_skin_member_index(data, name, exact, false));\n}\n"
                  "TIDE_HELPER %s tide_skin_bone_member(tide_list data, tide_str name, bool exact)\n{\n"
                  "    return tide_skin_bone_at(data, tide_skin_member_index(data, name, exact, true));\n}\n"
+                 "TIDE_HELPER tide_str tide_skin_bone_name(tide_list data, %s bone)\n{\n"
+                 "    if (bone.fingerprint == 0 || (uint64_t)bone.fingerprint != tide_skinned_fingerprint(data)) return TIDE_STR_EMPTY;\n"
+                 "    return tide_skinned_bone_name(data, bone.index);\n}\n"
+                 "TIDE_HELPER bool tide_skin_bone_equal(%s a, %s b) { return a.fingerprint == b.fingerprint && a.index == b.index; }\n"
                  "TIDE_HELPER tide_str tide_skin_animation_name(%s v) { return tide_skinned_animation_name(v.data, v.index); }\n"
                  "TIDE_HELPER float tide_skin_animation_duration(%s v) { return tide_skinned_animation_duration(v.data, v.index); }\n\n",
-              animation, animation, bone, bone, animation, bone, animation, animation);
+              animation, animation, bone, bone, animation, bone, bone, bone, bone, animation, animation);
     sb_put(o, "typedef struct tide_skin_catalog { tide_list data, sources; } tide_skin_catalog;\n"
               "TIDE_HELPER tide_list tide_skin_catalog_list(tide_list data)\n{\n"
               "    return data.at ? tide_list_from(&data, 1, sizeof data) : (tide_list){0};\n}\n"

@@ -142,7 +142,9 @@ writePair("animation", "negative", negative);
 
 // Blend shapes on the rig's triangle: "smile" moves two vertices and a normal at a default of 25%,
 // "jawOpen" one vertex. Maya-style names: the channel is "Blends.smile", its shape "smile".
-function shaped(inBetween) {
+// repeat: the jawOpen channel again, "same" exactly (left out, as the one of The Tales Factory's Medieval
+// Civilians & Soldiers is), "other" moving another vertex (two shapes of one name: refused).
+function shaped(inBetween, repeat) {
     const tree = document(true);
     const objects = tree.find(n => n.name === "Objects").children, connections = tree.find(n => n.name === "Connections").children;
     const shape = (id, name, indexes, vertices, normals) => node("Geometry", [id, `Geometry::${name}`, "Shape"], [node("Version", [100]),
@@ -154,6 +156,10 @@ function shaped(inBetween) {
         channel(7100n, "smile", 25, inBetween ? [50, 100] : [100]), shape(7200n, "smile", [0, 2], [0, 0.5, 0, 0, 0, 0.25], [0, 0, 0, 1, 0, 0]),
         channel(7300n, "jawOpen", 0, [100]), shape(7400n, "jawOpen", [1], [0, -1, 0]));
     connections.push(connect(7000n, 1000n), connect(7100n, 7000n), connect(7200n, 7100n), connect(7300n, 7000n), connect(7400n, 7300n));
+    if (repeat) {
+        objects.push(channel(7600n, "jawOpen", 0, [100]), shape(7700n, "jawOpen", [repeat === "same" ? 1 : 2], [0, -1, 0]));
+        connections.push(connect(7600n, 7000n), connect(7700n, 7600n));
+    }
     if (inBetween) {
         objects.push(shape(7500n, "smileHalf", [0], [0, 0.25, 0]));
         connections.push(connect(7500n, 7100n));
@@ -162,6 +168,20 @@ function shaped(inBetween) {
 }
 writePair("shapes", "shapes", shaped(false));
 writePair("shapes", "inbetween", shaped(true));
+writePair("shapes", "repeated", shaped(false, "same"));
+writePair("shapes", "renamed", shaped(false, "other"));
+
+// SkinningType "Blend", as 3ds Max and Unreal write it, with a dual-quaternion weight for each vertex: all
+// zero is linear skinning, the rig as "Linear" says it; any other is refused.
+function blended(weight) {
+    const tree = document(true);
+    const skin = tree.find(n => n.name === "Objects").children.find(n => n.props[2] === "Skin");
+    skin.children = [node("Version", [101]), node("Link_DeformAcuracy", [50]), node("SkinningType", ["Blend"]),
+        node("Indexes", [array("i", [0, 1, 2])]), node("BlendWeights", [array("d", [0, weight, 0])])];
+    return tree;
+}
+writePair("skin", "blend", blended(0));
+writePair("skin", "dualquaternion", blended(0.5));
 
 // Bone0 turns about z from 179 to -179 degrees over one 30 fps frame: two degrees, written wrapped, as
 // exporters do. Between the keys the bone must take the short way, not a full turn back through zero.

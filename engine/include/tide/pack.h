@@ -262,7 +262,9 @@ tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e);
 // The loaded pack's image that a Texture names (`named`: its
 // `image.version`), as pixels: width * height * 4 bytes, rows from the top,
 // and a version that's what's in them (the file's hash). False when the
-// pack has no image under that name. The pixels stay where they are until
+// pack has no image under that name. A compressed image is its blocks alone,
+// with `pixels` NULL and its size as ever (tide_pack_texture_blocks_find;
+// tide_texture_blocks_decode). The pixels stay where they are until
 // another pack is loaded or this one is let go, and a draw list draws with
 // them there (TIDE_PIXELS_PACK), with no copy of its own: a list that drew
 // with one isn't rendered after its pack went.

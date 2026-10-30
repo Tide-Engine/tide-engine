@@ -1,5 +1,47 @@
 # Textures and how they are sampled
 
+## Packs keep compressed images alone (2026-10-30)
+
+bannerlord-duel (notes/gaps.md) found its web pack going from 32 to 231 MB with
+a dozen 1k-2k photographs, and four 4096 by 4096 RGBA atlases ending `tide
+run` with "tide: out of memory". Both were the pack keeping every compressed
+image's exact RGBA beside its blocks: 85 MB for one 4096 image with BC3, and
+tidec's builder aborts (`block` in `engine/src/pack.c`) past the 512 MiB a pack
+handle reaches (`TIDE_PACK_BASE`, tide/text.h), which their pack passed.
+
+- **tidec** (`pack_item`) gives `tide_pack_texture_blocks` no RGBA when
+  compression made blocks; its content key flips another byte too, as this is
+  another representation. Uncompressed images (small, not a power of two,
+  `[Raw]`, cubemap faces) are as they were.
+- **The block** of one: the size, then the existing trailer (magic, format,
+  levels, bytes) and the blocks, with `next` exactly `8 + 16 + bytes`. With
+  RGBA, `next` counts the RGBA too and is never that, and an uncompressed
+  image's is 0, so `texture_at` (`pack_load.c`) tells them apart. A
+  blocks-only image's `tide_pack_texture_find` has `pixels` NULL (its size is
+  as before), its `tide_pack_texture_blocks_find` the blocks, and it's no
+  cubemap face. Old layouts still load.
+- **A device without BC** (`gpu->texture_blocks` absent or failing: phones'
+  OpenGL ES and WebGPU, WebGL without S3TC, Unity's backend) gets the blocks'
+  largest level decoded to premultiplied RGBA in `texture_for`
+  (`platform/src/platform.c`), uploaded as an ordinary image and freed; such a
+  texture makes its own mips for Trilinear as any uncompressed one does. The
+  decoder is `tide_texture_blocks_decode` (`tide/texture_blocks.h`, inline):
+  BC1's four and three-color blocks, BC3's eight and six-level alpha with its
+  color block always four colors, thirds and sevenths rounded to the nearest.
+  It checks the blocks' size against the image's before writing anything.
+- **Measured:** seven 4096 textures (six BC3, one BC1) pack into 145 MB; the
+  same with RGBA beside them was past 512 MiB and tidec aborted.
+
+Tests: `pack_textures_of_blocks_alone_have_no_pixels_and_their_blocks`
+(tests/test_pack.c: no pixels, whole blocks, a damaged `next` or trailer no
+blocks, no cube of it, an image given neither stays zeros);
+`texture_blocks_decode_to_the_first_level_as_the_formats_say` (within 2 of the
+independent decoder in texture_compress_test.c over both smooth fixtures,
+hand-made three-color BC1 and six-level BC3 blocks, wrong sizes, formats and
+counts writing nothing); `compressed_pack_textures` in `platform/tests/draw.c`
+now draws each format as blocks alone too, with its pixels and upload bytes;
+`texture_compression` e2e reads the decoded pixel.
+
 ## Depth dimensions (2026-10-29)
 
 The Render3D resolution increase needs physical shadow dimensions after the
@@ -132,7 +174,7 @@ There is no sampler, runtime or GPU contract change; see `notes/language.md`.
 - Coverage: compiler compression tests use an independent decoder and repeat-build comparison; `texture_compression` E2E checks automatic opaque/alpha imports, exact Raw/small channels and append. Pack tests reject corrupt metadata without changing RGBA. Renderer tests cover pixels, premultiplied alpha, point/trilinear reads, upload/memory accounting, residency expiry, byte/count pressure, unload/draw epochs, forced RGBA fallback and WebGPU device loss. Adapter mocks check BC with/without timestamps, timestamp fallback preserving BC and explicit disablement.
 - Validation: full native/web debug builds and suites exercised 2081/2053 tests. Initial failures came from new PNGs entering an existing recursive-glob fixture, an empty optional-feature request descriptor, and forwarding the page's fallback query as a C test argument. Those were corrected, fixtures/pages rebuilt, and all seven affected native checks and sixteen web asset/runtime/renderer/timing/shader/skinning/thread checks passed; every other full-suite case passed. The production docs build passed with existing allowed missing-example placeholders. All native runs used `TIDE_HIDDEN=1`; browsers were muted. No CI or deployment was requested.
 - Merge validation: incoming `dev` editor completions/playback hints and unbuilt LOD design were retained. Two top-of-note insertion conflicts preserved both entries; the spec merged cleanly. Rebuilt the changed compiler dependency, editor tests and affected asset/animation/render targets. Eleven native and eight web dependency checks passed, including all editor transports, automatic compression, CPU/default-pose sampling and skinned pixels on both web backends. The merged production docs build passed.
-- Remaining gaps: ETC2/ASTC/mobile-specific compressed variants, DDS/KTX imports, compressed cubemaps/non-power-of-two images, per-asset quality controls, smaller CPU/download representation, asynchronous uploads, mip streaming, total-memory budgets and virtual texturing. No streaming system is scaffolded here. Android and macOS hardware coverage remains CI/device work.
+- Remaining gaps: ETC2/ASTC/mobile-specific compressed variants, DDS/KTX imports, compressed cubemaps/non-power-of-two images, per-asset quality controls, smaller CPU/download representation (built 2026-10-30: Packs keep compressed images alone, above), asynchronous uploads, mip streaming, total-memory budgets and virtual texturing. No streaming system is scaffolded here. Android and macOS hardware coverage remains CI/device work.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 

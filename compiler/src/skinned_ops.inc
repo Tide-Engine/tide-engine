@@ -24,6 +24,10 @@ static type check_skinned_member(checker *c, expr *e, const type obj, bool *hand
         *handled = false;
         return T_ERR;
     }
+    if (d->skin_kind == SKIN_BONE && str_eq_c(e->member, "index")) {
+        e->skin_operation = SKIN_OP_BONE_INDEX;
+        return T_INT_;
+    }
     if ((d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_POSE) && str_eq_c(e->member, "skeleton")) {
         e->skin_operation = SKIN_OP_SKELETON;
         return decl_type(c->prog->skeleton);
@@ -295,6 +299,12 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
         count = 2;
         out_index = 1;
         result = T_BOOL_;
+    } else if (bones && str_eq_c(e->name, "NameOf")) {
+        e->skin_operation = SKIN_OP_BONE_NAME;
+        args[0] = decl_type(c->prog->bone);
+        names = "bone";
+        count = 1;
+        result = (type){TY_STRING, NULL};
     } else if (kind == SKIN_SKELETON && str_eq_c(e->name, "RestPose")) {
         e->skin_operation = SKIN_OP_REST_POSE;
         result = decl_type(c->prog->pose);

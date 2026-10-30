@@ -86,3 +86,62 @@ TIDE_TEST(texture_compression_leaves_small_non_power_of_two_and_invalid_images_e
     TIDE_CHECK(tide_texture_blocks_size(16384, 4, 3, &levels, &bytes));
     TIDE_CHECK(levels == 15 && bytes > 0);
 }
+
+// The runtime's decoder (a device with no BC blocks draws a pack image from
+// them) gives the first level as the independent decoder above does, within
+// rounding of the thirds and sevenths, and BC1's three-color blocks and
+// BC3's six-level alpha as the formats say.
+TIDE_TEST(texture_blocks_decode_to_the_first_level_as_the_formats_say)
+{
+    uint8_t rgba[128 * 128 * 4], out[128 * 128 * 4];
+    for (uint32_t alpha = 0; alpha < 2; alpha++) {
+        for (uint32_t y = 0; y < 128; y++) for (uint32_t x = 0; x < 128; x++) {
+            const uint32_t at = (y * 128u + x) * 4u, a = alpha ? x + y : 255u;
+            rgba[at] = (uint8_t)(x * 2u * a / 255u);
+            rgba[at + 1] = (uint8_t)(y * 2u * a / 255u);
+            rgba[at + 2] = (uint8_t)((x + y) * a / 255u);
+            rgba[at + 3] = (uint8_t)a;
+        }
+        const tide_texture_blocks compressed = texture_compress(rgba, 128, 128);
+        TIDE_REQUIRE(compressed.pixels != NULL);
+        memset(out, 0xEE, sizeof out);
+        TIDE_REQUIRE(tide_texture_blocks_decode(compressed, 128, 128, out));
+        const uint32_t stride = alpha ? 16 : 8;
+        uint32_t maximum = 0;
+        for (uint32_t y = 0; y < 128; y += 4) for (uint32_t x = 0; x < 128; x += 4) {
+            uint8_t decoded[64];
+            decode(compressed.pixels + (y / 4u * 32u + x / 4u) * stride, alpha != 0, decoded);
+            for (uint32_t row = 0; row < 4; row++) for (uint32_t col = 0; col < 4; col++) for (uint32_t c = 0; c < 4; c++) {
+                const int difference = (int)decoded[(row * 4u + col) * 4u + c] - out[((y + row) * 128u + x + col) * 4u + c];
+                const uint32_t error = (uint32_t)(difference < 0 ? -difference : difference);
+                if (error > maximum) maximum = error;
+            }
+        }
+        TIDE_CHECK(maximum <= 2);
+        // Wrong sizes, formats or counts write nothing
+        memset(out, 0xEE, sizeof out);
+        TIDE_CHECK(!tide_texture_blocks_decode(compressed, 64, 128, out));
+        tide_texture_blocks wrong = compressed;
+        wrong.bytes--;
+        TIDE_CHECK(!tide_texture_blocks_decode(wrong, 128, 128, out));
+        wrong = compressed;
+        wrong.format = 2;
+        TIDE_CHECK(!tide_texture_blocks_decode(wrong, 128, 128, out));
+        TIDE_CHECK(out[0] == 0xEE && out[sizeof out - 1u] == 0xEE);
+        free((void *)(uintptr_t)compressed.pixels);
+    }
+    uint32_t levels, bytes;
+    TIDE_REQUIRE(tide_texture_blocks_size(4, 4, TIDE_BLOCKS_BC1, &levels, &bytes) && levels == 3 && bytes == 24);
+    // BC1 with its first endpoint not above the second: blue, red, their middle and transparent black
+    uint8_t bc1[24] = {0x1F, 0x00, 0x00, 0xF8, 0xE4, 0xE4, 0xE4, 0xE4}, pixels[64];
+    TIDE_REQUIRE(tide_texture_blocks_decode((tide_texture_blocks){bc1, TIDE_BLOCKS_BC1, levels, bytes}, 4, 4, pixels));
+    static const uint8_t bc1_row[16] = {0, 0, 255, 255, 255, 0, 0, 255, 127, 0, 127, 255, 0, 0, 0, 0};
+    for (uint32_t row = 0; row < 4; row++) TIDE_CHECK(!memcmp(pixels + row * 16u, bc1_row, 16));
+    // BC3 with alpha 0 not above 255: six levels, then 0 and 255; its color block is four colors whatever the order
+    TIDE_REQUIRE(tide_texture_blocks_size(4, 4, TIDE_BLOCKS_BC3, &levels, &bytes) && bytes == 48);
+    uint8_t bc3[48] = {0, 255, 0x88, 0xC6, 0xFA, 0x88, 0xC6, 0xFA, 0x1F, 0x00, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00};
+    TIDE_REQUIRE(tide_texture_blocks_decode((tide_texture_blocks){bc3, TIDE_BLOCKS_BC3, levels, bytes}, 4, 4, pixels));
+    static const uint8_t alphas[8] = {0, 255, 51, 102, 153, 204, 0, 255};
+    for (uint32_t i = 0; i < 8; i++) TIDE_CHECK(pixels[i * 4u + 3u] == alphas[i] && pixels[(i + 8u) * 4u + 3u] == alphas[i]);
+    TIDE_CHECK(pixels[0] == 0 && pixels[2] == 255); // Color index 0 of four: the first endpoint, blue
+}

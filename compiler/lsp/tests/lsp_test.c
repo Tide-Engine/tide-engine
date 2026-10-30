@@ -12338,7 +12338,14 @@ TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
     completion = complete("scene Main { }\nvoid Inspect(Pose pose) { pose.$ }\n");
     TIDE_CHECK(offers(completion, "skeleton") && offers(completion, "Retarget") && !offers(completion, "transforms"));
     completion = complete("scene Main { }\nvoid Inspect(HumanoidRig rig) { rig.referencePose.skeleton.bones.$ }\n");
-    TIDE_CHECK(offers(completion, "TryGetByName") && offers(completion, "TryGetAt"));
+    TIDE_CHECK(offers(completion, "TryGetByName") && offers(completion, "TryGetAt") && offers(completion, "NameOf"));
+    completion = complete("scene Main { }\nvoid Inspect(Animation clip) { clip.skeleton.Na$ }\n");
+    TIDE_CHECK(offers(completion, "NameOf") && has(completion, "NameOf(Bone bone)"));
+    completion = complete("scene Main { }\nvoid Inspect(Bone bone) { bone.$ }\n");
+    TIDE_CHECK(offers(completion, "index") && !offers(completion, "fingerprint"));
+    open_document("scene Main { }\nint Place(HumanoidRig rig) { return rig[HumanoidBone.Head].in$dex; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "place in its skeleton"));
 
     open_document("scene Main { }\nHumanoidRig Characterize(Pose reference) { return HumanoidRig.Au$to(reference); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));

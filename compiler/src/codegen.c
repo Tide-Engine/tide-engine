@@ -2884,6 +2884,11 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         gen_expr(g, o, l); sb_put(o, ", "); gen_expr(g, o, r); sb_put(o, ")");
         return;
     }
+    if (lt.kind == TY_STRUCT && lt.decl->skin_kind == SKIN_BONE && (op == T_EQ || op == T_NE)) {
+        sb_put(o, op == T_EQ ? "tide_skin_bone_equal(" : "!tide_skin_bone_equal(");
+        gen_expr(g, o, l); sb_put(o, ", "); gen_expr(g, o, r); sb_put(o, ")");
+        return;
+    }
     if (lt.kind == TY_STRUCT && lt.decl == g->prog->visibility_group && (op == T_EQ || op == T_NE)) {
         sb_put(o, "(("); gen_expr(g, o, l); sb_put(o, ").id ");
         sb_put(o, op == T_EQ ? "== (" : "!= ("); gen_expr(g, o, r); sb_put(o, ").id)");
@@ -9842,6 +9847,15 @@ static void gen_show_part(gen *g, sb *o, const type t, const char *v)
     sb_put(o, ";\n");
 }
 
+// The i-th value type text might show: the program's, its maps' entries,
+// then the engine's skinned values (Bone, Pose...), which aren't its decls.
+static const decl *shown_decl(const program *prog, const int i)
+{
+    if (i < prog->decls.count) return prog->decls.items[i];
+    if (i < prog->decls.count + prog->maps.count) return prog->maps.items[i - prog->decls.count]->entry;
+    return prog->skinned_types.items[i - prog->decls.count - prog->maps.count];
+}
+
 // Text for what text shows by what's in it (decl.shown): values with fields
 // as C# shows records, `Name { a = 1, b = "x" }`, and lists, `[1, 2]`.
 // Session's has its room and Disconnected's its message, which are beside the
@@ -9851,8 +9865,9 @@ static void gen_show_helpers(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     bool any = false;
-    for (int i = 0; i < prog->decls.count + prog->maps.count; i++) { // Value types, then the maps' entries
-        const decl *d = i < prog->decls.count ? prog->decls.items[i] : prog->maps.items[i - prog->decls.count]->entry;
+    const int shown_count = prog->decls.count + prog->maps.count + prog->skinned_types.count;
+    for (int i = 0; i < shown_count; i++) { // Value types, then the maps' entries and the engine's skinned values
+        const decl *d = shown_decl(prog, i);
         if (!d || !d->shown) continue;
         any = true;
         const char *name = type_cname(d);
@@ -9901,8 +9916,8 @@ static void gen_show_helpers(gen *g)
         sb_put(o, "    }\n    return tide_str_add_cstr(a, \"]\");\n}\n\n");
     }
 
-    for (int i = 0; i < prog->decls.count + prog->maps.count; i++) {
-        const decl *d = i < prog->decls.count ? prog->decls.items[i] : prog->maps.items[i - prog->decls.count]->entry;
+    for (int i = 0; i < shown_count; i++) {
+        const decl *d = shown_decl(prog, i);
         if (!d || !d->shown) continue;
         const char *name = type_cname(d);
         const char *beside = shown_beside(prog, d);
@@ -9910,6 +9925,17 @@ static void gen_show_helpers(gen *g)
                   beside ? ", const char *" : "", beside ? beside : "");
         sb_printf(o, "    a = tide_str_add_cstr(a, \"" STR_FMT " {\");\n", STR_ARG(d->name));
         const char *comma = " ";
+        // The engine's skinned values show what their members say of them
+        if (d->skin_kind == SKIN_BONE) {
+            sb_put(o, "    a = tide_str_add_cstr(a, \" index = \");\n");
+            gen_show_part(g, o, (type){TY_INT, NULL}, "v.index");
+            comma = ", ";
+        } else if (d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_BLEND_SHAPE) {
+            sb_put(o, "    a = tide_str_add_cstr(a, \" name = \");\n");
+            gen_show_part(g, o, (type){TY_STRING, NULL},
+                          d->skin_kind == SKIN_ANIMATION ? "tide_skin_animation_name(v)" : "tide_skin_blend_shape_name(v)");
+            comma = ", ";
+        }
         for (int k = 0; k < d->fields.count; k++) {
             const field *f = &d->fields.items[k];
             if (f->hidden) continue;
@@ -19792,9 +19818,10 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         if (raw) content[0] ^= 0x52u, content[31] ^= 0x52u;
         const tide_texture_blocks compressed = raw || !compress ? (tide_texture_blocks){0}
             : texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
-        if (compressed.pixels) content[0] ^= 0x42u, content[31] ^= 0x43u;
+        // Blocks are the image then, with no RGBA beside them: a device without them decodes them
+        if (compressed.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
         const uint32_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
-                                                    rgba, compressed);
+                                                    compressed.pixels ? NULL : rgba, compressed);
         free((void *)(uintptr_t)compressed.pixels);
         free(rgba);
         return at;

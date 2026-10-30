@@ -1,5 +1,80 @@
 # Assets and local files
 
+## A bought character pack's FBX, and which bone is which (2026-10-30, bugs)
+
+From bannerlord-duel's notes/gaps.md: The Tales Factory's "Medieval Civilians
+& Soldiers" (Unity), whose `MedievalCivil&Soldier_Complete.FBX` (175 MB) has
+every clothing part, each at LOD0..LOD5, on one UE4-mannequin skeleton.
+
+- **"Dual-quaternion skinning" was linear.** All 676 skins say `SkinningType:
+  Blend` (3ds Max's and Unreal's default), with a `BlendWeights` array whose
+  every value is 0: no vertex blends in dual-quaternion skinning, so it is
+  linear, which Unity reads it as. `fbx_mesh` now accepts
+  `UFBX_SKINNING_METHOD_BLENDED_DQ_LINEAR`; `fbx_skin_vertex_has_weights`
+  refuses such a skin's vertex whose `dq_weight` isn't 0 ("blends FBX
+  dual-quaternion skinning into some vertices"). `DualQuaternion` is still
+  refused. ufbx gives a Blend skin's vertices without a weight 0.
+- **An exact repeat of a blend channel is one shape.** The next refusal was
+  "two morph targets named 'DaggerSheath_MK_Armor02' in one mesh": its
+  DaggerSheath_LOD0 has the channel twice, the same 40 offsets, both at weight
+  0 (the only repeat among the file's 1,612 channels). `fbx_channel_repeats`
+  leaves out a channel whose resolved name, offsets (vertices, positions,
+  normals) and zero default weight equal an earlier channel's of the mesh: the
+  rest geometry and what the name moves are what they were. Any other
+  repeated name is still refused by the decoder (`mesh_shapes`). My pick,
+  Provisional in the spec.
+- **The posed garbling was Blender's export, not the importer.** Their
+  Blender 4.4 glTF (tools/characters outfit.py: FBX import, parts joined,
+  `export_scene.gltf`) is self-consistent at rest (every joint's world times
+  its inverse bind is identity to 6e-7, weights sum to 1), but its skeleton
+  lies along -Z (head joint at (0, 0.01, -1.655)) while the mesh stands along
+  +Y. Rotating `head` then pivots 2.4 m from the helmet, in any glTF reader.
+  Cause: this FBX's cluster bind poses (TransformLink) lie 90 degrees from its
+  nodes' transforms; Blender makes the armature's rest from the bind pose and
+  its pose from the nodes, and its glTF exporter writes the rest as the
+  skeleton. ufbx with the importer's options puts the original's head at
+  (0, 1.655, 0.01), in the mesh; three of its parts imported by Tide
+  (Body_Full, GreatHelm, Gambeson) pose correctly: the helmet tilts with the
+  head and the arm turns about its shoulder. The retargeted clips garbled for
+  the same reason, the target rig being Blender's glTF.
+- **Blender's FBX re-export** failed the HumanoidRig profile because
+  `ik_foot_r` and its end have scale (99.9934, 100, 99.9995), 6.6e-5 apart,
+  past `retarget.c`'s 1e-5 uniformity tolerance (Blender's decomposition of a
+  0.01-scaled armature). The profile's error now names the first such bone and
+  its scale (`read_profile`, `humanoid_assets.c`); the rule is unchanged.
+- **The whole Complete FBX isn't one model:** 1,059,522 vertices (all parts,
+  all LODs; 2.1 million once parts with shapes split corners), 565 MB decoded,
+  past `TIDE_SKINNED_MAX_VERTICES`, `_READS`, `_SHAPE_DELTAS` and `_BYTES`.
+  Bringing such a pack in needs its parts chosen at import (a Unity prefab
+  enables a few renderers of it). Not built: a part filter on the asset (as
+  `[BlendShapes]` filters shapes) is the owner's decision; until then the parts
+  go through a modelling tool, whose armature must be exported in the nodes'
+  pose (see above).
+- **Bone.** `$"{bone}"` (and Pose, Skeleton, BoneTransform, Animation) made C
+  that didn't compile: the engine's skinned structs aren't `prog->decls`, so
+  `gen_show_helpers` never wrote their `tide_text_` functions. It now walks
+  `prog->skinned_types` too (`shown_decl`): visible fields as for any struct,
+  `Bone { index = 93 }`, `Animation { name = "Idle" }`, `BlendShape { name =
+  ... }`, `Pose { }`. New, my picks (Provisional in the spec): `bone.index`
+  (read-only, `SKIN_OP_BONE_INDEX`), `skeleton.NameOf(bone)` and
+  `skeleton.bones.NameOf(bone)` (`SKIN_OP_BONE_NAME`, generated
+  `tide_skin_bone_name`: the name only when the bone's fingerprint is the
+  skeleton's, else empty) and `==`/`!=` on Bones (`binary_result`, generated
+  `tide_skin_bone_equal`: fingerprint and index). The note for an engine
+  struct with no operators names its first visible field, or none, instead of
+  a hidden one (it suggested `a.fingerprint`). Editors complete and hover both.
+
+Tests: `fbx_blend_skinning_without_dual_quaternion_weights_is_linear` (a
+"Blend" rig with zero weights decodes to the "Linear" rig's bytes; a weight of
+0.5 is refused, ASCII and binary, from `fbx_make.mjs`'s `skin/`),
+`fbx_blend_shape_channels_repeated_exactly_are_one_shape` (`shapes/repeated_*`
+decodes to `shapes_*`'s bytes; `shapes/renamed_*` is refused), the
+`retarget_asset_scale` diagnostic (a profile whose `LeftHand` is scaled
+(1, 1.001, 1)), and six checks in `e2e/skinned.tide` (names, index, equality,
+texts; its world hash pin moved with the probe's check count, 38 to 44).
+Existing fixtures regenerate byte for byte. The licensed files aren't in the
+repository; the probes above were scratch programs.
+
 ## Animation sampling performance follow-up (2026-10-30)
 
 The owner's follow-up asked for substantially lower build-baked, runtime-baked

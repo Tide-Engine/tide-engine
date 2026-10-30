@@ -97,7 +97,7 @@ A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMe
 
 An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Rotation curves are Euler angles that exporters often write wrapped (-182° then 178°, one degree apart): each key is first moved by whole turns to within half a turn of the key before it, and written as the nearer of its two equivalent triples (x + 180°, 180° − y, z + 180° is the same rotation) where all three axes are keyed together, as an Euler filter does, so resampled keys between them take the short way. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
 
-Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Blend shapes (morph targets) are kept: see [Blend shapes](#blend-shapes). Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
+Export polygon meshes with linear or rigid skinning. A skin 3ds Max or Unreal marks `Blend` imports as linear when none of its vertices blends in dual-quaternion skinning, as is usual. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Blend shapes (morph targets) are kept: see [Blend shapes](#blend-shapes); a channel repeated exactly on a mesh (same name and offsets, weight 0) is one shape. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
 
 ## Blend shapes
 
@@ -463,6 +463,13 @@ Draw.Mesh(sword, weaponTransform);
 ```
 
 Systems can use the same matrices for sockets or hitboxes. Sampling leaves entity movement to your own systems; it does not extract root-motion deltas or send animation events. Bone references carry their skeleton identity, so use the character's pose when accessing its bones. An incompatible blend leaves the destination unchanged.
+
+A `Bone` says which bone it is: `bone.index` is its place in the skeleton (`skeleton.bones.TryGetAt(bone.index, out var same)` gives it back), `skeleton.NameOf(bone)` its source name (empty for a default `Bone` or one of another skeleton), and `a == b` whether two are the same bone of the same skeleton. In text a bone shows its index, and an animation its name:
+
+```csharp
+var head = rig[HumanoidBone.Head];
+Debug.Log($"head is {hero.skeleton.NameOf(head)} ({head})"); // head is head (Bone { index = 93 })
+```
 
 Imported model and animation content participates in the game's match compatibility, including assets read by its vertex defaults. Those dependencies include reads through constants, implicit struct defaults, operators and helper functions, and through another mesh's defaults. Changing their content requires the corresponding game build; a mismatched pack is refused before it replaces the running pack. Unrelated images and other visual assets can still reload without changing model compatibility.
 

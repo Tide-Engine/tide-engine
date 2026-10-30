@@ -54,6 +54,74 @@ TIDE_TEST(pack_compressed_texture_metadata_is_checked_without_changing_exact_pix
     free(copy), free(bytes), free(rgba), free(blocks);
 }
 
+// An image packed as its blocks alone (no RGBA given): it's found with its
+// size and no pixels, its blocks are whole, it's a quarter of the RGBA one or
+// less, and a block that says otherwise isn't read as blocks.
+TIDE_TEST(pack_textures_of_blocks_alone_have_no_pixels_and_their_blocks)
+{
+    uint32_t levels, compressed_bytes;
+    TIDE_REQUIRE(tide_texture_blocks_size(128, 128, TIDE_BLOCKS_BC3, &levels, &compressed_bytes));
+    uint8_t *blocks = malloc(compressed_bytes), *rgba = calloc(128u * 128u * 4u, 1u);
+    TIDE_REQUIRE(blocks != NULL && rgba != NULL);
+    for (uint32_t i = 0; i < compressed_bytes; i++) blocks[i] = (uint8_t)(i * 7u);
+    uint8_t hash[32] = {23}, other[32] = {24}, face[32] = {25};
+    tide_pack_builder builder = {0};
+    const uint32_t at = tide_pack_texture_blocks(&builder, hash, 128, 128, NULL,
+        (tide_texture_blocks){blocks, TIDE_BLOCKS_BC3, levels, compressed_bytes});
+    // No blocks and no pixels given: an image of zeros, as before
+    const uint32_t empty = tide_pack_texture_blocks(&builder, other, 128, 128, NULL, (tide_texture_blocks){0});
+    // A cubemap's faces need their pixels: one of blocks alone isn't a face
+    uint32_t faces[TIDE_CUBE_FACES];
+    for (uint32_t f = 0; f < TIDE_CUBE_FACES; f++) {
+        face[1] = (uint8_t)f;
+        faces[f] = f ? tide_pack_texture(&builder, face, 128, 128, rgba) : at;
+    }
+    tide_pack_name(&builder, "blocks", TIDE_PACK_TEXTURE, at, 0, 0);
+    tide_pack_name(&builder, "empty", TIDE_PACK_TEXTURE, empty, 0, 0);
+    tide_pack_name(&builder, "sky", TIDE_PACK_CUBEMAP, tide_pack_list(&builder, faces, TIDE_CUBE_FACES), TIDE_CUBE_FACES, 128u);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&builder, &size), *copy = malloc(size);
+    TIDE_REQUIRE(bytes != NULL && copy != NULL);
+    tide_pack_header file;
+    memcpy(&file, bytes, sizeof file);
+    tide_block block;
+    memcpy(&block, bytes + file.region_at + at, sizeof block);
+    TIDE_CHECK(block.next == 8u + 16u + compressed_bytes);
+    for (uint32_t variant = 0; variant < 3; variant++) {
+        memcpy(copy, bytes, size);
+        const uint32_t next = variant == 1 ? block.next + 4u : block.next;
+        memcpy(copy + file.region_at + at + offsetof(tide_block, next), &next, sizeof next);
+        if (variant == 2) copy[file.region_at + at + sizeof(tide_block) + 8u] ^= 1u; // Its trailer's magic
+        TIDE_REQUIRE(tide_pack_load(copy, size));
+        const tide_texture_ref image = tide_pack_texture_of(tide_pack_find("blocks", TIDE_PACK_TEXTURE));
+        const tide_texture_blocks loaded = tide_pack_texture_blocks_find(image.image.version & TIDE_TEXTURE_NAME);
+        tide_texture exact = {0};
+        const bool found = tide_pack_texture_find(image.image.version & TIDE_TEXTURE_NAME, &exact);
+        if (!variant) {
+            TIDE_CHECK(found && exact.pixels == NULL && exact.width == 128 && exact.height == 128);
+            TIDE_CHECK(loaded.bytes == compressed_bytes && loaded.levels == levels && loaded.format == TIDE_BLOCKS_BC3
+                       && !memcmp(loaded.pixels, blocks, compressed_bytes));
+            TIDE_CHECK(tide_texture_size(image).x == 128);
+        } else {
+            // Not blocks alone, so its RGBA would be past the region, or garbage within it: no blocks either way
+            TIDE_CHECK(loaded.pixels == NULL);
+            TIDE_CHECK(!found || exact.pixels != NULL);
+        }
+        tide_texture zeros;
+        TIDE_REQUIRE(tide_pack_texture_find(tide_pack_texture_of(tide_pack_find("empty", TIDE_PACK_TEXTURE)).image.version
+                                            & TIDE_TEXTURE_NAME, &zeros));
+        TIDE_CHECK(zeros.pixels != NULL && ((const uint8_t *)zeros.pixels)[0] == 0 && ((const uint8_t *)zeros.pixels)[128 * 128 * 4 - 1] == 0);
+        const uint8_t *const *cube;
+        int32_t cube_size;
+        uint64_t cube_version;
+        const tide_cubemap_ref sky = tide_pack_cubemap_of(tide_pack_find("sky", TIDE_PACK_CUBEMAP));
+        TIDE_CHECK(variant || !tide_pack_cubemap_find(sky.named, &cube_size, &cube_version, &cube));
+    }
+    TIDE_CHECK(size < 128u * 128u * 4u * (TIDE_CUBE_FACES + 1u)); // Six RGBA images with the empty one, and blocks
+    tide_pack_unload();
+    free(copy), free(bytes), free(blocks), free(rgba);
+}
+
 // Grid2<Color>, as tidec shapes it: cells of 16 bytes, chunks of 32 by 32.
 static const tide_grid_shape color_shape = {16u, 2u, {5u, 5u, 0u}};
 
