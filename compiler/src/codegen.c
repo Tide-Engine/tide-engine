@@ -3392,6 +3392,28 @@ static const char *task_owner(const gen *g, const bool local)
 
 #include "query_codegen.inc"
 
+// Whether a call to `m` could change the lists of a read-only value of type `t`
+// it's handed while it runs: a Set through the world, or a mut argument or
+// receiver holding lists that one of the two types could hold the other in.
+// Lists of types neither holds are never the same lists, so a helper given a
+// singleton's lists and another's to change reads them where they are.
+static bool call_changes_lists_of(const decl *m, const expr *e, const type t)
+{
+    if (takes_world_bindings(m)) return true; // Set can change a bound component without an explicit mut argument
+    if (m->is_mut_method) {
+        const type self = {m->owner->kind == DECL_COMPONENT ? TY_COMPONENT
+                           : m->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, m->owner};
+        if (type_has_list(self) && (value_contains_type(self, t, 0) || value_contains_type(t, self, 0))) return true;
+    }
+    for (int i = 0; i < e->args.count && i < m->params.count; i++) {
+        const type mt = m->params.items[i].type;
+        if (m->params.items[i].mode == PARAM_MUT && type_has_list(mt) && (value_contains_type(mt, t, 0) || value_contains_type(t, mt, 0))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void gen_routine_call(gen *g, sb *o, const expr *e)
 {
     const decl *m = e->method;
@@ -3405,16 +3427,9 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     }
     // Read-only lists, including the receiver's, need their own copies when
     // a mut argument or receiver could change them during the call.
-    bool mut_list = takes_world_bindings(m); // Set can change a bound component without an explicit mut argument
-    for (int i = 0; m->is_mut_method && i < m->owner->fields.count; i++) {
-        mut_list |= type_has_list(m->owner->fields.items[i].type);
-    }
-    for (int i = 0; i < e->args.count && i < m->params.count; i++) {
-        mut_list |= m->params.items[i].mode == PARAM_MUT && type_has_list(m->params.items[i].type);
-    }
     const type self = {m->owner && m->owner->kind == DECL_COMPONENT ? TY_COMPONENT
                       : m->owner && m->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, m->owner};
-    const bool copy_self = m->owner && !m->is_mut_method && !m->c_self_indirect && mut_list && type_has_list(self);
+    const bool copy_self = m->owner && !m->is_mut_method && !m->c_self_indirect && type_has_list(self) && call_changes_lists_of(m, e, self);
     const borrow_variant *borrowed = m->borrows_queries ? borrow_call(g, g->routine ? g->routine : g->code, g->borrow, e) : NULL;
     sb_printf(o, "%s(", borrowed ? borrow_cname(borrowed) : routine_cname(m));
     int args = 0;
@@ -3489,8 +3504,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
             sb_printf(o, "%s, %s", local_cname(g, e->args.items[i]->name), prev_input_name(g, e->args.items[i]->name));
         } else if (m->params.items[i].c_indirect) {
             gen_indirect_arg(g, o, e->args.items[i], e->arg_want.items[i]);
-        } else if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)
-                   && !type_is_asset_collection(m->params.items[i].type)) {
+        } else if (m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)
+                   && !type_is_asset_collection(m->params.items[i].type) && call_changes_lists_of(m, e, m->params.items[i].type)) {
             gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
         } else if (m->params.items[i].mode == PARAM_MUT && m->params.items[i].type.kind == TY_STRING) {
             gen_text_ref(g, o, e->args.items[i]);
@@ -10163,6 +10178,7 @@ static bool spawn_has_text(const gen *g, const int a)
 
 static bool field_blends(const field *f);
 static bool decl_blends(const decl *d);
+static bool reads_some_used(const gen *g, const decl *d);
 
 // Sets `v` between `before` and itself: `t` of the way from `before`.
 static void gen_blend_value(gen *g, const char *v, const char *before, const type t)
@@ -10197,15 +10213,32 @@ static void gen_blend_value(gen *g, const char *v, const char *before, const typ
     }
 }
 
-static void gen_blend_fields(gen *g, const decl *d)
+static int writes_field_offset(const decl *d, const field *f);
+
+// A component's fields blended, or with `some`, only those in the lanes the
+// C variable `some` has a bit for (tide_blend_some_<C>)
+static void gen_blend_fields_of(gen *g, const decl *d, const bool some)
 {
     if (d->interpolate) { // Its own way
         line(g, &g->c, "*v = %s(*before, *v, t);", routine_cname(d->interpolate));
         return;
     }
+    const int width = some ? comp_width(d) : 1;
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
         if (!field_blends(f)) continue;
+        if (some) {
+            const int at = writes_field_offset(d, f), size = type_layout(f->type).size;
+            if (at >= 0 && size > 0) {
+                indent(g, &g->c);
+                sb_put(&g->c, "if (");
+                for (int k = at / width; k * width < at + size; k++) {
+                    sb_printf(&g->c, "%s(some[%d] >> %d & 1u)", k == at / width ? "" : " || ", k >> 6, k & 63);
+                }
+                sb_put(&g->c, ") {\n");
+                g->indent++;
+            }
+        }
         char v[256];
         char before[256];
         snprintf(v, sizeof v, "v->%s", field_cname(f));
@@ -10223,7 +10256,21 @@ static void gen_blend_fields(gen *g, const decl *d)
             g->indent--;
             line(g, &g->c, "}");
         }
+        if (some && writes_field_offset(d, f) >= 0 && type_layout(f->type).size > 0) {
+            g->indent--;
+            line(g, &g->c, "}");
+        }
     }
+}
+
+static void gen_blend_fields(gen *g, const decl *d)
+{
+    gen_blend_fields_of(g, d, false);
+}
+
+static void gen_blend_fields_some(gen *g, const decl *d)
+{
+    gen_blend_fields_of(g, d, true);
 }
 
 static void gen_correction_math(gen *g)
@@ -10385,6 +10432,18 @@ static void gen_blend_helpers(gen *g)
             sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
             if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
             sb_printf(o, "    return tide_load_%s(w, e, out) ? out : NULL;\n}\n\n", name);
+            if (!reads_some_used(g, d)) continue;
+            // The same for the lanes a view reads: only the fields in them blend, and only those are found
+            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) void tide_blend_some_%s(%s *v, const %s *before, float t, const uint64_t *some)\n{\n"
+                         "    (void)some;\n    if (!before) return;\n", name, name, name);
+            if (d->snapped) sb_put(o, "    if (before->tide_snaps != v->tide_snaps) return; // It jumped\n");
+            gen_blend_fields_some(g, d);
+            sb_put(o, "}\n\n");
+            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) const %s *tide_prev_some_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out, "
+                         "const uint64_t *some)\n{\n", name, name, name);
+            sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
+            if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
+            sb_printf(o, "    return tide_load_some_%s(w, e, out, some) ? out : NULL;\n}\n\n", name);
         }
     }
     g->indent = 0;
@@ -10909,6 +10968,29 @@ static void gen_component_access(gen *g)
                     }
                     sb_put(o, "        return true;\n");
                 }
+            }
+            sb_put(o, "    default: return false;\n    }\n}\n\n");
+        }
+        if (reads_some_used(g, d)) { // Only the lanes a view reads, a bit each (lane_reads_codegen.inc): the others as they were
+            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) void tide_gather_some_%s(%s *v, const uint8_t *const *lanes, const uint32_t i, const uint64_t *some)\n{\n",
+                      name, name);
+            for (int k = 0; k < lanes; k++) {
+                sb_printf(o, "    if (some[%d] >> %d & 1u) memcpy((uint8_t *)v + %d, lanes[%d] + (size_t)i * %d, %d);\n", k >> 6, k & 63,
+                          k * width, k, width, width);
+            }
+            sb_put(o, "}\n\n");
+            sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) bool tide_load_some_%s(const %s *w, tide_entity e, %s *v, const uint64_t *some)\n{\n", name, w, name);
+            sb_put(o, "    (void)v;\n    (void)some;\n    const tide_location loc = tide_entity_location(&w->entities, e);\n    switch (loc.archetype) {\n");
+            for (int a = 0; a < prog->archetypes.count; a++) {
+                if (!arch_stores(g, a, c)) continue;
+                sb_printf(o, "    case %d: ", a);
+                if (comp_sparse(g, c)) sb_printf(o, "if (!%s) return false; ", presence_cell(g, "w", a, c, "loc.row", false));
+                sb_put(o, "\n");
+                for (int k = 0; k < lanes; k++) {
+                    sb_printf(o, "        if (some[%d] >> %d & 1u) memcpy((uint8_t *)v + %d, tide_table_get(&w->%s, %s, loc.row, %d), %d);\n",
+                              k >> 6, k & 63, k * width, arch_name(g, a), arch_columns(g, a), arch_column(g, a, c) + k, width);
+                }
+                sb_put(o, "        return true;\n");
             }
             sb_put(o, "    default: return false;\n    }\n}\n\n");
         }
@@ -14501,6 +14583,7 @@ static bool filters_owner(const gen *g, const decl *sys, const int a)
 // world's own (see tide/page.h).
 // Whether a system or handler changes component `c` of archetype `a`'s rows.
 #include "lane_writes_codegen.inc"
+#include "lane_reads_codegen.inc"
 
 static bool changes_component(const decl *sys, const int c, const bool read_only)
 {
@@ -14776,6 +14859,19 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
         if (joined(sys, p)) continue; // From the confirmed world's row (gen_row_join)
         if (which != COPIES_ALL && (which == COPIES_CHANGED) != (p->mode == PARAM_MUT)) continue;
         const char *c = type_cname(p->type.decl);
+        lane_mask read;
+        if (view_param_lanes(g, sys, i, &read)) { // Only the lanes it reads, found and blended (lane_reads_codegen.inc)
+            sb some = {0};
+            lane_words_c(&some, &read, comp_lanes(p->type.decl));
+            sb_printf(o, "%s%s tide_v%d;\n%stide_gather_some_%s(&tide_v%d, (const uint8_t *const *)tide_col_%s, tide_i, %s);\n", pad, c, i,
+                      pad, c, i, c, some.data);
+            if (param_blends(p)) {
+                sb_printf(o, "%sif (tide_blend) { %s tide_p%d; tide_blend_some_%s(&tide_v%d, tide_prev_some_%s(tide_prev, tide_w, "
+                             "tide_ent[tide_i], &tide_p%d, %s), tide_alpha, %s); }\n", pad, c, i, c, i, c, i, some.data, some.data);
+            }
+            if (has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
+            continue;
+        }
         sb_printf(o, "%s%s tide_v%d;\n%stide_gather_%s(&tide_v%d, (const uint8_t *const *)tide_%s_%s, tide_i);\n", pad, c, i, pad, c,
                   i, g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
         // Set may reuse a stored container's allocation, including this row's.
@@ -18232,6 +18328,17 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
             const char *c = type_cname(comp);
             sb place = {0};
             sb_printf(&place, "tide_row->%s", field_cname(value));
+            lane_mask read;
+            if (view_query_lanes(g, sys, qi, i, value, &read)) { // Only the lanes the view reads of it (lane_reads_codegen.inc)
+                sb some = {0};
+                lane_words_c(&some, &read, comp_lanes(comp));
+                sb_printf(o, "%stide_gather_some_%s(&%s, tide_col%d, tide_i, %s);\n", pad, c, place.data, i, some.data);
+                if (decl_blends(comp) && !comp->is_local) {
+                    sb_printf(o, "%sif (tide_blend) { %s tide_p; tide_blend_some_%s(&%s, tide_prev_some_%s(tide_prev, tide_w, tide_ent[tide_i], "
+                                 "&tide_p, %s), tide_alpha, %s); }\n", pad, c, c, place.data, c, some.data, some.data);
+                }
+                continue;
+            }
             if (!p->verified || confirmed) sb_printf(o, "%stide_gather_%s(&%s, tide_col%d, tide_i);\n", pad, c, place.data, i);
             if (p->verified) {
                 if (decl_blends(comp)) {

@@ -1,0 +1,183 @@
+// A view that reads a few fields of a component of many copies and blends
+// only those (tide_gather_some_<C>, tide_blend_some_<C>): what it reads is
+// what a view that reads all of it sees, through helpers it hands the
+// component to, a query's rows, a field that jumped alone, a component that
+// jumped whole, and a local field beside them.
+
+struct Pair
+{
+    float a;
+    float b;
+}
+
+component Wide
+{
+    float x;
+    float y;
+    float3 dir;
+    Pair pair;
+    float since;            // Jumps alone on the second tick
+    [Snap] float radius;
+    int steps;
+    float spare0;
+    float spare1;
+    float spare2;
+    float spare3;
+    float spare4;
+    float spare5;
+    float spare6;
+    float spare7;
+    local int marks;        // A view's own, beside the match's fields
+    local float2 spot;      // ...read through a member of it
+}
+
+// Teleports whole on the second tick.
+component Hops { }
+
+local singleton Seen
+{
+    float x;
+    float dirZ;
+    float pairB;
+    float since;
+    float radius;
+    float helperY;
+    float wholeX;
+    float wholeDirZ;
+    float wholePairB;
+    float wholeSince;
+    float wholeY;
+    float queryX;
+    float queryPairB;
+    int queryRows;
+    float hopX;
+    float localX;
+    int marks;
+    float spotX;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Wide { since = 0.5, radius = 1, spare3 = 9 });
+    Spawn(Wide { x = 500 }, Hops);
+}
+
+system Move(Time time, mut Wide w)
+{
+    w.x += 4;
+    w.y += 1;
+    w.dir.z += 8;
+    w.pair.b += 2;
+    w.since += 0.25;
+    w.radius += 1;
+    w.steps += 1;
+    if (time.tick == 1)
+    {
+        w.since = 50;
+        w.since.Snap();
+    }
+}
+
+system Hop(Time time, mut Wide w, with Hops)
+{
+    if (time.tick != 1) return;
+    w.x = 1000;
+    this.Snap();
+}
+
+// Reads y alone, by whatever name the caller's value has
+float Twice(Wide w)
+{
+    return w.y * 2;
+}
+
+view ReadSome(Wide w, mut Seen seen, without Hops)
+{
+    seen.x = w.x;
+    seen.dirZ = w.dir.z;
+    seen.pairB = w.pair.b;
+    seen.since = w.since;
+    seen.radius = w.radius;
+    seen.helperY = Twice(w);
+}
+
+// The same entity, read whole: every lane
+view ReadAll(Wide w, mut Seen seen, without Hops)
+{
+    var copy = w;
+    seen.wholeX = copy.x;
+    seen.wholeY = copy.y;
+    seen.wholeDirZ = copy.dir.z;
+    seen.wholePairB = copy.pair.b;
+    seen.wholeSince = copy.since;
+}
+
+view Rows(mut Seen seen, query (Wide w, without Hops) all)
+{
+    seen.queryRows = 0;
+    foreach (var row in all)
+    {
+        seen.queryX = row.w.x;
+        seen.queryPairB = row.w.pair.b;
+        seen.queryRows += 1;
+    }
+}
+
+view Hopper(Wide w, mut Seen seen, with Hops)
+{
+    seen.hopX = w.x;
+}
+
+view Marked(mut Wide w, mut Seen seen, without Hops)
+{
+    w.marks += 1;
+    w.spot.x += 0.5;
+    seen.localX = w.x;
+    seen.marks = w.marks;
+    seen.spotX = w.spot.x;
+}
+
+// A helper handed one singleton's lists to read and another's to change
+// reads them where they are: no list it changes can be one of them.
+local singleton Shelf
+{
+    List<float> items;
+    List<float4> rows;
+}
+
+local singleton Bag
+{
+    List<int> got;
+}
+
+local singleton Counts
+{
+    int kept;
+    int counted;
+}
+
+void Keep(mut Bag bag, Shelf shelf)
+{
+    bag.got.Add(int(shelf.items[0] + shelf.rows[0].y));
+}
+
+// Its Shelf holds the list it changes: what it reads is as the call began
+int Count(mut List<float> into, Shelf shelf)
+{
+    into.Add(1);
+    return shelf.items.count;
+}
+
+view Shelve(mut Shelf shelf, mut Bag bag, mut Counts counts)
+{
+    if (shelf.items.count == 0)
+    {
+        shelf.items.Add(3);
+        shelf.rows.Add(float4(0, 4, 0, 0));
+    }
+    Keep(bag, shelf);
+    counts.kept = bag.got[bag.got.count - 1];
+    counts.counted = Count(shelf.items, shelf);
+}

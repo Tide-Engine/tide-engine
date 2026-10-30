@@ -1,5 +1,62 @@
 # ECS and simulation state
 
+## Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied (2026-10-30)
+
+Two costs bannerlord-duel's tools/army (20,000 fighters) found in views that
+run once per entity, both in the generated C:
+
+- **A read-only list argument copied for any `mut` list beside it**
+  (`gen_routine_call`, `call_changes_lists_of`). A call copied every read-only
+  argument holding lists (the receiver too) whenever any `mut` argument held
+  a list, whatever its type: `KeepFar(mut FarCrowd crowd, FarSkins skins, ...)`
+  copied all of `FarSkins` (four lists, one of 25,905 matrices, 1.7 MB) into
+  the scratch area for each fighter, about 30 µs a call, 337 ms a frame in the
+  army. Now it copies only when a Set through the world could change it, or a
+  `mut` argument or `mut` receiver holds lists and one of the two types can
+  hold the other (`value_contains_type` either way, as `indirect_value`
+  already asked): lists of types neither holds are never the same lists. The
+  spec already said so (docs/spec.md, Lists: "unless a `mut` argument of the
+  same call could change it"); the code was coarser.
+- **A view copying and blending the whole component for each entity**
+  (`lane_reads_codegen.inc`). A per-entity view gathered every lane of each
+  component it takes, found the entity in last tick's world, gathered all of
+  it there too (`tide_table_get` a lane) and blended every field; a view's
+  query row did the same for every row. For a 75-lane component that read one
+  field, 7 times the cost of a small one. The read analysis mirrors
+  `code_writes`: the bytes of a parameter, or of a query row's binding (`row.w`
+  of `foreach (var row in all)`), the code can read, narrowed through fields
+  and swizzles and through Tide helpers it hands a place of it to
+  (`code_reads`, memoized per function and parameter). The value whole, an
+  element's container, a property, a method's receiver, C, a built-in, a
+  virtual or override, an async callee, a call back into a function being
+  worked out, the row variable whole, and a query named anywhere but as a
+  foreach's value read all of it. A local field (`f.guards.x`) reads none of
+  the lanes. Hidden fields (snap counts) are always in the mask, as blending
+  compares them. A view then calls `tide_gather_some_<C>`,
+  `tide_prev_some_<C>` (`tide_load_some_<C>`) and `tide_blend_some_<C>` with
+  a constant word mask; they're `always_inline`, so clang folds the mask and
+  keeps only the lanes read (without it, a call tested 75 bits and gained
+  only half). The lanes not read are left uninitialized in the copy, which
+  nothing reads. Generated only for components a view reads some of
+  (`reads_some_used`).
+  - Not partial: components a `frag` or `vert` takes (a draw sends them from
+    the view's copy, which no expression in the view names; `instancing` and
+    `shaders` caught it), `verified` parameters and joins, components with corrections
+    (`decl_corrects`), an `Interpolate`, blending that reads the heap
+    (`blend_reads_heap`), sharded games, `mut` local components (put back
+    whole), views that start tasks, and components past 1,024 lanes or 4 KiB.
+  - The duel's `DrawFighter` reads 183 of `Fighter`'s 308 bytes (its pose
+    helpers read most fields); before the local-field rule it was all 308.
+- **Tests**: `view_reads` (a component of about twenty lanes: fields, a struct's field, a
+  helper handed it whole, a field that jumped alone, `[Snap]`, a component that
+  jumped whole, query rows, a `mut` view with local fields read through a
+  member, and frames with no tick before; read-only lists beside a `mut` list
+  of another singleton, and beside one their own singleton holds, which still
+  reads the list as the call began) and `view_reads_codegen` (`ReadSome`,
+  `Marked` and the `Rows` query gather and blend some; `ReadAll` all; `Keep`'s
+  read-only singleton isn't copied, `Count`'s is). Measured with
+  `bench_views`: notes/benchmarks.md, Views over wide components.
+
 ## Wide components' lanes, an element's fields, and text passed to helpers (2026-10-30)
 
 Found measuring a Tide game of 20,000 sword fighters (bannerlord-duel's
@@ -475,7 +532,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A view's rows are what the view sees: blended between ticks like its own parameters, with corrections smoothed, over the entities of the world it draws. `verified` in a query follows the rule for views: all of it `verified`, the confirmed world's entities (`param.query_verified_entities`); some of it, the drawn world's that are the same entity in the confirmed one (`param.query_verified_join`, by `tide_born_same`), filters included. A query is all the match's or all local: a local one reads the local world as it is, through the code a system's query generates.
   - A local handler's rows are the match as the tick that sent its event left it, once the tick is done (Provisional: not as each event's turn left things), and a query of local entities the local world as it is. A handler of a local event takes only those.
   - Read-only (Provisional): no `mut`, and a row has the match's fields, never an entity's local fields. A view with a query over the match doesn't run outside a match (`reads_match` in `compiler/src/codegen.c`).
-  - **Going through a lot stays cheap:** a view's or a local handler's query over the match (`param.query_rows`, set in `check_params`) is handed its rows, an array made before the code runs, which `gen_query_foreach` loops over: a generated `tide_row_<view|handler>_<Name>_<i>` each, the entity and the bound components. A view's are made once for its run in a frame, in the scratch area (`gen_query_fill`: `tide_query_<View>_<i>`, called when the view first runs for an entity, so one no entity matches makes none; the run function moves its `tide_mark` past them and lets them go at its end). So a view that runs for each of N entities and goes through M others blends the M once, not N times. Measured in a release build, 2,048 bodies each going through all 2,048: about 2 ms a frame, against about 13 ms for a list a view fills by hand each frame, and about 80 ms when the rows are made again for each entity.
+  - **Going through a lot stays cheap:** a view's or a local handler's query over the match (`param.query_rows`, set in `check_params`) is handed its rows, an array made before the code runs, which `gen_query_foreach` loops over: a generated `tide_row_<view|handler>_<Name>_<i>` each, the entity and the bound components. A view's are made once for its run in a frame, in the scratch area (`gen_query_fill`: `tide_query_<View>_<i>`, called when the view first runs for an entity, so one no entity matches makes none; the run function moves its `tide_mark` past them and lets them go at its end). So a view that runs for each of N entities and goes through M others blends the M once, not N times. A row's binding is gathered and blended only in the lanes the view reads of it (`view_query_lanes`; Views copy and blend only the lanes they read, above), as is a per-entity view's own component. Measured in a release build, 2,048 bodies each going through all 2,048: about 2 ms a frame, against about 13 ms for a list a view fills by hand each frame, and about 80 ms when the rows are made again for each entity.
   - A tick records a listener's rows after its events, once for the tick, when it recorded an event with a handler that reads them: `tide_hear_<Event>` sets `tide_rows_wanted` and the event's `TIDE_HEARD_READS_ROWS`, and `tide_world_tick_events` calls `tide_hear_rows` (`gen_hear_rows`) once the tick is done, which pushes a `TIDE_HEARD_ROWS` record for each (`tide/events.h`: `handlers` says which rows, `same` how many, the rows follow, and `tide_event_log_trim` gives back what the sparse filters left unused). Queries with the same entities and components share one (`collect_heard_rows`, `same_rows`), and their layout is part of `TIDE_HEARD_BUILD`. A client's hearing sends a run's rows out with the first of its events that reads rows and went out (`tide_hearing_end`), and keeps them with the run for `verified` handlers. The frame finds an event's rows after it in the log (`tide_event_log_rows`: the first with its tick and `as`, which are its run's). Text, lists, maps, sets and grids aren't in them.
   - The language server says what a view's and a listener's queries read on hover and in the lens above them (`put_world_lens`), from the same `world_uses` a system's are in.
   - `compiler/tests/e2e/view_queries` checks it: rows blended between two ticks, an entity that came and one that went, filters, a local query, `verified` against a world that went otherwise and on a client that predicted wrong, and handlers' rows from their tick, once, with the confirmed tick's for a `verified` one.

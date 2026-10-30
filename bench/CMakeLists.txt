@@ -157,3 +157,5 @@ if(WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_link_libraries(tide_sample PRIVATE psapi)
     target_compile_definitions(tide_sample PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
+
+tide_add_game(bench_views SOURCES views/game.tide NAME game HOST views/main.c)

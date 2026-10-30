@@ -52,6 +52,10 @@ tide_e2e_test(wide_lanes) # Lanes a system can't write past 64; text passed whol
 add_test(NAME tidec_wide_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_wide_lanes/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/wide_lanes_codegen.cmake")
+tide_e2e_test(view_reads) # Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied
+add_test(NAME tidec_view_reads_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_view_reads/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/view_reads_codegen.cmake")
 tide_e2e_test(destroy_rows) # Pure updates and deferred self-destroys preserve math, order, handles and snapshots
 add_test(NAME tidec_destroy_rows_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_destroy_rows/game.c"
