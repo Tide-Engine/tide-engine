@@ -1,5 +1,11 @@
 # Netcode: sessions, prediction, commands
 
+## A match played alone ticks once (2026-10-30)
+
+A session that hosts its own match runs a server and this machine's client in one process, and each ran every tick: the client its prediction, the server the same tick with the same input. A game played alone paid for its simulation twice (a battle of 20000 fighters in the Bannerlord duel's tools/army: 11.9 ms a tick, 23.8 ms a frame at 60 ticks a second). Now, while `tide_session_update` updates its server, the server knows this machine's client (`tide_server.twin`), and a tick the client has run already as the server would is taken from it (`twin_ran`, a copy of its world) rather than run again: 11.4 ms a frame. Only when that's certain to be the same world: no recipient projections (`client_state`), no other player connected, the client predicting with nothing to catch up, repair or get again, its verified tick the one the server is about to run (so the world it ran from is the server's, checked by hash) and the frame as it predicted it (`as_predicted`: its own input and nothing else, no joins, leaves, commands or shard messages). Anything else, the server ticks as before. The client goes on hashing and confirming as it did.
+
+Tests: `net_a_session_played_alone_ticks_once` (each tick run once over 240 frames of changing input, the worlds alike every frame); `net_a_session_takes_a_new_build_of_its_game` counts a new build's ticks once, not twice.
+
 ## Protocol 20: rows entities left are holes (2026-10-29)
 
 `PROTOCOL` is 20 (`engine/src/session.c`, and the tests that write it by hand:

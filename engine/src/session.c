@@ -944,6 +944,9 @@ struct tide_server {
     struct injected *injected;
     uint32_t injected_count, injected_room;
     tide_player_set admitted; // Players of a sharded world it takes though closed (tide_server_admit)
+    // This machine's player, while its session updates the server: a tick it
+    // has run already as the server would is taken from it (twin_ran)
+    tide_client *twin;
 };
 
 static double resend_after(const uint32_t rtt_ms)
@@ -2445,6 +2448,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
 // Runs one tick: joins and leaves, then the inputs that arrived for it, in
 // slot order, the queued commands, then the systems. Clients do the same.
 static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size, private_journal *journal);
+static bool twin_ran(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size);
 
 static void server_tick(tide_server *s)
 {
@@ -2552,7 +2556,7 @@ static void server_tick(tide_server *s)
         ? calloc(s->players, sizeof *journals) : NULL;
     if (g->client_state && g->tick_client_events && !journals) tide_out_of_memory();
     if (journals) g->tick_client_events(s->world, s->desc.jobs, journals);
-    else g->tick(s->world, s->desc.jobs);
+    else if (!twin_ran(s, tick, s->frame, w.size)) g->tick(s->world, s->desc.jobs);
     s->tick++;
     s->ended = g->ended && g->ended(s->world);
     patch_u64(s->frame, hash_of(g, s->world, s->desc.jobs));
@@ -4502,6 +4506,27 @@ static bool as_predicted(const tide_client *c, const pending_frame *f)
 static void *world_at(const tide_client *c, const uint32_t tick)
 {
     return c->worlds[tick % c->ring];
+}
+
+// A tick the server is about to run that this machine's player, alone in the
+// match, has run already, as its prediction: from the world the server has
+// (the last it confirmed), with the same input and nothing else in the frame
+// (as_predicted). It comes out the same, so the server takes it rather than
+// running the tick again: played alone, a match isn't ticked twice. Not where
+// a player sees only part of the world (client_state), or with anyone else in.
+static bool twin_ran(tide_server *s, const uint32_t tick, const uint8_t *frame, const uint32_t size)
+{
+    const tide_client *c = s->twin;
+    const tide_game *g = s->game;
+    if (!c || g->client_state || !c->predicts || c->need_snapshot || c->receiving || c->catching_up || c->repair_tick) return false;
+    if (c->verified != tick || c->ahead <= tick || tick >= c->let_go || tick >= c->input_guessed) return false;
+    for (uint32_t p = 0; p < s->players; p++) {
+        if (s->connections[p].used && !(s->connections[p].local && p == (uint32_t)c->player)) return false;
+    }
+    const pending_frame f = {.tick = tick, .data = (uint8_t *)frame, .size = size};
+    if (!as_predicted(c, &f)) return false;
+    g->copy_world(s->world, world_at(c, tick + 1u));
+    return true;
 }
 
 // Whether the server ran a frame's tick without this machine's input, which
@@ -6567,7 +6592,11 @@ void tide_session_update(tide_session *s, const double now)
         s->client->local_user = s->local_user;
     } else {
         update_client(s->client, t);
-        if (s->server) tide_server_update(s->server, t);
+        if (s->server) {
+            s->server->twin = s->client;
+            tide_server_update(s->server, t);
+            s->server->twin = NULL;
+        }
         update_client(s->client, t); // What the server just sent: this machine's ticks, at once
     }
 
