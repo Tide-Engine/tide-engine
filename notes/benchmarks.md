@@ -1,7 +1,7 @@
 # Benchmarks
 
 
-## Pose.Sample a call at a time (2026-10-30)
+## Pose.Sample, indexing and Model a call at a time (2026-10-30)
 
 bannerlord-duel found sampling a clip into a pose its biggest per-fighter
 cost: 12 µs a `Sampled(clip, t)` (`mut var pose = dummy.defaultPose;
@@ -51,9 +51,42 @@ Left for the view's `Sampled()`, outside `Pose.Sample`:
   Copying a fresh value (`mut var pose = model.defaultPose`) and returning a
   local could also skip their copies in generated code. Neither is changed.
 - `pose[dummy.skeleton.bones.hips]` looks the bone up by name every time
-  (`tide_skin_bone_member`: a name search, the fingerprint and the bone count,
-  each opening the model): 0.7 µs a use. A `var hips = ...bones.hips` outside
-  the loop pays it once.
+  (`tide_skin_bone_member`); that's now kept too (below), 32 ns a use.
+
+### Pose indexing and Model, the same day
+
+bannerlord-duel again, 1,000 calls a frame each on the Synty character:
+`pose.Model(head)` 1.5-2 µs, its `TurnBone` (one `Model`, a few quaternion
+operations) 2 µs, copying 40 bones with `pose[bone] = other[bone]` 5.9 µs.
+Each `pose[bone]`, get or set, and each `Model` checks the bone belongs to
+the pose's model (`tide_skin_pose_has`: `tide_skinned_fingerprint` and
+`tide_skinned_bone_count`), each of which opened and parsed the model's
+header again; a rig member (`bones.head`) also searched every name of the
+model (`tide_skinned_find_bone`, the whole table, to refuse duplicates);
+and `Model` checked every node and made all 55 model matrices to return one.
+Now a thread keeps each keyed model's facts and the names it was asked for
+(notes/assets-and-files.md, Kept sample plans and model facts), and `Model` multiplies only
+the bone's ancestors.
+
+Release, quiet, µs a call, three alternating runs (ranges overlap to the
+last digit unless shown); before is `v0.6.0-nightly.1`'s `skinned.c`:
+
+| Work | Before | After |
+|---|---|---|
+| Synty: `rest.Model(bones.head)` (6 deep, Bone by name) | 1.28-1.29 | 0.18-0.19 |
+| Synty: `rest.Model(head)`, the Bone in a local | 0.99-1.00 | 0.16 |
+| Synty: `rest[bones.head]` read | 0.32 | 0.03 |
+| Synty: `rest[head]` read, the Bone in a local | 0.035 | 0.009 |
+| Synty: `copy[bones.head] = rest[bones.hips]` | 0.64 | 0.06 |
+| Synty: `Sampled()` and a `pose[bones.hips]` read | 10.3-10.4 | 1.89-1.91 |
+| `bench_pose`: 40 bones `copy[bone] = rest[bone]` (`TryGetAt`) | 3.82-4.06 | 0.84-0.87 |
+| `bench_pose`: `rest.Model(bones.middle)`, 33 deep | 1.60-1.97 | 0.59-0.62 |
+| `bench_pose`: `Pose.Sample` (rest + separate clip) | 10.4-10.8 | 1.31-1.32 |
+| `bench_pose`: `Sampled()` in a view | 14.1-14.2 | 2.61-2.63 |
+
+Every checksum is the same before and after. What's left of a read through
+a held Bone (9 ns) is the two identity checks, each a thread-local lookup;
+`Model` 6 deep is seven TRS matrices and six 4×4 products.
 
 ## Views over wide components (2026-10-30)
 

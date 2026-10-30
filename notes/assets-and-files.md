@@ -101,13 +101,13 @@ affected e2e CTests, including retargeting and net_alone_seen. Both private
 probes again applied all 593 frames successfully; all 256 measurement lines
 were identical before/after the merge and between native and WASM.
 
-## Kept sample plans (2026-10-30)
+## Kept sample plans and model facts (2026-10-30)
 
 bannerlord-duel measured `Pose.Sample` of an FBX clip onto its Synty
 character at 12 µs a call: before sampling anything, each call checked both
 node tables and every key of the clip (an ordinary packed `Animation` has no
 load-time proof), built two name tables and bound the rigs. Timings:
-notes/benchmarks.md, Pose.Sample a call at a time.
+notes/benchmarks.md, Pose.Sample, indexing and Model a call at a time.
 
 `tide_skinned_sample` and `tide_skinned_sample_into` (`engine/src/skinned.c`)
 now make a sample plan: whether the clip binds, each bound channel's
@@ -154,7 +154,25 @@ nothing in use. Plans are malloc'd (a 55-node, 156-channel plan is about
 and world outputs, heap/chunked through the list cache), the
 untouched-output-on-refusal rule and `tide_skinned_pose_into` are unchanged.
 
-Tests (`tests/test_skinned.c`): `skinned_kept_sample_plans_match_plans_made_for_one_call`
+The same keys keep a model's facts on each thread (`known_model`: node count,
+skeleton hash and fingerprint, size, node table offset, and node validity
+once asked; 16 slots, the last hit checked first), which
+`tide_skinned_fingerprint`, `tide_skinned_bone_count`,
+`tide_skinned_compatible` and `tide_skinned_model` read rather than opening
+the model: a Pose's indexing and Model check its identity on every use
+(`tide_skin_pose_has`). Names looked up by `tide_skinned_find_bone`,
+`_find_animation` and `_find_shape` (a rig's members, each read) are kept
+too, up to 40 bytes, 64 slots, matched by the model's key and the name's
+bytes. Keyless bytes, and a failed open, take the old paths. `Model`
+multiplies only the bone's ancestors, root down, with the same TRS and
+products as the all-node pass (`chain_model`); bits are unchanged.
+
+Tests (`tests/test_skinned.c`): `skinned_known_models_answer_as_their_bytes_do`
+(pack- and asset-held bytes give the same names, counts, fingerprints,
+compatibility and every bone's Model, bit for bit against the all-node
+product, as owned bytes, before and after a reload at the same offsets
+renaming a bone and changing the skeleton; it fails without the generation
+in the key); `skinned_kept_sample_plans_match_plans_made_for_one_call`
 (pack- and asset-held bytes against owned copies: the exact rig, separate
 bindings both ways, an armature folded in and out, refused bindings and
 clips, scratch and world outputs, twice so the second pass reads kept

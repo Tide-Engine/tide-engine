@@ -1668,3 +1668,78 @@ TIDE_TEST(skinned_kept_sample_plans_survive_eviction)
     free(pack);
     tide_scratch_reset(mark);
 }
+
+// Every node's model matrix as the old Model made them: all nodes, root down.
+static bool all_models_match(const tide_list data, const tide_list pose)
+{
+    tide_float4x4 global[8];
+    const int32_t nodes = tide_skinned_bone_count(data);
+    if (nodes <= 0 || nodes > 8 || tide_list_count(pose) != nodes) return false;
+    tide_skinned_data_view view;
+    const tide_list flat = tide_list_from(tide_list_at(data, 0, 1u), tide_list_count(data), 1u);
+    if (!tide_skinned_data_open(tide_list_at(flat, 0, 1u), (size_t)tide_list_count(flat), &view)) return false;
+    for (int32_t i = 0; i < nodes; i++) {
+        tide_skinned_node_data n;
+        if (!tide_skinned_data_node(&view, (uint32_t)i, &n)) return false;
+        const tide_bone_transform local = bone(pose, i);
+        const tide_float4x4 matrix = tide_trs_f4x4(local.position, local.rotation, local.scale);
+        global[i] = n.parent < 0 ? matrix : tide_mul_f4x4(global[n.parent], matrix);
+        const tide_float4x4 made = tide_skinned_model(data, pose, i);
+        if (memcmp(&made, &global[i], sizeof made) != 0) return false;
+    }
+    return true;
+}
+
+// What a model's header and names say is kept for pack- and asset-held bytes:
+// the same answers as owned bytes, and other answers once another pack's
+// bytes are at the same offsets.
+TIDE_TEST(skinned_known_models_answer_as_their_bytes_do)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list plain = model();
+    tide_list renamed = model();
+    uint8_t *bytes = tide_list_at_mut(renamed, 0, 1u);
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(renamed), &view));
+    memcpy(bytes + view.string_at + 5u, "palm", 4u); // "hand"
+    bytes[88] ^= 1u; // Another skeleton
+    number(bytes, view.node_at + TIDE_SKINNED_NODE_SIZE + 16u, 5.0f); // The arm's rest
+    const tide_list *loads[2] = {&plain, &renamed};
+    const tide_str hand = tide_str_from_cstr("hand"), palm = tide_str_from_cstr("palm"), cubic = tide_str_from_cstr("cubic");
+    uint32_t handles[2] = {0};
+    for (uint32_t load = 0; load < 2u; load++) {
+        const tide_list raw = *loads[load];
+        size_t size;
+        uint8_t *pack = sample_model_pack(raw, false, &size);
+        TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+        tide_heap heap = {0};
+        tide_text_use(&heap, NULL);
+        const tide_list packed = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
+        tide_list held = {0};
+        tide_list_set(&held, packed, 1u, TIDE_IN_MATCH);
+        handles[load] = packed.at;
+        const tide_list sources[] = {packed, held};
+        for (uint32_t twice = 0; twice < 2u; twice++) {
+            for (uint32_t s = 0; s < 2u; s++) {
+                const tide_list data = sources[s];
+                TIDE_CHECK(tide_skinned_fingerprint(data) == tide_skinned_fingerprint(raw));
+                TIDE_CHECK(tide_skinned_bone_count(data) == 3);
+                TIDE_CHECK(tide_skinned_find_bone(data, hand) == (load ? -1 : 2));
+                TIDE_CHECK(tide_skinned_find_bone(data, palm) == (load ? 2 : -1));
+                TIDE_CHECK(tide_skinned_find_animation(data, cubic) == 2);
+                TIDE_CHECK(tide_skinned_compatible(data, raw) && tide_skinned_compatible(data, plain) == !load);
+                tide_list pose = {0};
+                TIDE_REQUIRE(tide_skinned_sample(data, 2, 1.0f, &pose, TIDE_IN_SCRATCH));
+                TIDE_CHECK(all_models_match(data, pose) && all_models_match(raw, pose));
+                const tide_float4x4 none = tide_skinned_model(data, pose, 3), identity = tide_identity_f4x4();
+                TIDE_CHECK(memcmp(&none, &identity, sizeof none) == 0);
+            }
+        }
+        tide_text_use(NULL, NULL);
+        tide_heap_free(&heap);
+        tide_pack_unload();
+        free(pack);
+    }
+    TIDE_CHECK(handles[0] == handles[1]); // Otherwise the second load proves nothing
+    tide_scratch_reset(mark);
+}
