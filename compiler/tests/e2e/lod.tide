@@ -59,15 +59,15 @@ view Show(mut Art art)
     if (art.places.count == 0)
     {
         art.places.Add(At(900));
-        art.places.Add(At(2));
+        art.places.Add(At(1.5));
         art.places.Add(At(6));
         art.places.Add(At(950));
-        art.places.Add(At(2.5));
+        art.places.Add(At(1.75));
     }
     switch (art.mode)
     {
         case 0: // Each draw picks, by how far it is
-            Draw.Mesh(ball, At(2));
+            Draw.Mesh(ball, At(1.5));
             Draw.Mesh(ball, At(6));
             Draw.Mesh(ball, At(900));
             Draw.Mesh(whole, At(900));
@@ -81,7 +81,7 @@ view Show(mut Art art)
             Draw.Instanced(ball, art.places);
             break;
         case 2: // Through a frag, alone and as instances
-            Draw.Mesh(lit, At(2), Shade);
+            Draw.Mesh(lit, At(1.5), Shade);
             Draw.Mesh(lit, At(900), Shade);
             Draw.Instanced(lit, art.places, Shade);
             break;
@@ -91,24 +91,24 @@ view Show(mut Art art)
                 Draw.Mesh(ball, At(900));
             }
             Draw.SetLOD(1);
-            Draw.Mesh(ball, At(2));
+            Draw.Mesh(ball, At(1.5));
             Draw.LOD(99)
             {
-                Draw.Mesh(ball, At(2));
+                Draw.Mesh(ball, At(1.5));
                 Draw.LOD()
                 {
-                    Draw.Mesh(ball, At(2));
+                    Draw.Mesh(ball, At(1.5));
                 }
             }
             Draw.Instanced(ball, art.places);
             Draw.SetLOD();
-            Draw.Mesh(ball, At(2));
+            Draw.Mesh(ball, At(1.5));
             break;
         case 4: // A target picks by its own camera and pixels, or by the camera it's told
             art.shadow.SetCamera(float3(0, 0, 0), quaternion.identity, 60);
-            art.shadow.Mesh(ball, At(2));
+            art.shadow.Mesh(ball, At(1.5));
             art.shadow.SetLODCamera(float3(0, 0, 0), quaternion.identity, 60);
-            art.shadow.Mesh(ball, At(2));
+            art.shadow.Mesh(ball, At(1.5));
             art.shadow.LODCamera(Draw.CameraTransform(), Draw.CameraProjection())
             {
                 art.shadow.Mesh(ball, At(6));
@@ -120,9 +120,9 @@ view Show(mut Art art)
             art.shadow.SetLODCamera();
             art.shadow.LOD(2)
             {
-                art.shadow.Mesh(ball, At(2));
+                art.shadow.Mesh(ball, At(1.5));
             }
-            art.shadow.Mesh(ball, At(2));
+            art.shadow.Mesh(ball, At(1.5));
             break;
         case 5: // A skinned mesh, at rest
             Draw.SkinnedMesh(arm, At(2.2));
