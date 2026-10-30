@@ -263,6 +263,29 @@ non-unit/signed rotations, skipped-node scale/nonfinite validation and forged
 specialization metadata. Existing tests still cover changed facing and heading,
 different spine/helper chains and explicit reference/export separation.
 
+Final post-merge measurements at `43916e9fc` include the incoming Pose-index
+cache and its compatibility-collision repair. These release runs used clang
+23.1.2 on Ryzen 9 7900X, after all tests finished, with nine rounds per process
+and the median of three process medians. C Apply measured 2.686300 microseconds
+(process medians 2.686300, 2.682033, 2.886133), versus the original 9.932867.
+Raw sampling plus Apply measured 4.112733 microseconds; fresh profile-baked
+sampling 0.511133; separately measured legacy-baked sampling 0.526867; automatic
+discovery plus map creation 50.143. Every benchmark reported zero failures.
+
+At 100 calls, generated Tide measured 0.670100 microseconds per baked pose and
+4.324100 per live-retargeted pose: 0.067010 and 0.432410 milliseconds per batch,
+respectively. At 1,000 calls those were 1.664750 and 7.197000 microseconds per
+pose, or 1.664750 and 7.197000 milliseconds per batch. Original live-retargeted
+baselines were 12.7336 microseconds per pose at 100 calls and 14.56212 at 1,000.
+The workload includes pose construction, sampling and indexing, but excludes
+drawing, skinning, IK and gameplay. The earlier measurements above remain the
+pre-merge history; these are the final merged measurements.
+
+Final merged native and WASM suites passed, including the forced cache-collision
+regression and exact retarget pose hash; the private 1,181-sample bake-probe
+metrics still match between platforms. Full enabled/disabled test counts and
+integration coverage are recorded in notes/tide-programs.md.
+
 ## Kept sample plans and model facts (2026-10-30)
 
 bannerlord-duel measured `Pose.Sample` of an FBX clip onto its Synty

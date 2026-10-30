@@ -35,6 +35,17 @@ match, with no failures and maximum model-endpoint discrepancy 0.00000101 m.
 Licensed inputs and measurements stay under ignored build/; no prototype assets
 or game source are part of this commit.
 
+Final integration after merging dev through 05d92a922: both complete builds
+passed, then all 2,900 enabled native ASan checks and all 2,788 enabled web-debug
+checks passed (each still has the same disabled Newton test). Incoming mesh
+value/resource-collection codegen and Pose indexing changes were retained.
+Review found and corrected a same-slot model-facts cache lifetime bug in
+skinned compatibility; its 33-identity regression passes natively and on WASM,
+as does the pinned retarget pose hash. The five real-asset probes retain identical
+printed native/web results, including all 1,181 baked comparisons. The merged
+docs build also passes. Final release measurements were taken after the suites
+finished and are recorded in assets-and-files.md, Runtime performance follow-up.
+
 Deleted asset files (2026-10-27, owner-approved fix): the asset files a game's
 declarations name were only in tidec's DEPENDS, and Ninja never reruns a
 command because a dependency disappeared, so a file deleted from a glob's
