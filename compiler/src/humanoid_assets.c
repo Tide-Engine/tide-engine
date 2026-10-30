@@ -108,14 +108,36 @@ static uint32_t profile_block(sb *packed, const void *data, uint32_t count, uint
     return at;
 }
 
+// A reference's "parts": the patterns its model's parts are chosen by, as [Parts]'s
+typedef struct profile_parts {
+    const jnode *patterns;
+} profile_parts;
+
+static bool profile_part_kept(void *user, const char *name, const uint32_t length)
+{
+    const profile_parts *parts = user;
+    for (uint32_t i = 0; i < parts->patterns->count; i++) {
+        const jnode *p = parts->patterns->items[i];
+        if (asset_name_matches((str){p->text, (int)p->length}, name, length)) return true;
+    }
+    return false;
+}
+
 static bool read_profile(asset_match *item, const jnode *root, loc at, const char *game_folder)
 {
     char why[256] = {0};
     const char *const top_keys[] = {"reference", "bones", "referenceEdits"};
-    const char *const ref_keys[] = {"file", "pose", "clip", "seconds"};
+    const char *const ref_keys[] = {"file", "pose", "clip", "seconds", "parts"};
     if (!object_keys(root, top_keys, 3, why)) return profile_error(item, at, why);
     const jnode *reference = jget(root, "reference");
-    if (!object_keys(reference, ref_keys, 4, why)) return profile_error(item, at, "reference must specify file and pose: rest, or file, clip and seconds");
+    if (!object_keys(reference, ref_keys, 5, why)) return profile_error(item, at, "reference must specify file and pose: rest, or file, clip and seconds");
+    // "parts": the model's parts as a SkinnedMesh asset's [Parts] keeps them, so the rig is that model's skeleton
+    const jnode *part_list = jget(reference, "parts");
+    bool parts_valid = !part_list || (part_list->kind == J_ARRAY && part_list->count);
+    for (uint32_t i = 0; parts_valid && part_list && i < part_list->count; i++)
+        parts_valid = part_list->items[i]->kind == J_STRING && strlen(part_list->items[i]->text) == part_list->items[i]->length;
+    if (!parts_valid) return profile_error(item, at, "reference parts are a list of part names and * patterns, as [Parts] takes");
+    profile_parts parts = {part_list};
     const jnode *file = jget(reference, "file"), *pose = jget(reference, "pose");
     const jnode *clip = jget(reference, "clip"), *seconds = jget(reference, "seconds");
     float time = 0;
@@ -151,7 +173,9 @@ static bool read_profile(asset_match *item, const jnode *root, loc at, const cha
         if (ch == '"') sb_put(&path, "\\");
         sb_putn(&path, &ch, 1);
     }
+    if (part_list) asset_choose_parts(profile_part_kept, &parts);
     asset_value *resolved = asset_resolve(item->abs, (str){path.data, (int)path.len}, ASSET_ANIMATIONS, false, false, at, game_folder);
+    asset_choose_parts(NULL, NULL);
     if (!resolved || resolved->count != 1) return false;
     const asset_match *model = &resolved->items[0];
     add_dependencies(item, model);
@@ -189,22 +213,20 @@ static bool read_profile(asset_match *item, const jnode *root, loc at, const cha
         t->scale = tide_mul_f3(t->scale, tide_f3_splat(scale));
     }
     if (!tide_humanoid_auto(data, transforms, &bones, &status, 0)) {
-        snprintf(why, sizeof why, "reference transforms must be finite with positive uniform scale");
-        // Name the first bone that isn't, as retarget.c's valid_local judges
+        snprintf(why, sizeof why, "reference transforms must be finite with positive scale");
+        // Name the first bone that isn't
         for (int32_t i = 0; i < tide_list_count(transforms); i++) {
             const tide_bone_transform *t = tide_list_at(transforms, i, sizeof *t);
             const float x = t->scale.x, y = t->scale.y, z = t->scale.z;
             const float p[] = {t->position.x, t->position.y, t->position.z, t->rotation.value.x, t->rotation.value.y,
                                t->rotation.value.z, t->rotation.value.w, x, y, z};
-            bool fine = x > 0.0f && fabsf(x - y) <= x * 0.00001f && fabsf(x - z) <= x * 0.00001f;
+            bool fine = x > 0.0f && y > 0.0f && z > 0.0f;
             for (int k = 0; k < 10; k++) fine = fine && isfinite(p[k]);
             tide_skinned_node_data node;
             if (fine || !tide_skinned_data_node(&view, (uint32_t)i, &node)) continue;
-            const int length = (int)(node.name_length > 60u ? 60u : node.name_length);
-            if (x > 0.0f && isfinite(x) && isfinite(y) && isfinite(z) && !(fabsf(x - y) <= x * 0.00001f && fabsf(x - z) <= x * 0.00001f))
-                snprintf(why, sizeof why, "reference transforms must be finite with positive uniform scale; '%.*s' has scale (%g, %g, %g)",
-                         length, node.name ? node.name : "", (double)x, (double)y, (double)z);
-            else snprintf(why, sizeof why, "reference transforms must be finite with positive uniform scale; '%.*s' hasn't", length, node.name ? node.name : "");
+            snprintf(why, sizeof why, "reference transforms must be finite with positive scale; '%.*s' has position (%g, %g, %g) and scale (%g, %g, %g)",
+                     (int)(node.name_length > 60u ? 60u : node.name_length), node.name ? node.name : "",
+                     (double)p[0], (double)p[1], (double)p[2], (double)x, (double)y, (double)z);
             break;
         }
         ok = false; goto done;

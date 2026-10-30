@@ -1,3 +1,7 @@
-// expect: 'LeftHand' has scale (1, 1.001, 1)
-asset HumanoidRig source = "../retarget_profiles/nonuniform.humanoid.json";
+// expect: UnsupportedScale
+// The target rig's LeftHand is scaled (1, 1.001, 1): a role under non-uniform scale can't be transferred to
+[Retarget(sourceRig, scaledRig)]
+asset AnimationCatalog clips = "../e2e/retargeting/export.gltf";
+asset HumanoidRig sourceRig = "../e2e/retargeting/source.humanoid.json";
+asset HumanoidRig scaledRig = "../retarget_profiles/nonuniform.humanoid.json";
 scene Main { }

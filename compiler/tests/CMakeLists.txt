@@ -245,7 +245,7 @@ tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, prese
 tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
 tide_e2e_test(blend_shapes) # FBX blend channels and GLB morph targets: lookup, Shaped in the match and views, snapshots
-target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=936010611238560858ull)
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=13864903730648201482ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
 tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)

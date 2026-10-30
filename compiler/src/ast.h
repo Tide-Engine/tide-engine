@@ -732,6 +732,10 @@ typedef struct decl {
     // patterns where * is any run of characters (blend_shapes_kept); none when the attribute names none
     bool blend_shapes_chosen;
     VEC(str) blend_shape_patterns;
+    // [Parts("Body_LOD0", "Helmet*")] before a SkinnedMesh asset: the only parts (nodes holding meshes) its
+    // import keeps, by the same patterns (part_kept)
+    bool parts_chosen;
+    VEC(str) part_patterns;
     bool asset_many; // A List or Map: a glob's matches, or the one file its path names
 
     // Systems, views, methods, functions, and an input's Sample

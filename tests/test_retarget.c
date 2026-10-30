@@ -724,3 +724,49 @@ TIDE_TEST(retarget_rejects_forged_specializations_before_writing)
     }
     tide_scratch_reset(mark);
 }
+
+// A node of non-uniform scale no role or transfer needs (a part's geometry
+// helper, an exporter's noisy IK bone), on either rig, is carried as it is:
+// the same transfer as without it, its own local written unchanged. A role at
+// or below one refuses map creation, an optional one is left out.
+TIDE_TEST(retarget_non_uniform_scale_where_no_role_needs_it)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const test_rig source = humanoid(false, 1, 0, false), target = humanoid(true, 2, 0, false);
+    test_rig odd_source = source, odd_target = target;
+    const int32_t helper = add_node(&odd_target, "Helmet_geometry", odd_target.role[TIDE_HUMANOID_HEAD], tide_f3(0, 0.1f, 0));
+    odd_target.nodes[helper].local.scale = tide_f3(1.06f, 1.08f, 1.68f);
+    const int32_t ik = add_node(&odd_source, "ik_foot_r", 0, tide_f3(0.1f, 0, 0));
+    odd_source.nodes[ik].local.scale = tide_f3(0.999934f, 1, 0.999995f);
+    prepared plain, odd;
+    TIDE_REQUIRE(prepare(&source, &target, &plain));
+    TIDE_REQUIRE(prepare(&odd_source, &odd_target, &odd));
+    tide_list animated = tide_list_copy(plain.source_pose, sizeof(tide_bone_transform));
+    tide_list odd_animated = tide_list_copy(odd.source_pose, sizeof(tide_bone_transform));
+    for (int32_t role = 0; role < TIDE_HUMANOID_COUNT; role++) {
+        if (source.role[role] <= 0) continue;
+        const tide_quaternion turn = tide_euler_q(tide_f3(0.1f * (float)role, 0.05f, 0));
+        transform_at(animated, source.role[role])->rotation = tide_mul_q(transform_at(animated, source.role[role])->rotation, turn);
+        transform_at(odd_animated, source.role[role])->rotation = *(&transform_at(animated, source.role[role])->rotation);
+    }
+    tide_list a = {0}, b = {0};
+    TIDE_REQUIRE(apply(&plain, animated, &a));
+    TIDE_REQUIRE(apply(&odd, odd_animated, &b));
+    for (int32_t i = 0; i < target.count; i++) TIDE_CHECK(!memcmp(transform_at(a, i), transform_at(b, i), sizeof(tide_bone_transform)));
+    TIDE_CHECK(!memcmp(transform_at(b, helper), &odd_target.nodes[helper].local, sizeof(tide_bone_transform)));
+    // A required role under non-uniform scale refuses; an optional one is left out
+    test_rig scaled = target;
+    scaled.nodes[scaled.role[TIDE_HUMANOID_LEFT_LOWER_ARM]].local.scale = tide_f3(1, 1.001f, 1);
+    prepared refused;
+    TIDE_CHECK(!prepare(&source, &scaled, &refused));
+    int32_t optional = -1;
+    for (int role = TIDE_HUMANOID_LEFT_THUMB_PROXIMAL; role <= TIDE_HUMANOID_RIGHT_LITTLE_DISTAL && optional < 0; role++)
+        if (target.role[role] > 0) optional = role;
+    if (optional >= 0) {
+        test_rig finger = target;
+        finger.nodes[finger.role[optional]].local.scale = tide_f3(1, 1.5f, 1);
+        prepared kept;
+        TIDE_CHECK(prepare(&source, &finger, &kept));
+    }
+    tide_scratch_reset(mark);
+}

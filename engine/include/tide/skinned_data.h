@@ -210,6 +210,15 @@ bool tide_skinned_data_decode(const void *bytes, size_t size, bool runtime, tide
                               uint8_t **out, uint32_t *out_size, char why[256], char note[256]);
 void tide_skinned_data_free(uint8_t *bytes);
 
+// Build-time: decode keeping only the parts `keep` accepts, a part being a
+// node holding a mesh, by its name ([Parts]). Every node stays in the
+// skeleton; the meshes of the others, and skins only they use, are left out.
+// Refused when no part is kept. NULL keeps all, as tide_skinned_data_decode.
+typedef bool (*tide_skinned_keep_part_fn)(void *user, const char *name, uint32_t length);
+bool tide_skinned_data_decode_parts(const void *bytes, size_t size, tide_skinned_side_fn side, void *user,
+                                    tide_skinned_keep_part_fn keep, void *keep_user,
+                                    uint8_t **out, uint32_t *out_size, char why[256], char note[256]);
+
 // Build-time: the model with only the blend shapes `keep` accepts (by their
 // exact source names), deltas and all; the vertices keep every shape at its
 // file default, as they were. Written as the decoder writes a model, so keeping

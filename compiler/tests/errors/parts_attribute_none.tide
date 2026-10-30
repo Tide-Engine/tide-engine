@@ -1,0 +1,3 @@
+// expect: keeps none of its parts; it has 'Triangle', 'Hat'
+[Parts("Cape")] asset SkinnedMesh<Vertex3> model = "../e2e/fbx/parts/parts_ascii.fbx";
+scene Main { }

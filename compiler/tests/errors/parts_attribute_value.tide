@@ -1,0 +1,3 @@
+// expect: a Parts pattern is a text literal
+[Parts(3)] asset SkinnedMesh<Vertex3> model = "../e2e/fbx/parts/parts_ascii.fbx";
+scene Main { }

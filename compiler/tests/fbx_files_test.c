@@ -348,6 +348,62 @@ TIDE_TEST(fbx_blend_shape_channels_repeated_exactly_are_one_shape)
     }
 }
 
+static bool keep_part(void *user, const char *name, const uint32_t length)
+{
+    return strlen(user) == length && !memcmp(user, name, length);
+}
+
+static bool has_node(const tide_skinned_data_view *v, const char *name)
+{
+    for (uint32_t i = 0; i < v->nodes; i++) {
+        tide_skinned_node_data n;
+        if (tide_skinned_data_node(v, i, &n) && n.name_length == strlen(name) && !memcmp(n.name, name, n.name_length)) return true;
+    }
+    return false;
+}
+
+// [Parts] on an FBX: a part is a node holding a mesh. Keeping one leaves the
+// other's mesh, skin and nodes out (the Hat's Group too), keeps every bone, and
+// keeping none is refused naming the parts there are.
+TIDE_TEST(fbx_parts_keep_their_meshes_and_every_bone)
+{
+    static const char *const kinds[] = {"ascii", "binary"};
+    for (uint32_t i = 0; i < 2; i++) {
+        char name[64];
+        size_t size;
+        snprintf(name, sizeof name, "parts/parts_%s.fbx", kinds[i]);
+        uint8_t *bytes = fixture(name, &size);
+        TIDE_REQUIRE(bytes);
+        static const char *const keeps[] = {"Triangle", "Hat"};
+        for (uint32_t k = 0; k < 2; k++) {
+            uint8_t *glb = NULL, *model = NULL;
+            size_t glb_size = 0;
+            uint32_t model_size = 0;
+            char why[256], note[256];
+            TIDE_REQUIRE(fbx_file_to_glb_parts(bytes, size, true, keep_part, (void *)keeps[k], &glb, &glb_size, why, note));
+            TIDE_REQUIRE(tide_skinned_data_decode(glb, glb_size, false, NULL, NULL, &model, &model_size, why, note));
+            tide_skinned_data_view v;
+            TIDE_REQUIRE(tide_skinned_data_validate(model, model_size) && tide_skinned_data_open(model, model_size, &v));
+            TIDE_CHECK(v.vertices == 3);
+            for (uint32_t c = 0; c < v.vertices; c++) {
+                tide_skinned_vertex_data vertex;
+                TIDE_REQUIRE(tide_skinned_data_vertex(&v, c, &vertex));
+                TIDE_CHECK(k ? vertex.position[1] >= 3.0f : vertex.position[1] <= 2.0f);
+            }
+            TIDE_CHECK(has_node(&v, keeps[k]) && !has_node(&v, keeps[1u - k]) && has_node(&v, "Group") == (k == 1u));
+            TIDE_CHECK(has_node(&v, "Root") && has_node(&v, "Bone0") && has_node(&v, "Bone4"));
+            tide_skinned_data_free(model);
+            free(glb);
+        }
+        uint8_t *glb = NULL;
+        size_t glb_size = 0;
+        char why[256], note[256];
+        TIDE_CHECK(!fbx_file_to_glb_parts(bytes, size, true, keep_part, (void *)"Cape", &glb, &glb_size, why, note) && !glb);
+        TIDE_CHECK(strstr(why, "keeps none of its parts; it has 'Triangle', 'Hat'") != NULL);
+        free(bytes);
+    }
+}
+
 // SkinningType "Blend" whose dual-quaternion weights are all zero is linear
 // skinning: the same model as the rig saying "Linear". A vertex blending in
 // dual-quaternion skinning is refused.

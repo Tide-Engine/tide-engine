@@ -962,7 +962,7 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetLOD'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
 
     const char *offered = complete("[$] asset Texture masks = \"art/tile.png\";\nscene Main { }\n");
-    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter") && offers(offered, "BlendShapes"));
+    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter") && offers(offered, "BlendShapes") && offers(offered, "Parts"));
     open_document("[LO$D] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "LOD has simpler versions of a mesh made") && has(last_sent(), "'Rock' isn't a mesh"));
     const char *hover = request("textDocument/hover");
@@ -976,6 +976,13 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(hover, "[BlendShapes(") && has(hover, "any run of characters") && has(hover, "keeps none"));
     open_document("[BlendShape(\"jaw*\")] component Face { float x; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "did you mean 'BlendShapes'?"));
+    // [Parts] the same way
+    open_document("[Par$ts(\"Body*\")] component Body { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "Parts chooses which parts of its file a SkinnedMesh asset keeps"));
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "[Parts(") && has(hover, "node holding a mesh") && has(hover, "every bone stays"));
+    open_document("[Part(\"Body*\")] component Body { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "did you mean 'Parts'?"));
 }
 
 // Cull, which side of a 3D mesh's triangles draws: both forms, its sides, hovers, and rename fixes.

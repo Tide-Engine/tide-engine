@@ -3942,6 +3942,13 @@ static void describe(const occurrence *o, sb *out)
              "them; the vertices keep every shape at the file's default. `[BlendShapes()]` keeps none, and a pattern no "
              "shape of a file matches is fine. It goes before an asset that's a `SkinnedMesh<V>` (alone, or a list or a "
              "map of them); without it every shape is kept."},
+            {"Parts", "[Parts(\"name\", \"prefix*\")]",
+             "Keeps only the parts of this skinned model's file whose names match one of these: a part is a node holding a "
+             "mesh (an FBX geometry helper's is its parent's), named exactly or by a pattern where `*` is any run of "
+             "characters. The others' meshes and skins are left out before they're read, and their nodes with them; every "
+             "bone stays. For packs of many outfits on one skeleton, like `[Parts(\"Body_LOD0\", \"Helmet_LOD0\")]`. "
+             "A file none of whose parts match is refused, naming some. It goes before an asset that's a `SkinnedMesh<V>`; "
+             "a humanoid profile's reference takes the same list as `\"parts\"`."},
             {"Json", "[Json(\"key\")]",
              "This field's key in JSON, where it isn't the field's name: `[Json(\"max_players\")] int maxPlayers;`. "
              "`Json.Read` fills the field from that key and `Json.Write` writes it under it. It goes before a struct's "
@@ -9771,6 +9778,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "Raw");
             item(&c, "BlendShapes", CK_FUNCTION, "[BlendShapes(\"name\", \"prefix*\")]",
                  "A SkinnedMesh<V> asset keeps only the blend shapes these names or * patterns match.", "BlendShapes(\"$1\")");
+            item(&c, "Parts", CK_FUNCTION, "[Parts(\"name\", \"prefix*\")]",
+                 "A SkinnedMesh<V> asset keeps only the parts (nodes holding meshes) these names or * patterns match.", "Parts(\"$1\")");
             item(&c, "LOD", CK_FUNCTION, "[LOD]",
                  "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
                  "LOD");

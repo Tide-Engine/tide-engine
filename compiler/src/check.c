@@ -14288,26 +14288,8 @@ static bool mesh_wants_skin(const decl *vertex)
 
 #include "skinned_catalogs.inc"
 
-// A blend shape name against a [BlendShapes] pattern: * is any run of
-// characters (none too), everything else itself.
-static bool blend_shape_matches(const str pattern, const char *name, const uint32_t length)
-{
-    int p = 0, star = -1;
-    uint32_t n = 0, resume = 0;
-    while (n < length) {
-        if (p < pattern.len && pattern.ptr[p] == '*') {
-            star = p++;
-            resume = n;
-        } else if (p < pattern.len && pattern.ptr[p] == name[n]) {
-            p++, n++;
-        } else if (star >= 0) {
-            p = star + 1;
-            n = ++resume;
-        } else return false;
-    }
-    while (p < pattern.len && pattern.ptr[p] == '*') p++;
-    return p == pattern.len;
-}
+// A name against a [BlendShapes] or [Parts] pattern (asset_name_matches)
+#define blend_shape_matches asset_name_matches
 
 static bool blend_shape_kept(void *user, const char *name, const uint32_t length)
 {
@@ -14315,6 +14297,63 @@ static bool blend_shape_kept(void *user, const char *name, const uint32_t length
     for (int i = 0; i < k->blend_shape_patterns.count; i++)
         if (blend_shape_matches(k->blend_shape_patterns.items[i], name, length)) return true;
     return false;
+}
+
+static bool part_kept(void *user, const char *name, const uint32_t length)
+{
+    const decl *k = user;
+    for (int i = 0; i < k->part_patterns.count; i++)
+        if (blend_shape_matches(k->part_patterns.items[i], name, length)) return true;
+    return false;
+}
+
+// An attribute's pattern: a text literal or 'const string', its escapes as text has them; false for anything else.
+static bool attribute_pattern(const expr *value, str *out)
+{
+    const expr *literal = text_literal(value);
+    if (!literal) return false;
+    sb decoded = {0};
+    for (int c = 0; c < literal->text.len; c++) {
+        char ch = literal->text.ptr[c];
+        if (ch == '\\' && c + 1 < literal->text.len) {
+            ch = literal->text.ptr[++c];
+            ch = ch == 'n' ? '\n' : ch == 'r' ? '\r' : ch == 't' ? '\t' : ch;
+        }
+        sb_putn(&decoded, &ch, 1);
+    }
+    *out = (str){decoded.data ? decoded.data : "", (int)decoded.len};
+    return true;
+}
+
+// [Parts("Body_Full_LOD0", "GreatHelm_*")]: the parts a skinned model's import keeps, names or * patterns.
+static void check_parts_attribute(decl *k, const attribute *attr, const bool typed, const asset_kind read)
+{
+    if (k->parts_chosen) {
+        diag_error(attr->at, "'" STR_FMT "' already has a Parts", STR_ARG(k->name));
+        return;
+    }
+    if (typed && read != ASSET_SKINNED) {
+        diag_error(attr->at, "Parts chooses which parts of a skinned model's file its import keeps, and '" STR_FMT "' is %s",
+                   STR_ARG(k->name), type_name(k->return_type));
+        diag_note("it goes before a SkinnedMesh<V> asset, like '[Parts(\"Body_LOD0\", \"Helmet*\")] asset SkinnedMesh<Vertex3> knight = \"knight.fbx\";'");
+        return;
+    }
+    if (attr->args.count) {
+        diag_error(attr->at, "Parts takes part names and * patterns, not named arguments: '[Parts(\"Body_LOD0\", \"Helmet*\")]'");
+        return;
+    }
+    if (!attr->values.count) {
+        diag_error(attr->at, "Parts names the parts to keep: '[Parts(\"Body_LOD0\", \"Helmet*\")]'");
+        diag_note("a model with no parts has nothing to draw; leave the attribute out to keep them all");
+        return;
+    }
+    k->parts_chosen = true;
+    for (int i = 0; i < attr->values.count; i++) {
+        str pattern;
+        if (attribute_pattern(attr->values.items[i], &pattern)) vec_push(k->part_patterns, pattern);
+        else diag_error(attr->values.items[i]->at, "a Parts pattern is a text literal or a 'const string': a part's name (a node "
+                        "holding a mesh), where * stands for any run of characters");
+    }
 }
 
 // [BlendShapes("masculineFeminine", "default*")]: names or * patterns, each a constant text.
@@ -14336,22 +14375,10 @@ static void check_blend_shapes_attribute(decl *k, const attribute *attr, const b
     }
     k->blend_shapes_chosen = true;
     for (int i = 0; i < attr->values.count; i++) {
-        const expr *literal = text_literal(attr->values.items[i]);
-        if (!literal) {
-            diag_error(attr->values.items[i]->at, "a BlendShapes pattern is a text literal or a 'const string': a shape's name, "
-                       "where * stands for any run of characters");
-            continue;
-        }
-        sb decoded = {0};
-        for (int c = 0; c < literal->text.len; c++) {
-            char ch = literal->text.ptr[c];
-            if (ch == '\\' && c + 1 < literal->text.len) {
-                ch = literal->text.ptr[++c];
-                ch = ch == 'n' ? '\n' : ch == 'r' ? '\r' : ch == 't' ? '\t' : ch;
-            }
-            sb_putn(&decoded, &ch, 1);
-        }
-        vec_push(k->blend_shape_patterns, ((str){decoded.data ? decoded.data : "", (int)decoded.len}));
+        str pattern;
+        if (attribute_pattern(attr->values.items[i], &pattern)) vec_push(k->blend_shape_patterns, pattern);
+        else diag_error(attr->values.items[i]->at, "a BlendShapes pattern is a text literal or a 'const string': a shape's name, "
+                        "where * stands for any run of characters");
     }
 }
 
@@ -14417,6 +14444,8 @@ static void check_asset_decl(checker *c, decl *k)
             check_sampling_attribute(c, k, attr);
         } else if (str_eq_c(attr->name, "BlendShapes")) {
             check_blend_shapes_attribute(k, attr, typed, kind);
+        } else if (str_eq_c(attr->name, "Parts")) {
+            check_parts_attribute(k, attr, typed, read);
         } else if (str_eq_c(attr->name, "LOD")) {
             // Levels of detail (docs/spec.md): a mesh's, made as the game is built
             if (attr->args.count || attr->values.count) {
@@ -14483,7 +14512,9 @@ static void check_asset_decl(checker *c, decl *k)
         } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS
                                                     && kind != ASSET_ANIMATION && kind != ASSET_HUMANOID)) {
             const expr *path = k->asset_paths.items[0];
+            if (k->parts_chosen) asset_choose_parts(part_kept, k);
             k->asset = asset_resolve(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
+            asset_choose_parts(NULL, NULL);
             if (k->asset && read == ASSET_MESH && !c->prog->asset_metadata_only) {
                 const decl *vertex = asset_mesh_vertex(k->return_type);
                 bool tangents = false;
@@ -19682,6 +19713,12 @@ static void check_attributes(checker *c)
                                "' isn't an asset", STR_ARG(d->name));
                 continue;
             }
+            if (str_eq_c(attr->name, "Parts")) {
+                if (d->kind != DECL_ASSET) // An asset's was read with it
+                    diag_error(attr->at, "Parts chooses which parts of its file a SkinnedMesh asset keeps, and '" STR_FMT
+                               "' isn't an asset", STR_ARG(d->name));
+                continue;
+            }
             if (str_eq_c(attr->name, "LOD")) {
                 if (d->kind != DECL_ASSET) { // An asset's was read with it
                     diag_error(attr->at, "LOD has simpler versions of a mesh made, for where it's drawn small, and '" STR_FMT
@@ -19736,6 +19773,7 @@ static void check_attributes(checker *c)
             suggest_consider_c(&s, "Raw");
                 suggest_consider_c(&s, "LOD");
                 suggest_consider_c(&s, "BlendShapes");
+                suggest_consider_c(&s, "Parts");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "

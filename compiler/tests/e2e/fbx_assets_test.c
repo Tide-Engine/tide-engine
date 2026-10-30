@@ -37,7 +37,7 @@ TIDE_TEST(fbx_assets_static_skinned_collections_contracts_and_match_sampling)
 {
     TIDE_REQUIRE(start());
     const FbxProbe *p = &world.FbxProbe;
-    TIDE_CHECK(p->checks == 25 && p->passed == p->checks);
+    TIDE_CHECK(p->checks == 28 && p->passed == p->checks);
     TIDE_CHECK(p->position == -2 && p->modelPosition == -4);
     TIDE_CHECK(tide_list_read_count(&world.heap, p->geometry) == 3);
     TIDE_CHECK(tide_list_read_count(&world.heap, p->indices) == 3);
