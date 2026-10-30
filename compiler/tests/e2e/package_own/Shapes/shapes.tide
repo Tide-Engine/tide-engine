@@ -1,0 +1,14 @@
+// Another package, which Combat's code imports: its component Box is Box
+// there, though the game has a global function of that name.
+namespace Shapes;
+
+component Box
+{
+    float3 size;
+}
+
+// The game has a component Wheel too: Combat's code, which imports Shapes, means this one
+component Wheel
+{
+    int spokes;
+}

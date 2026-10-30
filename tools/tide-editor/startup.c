@@ -47,8 +47,8 @@ static bool startup_name_visible(const editor_document *d, const unit *from, con
 {
     // Qualified names are exact. A bare global name can be shadowed by a
     // declaration in the settings namespace (or one of its parent namespaces)
-    // that a prefab couldn't share its name with there: any but a system or an
-    // asset, as the compiler's nearest namespace decides whatever its kind.
+    // that takes a type's place, as the compiler's nearest namespace decides:
+    // a prefab, a scene, a type or an alias, not a system or any value.
     for (int i = 0; i < d->prog->decls.count; i++) {
         const decl *p = d->prog->decls.items[i];
         if (p != selected && p->kind == DECL_PREFAB && str_eq(p->qualified, selected->qualified)) return false;
@@ -61,7 +61,8 @@ static bool startup_name_visible(const editor_document *d, const unit *from, con
         for (int i = 0; i < d->prog->decls.count; i++) {
             const decl *p = d->prog->decls.items[i];
             if (!str_eq(p->name, selected->name)) continue;
-            if (p->kind != DECL_SYSTEM && p->kind != DECL_ASSET && str_eq_c(p->qualified, scoped.data)) return false;
+            const bool value = p->kind == DECL_FUNCTION || p->kind == DECL_CONST || p->kind == DECL_ASSET || p->kind == DECL_SHADER;
+            if (p->kind != DECL_SYSTEM && !value && str_eq_c(p->qualified, scoped.data)) return false;
             if (p->kind != DECL_PREFAB) continue;
             // These compiler namespaces also resolve a unique descendant by
             // its short name; ambiguous folder aliases continue at the parent.

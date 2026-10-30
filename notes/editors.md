@@ -444,9 +444,10 @@ Startup checks cover BOM/CRLF/trailing comments, invalid string RHS replacement,
 settings namespaces and name shadowing, exact disk bytes including appended
 NULs, exclusive file creation, source ownership, pending recovery and active
 .tide source baselines. A bare global prefab shadowed by a declaration in
-the settings namespace is refused before writing (any kind but a system or an
-asset, as the compiler's nearest namespace decides whatever its kind, since
-2026-10-30: a scene or struct there used to let the global prefab through);
+the settings namespace is refused before writing (a prefab, scene, type or
+alias, what takes a type's place, as the compiler's nearest namespace decides
+since 2026-10-30: a scene or struct there used to let the global prefab
+through; a system, function, constant, asset or frag/vert doesn't hide it);
 the user can move that setting to global scope. Repeated startup selection preserves the active declaration.
 The installed Play test builds/runs a no-Main unsaved scene twice with real
 Spawned/systems/unmarked views, input, camera pixels and fresh state after Stop.

@@ -427,8 +427,10 @@ tide_e2e_test(namespace_blocks SOURCES e2e/namespace_blocks/a_game.tide e2e/name
 # What a game declares itself comes before what a namespace it imports has by that name
 tide_e2e_test(using_own SOURCES e2e/using_own/a_lib.tide e2e/using_own/a_other.tide e2e/using_own/b_game.tide
     e2e/using_own/c_inner.tide)
-# A package's code means its own names: its enum Side(i), though the game has a global function Side
-tide_e2e_test(package_own SOURCES e2e/package_own/game.tide PACKAGES Combat e2e/package_own/Combat/combat.tide)
+# A package's code means its own names and its imports' (an enum Side(i), another package's Box), whatever
+# the game declares globally; the game's code finds a package's function and frag past its own handler and function
+tide_e2e_test(package_own SOURCES e2e/package_own/game.tide
+    PACKAGES Shapes e2e/package_own/Shapes/shapes.tide Combat e2e/package_own/Combat/combat.tide)
 tide_e2e_test(type_aliases SOURCES e2e/type_aliases/a_aliases.tide e2e/type_aliases/b_game.tide
     e2e/type_aliases/c_consumer.tide e2e/type_aliases/z_types.tide) # Closed aliases retain canonical values and declaration-site name binding
 tide_e2e_test(alias_assets SOURCES e2e/alias_assets.tide

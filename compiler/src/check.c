@@ -437,34 +437,61 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     return find_in_folders(prog, ns, name, kind);
 }
 
-// Whether `ns` has a declaration named `name` that a `kind` of that name
-// couldn't share it with in one namespace (the clashes check_decls reports):
-// it hides any `kind` of the name further out. A type and a system can share
-// a name; a function, a frag or vert, a constant or an alias shares none.
+// What a name is used as: a type (and a prefab or scene, which take a
+// type's place), a system, or a value, which a function, a constant, an asset
+// and a frag or vert all are where a name is read. A call takes an enum too:
+// `Side(i)` converts to it.
+static bool same_role(const decl *d, const name_kind kind)
+{
+    if (kind == NAME_SYSTEM) return d->kind == DECL_SYSTEM;
+    if (kind == NAME_TYPE || kind == NAME_PREFAB) return is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB;
+    if (kind == NAME_FUNCTION && d->kind == DECL_ENUM) return true;
+    return d->kind == DECL_FUNCTION || d->kind == DECL_CONST || d->kind == DECL_ASSET || d->kind == DECL_SHADER;
+}
+
+// Whether namespace `ns` has a declaration named `name` that's used as a
+// `kind` of that name would be: it hides any `kind` of the name further out.
+// A namespace's enum Side hides a function Side around it from a call, and a
+// command or a component of a name hides no function of it.
 static bool hides_kind(const program *prog, const str ns, const str name, const name_kind kind)
 {
     const decl_index *index = decls_by(prog, false);
     const uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), name.ptr, (size_t)name.len);
-    const bool kind_type = kind == NAME_TYPE || kind == NAME_PREFAB;
-    const bool kind_sole = kind == NAME_FUNCTION || kind == NAME_SHADER || kind == NAME_CONST;
     for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         const decl *d = prog->decls.items[i];
-        if (!str_eq(d->name, name) || !str_eq(decl_ns(d), ns)) continue;
-        const bool sole = d->kind == DECL_FUNCTION || d->kind == DECL_SHADER || d->kind == DECL_CONST || d->kind == DECL_ALIAS;
-        const bool type = is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB;
-        if (sole || kind_sole || (type && kind_type) || (d->kind == DECL_SYSTEM && kind == NAME_SYSTEM)) return true;
+        if (str_eq(d->name, name) && str_eq(decl_ns(d), ns) && same_role(d, kind)) return true;
     }
     return false;
+}
+
+// Whether `d` is the game's own, from a file of no package and not one of
+// tide's own (the preludes, "<tide>/..."). Packages declare nothing in the
+// global namespace, so there it's the game's or the engine's.
+static bool games_own(const decl *d)
+{
+    const unit *home = decl_home(d);
+    return !d->builtin && home && home->src && !home->src->package
+        && !(home->src->path && strncmp(home->src->path, "<tide>/", 7) == 0);
 }
 
 // What a name means as written in `from`. A qualified name (Combat.Health) is
 // exact. A plain one is looked up in the file's namespace, then its parents
 // out to the global namespace, then the `using` namespaces, as in C#: what a
 // game declares itself is what its code means, whatever a namespace it
-// imports also has by that name. The nearest namespace with the name decides,
-// whatever kind it has there: a package's enum Side hides the game's global
-// function Side from the package's code. If two `using` namespaces both have
-// it, *other gets the second: the name is ambiguous.
+// imports also has by that name.
+// - A namespace's own names win inside it: in a namespace other than the
+//   global one, a name of the role asked for hides the name further out,
+//   whatever its kind (hides_kind), so a package's enum Side is what Side(i)
+//   means in its code, though the game has a function Side.
+// - The global namespace has a name only of the kind asked for: a game's
+//   command Shake doesn't hide the function Shake its `using` namespace has.
+// - In a package's code, the game's global declarations come after the
+//   package's `using` namespaces (the engine's stay where they are): nothing a
+//   game names hides a package's names from a package's code. The game's
+//   functions are still found there when nothing else has the name, as a
+//   game's function a package's frag is handed as a Func.
+// If two `using` namespaces both have it, *other gets the second: the name is
+// ambiguous.
 static decl *lookup(const program *prog, const unit *from, const str text, const name_kind kind, decl **other)
 {
     *other = NULL;
@@ -472,11 +499,17 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
     str name;
     if (split_qualified(text, &ns, &name)) return find_in(prog, ns, name, kind);
 
+    const bool package = from && from->src && from->src->package;
+    decl *games = NULL; // A package's code: the game's global one, after the `using` namespaces
     for (ns = from ? from->ns : global_ns;;) {
         decl *d = find_in(prog, ns, text, kind);
+        if (d && ns.len == 0 && package && games_own(d)) {
+            games = d;
+            d = NULL;
+        }
         if (d) return d;
-        if (hides_kind(prog, ns, text, kind)) return NULL;
         if (ns.len == 0) break; // The global namespace, which is around every other
+        if (hides_kind(prog, ns, text, kind)) return NULL;
         int dot = ns.len - 1;
         while (dot >= 0 && ns.ptr[dot] != '.') dot--;
         ns.len = dot < 0 ? 0 : dot;
@@ -487,7 +520,7 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
         if (d && !found) found = d;
         else if (d && d != found && !*other) *other = d;
     }
-    return found;
+    return found ? found : games;
 }
 
 static decl *find_named(const checker *c, const str name, const loc at, const name_kind kind)

@@ -1,12 +1,20 @@
-// A package's code means its own namespace's names, whatever the game
-// declares globally: its enum Side is Side here, though the game has a
-// function of that name.
+// A package's code means its own namespace's names, and its imports', whatever
+// the game declares globally: its enum Side is Side here, though the game has a
+// function of that name, and Shapes' component Box is Box, though the game has
+// a function Box too.
 namespace Combat;
+
+using Shapes;
 
 enum Side
 {
     Left,
     Right,
+}
+
+struct Corner
+{
+    float3 position;
 }
 
 int Facing(Side s)
@@ -17,4 +25,22 @@ int Facing(Side s)
 int FacingOf(int i)
 {
     return Facing(Side(i));
+}
+
+// A function the game calls by its plain name, where the game has a command
+// handler of that name
+int Shake(int amount)
+{
+    return amount * 3;
+}
+
+// A frag the game names by its plain name, where the game has a function of that name
+frag Lit(Corner corner, out Color color)
+{
+    color = Color.red;
+}
+
+void Crate(float size)
+{
+    Spawn(Box { size = float3(size, size, size) }, Wheel { spokes = 4 });
 }
