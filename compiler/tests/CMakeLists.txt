@@ -208,6 +208,7 @@ tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(mesh_bones) # A Mesh with joints and weights: the model at rest, with its skeleton's bones
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+tide_e2e_test(retargeting) # Automatic humanoid characterization, calibrated pose transfer and manual corrections
 # Run the same asset/snapshot checks through the shipping loader, including
 # prehashed raw-pack fingerprint requests. This host needs no window or GPU.
 set(private_names_dir "${CMAKE_CURRENT_BINARY_DIR}/release_names")

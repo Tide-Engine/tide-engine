@@ -3688,6 +3688,8 @@ static decl *converted_enum(const checker *c, const expr *e)
         name = (str){text, ns.len + 1 + e->name.len};
     }
     decl *d = find_type(c, name, e->at);
+    type builtin;
+    if (!d && skinned_type_named(c->prog, name, &builtin) && builtin.kind == TY_ENUM) d = builtin.decl;
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
@@ -9071,10 +9073,8 @@ static decl *named_enum(const checker *c, const expr *e)
         return NULL;
     }
     decl *d = find_type(c, text, e->at);
-    if (!d && str_eq_c(text, "Playback")) {
-        skinned_builtins(c->prog);
-        d = c->prog->playback;
-    }
+    type builtin;
+    if (!d && skinned_type_named(c->prog, text, &builtin) && builtin.kind == TY_ENUM) d = builtin.decl;
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
@@ -11456,8 +11456,14 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("make the new text of its pieces, like 'name = name.Substring(0, i) + c + name.Substring(i + 1);'");
             return false;
         }
+        if (part->skin_operation == SKIN_OP_HUMANOID_INDEX && (arg_of || through_element(part->object))) {
+            diag_error(target->at, "a humanoid bone assignment is a value, not a writable reference");
+            diag_note("copy the rig to a mutable variable and assign its bone with 'rig[HumanoidBone.LeftHand] = bone'");
+            return false;
+        }
         if (part->kind == E_MEMBER && part->object->type.kind == TY_STRUCT
-            && part->object->type.decl->skin_kind && part->object->type.decl->skin_kind != SKIN_TRANSFORM) {
+            && part->object->type.decl->skin_kind && part->object->type.decl->skin_kind != SKIN_TRANSFORM
+            && part->object->type.decl->skin_kind != SKIN_HUMANOID_RIG && part->object->type.decl->skin_kind != SKIN_RETARGET_MAP) {
             diag_error(target->at, "model members are read-only; edit a Pose's local transforms through a Bone");
             return false;
         }
@@ -11940,7 +11946,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
         if ((e->visibility_operation & VISIBILITY_MUT) && !step_own(e->object, loop)) return false;
         break;
     case CALL_SKINNED:
-        if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
+        if (skinned_changes_pose(e->skin_operation)
             && (!e->object || !step_own(e->object, loop))) return false;
         if (skinned_lookup(e->skin_operation) && !step_own(e->args.items[1], loop)) return false;
         break; // Read-only sampling and step-local poses use the executing thread's scratch area.
@@ -13159,7 +13165,7 @@ static bool stands_alone(const expr *e)
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_TASK
         || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
-            || called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
+            || skinned_changes_pose(called->skin_operation)))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
@@ -17530,7 +17536,7 @@ static bool call_acts(const expr *e)
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_SKINNED: return skinned_lookup(e->skin_operation)
-        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+        || skinned_changes_pose(e->skin_operation);
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");

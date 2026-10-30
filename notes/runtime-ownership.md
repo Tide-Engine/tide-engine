@@ -1,5 +1,61 @@
 # Runtime written by Claude for now
 
+## Humanoid retargeting boundary (2026-10-30)
+
+Within the owner's approved standalone retargeting task, agents maintain
+`engine/include/tide/retarget.h`, `engine/src/retarget.c` and their focused C
+tests until the owner takes them over. This adds three generated-C runtime
+calls: `tide_humanoid_auto`, `tide_retarget_create`, and `tide_retarget_apply`.
+The compiler owns HumanoidRig/HumanoidBone/HumanoidBoneStatus, RetargetMap and
+RetargetError wrappers, typed Bone provenance checks, and value lifecycle
+handling. Public contracts and supported limits are in assets-and-files.md
+and the Pose documentation. There is no tide-motion dependency.
+
+Auto takes canonical skeleton bytes plus reference transforms and returns
+55 integer role indices and statuses as ordinary owned lists. Create takes
+actual source bytes separately from source reference bytes/transforms/roles
+and target reference bytes/transforms/roles. It returns an immutable List<byte>
+plan and the initial leg-length root scale only on success. Error codes are
+OK, InvalidRig, MissingBone, AmbiguousBone, InvalidReferencePose,
+IncompatibleSkeleton and UnsupportedScale in that order (0 through 6). Role
+values follow the declared HumanoidBone order, ending with UpperChest. Status
+values are Missing=0, Automatic=1, Uncertain=2 and Manual=3. Missing and uncertain
+required-role diagnostics identify the role; a failed Create preserves outputs.
+
+The plan contains a 136-byte header, an 8-byte record per actual source node,
+and a 120-byte record per target node. Static assertions pin their padding-free
+layouts. Records carry parent/source indices, scalar options, calibrated
+quaternions and reference local transforms; they contain no pointers, caches,
+asset offsets or allocator handles. Lists therefore keep normal copy-on-write,
+snapshot, hashing and packing semantics. Changes to this private plan layout
+must change its magic. No existing canonical asset format or skinned ABI changes.
+
+Preparation validates canonical data and positive uniform reference scale,
+accumulates model transforms once, binds export names using stable sorting,
+then prepares semantic anchors and torso/twist chains. Hand ancestry and chain
+sampling use parent-first/monotonic passes. Apply reads only the immutable
+skeleton headers for node counts and SHA-256 identity (with a chunk-size static
+assertion); it does not flatten or traverse whole mesh/animation payloads.
+Packed skeleton headers and payload spans are checked before access. All source
+globals and target locals/globals are staged in scratch; only a completely
+valid result prepares/resizes/writes the destination transform list. Existing
+destination storage is reused. Source transform/output aliasing is supported;
+aliasing a transform output with a byte-list plan or model is rejected. World
+output paths release the temporary scratch mark, leaving no persistent pointer.
+Current source scales must match the prepared static export scales. Finite
+options, hierarchy order, indices and intermediate transforms are checked;
+malformed inputs cannot partially mutate the output or its match heap.
+
+The arithmetic uses Tide deterministic quaternion/vector functions and basic
+IEEE operations. Original `tests/test_retarget.c` rigs verify independent
+geometric expectations, export separation, missing optional source roles,
+automatic/manual diagnostics, invalid data atomicity, copy-on-write snapshots
+and cross-platform output bits. Native ASan and WASM passed all twelve new C
+fixtures, the existing retarget regression and both new public API e2e cases.
+The exact 13-frame pose hash `a669d398066dafa5` is pinned after agreeing on both
+platforms. Existing skinned CPU coverage passed 62/62 on each. Private user-asset
+measurements and visual checks are recorded with the asset contract.
+
 ## GUI looks boundary (2026-10-29)
 
 Within the owner's approved GUI looks task, generated code gains the

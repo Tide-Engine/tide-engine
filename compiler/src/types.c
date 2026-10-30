@@ -368,6 +368,12 @@ bool type_assignable(const type to, const type from)
         return (!to.decl->skin_metadata_status && !to.decl->skin_inferred && !to.decl->skin_catalog.count)
             || skin_catalog_guarantees(to.decl, from.decl);
     }
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_SKELETON
+        && from.decl->skin_kind == SKIN_SKELETON) {
+        const decl *wanted = to.decl->skin_bones;
+        return (!wanted->skin_metadata_status && !wanted->skin_inferred && !wanted->skin_catalog.count)
+            || skin_catalog_guarantees(wanted, from.decl->skin_bones);
+    }
     if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_MESH
         && from.decl->skin_kind == SKIN_MESH) {
         if (to.decl->skin_vertex.decl != from.decl->skin_vertex.decl) return false;

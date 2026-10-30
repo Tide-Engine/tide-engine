@@ -12315,6 +12315,98 @@ TIDE_TEST(lsp_skinned_blend_shapes_complete_hover_and_help)
     TIDE_CHECK(offers(completion, "Decode") && !offers(completion, "Shaped"));
 }
 
+TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
+{
+    start();
+    const char *completion = complete("void Helper($\n");
+    TIDE_CHECK(offers(completion, "HumanoidRig") && offers(completion, "HumanoidBone")
+               && offers(completion, "HumanoidBoneStatus") && offers(completion, "RetargetMap") && offers(completion, "RetargetError"));
+    completion = complete("scene Main { }\nview V() { var rig = HumanoidRig.$ }\n");
+    TIDE_CHECK(offers(completion, "Auto") && !offers(completion, "GetStatus") && has(completion, "Auto(Pose referencePose)"));
+    completion = complete("scene Main { }\nview V() { var mapping = RetargetMap.$ }\n");
+    TIDE_CHECK(offers(completion, "Create") && !offers(completion, "rootScale") && has(completion, "fails RetargetError"));
+    completion = complete("scene Main { }\nvoid Inspect(HumanoidRig rig) { rig.$ }\n");
+    TIDE_CHECK(offers(completion, "referencePose") && offers(completion, "GetStatus") && !offers(completion, "Auto")
+               && !offers(completion, "bones") && !offers(completion, "status"));
+    completion = complete("scene Main { }\nvoid Inspect(RetargetMap mapping) { mapping.$ }\n");
+    TIDE_CHECK(offers(completion, "rootScale") && offers(completion, "rootOffset") && offers(completion, "headingDegrees")
+               && offers(completion, "spineDistribution") && offers(completion, "twistDistribution")
+               && !offers(completion, "Create") && !offers(completion, "sourceData") && !offers(completion, "targetData") && !offers(completion, "plan"));
+    completion = complete("scene Main { }\nvoid Inspect(Animation clip) { clip.skeleton.$ }\n");
+    TIDE_CHECK(offers(completion, "bones") && offers(completion, "RestPose"));
+    completion = complete("scene Main { }\nvoid Inspect(Pose pose) { pose.$ }\n");
+    TIDE_CHECK(offers(completion, "skeleton") && offers(completion, "Retarget") && !offers(completion, "transforms"));
+    completion = complete("scene Main { }\nvoid Inspect(HumanoidRig rig) { rig.referencePose.skeleton.bones.$ }\n");
+    TIDE_CHECK(offers(completion, "TryGetByName") && offers(completion, "TryGetAt"));
+
+    open_document("scene Main { }\nHumanoidRig Characterize(Pose reference) { return HumanoidRig.Au$to(reference); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "HumanoidRig.Auto(Pose referencePose)") && has(hover, "first frame"));
+    open_document("scene Main { }\nPose Reference(HumanoidRig rig) { return rig.reference$Pose; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "explicit calibration pose"));
+    open_document("scene Main { }\nfloat Heading(RetargetMap mapping) { return mapping.heading$Degrees; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "degrees"));
+    open_document("scene Main { }\nSkeleton Source(Animation clip) { return clip.ske$leton; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "not necessarily a neutral reference pose"));
+    open_document("scene Main { }\nHumanoidRig Copy(Humanoid$Rig rig) { return rig; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Reusable humanoid bone assignments"));
+}
+
+TIDE_TEST(lsp_humanoid_retargeting_roles_signatures_and_restrictions)
+{
+    start();
+    const char *completion = complete("scene Main { }\nBone Read(HumanoidRig rig) { return rig[$]; }\n");
+    TIDE_CHECK(offers(completion, "HumanoidBone") && offers(completion, "HumanoidBone.LeftHand"));
+    completion = complete("scene Main { }\nBone Read(HumanoidRig rig) { return rig[.$]; }\n");
+    TIDE_CHECK(offers(completion, "LeftHand") && offers(completion, "UpperChest") && offers(completion, "RightLittleDistal")
+               && !offers(completion, "HumanoidBone.LeftHand"));
+    completion = complete("scene Main { }\nHumanoidBoneStatus Read(HumanoidRig rig) { return rig.GetStatus($); }\n");
+    TIDE_CHECK(offers(completion, "HumanoidBone.LeftHand"));
+    completion = complete("scene Main { }\nHumanoidBoneStatus Read(HumanoidRig rig) { return rig.GetStatus(bone: .$); }\n");
+    TIDE_CHECK(offers(completion, "LeftHand") && !offers(completion, "Missing"));
+    completion = complete("scene Main { }\nHumanoidBoneStatus Read(HumanoidRig rig) { return HumanoidBoneStatus.$; }\n");
+    TIDE_CHECK(offers(completion, "Missing") && offers(completion, "Automatic") && offers(completion, "Uncertain") && offers(completion, "Manual"));
+
+    open_document("scene Main { }\nHumanoidBoneStatus Assign(Pose reference, Bone hand) {\n"
+                  "    mut var rig = HumanoidRig.Auto(reference);\n    rig[.LeftHand] = hand;\n    return rig.GetSta$tus(.LeftHand);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GetStatus(HumanoidBone bone)"));
+    open_document("scene Main { }\nRetargetMap Prepare(Animation clip, HumanoidRig sourceRig, HumanoidRig targetRig) {\n"
+                  "    return RetargetMap.Cre$ate(clip.skeleton, sourceRig, targetRig)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "RetargetMap.Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig)")
+               && has(hover, "fails RetargetError") && has(hover, "actual animation skeleton"));
+    open_document("scene Main { }\nRetargetMap Prepare(Animation clip, HumanoidRig sourceRig, HumanoidRig targetRig) {\n"
+                  "    return RetargetMap.Create(targetRig: targetRig, source: clip.skeleton, sourceRig: $sourceRig)!;\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "fails RetargetError") && has(help, "\"activeParameter\":1"));
+    open_document("scene Main { }\nview V() { var mapping = RetargetMap.Create($\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig)"));
+    open_document("scene Main { }\nHumanoidRig Characterize(Pose reference) { return HumanoidRig.Auto($reference); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Auto(Pose referencePose)"));
+    open_document("scene Main { }\nbool Apply(mut Pose target, Pose source, RetargetMap mapping) { return target.Reta$rget(source, mapping); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Returns false and leaves the target unchanged"));
+    open_document("scene Main { }\nbool Apply(mut Pose target, Pose source, RetargetMap mapping) { return target.Retarget(source, $mapping); }\n");
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Retarget(Pose source, RetargetMap mapping) -> bool") && has(help, "\"activeParameter\":1"));
+
+    open_document("scene Main { }\nbool Apply(Pose target, Pose source, RetargetMap mapping) { return target.Retarget(source, mapping); }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+    open_document("scene Main { }\nvoid Assign(HumanoidRig rig, Bone hand) { rig[.LeftHand] = hand; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+    completion = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { Humanoid$ }\n");
+    TIDE_CHECK(!offers(completion, "HumanoidRig") && !offers(completion, "RetargetMap"));
+    completion = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { var rig = HumanoidRig.$ }\n");
+    TIDE_CHECK(!offers(completion, "Auto"));
+    completion = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { HumanoidRig rig = default; rig.$ }\n");
+    TIDE_CHECK(!offers(completion, "GetStatus") && !offers(completion, "referencePose"));
+}
+
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
 {
     start();

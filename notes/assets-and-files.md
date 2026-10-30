@@ -1,5 +1,99 @@
 # Assets and local files
 
+## Humanoid pose retargeting (2026-10-30)
+
+The owner approved a standalone runtime path, without a tide-motion dependency:
+`HumanoidRig.Auto(referencePose)`, editable `rig[HumanoidBone]`,
+`rig.GetStatus(role)`, `RetargetMap.Create(actualAnimation.skeleton, sourceRig,
+targetRig)` failing with `RetargetError`, and `pose.Retarget(sampledPose, map)`
+returning a bool. A rig keeps its reference pose and role assignments. Status is
+Missing, Automatic, Uncertain or Manual; uncertain required roles prevent map
+creation, and runtime diagnostics identify the side and role to assign. Manual
+assignments can complete a partial automatic result before creating a map.
+Assigning a default Bone explicitly unmaps the role. Bone provenance and the
+reference pose's skeleton identity are checked; replacing a rig's reference
+with an incompatible skeleton cannot silently reuse its old indices.
+
+Automatic mapping combines common Unity/Mixamo, UE4 and Synty anatomical names,
+namespaces, side markers and hierarchy. Explicit geometry/mesh name tokens,
+IK, twist and helper names are excluded from semantic candidates. Clavicle plus
+Shoulder recognizes the Synty upper arm, whereas Mixamo Shoulder is the clavicle.
+Ball followed by Toes selects the proximal toe joint. Unsided fingers inherit
+their mapped hand, including Synty's right-hand numeric suffix; a single generic
+Finger_01/02/03 chain represents a mitten's middle finger, while competing or
+branched generic chains remain uncertain. A known bilateral pair supplies a
+reference-geometry side axis for anatomically named unsided limbs. A unique
+intermediate non-helper node can fill a missing elbow or knee. This is not
+recognition of arbitrary unnamed skeletons: ambiguity is exposed for manual
+assignment. Hips, head, upper/lower arms and legs, hands and feet are required;
+spine, chest, upper chest, neck, clavicles, toes and fingers are optional.
+
+Map creation binds the actual animation export separately from the calibration
+pose, by unique exact node names and the shared named ancestor chains. Reordered
+nodes, extra uniform armature wrappers and different authored node defaults are
+supported. The reference must describe that same source rig in its intended
+calibration pose; an FBX whose node defaults are idle can use a sampled T-pose
+clip as its explicit reference. Optional source roles absent or ambiguous in
+the actual export are omitted from the prepared mapping, without modifying the
+rig. Required roles must bind uniquely. Exporter axis/unit conversion must
+already place the actual source and its reference in the same model space.
+
+Transfer uses reference-calibrated global rotation deltas, aligned body facing
+and outgoing limb directions. It handles T/A reference differences and keeps
+target local translations and scales, so target segment lengths survive. Two
+finger rays can determine palm roll; leaves or hands without that secondary
+frame retain reference roll. Extra torso nodes interpolate source-chain global
+rotation deltas by reference arc length. Limb helpers receive only axial twist,
+never interpolation of elbow/knee swing; common sibling twist/roll bones receive
+half the distal axial delta. Off-axis serial helpers follow the proximal joint.
+`spineDistribution` and `twistDistribution` default to 1 and clamp to [0,1].
+The latter settings control intermediate helpers; mapped semantic endpoints
+still follow their source roles.
+
+`rootScale` starts at target/source average leg length, `rootOffset` at zero,
+and `headingDegrees` at zero. Hips travel includes source ancestor movement,
+is scaled in model space and turned by the calibrated facing plus requested
+heading about target up. Root offset uses target model space; rootScale zero
+removes hips travel. There is no separate root-motion extraction/controller.
+Reference-pose edits are calibration adjustments; geometric alignment can
+cancel a swing edit. For an artistic per-bone output offset, edit the resulting
+Pose after Retarget. Retarget a full target rig, then use existing compatible
+binding to draw sparse modular pieces; incomplete body rigs do not guess a leg
+ratio. Contact IK, ground locking, weapon/hand constraints and non-root position
+animation transfer are outside this pass. Nonuniform, reflected, zero or
+animated source scale is refused; positive uniform static unit wrappers work.
+
+Preparation owns a pointer-free byte plan and the API keeps ordinary list-backed
+value state, including snapshots. Apply checks immutable skeleton headers and
+walks source/target nodes once, without scanning mesh or animation payloads each
+frame. It stages results before mutation, allows source/output pose aliasing,
+and leaves the output unchanged on invalid identity, counts, options or nonfinite
+transforms. The runtime boundary is recorded in runtime-ownership.md. Original
+synthetic C fixtures cover naming/ambiguity/manual assignments, T/A and roll,
+root and facing calibration, different spine counts, axial helpers, independent
+export defaults/order/unit wrappers, missing optional export bones, atomic
+failure and snapshots, and deterministic pose bits. Public compiler fixtures
+exercise the API separately; licensed local meshes are not repository fixtures.
+
+Private validation used the owner's UE4 Kubold source with the sampled frame-0
+T-pose calibration and Synty POLYGON target. Five clips (idle, right cut, top
+cut, thrust and death), 593 sampled frames, all applied successfully. Every
+required role and the 18 supported target finger roles mapped automatically,
+without ambiguity. Independent model-space segment comparisons found a worst
+core limb-direction difference of 0.16902 degrees; retained branch geometry
+still differs (clavicle attachment rays up to 35.32 degrees, wrist-to-thumb-root
+36.61, wrist-to-index-root 20.22). These are not contact or weapon-alignment
+guarantees: differing attachment offsets and hand proportions remain target
+geometry. Matching-camera 1600x1200 source/target renders for all five clips were
+visually inspected, without an observed collapse or limb flip; hand contacts
+still need the game's constraints/IK. Native and WASM private probes each
+applied all 593 frames with zero failures; their 256 status, scale, direction
+and completion lines matched at the recorded precision. All twelve new C
+fixtures passed on native ASan and WASM (the retarget filter also runs one
+existing test, 13/13 total); the 13-frame synthetic pose hash matched exactly,
+`a669d398066dafa5`, and is pinned in the test. The two public API e2e cases also
+passed on both platforms. Existing skinned CPU coverage passed 62/62 on each.
+
 ## FBX keys closer than a float are one key (2026-10-29, bug)
 
 Reported by the owner from the duel (`bannerlord-duel`'s `notes/gaps.md`):

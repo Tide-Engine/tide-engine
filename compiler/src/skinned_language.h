@@ -30,7 +30,22 @@ typedef enum skinned_operation {
     SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME,
     SKIN_OP_TRY_GET_BLEND_SHAPE_AT,
     SKIN_OP_SHAPED,
+    SKIN_OP_HUMANOID_AUTO,
+    SKIN_OP_HUMANOID_INDEX,
+    SKIN_OP_HUMANOID_STATUS,
+    SKIN_OP_RETARGET_CREATE,
+    SKIN_OP_POSE_RETARGET,
 } skinned_operation;
+
+static inline bool skinned_changes_pose(const skinned_operation op)
+{
+    return op == SKIN_OP_POSE_SAMPLE || op == SKIN_OP_POSE_BLEND || op == SKIN_OP_POSE_RETARGET;
+}
+
+static inline bool skinned_static(const skinned_operation op)
+{
+    return op == SKIN_OP_DECODE || op == SKIN_OP_HUMANOID_AUTO || op == SKIN_OP_RETARGET_CREATE;
+}
 
 static inline bool skinned_lookup(const skinned_operation op)
 {

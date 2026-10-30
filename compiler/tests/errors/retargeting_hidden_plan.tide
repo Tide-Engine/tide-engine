@@ -1,0 +1,3 @@
+// expect: RetargetMap has no field 'plan'
+scene Main { }
+int Read(RetargetMap mapping) { return mapping.plan.count; }

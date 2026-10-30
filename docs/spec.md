@@ -1919,6 +1919,7 @@ Agreed 2026-10-08 and implemented the same day. Static `Mesh<V>` retains its fla
 
 - **A skinned model is a `SkinnedMesh<V>`.** It provides geometry over the game's vertex struct, its skeleton and its animations. A mesh is shared independently of playback: several characters can use the same model with different poses.
 - **A pose is separate from the mesh.** Animation produces a pose; game code can read and edit its bones, and drawing uses it to deform the mesh. Both match systems and views can sample and use poses, including for sockets, hitboxes and root motion. Sampling and blending are deterministic CPU operations using Tide's math. GPU deformation is for drawing and never supplies match results.
+- **Humanoid retargeting belongs to the runtime Pose API** (agreed 2026-10-30). Tide works independently of tide-motion. Automatic role discovery supplies a useful initial mapping, with explicit typed-bone overrides, reusable editable reference poses, inspectable assignment status and configurable root/chain controls. `HumanoidRig.Auto(referencePose)`, `rig[HumanoidBone.LeftHand] = bone`, `RetargetMap.Create(actualSourceSkeleton, sourceRig, targetRig)` and mutable `pose.Retarget(sourcePose, mapping)` separate preparation from repeated transfer. The actual animation export's skeleton is distinct from its calibration reference; an export's first-frame defaults need not be its anatomical reference pose. Existing same-rig sampling/binding remains unchanged. Detailed preparation, error and settings rules are provisional below.
 - **Drawing has its own call, `Draw.SkinnedMesh`.** Its pose is optional: omission uses the model's authored rest transforms. `model.defaultPose` returns those transforms as an editable Pose, including for a model with no animation clips (agreed 2026-10-10). The implemented argument list and pose operations are below.
 - **Animation catalogs can be separate assets.** `asset AnimationCatalog movement = "art/movement.glb";` exposes the file's clips directly, such as `movement.run`. The editor offers checked names from a known file. Clips from separate exports of the same rig can be sampled into a character's pose or drawn with its model (agreed 2026-10-10); binding details are below.
 - **Blend shapes are imported and baked on the CPU** (decided by the owner, 2026-10-27: "Import + bake: Skinned imports (FBX and glTF) keep morph targets; a CPU call returns the model with chosen shape weights applied, e.g. part.Shaped(weights). Draws unchanged. Body shape is set per character, as Synty's own tool bakes it. No GPU/shader changes."). GPU per-draw shape weights and shape-weight animation were not chosen and remain outside. The implemented API is under Provisional.
@@ -1993,10 +1994,16 @@ The CPU operations are:
 | `skeleton` | `.TryGetByName(string name, out Bone result)`, `.RestPose()` | `bool`, `Pose` |
 | `animation` | `.name`, `.duration` | Original name as `string`, seconds as `float` |
 | `animation` | `.Sample(float seconds[, Playback playback])` | A new `Pose` |
+| `animation` or `pose` | `.skeleton` | The original `Skeleton`, with dynamic bone lookup |
 | Mutable `pose` | `.Sample(Animation animation, float seconds[, Playback playback])` | Reuses the pose's transforms |
 | Mutable `pose` | `.Blend(Pose other, float weight)` | Blends toward `other` in place |
 | `pose` | `[Bone bone]` | Parent-local `BoneTransform` |
 | `pose` | `.Model(Bone bone)` | Accumulated model-space `float4x4` |
+| `HumanoidRig` | `.Auto(Pose referencePose)` | A partially or fully discovered `HumanoidRig` |
+| Mutable `rig` | `.referencePose`, `[HumanoidBone bone]` | Editable calibration `Pose`, typed `Bone` assignments |
+| `rig` | `.GetStatus(HumanoidBone bone)` | `HumanoidBoneStatus` |
+| `RetargetMap` | `.Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig)` | `RetargetMap fails RetargetError` |
+| Mutable `pose` | `.Retarget(Pose source, RetargetMap mapping)` | `bool`, replacing target transforms only on success |
 
 `BoneTransform` has `float3 position`, `quaternion rotation` and `float3 scale`; its default rotation is identity and default scale is one. `Playback.Clamp` is the default; `Playback.Loop` wraps positive and negative times over the clip duration, with an exact endpoint wrapping to zero. Unanimated properties begin from authored rest transforms on every sample. Blending clamps weight to zero through one and interpolates local transforms with shortest-path quaternion interpolation. A bone includes its skeleton identity; an invalid or incompatible bone reads the identity transform, and its writes do nothing. In-place sampling binds a compatible separate export to the destination skeleton; blending requires identical skeleton fingerprints. Failed in-place sample or blend leaves the destination unchanged; an unbindable pose records no skinned draw.
 
@@ -2037,11 +2044,74 @@ Draw.SkinnedMesh(hero, transform, pose);
 - **Responsive editor metadata.** A dedicated cached reader extracts catalogs and hierarchy from `.gltf` JSON or a `.glb` JSON chunk without reading geometry, sample buffers, side files or the BIN chunk. FBX inspection reads its source while skipping geometry, animation curves and embedded content. Watched changes invalidate metadata even with unchanged size/time; source and contract edits reuse unchanged metadata. URLs use an existing local cache without fetching, retaining the original URL's source extension for format detection. Invalid and unavailable imports are diagnosed separately from missing checked members, and contract completion remains available. Cold inspection is synchronous: 16 MiB of glTF JSON, or 64 MiB of FBX source with 128 MiB each for temporary and result parser allocations. No asynchronous indexing protocol is built. Full builds perform authoritative import validation. Details and measurements are in `notes/editors.md`.
 - **Imported match content.** Canonical skeleton, animation and model data and the vertex layout participate in the generated game's compatibility identity, including standalone `AnimationCatalog` assets and their collection keys. Loading a pack checks each declaration's expected content and shape before replacing the current pack; changed content requires its matching game build. A rejected replacement leaves the old pack available. This is separate from a Pose/Bone skeleton fingerprint, which checks structural pose compatibility rather than peer admission.
 
+#### Humanoid retargeting details
+
+Implemented 2026-10-30. The owner agreed the workflow above; detailed discovery
+thresholds, required roles, error members and distribution behavior are
+provisional implementation choices.
+
+`HumanoidBone` uses Unity's `HumanBodyBones` names and order: `Hips`, left/right
+upper legs, lower legs, feet, `Spine`, `Chest`, `Neck`, `Head`, left/right
+shoulders, upper arms, lower arms, hands, toes, eyes, `Jaw`, left fingers then
+right fingers (thumb, index, middle, ring, little, each proximal, intermediate,
+distal), then `UpperChest`. There are 55 roles and the usual enum `Count()`;
+there is no sentinel member. `HumanoidBoneStatus` is `Missing`, `Automatic`,
+`Uncertain`, `Manual` in that order. Discovery uses names, hierarchy and
+reference geometry; ambiguity stays inspectable. Hips, head, upper/lower arms
+and legs, hands and feet are required by preparation. Other roles are optional.
+
+A profile owns its reference pose and role lists. A typed assignment must
+identify a bone in its original reference skeleton; a mismatched bone is ignored.
+`default` unmaps the role. Either valid edit records `Manual`. Missing and
+out-of-range roles read as `default` Bone; out-of-range status reads as `Missing`
+and assignment does nothing. `HumanoidRig { referencePose = pose }` supports fully
+manual mapping. Assignments initialize other roles as missing. Changing reference
+transforms does not rerun discovery. Replacing the reference with a different
+skeleton makes preparation fail; use a new profile for that skeleton. A role
+assignment is a value and cannot be passed by `mut` or `out`; collection elements
+follow the existing copy/edit/replace rule.
+
+`RetargetMap.Create` resolves the actual source export against the calibrated
+source rig once, including node order, supported wrappers and changed defaults,
+then freezes both references, anatomical frames and correspondence into owned
+pointer-free data. Existing maps do not change when their profiles are edited.
+Failure is a `RetargetError`: `InvalidRig` (1), `MissingBone` (2),
+`AmbiguousBone` (3), `InvalidReferencePose` (4), `IncompatibleSkeleton` (5),
+`UnsupportedScale` (6). Required uncertain roles require a manual assignment.
+Reference transforms must be finite with positive uniform local scale; invalid
+hierarchy, ambiguous correspondence and unsupported scale are rejected. Runtime
+diagnostics describe the failing role or correspondence.
+
+Prepared maps expose mutable `float rootScale` (initial target/source leg-length
+ratio), `float3 rootOffset` (model-space metres, initially zero),
+`float headingDegrees` (initially zero), `float spineDistribution` and
+`float twistDistribution` (both initially one). `rootScale = 0` removes travel.
+Heading rotates about the target reference hips and up axis. Distribution values
+range from zero to one: the first controls interpolation along extra spine/neck
+nodes, the second longitudinal twist in helper bones; limb swing stays at its
+mapped joint. A default map has unit scale/distributions but no prepared data.
+
+`Retarget` preserves target calibration lengths, scales and skeleton identity.
+It applies source motion relative to the reference's anatomical frames, leaving
+normal target-bone edits, sockets, blending and drawing available. Artistic
+per-bone rotation offsets are ordinary pose edits after transfer; calibration
+describes reference anatomy. Transfer covers rotations and hips translation;
+animated local translations on other nodes are not copied. Palm/leaf roll with
+insufficient anatomical rays may need calibration or a post-transfer edit.
+Invalid input, incompatible source/target skeletons,
+invalid settings or unsupported source scale animation return `false` without
+changing the destination. Source/output aliasing is supported. Profiles, maps
+and poses use ordinary owned-value, match snapshot and serialization rules.
+`Animation.skeleton` and `Pose.skeleton` expose dynamic catalogs; inferred model
+catalogs retain their checked members and can pass to a plain `Skeleton` parameter.
+No per-frame name resolution, IK/contact correction, foot planting or automatic
+entity movement is added.
+
 ### Open
 
 - **Playback and interpolation.** Transitions, masks, additive layers, automatic `Play`/`Update` state, long-running clock precision and a convenience rule for view interpolation. A wrapped clock must not interpolate through the wrong part of a clip.
 - **Root motion and events.** An explicit root-motion delta over a time interval, including loop crossings, for a system to apply through its own movement rules; removal of extracted motion from the displayed pose. Root selection, translation/rotation/scale behavior and animation markers or event queries remain open. Sampling must not implicitly move entities or send events.
-- **Further model APIs.** Retargeting, hierarchy-path lookup and pre-skin vertex access.
+- **Further model APIs.** Non-humanoid retargeting, hierarchy-path lookup and pre-skin vertex access.
 - **Further match-content policy.** Admission of arbitrary runtime content and convenience rules for replacing a rig while retaining older rollback history. Imported content already participates in build compatibility; runtime content reaches the match through synchronized state.
 - **Further behavior.** IK, GPU blend shapes and shape-weight animation, and an automatic animation controller are outside the current implementation. Background metadata indexing and explicit editor URL refresh remain open.
 

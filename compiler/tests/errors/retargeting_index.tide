@@ -1,0 +1,3 @@
+// expect: a HumanoidRig is indexed by a HumanoidBone, not int
+scene Main { }
+Bone Read(HumanoidRig rig) { return rig[0]; }

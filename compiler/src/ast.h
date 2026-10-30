@@ -97,6 +97,7 @@ typedef struct property property;
 typedef enum skinned_kind {
     SKIN_NONE, SKIN_MESH, SKIN_ANIMATIONS, SKIN_SKELETON, SKIN_BONES,
     SKIN_ANIMATION, SKIN_BONE, SKIN_POSE, SKIN_TRANSFORM, SKIN_BLEND_SHAPES, SKIN_BLEND_SHAPE,
+    SKIN_HUMANOID_RIG, SKIN_RETARGET_MAP,
 } skinned_kind;
 
 typedef struct skinned_member {
@@ -1558,6 +1559,7 @@ typedef struct program {
     VEC(decl *) skinned_types; // Owned model values and their inferred/contracted catalog views.
     decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
     decl *blend_shape, *blend_shapes; // Made the first time a program names them, so others keep their C
+    decl *humanoid_rig, *humanoid_bone, *humanoid_status, *retarget_map, *retarget_error;
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
     bool editor_authoring; // Native authoring can instantiate checked prefabs without game startup.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination

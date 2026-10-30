@@ -1,5 +1,5 @@
 ---
-description: "Import skinned glTF or FBX models, sample and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
+description: "Import skinned glTF or FBX models, sample, retarget and blend deterministic poses, use bone sockets, and draw animated characters in Tide."
 ---
 
 # Skinned meshes and animation
@@ -247,6 +247,108 @@ When a clip doesn't bind, the first failed sample or draw for each model and cli
 
 This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
 
+## Retarget between humanoids
+
+Runtime retargeting adapts a source humanoid's motion to a character's proportions
+and bone axes. It is part of Tide and does not require Tide Motion. Prepare a
+`RetargetMap` once, then use it for every sampled pose from that animation export.
+
+Start with a reference pose for each rig. Use an authored T-pose or A-pose that
+describes the character's anatomy; an animation file's defaults can be its first
+frame instead. Keep that calibration separate from the actual clip's skeleton:
+
+```csharp
+asset SkinnedMesh<Vertex3> sourceCharacter = "art/source-reference.glb";
+asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
+asset Animation run = "art/run.fbx";
+
+RetargetMap PrepareRun() fails RetargetError
+{
+    mut var sourceRig = HumanoidRig.Auto(sourceCharacter.defaultPose);
+    mut var targetRig = HumanoidRig.Auto(hero.defaultPose);
+
+    // Correct an uncertain or missing assignment with a typed bone.
+    targetRig[HumanoidBone.LeftHand] = hero.skeleton.bones.leftHand;
+
+    // Optional calibration edits belong to the reusable reference pose.
+    var shoulder = hero.skeleton.bones.leftShoulder;
+    targetRig.referencePose[shoulder].rotation = quaternion.identity;
+
+    return try RetargetMap.Create(run.skeleton, sourceRig, targetRig);
+}
+
+void Animate(mut Pose destination, RetargetMap mapping, float seconds)
+{
+    var source = run.Sample(seconds, Playback.Loop);
+    if (!destination.Retarget(source, mapping)) return;
+
+    // Artistic offsets are ordinary edits after retargeting.
+    var hand = hero.skeleton.bones.leftHand;
+    destination[hand].rotation = Math.Mul(destination[hand].rotation,
+        quaternion.Euler(0, 0, 5deg));
+}
+```
+
+Initialize `destination` from `hero.defaultPose`, and keep the successful
+`PrepareRun()` result in a field. Handle preparation failures with Tide's normal
+`fails` handling. `animation.skeleton` and `pose.skeleton` expose each value's
+original skeleton, with `RestPose`, `TryGetByName` and `bones` enumeration.
+
+`HumanoidRig.Auto(referencePose)` discovers roles using names, hierarchy and
+reference geometry. Inspect `rig.GetStatus(HumanoidBone.LeftHand)`: the result is
+`HumanoidBoneStatus.Automatic`, `Uncertain`, `Missing` or `Manual`. Automatic
+discovery can be partial. Check the assignments and improve the reference pose
+when a rig needs help; it does not silently rerun after an edit.
+
+`rig[role]` returns a `Bone`, or `default` when unset. Assigning a bone from that
+rig sets `Manual`; assigning `default` explicitly unmaps the role. A bone from
+another skeleton is ignored. For fully manual mapping, initialize
+`HumanoidRig { referencePose = yourReference }` and assign its roles. Role names
+follow Unity's `HumanBodyBones`: `Hips`, `Spine`, `Chest`, `UpperChest`, `Neck`,
+`Head`, left/right upper and lower arms and legs, hands, feet, shoulders and toes,
+eyes, jaw, and each finger's proximal, intermediate and distal bones. Hips, head,
+upper/lower limbs, hands and feet are required; other roles are optional.
+
+`RetargetMap.Create(actualSourceSkeleton, sourceRig, targetRig)` validates and
+freezes the mapping and reference poses. It supports source exports whose node
+order, scene wrappers and default transforms differ from the calibration file.
+Rebuild the map after changing assignments or reference transforms. Replacing a
+rig's reference pose with another skeleton requires a new rig.
+
+Preparation returns `RetargetError.InvalidRig`, `MissingBone`, `AmbiguousBone`,
+`InvalidReferencePose`, `IncompatibleSkeleton` or `UnsupportedScale` on failure.
+The console gives the failing role or skeleton detail. Required uncertain roles
+need a manual assignment. References must have finite transforms and positive
+uniform local scale; malformed hierarchies and ambiguous correspondence are
+rejected.
+
+These mutable settings remain available on a prepared map:
+
+| Field | Meaning |
+|---|---|
+| `rootScale` | Root travel multiplier, initially the target/source leg-length ratio; zero removes travel |
+| `rootOffset` | Model-space translation in metres, initially zero |
+| `headingDegrees` | Rotation about the target reference hips and up axis, initially zero |
+| `spineDistribution` | Extra spine and neck chain interpolation, from zero to one; initially one |
+| `twistDistribution` | Longitudinal twist transferred to helper bones, from zero to one; initially one |
+
+`destination.Retarget(source, mapping)` returns `true` on success. It preserves
+the target's bone lengths and skeleton identity, so its normal bone edits,
+sockets, blending and drawing work afterward. Invalid settings, unsupported
+source scale animation or a source/destination from the wrong skeleton return
+`false` and leave the destination unchanged. Calibration profiles and prepared
+maps are ordinary owned values and can be stored in match or local fields,
+copied and snapshotted with poses.
+
+Retargeting transfers motion without foot planting or contact correction.
+It transfers rotations and hips translation; other animated local translations
+are not copied, preserving the target's segment lengths. A palm or leaf bone
+with too little geometry to determine its roll may need calibration or a
+post-transfer rotation edit.
+Different body proportions can still produce foot sliding or a hand missing a
+prop; those need game-specific pose correction or IK. Existing `pose.Sample`
+binding remains useful for separate exports of the same rig.
+
 ## Sample, blend and edit
 
 Time is explicit. `Sample(seconds)` clamps to the clip's endpoints. `Playback.Loop` wraps positive and negative time; an exact loop endpoint becomes time zero. Every sample begins from the authored rest transforms, so unanimated properties never retain a previous clip's values.
@@ -310,4 +412,4 @@ Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files
 
 Decoded vertices use your vertex struct's defaults too. Assets those defaults read have the same compatibility requirement even when the game declares no imported skinned model.
 
-glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights, blend shapes and baked node transforms; textures remain separate assets. Animated or GPU blend shapes, retargeting, IK, animation events and an automatic playback controller are not implemented.
+glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights, blend shapes and baked node transforms; textures remain separate assets. Animated or GPU blend shapes, IK, animation events and an automatic playback controller are not implemented.
