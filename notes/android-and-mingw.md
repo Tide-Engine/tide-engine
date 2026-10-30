@@ -1,7 +1,13 @@
 # Android and MinGW builds
 
+CLI modes (2026-10-30): --release is optimized with symbols and debuggable APKs,
+using a default app ID if needed. --distribution owns shipping exports, appId
+requirement and AAB creation. The CLI builds warning-free under Windows ASan;
+native/web artifact/C++ coverage passes. Android packaging/device execution
+for this split remains CI coverage; details: cli-and-packages.md.
+
 Shipping export policy (2026-10-27): Release/MinSizeRel CMake apps and standalone
-CLI --release builds use platform/android/game.exports, exposing only
+CLI --distribution builds use platform/android/game.exports, exposing only
 ANativeActivity_onCreate from libgame.so. That file installs as
 lib/android/game.exports for both ABI builds. Other game-supplied .so files keep
 their own exports. Debug/profiling and host/embed APIs are unchanged. No activity
@@ -38,5 +44,5 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - When Vulkan could not run: the default run fell back to OpenGL ES, then waited for a window event that never came, because its loop polled before it checked for the surface it had already made. It now checks first.
 - In the background an app has no window: frames come when the session asks and draw nothing (the frame loop's wait for a window nobody sees: `tide_window_unseen`, `tide_window_wait`), until Android freezes the app, as it does to apps in the background. Its match goes on through host migration, when the game has it (see Platforms).
 - `tide_apk` (`compiler/cli/apk.c`, built natively like tidec) makes and signs apps with no tool of Google's: the binary manifest (Android's attribute IDs, from its SDK's `public-final.xml`), a resource table (`resources.arsc`) that only names the icon (the game's `icon.png`, or Tide's, `lib/android/icon.png` in the package), the libraries stored on 16 KiB pages, which Android maps from the APK, and APK Signature Scheme v2. Apps are made for Android 16 (API 36), as Google Play requires, and opt out of its predictive back (`enableOnBackInvokedCallback`), which would keep the back button from the game.
-- Given a `.aab`, it makes an App Bundle for Google Play instead: the same files as bundletool lays them out, with the manifest and resource table as aapt2's protocol buffers (`Resources.proto`) and a `BundleConfig.pb` that keeps libraries stored on 16 KiB pages, signed as a JAR (`META-INF/TIDE.SF` and its PKCS #7 signature). `tide build --android --release` makes one beside the APK.
+- Given a `.aab`, it makes an App Bundle for Google Play instead: the same files as bundletool lays them out, with the manifest and resource table as aapt2's protocol buffers (`Resources.proto`) and a `BundleConfig.pb` that keeps libraries stored on 16 KiB pages, signed as a JAR (`META-INF/TIDE.SF` and its PKCS #7 signature). `tide build --android --distribution` makes one beside the APK.
 - Play takes upload keys of RSA only, so apps are signed with RSA of 2048 bits, PKCS #1 v1.5 (`compiler/cli/rsa.c`: keys, primes and signatures, from RFC 8017), and the key is a PEM file of a PKCS #8 key and its self-signed certificate (`compiler/cli/sign.c`), which OpenSSL and Java read. `tide_cli_tests` checks apps as Android does before installing one, bundles as Java checks a JAR, and RSA against a key and signature of OpenSSL's. Every build of this repo signs its apps with `build/android-debug.pem`, made once, so a new build installs over the last: `adb install -r build/android-debug/bench/sand.apk`.

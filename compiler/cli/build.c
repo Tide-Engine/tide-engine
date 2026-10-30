@@ -491,7 +491,17 @@ static const char *const cpp_flags[] = {"-std=c++20",      "-nostdinc++",       
                                         "-fno-rtti",       "-fno-threadsafe-statics", NULL};
 static const char *const debug_flags[] = {"-O0", "-g", NULL};
 static const char *const engine_debug_flags[] = {"-O2", "-g", NULL};
-static const char *const release_flags[] = {"-O2", "-DNDEBUG", NULL};
+static const char *const release_flags[] = {"-O2", "-g", NULL};
+static const char *const distribution_flags[] = {"-O2", "-DNDEBUG", NULL};
+// Optimization is independent of symbols, assertions and shipping policy.
+// Only -O0..3 reach this field; none relax floating-point rules.
+static void build_flags(args *a, const build_options *opts, const bool engine)
+{
+    arg_list(a, opts->distribution ? distribution_flags : opts->release ? release_flags
+                     : engine ? engine_debug_flags : debug_flags);
+    if (opts->optimization) arg(a, opts->optimization);
+}
+
 // These compile flags are part of every object's stamp. The link runs on
 // every build, so changing its collection policy cannot reuse an old program.
 static const char *const release_sections[] = {"-ffunction-sections", "-fdata-sections", NULL};
@@ -609,8 +619,8 @@ typedef struct build {
 static uint64_t header_stamp(const char *folder);
 static uint64_t hash_text(uint64_t h, const char *text);
 
-// Game code stays unoptimized for debugging; the engine keeps its speed in
-// every configuration, with debug information and assertions in development.
+// By default game code stays unoptimized for debugging and the engine uses O2.
+// Explicit optimization overrides preserve the selected mode's diagnostics.
 static void config_flags(args *a, const build *b, const bool cpp, const bool engine)
 {
     if (b->opts->server) arg(a, "-DTIDE_SERVER_BUILD=1");
@@ -624,15 +634,15 @@ static void config_flags(args *a, const build *b, const bool cpp, const bool eng
     }
     arg_list(a, cpp ? cpp_flags : c_flags);
     arg_list(a, common_flags);
-    arg_list(a, b->opts->release ? release_flags : engine ? engine_debug_flags : debug_flags);
+    build_flags(a, b->opts, engine);
     // Every type the game declares, for its debug views: a type only the generated plumbing names
     // (a list's element, a map's entry) would otherwise be left out with the plumbing's debug info.
     // No columns: generated C's would point into .tide lines at places that mean nothing there.
-    if (!b->opts->release && !engine) {
+    if (!b->opts->distribution && !engine) {
         arg(a, "-fno-eliminate-unused-debug-types");
         arg(a, "-gno-column-info");
     }
-    if (b->opts->release || b->opts->server) arg_list(a, release_sections);
+    if (b->opts->distribution || b->opts->server) arg_list(a, release_sections);
     // A library's code works wherever it's loaded, and Android's games are libraries.
     // On Linux and Android, a function whose locals take more than a page
     // touches each page as it makes room for them (-fstack-clash-protection):
@@ -650,7 +660,7 @@ static void config_flags(args *a, const build *b, const bool cpp, const bool eng
 #endif
 #ifdef _WIN32
     // Debug info Visual Studio's debugger reads, in a .pdb next to the game.
-    if (!b->opts->web && !b->opts->android && !b->opts->release) arg(a, "-gcodeview");
+    if (!b->opts->web && !b->opts->android && !b->opts->distribution) arg(a, "-gcodeview");
 #endif
 }
 
@@ -1079,8 +1089,9 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
     // Everything tide makes goes in <folder>/.tide/<configuration>.
     char *tide_dir = opts->work ? path_absolute(opts->work) : tide_work_folder(b->folder);
     char config[32];
-    snprintf(config, sizeof config, "%s-%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
-             opts->release ? "release" : "debug");
+    snprintf(config, sizeof config, "%s-%s%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
+             opts->distribution ? "distribution" : opts->release ? "release" : "debug",
+             opts->optimization ? opts->optimization : "");
     b->cache = path_join(tide_dir, config);
     free(tide_dir);
     if (!opts->work && (opts->scene || opts->editor_source)) {
@@ -1675,15 +1686,15 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     if (!opts->managed && (!shared || b->info.bold)) arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
-    arg_list(&a, opts->release ? release_flags : debug_flags);
+    build_flags(&a, opts, false);
     // Hot-reload libraries keep their public symbols and their existing link
-    // policy. Standalone releases only need code reachable from their entry.
-    if ((opts->release || opts->server) && !opts->watch && !shared) {
-        if (opts->web) arg(&a, "-Wl,-s"); // wasm-ld already collects unused sections.
+    // policy. Standalone distributions only need code reachable from their entry.
+    if ((opts->distribution || opts->server) && !opts->watch && !shared) {
+        if (opts->web && opts->distribution) arg(&a, "-Wl,-s"); // wasm-ld already collects unused sections.
 #ifdef __APPLE__
-        else arg(&a, opts->release ? "-Wl,-dead_strip,-S,-x,-no_exported_symbols" : "-Wl,-dead_strip");
+        else if (!opts->web) arg(&a, opts->distribution ? "-Wl,-dead_strip,-S,-x,-no_exported_symbols" : "-Wl,-dead_strip");
 #else
-        else arg(&a, opts->release ? "-Wl,--gc-sections,-s" : "-Wl,--gc-sections"); // ELF and Windows' MinGW lld.
+        else if (!opts->web) arg(&a, opts->distribution ? "-Wl,--gc-sections,-s" : "-Wl,--gc-sections"); // ELF and Windows' MinGW lld.
 #endif
     }
     char *pdb_flag = NULL;
@@ -1719,10 +1730,10 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
                 pdb_flag = format("-Wl,--pdb=%s", pdb, NULL);
                 arg(&a, pdb_flag);
             }
-        } else if (!opts->release) {
+        } else if (!opts->distribution) {
             arg(&a, "-Wl,--pdb="); // A debug game gets its debug info in a .pdb
         } else if (!b->library && !opts->server) {
-            // A release game opens its window without a console next to it. tide
+            // A distribution game opens its window without a console next to it. tide
             // run's host keeps tide's, to say what each reload did.
             arg(&a, "-Wl,--subsystem,windows");
         }
@@ -2079,7 +2090,7 @@ static bool folder_has_c_code(const char *folder)
 // Only a closed Tide game gives the compiler every root of its asset graph.
 static bool strip_game_assets(const build *b, const bool layout)
 {
-    if (!b->opts->release || b->opts->watch || b->library || layout || folder_has_c_code(b->folder)) return false;
+    if (!b->opts->distribution || b->opts->watch || b->library || layout || folder_has_c_code(b->folder)) return false;
     for (int i = 0; i < b->packages.count; i++) {
         if (folder_has_c_code(b->packages.items[i].folder)) return false;
     }
@@ -2106,7 +2117,7 @@ static void collect_shader(void *user, const char *name, const char *wgsl)
 // Whether a build writes how debuggers show the game's values (place_debug_views): a native one with debug info.
 static bool debug_views(const build_options *opts)
 {
-    return !opts->web && !opts->android && !opts->managed && !opts->release;
+    return !opts->web && !opts->android && !opts->managed && !opts->distribution;
 }
 
 static bool generate(build *b, const char *gen, const bool layout)
@@ -2198,8 +2209,12 @@ static bool generate(build *b, const char *gen, const bool layout)
     }
     uint8_t external_identity[32];
     if (has_external) {
-        const uint8_t release = b->opts->release ? 1u : 0u;
-        tide_sha256_add(&external, &release, 1);
+        const uint8_t mode = b->opts->distribution ? 2u : b->opts->release ? 1u : 0u;
+        tide_sha256_add(&external, &mode, 1);
+        // Trusted C can branch on __OPTIMIZE__; different experiments must
+        // not claim the same simulation identity merely because C text matches.
+        const char optimization = b->opts->optimization ? b->opts->optimization[2] : b->opts->release ? '2' : '0';
+        tide_sha256_add(&external, &optimization, 1);
     }
     tide_sha256_end(&external, external_identity);
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
@@ -2221,7 +2236,7 @@ static bool generate(build *b, const char *gen, const bool layout)
                                      .server = b->opts->server,
                                      .strip_server_assets = strip_server_assets(b),
                                      .strip_unused_assets = strip_game_assets(b, layout),
-                                     .strip_names = b->opts->release && !b->opts->watch && !b->library && !layout,
+                                     .strip_names = b->opts->distribution && !b->opts->watch && !b->library && !layout,
                                      .defines = b->opts->defines, .define_count = b->opts->define_count,
                                      .external_identity = has_external ? external_identity : NULL,
                                      .scene = b->opts->scene,
@@ -2273,8 +2288,8 @@ static bool place_pack(const char *from, const char *to);
 static bool place_debug_views(const build *b, const char *output, const char *stem, const bool dsym)
 {
     if (!b->views) {
-        if (!b->opts->release || b->library) return true;
-        // A release can replace a debug build at the same output path. Those
+        if (!b->opts->distribution || b->library) return true;
+        // A distribution can replace a debug/release build at the same output path. Those
         // old sidecars describe the game's source even after its code is stripped.
         char *dir = path_dir(output);
         const char *const suffixes[] = {".pdb", ".natvis", "_lldb.py"};
@@ -2283,7 +2298,7 @@ static bool place_debug_views(const build *b, const char *output, const char *st
             char *file = format("%s%s", stem, suffixes[i]);
             char *sidecar = path_join(dir, file);
             if (sys_exists(sidecar) && !sys_remove(sidecar)) {
-                fprintf(stderr, "tide: can't remove old debug file %s; close its debugger or remove it before distributing the release\n", sidecar);
+                fprintf(stderr, "tide: can't remove old debug file %s; close its debugger or remove it before distributing the game\n", sidecar);
                 ok = false;
             }
             free(sidecar);
@@ -2292,7 +2307,7 @@ static bool place_debug_views(const build *b, const char *output, const char *st
 #ifdef __APPLE__
         char *bundle = format("%s.dSYM", output, NULL);
         if (!sys_remove_tree(bundle)) {
-            fprintf(stderr, "tide: can't remove old debug bundle %s; remove it before distributing the release\n", bundle);
+            fprintf(stderr, "tide: can't remove old debug bundle %s; remove it before distributing the game\n", bundle);
             ok = false;
         }
         free(bundle);
@@ -2402,7 +2417,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
     }
     char *pack = pack_of(gen);
     if (opts->web && !opts->managed
-        && !make_page(root, b.folder, program, output, pack, args, opts->release && !opts->watch, opts->single_file)) {
+        && !make_page(root, b.folder, program, output, pack, args, opts->distribution && !opts->watch, opts->single_file)) {
         return NULL;
     }
     if (!opts->web || opts->managed) { // Beside the program, as <name>.pack, which tide/run.h loads
@@ -2528,7 +2543,7 @@ static bool build_library(run *r)
     char *linked = build_path(r, n, in_place ? suffix : ".tmp");
     char *pdb = build_path(r, n, ".pdb");
     char *library = build_path(r, n, suffix);
-    ok = ok && link_objects(&r->b, &objects, &c, linked, !r->web, r->b.opts->release || r->web ? NULL : pdb, in_place);
+    ok = ok && link_objects(&r->b, &objects, &c, linked, !r->web, r->b.opts->distribution || r->web ? NULL : pdb, in_place);
     free_game_c(&c);
     if (ok && !in_place && !sys_rename(linked, library)) {
         fprintf(stderr, "tide: can't write %s\n", library);
@@ -3001,7 +3016,7 @@ static bool build_embed_host(run *r)
         for (int i = 0; i < keep.count; i++) arg(&a, keep.items[i]);
         arg(&a, "-o");
         arg(&a, linked);
-        arg_list(&a, r->b.opts->release ? release_flags : debug_flags);
+        build_flags(&a, r->b.opts, false);
 #if defined(_WIN32) || defined(TIDE_EMBEDDED_CLANG)
         arg(&a, "-fuse-ld=lld");
 #endif
@@ -3432,7 +3447,7 @@ static int tide_unity_web(const char *root, const build_options *opts)
     if (!compile_game(&b, gen, game_c, main_c, &objects, &c) || !find_libraries(&b, &c)) goto done;
     if (!link_objects(&b, &objects, &c, program, false, NULL, false)) goto done;
     pack = pack_of(gen);
-    if (!write_unity_script(root, program, script, pack, opts->release)) goto done;
+    if (!write_unity_script(root, program, script, pack, opts->distribution)) goto done;
     const char *mapped = b.unity_map ? b.unity_map : "{\"assets\": []}\n";
     if (!sys_write_file(map, mapped, strlen(mapped))) {
         fprintf(stderr, "tide: can't write %s\n", map);
@@ -3467,7 +3482,7 @@ static void write_unity_declarations(const run *r)
     char *bin = sys_exe_dir();
     char *tide = path_join(bin, "tide" EXE_SUFFIX); // Itself: the compiler is clang where tide hasn't it built in
     free(bin);
-    const int fixed = 9;
+    const int fixed = 10;
     const char **argv = calloc((size_t)(fixed + 2 * opts->define_count + 1), sizeof *argv);
     if (!argv) abort();
     int n = 0;
@@ -3479,7 +3494,9 @@ static void write_unity_declarations(const run *r)
     argv[n++] = "--declarations";
     argv[n++] = "--assets";
     argv[n++] = opts->unity_assets;
-    if (opts->release) argv[n++] = "--release";
+    if (opts->distribution) argv[n++] = "--distribution";
+    else if (opts->release) argv[n++] = "--release";
+    if (opts->optimization) argv[n++] = opts->optimization;
     for (int i = 0; i < opts->define_count; i++) {
         if (strcmp(opts->defines[i], "DEBUG") == 0) continue; // Every build's but --release's, said again there
         argv[n++] = "--define";
@@ -3835,7 +3852,7 @@ static bool app_id(const build *b, char *out, const size_t size)
         if (isalnum((unsigned char)*c)) name[n++] = (char)tolower((unsigned char)*c);
     }
     name[n] = '\0';
-    if (b->opts->release) {
+    if (b->opts->distribution) {
         fprintf(stderr, "tide: an app made to ship needs an ID of its own, which phones and app stores know it by\n");
         fprintf(stderr, "  = note: give the game one in its settings, like 'settings { appId = \"com.studio.%s\"; }'\n",
                 n ? name : "game");
@@ -3885,12 +3902,12 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
-    arg_list(&a, b->opts->release ? release_flags : debug_flags);
+    build_flags(&a, b->opts, false);
     char *exports = NULL;
-    if (b->opts->release && !b->opts->watch) {
+    if (b->opts->distribution && !b->opts->watch) {
         exports = path_join(b->root, "lib/android/game.exports");
         if (!sys_exists(exports)) {
-            fprintf(stderr, "tide: this installation is missing %s; reinstall tide before building an Android release\n", exports);
+            fprintf(stderr, "tide: this installation is missing %s; reinstall tide before building an Android distribution\n", exports);
             free(exports);
             free(abi_dir);
             free(platform_lib);
@@ -3954,7 +3971,7 @@ static char *build_android(const char *root, const build_options *opts, char *pa
     char *cache = b.cache;
     apk_desc desc = {.package = id, .lib_name = "game", .version_code = android_version_code(),
                      .version_name = b.info.version[0] ? b.info.version : "1.0",
-                     .min_sdk = atoi(ANDROID_API), .target_sdk = 36, .debuggable = !opts->release};
+                     .min_sdk = atoi(ANDROID_API), .target_sdk = 36, .debuggable = !opts->distribution};
     c_side c[ANDROID_ABIS] = {0};
     apk_lib *needed = NULL;
     for (int abi = 0; abi < ANDROID_ABIS; abi++) {
@@ -4025,7 +4042,7 @@ static char *build_android(const char *root, const build_options *opts, char *pa
         return NULL;
     }
     // Made to ship: an App Bundle too, which Google Play takes
-    if (opts->release) {
+    if (opts->distribution) {
         const size_t n = strlen(output);
         char *bundle = format("%s%s", output, ".aab");
         if (n > 4 && strcmp(output + n - 4, ".apk") == 0) strcpy(bundle + n - 4, ".aab");

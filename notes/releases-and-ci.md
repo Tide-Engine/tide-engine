@@ -1,5 +1,16 @@
 # Releases, installing and CI
 
+## Distribution-mode package smoke builds (2026-10-30)
+
+check.yml's two shipping web builds and Google Play AAB build now request
+--distribution, preserving their previous shipping behavior after --release
+becomes optimized testing with symbols. The cache and C++ integration fixtures
+cover all three modes. Parsed YAML comparison confirms exactly these three
+argument changes; no jobs, gates or triggers change. Local native/web artifact,
+watch, C++ and ASan CLI results: cli-and-packages.md. Android/Google Play and
+other OS package confirmation remain the normal push-triggered CI coverage.
+No additional run was dispatched.
+
 ## Stable workflow permission guard (2026-10-30)
 
 Run 41050277648 selected release commit 9b0a2379f and failed in Version's own

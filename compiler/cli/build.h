@@ -4,7 +4,9 @@
 
 typedef struct build_options {
     const char *folder; // The game: every .tide file in it and its subfolders
-    bool release;       // Optimized, no console window on Windows
+    bool release;       // Optimized game code with symbols and readable diagnostics
+    bool distribution;  // Shipping cuts; implies release. No console window on Windows
+    const char *optimization; // -O0 through -O3, or NULL for the mode defaults; borrowed for watched rebuilds
     bool web;           // A web page, with clang's WebAssembly target: index.html, and the program and pack it downloads
     bool single_file;   // ...or one self-contained .html with them inside, which opens straight from disk
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator

@@ -33,7 +33,7 @@ static const command_help commands[] = {
      "Builds into <folder>/build by default; -o selects the output path.\n"
      "A game includes .tide and .tprefab files, its C/C++ and libraries, and\n"
      "the packages listed in tide.packages. Work files are cached in .tide.\n\n"
-     "Example: tide build --release --web", BUILD},
+     "Example: tide build --distribution --web", BUILD},
     {"unity", "unity [folder] -o <path> [options]", "Build a game for Unity's Tide package",
      "Builds the game for the Tide package in a Unity project, into the path\n"
      "(the project's Library/Tide): the host Unity loads, then a library of the\n"
@@ -167,11 +167,28 @@ static const argument_help arguments[] = {
      "update accepts several names, or none for every git package; eject takes one.", UPDATE | EJECT},
     {"file.tprefab", "<file.tprefab>", "Authored prefab or scene file",
      "Selects the file to edit or validate. Use --project to choose the game root.", OPEN},
-    {"--release", "--release", "Optimize game code for players",
-     "Engine code is always optimized. Without --release, game/package code\n"
-     "is unoptimized, assertions remain enabled and DEBUG is defined.\n"
-     "Standalone releases strip unused code; Tide-only releases also omit\n"
-     "unreferenced assets. schedule/shaders use this to leave DEBUG undefined.", COMPILE},
+    {"--release", "--release", "Optimize game code for testing and profiling",
+     "Keeps debug symbols, readable diagnostics, assertions and assets. Engine\n"
+     "code defaults to -O2; default game/package code is unoptimized.\n"
+     "DEBUG is undefined. Use --distribution for shipping cuts.", COMPILE},
+    {"--distribution", "--distribution", "Build an optimized game for distribution",
+     "Implies --release. Standalone builds strip debug symbols and readable\n"
+     "diagnostic/shader names, collect unused code and omit unreferenced\n"
+     "assets in Tide-only games. Keeps a private game.names diagnostic map\n"
+     "in the build cache. Watched/embedded builds retain required metadata.\n"
+     "Android also makes an app bundle and requires the game's appId.", COMPILE},
+    {"-O0", "-O0", "Disable optimization of game and engine sources",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O1", "-O1", "Use optimization level 1",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O2", "-O2", "Use optimization level 2",
+     "Overrides the mode default; see tide help -O3.", COMPILE},
+    {"-O3", "-O3", "Use optimization level 3",
+     "Choose one of -O0, -O1, -O2 or -O3 for engine, game and package C/C++.\n"
+     "Does not rebuild prebuilt libraries or change DEBUG, assertions, symbols\n"
+     "or shipping cuts. Deterministic math stays enabled; no fast-math or FMA.\n"
+     "Defaults: debug game -O0, engine -O2; release/distribution both -O2.\n"
+     "Explicit levels use separate caches. Example: tide run --release -O3 --stats.", COMPILE},
     {"--web", "--web", "Build a web page",
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
      "build makes a folder to put online, .build/web: index.html, which shows\n"
@@ -189,7 +206,7 @@ static const argument_help arguments[] = {
      "download its files.", BUILD},
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
-     "Saving rebuilds and restarts the app. Release builds also make an app\n"
+     "Saving rebuilds and restarts the app. Distribution builds also make an app\n"
      "bundle and require the game's appId. Choose native, web or Android.", RUN | BUILD},
     {"--define", "--define <SYMBOL>", "Define a symbol for #if lines",
      "Repeat for as many symbols as needed, like --define FAST --define STEAM.\n"

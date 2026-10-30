@@ -1,5 +1,79 @@
 # `tide`, packages and the package
 
+## Per-project optimization experiments (2026-10-30)
+
+Owner requested an explicit optimization-level flag for project experiments.
+CLI build/run/unity accepts one of -O0, -O1, -O2 or -O3. The borrowed
+build_options.optimization overrides engine, generated game, launcher and
+game/package C/C++ compile/link flags. It does not change mode, DEBUG,
+NDEBUG, visualizers, stripping or deterministic float rules. Prebuilt libraries
+are unchanged. Without the flag the existing mode defaults remain. Other
+levels, -Ofast and duplicate optimization flags fail before building.
+
+Explicit levels use caches such as native-release-O3, including watch/server/
+Android/web targets. Compile stamps include the override; returning to a level
+can reuse its objects. Trusted-C simulation identity includes the effective
+game optimization level because __OPTIMIZE__ can change custom C behavior.
+Unity's declaration fallback forwards the flag with space for its argument.
+No runtime API, Tide semantics, telemetry fields or CMake defaults changed.
+The CLI reference and focused help describe the override and its limits.
+
+Validation: strict Windows ASan CLI/dispatch builds and the two focused
+run-exit/help CTests pass. The installed optimization-only cache fixture builds
+all four levels on native/web, plus release/distribution at O0 and O3, retaining
+each mode's name-map/visualizer policy and separate custom-C identities.
+Eight bounded two-frame native runs check actual engine, game C and C++
+optimization macros, NDEBUG policy, noncontracted multiply/add bits and
+subnormal preservation. Switching back to O0 rewrites no engine/game objects.
+Release O3 web-watch passes C/Tide edits, identity/launcher reuse, custom-C pack
+changes and visual-only repacking. The production docs build, Node syntax and
+diff checks pass (Clang 23.1.2, Node 24.22.1, private staged ASan CLI using
+external clang). The normal package cache test includes the optimization cases.
+Android, Unity editor execution, embedded LLVM, other OSes and actual WASM
+runtime FP probes remain CI/follow-up coverage; this does not claim full
+all-platform determinism validation of every optimization level or measure
+performance. No workflow was manually dispatched.
+
+## Optimized testing versus distribution (2026-10-30)
+
+Owner approved three CLI modes: default debug, optimized `--release` for
+testing/profiling, and `--distribution` for shipping. This supersedes the
+older entries below that call the shipping policy `--release`.
+
+Release compiles all game/package C/C++ at -O2 -g, keeps C assertions, names,
+assets and native debugger visualizers/PDBs/dSYMs. Default game code stays
+-O0 -g and the engine -O2 -g. Distribution implies release, uses the previous
+-O2 -DNDEBUG policy, and owns standalone metadata/shader-name stripping,
+unused-asset pruning, native export/section stripping, debugger-sidecar cleanup,
+Windows GUI subsystem selection, and compressed/minified web pages. Existing
+watched/library/layout metadata exceptions remain. Required safety checks and
+tick verification are unchanged. Both optimized modes leave Tide DEBUG
+undefined; no new language symbol or telemetry field is introduced.
+
+Caches are separate <target>-debug/release/distribution directories. Custom-C
+simulation identity records all three modes because NDEBUG can affect trusted
+C. Android release APKs stay debuggable and accept the default app ID;
+distribution requires appId and produces the shipping AAB/limited exports.
+Deploy explicitly requests distribution, preserving its shipping contract.
+Unity declaration fallback forwards the selected mode. CMake configurations
+and tidec's explicit strip options are unchanged.
+
+Tests: five focused native Windows ASan CTests (CLI unit, dispatch, help,
+packages, hidden) pass. The expanded installed cache stripping fixture passes
+all three modes on native/web: optimization and NDEBUG probes, retained
+names/debug info versus stripped artifacts, shader identifiers/private maps,
+debug/release-to-distribution sidecar cleanup, split/single-file pack parity,
+custom-C assets and Tide-only unused-asset pruning. Native debug/release
+two-frame hidden smoke runs pass. Debug/release web-watch cache/repack cases
+and consecutive runs pass; native/web C++ fixture builds all three modes.
+Clang 23.1.2, Node 24.22.1, locally rebuilt MinGW/web platform libraries and
+a private staged ASan CLI using external clang. Docs production build passes.
+Parsed workflow comparison changes only three shipping smoke arguments.
+No compiler/runtime code or deterministic hash expectations changed.
+Embedded-LLVM gzip, Android execution/packaging, actual optimized debugger
+stepping, macOS/Linux and their export/dSYM behavior remain CI/follow-up
+coverage. No additional workflow was dispatched.
+
 ## What packages need resolves by itself (2026-10-30)
 
 The owner, of a game that had to list `box3d` because its local `combat`

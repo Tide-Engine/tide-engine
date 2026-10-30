@@ -371,8 +371,8 @@ jobs:
           cp demo/demo.tide build/try/
           build/dist/tide/bin/tide version
           build/dist/tide/bin/tide build build/try
-          build/dist/tide/bin/tide build build/try --release --web
-          build/dist/tide/bin/tide build build/try --release --web --single-file
+          build/dist/tide/bin/tide build build/try --distribution --web
+          build/dist/tide/bin/tide build build/try --distribution --web --single-file
           build/dist/tide/bin/tide build build/try --android
           cmake -DTIDE="$PWD/build/dist/tide/bin/tide${{ runner.os == 'Windows' && '.exe' || '' }}" \
             -DBUNDLE="$PWD/build/dist/tide/editors/tide-jetbrains-installer.zip" \
@@ -395,7 +395,7 @@ jobs:
         if: runner.os == 'Linux' && inputs.preset == 'package'
         run: |
           printf 'settings\n{\n    appId = "dev.tide.trydemo";\n}\n' > build/try/settings.tide
-          build/dist/tide/bin/tide build build/try --android --release
+          build/dist/tide/bin/tide build build/try --android --distribution
           tools=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
           "$tools/apksigner" verify --verbose build/try/.build/try.apk
           "$JAVA_HOME/bin/jarsigner" -verify build/try/.build/try.aab | tee jarsigner.log

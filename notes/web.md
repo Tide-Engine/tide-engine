@@ -1,5 +1,12 @@
 # Web builds
 
+CLI build-mode correction (2026-10-30): --release retains readable tide.js,
+raw embedded payloads and WASM debug symbols. --distribution selects the former
+shipping runtime/compression/stripping policy; watched pages keep their existing
+policy. Historical CLI release references below now mean distribution; CMake
+Release/MinSizeRel and the tide.release.js filename are unchanged. Three-mode
+native/web artifact and debug/release watch validation: cli-and-packages.md.
+
 ## Split pages and the loader (2026-10-27)
 
 The owner asked for feedback while a web game loads, and decided that pages

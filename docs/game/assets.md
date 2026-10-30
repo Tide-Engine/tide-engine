@@ -52,13 +52,13 @@ An asset is read-only. Nothing assigns it, takes it `mut`, or clears it: it's th
 
 Match code reads assets like any value, since every machine has the same pack; a `Texture` is the one that's local code's alone (below). What a machine loads as the game runs is another matter, further down.
 
-### Release builds
+### Distribution builds
 
-A standalone `tide build --release` omits asset declarations that no checked Tide code, default or shader references. An asset named in a helper or a type's default stays, even if that helper or type is unused. A referenced list or map keeps every file its path matches. Every declaration is still checked, so an unused asset with a missing or invalid file remains a build error.
+A standalone `tide build --distribution` omits asset declarations that no checked Tide code, default or shader references. An asset named in a helper or a type's default stays, even if that helper or type is unused. A referenced list or map keeps every file its path matches. Every declaration is still checked, so an unused asset with a missing or invalid file remains a build error.
 
-Debug and hot-reload builds keep every declared asset. So do games or packages with C/C++ sources or prebuilt libraries, and games with a custom C host: their C code may read assets through the generated API or by name in the pack.
+Debug, release and hot-reload builds keep every declared asset. So do games or packages with C/C++ sources or prebuilt libraries, and games with a custom C host: their C code may read assets through the generated API or by name in the pack.
 
-A web release also compresses the retained pack inside its self-contained page when that saves space. The page decodes the same packed bytes before the game starts; the asset values and match results stay the same.
+A web distribution also compresses the retained pack inside its self-contained page when that saves space. The page decodes the same packed bytes before the game starts; the asset values and match results stay the same.
 
 ### A field's default
 

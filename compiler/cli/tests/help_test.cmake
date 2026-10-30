@@ -83,7 +83,7 @@ contains("${out}" "--max-connections <n>")
 contains("${out}" "--shard-width <units>")
 excludes("${out}" "--nightly")
 
-foreach(argument folder source package editor file.tprefab --release --web --android --define --title --scene --stats --debug-views -o
+foreach(argument folder source package editor file.tprefab --release --distribution -O0 -O1 -O2 -O3 --web --android --define --title --scene --stats --debug-views -o
         --no-open --host --join --connect --server --strip-server-assets --anonymous --port --max-matches --max-connections
         --udp-only --shards --shard-width --shard-most --shard-journal --capture --capture-audio --microphone --frames --script
         --scale --size
@@ -158,3 +158,11 @@ else()
     help(0 help cc)
     contains("${out}" "tide cc --help")
 endif()
+
+help(0 help --release)
+contains("${out}" "Keeps debug symbols")
+help(0 help --distribution)
+contains("${out}" "Implies --release")
+
+help(0 help -O3)
+contains("${out}" "Deterministic math stays enabled")

@@ -71,18 +71,19 @@ file(COPY "${e2e}/cpp_code.cpp" DESTINATION "${game}/lib")
 file(APPEND "${game}/cpp.tide" "\nsettings { appId = \"dev.tide.test.cpp\"; }\n")
 foreach(target IN LISTS targets)
     tide("${game}" ARGS build . ${${target}_args} EXPECT "Built ")
-    # Release section collection must retain constructors, virtual dispatch,
-    # and the code's own new/delete implementation as well as direct calls.
     tide("${game}" ARGS build . ${${target}_args} --release EXPECT "Built ")
+    # Distribution section collection must retain constructors, virtual dispatch,
+    # and the code's own new/delete implementation as well as direct calls.
+    tide("${game}" ARGS build . ${${target}_args} --distribution EXPECT "Built ")
 endforeach()
 if(ANDROID)
     tide("${game}" ARGS build . --android EXPECT "Built ")
-    tide("${game}" ARGS build . --android --release EXPECT "Built ")
+    tide("${game}" ARGS build . --android --distribution EXPECT "Built ")
     find_program(readobj NAMES llvm-readobj llvm-readobj-23 llvm-readobj-22 llvm-readobj-21
         llvm-readobj-20 llvm-readobj-19 llvm-readobj-18 HINTS "$ENV{LLVM_ROOT}/bin" "$ENV{ProgramFiles}/LLVM/bin")
     find_program(node NAMES node)
     if(readobj AND node)
-        file(GLOB modules "${game}/.tide/android-release/*/libgame.so")
+        file(GLOB modules "${game}/.tide/android-distribution/*/libgame.so")
         list(LENGTH modules count)
         if(NOT count EQUAL 2)
             message(FATAL_ERROR "Expected both Android ABI libraries for export inspection")
@@ -90,7 +91,7 @@ if(ANDROID)
         execute_process(COMMAND "${node}" "${CMAKE_CURRENT_LIST_DIR}/exports_test.mjs" --android "${readobj}" ${modules}
             RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err)
         if(NOT code EQUAL 0)
-            message(FATAL_ERROR "Android release exports failed: ${out}${err}")
+            message(FATAL_ERROR "Android distribution exports failed: ${out}${err}")
         endif()
     endif()
 endif()
@@ -205,7 +206,7 @@ extern \"C\" void __cxa_pure_virtual() { abort(); }
 ")
 foreach(target IN LISTS targets)
     tide("${bare}" ARGS build . ${${target}_args} EXPECT "Built ")
-    tide("${bare}" ARGS build . ${${target}_args} --release EXPECT "Built ")
+    tide("${bare}" ARGS build . ${${target}_args} --distribution EXPECT "Built ")
 endforeach()
 
 # ---------------------------------------------------------------------------

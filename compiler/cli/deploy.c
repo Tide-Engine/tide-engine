@@ -214,7 +214,7 @@ static char *bundle(const char *root, const char *folder, const bool server_only
     char *work = tide_work_folder(folder), *directory = path_join(work, "deploy");
     sys_mkdirs(directory); free(work);
     char *server = path_join(directory, "server.wasm"), *client = path_join(directory, "client.html");
-    build_options opts = {.folder = folder, .release = true, .web = true, .server = true, .managed = true, .output = server};
+    build_options opts = {.folder = folder, .release = true, .distribution = true, .web = true, .server = true, .managed = true, .output = server};
     char *built = tide_build(root, &opts);
     if (!built) { free(directory); free(server); free(client); return NULL; }
     free(built);
