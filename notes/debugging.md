@@ -1,5 +1,16 @@
 # Debugging Tide code in native debuggers
 
+## Optimized CLI debugging (2026-10-30)
+
+CLI --release now retains -g, CodeView/PDB, natvis/LLDB visualizers and macOS
+dSYM generation; --distribution takes the old no-debug-info policy. Existing
+references below to non-release CLI builds describe the previous policy.
+Optimized functions/locals remain subject to ordinary inlining/elimination.
+Installed native release artifact checks require debugger sidecars; web
+release checks require DWARF. Full mode validation: cli-and-packages.md,
+Optimized testing versus distribution. No line mapping or visualizer generator
+changed; optimized attach/stepping was not exercised.
+
 ## Windows ASan debugger fixture (2026-10-29)
 
 The native sanitizer suite exposed dbgeng stopping at a first-chance access

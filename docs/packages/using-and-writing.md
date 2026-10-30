@@ -141,7 +141,7 @@ A name no package has is an error that lists the ones there are. They're folders
 
 ## Packages for some builds only
 
-`#if` lines say which builds a package is in, by the build's [symbols](../language/namespaces.md#symbols-of-your-own): `DEBUG`, which every build but a `--release` one has, and what the command line names with `--define`.
+`#if` lines say which builds a package is in, by the build's [symbols](../language/namespaces.md#symbols-of-your-own): `DEBUG`, which default debug builds, rather than `--release` or `--distribution` builds has, and what the command line names with `--define`.
 
 ```
 rooms

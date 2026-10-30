@@ -133,11 +133,12 @@ still performs only front-end validation, even with a preview flag.
 
 | Option | What it does |
 |---|---|
-| `--release` | Optimizes game and package code, the way players get it |
+| `--release` | Optimizes game and package code for testing and profiling, keeping symbols, diagnostics and assets |
+| `--distribution` | Optimizes for shipping, with symbol/name stripping, shader minification and unused-asset pruning; implies `--release` |
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace |
-| `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined without `--release`. `schedule` and `shaders` take it too |
+| `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined in the default debug mode. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
@@ -177,19 +178,21 @@ existing live instances. Restart the run to play from fresh initial state.
 `--scene` leaves the output filename unchanged; use `-o` for a separate build
 artifact.
 
-The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
+The engine is optimized in every build. In the default debug mode, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
-Standalone `tide build --release` also removes readable system/view profiling labels, shader labels, event/command diagnostic names, and assertion source lines and paths. Asset loading uses the pack's existing SHA-256 name IDs directly. Assertions still check their conditions and keep messages you wrote; profiles and failures use IDs. Resolve them with `.tide/<target>-release/gen/game.names`, a private diagnostic map for that build. Keep that map with your build records, and distribute only the finished game files, never `.tide/`, generated C, debug files or the map. Replacing a native debug output with a release removes its old debugger sidecars. Debug, watched/hot-reload and Unity builds retain their names.
+Use `tide run --release --stats` to test a large game at optimized speed. Release retains debug symbols, readable profiling and diagnostic names, assets, C assertions and native debugger visualizers. Optimized stepping may skip inlined calls or show locals as unavailable. Both optimized modes leave `DEBUG` undefined. Debug, release and distribution use separate `.tide/<target>-<mode>/` caches.
+
+Standalone `tide build --distribution` removes readable system/view profiling labels, shader labels, event/command diagnostic names, and assertion source lines and paths. Asset loading uses the pack's existing SHA-256 name IDs directly. Assertions still check their conditions and keep messages you wrote; profiles and failures use IDs. Resolve them with `.tide/<target>-distribution/gen/game.names`, a private diagnostic map for that build. Keep that map with your build records, and distribute only the finished game files, never `.tide/`, generated C, debug files or the map. Replacing a native debug output with a distribution removes its old debugger sidecars. Debug, release, watched/hot-reload and Unity builds retain their names.
 
 Shipping shader source also replaces function, type, field, parameter and local identifiers derived from Tide names with short tokens. Renderer bindings and shader entry points stay fixed. The private map records the original identifiers for each shader stage. Expressions, numeric literals and layouts stay the same.
 
-Standalone macOS release executables expose no public symbols. Android's shipping `libgame.so` exports only `ANativeActivity_onCreate`, the entry point Android loads. Additional shared libraries supplied by your game keep their own exports; code needing a public dynamic API should provide it in a separate library. Hot-reload and Unity libraries retain their host APIs.
+Standalone macOS distribution executables expose no public symbols. Android's shipping `libgame.so` exports only `ANativeActivity_onCreate`, the entry point Android loads. Additional shared libraries supplied by your game keep their own exports; code needing a public dynamic API should provide it in a separate library. Hot-reload and Unity libraries retain their host APIs.
 
-This makes reverse engineering less convenient; it does not encrypt a game or prevent copying a downloaded demo. Game text, lookup keys, model contents and executable shader source remain available where the game needs them. For a custom compiler pipeline, `tidec --strip-names` applies the same metadata policy and writes `<name>.names` beside its generated C. CMake's standard-host `Release`/`MinSizeRel` games enable it automatically; custom hosts, layout/embed targets, `RelWithDebInfo` and explicit debugger-visualizer builds retain names unless their compiler pipeline explicitly requests stripping. `tide_add_game(... STRIP_NAMES)` opts in explicitly, including for custom hosts. Required layout/embed metadata still retains its names. The repository's `release` preset uses `RelWithDebInfo` for profiling; use `tide build --release` for a shipping build.
+This makes reverse engineering less convenient; it does not encrypt a game or prevent copying a downloaded demo. Game text, lookup keys, model contents and executable shader source remain available where the game needs them. For a custom compiler pipeline, `tidec --strip-names` applies the same metadata policy and writes `<name>.names` beside its generated C. CMake's standard-host `Release`/`MinSizeRel` games enable it automatically; custom hosts, layout/embed targets, `RelWithDebInfo` and explicit debugger-visualizer builds retain names unless their compiler pipeline explicitly requests stripping. `tide_add_game(... STRIP_NAMES)` opts in explicitly, including for custom hosts. Required layout/embed metadata still retains its names. The repository's `release` preset uses `RelWithDebInfo` for profiling; use `tide build --distribution` for a shipping build.
 
-`tide build --release --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
+`tide build --distribution --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
 
-`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web releases compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Release pages of either kind use a smaller page runtime. Debug and hot-reload pages keep the readable runtime and original payloads.
+`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web distributions compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Distribution pages of either kind use a smaller page runtime. Debug, release and hot-reload pages keep the readable runtime and original payloads.
 
 ### The page while it loads
 
@@ -198,7 +201,7 @@ Until the game first draws, the page shows what it's doing: how much of the game
 - An element with the ID `tide-loading` is the loader: the game takes it away once it has drawn, and fills in the elements in it with the IDs `tide-loading-bar` (a bar, whose first child's width is how much has downloaded), `tide-loading-text` (what's happening, in words) and `tide-loading-logo` (an `<img>` for the icon). Leave it out for no loader.
 - `Tide.onProgress`, set in the `var Tide = { ... }` before the game's script, is told each step for a loader of your own: `{ stage, loaded, total, error }`, where `stage` is `download` (`loaded` of `total` bytes), `compile`, `waiting` (for `Tide.start()`, on a page that set `Tide.wait`), `start` (the game is running, until it first draws), `done` (it drew) or `error` (it couldn't start, and `error` says why).
 
-Standalone release builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Debug and hot-reload builds keep their usual code and asset loading behavior.
+Standalone distribution builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#distribution-builds). Debug, release and hot-reload builds keep their usual code and asset loading behavior.
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
 
@@ -273,13 +276,13 @@ Cross-Origin-Embedder-Policy: require-corp
 
 ## Android
 
-`tide build --android` makes an Android app, `<folder>/build/<name>.apk`, for phones and tablets (arm64) and Android's emulator (x86-64), on Android 10 and up. With `--release`, it also makes `<name>.aab`, for [Google Play](#google-play). `tide run --android` builds it, installs it on the phone or emulator that's connected, starts it, and shows what it prints until it ends. `--host`, `--join` and `--connect` go to it as they do on a computer, and Android players play in the same rooms as everyone else.
+`tide build --android` makes an Android app, `<folder>/.build/<name>.apk`, for phones and tablets (arm64) and Android's emulator (x86-64), on Android 10 and up. With `--distribution`, it also makes `<name>.aab`, for [Google Play](#google-play). `tide run --android` builds it, installs it on the phone or emulator that's connected, starts it, and shows what it prints until it ends. `--host`, `--join` and `--connect` go to it as they do on a computer, and Android players play in the same rooms as everyone else.
 
 To play on your phone, turn on USB debugging once: in **Settings > About phone**, tap **Build number** seven times, then turn on **USB debugging** in **System > Developer options**. Connect the phone, and allow your computer when it asks.
 
 Building for Android needs two things of Google's: the NDK, Android's C library and headers, and adb, which installs apps. `tide` uses the ones Android Studio installs. Without them, the first `tide build --android` asks to download them from Google, under Google's license (the [Android SDK License Agreement](https://developer.android.com/studio/terms)), and keeps what it needs of them next to itself: about 30 MB. Set `TIDE_ACCEPT_ANDROID_LICENSE=1` to accept it without being asked, as a build server would.
 
-- The app's ID is the game's `appId` setting (see [Settings](../language/basics.md#settings)). Without one, it's `dev.tide.<the game's name>`, which is fine for testing, but `--release` needs one.
+- The app's ID is the game's `appId` setting (see [Settings](../language/basics.md#settings)). Without one, it's `dev.tide.<the game's name>`, which is fine for testing, but `--distribution` needs one.
 - Its name under its icon is the game's `title` setting, or `--title`, or else the game's name.
 - Its icon is `icon.png` in the game's folder: a square PNG, 512 by 512 pixels is plenty. Without one, it's Tide's. It's a web page's icon too, shown while the page loads (see [The page while it loads](#the-page-while-it-loads)).
 - The Android libraries in the game's folder (`.so` files) go in the app with the game (see [Calling C](../c/functions.md#android)).
@@ -294,7 +297,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 `<name>.aab` is an App Bundle, which is what Google Play takes: Play makes the APKs from it, each phone getting only the library for its CPU. To put a game on Play:
 
 1. Make a developer account in the [Play Console](https://play.google.com/console) (Google charges a one-time fee), and create the app there.
-2. Give the game its `appId`, and build it with `tide build --android --release`.
+2. Give the game its `appId`, and build it with `tide build --android --distribution`.
 3. Upload `.build/<name>.aab` to a release: internal testing is the quickest way to try it on your own phone. Play signs the APKs it makes with a key of its own, which it keeps (Play App Signing); `~/.android/tide.pem` is then your upload key, and Play only takes uploads signed with it.
 4. For an update, build again and upload the new `.aab`: its version code is higher than the last one's.
 
@@ -347,7 +350,7 @@ and an outline of what each file declares and which packages the
 game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
-Each library is a debug build: a native debugger attached to the Unity editor
+Debug and release libraries carry debug information: a native debugger attached to the Unity editor
 stops at breakpoints in `.tide` files, with the game's natvis in its `.pdb` and
 `game.natvis` and `game_lldb.py` beside it (see [Debugging](debugging.md)).
 

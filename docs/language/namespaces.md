@@ -152,7 +152,7 @@ event(Hit hit) Trace(Health health)
 
 - **`#define NAME`** defines a symbol for the file it's in, and **`#undef NAME`** takes one away there, the build's too. Both go at the top of the file, before its first declaration, as they're for all of it. Other files don't see them.
 - **`--define NAME`** on `tide run`, `tide build`, `tide schedule` and `tide shaders` defines a symbol for every file of the game and its packages, as many times as you have symbols: `tide build --define DEMO --define STEAM`.
-- **`DEBUG`** is defined in every build but a `--release` one.
+- **`DEBUG`** is defined in default debug builds, rather than `--release` or `--distribution` builds.
 - **`PACKAGE_<NAME>`** is defined for each package the game builds with, its name in capitals: `PACKAGE_BOX2D` when the game's `tide.packages` lists Box2D. So a package, or a game, can have code that's only there beside another package:
 
 ```csharp

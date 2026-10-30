@@ -355,6 +355,7 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
         else if (strcmp(a, "--release") == 0) opts.release = true;
+        else if (strcmp(a, "--distribution") == 0) opts.distribution = opts.release = true;
         else if (strcmp(a, "--web") == 0) opts.web = true;
         else if (build && strcmp(a, "--single-file") == 0) opts.single_file = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
