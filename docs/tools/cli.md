@@ -250,6 +250,8 @@ The list is two columns, a label on the left and its value on the right, in four
 | `renderer` | What draws: Vulkan, OpenGL 3.3, OpenGL ES 3, WebGPU or WebGL 2 |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
+Vertex counts use decimal suffixes: `123.5K` for thousands, `97M` for millions and `4.3B` for billions, continuing with `T`, `P` and `E` for larger counts. Counts below 1,000 stay exact; larger counts round to one decimal, with trailing zeroes omitted.
+
 Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
 
 A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game, unless the frame rate in a corner is what you want them to have.
@@ -875,7 +877,7 @@ tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
 | `tide update` | Every package from git, to the newest commit of what it follows |
 | `tide update physics` | One, by its name, its repository's name or its source |
 
-Both add the lines of the packages the game's packages need that it doesn't list yet.
+Both write only the lines they name: what the game's packages need, the game builds from their own lines (see [The packages a package needs](../packages/using-and-writing.md#the-packages-a-package-needs)). Each then checks that the game's packages resolve, and fails with the error if not.
 
 ## eject
 
@@ -887,7 +889,7 @@ tide eject rooms    # the rooms line becomes ./packages/rooms
 
 A package that's a folder already is left where it is, and a folder already at `packages/<name>` is an error, with nothing copied.
 
-`tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, and adds the same lines: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
+`tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, what its packages need included, and those any `#if` leaves out of this build: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
 
 ## upgrade
 

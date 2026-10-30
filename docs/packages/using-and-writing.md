@@ -98,15 +98,18 @@ A line can leave its commit out, as when you write one by hand: `tide update` pu
 
 ## The packages a package needs
 
-A package can use other packages, which its own `tide.packages` lists. The game's `tide.packages` lists every package the game builds with, those its packages need included, so that one file says everything the game builds with. `tide add` and `tide update` add the lines of what's missing, and say so:
+A package can use other packages, which its own `tide.packages` lists. The game builds with them too, and with what they need in turn, each from the line of the package that needs it: a package from git at the commit that package names, a folder relative to that package's folder. The game's `tide.packages` lists only the packages it chooses.
+
+If a package's metadata or dependencies are invalid, `tide add`, `tide update` and a build report the problem, at the line of the package that needs it, and fail.
+
+When the game lists a package that one of its packages needs too, the game's line is the one it builds with, whatever commit each names. That's how a game chooses: when two packages need one from git at different commits and the game doesn't list it, nothing builds, and the error names both and the line that settles it:
 
 ```
-tide: added github.com/someone/tide-math 9f2c1e0..., which Physics needs
+tools/tide.packages:2: error: Tools needs github.com/someone/tide-math at 6e1f0a2, and Physics needs it at 9f2c1e0
+  = note: a game builds one commit of each package: list the one to build in game/tide.packages, like `github.com/someone/tide-math 9f2c1e0...`
 ```
 
-If a package's metadata or dependencies are invalid, the command reports the problem and fails.
-
-When the game and one of its packages list another package at different commits, the game's line is the one it builds with.
+Two packages needing the same commit, or the same folder, need one package.
 
 ## Packages in folders
 
@@ -128,7 +131,7 @@ box2d
 github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 ```
 
-`tide add box2d` writes that line, and the lines of what the package needs. A game that doesn't list one builds none of it: its code compiles and links only with the games that name it.
+`tide add box2d` writes that line. A game that doesn't list one builds none of it: its code compiles and links only with the games that name it.
 
 A name is lower-case letters and digits, and it's never a folder: a folder of that name beside the game is still written as a path, `./box2d`. The line has no commit and follows no branch, since the package is the version your `tide` came with: `tide upgrade` updates both, and `tide update` leaves the line alone. So two machines build the same code of it when they have the same version of `tide`. A `tide 0.3` line in the game's `tide.packages` says the oldest one the game builds with.
 

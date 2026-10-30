@@ -1219,49 +1219,31 @@ void packages_free(game_packages *g)
     for (int i = 0; i < g->count; i++) {
         free(g->items[i].name);
         free(g->items[i].folder);
+        packages_free_file(&g->items[i].file);
     }
     free(g->items);
     packages_free_file(&g->file);
     memset(g, 0, sizeof *g);
 }
 
-typedef struct need_list {
-    package_need *items;
-    int count;
-} need_list;
+// A line of a package the build has: the game's, or one a package needs that
+// the game's file doesn't list.
+typedef struct wanted {
+    const package_line *line;
+    const char *base;  // The folder its line's path is from
+    const char *where; // The tide.packages it's in
+    int by;            // The package in out->items that needs it; -1 for the game's own
+    int item;          // Its own package in out->items; -1 while it isn't one
+} wanted;
 
-static bool resolve(const char *folder, game_packages *out, const packages_fetch_fn fetch,
-                    const packages_report_fn report, void *user, need_list *missing);
+// Package `from` (in out->items) needing what wanted[to] is.
+typedef struct need_edge {
+    int from;
+    int to;
+} need_edge;
 
 bool packages_resolve(const char *folder, game_packages *out, const packages_fetch_fn fetch,
                       const packages_report_fn report, void *user)
-{
-    return resolve(folder, out, fetch, report, user, NULL);
-}
-
-int packages_missing(const char *folder, const packages_fetch_fn fetch, void *user, package_need **out)
-{
-    need_list missing = {0};
-    game_packages g;
-    resolve(folder, &g, fetch, NULL, user, &missing);
-    packages_free(&g);
-    *out = missing.items;
-    return missing.count;
-}
-
-void packages_free_needs(package_need *needs, const int count)
-{
-    for (int i = 0; i < count; i++) {
-        free(needs[i].line);
-        free(needs[i].by);
-    }
-    free(needs);
-}
-
-// packages_resolve, which also lists what packages need that the game doesn't
-// list in `missing`, if it isn't NULL.
-static bool resolve(const char *folder, game_packages *out, const packages_fetch_fn fetch,
-                    const packages_report_fn report, void *user, need_list *missing)
 {
     memset(out, 0, sizeof *out);
     bool ok = packages_read(folder, &out->file, report, user);
@@ -1288,32 +1270,37 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
     }
     if (game->count == 0) return ok;
 
-    // Each package the game lists, with its own tide.packages.
-    packages_file *own = calloc((size_t)game->count, sizeof(packages_file));
-    int *of = calloc((size_t)game->count, sizeof(int)); // The game's line of each package found
-    if (!own || !of) abort();
-    out->items = calloc((size_t)game->count, sizeof(package));
-    if (!out->items) abort();
-    int found = 0;
-    for (int i = 0; i < game->count; i++) {
-        const package_line *line = &game->lines[i];
-        if (!line->local && !line->builtin && !line->commit) {
+    // The game's lines first, so that a package's need of one the game lists
+    // is always the game's line; then what packages need, as it's found.
+    int wanted_count = game->count;
+    int wanted_size = game->count;
+    wanted *want = malloc(sizeof(wanted) * (size_t)wanted_size);
+    if (!want) abort();
+    for (int i = 0; i < game->count; i++) want[i] = (wanted){&game->lines[i], game->folder, game->path, -1, -1};
+    need_edge *edges = NULL;
+    int edge_count = 0;
+    int edge_size = 0;
+
+    for (int w = 0; w < wanted_count; w++) {
+        const package_line *line = want[w].line;
+        const char *base = want[w].base;
+        const char *where = want[w].where;
+        if (!line->local && !line->builtin && !line->commit) { // Only the game's: a package's is refused below
             char note[600];
             snprintf(note, sizeof note, "`tide update %s` pins it to the newest commit%s%s", line->source,
                      line->ref ? " of " : "", line->ref ? line->ref : "");
-            report_at(report, user, game->path, line->line, note, "%s has no commit to build with", line->source);
+            report_at(report, user, where, line->line, note, "%s has no commit to build with", line->source);
             ok = false;
             continue;
         }
         if (line->builtin && !packages_builtin_exists(line->source)) {
-            char *note = packages_builtin_unknown(line->source, game->folder);
-            report_at(report, user, game->path, line->line, note, "no package called %s comes with this tide",
-                      line->source);
+            char *note = packages_builtin_unknown(line->source, base);
+            report_at(report, user, where, line->line, note, "no package called %s comes with this tide", line->source);
             free(note);
             ok = false;
             continue;
         }
-        char *dir = packages_folder(line, game->folder);
+        char *dir = packages_folder(line, base);
         if (!line->local && !line->builtin) {
             char *repo = packages_repo_dir(line);
             bool here = packages_fetched(repo);
@@ -1326,113 +1313,136 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
             }
         }
         if (!folder_exists(dir)) {
-            report_at(report, user, game->path, line->line, NULL, "%s isn't a folder%s", line->source,
+            report_at(report, user, where, line->line, NULL, "%s isn't a folder%s", line->source,
                       line->local ? "" : " of that commit");
             ok = false;
             free(dir);
             continue;
         }
-        packages_file *pf = &own[found];
-        if (!packages_read(dir, pf, report, user)) ok = false;
-        if (!pf->name) {
-            report_at(report, user, game->path, line->line,
+        packages_file pf;
+        if (!packages_read(dir, &pf, report, user)) ok = false;
+        if (!pf.name) {
+            report_at(report, user, where, line->line,
                       "a package's tide.packages starts with its name, which is its namespace: `package Physics`",
-                      pf->exists ? "%s isn't a package: its tide.packages has no `package` line"
-                                 : "%s isn't a package: it has no tide.packages",
+                      pf.exists ? "%s isn't a package: its tide.packages has no `package` line"
+                                : "%s isn't a package: it has no tide.packages",
                       line->source);
             ok = false;
-            packages_free_file(pf);
+            packages_free_file(&pf);
             free(dir);
             continue;
         }
-        if (pf->tide_line && !tide_version_at_least(pf->tide[0], pf->tide[1], pf->tide[2])) {
+        if (pf.tide_line && !tide_version_at_least(pf.tide[0], pf.tide[1], pf.tide[2])) {
             char note[600] = "run `tide upgrade`";
             if (!line->local && !line->builtin) {
                 snprintf(note, sizeof note, "run `tide upgrade`, or use a commit of %s made for tide %s", line->source,
                          tide_version_text());
             }
-            report_at(report, user, game->path, line->line, note, "%s needs tide %d.%d or newer, and this is %s",
-                      pf->name, pf->tide[0], pf->tide[1], tide_version_text());
+            report_at(report, user, where, line->line, note, "%s needs tide %d.%d or newer, and this is %s", pf.name,
+                      pf.tide[0], pf.tide[1], tide_version_text());
             ok = false;
         }
-        if (pf->pinned_line) {
-            report_at(report, user, pf->path, pf->pinned_line, "a package says the oldest tide it builds with, like `tide 0.5`",
+        if (pf.pinned_line) {
+            report_at(report, user, pf.path, pf.pinned_line, "a package says the oldest tide it builds with, like `tide 0.5`",
                       "only a game pins its tide");
             ok = false;
         }
         bool taken = false;
         for (int k = 0; k < out->count && !taken; k++) {
-            taken = strcmp(out->items[k].name, pf->name) == 0;
+            taken = strcmp(out->items[k].name, pf.name) == 0;
             if (taken) {
-                report_at(report, user, game->path, line->line, "a game can't have two packages of one name",
-                          "%s and %s are both called %s", out->items[k].line->source, line->source, pf->name);
+                report_at(report, user, where, line->line, "a game can't have two packages of one name",
+                          "%s and %s are both called %s", out->items[k].line->source, line->source, pf.name);
             }
         }
         if (taken) {
             ok = false;
-            packages_free_file(pf);
+            packages_free_file(&pf);
             free(dir);
             continue;
         }
-        out->items[out->count++] = (package){dup(pf->name), dir, line};
-        of[found++] = i;
-    }
+        out->items = realloc(out->items, sizeof(package) * (size_t)(out->count + 1));
+        if (!out->items) abort();
+        const int k = out->count++;
+        out->items[k] = (package){dup(pf.name), dir, line, where, pf};
+        want[w].item = k;
 
-    // What each needs, which the game must list: needs[k * found + j] when
-    // package k needs package j.
-    bool *needs = calloc((size_t)found * (size_t)found + 1, sizeof(bool));
-    if (!needs) abort();
-    for (int k = 0; k < found; k++) {
-        const packages_file *pf = &own[k];
-        for (int r = 0; r < pf->count; r++) {
-            const package_line *need = &pf->lines[r];
-            if (need->local && !out->items[k].line->local) {
-                if (out->items[k].line->builtin) {
-                    report_at(report, user, pf->path, need->line,
+        // What it needs: the game's line for it, or else the line of a package
+        // that needs it already, or else its own.
+        const packages_file *own = &out->items[k].file;
+        for (int r = 0; r < own->count; r++) {
+            const package_line *need = &own->lines[r];
+            if (need->local && !line->local) {
+                if (line->builtin) {
+                    report_at(report, user, own->path, need->line,
                               "name it as a game does: by its name if it comes with tide too, or by its git "
                               "repository and commit",
                               "a package that comes with tide can't use a folder on this machine (%s)", need->source);
                 } else {
-                    report_at(report, user, pf->path, need->line,
+                    report_at(report, user, own->path, need->line,
                               "name it by its git repository and commit, like the game does",
                               "a package from git can't use a folder on this machine (%s)", need->source);
                 }
                 ok = false;
                 continue;
             }
-            int j = -1;
-            for (int g = 0; g < game->count && j < 0; g++) {
-                if (!same_package(need, pf->folder, &game->lines[g], game->folder)) continue;
-                for (int m = 0; m < found; m++) {
-                    if (of[m] == g) j = m;
-                }
-                if (j < 0) j = found; // Listed, but not found: reported already
+            int match = -1;
+            for (int g = 0; g < game->count && match < 0; g++) {
+                if (same_package(need, own->folder, &game->lines[g], game->folder)) match = g;
             }
-            if (j < 0) {
-                char *text = line_text(need, pf->folder, game->folder);
-                char note[1200];
-                snprintf(note, sizeof note, "add this line: %s", text);
-                report_at(report, user, game->path, out->items[k].line->line, note,
-                          "%s needs %s, which this file doesn't list", out->items[k].name,
-                          need->local ? text : need->source); // A folder as the game's file writes it
-                bool listed = false;
-                for (int m = 0; missing && m < missing->count && !listed; m++) {
-                    listed = strcmp(missing->items[m].line, text) == 0;
-                }
-                if (missing && !listed) {
-                    const package_need n = {text, dup(out->items[k].name)};
-                    missing->items = realloc(missing->items, sizeof(package_need) * (size_t)(missing->count + 1));
-                    if (!missing->items) abort();
-                    missing->items[missing->count++] = n;
-                } else {
-                    free(text);
-                }
+            if (match < 0 && !need->local && !need->builtin && !need->commit) {
+                report_at(report, user, own->path, need->line,
+                          "a package names the commit of each package it needs from git, which `tide update` in its "
+                          "folder writes; or the game's tide.packages lists it with one",
+                          "%s has no commit to build with", need->source);
                 ok = false;
-            } else if (j < found && j != k) {
-                needs[k * found + j] = true;
+                continue;
             }
+            for (int m = game->count; m < wanted_count && match < 0; m++) {
+                if (!same_package(need, own->folder, want[m].line, want[m].base)) continue;
+                match = m;
+                const char *before = want[m].line->commit;
+                if (before && need->commit && strcmp(before, need->commit) != 0) {
+                    // Two commits of one package can't both be built: the game says which
+                    char *text = line_text(want[m].line, want[m].base, game->folder);
+                    char note[1400];
+                    snprintf(note, sizeof note,
+                             "a game builds one commit of each package: list the one to build in %s, like `%s`",
+                             game->path, text);
+                    free(text);
+                    report_at(report, user, own->path, need->line, note, "%s needs %s at %.7s, and %s needs it at %.7s",
+                              out->items[k].name, need->source, need->commit, out->items[want[m].by].name, before);
+                    ok = false;
+                }
+            }
+            if (match < 0) {
+                if (wanted_count == wanted_size) {
+                    wanted_size *= 2;
+                    want = realloc(want, sizeof(wanted) * (size_t)wanted_size);
+                    if (!want) abort();
+                }
+                want[wanted_count] = (wanted){need, own->folder, own->path, k, -1};
+                match = wanted_count++;
+            }
+            if (edge_count == edge_size) {
+                edge_size = edge_size ? edge_size * 2 : 16;
+                edges = realloc(edges, sizeof(need_edge) * (size_t)edge_size);
+                if (!edges) abort();
+            }
+            edges[edge_count++] = (need_edge){k, match};
         }
     }
+
+    // needs[k * found + j] when package k needs package j.
+    const int found = out->count;
+    bool *needs = calloc((size_t)found * (size_t)found + 1, sizeof(bool));
+    if (!needs) abort();
+    for (int e = 0; e < edge_count; e++) {
+        const int j = want[edges[e].to].item;
+        if (j >= 0 && j != edges[e].from) needs[edges[e].from * found + j] = true;
+    }
+    free(edges);
+    free(want);
 
     // Each after the packages it needs; of those that could go next, the
     // first by name; and in a circle of needs, the first of it by name.
@@ -1452,12 +1462,9 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
         placed[pick] = true;
         ordered[n] = out->items[pick];
     }
-    memcpy(out->items, ordered, sizeof(package) * (size_t)found);
+    if (found > 0) memcpy(out->items, ordered, sizeof(package) * (size_t)found);
     free(ordered);
     free(placed);
     free(needs);
-    for (int k = 0; k < found; k++) packages_free_file(&own[k]);
-    free(own);
-    free(of);
     return ok;
 }
