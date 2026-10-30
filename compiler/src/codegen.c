@@ -1856,6 +1856,13 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         return;
     }
     if (want.kind == TY_STRUCT && have.kind == TY_STRUCT && want.decl != have.decl
+        && want.decl->skin_kind == SKIN_SKELETON && have.decl->skin_kind == SKIN_SKELETON) {
+        sb_printf(o, "((%s){.data = (", type_cname(want.decl));
+        gen_expr(g, o, e);
+        sb_put(o, ").data})");
+        return;
+    }
+    if (want.kind == TY_STRUCT && have.kind == TY_STRUCT && want.decl != have.decl
         && ((want.decl->skin_kind == SKIN_MESH && have.decl->skin_kind == SKIN_MESH)
             || (want.decl->skin_kind == SKIN_ANIMATIONS && have.decl->skin_kind == SKIN_ANIMATIONS))) {
         sb_printf(o, "tide_skin_%s_from(tide_skin_%s_to(", type_cname(want.decl), type_cname(have.decl));
@@ -2622,6 +2629,9 @@ static void gen_value_of(gen *g, sb *o, expr *e, const type want)
     const bool skin_convert = want.kind == TY_STRUCT && e->type.kind == TY_STRUCT && want.decl != e->type.decl
         && ((want.decl->skin_kind == SKIN_MESH && e->type.decl->skin_kind == SKIN_MESH)
             || (want.decl->skin_kind == SKIN_ANIMATIONS && e->type.decl->skin_kind == SKIN_ANIMATIONS));
+    const bool skeleton_convert = want.kind == TY_STRUCT && e->type.kind == TY_STRUCT && want.decl != e->type.decl
+        && want.decl->skin_kind == SKIN_SKELETON && e->type.decl->skin_kind == SKIN_SKELETON;
+    if (skeleton_convert) sb_printf(o, "((%s){.data = (", type_cname(want.decl));
     if (skin_convert) sb_printf(o, "tide_skin_%s_from(tide_skin_%s_to(", type_cname(want.decl), type_cname(e->type.decl));
     if (e->type.kind == TY_LIST) sb_printf(o, "tide_list%d_copy(", e->type.decl->index);
     else if (e->type.kind == TY_MAP || e->type.kind == TY_SET) sb_printf(o, "tide_map%d_copy(", e->type.decl->index);
@@ -2629,6 +2639,7 @@ static void gen_value_of(gen *g, sb *o, expr *e, const type want)
     gen_expr(g, o, e);
     sb_put(o, ")");
     if (skin_convert) sb_put(o, "))");
+    if (skeleton_convert) sb_put(o, ").data})");
 }
 
 // The field itself, as the tide_text it is.
@@ -5624,7 +5635,7 @@ static bool writes(const expr *e)
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get"); // TryGet writes its `out` argument
     case CALL_GRID: case CALL_PARENT: return true; // Clear, or a deferred parent change
     case CALL_SKINNED: return skinned_lookup(e->skin_operation)
-        || e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
+        || skinned_changes_pose(e->skin_operation);
     case CALL_RANDOM: case CALL_ROLL: return true; // Each of a Random's methods steps it
     case CALL_WORLD: return str_eq_c(e->name, "TryGet"); // Its `out` argument
     case CALL_JSON: return e->arg_out != 0; // int.TryParse(text, out value)
@@ -5861,8 +5872,8 @@ static void call_operands(expr *e, operand_list *ops)
                 (e->visibility_operation & VISIBILITY_MUT) ? PLACE : use_of(e->object));
             break;
         case CALL_SKINNED:
-            if (e->skin_operation != SKIN_OP_DECODE) operand_push(ops, e->object,
-                e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND ? PLACE : TAKEN);
+            if (!skinned_static(e->skin_operation)) operand_push(ops, e->object,
+                skinned_changes_pose(e->skin_operation) ? PLACE : TAKEN);
             break;
         case CALL_SNAP: operand_push(ops, e->object, e->type_decl ? PLACE : TAKEN); break; // A singleton counts its snaps
         case CALL_TEXT:
@@ -7534,6 +7545,17 @@ static void gen_stmt(gen *g, const stmt *s)
         }
         if (via_element_member(target)) { // rows[i].x = v, rings[b].cells[j] = v: into the element's slot
             gen_element_assign(g, s, left);
+            break;
+        }
+        if (target->skin_operation == SKIN_OP_HUMANOID_INDEX) {
+            indent(g, o);
+            sb_put(o, "tide_skin_humanoid_set(&(");
+            gen_expr(g, o, target->object);
+            sb_put(o, "), ");
+            gen_expr(g, o, target->lhs);
+            sb_put(o, ", ");
+            gen_as(g, o, s->value, target->type);
+            sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
         }
         if (target->skin_operation == SKIN_OP_POSE_INDEX) {
@@ -10766,6 +10788,7 @@ static void gen_prelude(gen *g)
     if (g->opts->editor_prefab) sb_put(o, "#include \"tide/editor_preview.h\"\nstatic tide_render_target tide_editor_target;\n");
     if (g->prog->assets.count) sb_put(o, "#include \"tide/pack.h\"\n");
     if (g->prog->skinned_types.count) sb_put(o, "#include \"tide/skinned_data.h\"\n");
+    if (g->prog->humanoid_rig) sb_put(o, "#include \"tide/retarget.h\"\n");
     sb_put(o, "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
     sb_put(o, "#include \"tide/shard.h\" // Shards.Owns and Shards.delay, which any game can read\n\n");
     sb_printf(o, "#define TIDE_SHARDS_ON %s // Shards.on\n\n", g->prog->shards ? "true" : "false");

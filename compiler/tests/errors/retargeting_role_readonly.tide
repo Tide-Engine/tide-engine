@@ -1,0 +1,3 @@
+// expect: 'rig' is read-only
+scene Main { }
+void Change(HumanoidRig rig, Bone bone) { rig[HumanoidBone.LeftHand] = bone; }

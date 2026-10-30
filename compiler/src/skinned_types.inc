@@ -105,8 +105,89 @@ static void skinned_blend_shapes(program *prog)
     skinned_data_field(prog, prog->blend_shapes);
 }
 
+static decl *skinned_enum(program *prog, const char *name, const char *const *members, const int count, const int first)
+{
+    decl *d = NEW(decl);
+    d->kind = DECL_ENUM;
+    d->builtin = true;
+    d->name = str_from(name);
+    d->qualified = d->name;
+    d->width = 4;
+    for (int i = 0; i < count; i++) {
+        expr *value = NEW(expr);
+        value->kind = E_INT;
+        value->type = T_INT_;
+        value->int_value = i + first;
+        const enum_member m = {str_from(members[i]), {0}, value, i + first};
+        vec_push(d->members, m);
+    }
+    vec_push(prog->decls, d);
+    return d;
+}
+
+// Retarget profiles and prepared plans are ordinary owned values. Making them
+// lazily leaves programs which only sample/bind poses byte-for-byte unchanged.
+static void skinned_retarget_types(program *prog)
+{
+    skinned_builtins(prog);
+    if (prog->humanoid_rig) return;
+    static const char *const roles[] = {
+        "Hips", "LeftUpperLeg", "RightUpperLeg", "LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot",
+        "Spine", "Chest", "Neck", "Head", "LeftShoulder", "RightShoulder", "LeftUpperArm", "RightUpperArm",
+        "LeftLowerArm", "RightLowerArm", "LeftHand", "RightHand", "LeftToes", "RightToes", "LeftEye", "RightEye", "Jaw",
+        "LeftThumbProximal", "LeftThumbIntermediate", "LeftThumbDistal",
+        "LeftIndexProximal", "LeftIndexIntermediate", "LeftIndexDistal",
+        "LeftMiddleProximal", "LeftMiddleIntermediate", "LeftMiddleDistal",
+        "LeftRingProximal", "LeftRingIntermediate", "LeftRingDistal",
+        "LeftLittleProximal", "LeftLittleIntermediate", "LeftLittleDistal",
+        "RightThumbProximal", "RightThumbIntermediate", "RightThumbDistal",
+        "RightIndexProximal", "RightIndexIntermediate", "RightIndexDistal",
+        "RightMiddleProximal", "RightMiddleIntermediate", "RightMiddleDistal",
+        "RightRingProximal", "RightRingIntermediate", "RightRingDistal",
+        "RightLittleProximal", "RightLittleIntermediate", "RightLittleDistal", "UpperChest",
+    };
+    static const char *const statuses[] = {"Missing", "Automatic", "Uncertain", "Manual"};
+    static const char *const errors[] = {
+        "InvalidRig", "MissingBone", "AmbiguousBone", "InvalidReferencePose", "IncompatibleSkeleton", "UnsupportedScale",
+    };
+    prog->humanoid_bone = skinned_enum(prog, "HumanoidBone", roles, (int)(sizeof roles / sizeof roles[0]), 0);
+    prog->humanoid_status = skinned_enum(prog, "HumanoidBoneStatus", statuses, (int)(sizeof statuses / sizeof statuses[0]), 0);
+    prog->retarget_error = skinned_enum(prog, "RetargetError", errors, (int)(sizeof errors / sizeof errors[0]), 1);
+    prog->humanoid_rig = skinned_struct(prog, "HumanoidRig", SKIN_HUMANOID_RIG);
+    prog->humanoid_rig->qualified = prog->humanoid_rig->name;
+    skinned_data_field(prog, prog->humanoid_rig);
+    vec_push(prog->humanoid_rig->fields, skinned_field("referencePose", decl_type(prog->pose), false));
+    vec_push(prog->humanoid_rig->fields, skinned_field("bones", list_of(prog, T_INT_), true));
+    vec_push(prog->humanoid_rig->fields, skinned_field("status", list_of(prog, T_INT_), true));
+    prog->retarget_map = skinned_struct(prog, "RetargetMap", SKIN_RETARGET_MAP);
+    prog->retarget_map->qualified = prog->retarget_map->name;
+    vec_push(prog->retarget_map->fields, skinned_field("plan", list_of(prog, (type){TY_BYTE, NULL}), true));
+    field scale = skinned_field("rootScale", T_FLOAT_, false);
+    scale.default_value = NEW(expr);
+    scale.default_value->kind = E_FLOAT;
+    scale.default_value->type = T_FLOAT_;
+    scale.default_value->text = str_from("1");
+    vec_push(prog->retarget_map->fields, scale);
+    vec_push(prog->retarget_map->fields, skinned_field("rootOffset", (type){TY_FLOAT3, NULL}, false));
+    vec_push(prog->retarget_map->fields, skinned_field("headingDegrees", T_FLOAT_, false));
+    field spine = skinned_field("spineDistribution", T_FLOAT_, false);
+    spine.default_value = scale.default_value;
+    vec_push(prog->retarget_map->fields, spine);
+    field twist = skinned_field("twistDistribution", T_FLOAT_, false);
+    twist.default_value = scale.default_value;
+    vec_push(prog->retarget_map->fields, twist);
+}
+
 static bool skinned_type_named(program *prog, const str name, type *out)
 {
+    static const char *const retarget[] = {"HumanoidRig", "HumanoidBone", "HumanoidBoneStatus", "RetargetMap", "RetargetError"};
+    for (size_t i = 0; i < sizeof retarget / sizeof retarget[0]; i++) {
+        if (!str_eq_c(name, retarget[i])) continue;
+        skinned_retarget_types(prog);
+        decl *const types[] = {prog->humanoid_rig, prog->humanoid_bone, prog->humanoid_status, prog->retarget_map, prog->retarget_error};
+        *out = decl_type(types[i]);
+        return true;
+    }
     if (str_eq_c(name, "BlendShape")) {
         skinned_blend_shapes(prog);
         *out = decl_type(prog->blend_shape);

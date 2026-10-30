@@ -1,0 +1,3 @@
+// expect: a list's element is a copy, so 'Retarget' can't change it
+scene Main { }
+bool Change(mut List<Pose> poses, Pose source, RetargetMap mapping) { return poses[0].Retarget(source, mapping); }

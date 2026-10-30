@@ -1,0 +1,234 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "nodes": [
+    {
+      "name": "Hips",
+      "translation": [
+        0,
+        2.4,
+        0
+      ],
+      "children": [
+        1,
+        9,
+        12
+      ]
+    },
+    {
+      "name": "Spine",
+      "translation": [
+        0,
+        0.6,
+        0
+      ],
+      "children": [
+        2,
+        3,
+        6
+      ]
+    },
+    {
+      "name": "Head",
+      "translation": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "LeftUpperArm",
+      "translation": [
+        0.5,
+        0.6,
+        0
+      ],
+      "children": [
+        4
+      ]
+    },
+    {
+      "name": "LeftLowerArm",
+      "translation": [
+        0.7,
+        0,
+        0
+      ],
+      "children": [
+        5
+      ]
+    },
+    {
+      "name": "LeftHand",
+      "translation": [
+        0.6,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "RightUpperArm",
+      "translation": [
+        -0.5,
+        0.6,
+        0
+      ],
+      "children": [
+        7
+      ]
+    },
+    {
+      "name": "RightLowerArm",
+      "translation": [
+        -0.7,
+        0,
+        0
+      ],
+      "children": [
+        8
+      ]
+    },
+    {
+      "name": "RightHand",
+      "translation": [
+        -0.6,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "LeftUpperLeg",
+      "translation": [
+        0.3,
+        -0.2,
+        0
+      ],
+      "children": [
+        10
+      ]
+    },
+    {
+      "name": "LeftLowerLeg",
+      "translation": [
+        0,
+        -1,
+        0
+      ],
+      "children": [
+        11
+      ]
+    },
+    {
+      "name": "LeftFoot",
+      "translation": [
+        0,
+        -1,
+        0.2
+      ]
+    },
+    {
+      "name": "RightUpperLeg",
+      "translation": [
+        -0.3,
+        -0.2,
+        0
+      ],
+      "children": [
+        13
+      ]
+    },
+    {
+      "name": "RightLowerLeg",
+      "translation": [
+        0,
+        -1,
+        0
+      ],
+      "children": [
+        14
+      ]
+    },
+    {
+      "name": "RightFoot",
+      "translation": [
+        0,
+        -1,
+        0.2
+      ]
+    }
+  ],
+  "animations": [
+    {
+      "name": "Move",
+      "samplers": [
+        {
+          "input": 0,
+          "output": 1
+        },
+        {
+          "input": 0,
+          "output": 2
+        }
+      ],
+      "channels": [
+        {
+          "sampler": 0,
+          "target": {
+            "node": 0,
+            "path": "translation"
+          }
+        },
+        {
+          "sampler": 1,
+          "target": {
+            "node": 4,
+            "path": "rotation"
+          }
+        }
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 64,
+      "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAmpkZQAAAAAAAAAAAzcyMQAAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAV78M+XoNsPw=="
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 8
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 8,
+      "byteLength": 24
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 32,
+      "byteLength": 32
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 2,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 2,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 2,
+      "type": "VEC4"
+    }
+  ]
+}

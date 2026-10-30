@@ -1,0 +1,3 @@
+// expect: 'pose' is read-only
+scene Main { }
+bool Change(Pose pose, Pose source, RetargetMap mapping) { return pose.Retarget(source, mapping); }

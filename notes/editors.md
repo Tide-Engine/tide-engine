@@ -1,5 +1,31 @@
 # The language server and the editors
 
+## Humanoid retargeting (2026-10-30)
+
+The common language server offers HumanoidRig, HumanoidBone,
+HumanoidBoneStatus, RetargetMap and RetargetError in CPU type positions.
+HumanoidRig.Auto and RetargetMap.Create have static completion, hover and
+signature help, including an unfinished Create call and reordered named
+arguments. Rig values expose referencePose and GetStatus; prepared maps
+expose rootScale, rootOffset, headingDegrees, spineDistribution and
+twistDistribution, with calibration, units and distribution help. Backing
+lists and static creation methods do not appear on instances.
+
+Animation.skeleton and Pose.skeleton complete through their bone catalogs.
+Pose.Retarget describes its bool result, unchanged output on failure and
+retained target skeleton. A rig index and GetStatus argument offer anatomical
+roles, including leading-dot shorthand. CPU-only operations stay out of GPU
+completion; readonly mutation diagnostics come from the shared checker.
+Reference-pose help calls out animation-only exports whose defaults are the
+take's first frame. Existing general type and enum syntax covers these names,
+so no editor adapter or lexical grammar change is needed.
+
+Protocol regressions:
+lsp_humanoid_retargeting_completion_and_calibration_help and
+lsp_humanoid_retargeting_roles_signatures_and_restrictions. Both passed on
+Windows with native ASan. Compiler/runtime contracts and combined validation
+are recorded in notes/assets-and-files.md.
+
 ## Sanitizer test builds keep their own server (2026-10-29)
 
 With TIDE_SANITIZE enabled, tidels stays in that build's bin directory and

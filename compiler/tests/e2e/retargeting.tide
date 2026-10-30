@@ -1,0 +1,142 @@
+asset Animation reference = "retargeting/source.gltf";
+asset Animation motion = "retargeting/export.gltf";
+asset Animation character = "retargeting/target.gltf";
+asset SkinnedMesh<Vertex3> catalogued = "skinned/models/a.gltf";
+
+singleton Probe
+{
+    int ticks;
+    int checks;
+    int passed;
+    int firstFailure;
+    HumanoidRig sourceRig;
+    HumanoidRig targetRig;
+    RetargetMap mapping;
+    Pose pose;
+    Pose original;
+    Bone hips;
+    float height;
+    int order;
+}
+scene Main { }
+
+void Expect(mut Probe p, bool yes)
+{
+    p.checks++;
+    if (yes) p.passed++;
+    else if (p.firstFailure == 0) p.firstFailure = p.checks;
+}
+bool Near(float a, float b) { return Math.Abs(a - b) < 0.0001; }
+Bone Find(Skeleton skeleton, string name) { skeleton.TryGetByName(name, out var result); return result; }
+RetargetMap Prepare(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig) fails RetargetError
+{
+    return try RetargetMap.Create(source, sourceRig, targetRig);
+}
+Pose StampSource(mut Probe p) { p.order = p.order * 10 + 1; return motion.Sample(1); }
+RetargetMap StampMap(mut Probe p) { p.order = p.order * 10 + 2; return p.mapping; }
+
+system Retarget(mut Probe p)
+{
+    if (p.ticks == 0)
+    {
+        var source = reference.skeleton.RestPose();
+        var target = character.skeleton.RestPose();
+        mut var sourceRig = HumanoidRig.Auto(referencePose: source);
+        mut var targetRig = HumanoidRig.Auto(target);
+        var hips = Find(target.skeleton, "Hips");
+        var hand = Find(target.skeleton, "LeftHand");
+        Expect(p, HumanoidBone.Count() == 55 && int(HumanoidBone.UpperChest) == 54);
+        Expect(p, int(RetargetError.InvalidRig) == 1 && int(RetargetError.UnsupportedScale) == 6);
+        Expect(p, source.skeleton.bones.count == 16 && motion.skeleton.bones.count == 17);
+        Expect(p, catalogued.skeleton.bones.count == 3 && catalogued.defaultPose[Find(catalogued.skeleton, "Arm")].scale.x == 1);
+        Expect(p, sourceRig.GetStatus(bone: HumanoidBone.LeftHand) == HumanoidBoneStatus.Automatic);
+        Expect(p, targetRig.GetStatus(HumanoidBone.LeftThumbDistal) == HumanoidBoneStatus.Missing);
+        Expect(p, Near(target[targetRig[HumanoidBone.Hips]].position.y, 2.4));
+        Expect(p, sourceRig.GetStatus(HumanoidBone(-1)) == HumanoidBoneStatus.Missing);
+        Expect(p, target[targetRig[HumanoidBone(999)]].position.y == 0);
+
+        var automatic = targetRig;
+        targetRig[HumanoidBone.LeftHand] = hand;
+        Expect(p, targetRig.GetStatus(HumanoidBone.LeftHand) == HumanoidBoneStatus.Manual
+            && automatic.GetStatus(HumanoidBone.LeftHand) == HumanoidBoneStatus.Automatic);
+        targetRig[HumanoidBone.LeftHand] = sourceRig[HumanoidBone.LeftHand]; // Wrong identity is ignored.
+        Expect(p, Near(target[targetRig[HumanoidBone.LeftHand]].position.x, target[hand].position.x));
+        targetRig[HumanoidBone.LeftHand] = default;
+        Expect(p, RetargetMap.Create(motion.skeleton, sourceRig, targetRig) is RetargetError.MissingBone);
+        targetRig[HumanoidBone.LeftHand] = hand;
+
+        mut var manual = HumanoidRig { referencePose = target };
+        manual[HumanoidBone.LeftHand] = hand;
+        Expect(p, manual.GetStatus(HumanoidBone.Hips) == HumanoidBoneStatus.Missing
+            && manual.GetStatus(HumanoidBone.LeftHand) == HumanoidBoneStatus.Manual);
+        Expect(p, RetargetMap.Create(motion.skeleton, sourceRig, manual) is RetargetError.MissingBone);
+        Expect(p, RetargetMap.Create(motion.skeleton, default, targetRig) is RetargetError.InvalidRig);
+        mut var changedIdentity = targetRig;
+        changedIdentity.referencePose = source;
+        Expect(p, RetargetMap.Create(motion.skeleton, sourceRig, changedIdentity) is RetargetError.IncompatibleSkeleton);
+        var identity = RetargetMap.Create(reference.skeleton, sourceRig, sourceRig);
+        if (identity is RetargetMap sameRig)
+        {
+            mut var samePose = reference.Sample(1);
+            Expect(p, samePose.Retarget(samePose, sameRig));
+            Expect(p, Near(samePose[sourceRig[HumanoidBone.Hips]].position.y, 2.2));
+        }
+        else Expect(p, false);
+
+        var prepared = Prepare(motion.skeleton, sourceRig, targetRig);
+        if (prepared is RetargetMap mapping)
+        {
+            p.mapping = mapping;
+            Expect(p, Near(mapping.rootScale, 2) && mapping.spineDistribution == 1 && mapping.twistDistribution == 1);
+            mut var pose = target;
+            Expect(p, pose.Retarget(source: motion.Sample(0), mapping: mapping));
+            Expect(p, Near(pose[hips].position.y, target[hips].position.y));
+            Expect(p, pose.Retarget(motion.Sample(1), mapping));
+            Expect(p, Near(pose[hips].position.y, 4.4));
+            Expect(p, Near(pose[hand].position.x, target[hand].position.x));
+            Expect(p, Near(Math.Dot(pose[Find(target.skeleton, "LeftLowerArm")].rotation,
+                motion.Sample(1)[Find(motion.skeleton, "LeftLowerArm")].rotation), 1));
+            pose[hand].position.z += 0.125;
+            var before = pose;
+            Expect(p, !pose.Retarget(reference.Sample(1), mapping));
+            Expect(p, Near(pose[hips].position.y, before[hips].position.y)
+                && pose[hand].position.z == before[hand].position.z);
+            pose.Blend(target, 0.5);
+            Expect(p, Near(pose[hips].position.y, 3.4));
+
+            mut var adjusted = mapping;
+            adjusted.rootScale = 0;
+            adjusted.rootOffset = float3(3, 0, 0);
+            adjusted.headingDegrees = 90;
+            adjusted.spineDistribution = 0;
+            adjusted.twistDistribution = 0;
+            Expect(p, pose.Retarget(motion.Sample(1), adjusted));
+            Expect(p, Near(pose[hips].position.y, 2.4) && Near(pose[hips].position.x, 3));
+            Expect(p, mapping.rootScale != adjusted.rootScale && mapping.headingDegrees == 0);
+
+            // Reference edits are reusable values; a prepared map is a snapshot.
+            targetRig.referencePose[hips].position.y += 1;
+            var changed = RetargetMap.Create(motion.skeleton, sourceRig, targetRig);
+            if (changed is RetargetMap revised)
+            {
+                Expect(p, pose.Retarget(motion.Sample(0), revised));
+                Expect(p, Near(pose[hips].position.y, 3.4));
+            }
+            else Expect(p, false);
+            Expect(p, pose.Retarget(motion.Sample(0), mapping));
+            Expect(p, Near(pose[hips].position.y, 2.4));
+            p.pose = target;
+            p.original = target;
+            p.hips = hips;
+            p.sourceRig = sourceRig;
+            p.targetRig = targetRig;
+            p.order = 0;
+            Expect(p, p.pose.Retarget(mapping: StampMap(p), source: StampSource(p)));
+            Expect(p, p.order == 21);
+        }
+        else Expect(p, false);
+    }
+    Expect(p, p.pose.Retarget(motion.Sample(float(p.ticks % 3) * 0.5), p.mapping));
+    p.height = p.pose[p.hips].position.y;
+    p.ticks++;
+}

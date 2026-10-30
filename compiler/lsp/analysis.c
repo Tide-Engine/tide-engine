@@ -2381,9 +2381,34 @@ static const char *shader_record_doc(const decl *d)
     return NULL;
 }
 
+#define HUMANOID_RIG_DOC "Reusable humanoid bone assignments and an explicit reference pose. Auto suggests assignments; " \
+    "inspect GetStatus and override a role with rig[HumanoidBone.LeftHand] = bone."
+#define RETARGET_MAP_DOC "A prepared source-to-target retargeting map. Create it once for the actual animation skeleton " \
+    "and both characterized rigs, then reuse it with Pose.Retarget."
+
+static const char *retarget_type_doc(const decl *d)
+{
+    if (!d) return NULL;
+    if (d == A.prog->humanoid_rig) return HUMANOID_RIG_DOC;
+    if (d == A.prog->retarget_map) return RETARGET_MAP_DOC;
+    if (d == A.prog->humanoid_bone) return "An anatomical role in a HumanoidRig, independent of the skeleton's original bone names.";
+    if (d == A.prog->humanoid_status) return "Whether a role is Missing, Automatic, Uncertain or manually assigned. Check uncertain assignments before preparing a map.";
+    if (d == A.prog->retarget_error) return "Why RetargetMap.Create could not prepare the rigs. Correct the assignments, reference poses or source skeleton before trying again.";
+    return NULL;
+}
+
 // What the fields of the engine's own types are: Time's, Pixel's and Instance's.
 static const char *builtin_field_doc(const decl *d, const str name)
 {
+    if (d && d == A.prog->humanoid_rig && str_eq_c(name, "referencePose"))
+        return "The explicit calibration pose. Edit its bone transforms to correct calibration, then create the mapping again. An animation export's defaults may be its first frame rather than a neutral pose.";
+    if (d && d == A.prog->retarget_map) {
+        if (str_eq_c(name, "rootScale")) return "Multiplier for source root travel, initialized from the rigs' leg-length ratio. Changes affect subsequent retargets.";
+        if (str_eq_c(name, "rootOffset")) return "Additional root position offset in the target's model space.";
+        if (str_eq_c(name, "headingDegrees")) return "Additional heading correction in degrees about the target's up axis.";
+        if (str_eq_c(name, "spineDistribution")) return "How much rotation is distributed across additional spine and neck nodes, from 0 to 1. A prepared map starts at 1.";
+        if (str_eq_c(name, "twistDistribution")) return "How much longitudinal twist is distributed to limb helper bones, from 0 to 1. A prepared map starts at 1; elbow and knee bends are not distributed as twist.";
+    }
     if (d && d == A.prog->time) {
         if (str_eq_c(name, "dt")) return "The length of a tick in seconds: the same every tick.";
         if (str_eq_c(name, "tick")) return "The tick the match is at, counting from 0.";
@@ -2540,6 +2565,24 @@ static const method_form pose_calls[] = {
      "Blends a writable pose toward a compatible pose in parent-local space. Weight is clamped to 0 through 1."},
     {"Model", "Model(Bone bone) -> float4x4",
      "Returns a node's accumulated transform in model space, without inverse-bind offsets. Use it for sockets and hitboxes."},
+    {"Retarget", "Retarget(Pose source, RetargetMap mapping) -> bool",
+     "Transfers a source pose through a prepared mapping into this writable target pose with deterministic CPU math. "
+     "Returns false and leaves the target unchanged for incompatible or invalid input. The result keeps the target skeleton for blending and sockets."},
+};
+
+// Static creation is first; only GetStatus belongs to a rig value.
+static const method_form humanoid_rig_calls[] = {
+    {"Auto", "Auto(Pose referencePose) -> HumanoidRig",
+     "Suggests humanoid bone assignments from a rig's explicit reference pose. Inspect GetStatus and override uncertain or missing roles with rig[HumanoidBone]. "
+     "Use a known reference pose: animation-only export defaults can be the first frame of a take."},
+    {"GetStatus", "GetStatus(HumanoidBone bone) -> HumanoidBoneStatus",
+     "Reports whether this role is Missing, Automatic, Uncertain or Manual. Assign a Bone to rig[bone] to override automatic discovery."},
+};
+
+static const method_form retarget_map_calls[] = {
+    {"Create", "Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig) -> RetargetMap fails RetargetError",
+     "Prepares retargeting once for the actual animation skeleton and both rigs' assignments and reference poses. "
+     "The source may be a separate animation export of the reference rig. Invalid assignments, calibration, hierarchy or scale fail with RetargetError."},
 };
 
 #define BLEND_SHAPES_DOC "The model's blend shapes (morph targets) in their order, with their source names and the file's default weights. " \
@@ -2581,6 +2624,8 @@ static const method_form *methods_of(const type t, size_t *count)
         case SKIN_SKELETON: forms = skeleton_calls; *count = sizeof skeleton_calls / sizeof skeleton_calls[0]; break;
         case SKIN_ANIMATION: forms = animation_calls; *count = sizeof animation_calls / sizeof animation_calls[0]; break;
         case SKIN_POSE: forms = pose_calls; *count = sizeof pose_calls / sizeof pose_calls[0]; break;
+        case SKIN_HUMANOID_RIG: forms = humanoid_rig_calls; *count = sizeof humanoid_rig_calls / sizeof humanoid_rig_calls[0]; break;
+        case SKIN_RETARGET_MAP: forms = retarget_map_calls; *count = sizeof retarget_map_calls / sizeof retarget_map_calls[0]; break;
         default: break;
         }
         if (forms) return forms;
@@ -3145,6 +3190,7 @@ static void describe(const occurrence *o, sb *out)
             else if (o->decl == A.prog->audience) sb_put(out, "\n\n" AUDIENCE_DOC);
             else if (o->decl == A.prog->visibility) sb_put(out, "\n\n" VISIBILITY_DOC);
             else if (o->decl == A.prog->visibility_group) sb_put(out, "\n\n" VISIBILITY_GROUP_DOC);
+            else if (retarget_type_doc(o->decl)) sb_printf(out, "\n\n%s", retarget_type_doc(o->decl));
             else if (o->decl == A.prog->font) {
                 sb_put(out, "\n\nThe weight `Draw.Text` draws in and `Draw.MeasureText` measures in, after their "
                             "other arguments: `Font.Regular` (what they use without one) or `Font.Bold`, the font's "
@@ -3775,6 +3821,8 @@ static void describe(const occurrence *o, sb *out)
             }
             if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "duration")) sb_put(out, "\n\nThe animation's duration in seconds.");
             if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "name")) sb_put(out, "\n\nThis animation's original source name.");
+            if ((d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_POSE) && str_eq_c(o->name, "skeleton"))
+                sb_put(out, "\n\nThis value's source skeleton. Use the actual animation skeleton when preparing RetargetMap.Create; its authored defaults are not necessarily a neutral reference pose.");
             if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES || d->skin_kind == SKIN_BLEND_SHAPES) && str_eq_c(o->name, "count")) sb_put(out, "\n\nHow many entries the immutable catalog has, including entries without checked names.");
         }
         if (o->object_type.decl && o->object_type.decl->query_row) {
@@ -6699,6 +6747,7 @@ static type member_type(const type t, const str member)
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "animations")) return (type){TY_STRUCT, d->skin_animations};
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "skeleton")) return (type){TY_STRUCT, d->skin_skeleton};
+        if ((d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_POSE) && str_eq_c(member, "skeleton")) return (type){TY_STRUCT, A.prog->skeleton};
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "defaultPose")) return (type){TY_STRUCT, A.prog->pose};
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "blendShapes") && A.prog->blend_shapes) return (type){TY_STRUCT, A.prog->blend_shapes};
         if (d->skin_kind == SKIN_BLEND_SHAPES && str_eq_c(member, "count")) return (type){TY_INT, NULL};
@@ -6927,6 +6976,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             item(c, "weight", CK_PROPERTY, "float", BLEND_SHAPE_WEIGHT_DOC, NULL);
         }
         if (d->skin_kind == SKIN_SKELETON) item(c, "bones", CK_PROPERTY, "Bones", "Named nodes for sockets, hitboxes and procedural pose edits.", NULL);
+        if (d->skin_kind == SKIN_ANIMATION || d->skin_kind == SKIN_POSE)
+            item(c, "skeleton", CK_PROPERTY, "Skeleton", "This value's source skeleton, including animation-only exports. Use it when preparing RetargetMap.Create.", NULL);
         if (d->skin_kind == SKIN_ANIMATION) {
             item(c, "name", CK_PROPERTY, "string", "This animation's original source name.", NULL);
             item(c, "duration", CK_PROPERTY, "float", "The animation's duration in seconds.", NULL);
@@ -6945,6 +6996,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         size_t count;
         const method_form *forms = methods_of(t, &count);
         for (size_t i = 0; d->skin_kind != SKIN_MESH && i < count; i++) {
+            if (i == 0 && (d->skin_kind == SKIN_HUMANOID_RIG || d->skin_kind == SKIN_RETARGET_MAP)) continue;
             sb detail = {0}, snippet = {0};
             format_method(&forms[i], t, &detail);
             method_snippet(&forms[i], &snippet);
@@ -7295,6 +7347,15 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         return;
     }
     if (t.kind == TY_ERROR) {
+        if (n == 1 && (str_eq_c(base, "HumanoidRig") || str_eq_c(base, "RetargetMap"))) {
+            if (gpu) return;
+            const method_form *form = str_eq_c(base, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];
+            sb detail = {0}, snippet = {0};
+            sb_printf(&detail, STR_FMT ".%s", STR_ARG(base), form->form);
+            method_snippet(form, &snippet);
+            item(c, form->name, CK_METHOD, detail.data, form->doc, snippet.data);
+            return;
+        }
         if (n == 1 && (str_eq_c(base, "Audience") || str_eq_c(base, "Visibility"))) {
             if (gpu) return;
             const bool audience = str_eq_c(base, "Audience");
@@ -7799,6 +7860,11 @@ static void complete_value_types(completion *c, const unsigned which)
             for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
                 item(c, names[i], i == 5 ? CK_ENUM : CK_STRUCT, "built-in type", docs[i], NULL);
             }
+            item(c, "HumanoidRig", CK_STRUCT, "built-in type", HUMANOID_RIG_DOC, NULL);
+            item(c, "RetargetMap", CK_STRUCT, "built-in type", RETARGET_MAP_DOC, NULL);
+            item(c, "HumanoidBone", CK_ENUM, "built-in type", "An anatomical role used to index a HumanoidRig.", NULL);
+            item(c, "HumanoidBoneStatus", CK_ENUM, "built-in type", "Missing, Automatic, Uncertain or Manual bone assignment.", NULL);
+            item(c, "RetargetError", CK_ENUM, "built-in type", "A failure preparing a retarget map: check the rigs, calibration and source skeleton.", NULL);
         }
     }
     if (which & VT_GRID) {
@@ -9306,6 +9372,12 @@ static const decl *completion_enum(const scope *sc, const int last, const int br
     if (last < 0) return NULL;
     const token *toks = DOC->toks;
     const tok_kind kind = toks[last].kind;
+    if (kind == T_LBRACKET && last > 0) {
+        int first = last - 1;
+        while (first >= 2 && toks[first - 1].kind == T_DOT && toks[first - 2].kind == T_IDENT) first -= 2;
+        const type indexed = names_type(sc, first, last - 1);
+        if (indexed.decl && indexed.decl->skin_kind == SKIN_HUMANOID_RIG) return A.prog->humanoid_bone;
+    }
     if (kind == T_RETURN && sc->decl && sc->decl->return_type.kind == TY_ENUM) return sc->decl->return_type.decl;
     if (kind == T_CASE) {
         const int switched = switch_of_brace(brace);
@@ -11838,6 +11910,13 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb label = {0};
             sb_printf(&label, STR_FMT "(DeclarationOrPhase, ...)", STR_ARG(name));
             add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
+        }
+    } else if (str_eq_c(owner, "HumanoidRig") || str_eq_c(owner, "RetargetMap")) {
+        const method_form *form = str_eq_c(owner, "HumanoidRig") ? &humanoid_rig_calls[0] : &retarget_map_calls[0];
+        if (str_eq_c(name, form->name)) {
+            sb label = {0};
+            sb_printf(&label, STR_FMT ".%s", STR_ARG(owner), form->form);
+            add_signature(&s, label.data, form->doc);
         }
     } else if (str_eq_c(owner, "Audience") || str_eq_c(owner, "Visibility")) {
         const bool audience = str_eq_c(owner, "Audience");

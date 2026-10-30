@@ -1,0 +1,3 @@
+// expect: 'Create' argument 1 is Skeleton, not Pose
+scene Main { }
+RetargetMap Create(Pose source, HumanoidRig rig) fails RetargetError { return RetargetMap.Create(source, rig, rig)!; }

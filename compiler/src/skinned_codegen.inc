@@ -24,6 +24,40 @@ static void gen_skin_catalog(gen *g, sb *o, expr *object)
 static void gen_skin_expr(gen *g, sb *o, const expr *e)
 {
     const skinned_operation op = (skinned_operation)e->skin_operation;
+    if (op == SKIN_OP_HUMANOID_AUTO) {
+        sb_put(o, "tide_skin_humanoid_auto(");
+        gen_expr(g, o, e->args.items[0]);
+        sb_put(o, ")");
+        return;
+    }
+    if (op == SKIN_OP_HUMANOID_INDEX || op == SKIN_OP_HUMANOID_STATUS) {
+        sb_printf(o, "tide_skin_humanoid_%s(", op == SKIN_OP_HUMANOID_INDEX ? "bone" : "status");
+        gen_expr(g, o, e->object);
+        sb_put(o, ", ");
+        gen_expr(g, o, op == SKIN_OP_HUMANOID_INDEX ? e->lhs : e->args.items[0]);
+        sb_put(o, ")");
+        return;
+    }
+    if (op == SKIN_OP_RETARGET_CREATE) {
+        sb_printf(o, "tide_skin_result%d_retarget_create(", e->type.decl->index);
+        gen_as(g, o, e->args.items[0], (type){TY_STRUCT, g->prog->skeleton});
+        sb_put(o, ", ");
+        gen_expr(g, o, e->args.items[1]);
+        sb_put(o, ", ");
+        gen_expr(g, o, e->args.items[2]);
+        sb_put(o, ")");
+        return;
+    }
+    if (op == SKIN_OP_POSE_RETARGET) {
+        sb_put(o, "tide_skin_pose_retarget(&(");
+        gen_expr(g, o, e->object);
+        sb_put(o, "), ");
+        gen_expr(g, o, e->args.items[0]);
+        sb_put(o, ", ");
+        gen_expr(g, o, e->args.items[1]);
+        sb_printf(o, ", %s)", place_where(g, e->object));
+        return;
+    }
     if (op == SKIN_OP_BLEND_SHAPES) {
         sb_printf(o, "((%s){.data = ", c_type(e->type));
         gen_skin_data(g, o, e->object);
