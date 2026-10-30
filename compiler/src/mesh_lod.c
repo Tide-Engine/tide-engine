@@ -552,6 +552,108 @@ static void gather(maker *m)
     free(edges);
 }
 
+// A level's triangles in an order a GPU's cache of transformed vertices reuses most (Forsyth's): the next is the
+// one whose corners were drawn most lately, and whose corners have fewest triangles left, so none is left behind
+// alone. Only the order changes. A vertex's score is `+ - * /` and `sqrt`, so the order is the same everywhere.
+enum { CACHE_SCORED = 32 };
+
+static double vertex_score(const int32_t position, const uint32_t remaining)
+{
+    if (remaining == 0) return -1.0;
+    double score = 0.0;
+    if (position >= 0 && position < 3) {
+        score = 0.75; // The last triangle's: about as good wherever they are among themselves
+    } else if (position >= 3) {
+        const double x = 1.0 - (double)(position - 3) / (double)(CACHE_SCORED - 3);
+        score = x * sqrt(x);
+    }
+    return score + 2.0 / sqrt((double)remaining);
+}
+
+static void order_for_cache(uint32_t *index, const uint32_t count, const uint32_t vertices)
+{
+    const uint32_t triangles = count / 3u;
+    if (triangles < 2u) return;
+    uint32_t *first = room((size_t)vertices + 1u, sizeof(uint32_t));
+    uint32_t *remaining = room(vertices, sizeof(uint32_t));
+    for (uint32_t i = 0; i < count; i++) remaining[index[i]]++;
+    for (uint32_t v = 0, at = 0; v <= vertices; v++) {
+        first[v] = at;
+        if (v < vertices) at += remaining[v];
+    }
+    // Each vertex's triangles still to draw are the first `remaining` of its own
+    uint32_t *adjacent = room(count, sizeof(uint32_t));
+    uint32_t *filled = room(vertices, sizeof(uint32_t));
+    for (uint32_t i = 0; i < count; i++) adjacent[first[index[i]] + filled[index[i]]++] = i / 3u;
+    int32_t *position = room(vertices, sizeof(int32_t));
+    double *score = room(vertices, sizeof(double));
+    for (uint32_t v = 0; v < vertices; v++) position[v] = -1, score[v] = vertex_score(-1, remaining[v]);
+    double *triangle_score = room(triangles, sizeof(double));
+    uint8_t *drawn = room(triangles, 1);
+    uint32_t *ordered = room(count, sizeof(uint32_t));
+    uint32_t best = 0;
+    for (uint32_t t = 0; t < triangles; t++) {
+        const uint32_t *c = &index[t * 3u];
+        triangle_score[t] = score[c[0]] + score[c[1]] + score[c[2]];
+        if (triangle_score[t] > triangle_score[best]) best = t;
+    }
+    uint32_t cache[CACHE_SCORED + 3], cached = 0, next_free = 0;
+    for (uint32_t out = 0; out < triangles; out++) {
+        if (best == UINT32_MAX) { // Nothing around the cache is left: the first not drawn, in the list's order
+            while (drawn[next_free]) next_free++;
+            best = next_free;
+        }
+        const uint32_t t = best;
+        drawn[t] = 1;
+        memcpy(&ordered[out * 3u], &index[t * 3u], 3u * sizeof(uint32_t));
+        uint32_t fresh[CACHE_SCORED + 3], count_fresh = 0;
+        for (uint32_t k = 0; k < 3u; k++) {
+            const uint32_t v = index[t * 3u + k];
+            uint32_t *mine = &adjacent[first[v]];
+            for (uint32_t j = 0; j < remaining[v]; j++) {
+                if (mine[j] == t) {
+                    mine[j] = mine[remaining[v] - 1u];
+                    break;
+                }
+            }
+            remaining[v]--;
+            bool there = false;
+            for (uint32_t j = 0; j < count_fresh && !there; j++) there = fresh[j] == v;
+            if (!there) fresh[count_fresh++] = v;
+        }
+        // The triangle's corners first, then what was there, the most lately drawn first
+        for (uint32_t i = 0; i < cached; i++) {
+            bool there = false;
+            for (uint32_t j = 0; j < count_fresh && !there; j++) there = fresh[j] == cache[i];
+            if (!there) fresh[count_fresh++] = cache[i];
+        }
+        for (uint32_t i = 0; i < count_fresh; i++) {
+            const uint32_t v = fresh[i];
+            position[v] = i < CACHE_SCORED ? (int32_t)i : -1;
+            score[v] = vertex_score(position[v], remaining[v]);
+        }
+        best = UINT32_MAX;
+        double top = -1.0;
+        for (uint32_t i = 0; i < count_fresh; i++) {
+            const uint32_t v = fresh[i];
+            for (uint32_t j = 0; j < remaining[v]; j++) {
+                const uint32_t other = adjacent[first[v] + j];
+                const uint32_t *c = &index[other * 3u];
+                triangle_score[other] = score[c[0]] + score[c[1]] + score[c[2]];
+                if (triangle_score[other] > top || (triangle_score[other] == top && other < best)) {
+                    top = triangle_score[other];
+                    best = other;
+                }
+            }
+        }
+        cached = count_fresh < CACHE_SCORED ? count_fresh : CACHE_SCORED;
+        memcpy(cache, fresh, (size_t)cached * sizeof(uint32_t));
+    }
+    memcpy(index, ordered, (size_t)count * sizeof(uint32_t));
+    free(first), free(remaining), free(adjacent), free(filled), free(position), free(score);
+    free(triangle_score), free(drawn), free(ordered);
+}
+
 void mesh_lod_make(const mesh_lod_source *s, mesh_lod *out)
 {
     *out = (mesh_lod){0};
@@ -685,6 +787,7 @@ void mesh_lod_make(const mesh_lod_source *s, mesh_lod *out)
             memcpy(&out->index[out->indices], &m.corner_vertex[t * 3u], 3u * sizeof(uint32_t));
             out->indices += 3u;
         }
+        order_for_cache(&out->index[out->first[level]], count, m.vertices);
         before = m.left;
     }
     free(m.place), free(m.chart), free(m.values), free(m.point);

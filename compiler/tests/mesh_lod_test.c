@@ -563,3 +563,36 @@ TIDE_TEST(mesh_lod_weighs_what_a_surface_shows_by_the_patch_it_is_on)
     mesh_lod_free(&lod);
     shape_free(&s);
 }
+
+// How many vertices a GPU's cache of the last 16 transformed ones would transform again, for each triangle.
+static double cache_misses(const uint32_t *index, const uint32_t count)
+{
+    uint32_t cache[16], cached = 0, misses = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        bool there = false;
+        for (uint32_t j = 0; j < cached && !there; j++) there = cache[j] == index[i];
+        if (there) continue;
+        misses++;
+        if (cached == 16u) memmove(cache, cache + 1, 15u * sizeof(uint32_t)), cached--;
+        cache[cached++] = index[i];
+    }
+    return (double)misses / (double)(count / 3u);
+}
+
+// A level's triangles are in an order a GPU's vertex cache reuses: about two vertices transformed for each three
+// triangles of a smooth mesh, which has a vertex for each two.
+TIDE_TEST(mesh_lod_orders_levels_for_the_vertex_cache)
+{
+    shape s = ball(32, 64);
+    const mesh_lod_source source = source_of(&s);
+    mesh_lod lod;
+    mesh_lod_make(&source, &lod);
+    TIDE_REQUIRE(lod.levels >= 4u);
+    for (uint32_t level = 0; level < lod.levels; level++) {
+        const double misses = cache_misses(&lod.index[lod.first[level]], lod.count[level]);
+        // Unordered, as the collapses left them, the bigger ones were 1.0 to 1.5
+        if (lod.count[level] >= 100u * 3u) TIDE_CHECK(misses < 0.75);
+    }
+    mesh_lod_free(&lod);
+    shape_free(&s);
+}

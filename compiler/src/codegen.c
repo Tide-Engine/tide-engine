@@ -19601,9 +19601,11 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
                         tide_mesh_levels *levels, uint8_t key[32])
 {
     static const char plain_version[] =
-        "tide levels of detail 4, values by area, of meshes of 1000 triangles and levels of 64 at the least";
-    static const char tangent_version[] = "tide levels of detail 5, values by area, of meshes of 1000 triangles and "
-                                          "levels of 64 at the least, with tangent handedness seams";
+        "tide levels of detail 6, values by area, of meshes of 1000 triangles and levels of 64 at the least, "
+        "ordered for the vertex cache";
+    static const char tangent_version[] = "tide levels of detail 7, values by area, of meshes of 1000 triangles and "
+                                          "levels of 64 at the least, ordered for the vertex cache, with tangent "
+                                          "handedness seams";
     _Static_assert(MESH_LOD_MESH_LEAST == 1000 && MESH_LOD_TRIANGLES_LEAST == 64,
                    "the levels' version says the fewest triangles a mesh and a level have");
     const bool tangent_sides = tangents && !skinned;
