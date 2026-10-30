@@ -1,5 +1,88 @@
 # ECS and simulation state
 
+## 64-bit handles: design (2026-10-30)
+
+The owner's decision ("Full 64-bit handles"), knowing it changes every layout
+holding text, lists, maps, sets or grids, the world's bytes and hash, and the
+generated C. Why: a handle was one `uint32_t`, two bits saying where its block
+is and 30 its offset, so a world's heap and a thread's scratch area stopped at
+1 GiB and the asset pack, mapped into the scratch area's offsets from
+`TIDE_PACK_BASE` (2^29), at 512 MiB, which bannerlord-duel's textures passed
+(`past_handles` in `engine/src/pack.c`). Every tag value is taken, so there was
+no cheap widening.
+
+**Layout.** A handle is `tide_handle`, a `uint64_t`: where (`TIDE_IN_MATCH` 0,
+`TIDE_IN_LOCAL` 1, `TIDE_IN_SCRATCH` 2, `TIDE_IN_VERIFIED` 3, as before) in the
+top two bits (`TIDE_WHERE_SHIFT` 62), the offset in the low 62. Everything
+reads and makes them through `tide_handle_where`, `tide_handle_offset` and
+`tide_handle_of` (`tide/text.h`). The tag stays on top, rather than in low
+bits that alignment frees, so a match handle (tag 0) below 4 GiB has a zero
+high word: what deltas and hashes of handle columns see is mostly zeros, as
+before. Considered and not taken: keeping 32 bits and counting offsets in
+16-byte units, which gives 16 GiB a heap, another limit of handle bits (and
+the scratch area's text is only 4-aligned).
+
+- **Heap** (`tide/heap.h`): offsets, `used`, `free[]` and `pending` are 64 bits.
+  It stops at 2^56 bytes (`LIMIT`), which memory reaches first; page indices
+  (`pages`, `room`, `tide_page.first`) stay 32 bits, 2^32 places of 16 KiB.
+  A block's header stays 16 bytes: `link` (its size class in the low 8 bits,
+  above them the next block of a free or pending list, or a pack block's
+  trailer distance, which `next` held), then `a` and `b` as they were,
+  through `tide_block_class`, `tide_block_next` and `tide_block_link`.
+- **Lists**: a chunked list's directory holds 8-byte chunk offsets (was 4).
+- **Grids**: a chunk's record is `{int32_t chunk[3]; uint32_t zero; uint64_t
+  block}`, 24 bytes (was 16). A grid's `Texture` keeps the handle's low word in
+  `image.version`, where it was, and the high word in `image.width`, which a
+  grid's texture didn't use.
+- **Maps and sets**: `tide_map` is 32 bytes (two handles, live count, zero
+  padding, last order; was 24). Entries hold 8-byte handles for text keys and
+  values that hold text or lists.
+- **Scratch area** (`tide/text.h`): offsets and marks are 64 bits. A thread's
+  slot table grows as its pieces need (a thread-local pointer and its room)
+  instead of 1,024 fixed slots, so it holds what memory holds. Blocks are at
+  least 8-aligned (their header has a `uint64_t`).
+- **Pack** (`tide/pack.h`): the region is at `TIDE_PACK_BASE` = 2^61 in the
+  scratch area's offsets. `tide_scratch_at` tests for it (one predictable
+  branch) and reads it from its own base, a thread-local copy `tide_pack_use`
+  sets, where the slots mapped it before. Format version 3: the header's
+  region place and size, entries' offset and size and the builder's sizes are
+  64 bits; handles in the region are 8 bytes, as in the game's structs. The
+  builder's and the loader's limits are memory (and wasm32's 4 GiB).
+
+**Memory.** A text, list or grid field is 8 bytes, 8-aligned (was 4): two of a
+component's 4-byte lanes, and up to 4 bytes of padding where it follows a
+4-byte field. A map or set field is 32 bytes (was 24), a `Mesh` 16 (was 8), a
+`SkinnedMesh`'s lists 24 (was 12). Heap blocks cost what they did; a chunked
+list 4 bytes more a 16 KiB chunk, a grid 8 more a chunk.
+
+**Wire and hash.** No hash function changes, but page bytes do, so every
+pinned world hash moves, and `PROTOCOL` goes from 20 to 21. Raw world bytes
+(saves, a join with no base) grow by 4 bytes a handle a row and the heap's
+numbers go as `uint64_t`; deltas send handle columns XOR'd and as runs of
+zeros, and the heap's numbers as varints, so small handles stay small. The
+asset dictionary's descriptor locations and pack offsets are 64 bits (its
+`UINT32_MAX` "same as the base" mark becomes `UINT64_MAX`). Commands and
+inputs carry text and list bytes, never handles, and recipient (visibility)
+state encodes values, not offsets: neither changes but by struct sizes.
+Generated headers say `Heap ABI: ... (2)`; the Unity embed ABI goes up, as
+its C# mirrors change (`TideText`, `TideList`, `TideGrid` hold a `ulong`,
+`TideMap` is 32 bytes).
+
+**Phases.** (1) The helpers above, with `tide_handle` still 32 bits, through
+the engine, generated C, packages and tests: no byte changes, every pin
+stays. (2) The widening: `tide_handle` 64 bits and everything above, the
+compiler's layouts (`type_layout`), generated marks and handle locals, debug
+views, migration, the Unity mirrors, packages, docs; pins and `PROTOCOL` move,
+native and web agreeing on each.
+
+**What C changes.** `.at` is a `tide_handle` (`uint64_t`); a scratch mark
+(`tide_scratch_mark`) is a `uint64_t`, which a `uint32_t` would cut; functions
+that take or give a block's offset (`tide_heap_alloc`, `tide_heap_release`,
+`tide_heap_block`, `tide_scratch_block`'s handle, `tide_grid_record.block`,
+the pack builder's offsets) take or give `uint64_t`; `tide_block`'s
+`size_class` and `next` are `link`, read and made through its helpers. Code
+that only calls `tide_text_*`, `tide_list_*` and the rest is unchanged.
+
 ## Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied (2026-10-30)
 
 Two costs bannerlord-duel's tools/army (20,000 fighters) found in views that
