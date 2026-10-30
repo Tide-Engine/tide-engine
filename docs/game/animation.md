@@ -306,6 +306,33 @@ and clips retain their original names and duration. A profile asset is also an
 ordinary `HumanoidRig` value: inspect its statuses or copy it and edit its mapping
 before creating a runtime map. Each profile is a separate asset declaration.
 
+For dynamically loaded motion, prepare a map and bake once when loading it:
+
+```csharp
+Animation BakeLoaded(RetargetMap mapping, Animation source, Skeleton target) fails IOError
+{
+    return try mapping.Bake(source, target);
+}
+
+AnimationCatalog BakeLoadedCatalog(RetargetMap mapping, AnimationCatalog source, Skeleton target) fails IOError
+{
+    return try mapping.Bake(source, target, sampleRate: 60);
+}
+```
+
+The target is the skeleton used to prepare the map, such as `hero.skeleton`.
+Keep the returned animation or catalog in a field and use ordinary `Sample`
+during playback. The baked data remains valid after the source, target and map
+are discarded, and later map edits do not change it. Catalog baking keeps source
+order, names and durations and returns a plain catalog with dynamic lookup. All
+its source skeletons must match the map's actual source skeleton.
+
+`Bake` defaults to 60 samples per second and uses the same sampling rules as
+build-time baking. Invalid inputs, incompatible skeletons, empty catalogs or
+excessive bake work return `IOError.InvalidData` with a diagnostic explaining
+the reason; a catalog failure returns no partial result. Use live pose
+retargeting below when the mapping or corrections need to change during playback.
+
 Runtime retargeting adapts a source humanoid's motion to a character's proportions
 and bone axes. It is part of Tide and does not require Tide Motion. Prepare a
 `RetargetMap` once, then use it for every sampled pose from that animation export.

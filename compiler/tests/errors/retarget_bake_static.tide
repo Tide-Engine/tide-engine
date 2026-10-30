@@ -1,0 +1,3 @@
+// expect: RetargetMap has the static method Create, not 'Bake'
+Animation Convert(Animation source, Skeleton target) fails IOError { return try RetargetMap.Bake(source, target); }
+scene Main { }

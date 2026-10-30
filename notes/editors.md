@@ -55,6 +55,19 @@ the existing asset type test also excludes profile collections. Both regressions
 and lsp_asset_type_completion passed under Windows native ASan (3/3). The full
 native suite also passed, including all language-server tests.
 
+RetargetMap values now offer Bake for either an Animation or AnimationCatalog,
+returning the corresponding owned value and failing with IOError. Hover uses
+the checked result to show the matching overload; signature help lists both,
+selects the checked overload and follows reordered named source/target/sampleRate
+arguments. Inlay hints label an explicit positional sampleRate and omit an
+implicit default or an already named argument. Help describes the 60 Hz default,
+approximate interpolation and ordinary sampling after baking. Bake stays off
+static RetargetMap and GPU completion. The focused
+lsp_humanoid_runtime_bake_overloads_and_hints regression covers these editor
+contracts. All 17 affected native language-server tests passed: five humanoid,
+eight skinned, three animation and asset_type_completion. Dynamic Bake compiler
+and runtime tests passed on native and web, and the docs build passed.
+
 ## Sanitizer test builds keep their own server (2026-10-29)
 
 With TIDE_SANITIZE enabled, tidels stays in that build's bin directory and

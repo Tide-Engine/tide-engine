@@ -1,5 +1,56 @@
 # Language features, as tidec builds them
 
+## Dynamic retarget baking (2026-10-30)
+
+Owner-approved `mapping.Bake(source, target[, sampleRate])` is an instance
+operation on RetargetMap, with Animation and AnimationCatalog overloads. The
+optional float rate defaults to 60; the baker also accepts zero as that default.
+Both overloads use ordinary `fails IOError` values and report InvalidData with
+the shared baker's diagnostic. The catalog result is plain AnimationCatalog,
+without compile-time inferred members. Named arguments retain authored argument
+evaluation order after evaluating the receiver once. CPU restrictions follow
+the existing skinned operations.
+
+Generated adapters call the agreed shared `tide_retarget_bake` helper for a
+selected clip and `tide_retarget_bake_with_budget` for ordered catalog sources.
+One zero-initialized budget bounds samples, transforms, key reads and bytes
+across the whole catalog. Each part is staged as ordinary scratch bytes; any
+failure resets all staged results and publishes no partial catalog. A selected
+clip's new index is zero, and names/durations plus target skeleton identity are
+preserved. Empty/default catalogs fail InvalidData. The map's current root and
+chain settings are copied into the bake; later edits affect only later bakes.
+
+The agreed `tide_skinned_own(data, where)` ownership hook promotes stored
+Animation model bytes to the existing immutable asset-descriptor/payload form.
+AnimationCatalog keeps an ordinary source list and promotes each inner model.
+Heap-path provenance preserves these hooks in nested structs, optional storage,
+components and container elements; assignment acquires the new value before
+releasing its predecessor. Scratch values remain ordinary lists, existing
+immutable values retain descriptor leases, and ordinary snapshots/codecs apply.
+Repeated assignment of the same immutable Animation retains the existing
+descriptor through the normal list-set fast path.
+This makes stored baked or decoded animation playback use the immutable sampler
+cache without retaining any input value or pack. Pose/model layouts are unchanged.
+The existing skinned E2E world's exact hash intentionally changes from
+13181359130345510980 to 18284937891356215991 because its stored decoded Animation
+now owns an immutable descriptor instead of a mutable byte-list allocation.
+Native ASan and WASM agree on the new hash; pose values, snapshot independence
+and packed-state equality remain unchanged. This is an ownership representation
+change, with release-configuration confirmation included in final validation.
+
+`retargeting_dynamic` covers runtime Decode input, a selected second clip,
+direct/escaped/multi-source catalogs, failable helper propagation, named effect
+order, immutable completed bakes, error paths, pack unload, copies, snapshots,
+serialization, self-assignment, nested structs/lists/fixed arrays/maps/optionals,
+unchanged world state during scratch operations and stable repeated sampling
+storage. Four `retarget_bake_*` diagnostics pin the overload's source/target/rate
+types and instance-only call. All 23 affected native ASan and 22 affected WASM
+CTests pass, including the full engine suites, after the intentional hash-pin
+correction above. The existing skinned hash also matches in release. All 17
+related LSP tests and the production docs build pass. The dynamic-bake fixture's
+world hash is pinned to 6273408732930949875, identical on native ASan, WASM and
+release; all three final pinned-fixture checks pass.
+
 ## Imported humanoid profiles and baked retargeting (2026-10-30)
 
 Owner-approved `.humanoid.json` `HumanoidRig` assets and

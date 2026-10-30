@@ -24,6 +24,19 @@ static void gen_skin_catalog(gen *g, sb *o, expr *object)
 static void gen_skin_expr(gen *g, sb *o, const expr *e)
 {
     const skinned_operation op = (skinned_operation)e->skin_operation;
+    if (skinned_bakes(op)) {
+        sb_printf(o, "tide_skin_result%d_retarget_bake(", e->type.decl->index);
+        gen_expr(g, o, e->object);
+        sb_put(o, ", ");
+        if (op == SKIN_OP_RETARGET_BAKE_CATALOG) gen_skin_catalog(g, o, e->args.items[0]);
+        else gen_expr(g, o, e->args.items[0]);
+        sb_put(o, ", ");
+        gen_as(g, o, e->args.items[1], (type){TY_STRUCT, g->prog->skeleton});
+        sb_put(o, ", ");
+        gen_as(g, o, e->args.items[2], (type){TY_FLOAT, NULL});
+        sb_put(o, ")");
+        return;
+    }
     if (op == SKIN_OP_HUMANOID_AUTO) {
         sb_put(o, "tide_skin_humanoid_auto(");
         gen_expr(g, o, e->args.items[0]);

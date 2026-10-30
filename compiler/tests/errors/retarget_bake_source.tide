@@ -1,0 +1,3 @@
+// expect: 'Bake' source is an Animation or AnimationCatalog, not Pose
+Animation Convert(RetargetMap mapping, Pose source, Skeleton target) fails IOError { return try mapping.Bake(source, target); }
+scene Main { }

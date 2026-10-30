@@ -575,6 +575,7 @@ typedef struct heap_path {
     const decl *map; // A Map<K, V> or Set<K>
     const decl *grid;
     const decl *array; // An array whose elements hold text or lists (tide_array<n>_own and the rest)
+    int skin_data; // Animation bytes or AnimationCatalog sources, including nested struct fields.
 } heap_path;
 
 typedef VEC(heap_path) path_list;
@@ -596,7 +597,8 @@ static void text_paths(const decl *d, const char *prefix, path_list *out)
             const heap_path hp = {path.data, f->type.kind == TY_LIST ? f->type.decl : NULL,
                                   f->type.kind == TY_MAP || f->type.kind == TY_SET ? f->type.decl : NULL,
                                   f->type.kind == TY_GRID ? f->type.decl : NULL,
-                                  f->type.kind == TY_ARRAY ? f->type.decl : NULL};
+                                  f->type.kind == TY_ARRAY ? f->type.decl : NULL,
+                                  str_eq_c(f->name, "data") ? d->skin_kind : 0};
             vec_push(*out, hp);
         } else {
             sb_put(&path, ".");
@@ -647,7 +649,7 @@ static void random_paths(const program *prog, const decl *d, const char *prefix,
         sb path = {0};
         sb_printf(&path, "%s%s", prefix, field_cname(f));
         if (f->type.decl == prog->random) {
-            const heap_path p = {path.data, NULL, NULL, NULL, NULL};
+            const heap_path p = {path.data, NULL, NULL, NULL, NULL, 0};
             vec_push(*out, p);
         } else {
             sb_put(&path, ".");
@@ -691,7 +693,7 @@ static void entity_paths(const decl *d, const char *prefix, path_list *out)
         sb path = {0};
         sb_printf(&path, "%s%s", prefix, field_cname(f));
         if (f->type.kind == TY_ENTITY) {
-            const heap_path p = {path.data, NULL, NULL, NULL, NULL};
+            const heap_path p = {path.data, NULL, NULL, NULL, NULL, 0};
             vec_push(*out, p);
         } else if (f->type.kind == TY_STRUCT) {
             sb_put(&path, ".");
@@ -9655,6 +9657,20 @@ static void gen_text_helpers(gen *g)
     gen_map_helpers(g, false);
     gen_grid_helpers(g);
     gen_array_heap_helpers(g, false);
+    if (prog->animation) {
+        sb_put(o, "TIDE_HELPER void tide_skin_animation_assign(tide_list *to, tide_list value, uint32_t where)\n{\n"
+                  "    const tide_block *from = tide_block_at(value.at), *kept = tide_block_at(to->at);\n"
+                  "    if (!tide_heap_of(where) || ((!to->at || (kept && kept->b == TIDE_LIST_ASSET))\n"
+                  "        && (tide_pack_holds(value.at) || (from && from->b == TIDE_LIST_ASSET)))) {\n"
+                  "        tide_list_set(to, value, 1u, where);\n        return;\n    }\n"
+                  "    tide_skinned_own(&value, where);\n    tide_list_release(to, where);\n    *to = value;\n}\n\n"
+                  "TIDE_HELPER void tide_skin_catalog_own(tide_list *sources, uint32_t where)\n{\n"
+                  "    if (!tide_heap_of(where)) return;\n"
+                  "    tide_list_own(sources, sizeof(tide_list), where);\n"
+                  "    tide_list_prepare(sources, sizeof(tide_list), where);\n"
+                  "    for (int32_t i = 0; i < tide_list_count(*sources); i++)\n"
+                  "        tide_skinned_own(tide_list_at_mut(*sources, i, sizeof(tide_list)), where);\n}\n\n");
+    }
     // The program's value types, the local parts of the match's components and
     // singletons, then the maps' entries (what a foreach gives)
     const int models = prog->decls.count + prog->skinned_types.count;
@@ -9677,7 +9693,9 @@ static void gen_text_helpers(gen *g)
         sb_printf(o, "TIDE_HELPER void tide_own_%s(%s *v, const uint32_t where)\n{\n", name, name);
         for (int k = 0; k < paths.count; k++) {
             const heap_path *hp = &paths.items[k];
-            if (hp->list) sb_printf(o, "    tide_list%d_own(&v->%s, where);\n", hp->list->index, hp->path);
+            if (hp->skin_data == SKIN_ANIMATION || hp->skin_data == SKIN_ANIMATIONS)
+                sb_printf(o, "    %s(&v->%s, where);\n", hp->skin_data == SKIN_ANIMATION ? "tide_skinned_own" : "tide_skin_catalog_own", hp->path);
+            else if (hp->list) sb_printf(o, "    tide_list%d_own(&v->%s, where);\n", hp->list->index, hp->path);
             else if (hp->array) sb_printf(o, "    tide_array%d_own(&v->%s, where);\n", hp->array->index, hp->path);
             else if (hp->map) sb_printf(o, "    tide_map%d_own(&v->%s, where);\n", hp->map->index, hp->path);
             else if (hp->grid) sb_printf(o, "    tide_grid_own(&v->%s, &%s, where);\n", hp->path, grid_shape_name(hp->grid));
@@ -9698,7 +9716,13 @@ static void gen_text_helpers(gen *g)
         sb_put(o, "    *to = next;\n");
         for (int k = 0; k < paths.count; k++) {
             const heap_path *hp = &paths.items[k];
-            if (hp->list) sb_printf(o, "    tide_list%d_assign(&to->%s, value.%s, where);\n", hp->list->index, hp->path, hp->path);
+            if (hp->skin_data == SKIN_ANIMATION)
+                sb_printf(o, "    tide_skin_animation_assign(&to->%s, value.%s, where);\n", hp->path, hp->path);
+            else if (hp->skin_data == SKIN_ANIMATIONS) {
+                sb_printf(o, "    { tide_list owned = value.%s;\n        %s(&owned, where);\n"
+                             "        tide_list%d_release(&to->%s, where);\n        to->%s = owned; }\n",
+                          hp->path, "tide_skin_catalog_own", hp->list->index, hp->path, hp->path);
+            } else if (hp->list) sb_printf(o, "    tide_list%d_assign(&to->%s, value.%s, where);\n", hp->list->index, hp->path, hp->path);
             else if (hp->array) sb_printf(o, "    tide_array%d_assign(&to->%s, value.%s, where);\n", hp->array->index, hp->path, hp->path);
             else if (hp->map) sb_printf(o, "    tide_map%d_assign(&to->%s, value.%s, where);\n", hp->map->index, hp->path, hp->path);
             else if (hp->grid) sb_printf(o, "    tide_grid_set(&to->%s, value.%s, &%s, where);\n", hp->path, hp->path, grid_shape_name(hp->grid));
@@ -10861,7 +10885,7 @@ static void gen_prelude(gen *g)
     if (g->opts->editor_prefab) sb_put(o, "#include \"tide/editor_preview.h\"\nstatic tide_render_target tide_editor_target;\n");
     if (g->prog->assets.count) sb_put(o, "#include \"tide/pack.h\"\n");
     if (g->prog->skinned_types.count) sb_put(o, "#include \"tide/skinned_data.h\"\n");
-    if (g->prog->humanoid_rig) sb_put(o, "#include \"tide/retarget.h\"\n");
+    if (g->prog->humanoid_rig) sb_put(o, "#include \"tide/retarget.h\"\n#include \"tide/retarget_bake.h\"\n");
     sb_put(o, "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
     sb_put(o, "#include \"tide/shard.h\" // Shards.Owns and Shards.delay, which any game can read\n\n");
     sb_printf(o, "#define TIDE_SHARDS_ON %s // Shards.on\n\n", g->prog->shards ? "true" : "false");

@@ -2387,7 +2387,7 @@ static const char *shader_record_doc(const decl *d)
 #define HUMANOID_RIG_DOC "Reusable humanoid bone assignments and an explicit reference pose. Auto suggests assignments; " \
     "inspect GetStatus and override a role with rig[HumanoidBone.LeftHand] = bone."
 #define RETARGET_MAP_DOC "A prepared source-to-target retargeting map. Create it once for the actual animation skeleton " \
-    "and both characterized rigs, then reuse it with Pose.Retarget."
+    "and both characterized rigs, then reuse it with Pose.Retarget or Bake an ordinary animation for repeated sampling."
 #define HUMANOID_ASSET_DOC "A reusable .humanoid.json profile with an explicit reference model or sampled reference clip, " \
     "automatic bone discovery, manual bone assignments and reference edits. Copy the asset to edit a profile at runtime."
 #define RETARGET_ATTRIBUTE_FORM "Retarget(HumanoidRig sourceRig, HumanoidRig targetRig, float rootScale = automatic, " \
@@ -2589,11 +2589,27 @@ static const method_form humanoid_rig_calls[] = {
      "Reports whether this role is Missing, Automatic, Uncertain or Manual. Assign a Bone to rig[bone] to override automatic discovery."},
 };
 
+#define RETARGET_BAKE_DOC "Bakes a source Animation or AnimationCatalog through this prepared map into the target skeleton, " \
+    "using the map's current root and distribution settings. Returns an ordinary owned animation or catalog for repeated sampling, " \
+    "with no per-frame retargeting. sampleRate defaults to 60 samples per second; interpolation between baked keys is approximate. " \
+    "Invalid input, incompatible skeletons or invalid settings fail with IOError.InvalidData and a diagnostic explaining why."
+
 static const method_form retarget_map_calls[] = {
     {"Create", "Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig) -> RetargetMap fails RetargetError",
      "Prepares retargeting once for the actual animation skeleton and both rigs' assignments and reference poses. "
      "The source may be a separate animation export of the reference rig. Invalid assignments, calibration, hierarchy or scale fail with RetargetError."},
+    {"Bake", "Bake(Animation source, Skeleton target, float sampleRate = 60) -> Animation fails IOError", RETARGET_BAKE_DOC},
+    {"Bake", "Bake(AnimationCatalog source, Skeleton target, float sampleRate = 60) -> AnimationCatalog fails IOError", RETARGET_BAKE_DOC},
 };
+
+static bool retarget_bake_catalog_result(type result)
+{
+    // The method occurrence keeps its failable result even when the enclosing
+    // expression unwraps it with '!'. Its first field is the successful value.
+    if (result.kind == TY_FAILABLE && result.decl && result.decl->fields.count)
+        result = result.decl->fields.items[0].type;
+    return result.kind == TY_STRUCT && result.decl && result.decl->skin_kind == SKIN_ANIMATIONS;
+}
 
 #define BLEND_SHAPES_DOC "The model's blend shapes (morph targets) in their order, with their source names and the file's default weights. " \
     "Find one with TryGetByName or TryGetAt; Shaped(weights) applies weights in this order."
@@ -3799,6 +3815,9 @@ static void describe(const occurrence *o, sb *out)
             size_t count;
             const method_form *forms = methods_of(o->object_type, &count);
             const method_form *form = find_form(forms, count, o->name);
+            if (o->object_type.decl == A.prog->retarget_map && str_eq_c(o->name, "Bake")
+                && retarget_bake_catalog_result(o->type))
+                form = &retarget_map_calls[2];
             if (!form) break;
             if (o->object_type.kind == TY_WORLD) format_world_method(form, o->component, &code);
             else format_method(form, o->object_type, &code);
@@ -11813,10 +11832,12 @@ static int call_param_names(const expr *call, str *names, const int max)
     case CALL_SKINNED: {
         size_t forms_count;
         const method_form *forms = methods_of(call->object->type, &forms_count);
-        const method_form *form = find_form(forms, forms_count, call->name);
-        sb label = {0};
-        if (form) format_method(form, call->object->type, &label);
-        if (form) vec_push(list.labels, label.data);
+        for (size_t i = 0; i < forms_count; i++) {
+            if (!str_eq_c(call->name, forms[i].name)) continue;
+            sb label = {0};
+            format_method(&forms[i], call->object->type, &label);
+            vec_push(list.labels, label.data);
+        }
         break;
     }
     case CALL_LIST: {
@@ -12064,11 +12085,14 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb label = {0};
             format_world_method(form, type_open >= 0 ? component_written(type_open, open - 1) : NULL, &label);
             add_signature(&s, label.data, form->doc);
-        } else if (form && t.decl && (t.decl == A.prog->visibility || t.decl == A.prog->audience)) {
+        } else if (form && t.decl && (t.decl == A.prog->visibility || t.decl == A.prog->audience
+                                     || (t.decl == A.prog->retarget_map && str_eq_c(name, "Bake")))) {
             for (size_t i = 0; i < count; i++) {
                 if (!str_eq_c(name, forms[i].name)) continue;
                 sb label = {0};
                 format_method(&forms[i], t, &label);
+                if (t.decl == A.prog->retarget_map && called)
+                    s.picked = i == (retarget_bake_catalog_result(called->type) ? 2u : 1u);
                 add_signature(&s, label.data, forms[i].doc);
             }
         } else if (form) {

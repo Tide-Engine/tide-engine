@@ -31,6 +31,9 @@ typedef struct tide_asset_retired {
 } tide_asset_retired;
 
 tide_asset_data *tide_asset_pack(tide_list list, uint32_t element);
+// A new caller-owned immutable canonical model, or NULL for invalid bytes.
+// Not registered globally; attach it to a heap, then release this reference.
+tide_asset_data *tide_asset_model(const void *bytes, uint32_t count);
 tide_asset_data *tide_asset_find(const tide_heap *heap, const uint8_t id[32]);
 tide_asset_data *tide_asset_list(tide_list list);
 void tide_asset_use(tide_heap *heap, tide_asset_data *data, uint32_t block);

@@ -35,7 +35,14 @@ typedef enum skinned_operation {
     SKIN_OP_HUMANOID_STATUS,
     SKIN_OP_RETARGET_CREATE,
     SKIN_OP_POSE_RETARGET,
+    SKIN_OP_RETARGET_BAKE_ANIMATION,
+    SKIN_OP_RETARGET_BAKE_CATALOG,
 } skinned_operation;
+
+static inline bool skinned_bakes(const skinned_operation op)
+{
+    return op == SKIN_OP_RETARGET_BAKE_ANIMATION || op == SKIN_OP_RETARGET_BAKE_CATALOG;
+}
 
 static inline bool skinned_changes_pose(const skinned_operation op)
 {

@@ -2,9 +2,9 @@
 
 #include "tide/retarget.h"
 
-// Shared cold-path support for imported clips and future bake-on-load callers.
-// This is not a generated-C/Tide API. Baked bytes use the existing canonical
-// skinned format and ordinary sampling; there is no per-frame retarget work.
+// Shared cold-path support for imported clips and generated bake-on-load calls.
+// Baked bytes use the existing canonical skinned format and ordinary sampling;
+// there is no per-frame retarget work.
 #define TIDE_RETARGET_BAKE_VERSION 2u
 #define TIDE_RETARGET_BAKE_DEFAULT_RATE 60.0f
 
@@ -13,7 +13,7 @@
 #define TIDE_RETARGET_BAKE_MAX_SAMPLES (1u << 20)
 // Source plus target node transforms evaluated over all selected samples.
 #define TIDE_RETARGET_BAKE_MAX_TRANSFORMS (1u << 22)
-// Owned input sampling currently validates its keys again for each sample.
+// Mutable input sampling validates its keys again for each sample.
 // Bound that cold-path work as well as the number of produced transforms.
 #define TIDE_RETARGET_BAKE_MAX_KEY_READS (1u << 30)
 // Encoded output and the accumulated key payload; canonical limits also apply.
@@ -47,6 +47,20 @@ bool tide_retarget_bake(tide_list source_data, int32_t clip_index,
                         tide_list target_data, tide_list plan,
                         const tide_retarget_bake_settings *settings,
                         uint8_t **out, uint32_t *out_size, char why[256]);
+
+// Share a zero-initialized budget across separate source models in a catalog.
+// The same limits apply to the whole operation, including each encoded model.
+// Budget and outputs change only on success. A caller stages successful parts
+// until every part succeeds, then publishes its complete catalog atomically.
+typedef struct tide_retarget_bake_budget {
+    uint64_t samples, transforms, key_reads, bytes;
+} tide_retarget_bake_budget;
+
+bool tide_retarget_bake_with_budget(tide_list source_data, int32_t clip_index,
+                                   tide_list target_data, tide_list plan,
+                                   const tide_retarget_bake_settings *settings,
+                                   tide_retarget_bake_budget *budget,
+                                   uint8_t **out, uint32_t *out_size, char why[256]);
 
 // The same target-preserving encoder, without clips: strips geometry and
 // animation from a profile's reference asset. Same ownership/error contract.

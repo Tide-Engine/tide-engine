@@ -56,6 +56,45 @@ static void close_model(model_seen *m)
     tide_list_unflatten(m->list, m->bytes, 1u, false, m->copied);
 }
 
+void tide_skinned_own(tide_list *data, const uint32_t where)
+{
+    if (!data) return;
+    tide_heap *heap = tide_heap_of(where);
+    if (!heap || !data->at) { tide_list_own(data, 1u, where); return; }
+    if (tide_pack_holds(data->at)) {
+        // Unlike list ownership's trusted pack path, this boundary also sees
+        // failed/invalid model values. Check the complete byte-list span first.
+        const uint32_t offset = data->at & 0x3FFFFFFFu;
+        const uint8_t *header = tide_pack_span(offset, sizeof(tide_block));
+        tide_block block = {0};
+        if (header) memcpy(&block, header, sizeof block);
+        if (!header || block.a != block.b || block.a > INT32_MAX
+            || !tide_pack_span(offset + (uint32_t)sizeof block, block.a)) {
+            data->at = 0;
+            return;
+        }
+        tide_list_own(data, 1u, where);
+        return;
+    }
+    if (tide_asset_list(*data)) { tide_list_own(data, 1u, where); return; }
+    model_seen model;
+    tide_asset_data *asset = NULL;
+    if (open_model(*data, &model)) {
+        asset = tide_asset_model(model.bytes, (uint32_t)tide_list_count(*data));
+        close_model(&model);
+    }
+    if (!asset) { tide_list_own(data, 1u, where); return; }
+    // The payload has been copied before heap allocation can move source pages.
+    const uint32_t at = tide_heap_alloc(heap, 32u);
+    tide_asset_use(heap, asset, at);
+    tide_block *block = tide_heap_write(heap, at);
+    block->a = asset->count;
+    block->b = TIDE_LIST_ASSET;
+    memcpy(block + 1, asset->id, sizeof asset->id);
+    data->at = where << 30 | at;
+    tide_asset_release(asset);
+}
+
 // A model's bytes that can't change while its key stays the same: a block
 // within the pack file's bytes (with the pack's generation), or an owned
 // asset copy, named by the SHA-256 of what's in it.

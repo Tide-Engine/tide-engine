@@ -212,6 +212,7 @@ tide_e2e_test(mesh_bones) # A Mesh with joints and weights: the model at rest, w
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
 tide_e2e_test(retargeting) # Automatic humanoid characterization, calibrated pose transfer and manual corrections
 tide_e2e_test(retargeting_baked) # Reusable rig profiles and retargeted clips use ordinary animation playback
+tide_e2e_test(retargeting_dynamic) # Bake runtime-loaded clips/catalogs once, then retain ordinary owned animations
 if(TIDE_NODE)
     add_test(NAME tidec_retarget_assets
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/retarget_assets.mjs"
@@ -256,7 +257,10 @@ if(TIDE_NODE)
             "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")
     set_tests_properties(tidec_skinned_default_identity PROPERTIES TIMEOUT 120)
 endif()
-target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=13181359130345510980ull)
+# Stored decoded Animation bytes now use immutable model descriptors. Native
+# ASan and WASM agree on this intentional ownership/hash change; pose bits stay
+# unchanged and the fixture checks snapshot and serialized-value equivalence.
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=18284937891356215991ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume

@@ -214,6 +214,15 @@ static tide_asset_data *make(const void *bytes, const uint32_t count, const uint
     return data;
 }
 
+tide_asset_data *tide_asset_model(const void *bytes, const uint32_t count)
+{
+    if (!bytes || count < TIDE_SKINNED_HEADER_SIZE || count > TIDE_SKINNED_MAX_BYTES) return NULL;
+    tide_asset_data *data = make(bytes, count, 1u, 0u);
+    if (data->skinned) return data;
+    tide_asset_release(data);
+    return NULL;
+}
+
 tide_asset_data *tide_asset_pack(const tide_list list, const uint32_t element)
 {
     if (!tide_pack_holds(list.at) || !element) return NULL;

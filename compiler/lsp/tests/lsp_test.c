@@ -12408,6 +12408,55 @@ TIDE_TEST(lsp_humanoid_retargeting_roles_signatures_and_restrictions)
     TIDE_CHECK(!offers(completion, "GetStatus") && !offers(completion, "referencePose"));
 }
 
+TIDE_TEST(lsp_humanoid_runtime_bake_overloads_and_hints)
+{
+    start();
+    const char *reply = complete("scene Main { }\nvoid Inspect(RetargetMap mapping) { mapping.$ }\n");
+    TIDE_CHECK(offers(reply, "Bake") && !offers(reply, "Create") && has(reply, "sampleRate = 60")
+               && has(reply, "IOError.InvalidData") && has(reply, "AnimationCatalog"));
+    reply = complete("scene Main { }\nview V() { var mapping = RetargetMap.$ }\n");
+    TIDE_CHECK(offers(reply, "Create") && !offers(reply, "Bake"));
+    open_document("scene Main { }\nAnimation Convert(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Ba$ke(clip, target)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/hover");
+    TIDE_CHECK(has(reply, "Bake(Animation source, Skeleton target, float sampleRate = 60) -> Animation fails IOError")
+               && has(reply, "ordinary owned") && has(reply, "no per-frame retargeting"));
+    open_document("scene Main { }\nAnimationCatalog Convert(RetargetMap mapping, AnimationCatalog clips, Skeleton target) {\n"
+                  "    return mapping.Ba$ke(clips, target)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/hover");
+    TIDE_CHECK(has(reply, "Bake(AnimationCatalog source, Skeleton target, float sampleRate = 60) -> AnimationCatalog fails IOError")
+               && has(reply, "approximate"));
+    open_document("scene Main { }\nAnimationCatalog Convert(RetargetMap mapping, AnimationCatalog clips, Skeleton target) {\n"
+                  "    return mapping.Bake(clips, target, $30)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "Bake(Animation source") && has(reply, "Bake(AnimationCatalog source")
+               && has(reply, "\"activeSignature\":1,\"activeParameter\":2"));
+    open_document("scene Main { }\nAnimation Convert(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(sampleRate: 30, target: target, source: $clip)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    reply = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "\"activeSignature\":0,\"activeParameter\":0"));
+    open_document("scene Main { }\nAnimation Convert(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake($\n");
+    reply = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(reply, "Bake(Animation source") && has(reply, "Bake(AnimationCatalog source"));
+    open_document("scene Main { }\nAnimation One(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(clip, target, 30)!;\n}\n"
+                  "AnimationCatalog All(RetargetMap mapping, AnimationCatalog clips, Skeleton target) {\n"
+                  "    return mapping.Bake(clips, target, 24)!;\n}\n"
+                  "Animation DefaultRate(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(clip, target)!;\n}\n"
+                  "Animation NamedRate(RetargetMap mapping, Animation clip, Skeleton target) {\n"
+                  "    return mapping.Bake(clip, target, sampleRate: 30)!;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(count(all_hints(), "\"label\":\"sampleRate:\"") == 2);
+    reply = complete("scene Main { }\nvert Move(mut Vertex3 vertex) { RetargetMap mapping = default; mapping.$ }\n");
+    TIDE_CHECK(!offers(reply, "Bake"));
+}
+
 static const char *humanoid_asset_request(const char *uri, const char *marked, const char *method)
 {
     char text[4096];

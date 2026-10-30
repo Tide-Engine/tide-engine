@@ -24,6 +24,7 @@ typedef struct bake_output {
     uint32_t channel_count, channel_room;
     uint8_t *keys;
     uint32_t key_size, key_room;
+    uint64_t prior_bytes;
 } bake_output;
 
 typedef struct bake_times {
@@ -213,8 +214,8 @@ static bool key_room(bake_output *b, uint32_t numbers, uint32_t *at, char why[25
     const uint64_t size = (uint64_t)b->key_size + (uint64_t)numbers * 4u;
     if (size / 4u > TIDE_SKINNED_MAX_KEY_NUMBERS)
         return limit(why, "output key numbers", size / 4u, TIDE_SKINNED_MAX_KEY_NUMBERS, "TIDE_SKINNED_MAX_KEY_NUMBERS");
-    if (size > TIDE_RETARGET_BAKE_MAX_BYTES)
-        return limit(why, "key bytes", size, TIDE_RETARGET_BAKE_MAX_BYTES, "TIDE_RETARGET_BAKE_MAX_BYTES");
+    if (size + b->prior_bytes > TIDE_RETARGET_BAKE_MAX_BYTES)
+        return limit(why, "key bytes across models", size + b->prior_bytes, TIDE_RETARGET_BAKE_MAX_BYTES, "TIDE_RETARGET_BAKE_MAX_BYTES");
     if (size > b->key_room) {
         uint32_t room = b->key_room ? b->key_room : 4096u;
         while (room < size) room *= 2u;
@@ -300,8 +301,8 @@ static bool encode(const tide_skinned_data_view *target, const bake_output *b,
     const uint64_t string_at = channel_at + (uint64_t)b->channel_count * TIDE_SKINNED_CHANNEL_SIZE;
     const uint64_t key_at = (string_at + strings + 3u) & ~(uint64_t)3u;
     const uint64_t size = key_at + b->key_size;
-    if (size > TIDE_RETARGET_BAKE_MAX_BYTES)
-        return limit(why, "encoded bytes", size, TIDE_RETARGET_BAKE_MAX_BYTES, "TIDE_RETARGET_BAKE_MAX_BYTES");
+    if (size + b->prior_bytes > TIDE_RETARGET_BAKE_MAX_BYTES)
+        return limit(why, "encoded bytes across models", size + b->prior_bytes, TIDE_RETARGET_BAKE_MAX_BYTES, "TIDE_RETARGET_BAKE_MAX_BYTES");
     uint8_t *bytes = tide_alloc_zeroed(1u, (size_t)size);
     put_word(bytes, TIDE_SKINNED_DATA_MAGIC); put_word(bytes + 4, TIDE_SKINNED_DATA_VERSION);
     put_word(bytes + 8, (uint32_t)size);
@@ -353,8 +354,19 @@ bool tide_retarget_bake_skeleton(tide_list data, uint8_t **out, uint32_t *out_si
 bool tide_retarget_bake(tide_list source_data, int32_t clip_index, tide_list target_data, tide_list plan,
                         const tide_retarget_bake_settings *settings, uint8_t **out, uint32_t *out_size, char why[256])
 {
+    tide_retarget_bake_budget budget = {0};
+    return tide_retarget_bake_with_budget(source_data, clip_index, target_data, plan, settings, &budget, out, out_size, why);
+}
+
+bool tide_retarget_bake_with_budget(tide_list source_data, int32_t clip_index, tide_list target_data, tide_list plan,
+                                   const tide_retarget_bake_settings *settings, tide_retarget_bake_budget *budget,
+                                   uint8_t **out, uint32_t *out_size, char why[256])
+{
     if (why) why[0] = 0;
-    if (!out || !out_size || !settings) return fail(why, "retarget bake needs settings and both output pointers");
+    if (!out || !out_size || !settings || !budget) return fail(why, "retarget bake needs settings, a budget and both output pointers");
+    if (budget->samples > TIDE_RETARGET_BAKE_MAX_SAMPLES || budget->transforms > TIDE_RETARGET_BAKE_MAX_TRANSFORMS
+        || budget->key_reads > TIDE_RETARGET_BAKE_MAX_KEY_READS || budget->bytes > TIDE_RETARGET_BAKE_MAX_BYTES)
+        return fail(why, "retarget bake budget exceeds its sample, transform, key-read or byte limit; start a new bounded operation");
     const float rate = settings->sample_rate == 0 ? TIDE_RETARGET_BAKE_DEFAULT_RATE : settings->sample_rate;
     if (!(rate > 0) || !tide_is_finite_f(rate) || !tide_is_finite_f(settings->root_scale) || settings->root_scale < 0
         || !tide_is_finite_f(settings->root_offset.x) || !tide_is_finite_f(settings->root_offset.y)
@@ -363,7 +375,7 @@ bool tide_retarget_bake(tide_list source_data, int32_t clip_index, tide_list tar
         return fail(why, "retarget bake requires finite settings, nonnegative rootScale and positive sampleRate (or 0 for 60 Hz)");
     const uint32_t mark = tide_scratch_mark();
     bake_model source = {0}, target = {0};
-    bake_output b = {0};
+    bake_output b = {.prior_bytes = budget->bytes};
     bool valid = open_model(source_data, &source, why) && open_model(target_data, &target, why);
     if (valid && (clip_index < -1 || (clip_index >= 0 && (uint32_t)clip_index >= source.view.clips)))
         valid = fail(why, "retarget bake clip index is outside the source catalog");
@@ -373,7 +385,7 @@ bool tide_retarget_bake(tide_list source_data, int32_t clip_index, tide_list tar
         b.clips = tide_alloc_zeroed(b.clip_count, sizeof *b.clips);
     }
     tide_list sampled = {0}, retargeted = {0};
-    uint64_t total_samples = 0, total_transforms = 0, reads = 0, sample_reads = 0;
+    uint64_t total_samples = budget->samples, total_transforms = budget->transforms, reads = 0, sample_reads = budget->key_reads;
     for (uint32_t i = 0; valid && i < b.clip_count; i++) {
         const uint32_t index = clip_index < 0 ? i : (uint32_t)clip_index;
         tide_skinned_clip_data clip;
@@ -427,6 +439,7 @@ bool tide_retarget_bake(tide_list source_data, int32_t clip_index, tide_list tar
         free(set.slots); free(times); free(frames);
     }
     if (valid) valid = encode(&target.view, &b, out, out_size, why);
+    if (valid) *budget = (tide_retarget_bake_budget){total_samples, total_transforms, sample_reads, budget->bytes + *out_size};
     free(b.clips); free(b.channels); free(b.keys);
     close_model(&source); close_model(&target);
     tide_scratch_reset(mark);

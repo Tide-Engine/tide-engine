@@ -230,6 +230,41 @@ static void gen_skinned_adapters(gen *g)
                       result, type_cname(p->retarget_error), type_cname(p->retarget_error), type_cname(p->retarget_error));
             continue;
         }
+        if (p->retarget_map && r->fields.count == 2 && r->fields.items[1].type.decl == p->io_error
+            && (value.decl->skin_kind == SKIN_ANIMATION || value.decl->skin_kind == SKIN_ANIMATIONS)) {
+            const bool catalog = value.decl->skin_kind == SKIN_ANIMATIONS;
+            const char *result = c_type((type){TY_FAILABLE, (decl *)r});
+            sb_printf(o, "TIDE_HELPER %s tide_skin_result%d_retarget_bake(%s mapping, %s source, %s target, float sampleRate)\n{\n"
+                         "    %s result = {.error = IOError_InvalidData};\n"
+                         "    const tide_retarget_bake_settings settings = {mapping.rootScale, mapping.rootOffset, mapping.headingDegrees,\n"
+                         "        mapping.spineDistribution, mapping.twistDistribution, sampleRate};\n"
+                         "    char why[256] = {0};\n",
+                      result, r->index, type_cname(p->retarget_map), catalog ? "tide_skin_catalog" : animation,
+                      type_cname(p->skeleton), result);
+            if (catalog) {
+                sb_put(o, "    const int32_t count = source.data.at ? 1 : tide_list_count(source.sources);\n"
+                          "    if (count <= 0) { tide_debug_log(\"tide: RetargetMap.Bake: the source catalog contains no animations\"); return result; }\n"
+                          "    const uint32_t mark = tide_scratch_mark();\n    tide_list sources = {0};\n"
+                          "    tide_retarget_bake_budget budget = {0};\n"
+                          "    for (int32_t i = 0; i < count; i++) {\n"
+                          "        uint8_t *baked = NULL;\n        uint32_t size = 0;\n"
+                          "        if (!tide_retarget_bake_with_budget(tide_skin_catalog_source(source, i), -1, target.data, mapping.plan, &settings, &budget, &baked, &size, why)) {\n"
+                          "            tide_debug_log(why);\n            tide_scratch_reset(mark);\n            return result;\n        }\n"
+                          "        const tide_list data = tide_list_from(baked, (int32_t)size, 1u);\n"
+                          "        tide_skinned_data_free(baked);\n"
+                          "        *(tide_list *)tide_list_add(&sources, sizeof(tide_list), TIDE_IN_SCRATCH) = data;\n    }\n"
+                          "    result.value.data = sources;\n");
+            } else {
+                sb_put(o, "    uint8_t *baked = NULL;\n    uint32_t size = 0;\n"
+                          "    if (source.index < 0 || !tide_retarget_bake(source.data, source.index, target.data, mapping.plan, &settings, &baked, &size, why)) {\n"
+                          "        tide_debug_log(source.index < 0 ? \"tide: RetargetMap.Bake: select a valid source Animation\" : why);\n"
+                          "        return result;\n    }\n"
+                          "    result.value.data = tide_list_from(baked, (int32_t)size, 1u);\n"
+                          "    tide_skinned_data_free(baked);\n");
+            }
+            sb_put(o, "    result.ok = true;\n    result.error = (IOError)0;\n    return result;\n}\n\n");
+            continue;
+        }
         if (r->fields.count != 2 || value.decl->skin_kind != SKIN_MESH) continue;
         const decl *mesh = value.decl, *vertex = mesh->skin_vertex.decl;
         const char *result = c_type((type){TY_FAILABLE, (decl *)r});

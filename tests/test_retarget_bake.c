@@ -351,3 +351,44 @@ TIDE_TEST(retarget_bake_borrows_owned_inputs_and_keeps_snapshot_bytes)
     TIDE_CHECK(tide_skinned_data_validate(bytes, size));
     free(bytes);
 }
+
+TIDE_TEST(retarget_bake_catalog_budget_accumulates_and_failures_publish_nothing)
+{
+    const uint32_t mark = tide_scratch_mark();
+    bake_fixture f; TIDE_REQUIRE(fixture(&f, false));
+    tide_retarget_bake_budget budget = {0};
+    uint8_t *first = NULL, *second = NULL; uint32_t first_size = 0, second_size = 0; char why[256];
+    const uint32_t before = tide_scratch_mark();
+    TIDE_REQUIRE(tide_retarget_bake_with_budget(f.source, 0, f.target, f.plan, &f.settings,
+                                              &budget, &first, &first_size, why));
+    const tide_retarget_bake_budget one = budget;
+    TIDE_CHECK(one.samples > 0 && one.transforms == one.samples * (NODES * 2u)
+               && one.key_reads > 0 && one.bytes == first_size);
+    TIDE_REQUIRE(tide_retarget_bake_with_budget(f.source, 0, f.target, f.plan, &f.settings,
+                                              &budget, &second, &second_size, why));
+    TIDE_CHECK(budget.samples == one.samples * 2u && budget.transforms == one.transforms * 2u
+               && budget.key_reads == one.key_reads * 2u && budget.bytes == one.bytes * 2u);
+    TIDE_CHECK(first_size == second_size && !memcmp(first, second, first_size) && tide_scratch_mark() == before);
+    free(first); free(second);
+    const tide_retarget_bake_budget limits[] = {
+        {.samples = TIDE_RETARGET_BAKE_MAX_SAMPLES - one.samples + 1u},
+        {.transforms = TIDE_RETARGET_BAKE_MAX_TRANSFORMS - one.transforms + 1u},
+        {.key_reads = TIDE_RETARGET_BAKE_MAX_KEY_READS - one.key_reads + 1u},
+        {.bytes = TIDE_RETARGET_BAKE_MAX_BYTES - one.bytes + 1u},
+        {.samples = UINT64_MAX}, {.transforms = UINT64_MAX}, {.key_reads = UINT64_MAX}, {.bytes = UINT64_MAX}
+    };
+    for (uint32_t i = 0; i < sizeof limits / sizeof *limits; i++) {
+        budget = limits[i];
+        uint8_t sentinel = 61, *out = &sentinel; uint32_t out_size = 713u;
+        TIDE_CHECK(!tide_retarget_bake_with_budget(f.source, 0, f.target, f.plan, &f.settings,
+                                                  &budget, &out, &out_size, why));
+        TIDE_CHECK(!memcmp(&budget, &limits[i], sizeof budget) && out == &sentinel && out_size == 713u && why[0]);
+        TIDE_CHECK(tide_scratch_mark() == before);
+    }
+    budget = one;
+    uint8_t sentinel = 37, *out = &sentinel; uint32_t out_size = 91;
+    TIDE_CHECK(!tide_retarget_bake_with_budget(f.source, 0, f.target, (tide_list){0}, &f.settings,
+                                              &budget, &out, &out_size, why));
+    TIDE_CHECK(!memcmp(&budget, &one, sizeof budget) && out == &sentinel && out_size == 91 && tide_scratch_mark() == before);
+    tide_scratch_reset(mark);
+}

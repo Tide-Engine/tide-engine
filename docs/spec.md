@@ -1924,6 +1924,7 @@ Agreed 2026-10-08 and implemented the same day. Static `Mesh<V>` retains its fla
 - **A pose is separate from the mesh.** Animation produces a pose; game code can read and edit its bones, and drawing uses it to deform the mesh. Both match systems and views can sample and use poses, including for sockets, hitboxes and root motion. Sampling and blending are deterministic CPU operations using Tide's math. GPU deformation is for drawing and never supplies match results.
 - **Humanoid retargeting belongs to the runtime Pose API** (agreed 2026-10-30). Tide works independently of tide-motion. Automatic role discovery supplies a useful initial mapping, with explicit typed-bone overrides, reusable editable reference poses, inspectable assignment status and configurable root/chain controls. `HumanoidRig.Auto(referencePose)`, `rig[HumanoidBone.LeftHand] = bone`, `RetargetMap.Create(actualSourceSkeleton, sourceRig, targetRig)` and mutable `pose.Retarget(sourcePose, mapping)` separate preparation from repeated transfer. The actual animation export's skeleton is distinct from its calibration reference; an export's first-frame defaults need not be its anatomical reference pose. Existing same-rig sampling/binding remains unchanged. Detailed preparation, error and settings rules are provisional below.
 - **Imported humanoid motion can be retargeted at build time** (agreed 2026-10-30). `asset HumanoidRig sourceRig = "source.humanoid.json";` imports a reusable automatic/manual calibration profile. `[Retarget(sourceRig, targetRig)]` on an `Animation` or `AnimationCatalog` asset bakes ordinary target-skeleton clips using the same algorithm as runtime retargeting. Playback does no retarget work. Runtime preparation and pose transfer remain available for dynamically loaded assets.
+- **Dynamically loaded motion can be baked once** (agreed 2026-10-30). A prepared map's `Bake(source, targetSkeleton[, sampleRate])` accepts an `Animation` or `AnimationCatalog`, returns the corresponding ordinary animation value, and `fails IOError`. The default rate is 60 Hz. The result owns its data independently of the source, map and target; playback performs ordinary sampling with no retarget work.
 - **Drawing has its own call, `Draw.SkinnedMesh`.** Its pose is optional: omission uses the model's authored rest transforms. `model.defaultPose` returns those transforms as an editable Pose, including for a model with no animation clips (agreed 2026-10-10). The implemented argument list and pose operations are below.
 - **Animation catalogs can be separate assets.** `asset AnimationCatalog movement = "art/movement.glb";` exposes the file's clips directly, such as `movement.run`. The editor offers checked names from a known file. Clips from separate exports of the same rig can be sampled into a character's pose or drawn with its model (agreed 2026-10-10); binding details are below.
 - **Blend shapes are imported and baked on the CPU** (decided by the owner, 2026-10-27: "Import + bake: Skinned imports (FBX and glTF) keep morph targets; a CPU call returns the model with chosen shape weights applied, e.g. part.Shaped(weights). Draws unchanged. Body shape is set per character, as Synty's own tool bakes it. No GPU/shader changes."). GPU per-draw shape weights and shape-weight animation were not chosen and remain outside. The implemented API is under Provisional.
@@ -2007,6 +2008,8 @@ The CPU operations are:
 | Mutable `rig` | `.referencePose`, `[HumanoidBone bone]` | Editable calibration `Pose`, typed `Bone` assignments |
 | `rig` | `.GetStatus(HumanoidBone bone)` | `HumanoidBoneStatus` |
 | `RetargetMap` | `.Create(Skeleton source, HumanoidRig sourceRig, HumanoidRig targetRig)` | `RetargetMap fails RetargetError` |
+| `mapping` | `.Bake(Animation source, Skeleton target[, float sampleRate])` | `Animation fails IOError`; default rate 60 Hz |
+| `mapping` | `.Bake(AnimationCatalog source, Skeleton target[, float sampleRate])` | Plain `AnimationCatalog fails IOError`; default rate 60 Hz |
 | Mutable `pose` | `.Retarget(Pose source, RetargetMap mapping)` | `bool`, replacing target transforms only on success |
 
 `BoneTransform` has `float3 position`, `quaternion rotation` and `float3 scale`; its default rotation is identity and default scale is one. `Playback.Clamp` is the default; `Playback.Loop` wraps positive and negative times over the clip duration, with an exact endpoint wrapping to zero. Unanimated properties begin from authored rest transforms on every sample. Blending clamps weight to zero through one and interpolates local transforms with shortest-path quaternion interpolation. A bone includes its skeleton identity; an invalid or incompatible bone reads the identity transform, and its writes do nothing. In-place sampling binds a compatible separate export to the destination skeleton; blending requires identical skeleton fingerprints. Failed in-place sample or blend leaves the destination unchanged; an unbindable pose records no skinned draw.
@@ -2110,6 +2113,26 @@ and poses use ordinary owned-value, match snapshot and serialization rules.
 catalogs retain their checked members and can pass to a plain `Skeleton` parameter.
 No per-frame name resolution, IK/contact correction, foot planting or automatic
 entity movement is added.
+
+`mapping.Bake` uses the prepared correspondence and the map's current settings.
+It retains source names/durations and the target's original skeleton identity,
+names, order and rest transforms, excluding geometry and unrelated source clips.
+The single-animation overload bakes only the selected clip. The catalog overload
+bakes every source in catalog order, preserving duplicate names and ordinary
+ambiguous-name lookup rules; it returns a plain catalog with dynamic lookup.
+Every source must match the actual source skeleton used to prepare the map, and
+`target` must match its target skeleton. Changing a map afterward does not change
+an existing baked result.
+
+Baking is a CPU operation. Invalid/default maps or clips, empty catalogs,
+incompatible skeletons, invalid settings, unsupported scale animation and work
+limit refusals return `IOError.InvalidData`; the runtime diagnostic explains the
+reason. Catalog failure returns no partial output. `sampleRate` must be finite
+and positive, with zero also selecting the default 60 Hz. The shared baker uses
+the sample/interpolation rules below and bounds total work across catalog
+sources. Results can be stored, copied, snapshotted and serialized independently
+of all input values and loaded asset packs. Store the successful result once and
+sample it during playback.
 
 #### Imported humanoid profiles and baked clips
 

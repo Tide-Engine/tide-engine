@@ -1,14 +1,67 @@
 # Runtime written by Claude for now
 
+## Owned runtime-baked animations (2026-10-30)
+
+The owner approved `map.Bake(animation, target.skeleton, sampleRate = 60)`
+and the AnimationCatalog overload, returning ordinary owned animation values
+with `fails IOError`. Generated wrappers use the shared baker below. Their
+temporary results are ordinary scratch byte lists; no scratch asset marker,
+global payload registry or new value layout is introduced. The existing
+scratch lifetime and caller capability rules remain in force.
+
+The agreed generated-C boundary adds
+`void tide_skinned_own(tide_list *data, uint32_t where)`. Animation model-data
+ownership, including nested values and each catalog source, calls it when
+storing a copied value. A valid canonical model copied to a real match/local
+heap becomes an existing `TIDE_LIST_ASSET` descriptor with its own lease in
+that heap's refcounted asset pool. Already immutable values acquire another
+descriptor lease; the borrowed source is never released. Assignment promotes
+the incoming value before releasing its old destination, including aliases.
+Scratch/no-heap destinations and noncanonical bytes follow generic byte-list
+ownership. Packed descriptors are span-checked before their trusted list path.
+
+The private `tide_asset_model` constructor makes and validates the immutable
+payload once, hashes its existing content identity, and transfers its sole
+reference to the destination pool. It registers nothing globally. Snapshot,
+raw/delta transfer, clear, unload and write-detachment use existing asset-list
+machinery. Stored baked or decoded Animation bytes therefore get existing
+immutable sampling/model caches; immediate scratch-only playback retains the
+checked cold path. An edited/detached value loses its immutable sampling proof.
+No pointers enter world pages, and no cache is part of match state.
+
+Catalog wrappers stage every successful part before publishing a result. The
+new `tide_retarget_bake_with_budget` shares bounded samples, source-plus-target
+transforms, sampled key numbers and encoded bytes across all source models;
+both its budget and outputs remain unchanged on a failed part. Its original
+single-model entry point delegates with a zero budget. Canonical output and
+solver arithmetic are unchanged, so the bake algorithm version stays 2.
+
+Three `skinned_own_` C tests cover cache proof and exact samples, independent
+leases, replacement aliases, match/local ownership, scratch reset, source
+release, snapshot retention, raw pack/unpack, mutable detachment, chunked data,
+invalid data fallback and pack unload/span safety. The additional baker budget
+test checks cross-source totals, every work limit, hostile uint64 totals and
+atomic failure. All three ownership fixtures and the 26-test combined retarget
+filter pass within the complete native ASan and WASM engine suites.
+
+Promoting a stored decoded Animation changes its physical heap representation
+from copied byte pages to immutable descriptors. The existing skinned e2e's
+world-hash pin intentionally changes from `13181359130345510980` to
+`18284937891356215991`, identical on native ASan and WASM. Its pose bits,
+snapshot, packing and replay checks remain unchanged and pass. This is an
+ownership representation change, with no calibration or sampling math change.
+Final compiler/release integration and stored-bake timings are recorded by the
+coordinator in language.md and assets-and-files.md.
+
 ## Shared retarget baking support (2026-10-30)
 
 Within the owner's approved profile-assets and Retarget-attribute task, agents
 maintain `tide/retarget_bake.h`, `engine/src/retarget_bake.c` and their focused
 tests alongside the existing skinned/retarget maintenance exception. The C
-helpers `tide_retarget_bake` and `tide_retarget_bake_skeleton` are compiler and
-cold-path support; generated Tide code calls neither, and this adds no public
-Tide bake-on-load method. Dynamic-load support can reuse this implementation
-when its language API is agreed. There is no tide-motion dependency.
+helpers `tide_retarget_bake`, `tide_retarget_bake_with_budget` and
+`tide_retarget_bake_skeleton` are compiler and cold-path support. The first two
+also serve the approved generated bake-on-load wrappers described above.
+There is no tide-motion dependency.
 
 The baker borrows canonical source/target lists, a prepared pointer-free map
 and scalar settings. Clip index -1 selects the source catalog; a nonnegative

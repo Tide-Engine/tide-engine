@@ -157,7 +157,7 @@ static bool skinned_arguments(checker *c, expr *e, const char *names, const int 
         clamp->kind = E_INT;
         clamp->type = types[count - 1];
         clamp->at = e->at;
-        clamp->int_value = 0;
+        clamp->int_value = skinned_bakes(e->skin_operation) ? 60 : 0;
         vec_push(e->args, clamp);
     }
     return valid;
@@ -225,6 +225,24 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
     const skinned_kind kind = obj.decl->skin_kind;
     const bool animations = kind == SKIN_ANIMATIONS;
     const bool bones = kind == SKIN_BONES || kind == SKIN_SKELETON;
+    if (kind == SKIN_RETARGET_MAP && str_eq_c(e->name, "Bake")) {
+        // Check every written argument in source order before selecting the
+        // overload. The source carries either a clip or a catalog; no inferred
+        // catalog member contract survives this dynamic conversion.
+        e->skin_operation = SKIN_OP_RETARGET_BAKE_ANIMATION;
+        const type parameters[] = {T_ERR, decl_type(c->prog->skeleton), T_FLOAT_};
+        if (!skinned_arguments(c, e, "source, target, sampleRate", 1, parameters, 3, -1)) return T_ERR;
+        const type source = e->args.items[0]->type;
+        if (source.kind != TY_STRUCT || (source.decl->skin_kind != SKIN_ANIMATION && source.decl->skin_kind != SKIN_ANIMATIONS)) {
+            diag_error(e->args.items[0]->at, "'Bake' source is an Animation or AnimationCatalog, not %s", type_name(source));
+            return T_ERR;
+        }
+        const bool catalog = source.decl->skin_kind == SKIN_ANIMATIONS;
+        e->skin_operation = catalog ? SKIN_OP_RETARGET_BAKE_CATALOG : SKIN_OP_RETARGET_BAKE_ANIMATION;
+        e->call = CALL_SKINNED;
+        return result_of(c->prog, decl_type(catalog ? c->prog->animations : c->prog->animation),
+                         (type){TY_ENUM, c->prog->io_error}, false);
+    }
     type args[3] = {{TY_ERROR, NULL}, {TY_ERROR, NULL}, {TY_ERROR, NULL}};
     type result = T_ERR;
     const char *names = "";

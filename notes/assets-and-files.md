@@ -1,5 +1,69 @@
 # Assets and local files
 
+## Baking dynamically loaded animations (2026-10-30)
+
+The approved `RetargetMap.Bake` instance method accepts an Animation or
+AnimationCatalog, an explicit target Skeleton and optional `sampleRate`
+(default 60), returning the corresponding Animation/plain AnimationCatalog
+with `fails IOError`. It uses the prepared map and its current root, heading,
+spine and twist settings. Source bytes must match the map's actual source
+skeleton, and target bytes its target identity. Bake is a cold operation;
+the returned target-skeleton clips use ordinary sampling afterward. Catalog
+order, clip names and durations survive. Empty/invalid catalogs, incompatible
+maps, unsupported animated scale, invalid settings and resource limits fail
+without publishing a partial catalog.
+
+The shared C baker now accepts an optional shared-operation path,
+`tide_retarget_bake_with_budget`, used across separate catalog source models.
+Its actual sample, transform, sampled-key and encoded-byte totals use the same
+limits documented below for the complete catalog, rather than granting each
+source another allowance. Outputs and the caller's budget change only after
+that part succeeds; the generated wrapper stages all parts in scratch and
+discards them if a later part fails. All source lists are borrowed only during
+the call. Successful output contains no retained source/map dependency.
+
+Temporary bake results are ordinary scratch values. Storing an Animation or
+catalog in match/local state promotes each valid canonical model into the
+existing immutable content-addressed asset pool with independent descriptor
+leases. This also applies to stored decoded Animation values. Ordinary
+snapshot, packing, reload and copy-on-write lifetime rules therefore apply,
+and subsequent playback uses existing cached sampling plans instead of
+revalidating every key per frame. There is no global runtime-bake registry.
+Scratch-only playback remains the checked cold path. The new ownership
+boundary and lifecycle tests are recorded in runtime-ownership.md.
+
+Three new runtime ownership fixtures and one shared-budget fixture supplement
+the generated dynamic-bake API coverage. The complete native ASan and WASM
+engine suites pass, including all three ownership tests and the 26-test
+retarget filter. Stored decoded Animation values now use immutable descriptors;
+their intentional physical world-hash pin change is recorded in
+runtime-ownership.md, with unchanged pose bits and passing snapshot/pack/replay
+checks on both platforms. Final affected checks pass 23/23 natively and 22/22
+on WASM, including the complete engine suites; all 17 related LSP checks and
+the docs build pass. The existing skinned world-hash check also passes in
+release with the intentional representation pin. The canonical byte format,
+math and bake algorithm version (2) are unchanged.
+
+Final public-Bake playback measurements used release clang 23 on Ryzen 9
+7900X, the same actual idle clip with 89 source and 55 target nodes, after
+all tests finished. These are the median of three process medians, each
+process taking nine rounds. Runtime Bake ran once and its result was stored
+in a local Animation before steady-state timing:
+
+| Tide playback path | 100 calls, microseconds per pose | 1,000 calls, microseconds per pose | 1,000-call batch, milliseconds |
+| --- | ---: | ---: | ---: |
+| Build-time baked | 0.681000 | 1.631050 | 1.631050 |
+| Live sample and retarget | 4.296400 | 7.032780 | 7.032780 |
+| Stored runtime Bake | 0.703400 | 1.661290 | 1.661290 |
+
+Runtime-baked and build-time-baked pose/bone checksums are identical for
+1, 100 and 1,000 calls; every run reports `FAILURES 0`. This measures animation
+work without drawing, skinning, IK or gameplay. The first frame, including
+map creation, Bake and the first sample, took 29.4236, 29.4824 and 29.7660 ms
+(median 29.4824 ms). That is combined cold load work, not a measurement of
+Bake alone or a recurring per-frame cost. Historical live/runtime optimization
+measurements below remain separate from this final public-API comparison.
+
 ## Profile assets and retargeted animation baking (2026-10-30)
 
 The owner chose reusable `.humanoid.json` rig profiles and
@@ -7,8 +71,8 @@ The owner chose reusable `.humanoid.json` rig profiles and
 Tide independent of tide-motion. Build-time conversion produces ordinary
 target-skeleton animation bytes: playback uses existing sampling and has no
 per-frame retarget pass. The live Pose API remains available for dynamic
-poses. The shared C baker can support baking a dynamically loaded clip once,
-but no public Tide bake-on-load method is exposed by this change.
+poses. The subsequent approved Bake method above also uses the shared C baker
+for dynamically loaded clips.
 
 A singular `asset HumanoidRig` names a profile. Its `reference` selects either
 `{"file":"reference.fbx","pose":"rest"}` or
@@ -74,7 +138,7 @@ distinct samples across clips, 4,194,304 evaluated source-plus-target node
 transforms, 1,073,741,824 sampled input-key numbers and 128 MiB encoded output,
 plus the existing canonical channel/key limits. Limits are implementation
 picks, not new language requirements; exhaustion uses the ordinary engine
-allocation policy. Owned inputs currently revalidate sampling keys each frame,
+allocation policy. Mutable inputs revalidate sampling keys each frame,
 so the explicit key-read budget bounds that remaining cold-path cost.
 
 Seven `tests/test_retarget_bake.c` fixtures cover independent root travel and

@@ -16,6 +16,13 @@ typedef struct tide_bone_transform {
     tide_float3 scale;
 } tide_bone_transform;
 
+// Own a copied model-data value in the destination heap. Canonical models
+// become immutable, content-addressed assets, so stored decoded/baked clips
+// share the ordinary sampling caches. Every owned copy gets its own lease;
+// the borrowed source is not released. Scratch destinations and noncanonical
+// bytes retain ordinary byte-list ownership. Release with tide_list_release.
+void tide_skinned_own(tide_list *data, uint32_t where);
+
 // Invalid model data has no nodes, clips or fingerprint. Names and matrices
 // return empty text and identity; a failed lookup returns -1.
 bool tide_skinned_valid(tide_list data);

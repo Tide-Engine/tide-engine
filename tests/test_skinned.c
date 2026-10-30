@@ -208,6 +208,141 @@ static uint8_t *sample_model_pack(const tide_list data, const bool alias, size_t
     return tide_pack_end(&b, size);
 }
 
+TIDE_TEST(skinned_own_promotes_runtime_models_and_preserves_values_and_leases)
+{
+    const uint32_t mark = tide_scratch_mark();
+    tide_heap heap = {0}, local_heap = {0}, snapshot = {0}, back = {0};
+    tide_text_use(&heap, &local_heap);
+    tide_list raw = model(), stored = raw, local = raw;
+    const uint32_t size = (uint32_t)tide_list_count(raw);
+    uint8_t *expected = malloc(size);
+    memcpy(expected, tide_list_at(raw, 0, 1u), size);
+    tide_skinned_own(&stored, TIDE_IN_MATCH);
+    tide_skinned_own(&local, TIDE_IN_LOCAL);
+    bool nonnegative = false;
+    uint64_t version = 0;
+    TIDE_REQUIRE(tide_pack_skinned_sample_proof(stored, &nonnegative) && nonnegative);
+    TIDE_CHECK(tide_pack_skinned_version(stored, &version) && version == tide_hash(expected, size));
+    TIDE_CHECK(tide_pack_skinned_sample_proof(local, NULL));
+    TIDE_CHECK(!tide_list_at_mut(stored, 0, 1u));
+    tide_list copy = stored;
+    tide_skinned_own(&copy, TIDE_IN_MATCH);
+    TIDE_CHECK(copy.at != stored.at && tide_list_at(copy, 0, 1u) == tide_list_at(stored, 0, 1u));
+    tide_list a = {0}, b = {0};
+    for (int32_t clip = 0; clip < 3; clip++) {
+        for (int32_t step = 0; step < 9; step++) {
+            TIDE_REQUIRE(tide_skinned_sample(raw, clip, (float)step * 0.25f, &a, TIDE_IN_SCRATCH));
+            TIDE_REQUIRE(tide_skinned_sample(stored, clip, (float)step * 0.25f, &b, TIDE_IN_SCRATCH));
+            for (int32_t node = 0; node < 3; node++)
+                TIDE_CHECK(!memcmp(tide_list_at(a, node, sizeof(tide_bone_transform)),
+                                   tide_list_at(b, node, sizeof(tide_bone_transform)), sizeof(tide_bone_transform)));
+        }
+    }
+    tide_scratch_reset(mark);
+    tide_heap_copy(&snapshot, &heap);
+    const uint64_t original = tide_heap_hash(0, &snapshot);
+    // Promote the incoming value before releasing an aliased old destination.
+    tide_list replacement = stored;
+    tide_skinned_own(&replacement, TIDE_IN_MATCH);
+    tide_list_release(&stored, TIDE_IN_MATCH);
+    stored = replacement;
+    tide_heap_flush(&heap);
+    TIDE_CHECK(!memcmp(tide_list_at(stored, 0, 1u), expected, size));
+    tide_skinned_data_view view; tide_skinned_channel_data channel_data;
+    TIDE_REQUIRE(tide_skinned_data_open(expected, size, &view));
+    TIDE_REQUIRE(tide_skinned_data_channel(&view, 0u, &channel_data));
+    tide_list_prepare(&stored, 1u, TIDE_IN_MATCH);
+    number(tide_list_at_mut(stored, 0, 1u), channel_data.values_at, 7.0f);
+    TIDE_CHECK(!tide_pack_skinned_sample_proof(stored, NULL));
+    TIDE_CHECK(tide_pack_skinned_sample_proof(copy, NULL));
+    TIDE_CHECK(!memcmp(tide_list_at(copy, 0, 1u), expected, size));
+    TIDE_CHECK(tide_heap_hash(0, &snapshot) == original);
+    a = (tide_list){0}; b = (tide_list){0};
+    TIDE_REQUIRE(tide_skinned_sample(stored, 0, 0, &a, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_sample(copy, 0, 0, &b, TIDE_IN_SCRATCH));
+    TIDE_CHECK(((const tide_bone_transform *)tide_list_at(a, 1, sizeof(tide_bone_transform)))->position.x == 7.0f);
+    TIDE_CHECK(((const tide_bone_transform *)tide_list_at(b, 1, sizeof(tide_bone_transform)))->position.x == 2.0f);
+    const uint32_t packed_size = tide_heap_packed_size(&heap);
+    uint8_t *bytes = malloc(packed_size);
+    tide_writer writer = {bytes, packed_size, 0, false, false};
+    tide_heap_pack(&heap, &writer);
+    TIDE_REQUIRE(!writer.overflow && writer.size == packed_size);
+    tide_reader reader = {bytes, packed_size, 0, false};
+    TIDE_REQUIRE(tide_heap_unpack(&back, &reader));
+    TIDE_CHECK(reader.at == packed_size && tide_heap_hash(0, &back) == tide_heap_hash(0, &heap));
+    tide_heap_free(&heap);
+    TIDE_CHECK(!memcmp(tide_list_read(&snapshot, copy, 0, 1u), expected, size));
+    tide_text_use(&back, &local_heap);
+    TIDE_REQUIRE(tide_pack_skinned_sample_proof(copy, NULL));
+    a = (tide_list){0};
+    TIDE_REQUIRE(tide_skinned_sample(copy, 0, 0, &a, TIDE_IN_SCRATCH));
+    TIDE_CHECK(((const tide_bone_transform *)tide_list_at(a, 1, sizeof(tide_bone_transform)))->position.x == 2.0f);
+    TIDE_CHECK(!memcmp(tide_list_at(local, 0, 1u), expected, size));
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&back); tide_heap_free(&snapshot); tide_heap_free(&local_heap);
+    tide_scratch_reset(mark); free(bytes); free(expected);
+}
+
+TIDE_TEST(skinned_own_handles_chunked_sources_and_invalid_data_without_false_proof)
+{
+    const uint32_t mark = tide_scratch_mark();
+    tide_heap heap = {0};
+    tide_text_use(&heap, NULL);
+    tide_list raw = model(), scratch = raw;
+    tide_skinned_own(&scratch, TIDE_IN_SCRATCH);
+    TIDE_CHECK(scratch.at == raw.at && !tide_pack_skinned_sample_proof(scratch, NULL));
+    const uint32_t old_size = (uint32_t)tide_list_count(raw), size = old_size + TIDE_LIST_CHUNK * 2u;
+    uint8_t *large = calloc(size, 1u);
+    memcpy(large, tide_list_at(raw, 0, 1u), old_size);
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(large, old_size, &view));
+    word(large, 8u, size); word(large, 84u, view.key_size + size - old_size);
+    tide_list chunked = {0}, temporary = tide_list_from(large, (int32_t)size, 1u);
+    tide_list_set(&chunked, temporary, 1u, TIDE_IN_MATCH);
+    tide_list owned = chunked;
+    tide_skinned_own(&owned, TIDE_IN_MATCH);
+    TIDE_REQUIRE(tide_pack_skinned_sample_proof(owned, NULL));
+    TIDE_CHECK(!memcmp(tide_list_at(owned, 0, 1u), large, size));
+    tide_list_release(&chunked, TIDE_IN_MATCH); tide_heap_flush(&heap);
+    TIDE_CHECK(tide_skinned_animation_count(owned) == 3);
+    tide_skinned_channel_data c;
+    TIDE_REQUIRE(tide_skinned_data_channel(&view, 0u, &c));
+    number(large, c.times_at + 4u, -2.0f);
+    tide_list invalid = tide_list_from(large, (int32_t)size, 1u);
+    tide_skinned_own(&invalid, TIDE_IN_MATCH);
+    TIDE_CHECK(!tide_pack_skinned_sample_proof(invalid, NULL));
+    bool copied = false;
+    void *flat = tide_list_flatten(invalid, 1u, false, &copied);
+    TIDE_CHECK(!memcmp(flat, large, size));
+    tide_list_unflatten(invalid, flat, 1u, false, copied);
+    tide_list empty = {0}; tide_skinned_own(&empty, TIDE_IN_MATCH); TIDE_CHECK(!empty.at);
+    tide_text_use(NULL, NULL);
+    tide_list no_heap = raw; tide_skinned_own(&no_heap, TIDE_IN_MATCH); TIDE_CHECK(no_heap.at == raw.at);
+    tide_heap_free(&heap); tide_scratch_reset(mark); free(large);
+}
+
+TIDE_TEST(skinned_own_retains_packed_models_after_unload)
+{
+    const uint32_t mark = tide_scratch_mark();
+    tide_list raw = model();
+    size_t size;
+    uint8_t *pack = sample_model_pack(raw, false, &size);
+    TIDE_REQUIRE(pack && tide_pack_load(pack, size));
+    tide_pack_use();
+    const tide_list packed = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
+    tide_heap heap = {0}; tide_text_use(&heap, NULL);
+    tide_list stored = packed; tide_skinned_own(&stored, TIDE_IN_MATCH);
+    TIDE_REQUIRE(tide_pack_skinned_sample_proof(stored, NULL));
+    tide_list invalid = {TIDE_IN_SCRATCH << 30 | TIDE_PACK_BASE | ((uint32_t)size - 1u)};
+    tide_skinned_own(&invalid, TIDE_IN_MATCH);
+    TIDE_CHECK(!invalid.at);
+    tide_pack_unload(); tide_scratch_reset(mark); free(pack);
+    tide_list pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample(stored, 0, 1.0f, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(((const tide_bone_transform *)tide_list_at(pose, 1, sizeof(tide_bone_transform)))->position.x == 3.0f);
+    tide_text_use(NULL, NULL); tide_heap_free(&heap); tide_scratch_reset(mark);
+}
+
 // Five nonuniform keys exercise both sides of the binary-search decisions and exact-key selection; equal cubic endpoint slopes make each midpoint the average of its neighbors.
 static tide_list sampling_search_model(void)
 {
