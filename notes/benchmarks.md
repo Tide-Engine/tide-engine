@@ -1,5 +1,26 @@
 # Benchmarks
 
+
+## Views over wide components (2026-10-30)
+
+`bench_views` (`bench/views/`, `bench_views [frames]`) times each view of a
+frame blended halfway between two ticks, 20,000 entities: a per-entity view
+and a view's query reading one field of a 75-lane component (`Wide`) and of a
+small one, and `Far`, which hands a helper a local singleton's lists to read
+while it adds to another's (bannerlord-duel's far crowd: 25,905 matrices and
+three lists of 471). Release, this machine, quiet, ms a frame:
+
+| View | Before | After |
+|---|---|---|
+| PitchWide (per entity, wide) | 1.84-1.91 | 0.20 |
+| PitchSmall (per entity, small) | 0.24-0.25 | 0.20 |
+| QueryWide (query rows, wide) | 1.63-1.67 | 0.17 |
+| QuerySmall (query rows, small) | 0.23-0.25 | 0.16 |
+| Far (helper handed lists) | 609-625 | 1.55 |
+
+Before is the same harness with `dev` 5245298d6's tidec. What changed and why:
+notes/ecs.md, Views copy and blend only the lanes they read.
+
 ## Bound Render3D correctness-smoke pixel work (2026-10-29)
 
 Nightly run `40960903022` reached the Linux WebGL browser's 120-second guard

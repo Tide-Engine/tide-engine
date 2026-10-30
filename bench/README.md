@@ -20,6 +20,10 @@ The [October 20 performance pass](../notes/benchmarks.md) added tools for measur
 
 Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the source revision and local changes before saving simulation or session runs, as for drawing below. New rows also record architecture, compiler version and whether C splitting was forced (`--split`, or `--quick`). Comparisons group matching options, machine, compiler and thread counts; older rows without that metadata form separate groups. Unidentified machines are reported as `unknown`; provide the machine label when comparing machines.
 
+## Views over wide components (2026-10-30)
+
+`bench_views` (`views/`) times views that run once for each of 20,000 entities, a view at a time: reading one field of a wide component and of a small one, per entity and through a query, and a helper handed a big local singleton's lists. `bench_views [frames]`. Results: `notes/benchmarks.md`, Views over wide components.
+
 ## Earth under load (2026-10-24)
 
 `bench_earth` plays the home page's planet (`examples/earth`, with room for 256 players) with bots that land in towns, walk, drive, wave and go to other towns: `--towns 1` puts everyone in one, `--drivers` and `--hop` say how many drive and how often they travel. As any benchmark of a sharded game, `--split <n>` runs its world split into `n` regions, each shard timed apart (`--most` and `--busiest` let regions split and merge); `--lag <ticks>` lets bots fall further behind before the run fails; and with visibility, `--diverge <bot>` says what differs between that bot's world and what the server says it is, tick by tick. Results and what they mean: `notes/benchmarks.md`, Earth under load.

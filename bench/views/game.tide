@@ -1,0 +1,141 @@
+// Views that run once for each of many entities (bench/views/main.c times
+// each one): over a component of many fields that they read a few of, as a
+// query's rows and as a view's own parameter, against the same over a small
+// component; and a helper each run hands a big local singleton's lists to read
+// while it adds to another's (a far crowd, as a battle of thousands keeps it).
+
+const int COUNT = 20000;
+
+scene Main { }
+
+// About as wide as a fighter in a battle of thousands: 75 lanes.
+component Wide
+{
+    float3 position;
+    float yaw;
+    float4 rows;
+    float pitch;
+    float spare0; float spare1; float spare2; float spare3; float spare4; float spare5; float spare6; float spare7; float spare8; float spare9;
+    float spare10; float spare11; float spare12; float spare13; float spare14; float spare15; float spare16; float spare17; float spare18; float spare19;
+    float spare20; float spare21; float spare22; float spare23; float spare24; float spare25; float spare26; float spare27; float spare28; float spare29;
+    float spare30; float spare31; float spare32; float spare33; float spare34; float spare35; float spare36; float spare37; float spare38; float spare39;
+    float spare40; float spare41; float spare42; float spare43; float spare44; float spare45; float spare46; float spare47; float spare48; float spare49;
+    float spare50; float spare51; float spare52; float spare53; float spare54; float spare55; float spare56; float spare57; float spare58; float spare59;
+    float spare60; float spare61; float spare62; float spare63; float spare64; float spare65;
+    local float feetYaw;
+}
+
+component Small
+{
+    float3 position;
+    float pitch;
+}
+
+struct Item
+{
+    float4x4 transform;
+    float4 rows;
+}
+
+// Each row's bones, read a few at a time
+local singleton Skins
+{
+    bool made;
+    List<float4x4> skins;
+    List<float4x4> hips;
+    List<float4> spineOn;
+    List<float4> spineAt;
+}
+
+// What each far one adds
+local singleton Crowd
+{
+    List<Item> items;
+}
+
+local singleton Sink
+{
+    float total;
+}
+
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < COUNT; i++)
+    {
+        Spawn(Small { position = float3(i, 0, 0) });
+        Spawn(Wide { position = float3(i, 0, 0), rows = float4(i % 400, i % 400 + 1, (i * 7) % 400, (i * 7) % 400 + 1) });
+    }
+}
+
+system MoveWide(mut Wide w)
+{
+    w.pitch += 0.01;
+    w.position.x += 0.01;
+}
+
+system MoveSmall(mut Small s)
+{
+    s.pitch += 0.01;
+}
+
+[Before(PitchWide)]
+view Prepare(mut Skins skins)
+{
+    if (skins.made) return;
+    skins.made = true;
+    for (int i = 0; i < 25905; i++) skins.skins.Add(float4x4.identity);
+    for (int i = 0; i < 471; i++)
+    {
+        skins.hips.Add(float4x4.identity);
+        skins.spineOn.Add(float4(i, 0, 0, 1));
+        skins.spineAt.Add(float4(0, i, 0, 1));
+    }
+}
+
+view PitchWide(Wide w, mut Sink sink)
+{
+    sink.total += w.pitch * 0;
+}
+
+view PitchSmall(Small s, mut Sink sink)
+{
+    sink.total += s.pitch * 0;
+}
+
+view QueryWide(mut Sink sink, query (Wide w) all)
+{
+    foreach (var row in all) sink.total += row.w.pitch * 0;
+}
+
+view QuerySmall(mut Sink sink, query (Small s) all)
+{
+    foreach (var row in all) sink.total += row.s.pitch * 0;
+}
+
+float3 Shift(List<float4x4> hipsAt, List<float4> spineOn, List<float4> spineAt, float4 rows)
+{
+    var legs = int(Math.Floor(rows.x));
+    var arm = int(Math.Floor(rows.z));
+    var on = Math.Lerp(spineOn[arm], spineOn[int(rows.w)], rows.z - arm);
+    var at = Math.Lerp(spineAt[arm], spineAt[int(rows.w)], rows.z - arm);
+    return Math.Mul(hipsAt[legs], float4(on.x, on.y, on.z, 1)).xyz + hipsAt[int(rows.y)].c3.xyz - at.xyz;
+}
+
+void KeepFar(mut Crowd crowd, Skins skins, Wide w)
+{
+    mut var rows = w.rows;
+    rows.x += Shift(skins.hips, skins.spineOn, skins.spineAt, w.rows).x * 0;
+    crowd.items.Add(Item { transform = float4x4.TRS(w.position, quaternion.Euler(0, w.feetYaw, 0), float3(1)), rows = rows });
+}
+
+view Far(mut Wide w, mut Crowd crowd, Skins skins)
+{
+    w.feetYaw = w.yaw;
+    if (skins.made) KeepFar(crowd, skins, w);
+}
+
+[After(Far)]
+view DrawCrowd(mut Crowd crowd)
+{
+    crowd.items.Clear();
+}
