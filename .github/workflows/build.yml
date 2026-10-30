@@ -38,15 +38,21 @@ env:
   TIDE_TELEMETRY: '0'
 
 concurrency:
-  group: build-${{ github.ref }}
-  # Finish the current run, then take the newest waiting push: pushes in a burst
-  # publish one nightly, of the last. A pull request's newer push replaces its run.
+  # Dev runs overlap so their build jobs can replace stale work independently
+  # of an active publisher. Stable releases still finish one run at a time.
+  group: build-${{ github.ref }}-${{ github.ref == 'refs/heads/dev' && github.run_id || 'serial' }}
   queue: single
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version:
     name: Version
+    # Share the publisher's lock: a new version sees tags from any publication
+    # already in progress. Superseded builds may otherwise choose the same next tag.
+    concurrency:
+      group: build-publish-${{ github.ref }}
+      queue: max # A stale Release must not replace a pending newer Version.
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.next.outputs.new_release_version || steps.nightly.outputs.version }}
@@ -91,7 +97,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
 
   checks:
-    name: Test (${{ matrix.platform }}, ${{ matrix.preset }})
+    name: Test (${{ matrix.platform }}, ${{ matrix.preset }}, ${{ matrix.shard || 1 }})
     needs: version
     strategy:
       fail-fast: false # Finish every platform to report all failures
@@ -105,6 +111,17 @@ jobs:
             os: windows-2025
             preset: web-release
             test-jobs: 4
+            shard: 1
+          - platform: windows-x64
+            os: windows-2025
+            preset: web-release
+            test-jobs: 4
+            shard: 2
+          - platform: windows-x64
+            os: windows-2025
+            preset: web-release
+            test-jobs: 4
+            shard: 3
           - platform: windows-x64
             os: windows-2025
             preset: mingw-release
@@ -117,6 +134,17 @@ jobs:
             os: ubuntu-24.04
             preset: web-release
             test-jobs: 4
+            shard: 1
+          - platform: linux-x64
+            os: ubuntu-24.04
+            preset: web-release
+            test-jobs: 4
+            shard: 2
+          - platform: linux-x64
+            os: ubuntu-24.04
+            preset: web-release
+            test-jobs: 4
+            shard: 3
           - platform: linux-x64
             os: ubuntu-24.04
             preset: sanitize
@@ -129,12 +157,25 @@ jobs:
             os: macos-latest
             preset: web-release
             test-jobs: 4
+            shard: 1
+          - platform: macos-arm64
+            os: macos-latest
+            preset: web-release
+            test-jobs: 4
+            shard: 2
+          - platform: macos-arm64
+            os: macos-latest
+            preset: web-release
+            test-jobs: 4
+            shard: 3
     uses: ./.github/workflows/check.yml
     with:
       platform: ${{ matrix.platform }}
       os: ${{ matrix.os }}
       preset: ${{ matrix.preset }}
       test-jobs: ${{ matrix.test-jobs }}
+      shard: ${{ matrix.shard || 1 }}
+      shards: ${{ matrix.preset == 'web-release' && 3 || 1 }}
       version: ${{ needs.version.outputs.version }}
       channel: ${{ github.ref_name == 'release' && 'stable' || 'nightly' }}
 
@@ -187,6 +228,9 @@ jobs:
   # the oldest IDE it supports and the newest CLion.
   jetbrains:
     name: JetBrains plugin
+    concurrency:
+      group: build-jetbrains-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref == 'refs/heads/dev' }}
     needs: version
     runs-on: ubuntu-24.04
     env:
@@ -228,6 +272,10 @@ jobs:
 
   release:
     name: Release
+    concurrency:
+      group: build-publish-${{ github.ref }}
+      queue: max # A stale Release must not replace a pending newer Version.
+      cancel-in-progress: false
     needs: [version, build, jetbrains]
     if: (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/release') && needs.version.outputs.published == 'true'
     runs-on: ubuntu-24.04
@@ -270,6 +318,13 @@ jobs:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
+          # Once this check passes, finish publishing even if another push arrives.
+          # Version selection shares this job's lock and will then see our tag.
+          latest=$(git ls-remote origin refs/heads/dev)
+          if [ "${latest%%[[:space:]]*}" != "$GITHUB_SHA" ]; then
+            echo "A newer dev commit exists; leaving publication to its build."
+            exit 0
+          fi
           npm ci --prefix .github --ignore-scripts --legacy-peer-deps --no-audit --no-fund
           node .github/nightly-notes.mjs "$TAG" "$GITHUB_SHA" > "$RUNNER_TEMP/tide-release-notes.md"
           tag_ref="refs/tags/$TAG"

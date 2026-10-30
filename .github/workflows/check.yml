@@ -16,6 +16,12 @@ on:
       test-jobs:
         required: true
         type: number
+      shard:
+        default: 1
+        type: number
+      shards:
+        default: 1
+        type: number
       version:
         required: true
         type: string
@@ -29,6 +35,9 @@ env:
 
 jobs:
   check:
+    concurrency:
+      group: build-check-${{ github.ref }}-${{ inputs.platform }}-${{ inputs.preset }}-${{ inputs.shard }}
+      cancel-in-progress: ${{ github.ref == 'refs/heads/dev' }}
     runs-on: ${{ inputs.os }}
     env:
       TIDE_VERSION: ${{ inputs.version }}
@@ -38,7 +47,9 @@ jobs:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
-      CCACHE_MAXSIZE: 500M
+      # Instrumented objects overflowed 500 MB and triggered 127 cleanups in
+      # run 41043006631. Leave room for the full sanitizer working set.
+      CCACHE_MAXSIZE: ${{ inputs.preset == 'sanitize' && '2G' || '500M' }}
       CCACHE_COMPILERCHECK: content
       CCACHE_NODIRECT: 'true'
     defaults:
@@ -127,11 +138,13 @@ jobs:
               | zstd -d -q --long=31 | tar -x -f - -C /c/llvm --strip-components=1 "$name/bin" "$name/lib/clang"
           fi
           echo "LLVM_ROOT=C:/llvm" >> "$GITHUB_ENV"
-      # Apple's clang builds native code; web builds need Homebrew's LLVM, and its lld for wasm-ld.
+      # Use the same newer LLVM for native and web: AppleClang 21 spends many
+      # minutes optimizing tag_fallback's generated C (run 41043006631).
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install ninja llvm lld zstd ccache
+          echo "LLVM_ROOT=$(brew --prefix llvm)" >> "$GITHUB_ENV"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
       # Web builds download wasi-sdk's C library (cmake/wasi-toolchain.cmake),
       # and MinGW builds llvm-mingw's (cmake/mingw-toolchain.cmake).
@@ -166,7 +179,8 @@ jobs:
       # CMake inherits these launchers in its native host builds too. ccache
       # hashes the compiler and preprocessed source, including optional headers.
       - name: Cache compiled objects
-        uses: actions/cache@v4
+        id: compiled-objects
+        uses: actions/cache/restore@v4
         with:
           path: build/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-${{ env.LLVM_VERSION }}-${{ github.sha }}
@@ -178,7 +192,7 @@ jobs:
       # rendering CPU when grouped together, so keep their usual ordering.
       # Only scheduling data is cached; every selected test still runs.
       - name: Cache test durations
-        if: inputs.preset == 'release' || inputs.preset == 'mingw-release'
+        if: inputs.preset == 'release' || inputs.preset == 'mingw-release' || inputs.preset == 'sanitize'
         uses: actions/cache@v4
         with:
           path: build/${{ inputs.preset }}/Testing/Temporary/CTestCostData.txt
@@ -255,10 +269,13 @@ jobs:
           # Software-rendered pages reserve the host's CPUs in CTest. Private
           # Windows/Linux runners have two CPUs, despite the four-job default.
           web_test_jobs="$(node -p 'require("node:os").availableParallelism()')"
+          # Interleave CTest's test indices across independent runners; keep
+          # each browser's whole-CPU reservation within its runner.
+          shard=(-I '${{ inputs.shard }},,${{ inputs.shards }}')
           if [ "$RUNNER_OS" = Linux ]; then
-            ctest --preset web-release --parallel "$web_test_jobs" -LE webgpu
+            ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}" -LE webgpu
           else
-            ctest --preset web-release --parallel "$web_test_jobs"
+            ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}"
           fi
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
@@ -405,6 +422,15 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1 # Only the release job reads them, and they count against the account's storage
+
+      # A failing test must not discard the successful compilation before it:
+      # the next fix can reuse those objects. Cancelled jobs should stop promptly.
+      - name: Save compiled objects
+        if: always() && !cancelled() && steps.compiled-objects.outputs.cache-primary-key != '' && steps.compiled-objects.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/ccache
+          key: ${{ steps.compiled-objects.outputs.cache-primary-key }}
 
       - name: Compiler cache statistics (end)
         if: always()

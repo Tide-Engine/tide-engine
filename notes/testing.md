@@ -1,5 +1,27 @@
 # Test infrastructure
 
+## Web CI shards and sanitizer scheduling (2026-10-30)
+
+Build's web-release entries select every third CTest index on each of three
+independent runners. They keep the existing per-browser whole-CPU reservation,
+muted audio, assertions and test deadlines. CTest JSON confirms their union is
+exactly the original suite, with no duplicates, including when -LE webgpu applies
+on Linux. There are no cross-test fixtures or DEPENDS properties requiring tests
+to share a runner. Each shard's failure reaches the existing required Build gates.
+
+The sanitizer preset now restores/saves CTest duration history as release and
+MinGW do, starting expensive cases first, and has a 2 GB compiler cache instead
+of 500 MB. Compiler objects are also saved after failed tests (but not cancelled
+jobs), preserving successful work for the next fix. Hosted measurements and the
+publication/cancellation contracts are in releases-and-ci.md, Faster feedback for overlapping dev builds.
+
+Local validation: Windows Clang 23.1.2/Node 24.22.1 web-release builds and all
+three shards pass: 931, 930 and 929 enabled tests, with the existing disabled
+right-turn case retained in the third shard. The 2,790 enabled tests include
+WebGL, WebGPU and Windows D3D11 coverage. The targeted native Windows ASan
+`tidec_e2e_tag_fallback` build/test passes. Native Mac compiler selection and
+hosted scheduling/cache performance cannot be exercised on this Windows host.
+
 ## Routine native sanitizers (2026-10-29)
 
 The owner approved routine sanitizer testing after ASan identified a Render3D

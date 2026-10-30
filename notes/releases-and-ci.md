@@ -1,5 +1,75 @@
 # Releases, installing and CI
 
+## Faster feedback for overlapping dev builds (2026-10-30)
+
+Build gives each dev run its own workflow concurrency group. Its native/web/
+MinGW/sanitizer/package jobs and JetBrains build instead cancel older dev jobs
+with the same platform, preset and shard. A new push can start checking without
+waiting for the previous complete workflow. Pull requests retain whole-workflow
+cancellation, and stable releases retain serialized whole workflows.
+
+Version and Release share a non-cancelling per-ref publication lock with
+`queue: max`: a stale Release cannot replace the pending Version of a newer run.
+Version's full checkout therefore sees tags from a publisher already running. Before a
+nightly publishes, it checks origin/dev under that same lock and skips if the
+built commit is stale. Once it passes the check, publication finishes even if a
+new push arrives; that push's Version job then sees its tag. This prevents two
+built commits choosing the same nightly version while keeping versions embedded
+in packages unchanged. Cancelled/failed tests still block Release. Marketplace
+still requires successful publication. Docs keeps its independent non-cancelling
+concurrency and does not gate publication.
+
+Each platform's web suite now runs on three independent runners using CTest's
+interleaved test indices (-I 1,,3, 2,,3 and 3,,3). Browser CPU reservations remain
+in force within each runner. Every registered test belongs to exactly one shard;
+Linux retains its WebGPU exclusion. All fourteen test matrix entries and all
+three package entries must succeed through the existing aggregate Build gates.
+The extra runners repeat configuration/build work in exchange for running the
+long software-rendered pages in parallel across machines.
+
+In run 41043006631, macOS native tests took 115.34 seconds, but their configure/
+build/test step took 15m42s. The generated tag_fallback C object finished 466
+seconds after the preceding build output. macOS now exports Homebrew's LLVM_ROOT
+for native builds as well as web builds, using its already-installed newer clang
+instead of AppleClang 21. This is a compiler selection change, with no fixture
+reduction or optimization-flag exception. Actual Mac compilation savings remain
+unmeasured locally and need hosted confirmation.
+
+The same run's Linux sanitizer job spent about thirteen minutes building and
+472.26 seconds testing. Its compiler cache was 99.81% full, reported 127 cleanups
+and missed 493 of 2,344 cacheable calls. Only this preset's cache limit increases
+from 500 MB to 2 GB, to retain instrumented objects. The compiled-object cache
+uses separate restore/save actions and saves even when a test fails, so the
+next fix can reuse successful compilation. It skips saving on cancellation,
+when restore never supplied a key, or when the exact key was already restored.
+Native test-duration caching now includes sanitize, so its long tests start
+early on subsequent runs.
+
+Storage follow-up: the owner reported GitHub's repository cache limit warning.
+The API showed 12,387,653,304 bytes across 49 active entries; 21 compiler-cache
+snapshots in the paginated inventory consumed about 8.67 GiB. Raising the local
+sanitizer cache limit alone cannot solve GitHub's repository-wide eviction.
+GitHub supports paid cache capacity above its free 10 GB, subject to the
+organization's cap and billing budget. Its documented rate is $0.07/GB-month
+above the allowance (30 GB fully used: about $1.40/month). The current Blacksmith
+cache documentation ties the service to Blacksmith runners, so no standalone
+backend or runner migration is introduced. No billing settings or cache entries
+are changed by this task. Sources checked 2026-10-30:
+https://docs.github.com/en/billing/concepts/product-billing/github-actions
+https://docs.blacksmith.sh/blacksmith-caching/dependencies-actions
+
+Validation: actionlint 1.7.12 passes, excluding only its pre-existing unsupported
+concurrency.queue key. Parsed YAML checks preserve triggers, permissions, all
+platforms, package checks and publication gates; all Bash blocks parse. The exact
+nightly branch guard passes against isolated local Git remotes for current and
+stale SHAs, a missing ref, and a failed lookup. Real CTest JSON confirms an exact
+disjoint partition of all 2,791 web tests (931/930/930), and of the 2,769 selected
+with Linux's exclusion (923 each), with no cross-test fixtures/dependencies.
+Windows ASan's tag_fallback target builds and its test passes. Web execution
+validation is recorded in testing.md. Actual macOS/Linux/MinGW/Android scheduling,
+cache savings and end-to-end time remain normal push-to-dev CI coverage; no
+extra run is dispatched.
+
 ## Tests alongside JetBrains verification (2026-10-29)
 
 Build's eight native/web/MinGW/sanitizer test entries now depend only on
@@ -601,7 +671,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - Publishing uses the default `GITHUB_TOKEN` unless repository secret `TIDE_PUBLISH_TOKEN` is configured. The optional token belongs to `Tide-Engine`, selects this repository, and needs Contents and Workflows write permission: GitHub requires workflow authorization when the selected commit's workflows differ from the default branch's. Version checks that difference before building packages when the optional token is absent; Release checks again because the default branch can move during a build. This publishing token is separate from the docs site's read-only `TIDE_RELEASES_TOKEN`. Nightly retries fetch existing tag and notes refs, reject a tag for another commit, and push both refs atomically so a rejected tag leaves no new notes behind.
 - **All CI jobs use GitHub-hosted runners** (the owner, 2026-10-09: "move the workflows back to pure github for now, not blacksmith"). Windows' package and suites run on `windows-2025`, Linux's on `ubuntu-24.04`, and macOS's (Apple Silicon) on `macos-latest`. The supporting jobs and Docs use `ubuntu-24.04` too. Both workflows use `actions/checkout@v4`, install their tools and restore their caches on fresh checkouts. Manual triggers, suites, publishing gates and `TIDE_HIDDEN` stay as before. The former self-hosted runners' notes were removed on 2026-10-21 (git history, `bf647de4`); `.github/runner/setup-linux.sh` remains for the Linux cross build's xwin setup.
   - Validation: both workflows parse as YAML, a comparison against their previous versions confirms only runner labels, checkout actions and the runner comment changed, and `git diff --check` passes. `actionlint` 1.7.12 passes with only its unsupported existing `queue` key excluded; `queue: single` is supported by [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency). The hosted environments still need a manually requested workflow run; none was dispatched for this change.
-- Manual Build runs on `dev` and `release` finish the current run and keep only the newest pending request; a newer manual request replaces the older pending one. The Build workflow says `queue: single` explicitly in each ref's concurrency group, with `cancel-in-progress: false`. Nightlies are previews published when requested, with no nightly for every intermediate commit (the owner, 2026-10-07).
+- Historical policy, superseded for dev on 2026-10-30 above: manual Build runs on `dev` and `release` finish the current run and keep only the newest pending request; a newer manual request replaces the older pending one. The Build workflow says `queue: single` explicitly in each ref's concurrency group, with `cancel-in-progress: false`. Nightlies are previews published when requested, with no nightly for every intermediate commit (the owner, 2026-10-07).
 - **Windows' package can also be built on Linux** (built 2026-10-07 for the former home-server runner). CI builds it on Windows, and the workflow has no step for the cross build any more: it's done by hand, with the presets below. The cross-build support remains:
   - Its `tide.exe` and `tidels.exe` are for Windows' own target (`x86_64-pc-windows-msvc`), as on Windows, since tide links LLVM's Windows libraries and so Microsoft's C++ runtime: the `windows-package` preset, which is `package` with `cmake/windows-msvc-toolchain.cmake`. clang takes Microsoft's headers and libraries from a folder xwin made (`-Xmicrosoft-windows-sys-root`, `TIDE_XWIN` or `~/xwin`), laid out as a Windows machine has them, so they come after clang's own headers, as system headers: given with `-isystem`, Microsoft's `vadefs.h` came before clang's and `va_arg` was a warning. They're Microsoft's, under Visual Studio's license, which `.github/runner/setup-linux.sh` accepts when told to (`TIDE_ACCEPT_MICROSOFT_LICENSE`): never in the repo or the package, whose programs have the C runtime linked in, as they always had.
   - CMake's own setup for that target wants LLVM's tools named: `llvm-rc`, `llvm-mt`, `lld-link`, and `llvm-ar` (with clang's GNU-style driver CMake writes `ar`'s arguments, which `llvm-lib` doesn't take). Resources are preprocessed without the C flags, so the toolchain gives their tool Microsoft's folders itself (`CMAKE_RC_FLAGS_INIT`): libxml2's has one.
@@ -611,7 +681,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **A nightly waits for every suite, as a stable release does** (the owner, 2026-10-08, with the workflow's restoring, above). For a day they didn't (2026-10-07: "dev/nightly is meant to move fast; we can introduce them back later, right now its too early for always running it", said while every push started a run and the suites ran on a home server): nightlies went out from the three packages alone, and one could go out with a suite failing somewhere this machine's sessions didn't run it. A run is asked for now, and Windows' and Linux's packages and suites together took about four minutes on Blacksmith's runners (2026-10-08, with the compiler's cache).
   - `gh workflow run build.yml --ref dev` is a nightly, `gh workflow run build.yml --ref release` a stable release, and the same on any other branch checks it and publishes nothing.
   - macOS's suites (native and web) are back with it. They ran on no machine from 2026-10-07 until the first run after this, so what landed in between (audio's CoreAudio, Box3D's resident state) was first run on a Mac then.
-- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. The workflow's `concurrency` group is what keeps two runs from taking one number.
+- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. The shared Version/Release publication lock (2026-10-30, above) and stale-commit check keep overlapping dev runs from publishing two commits under one number.
   - Nightlies use commit-based release notes again (2026-10-10, future releases
     only). Switching the publisher to `gh --generate-notes` had replaced the
     Features/Bug Fixes lists with GitHub's merged-PR notes; direct commits to
