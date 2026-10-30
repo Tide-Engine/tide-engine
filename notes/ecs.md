@@ -1,5 +1,44 @@
 # ECS and simulation state
 
+## Wide components' lanes, an element's fields, and text passed to helpers (2026-10-30)
+
+Found measuring a Tide game of 20,000 sword fighters (bannerlord-duel's
+tools/army): its `Fighter` is 77 lanes and holds text (its gear's names).
+
+- **Masks past 64 lanes** (`lane_writes_codegen.inc`): `lane_mask` is 16
+  words, so components of up to 1,024 lanes put back only the lanes a system
+  writes (`LANE_MASK_MOST`; wider ones keep every lane). Up to 64 the generated
+  C is what it was; wider, `tide_scatter_some_<C>` takes the words as an array
+  (`const uint64_t *some`), passed as a compound literal, and the cached-chunk
+  shortcut tests `mask[lane >> 6] >> (lane & 63)` (`lane_mask_c`,
+  `lane_test_c`).
+- **An element's field** (bug, live for every component on `dev` before this):
+  `writes_place_of` took `s.pair[1].b` for `s.pair[0].b`, the element being all
+  of its array but the field after it narrowing to its offset in the first
+  element. Beside a kept snapshot, the write to the second element was lost.
+  A place through an index is now `element`, which a field can't narrow.
+  Lifting the 64-lane cap exposed it: `optional_fields`' `Holder` (82 lanes)
+  changed its pinned hash.
+- **Text passed whole to a helper** (`check.c`, `heap_pass`,
+  `settle_heap_passes`): a system's component holding text, passed whole to a
+  Tide function's `mut` or `out` parameter, made the system `writes_text`
+  whatever the callee did: no threads, and ordered behind every system that
+  changes the heap (the fighters' `Fight` was in stage 38 of 44, behind
+  Box3D's). Now a function's parameter records whether its code can change
+  text, lists or grids through it (`param.heap_written`: a write to text, a
+  list, a grid or an element, the whole of one holding them, or passing it on
+  to a callee whose parameter does, settled to a fixpoint), and the system
+  changes the heap only if the callee's parameter does. Extern, async, virtual
+  and override callees, methods and anything else count as before.
+- **Tests**: `wide_lanes` (an element's field beside a kept snapshot, a
+  72-lane component with text written apart, its snapshot as the tick before)
+  and `wide_lanes_codegen` (the word mask; `Step`, which hands its component
+  to helpers that change no text, doesn't flush the heap; `Name`, which does,
+  does). The element case fails without its fix. Full native suite (2,906)
+  passes; web not run locally.
+- **Measured** (tools/army, 20,000 fighters, release, same runtime): a tick
+  13.4 ms to 11.0; `Fight` 2.3 ms to 0.6, now in stage 2 beside Box3D.
+
 ## Lanes a system can't write stay where they are (2026-10-29)
 
 Following the owner's thread-scaling question: Tide's dense and `[Lasting]`

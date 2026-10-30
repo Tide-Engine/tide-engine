@@ -1,0 +1,33 @@
+if(NOT DEFINED GAME_C OR NOT EXISTS "${GAME_C}")
+    message(FATAL_ERROR "GAME_C must name the generated wide_lanes C file")
+endif()
+file(READ "${GAME_C}" generated)
+# A wide component's mask is words: Step puts back only what it writes
+foreach(required IN ITEMS
+    "TIDE_HELPER void tide_scatter_some_Wide(uint8_t *const *lanes, const uint32_t i, const Wide *v, const uint64_t *some)"
+    "tide_scatter_some_Wide(tide_col_Wide, tide_i, &tide_v0, ((const uint64_t[]){")
+    string(FIND "${generated}" "${required}" found)
+    if(found EQUAL -1)
+        message(FATAL_ERROR "wide_lanes is missing: ${required}")
+    endif()
+endforeach()
+# Step hands its Wide to helpers that change no text: its rows don't flush the
+# heap (a system that changes it does, and runs alone); Name's do.
+function(rows_body name output)
+    string(FIND "${generated}" "TIDE_ROWS void tide_rows_${name}_0(" begin)
+    if(begin EQUAL -1)
+        message(FATAL_ERROR "missing tide_rows_${name}_0")
+    endif()
+    string(SUBSTRING "${generated}" ${begin} -1 tail)
+    string(FIND "${tail}" "\n}\n" end)
+    string(SUBSTRING "${tail}" 0 ${end} body)
+    set(${output} "${body}" PARENT_SCOPE)
+endfunction()
+rows_body(Step step)
+if(step MATCHES "tide_heap_flush")
+    message(FATAL_ERROR "Step changes no text, yet its rows flush the match's heap")
+endif()
+rows_body(Name name)
+if(NOT name MATCHES "tide_heap_flush")
+    message(FATAL_ERROR "Name changes text, yet its rows don't flush the match's heap")
+endif()

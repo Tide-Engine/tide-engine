@@ -957,6 +957,10 @@ static int comp_width(const decl *d)
     return size % 4 == 0 ? 4 : size % 2 == 0 ? 2 : 1;
 }
 
+// The most lanes a system's writes are told apart for (lane_writes_codegen.inc)
+#define LANE_MASK_WORDS 16
+#define LANE_MASK_MOST (LANE_MASK_WORDS * 64)
+
 static int comp_lanes(const decl *d)
 {
     return decl_layout(d).size / comp_width(d);
@@ -10872,6 +10876,14 @@ static void gen_component_access(gen *g)
                           k * width, width);
             }
             sb_put(o, "}\n\n");
+        } else if (lanes <= LANE_MASK_MOST) { // The same, its bits in words
+            sb_printf(o, "TIDE_HELPER void tide_scatter_some_%s(uint8_t *const *lanes, const uint32_t i, const %s *v, const uint64_t *some)\n{\n",
+                      name, name);
+            for (int k = 0; k < lanes; k++) {
+                sb_printf(o, "    if (some[%d] >> %d & 1u) memcpy(lanes[%d] + (size_t)i * %d, (const uint8_t *)v + %d, %d);\n", k >> 6,
+                          k & 63, k, width, k * width, width);
+            }
+            sb_put(o, "}\n\n");
         }
         // By entity: false when it's gone, or has none
         for (int put = 0; put < 2; put++) {
@@ -14883,9 +14895,11 @@ static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool re
             continue;
         }
         if (lanes_partial(g, sys, p->type.decl->index)) {
-            sb_printf(&g->c, "%stide_scatter_some_%s(tide_col_%s, tide_i, &tide_v%d, UINT64_C(0x%llx));\n", pad,
-                      type_cname(p->type.decl), type_cname(p->type.decl), i,
-                      (unsigned long long)written_lanes(g, sys, p->type.decl->index));
+            const lane_mask mask = written_lanes(g, sys, p->type.decl->index);
+            sb_printf(&g->c, "%stide_scatter_some_%s(tide_col_%s, tide_i, &tide_v%d, ", pad, type_cname(p->type.decl),
+                      type_cname(p->type.decl), i);
+            lane_mask_c(&g->c, &mask, comp_lanes(p->type.decl));
+            sb_put(&g->c, ");\n");
             continue;
         }
         sb_printf(&g->c, "%stide_scatter_%s(tide_col_%s, tide_i, &tide_v%d);\n", pad, type_cname(p->type.decl),
@@ -17627,7 +17641,7 @@ static void gen_rows_shared(gen *g, const decl *sys, const int a)
     bool first = true;
     for (int c = 0; c < g->prog->components.count; c++) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
-        lane_run runs[64];
+        lane_run runs[LANE_MASK_MOST];
         const int n = written_runs(g, sys, c, runs);
         for (int r = 0; r < n; r++) {
             sb_printf(&g->c, "%stide_table_lanes_shared(tide_t, %s, tide_c, %d, %d)", first ? "" : " || ", arch_columns(g, a),
@@ -17644,9 +17658,9 @@ static void gen_unwritten_lanes(gen *g, const decl *sys, const int a, const int 
 {
     if (!lanes_partial(g, sys, c)) return;
     const decl *d = g->prog->components.items[c];
-    const uint64_t mask = written_lanes(g, sys, c);
+    const lane_mask mask = written_lanes(g, sys, c);
     for (int k = 0; k < comp_lanes(d); k++) {
-        if (mask >> k & 1u) continue;
+        if (lane_has(&mask, k)) continue;
         sb_printf(&g->c, "%stide_was_%s[%d] = tide_table_column(tide_t, %s, tide_c, %d);\n%stide_own_%s[%d] = (uint8_t *)(uintptr_t)tide_was_%s[%d];\n",
                   pad, type_cname(d), k, arch_columns(g, a), arch_column(g, a, c) + k, pad, type_cname(d), k, type_cname(d), k);
     }
@@ -17793,7 +17807,7 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
         if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
         const decl *d = prog->components.items[c];
         gen_unwritten_lanes(g, sys, a, c, in.data);
-        lane_run runs[64];
+        lane_run runs[LANE_MASK_MOST];
         const int n = written_runs(g, sys, c, runs);
         for (int r = 0; r < n; r++) {
             sb_printf(o, "%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_apart, &tide_was_%s[%d], &tide_own_%s[%d]);\n", in.data,
@@ -17807,7 +17821,7 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
             if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
             const decl *d = prog->components.items[c];
             gen_unwritten_lanes(g, sys, a, c, in.data);
-            lane_run runs[64];
+            lane_run runs[LANE_MASK_MOST];
             const int n = written_runs(g, sys, c, runs);
             for (int r = 0; r < n; r++) {
                 sb_printf(o, "%stide_apart |= tide_table_lanes_piece(tide_t, %s, tide_c, %d, %d, &tide_was_%s[%d], &tide_own_%s[%d]);\n",
@@ -17840,7 +17854,7 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
     for (int c = prog->components.count; c-- > 0;) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
         const decl *d = prog->components.items[c];
-        lane_run runs[64];
+        lane_run runs[LANE_MASK_MOST];
         const int n = written_runs(g, sys, c, runs);
         for (int r = n; r-- > 0;) {
             sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, &tide_own_%s[%d]);\n", in.data, columns,
@@ -17985,7 +17999,7 @@ static void gen_system_pieces(gen *g, const decl *sys)
             for (int i = 0; i < prog->components.count; i++) {
                 const int c = done ? prog->components.count - 1 - i : i; // Ended in the reverse order they were begun
                 if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
-                lane_run runs[64];
+                lane_run runs[LANE_MASK_MOST];
                 const int n = written_runs(g, sys, c, runs);
                 for (int k = 0; k < n; k++) {
                     const int r = done ? n - 1 - k : k;
@@ -18502,8 +18516,10 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
                 // Only the lanes the code writes need be the table's alone, as the ordinary task begins only those
                 sb_printf(o, "};\n            for (uint32_t tide_lane = 0u; tide_lane < %du; tide_lane++)\n", lanes);
                 if (lanes_partial(g, sys, c)) {
-                    sb_printf(o, "                if ((UINT64_C(0x%llx) >> tide_lane & 1u) && tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n",
-                              (unsigned long long)written_lanes(g, sys, c), comp);
+                    const lane_mask mask = written_lanes(g, sys, c);
+                    sb_put(o, "                if (");
+                    lane_test_c(o, &mask, lanes, "tide_lane");
+                    sb_printf(o, " && tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n", comp);
                 } else {
                     sb_printf(o, "                if (tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n", comp);
                 }
@@ -18517,8 +18533,10 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
                              "            for (uint32_t tide_lane = 0u; tide_lane < %du; tide_lane++) {\n"
                              "                tide_page *const tide_page_now = tide_pages_%s[tide_lane];\n", comp, lanes, lanes, comp);
                 if (lanes_partial(g, sys, c)) {
-                    sb_printf(o, "                if (UINT64_C(0x%llx) >> tide_lane & 1u) tide_page_now->hashed = UINT32_MAX;\n",
-                              (unsigned long long)written_lanes(g, sys, c));
+                    const lane_mask mask = written_lanes(g, sys, c);
+                    sb_put(o, "                if ");
+                    lane_test_c(o, &mask, lanes, "tide_lane");
+                    sb_put(o, " tide_page_now->hashed = UINT32_MAX;\n");
                 } else {
                     sb_put(o, "                tide_page_now->hashed = UINT32_MAX;\n");
                 }

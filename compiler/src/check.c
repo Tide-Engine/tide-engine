@@ -45,6 +45,7 @@ typedef struct checker {
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
+    VEC(struct heap_pass) heap_passes; // Components and parameters passed whole to a function's `mut` or `out` parameter (settle_heap_passes)
     VEC(struct call_site) bare;  // Operators used where no code runs (a default, a constant): they can't roll there
     const expr *device_whole_ok; // A device record about to be checked that isn't read whole: a.b's a, or an argument
     const expr *colors_indexed;  // A 'target.colors' about to be checked that an index reads one of: target.colors[1]'s
@@ -86,6 +87,20 @@ typedef struct task_call {
 
 // A call of a function, and the code it's in: a function, method, system,
 // view, handler or the input.
+// A system's component, or a function's parameter, passed whole to a Tide
+// function's `mut` or `out` parameter: whether text, lists or grids change
+// through it is the callee's code's to say, worked out once every body is
+// checked (settle_heap_passes). Before, a component holding text passed this
+// way changed the heap whatever the callee did, which kept every system that
+// handed its component to a helper off threads and in line behind every other
+// such system.
+typedef struct heap_pass {
+    decl *system; // The system whose component it is, or...
+    param *from;  // ...the function's parameter
+    decl *to;     // The callee...
+    int index;    // ...and its parameter
+} heap_pass;
+
 typedef struct call_site {
     decl *from;
     decl *to;
@@ -139,7 +154,7 @@ static void check_placement_body(checker *c, decl *m)
     check_method_body(&nested, m);
 #define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
     MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
-    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
+    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
 #undef MERGE_CHECKS
 }
 
@@ -11465,7 +11480,31 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     bool in_list = false;
     for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) in_list |= e->kind == E_INDEX;
     const bool passed_holder = world_place && arg_of && target == root && decl_holds_text(root->param->type.decl);
-    note_text_write(c, world_place && (holds_heap(target->type) || target->type.kind == TY_GRID || in_list || passed_holder));
+    const bool heap_place = holds_heap(target->type) || target->type.kind == TY_GRID || in_list;
+    // Passed whole to a Tide function's parameter: what it changes there is
+    // its code's (settle_heap_passes)
+    const int pass_index = arg_of && called && called->kind == DECL_FUNCTION && called->body && !called->is_extern && !called->is_async
+                                   && !called->is_virtual && !called->is_override && arg_of >= called->params.items
+                                   && arg_of < called->params.items + called->params.count
+                               ? (int)(arg_of - called->params.items)
+                               : -1;
+    if (passed_holder && pass_index >= 0 && c->system && c->system->kind == DECL_SYSTEM && !c->method) {
+        vec_push(c->heap_passes, ((heap_pass){c->system, NULL, (decl *)called, pass_index}));
+    } else {
+        note_text_write(c, world_place && (heap_place || passed_holder));
+    }
+    // A function's own parameter changed: text, lists or grids in it, or the
+    // whole of one holding them (passed on whole, as the callee says)
+    if (root && root->bind == BIND_PARAM && root->param->function_param) {
+        param *p = root->param;
+        const bool whole_holds = target == root && (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON || p->type.kind == TY_STRUCT)
+                              && p->type.decl && decl_holds_text(p->type.decl);
+        if (target == root && whole_holds && pass_index >= 0) {
+            vec_push(c->heap_passes, ((heap_pass){NULL, p, (decl *)called, pass_index}));
+        } else if (heap_place || whole_holds) {
+            p->heap_written = true;
+        }
+    }
     if (!root || root->bind == BIND_NONE || root->bind == BIND_TYPE || root->bind == BIND_NAMESPACE) {
         if (arg_of) {
             diag_error(target->at, "'" STR_FMT "' %s its '" STR_FMT "', so pass it a variable or field",
@@ -20646,6 +20685,26 @@ static void check_task_params(const checker *c)
     }
 }
 
+// Whether the text, lists or grids passed whole to a function's parameter
+// change there: its code's own writes, and what the functions it passes it on
+// to change, until nothing more changes. A system whose component a callee can
+// change them through changes its world's heap.
+static void settle_heap_passes(checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->heap_passes.count; i++) {
+            const heap_pass *h = &c->heap_passes.items[i];
+            if (!h->from || h->from->heap_written) continue;
+            if (h->to->params.items[h->index].heap_written) h->from->heap_written = changed = true;
+        }
+    }
+    for (int i = 0; i < c->heap_passes.count; i++) {
+        const heap_pass *h = &c->heap_passes.items[i];
+        if (h->system && h->to->params.items[h->index].heap_written) h->system->writes_text = true;
+    }
+}
+
 // Nothing is wrong with a function that sends, spawns, changes entities or starts tasks: what's checked is each call of one from code with abilities of its own,
 // a system, view, handler, task, the input's code or the GPU's, and those in a parallel loop's step or a comparison. A function's own callers answer for it.
 // A system that calls one hands out entity IDs when it spawns, changes its world's heap when what it records holds text, and starts its tasks in order,
@@ -21834,6 +21893,7 @@ bool check(program *prog)
             site->to->task_cpu = changed = true;
         }
     }
+    settle_heap_passes(&c);
     check_acts(&c);
     check_render_resource_calls(&c);
     check_io_calls(&c);

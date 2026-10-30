@@ -1,0 +1,70 @@
+// Lanes a system can't write, for components wider than 64 lanes, and the
+// heap: a component holding text passed whole to a helper that changes none of
+// it doesn't change the match's heap (notes/ecs.md).
+scene Main { }
+
+struct Pair
+{
+    int a;
+    int b;
+}
+
+// Under 64 lanes: an element's field is all of the element's array
+component Small
+{
+    Pair[2] pair;
+    int touched;
+}
+
+// 72 lanes, text among them
+component Wide
+{
+    string name;
+    float[66] spare;
+    float speed;
+    float x;
+    int steps;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Small { });
+    mut var wide = Wide { name = "wide", speed = 0.5 };
+    wide.spare[40] = 7;
+    Spawn(wide);
+}
+
+system SetSecond(mut Small s)
+{
+    s.pair[1].b = s.pair[1].b + 3;
+    s.touched = s.touched + 1;
+}
+
+void Push(mut Wide w)
+{
+    w.x = w.x + w.speed;
+}
+
+void Count(mut Wide w)
+{
+    Push(w);
+    w.steps = w.steps + 1;
+}
+
+// Hands its Wide whole to helpers that change no text: it doesn't change the heap
+system Step(mut Wide w)
+{
+    Count(w);
+}
+
+void Rename(mut Wide w)
+{
+    w.name = w.steps % 2 == 0 ? "even" : "odd";
+}
+
+// ...and one that does
+[After(Step)]
+system Name(mut Wide w)
+{
+    Rename(w);
+}

@@ -48,6 +48,10 @@ add_test(NAME tidec_sparse_cache_private COMMAND tidec_sparse_cache_private)
 add_test(NAME tidec_sparse_cache_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${TIDE_SPARSE_CACHE_DIR}/game.c" "-DGAME_H=${TIDE_SPARSE_CACHE_DIR}/game.h"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/sparse_cache_codegen.cmake")
+tide_e2e_test(wide_lanes) # Lanes a system can't write past 64; text passed whole to a helper that changes none of it
+add_test(NAME tidec_wide_lanes_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_wide_lanes/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/wide_lanes_codegen.cmake")
 tide_e2e_test(destroy_rows) # Pure updates and deferred self-destroys preserve math, order, handles and snapshots
 add_test(NAME tidec_destroy_rows_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_destroy_rows/game.c"
