@@ -1,0 +1,92 @@
+// Played alone, a match whose player sees only part of it: walkers come into
+// the player's sight and go out of it as they pass, and are spawned and
+// destroyed, while local handlers hear what the match sends.
+
+settings { maxPlayers = 2; }
+
+component Walker
+{
+    int id;
+    float2 at;
+    float speed;
+    VisibilityGroup group;
+}
+
+component Mover { float2 at; }
+
+input Controls { float2 move; }
+
+singleton Walkers { int next; }
+
+event Rang { int at; }
+
+scene Main { }
+
+void AddWalker(mut Walkers walkers)
+{
+    walkers.next += 1;
+    var group = Visibility.CreateGroup(Audience.None);
+    Spawn(Walker { id = walkers.next, at = float2(walkers.next * 4 - 20, walkers.next % 3), speed = 2 + walkers.next % 3, group = group },
+          Visibility { group = group });
+}
+
+event(Spawned) Setup(with Main, mut Walkers walkers)
+{
+    for (var i = 0; i < 8; i++) AddWalker(walkers);
+}
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Mover, Owner { player = joined.player });
+}
+
+system Move(Controls input, Time time, mut Mover mover, with Owner)
+{
+    mover.at += input.move * time.dt * 5;
+}
+
+system Walk(Time time, mut Walker walker)
+{
+    walker.at.x += walker.speed * time.dt;
+    if (walker.at.x > 20) walker.at.x -= 40;
+}
+
+// A walker the player is near is the player's to see; the others aren't on
+// the player's machine at all
+system Sight(query (Mover m, Owner o) movers, query (Walker w) walkers)
+{
+    foreach (var row in walkers)
+    {
+        mut List<PlayerID> seen = [];
+        foreach (var mover in movers)
+        {
+            if (Math.Distance(mover.m.at, row.w.at) <= 6) seen.Add(mover.o.player);
+        }
+        Visibility.Set(row.w.group, Audience.From(seen));
+    }
+}
+
+// Now and then the oldest walker goes and another comes
+system Retire(Time time, Walker walker, Walkers walkers)
+{
+    if (time.tick % 40 == 20 && walker.id == walkers.next - 7) this.Destroy();
+}
+
+system Hire(Time time, mut Walkers walkers)
+{
+    if (time.tick % 40 == 21) AddWalker(walkers);
+    if (time.tick % 30 == 0) Send(Rang { at = time.tick });
+}
+
+local singleton Heard
+{
+    int rang;
+    int sureRang;
+    int shown;
+    int sureShown;
+}
+
+local event(Rang rang) HearRang(mut Heard heard) { heard.rang += 1; }
+local event(verified Rang rang) SureRang(mut Heard heard) { heard.sureRang += 1; }
+local event(Shown) HearShown(with Walker, mut Heard heard) { heard.shown += 1; }
+local event(verified Shown) SureShown(with Walker, mut Heard heard) { heard.sureShown += 1; }
