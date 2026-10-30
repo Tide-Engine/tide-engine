@@ -1,4 +1,0 @@
-// expect: C takes a mesh as its two lists
-using Model = Mesh<Vertex3>;
-extern void Hull(Model mesh);
-scene Main;

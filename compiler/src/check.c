@@ -22,6 +22,7 @@ typedef struct checker {
     VEC(expr *) raw_uses;     // Raw Texture sources: sampled, inspected, stored in a Raw field or rejected (check_raw_uses).
     const expr *raw_value;    // The direct initializer/assignment of a statically [Raw] Texture field.
     const expr *texture_arg;  // Texture argument conversions whose Raw permission waits for GPU call propagation.
+    bool raw_mesh; // Resolving an imported mesh payload rather than its stable value handle.
     bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
@@ -1474,6 +1475,29 @@ static type mesh_of(program *prog, const type vertex)
     return (type){TY_MESH, d};
 }
 
+static type asset_reference_of(const checker *c, const type mesh, const loc at)
+{
+    for (int i = 0; i < c->prog->asset_refs.count; i++) {
+        decl *d = c->prog->asset_refs.items[i];
+        if (d->asset_ref_of == mesh.decl) return (type){TY_STRUCT, d};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_STRUCT;
+    d->builtin = true;
+    d->at = at;
+    d->asset_ref_of = mesh.decl;
+    sb name_text = {0};
+    sb_printf(&name_text, "Asset<%s>", type_name(mesh));
+    d->name = (str){name_text.data, (int)name_text.len};
+    field id = {0};
+    id.name = str_from("id");
+    id.type = (type){TY_LONG, NULL};
+    id.hidden = true;
+    vec_push(d->fields, id);
+    vec_push(c->prog->asset_refs, d);
+    return (type){TY_STRUCT, d};
+}
+
 // Whether a value of type `t` is a Mesh, or holds one: a list or a map of
 // them, an entry of such a map, a T? of one. It's the pack's own memory by
 // two handles, which a frame reads and passes on, and nothing keeps: a pack
@@ -1486,6 +1510,18 @@ static bool holds_mesh(const type t)
         const type f = t.decl->fields.items[i].type;
         if (f.kind == TY_MESH || ((f.kind == TY_LIST || f.kind == TY_MAP) && holds_mesh(f))) return true;
     }
+    return false;
+}
+
+// Mesh values are stable references; collections containing them remain CPU values.
+static bool holds_mesh_reference(const type t, const int depth)
+{
+    if (depth > 128) return false;
+    if (t.kind == TY_STRUCT && t.decl->asset_ref_of && t.decl->asset_ref_of->kind == DECL_MESH) return true;
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_ARRAY
+        && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+    for (int i = 0; i < t.decl->fields.count; i++)
+        if (holds_mesh_reference(t.decl->fields.items[i].type, depth + 1)) return true;
     return false;
 }
 
@@ -2019,7 +2055,9 @@ static type resolve_arg(const checker *c, const type_ref *arg, const generic_for
 {
     static const type_place places[] = {ARG_ELEMENT, ARG_KEY, ARG_CELL};
     const generic_arg kind = form->args[i];
-    const type t = resolve_type(c, arg, places[kind], at);
+    checker scoped = *c;
+    scoped.raw_mesh = asset && kind == GENERIC_ELEMENT;
+    const type t = resolve_type(&scoped, arg, places[kind], at);
     switch (kind) {
     case GENERIC_ELEMENT: return element_ok(t, at, key, asset || (borrow && (!key || key->kind == TY_STRING)
                                            && (t.kind == TY_CLIP || t.kind == TY_TEXTURE || t.kind == TY_MESH))) ? t : T_ERR;
@@ -2085,15 +2123,8 @@ static type resolve_mesh(const checker *c, const type_ref *r, const type_place p
         diag_error(at, "a Mesh's vertices are a struct with a 'float3 position', like 'Mesh<Vertex3>', not %s", type_name(vertex));
         return T_ERR;
     }
-    if (place == PLACE_FIELD || place == PLACE_CONST || place == PLACE_IS) {
-        diag_error(at, "%s can't be a Mesh: one is an asset's, the pack's own, which code reads by the asset's name and nothing keeps",
-                   place == PLACE_FIELD ? "a field" : place == PLACE_CONST ? "a constant" : "a pattern");
-        diag_note("declare it as an asset, 'asset Mesh<" STR_FMT "> tree = \"art/tree.glb\";'; to say which of several a thing has, "
-                  "keep its place in an 'asset List<Mesh<" STR_FMT ">>', or its key in an 'asset Map<string, Mesh<" STR_FMT ">>'",
-                  STR_ARG(vertex.decl->name), STR_ARG(vertex.decl->name), STR_ARG(vertex.decl->name));
-        return T_ERR;
-    }
-    return mesh_of(c->prog, vertex);
+    const type mesh = mesh_of(c->prog, vertex);
+    return place == PLACE_ASSET || c->raw_mesh ? mesh : asset_reference_of(c, mesh, at);
 }
 
 // The type `r` names, written at `place`, with errors at `at` (where the
@@ -2246,25 +2277,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
             diag_error(at, "Asset references a Mesh<V> or SkinnedMesh<V>, not %s", type_name(mesh));
             return T_ERR;
         }
-        for (int i = 0; i < c->prog->asset_refs.count; i++) {
-            decl *d = c->prog->asset_refs.items[i];
-            if (d->asset_ref_of == mesh.decl) return (type){TY_STRUCT, d};
-        }
-        decl *d = NEW(decl);
-        d->kind = DECL_STRUCT;
-        d->builtin = true;
-        d->at = at;
-        d->asset_ref_of = mesh.decl;
-        sb name_text = {0};
-        sb_printf(&name_text, "Asset<%s>", type_name(mesh));
-        d->name = (str){name_text.data, (int)name_text.len};
-        field id = {0};
-        id.name = str_from("id");
-        id.type = (type){TY_LONG, NULL};
-        id.hidden = true;
-        vec_push(d->fields, id);
-        vec_push(c->prog->asset_refs, d);
-        return (type){TY_STRUCT, d};
+        return asset_reference_of(c, mesh, at);
     }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
@@ -2682,7 +2695,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
     }
     const type t = checked ? e->type : check_expr_any(c, e);
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && e->bind == BIND_ASSET
-        && type_asset_reference_accepts(inner.decl, t)) {
+        && type_asset_reference_accepts(inner.decl, e->constant->return_type)) {
         e->asset_reference = true;
         return e->type = inner;
     }
@@ -5107,7 +5120,7 @@ static bool arg_fits(const expr *arg, const param *p)
     if (t.kind == TY_ERROR || p->type.kind == TY_ERROR) return true;
     if (p->mode == PARAM_MUT) return same_type(p->type, t); // The variable itself
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && arg->bind == BIND_ASSET
-        && type_asset_reference_accepts(inner.decl, t)) return true;
+        && type_asset_reference_accepts(inner.decl, arg->constant->return_type)) return true;
     if (type_assignable(p->type, t)) return true;
     int64_t value; // As in C#, an int constant fits a byte
     return inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(arg, &value) && value >= 0 && value <= 255;
@@ -6786,7 +6799,8 @@ static type check_mesh_draw(checker *c, expr *e)
                                        : "%s takes a skinned mesh and its float4x4 transform first; a Pose is optional", draw_name);
             return T_ERR;
         }
-        if (whole.kind == TY_MESH || skinned) {
+        if (whole.kind == TY_MESH || (whole.kind == TY_STRUCT && whole.decl->asset_ref_of
+                && whole.decl->asset_ref_of->kind == DECL_MESH) || skinned) {
             const int had = e->args.count;
             expr **given = e->args.items;
             e->written.items = given;
@@ -6800,7 +6814,7 @@ static type check_mesh_draw(checker *c, expr *e)
                 of->at = mesh->at;
                 of->object = mesh;
                 of->member = str_from(part == 1 ? "vertices" : "indices");
-                of->type = part == 1 ? list_of(prog, skinned ? whole.decl->skin_vertex : mesh_vertex(whole)) : list_of(prog, T_INT_);
+                of->type = part == 1 ? list_of(prog, skinned ? whole.decl->skin_vertex : mesh_vertex(whole.kind == TY_MESH ? whole : (type){TY_MESH, whole.decl->asset_ref_of})) : list_of(prog, T_INT_);
                 if (skinned) of->field = (field *)field_called(whole.decl, part == 1 ? "vertices" : "indices");
                 of->mesh_part = part;
                 vec_push(e->args, of);
@@ -9308,7 +9322,18 @@ static type check_member(checker *c, expr *e)
     if (skin_handled) return skin_result;
     if (obj.kind == TY_STRUCT && obj.decl->asset_ref_of) {
         if (gpu_code(c)) {
-            diag_error(e->at, "resolve an Asset's Value in CPU code before passing mesh data to a shader");
+            diag_error(e->at, "mesh geometry is read in CPU code; pass its vertices and indices to the draw");
+            return T_ERR;
+        }
+        if (obj.decl->asset_ref_of->kind == DECL_MESH) {
+            if (str_eq_c(e->member, "Value")) { e->asset_ref_value = true; return obj; }
+            if (str_eq_c(e->member, "vertices") || str_eq_c(e->member, "indices")) {
+                e->mesh_part = str_eq_c(e->member, "vertices") ? 1 : 2;
+                return list_of(c->prog, e->mesh_part == 1 ? obj.decl->asset_ref_of->fields.items[0].type : T_INT_);
+            }
+        }
+        if (!str_eq_c(e->member, "Value") && obj.decl->asset_ref_of->kind == DECL_MESH) {
+            diag_error(e->at, "a Mesh has 'vertices', 'indices' and 'Value', not '" STR_FMT "'", STR_ARG(e->member));
             return T_ERR;
         }
         if (!str_eq_c(e->member, "Value")) {
@@ -11268,10 +11293,12 @@ static type check_expr_any_raw(checker *c, expr *e)
         c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
         c->method->makes_text_at = e->at;
     }
+    if (holds_mesh_reference(t, 0) && (holds_heap(t) || t.kind == TY_ARRAY) && reading_code(c))
+        reading_code(c)->borrows_asset_collections = true;
     if ((holds_render_resource(t) || holds_callable(t)) && !gpu_code(c)) {
         decl *code = reading_code(c);
         if (code) {
-            if (holds_render_resource(t) && (holds_heap(t) || t.kind == TY_ARRAY))
+            if ((holds_render_resource(t) || holds_mesh_reference(t, 0)) && (holds_heap(t) || t.kind == TY_ARRAY))
                 code->borrows_asset_collections = true;
             if (!code->render_resources) code->render_resources_at = e->at;
             code->render_resources = true;
@@ -11453,7 +11480,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             return false;
         }
         // mesh.vertices and mesh.indices, whatever holds the Mesh: a local's too, which only names the pack's
-        if (part->kind == E_MEMBER && part->object->type.kind == TY_MESH) {
+        if (part->kind == E_MEMBER && (part->object->type.kind == TY_MESH || (part->object->type.kind == TY_STRUCT
+            && part->object->type.decl->asset_ref_of && part->object->type.decl->asset_ref_of->kind == DECL_MESH))) {
             diag_error(target->at, "a Mesh's vertices and indices are read-only: they're the file it names, as the game was built");
             diag_note("copy them into a list of your own to change them, like 'mut var mine = mesh.vertices;'");
             return false;
@@ -14004,7 +14032,13 @@ static type use_asset(checker *c, expr *e, decl *k)
         return T_ERR;
     }
     if (k->sample_raw && k->return_type.kind == TY_TEXTURE && builds(c->prog)) vec_push(c->raw_uses, e);
-    return k->return_type;
+    type t = k->return_type;
+    if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at);
+    if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_MESH)
+        return list_of(c->prog, asset_reference_of(c, t.decl->fields.items[0].type, e->at));
+    if (t.kind == TY_MAP && t.decl->fields.items[1].type.kind == TY_MESH)
+        return map_of(c->prog, t.decl->fields.items[0].type, asset_reference_of(c, t.decl->fields.items[1].type, e->at), false);
+    return t;
 }
 
 // ---------------------------------------------------------------------------
@@ -15361,7 +15395,8 @@ static void check_signature(checker *c, decl *m)
                                                         : "a task can't return a Mesh: it's the pack's own memory, which is read within a frame");
         m->return_type = T_ERR;
     }
-    if (holds_render_resource(m->return_type) && (holds_heap(m->return_type) || m->return_type.kind == TY_ARRAY))
+    if ((holds_render_resource(m->return_type) || holds_mesh_reference(m->return_type, 0))
+        && (holds_heap(m->return_type) || m->return_type.kind == TY_ARRAY))
         m->borrows_asset_collections = true;
     if (holds_render_resource(m->return_type) || holds_callable(m->return_type)) {
         m->render_resources = true;
@@ -15433,7 +15468,7 @@ static void check_signature(checker *c, decl *m)
                 m->gpu_only_reads = TY_GRID;
             }
         }
-        if (holds_render_resource(p->type) && (holds_heap(p->type) || p->type.kind == TY_ARRAY))
+        if ((holds_render_resource(p->type) || holds_mesh_reference(p->type, 0)) && (holds_heap(p->type) || p->type.kind == TY_ARRAY))
             m->borrows_asset_collections = true;
         if (holds_render_resource(p->type) || holds_callable(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;

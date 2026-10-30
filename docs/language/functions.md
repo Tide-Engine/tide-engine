@@ -147,7 +147,7 @@ Clip Pick(List<Clip> clips, int index)
 view HitSound() { Audio.Play(Pick(hits, 0)); }
 ```
 
-Mesh asset collections (`List<Mesh<V>>` and `Map<string, Mesh<V>>`) remain borrowed by synchronous CPU helpers: pass an asset directly or forward a borrowed parameter. Count, indexing, `foreach` and read-only methods work without copying geometry. A mesh collection borrow cannot be stored, returned, optional, mutated, defaulted or retained by async code. Externs, operators, audio declarations and GPU code take no such borrow.
+Mesh collections (`List<Mesh<V>>`, `Mesh<V>[N]`, and map values) contain stable IDs and use the same parameter, return, mutation and task-storage rules as ordinary values. A read-only call can borrow the collection storage; copying it copies IDs or shares immutable ID storage until a write. Geometry is resolved from the current pack only when read.
 
 Large read-only values can use borrowed storage in generated CPU helpers when the compiler proves it safe, avoiding repeated stack copies. They retain value semantics: overlapping mutable arguments, later argument effects and C calls still preserve the captured value. This needs no annotation or reference syntax.
 

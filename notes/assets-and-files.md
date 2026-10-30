@@ -1,5 +1,20 @@
 # Assets and local files
 
+## Static mesh IDs in ordinary collections (2026-10-30)
+
+Ordinary Mesh<V> values now use the existing Asset<Mesh<V>> checked ID type.
+Lists/arrays/maps own or share only ID storage; geometry is borrowed from the
+current pack when read. Static Value preserves the handle. Raw imported geometry
+and runtime pack/mesh APIs are unchanged. Private ID metadata accompanies static
+glob imports, keyed by declaration plus authored file key. Generated load caches
+bind actual geometry rows by ID, preserving retained selections across row-order
+changes. Unknown IDs resolve empty. Server pruning retains matching collections.
+Detailed compiler/storage contracts and validation: language.md, Static mesh
+values keep stable IDs. mesh_values covers snapshots, packing, async retention,
+unknown IDs and reordered replacement packs on Windows ASan and WASI; import,
+LOD, weighted-mesh and typed-reference regressions pass too.
+
+
 ## Humanoid pose retargeting (2026-10-30)
 
 The owner approved a standalone runtime path, without a tide-motion dependency:

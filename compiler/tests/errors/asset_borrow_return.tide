@@ -1,3 +1,0 @@
-// expect: functions can't return a borrowed asset collection
-List<Mesh<Vertex3>> Keep(List<Mesh<Vertex3>> values) { return values; }
-scene Main { }

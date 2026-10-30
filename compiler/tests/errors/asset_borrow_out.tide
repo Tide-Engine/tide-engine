@@ -1,3 +1,0 @@
-// expect: a borrowed asset collection is read-only
-void Keep(out List<Mesh<Vertex3>> values) { values = []; }
-scene Main { }

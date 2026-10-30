@@ -1,3 +1,0 @@
-// expect: asset collections are borrowed by ordinary synchronous Tide functions and methods
-extern void Keep(List<Mesh<Vertex3>> values);
-scene Main { }

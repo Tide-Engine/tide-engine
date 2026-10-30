@@ -1,6 +1,0 @@
-// expect: takes Asset<Mesh<Vertex3>>
-using Model = Mesh<Vertex3>;
-using Reference = Asset<Model>;
-void Keep(Reference value) { Debug.Assert(value.Value.indices.count == 0); }
-void Copy(Model mesh) { Keep(mesh); }
-scene Main;

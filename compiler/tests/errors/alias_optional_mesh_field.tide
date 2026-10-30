@@ -1,4 +1,0 @@
-// expect: a field can't be a Mesh
-using OptionalModel = Mesh<Vertex3>?;
-component Holder { OptionalModel value; }
-scene Main;

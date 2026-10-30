@@ -274,7 +274,7 @@ local singleton Mixer
 }
 ```
 
-Playing `Sound` elements are collected automatically each frame. Their voices follow list/array positions; map voices follow insertion order. Rendering references inside collections are rebound on reload as ordinary resource fields are. Grids, ECS declarations and borrowed contexts still cannot be collection elements; mesh asset collections keep their borrowed lifetime.
+Playing `Sound` elements are collected automatically each frame. Their voices follow list/array positions; map voices follow insertion order. Rendering references inside collections are rebound on reload as ordinary resource fields are. Grids, ECS declarations and borrowed contexts still cannot be collection elements; mesh values store stable asset IDs, so mesh collections can persist without copying geometry.
 
 ## Changing an element where it is
 
