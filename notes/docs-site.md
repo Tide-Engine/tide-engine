@@ -1,5 +1,14 @@
 # The docs site
 
+## Newton removal (2026-10-31)
+
+Owner retired the slow experimental Newton package. Its public page and
+sidebar entry are removed, along with references in the package overview,
+usage guide, README and sharding spec. Eight bundled packages remain, including
+two physics integrations (Box2D and Box3D). No redirect or alternate Newton
+integration is introduced. Removal/build validation is in notes/newton.md.
+
+
 ## Unity version selection (2026-10-31)
 
 The CLI's Unity guide and package README document Window > Tide > Versions,

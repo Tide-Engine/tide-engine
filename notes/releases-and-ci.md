@@ -1,5 +1,18 @@
 # Releases, installing and CI
 
+## Run 41206262777 and Newton removal (2026-10-31)
+
+At 347df3e6f, Linux sanitizer's only failed test is tide_platform_migrate.
+UBSan reports a misaligned Unit_local store in generated layout defaults,
+called from platform/src/migrate.c's carry_value and tide_migrate_world in
+migrate_carries_local_fields_by_name. This precedes the Unity version-window
+commit. The other platform/package jobs pass; aggregate gates fail/cancel,
+and Release is skipped. Newton's rollback case passes in 216.41 seconds.
+The owner redirected the task to removing Newton for performance; this removal
+does not fix migration alignment. No old run was retried or new run dispatched.
+Removal details and local validation are in newton.md.
+
+
 ## Exact release proof for Unity version selection (2026-10-31)
 
 The existing /releases/for/<commit> answer retains its nearest ancestor release

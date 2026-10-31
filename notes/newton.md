@@ -1,5 +1,35 @@
 # The Newton package
 
+## Removed (2026-10-31)
+
+Owner requested removing Newton because it is too slow. The package, vendored
+Newton/Warp kernels and headers, import/export tools, policy/model data, tests,
+and both dependent robotics examples (arm and MicroDuck) are removed. Their
+CMake targets and test registration are removed, so native, web and packaged
+source builds no longer compile or ship Newton. The public package page,
+navigation, overview, README, guide and spec references are removed too.
+Box2D and Box3D retain their existing implementations and behavior.
+
+Everything below is historical; source and provenance remain in Git history.
+Old measurements and validation records elsewhere in notes/ stay historical.
+
+The preceding CI investigation found run 41206262777 at 347df3e6f failed only
+Linux sanitizer tide_platform_migrate: UBSan reports a misaligned Unit_local
+write in generated defaults, reached from carry_value / tide_migrate_world.
+Newton's rollback test passed in 216.41 seconds; removing Newton does not fix
+that separate migration bug. The owner's removal request replaces work on the
+failed run; no migration runtime change or rerun of that old workflow is made.
+
+Local validation with Clang 23.1.2 / Node 24.22.1: full Windows sanitizer build
+and 2,877/2,877 CTests pass, including 61 GPU and 29 safety tests. Full web-debug
+build and 2,765/2,765 CTests pass, including WebGL, D3D11 and WebGPU. Native/web
+CTest inventories and compile manifests contain no Newton or MicroDuck entries.
+A fresh cmake --install --component tide staging contains exactly the eight
+remaining package directories, no newton. Docs production build passes with
+the existing unstaged-example 404s, and the removed page is absent from output.
+Linux UBSan, macOS, MinGW and Android remain normal CI coverage.
+
+
 ## Layouts with 64-bit handles (2026-10-30)
 
 Lists and maps in `newton.tide`'s `Physics` are 8 and 32 bytes (notes/ecs.md,
