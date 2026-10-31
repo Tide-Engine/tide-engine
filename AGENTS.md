@@ -184,7 +184,6 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `packages/render3d/`, default PBR, light components, shadows and HDR presentation | `notes/render3d.md` |
 | `packages/cornerculling/`, conservative CPU box occlusion and candidate caches | `notes/corner-culling.md` |
 | `packages/box3d/`, resident state | `notes/box3d.md` |
-| `packages/newton/`, experimental NVIDIA Newton articulated CPU physics | `notes/newton.md` |
 | `packages/rooms/` | `notes/rooms-package.md` |
 | `packages/lobby/`, the client of the relay's lobbies and its menu | `notes/lobby-package.md` |
 | `tide/network.h`, a game's own match network, `examples/network/`, `packages/test/network_players.h` | `notes/own-network.md` |

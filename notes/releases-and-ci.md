@@ -1,5 +1,31 @@
 # Releases, installing and CI
 
+## Migration alignment fix for run 41206262777 (2026-10-31)
+
+Following the Newton removal, the owner requested fixing the independent
+Linux sanitizer failure too. Packed attached local-field rows were handed
+directly to typed generated defaults despite their arbitrary alignment.
+Migration now defaults/carries them in its existing aligned temporary and
+copies the bytes to the writer. A regression fails on the previous runtime
+without needing UBSan, then passes with the fix; all 14 migration cases pass
+on Windows ASan and WASI, plus native embed 17/17 and travel 10/10.
+hot-reload.md records the contract and local coverage. Linux UBSan remains
+the next normal push-triggered CI check; no manual rerun or dispatch is made.
+
+
+## Run 41206262777 and Newton removal (2026-10-31)
+
+At 347df3e6f, Linux sanitizer's only failed test is tide_platform_migrate.
+UBSan reports a misaligned Unit_local store in generated layout defaults,
+called from platform/src/migrate.c's carry_value and tide_migrate_world in
+migrate_carries_local_fields_by_name. This precedes the Unity version-window
+commit. The other platform/package jobs pass; aggregate gates fail/cancel,
+and Release is skipped. Newton's rollback case passes in 216.41 seconds.
+The owner redirected the task to removing Newton for performance; this removal
+does not fix migration alignment. No old run was retried or new run dispatched.
+Removal details and local validation are in newton.md.
+
+
 ## Exact release proof for Unity version selection (2026-10-31)
 
 The existing /releases/for/<commit> answer retains its nearest ancestor release
