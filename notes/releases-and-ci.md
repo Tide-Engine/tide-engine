@@ -1,5 +1,18 @@
 # Releases, installing and CI
 
+## Migration alignment fix for run 41206262777 (2026-10-31)
+
+Following the Newton removal, the owner requested fixing the independent
+Linux sanitizer failure too. Packed attached local-field rows were handed
+directly to typed generated defaults despite their arbitrary alignment.
+Migration now defaults/carries them in its existing aligned temporary and
+copies the bytes to the writer. A regression fails on the previous runtime
+without needing UBSan, then passes with the fix; all 14 migration cases pass
+on Windows ASan and WASI, plus native embed 17/17 and travel 10/10.
+hot-reload.md records the contract and local coverage. Linux UBSan remains
+the next normal push-triggered CI check; no manual rerun or dispatch is made.
+
+
 ## Run 41206262777 and Newton removal (2026-10-31)
 
 At 347df3e6f, Linux sanitizer's only failed test is tide_platform_migrate.

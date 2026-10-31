@@ -14,6 +14,72 @@ extern const tide_layout tide_game_layout;
 
 #define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f)}
 
+typedef struct aligned_local {
+    int64_t kept, added;
+} aligned_local;
+
+static void aligned_local_defaults(void *value)
+{
+    // Fail portably before a typed store: Windows ASan does not check alignment.
+    TIDE_REQUIRE((uintptr_t)value % _Alignof(aligned_local) == 0);
+    *(aligned_local *)value = (aligned_local){.added = 99};
+}
+
+TIDE_TEST(migrate_local_defaults_are_aligned_at_every_packed_offset)
+{
+    const tide_layout_field fields[] = {
+        FIELD(aligned_local, kept, "long", TIDE_LAYOUT_LONG, 1, -1),
+        FIELD(aligned_local, added, "long", TIDE_LAYOUT_LONG, 1, -1),
+    };
+    const tide_layout_type old_type = {"Unit local", sizeof(int64_t), false, 1, fields, NULL};
+    const tide_layout_type new_type = {"Unit local", sizeof(aligned_local), false, 2, fields, aligned_local_defaults};
+    const tide_layout_place attached = {0, 0, false};
+    tide_layout before = {.type_count = 1, .types = &old_type,
+        .local = {.input = -1, .attached_count = 1, .attached = &attached}};
+    tide_layout after = {.type_count = 1, .types = &new_type, .local = before.local};
+    const tide_entity entities[] = {{3, 1}, {7, 5}, {9, 3}};
+    const int64_t values[] = {INT64_C(0x1122334455667788), -7, 42};
+    const uint32_t born[] = {15, 27, 39};
+    for (uint32_t prefix = 1; prefix <= _Alignof(aligned_local); prefix++) {
+        before.local.size = after.local.size = prefix;
+        for (uint32_t count = 1; count <= 3; count++) {
+            uint8_t packed[256] = {0};
+            tide_writer writer = {packed, sizeof packed, prefix, false, false};
+            tide_entities empty = {0};
+            tide_entities_pack(&empty, &writer);
+            tide_write_u32(&writer, 0); // No queued changes
+            tide_write_u32(&writer, count);
+            tide_write_bytes(&writer, entities, count * sizeof *entities);
+            tide_write_bytes(&writer, values, count * sizeof *values);
+            tide_write_bytes(&writer, born, count * sizeof *born);
+            TIDE_REQUIRE(!writer.overflow);
+            void *bytes = NULL;
+            uint32_t size = 0;
+            tide_migration migration;
+            TIDE_REQUIRE(tide_migrate_world(&before, &before.local, packed, writer.size,
+                &after, &after.local, &bytes, &size, &migration));
+            tide_reader reader = {bytes, size, prefix, false};
+            TIDE_REQUIRE(tide_entities_unpack(&empty, &reader));
+            TIDE_CHECK(tide_read_u32(&reader) == 0);
+            TIDE_CHECK(tide_read_u32(&reader) == count);
+            const void *ids = tide_read_bytes(&reader, count * sizeof *entities);
+            TIDE_REQUIRE(ids != NULL);
+            TIDE_CHECK(memcmp(ids, entities, count * sizeof *entities) == 0);
+            for (uint32_t row = 0; row < count; row++) {
+                aligned_local value;
+                const void *at = tide_read_bytes(&reader, sizeof value);
+                TIDE_REQUIRE(at != NULL);
+                memcpy(&value, at, sizeof value);
+                TIDE_CHECK(value.kept == values[row] && value.added == 99);
+            }
+            for (uint32_t row = 0; row < count; row++) TIDE_CHECK(tide_read_u32(&reader) == born[row]);
+            TIDE_CHECK(!reader.failed && reader.at == size);
+            tide_entities_free(&empty);
+            free(bytes);
+        }
+    }
+}
+
 typedef struct byte_before {
     uint8_t a, b, c, keep;
     int32_t narrow;

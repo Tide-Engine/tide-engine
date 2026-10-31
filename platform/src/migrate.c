@@ -636,10 +636,13 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         const int32_t new_type = tw->attached[k].type;
         const int32_t old_type = fw->attached[t].type;
         const uint32_t old_size = from_layout->types[old_type].size;
+        const uint32_t new_size = to_layout->types[new_type].size;
         tide_write_bytes(&w, old.attached_rows[t], count * (uint32_t)sizeof(tide_entity));
         const uint8_t *values = old.attached_rows[t] + (size_t)count * sizeof(tide_entity);
         for (uint32_t row = 0; row < count; row++) {
-            carry_value(&c, new_type, old_type, take(&w, to_layout->types[new_type].size), values + (size_t)row * old_size);
+            // Packed rows need not be aligned for the typed defaults callback.
+            carry_value(&c, new_type, old_type, new_value, values + (size_t)row * old_size);
+            tide_write_bytes(&w, new_value, new_size);
         }
         tide_write_bytes(&w, values + (size_t)count * old_size, count * (uint32_t)sizeof(uint32_t));
     }
