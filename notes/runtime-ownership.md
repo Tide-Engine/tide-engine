@@ -1,5 +1,21 @@
 # Runtime written by Claude for now
 
+## All of a pose's model matrices (2026-10-31)
+
+Owner-approved ("OK" to the proposed `pose.Models()`): generated code calls
+the new `tide_skinned_models(data, transforms, where)` (`tide/skinned.h`,
+`engine/src/skinned.c`) through the adapter `tide_skin_pose_models`, which
+returns an empty list for a pose whose count isn't the model's. It reuses the
+palette's `global_matrices` (parents before children, `tide_mul_f4x4(parent,
+local)`), the order `chain_model` multiplies in, so every element is the bits
+`tide_skinned_model` gives that node; the packed-model fast path and the
+opened-model path mirror `tide_skinned_model`'s. The result list is made in
+`where` before the scratch mark the pass resets. Tests:
+`skinned_models_are_each_nodes_model_matrix` (tests/test_retarget.c, owned
+bytes, edited scale/rotation, wrong count, no model) and
+`tidec_e2e_baked_poses` (packed models, five poses, by bits). Used by
+`BakedPoses.Add`/`Of`: 3,000 rows of the 64-deep benchmark chain 134 -> 19 ms.
+
 ## Asset LOD multiplier metadata (2026-10-31)
 
 Under the drawing/pack maintenance exceptions, the approved `[LOD(multiplier)]`

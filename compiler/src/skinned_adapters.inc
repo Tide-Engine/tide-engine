@@ -165,13 +165,16 @@ static void gen_skinned_adapters(gen *g)
                  "        && bone.index < tide_list_count(v.transforms) && tide_list_count(v.transforms) == tide_skinned_bone_count(v.data);\n}\n"
                  "TIDE_HELPER tide_float4x4 tide_skin_pose_model(%s v, %s bone)\n{\n"
                  "    return tide_skin_pose_has(v, bone) ? tide_skinned_model(v.data, v.transforms, bone.index) : tide_identity_f4x4();\n}\n"
+                 "TIDE_HELPER tide_list tide_skin_pose_models(%s v)\n{\n"
+                 "    return tide_list_count(v.transforms) == tide_skinned_bone_count(v.data)\n"
+                 "        ? tide_skinned_models(v.data, v.transforms, TIDE_IN_SCRATCH) : (tide_list){0};\n}\n"
                  "TIDE_HELPER const tide_bone_transform *tide_skin_pose_ref(%s v, %s bone)\n{\n"
                  "    static const tide_bone_transform zero = {.rotation = {{0, 0, 0, 1}}, .scale = {1, 1, 1}};\n"
                  "    const tide_bone_transform *at = tide_skin_pose_has(v, bone) ? tide_list_at(v.transforms, bone.index, sizeof *at) : NULL;\n"
                  "    return at ? at : &zero;\n}\n"
                  "TIDE_HELPER tide_bone_transform *tide_skin_pose_slot(%s *v, %s bone)\n{\n"
                  "    return v && tide_skin_pose_has(*v, bone) ? tide_list_at_mut(v->transforms, bone.index, sizeof(tide_bone_transform)) : NULL;\n}\n\n",
-              pose, pose, pose, animation, pose, pose, animation, pose, pose, pose, bone, pose, bone, pose, bone, pose, bone);
+              pose, pose, pose, animation, pose, pose, animation, pose, pose, pose, bone, pose, bone, pose, pose, bone, pose, bone);
     if (p->humanoid_rig) {
         const char *rig = type_cname(p->humanoid_rig), *mapping = type_cname(p->retarget_map);
         sb_printf(o, "TIDE_HELPER %s tide_skin_humanoid_auto(%s reference)\n{\n"

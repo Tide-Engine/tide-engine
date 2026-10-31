@@ -104,9 +104,9 @@ modes alike):
 At 1,000 the baked draw is the unskinned one's 0.476 ms. Here the frame is
 bound by rasterizing thousands of small characters, so skinning is close to
 free; a mesh with many more vertices a character would show it again.
-Baking 3,000 rows of this 64-deep chain takes ~134 ms at load (`pose.Model`
-walks each bone's ancestors; a realistic rig of ~6 deep is several times
-less). Web performance wasn't measured: a debug browser run of 10,000 was too
+Baking 3,000 rows of this 64-deep chain took ~134 ms at load (`pose.Model`
+walked each bone's ancestors); with `pose.Models()`, one pass a row, 19 ms
+(three runs 18.97-19.15, the setup frame timed around the bake). Web performance wasn't measured: a debug browser run of 10,000 was too
 slow to finish.
 
 ## 64-bit handles, before and after (2026-10-30)

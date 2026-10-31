@@ -83,5 +83,9 @@ TIDE_TEST(baked_poses_rows_frames_and_fades)
     // A second jump in a fade's first half fades from what showed more: the first's start
     TIDE_CHECK(rows(seen->twice, 9, 9, 5, 6) && blend(seen->twice, 0, 0.2f, 0.15625f, 0));
     TIDE_CHECK(rows(seen->cut, 2, 3, 2, 3) && blend(seen->cut, 0, 0, 1, 0));
+    // pose.Models(): every bone of five poses (rest, sampled, edited, another model's) as Model gives it, bit for bit
+    TIDE_CHECK(seen->modelsChecked >= 3 * 4 + 4);
+    TIDE_CHECK(seen->modelsDiffer == 0);
+    TIDE_CHECK(seen->modelsOfNothing == 0);
     tide_world_free(&world);
 }

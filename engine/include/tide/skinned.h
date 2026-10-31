@@ -95,6 +95,10 @@ bool tide_skinned_blend(tide_list a, tide_list b, float weight,
 // complete palette of model-space skin matrices in the scratch area. Pose
 // counts must match the model's nodes. Nothing caches a mutable pose's values.
 tide_float4x4 tide_skinned_model(tide_list data, tide_list transforms, int32_t bone);
+// Every node's model matrix, by node, in one pass from the root: each the
+// bits tide_skinned_model gives for it. An empty list for a pose of another
+// count or a model that can't be read. The list is made in `where`.
+tide_list tide_skinned_models(tide_list data, tide_list transforms, uint32_t where);
 tide_list tide_skinned_palette(tide_list data, tide_list transforms);
 
 // The GPU's two read-only textures of integer words: palette matrices, then

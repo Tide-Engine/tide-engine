@@ -770,3 +770,32 @@ TIDE_TEST(retarget_non_uniform_scale_where_no_role_needs_it)
     }
     tide_scratch_reset(mark);
 }
+
+// tide_skinned_models: every node's model matrix in one pass, the bits tide_skinned_model gives each, for a model
+// held as owned bytes (the packed path is tidec_e2e_baked_poses'), with edits; empty for a pose of another count.
+TIDE_TEST(skinned_models_are_each_nodes_model_matrix)
+{
+    const uint64_t mark = tide_scratch_mark();
+    const test_rig rig = humanoid(true, 1.2f, 0.4f, true);
+    const tide_list data = model_of(&rig);
+    tide_list pose = reference_of(&rig);
+    for (int32_t i = 1; i < rig.count; i += 3) {
+        tide_bone_transform *t = transform_at(pose, i);
+        t->rotation = tide_euler_q(tide_f3(0.1f * (float)i, 0.05f * (float)i, -0.03f * (float)i));
+        if (i % 2) t->scale = tide_f3(1.1f, 0.9f, 1.0f);
+    }
+    const tide_list models = tide_skinned_models(data, pose, TIDE_IN_SCRATCH);
+    TIDE_REQUIRE(tide_list_count(models) == rig.count);
+    int differ = 0;
+    for (int32_t i = 0; i < rig.count; i++) {
+        const tide_float4x4 one = tide_skinned_model(data, pose, i);
+        const tide_float4x4 *all = tide_list_at(models, i, sizeof *all);
+        differ += !all || memcmp(all, &one, sizeof one) != 0;
+    }
+    TIDE_CHECK(differ == 0);
+    const tide_list fewer = tide_list_from(tide_list_at(pose, 0, sizeof(tide_bone_transform)), rig.count - 1,
+                                           sizeof(tide_bone_transform));
+    TIDE_CHECK(tide_list_count(tide_skinned_models(data, fewer, TIDE_IN_SCRATCH)) == 0);
+    TIDE_CHECK(tide_list_count(tide_skinned_models((tide_list){0}, pose, TIDE_IN_SCRATCH)) == 0);
+    tide_scratch_reset(mark);
+}
