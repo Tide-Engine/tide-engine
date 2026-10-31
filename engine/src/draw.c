@@ -2566,6 +2566,7 @@ void tide_draw_mesh_levels(tide_draw_list *d, const uint32_t mesh, const tide_me
     m->level_indices = grow(m->level_indices, 0, &m->level_index_capacity, levels->index_count, sizeof(uint32_t), 192u);
     memcpy(m->center, levels->center, sizeof m->center);
     m->radius = levels->radius >= 0.0f ? levels->radius : 0.0f;
+    m->lod_multiplier = levels->multiplier > 0.0f && levels->multiplier <= FLT_MAX ? levels->multiplier : 1.0f;
     float before = 0.0f;
     for (uint32_t level = 0; level < levels->count && level < TIDE_MESH_LEVELS; level++) {
         const uint32_t first = levels->first[level], count = levels->indices[level];
@@ -2712,7 +2713,8 @@ static inline uint32_t pick_level(const tide_draw_mesh_data *m, const lod_view *
     const float big = tide_sqrt_f(sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz));
     const float away = view->w[0] * cx + view->w[1] * cy + view->w[2] * cz + view->w[3] - m->radius * big * view->w_length;
     if (!(away > 0.0f)) return 0; // Around the camera, or behind it, or nowhere a number says
-    const float allowed = away / (big * view->scale);
+    // Widen only the asset multiplication: default assets retain the original float threshold.
+    const double allowed = (double)(away / (big * view->scale)) * (double)m->lod_multiplier;
     uint32_t level = 0;
     while (level < m->levels && m->level_error[level] <= allowed) level++;
     return level;

@@ -1,0 +1,3 @@
+// expect: a LOD multiplier must be a positive finite constant number
+[LOD(1.0 / 0.0)] asset Mesh<Vertex3> ball = "../e2e/assets/lod/ball.glb";
+scene Main { }

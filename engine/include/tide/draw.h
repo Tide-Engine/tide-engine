@@ -1243,6 +1243,7 @@ typedef struct tide_mesh {
 // (tide/pack.h); a mesh of C's is given them with tide_draw_mesh_levels.
 enum { TIDE_MESH_LEVELS = 7 }; // After the full mesh, at the most
 typedef struct tide_mesh_levels {
+    float multiplier; // Asset error tolerance multiplier; zero defaults to 1
     float center[3];
     float radius;
     uint32_t count;
@@ -1281,6 +1282,7 @@ typedef struct tide_draw_mesh_data {
     uint32_t levels;
     float center[3], radius;                   // A ball the mesh is in, in its own units
     float level_error[TIDE_MESH_LEVELS];       // How far each is off, never less than the one before
+    float lod_multiplier;                    // Asset tolerance multiplier, normalized to positive finite (default 1)
     uint32_t level_first[TIDE_MESH_LEVELS];    // Its triangles in `level_indices`...
     uint32_t level_count[TIDE_MESH_LEVELS];    // ...three indices each
     uint32_t level_mesh[TIDE_MESH_LEVELS];     // 1 + the place it last had, or 0

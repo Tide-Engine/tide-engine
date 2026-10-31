@@ -974,6 +974,7 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(last_sent(), "LOD has simpler versions of a mesh made") && has(last_sent(), "'Rock' isn't a mesh"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "[LOD]") && has(hover, "levels of detail made as the game is built") && has(hover, "Draw.LODCamera"));
+    TIDE_CHECK(has(hover, "[LOD(2)]") && has(hover, "positive finite constant multiplier"));
     open_document("[Lod] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
     // [BlendShapes], beside them: offered, explained, refused off an asset, suggested for a misspelling.

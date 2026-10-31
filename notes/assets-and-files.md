@@ -1,5 +1,32 @@
 # Assets and local files
 
+## Asset LOD tolerance multiplier (2026-10-31)
+
+The owner chose multiplication: `[LOD(2)]` with `SetLODPixels(4)` allows 8
+pixels of estimated error. `[LOD]`, `[LOD()]` and `[LOD(1)]` mean 1. The
+optional argument is a positive finite constant float/int expression (named
+constants and arithmetic included); invalid/extra arguments are errors. Lists,
+maps, static meshes, weighted Mesh layouts and SkinnedMesh use the same pack
+path. Draws through the original vertex/index lists retain the multiplier.
+
+The simplifier, cached chain keys, levels, errors and floors are unchanged.
+Nondefault multipliers enter the packed mesh's content hash after its chain
+hash, preventing shared geometry identities from hiding different selection
+rules. Default mesh identities and pack bytes stay unchanged. The levels
+block's formerly unused word 27 stores the float multiplier; zero means 1.
+Block size and pack version remain unchanged. `tide_pack_list_levels` rejects
+negative/nonfinite multipliers and returns a normalized positive value.
+The draw mesh keeps it and multiplies the allowed error; forced levels win.
+
+Validation: 84 drawing and 26 pack-related C tests pass on native Windows ASan
+and WASM, as does the expanded LOD e2e on both. They cover composition,
+fractions, all asset collection forms, skinned/instanced/list draws, unchanged
+chain errors, malformed metadata and zero/default metadata. Native compiler
+LOD maker and asset-file/variant suites, ten attribute diagnostic fixtures and
+the full language-server suite pass. Production docs build passes with the
+usual unstaged-example 404s. No GPU backend changed or GPU pixel tests run;
+other native platforms remain CI coverage.
+
 ## Exposed automatic LOD tolerance (2026-10-31)
 
 The pixel tolerance previously listed as missing below is now available as
@@ -1284,7 +1311,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 ## Levels of detail (agreed and built 2026-10-11)
 
 - `docs/spec.md`, Levels of detail, has the design: the owner decided opt-in with `[LOD]` on a mesh asset's declaration (opt-out was the first proposal; "that way no surprises for the user"), everything else automatic and made at build time with a cache, a pick for each instance of `Draw.Instanced`, skinned meshes included, and two overrides (a level by its number, and a camera for a target to pick through; "they probably want it to match the visuals the main camera rendered"). Every other rule there is a pick, Provisional. `docs/game/assets.md` (Levels of detail) is the users' page. What's built, and what code relies on:
-  - **The language** (`compiler/src/check.c`): `[LOD]` is read with the asset's other attributes, in the loop that reads `[Filter]`, and sets `decl.lod`; it takes nothing, goes once, and is an error on an asset that isn't `ASSET_MESH` or `ASSET_SKINNED`, and on any declaration that's no asset (in the declarations' attribute loop, which also suggests it for `[Lod]`). `Draw.LOD`, `Draw.SetLOD`, `Draw.LODCamera` and `Draw.SetLODCamera` are `add_setting` signatures in `builtins.c`, so both forms, each one's misuse and quick fix, a target's own and the editors' completion and hover are the family's code. The forms with no arguments are settings of no parameters, as `Screen` is, whose block form is `tide_draw_push_no_lod` or `tide_draw_push_no_lod_camera`.
+  - **The language** (`compiler/src/check.c`): `[LOD]` is read with the asset's other attributes, in the loop that reads `[Filter]`, and sets `decl.lod`; it originally took nothing and now accepts an optional multiplier (2026-10-31, above), goes once, and is an error on an asset that isn't `ASSET_MESH` or `ASSET_SKINNED`, and on any declaration that's no asset (in the declarations' attribute loop, which also suggests it for `[Lod]`). `Draw.LOD`, `Draw.SetLOD`, `Draw.LODCamera` and `Draw.SetLODCamera` are `add_setting` signatures in `builtins.c`, so both forms, each one's misuse and quick fix, a target's own and the editors' completion and hover are the family's code. The forms with no arguments are settings of no parameters, as `Screen` is, whose block form is `tide_draw_push_no_lod` or `tide_draw_push_no_lod_camera`.
   - **Nothing in generated draw code changed.** A level is found by the mesh's indices' list (below), so `Draw.Mesh(rock, ...)`, `Draw.Mesh(rock.vertices, rock.indices, ...)`, a list's element and a map's value are all the same calls they were. A game with no `[LOD]` and none of the settings generates the C it did.
   - **Making the levels** (`compiler/src/mesh_lod.c`, `mesh_lod.h`; tidec's alone, nothing of it is in the engine or a game): edges collapsed onto one of their ends, the cheapest first from a heap, by quadrics. Vertices are numbered by their position's bits (`place`), and again by position with uvs and colors (`chart`): topology and the planes are a position's, so a mesh whose every triangle has corners of its own is still a surface, and a seam is a position with two charts. A collapse is refused where the edge isn't a side of one triangle (for a position on an open edge) or of two (inside), where another position is next to both ends (the surface would fold), where a vertex's chart has nothing beside it along the edge (a seam would tear) and where a triangle that stays would turn more than `TURN_LEAST` or go flat. A position gathers its triangles' planes by area, and ten times an open edge's own plane; a vertex gathers what its values (uv, uv2 and color times their weights, then the normal times its) do over its triangles, as a slope and where from, Hoppe's way. What a collapse costs is both ends' planes at the end it goes to, over their weight, plus what the moved vertices' values were against the ones they take, summed over the area they held them on (not averaged: see the crowd's two gaps below), plus, for a skinned mesh, the edge's length times how differently the two follow their bones (`mesh_lod_source.apart`). A level's error is the square root of the dearest collapse so far, times the mesh's extent. Corners at a position are a linked list through their triangles' corners, so a collapse splices two lists; a position with more than `FAN_MOST` (96) corners stays.
     - **Everything is `+ - * /` and `sqrt` on doubles in a fixed order**, with `#pragma STDC FP_CONTRACT OFF`, and ties in the heap go by the positions' numbers, so a file gives the same levels wherever it's built. Nothing reads a level but a draw, so this is for packs that are the same bytes, not for the match.

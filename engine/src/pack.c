@@ -276,7 +276,7 @@ static uint64_t versioned_list(tide_pack_builder *b, const void *elements, const
 }
 
 // A mesh's levels of detail as a block: the ball, how many levels, how many indices, each level's error, first
-// index and count, a word of nothing, then the indices (LEVELS_HEAD bytes before them, in pack_load.c too).
+// index and count, the asset tolerance multiplier, then the indices (LEVELS_HEAD bytes before them, in pack_load.c too).
 static uint64_t levels_block(tide_pack_builder *b, const tide_mesh_levels *levels)
 {
     uint32_t words[28] = {0};
@@ -284,6 +284,8 @@ static uint64_t levels_block(tide_pack_builder *b, const tide_mesh_levels *level
     memcpy(&words[3], &levels->radius, sizeof levels->radius);
     words[4] = levels->count;
     words[5] = levels->index_count;
+    // Zero in existing/default metadata means 1; keep default packs byte-identical.
+    if (levels->multiplier != 1.0f) memcpy(&words[27], &levels->multiplier, sizeof(float));
     for (uint32_t i = 0; i < levels->count; i++) {
         memcpy(&words[6u + i * 3u], &levels->error[i], sizeof(float));
         words[7u + i * 3u] = levels->first[i];

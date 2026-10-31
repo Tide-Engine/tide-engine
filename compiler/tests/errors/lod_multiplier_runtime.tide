@@ -1,0 +1,4 @@
+// expect: a LOD multiplier must be a positive finite constant number
+float Multiplier() { return 2; }
+[LOD(Multiplier())] asset Mesh<Vertex3> ball = "../e2e/assets/lod/ball.glb";
+scene Main { }

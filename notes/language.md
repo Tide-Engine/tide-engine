@@ -1,5 +1,19 @@
 # Language features, as tidec builds them
 
+## LOD attribute multiplier (2026-10-31)
+
+The owner approved `[LOD(multiplier)]` multiplying the destination's pixel
+tolerance. Parser attribute values retain ordinary expressions; the checker
+requires an optional positive finite constant float/int using existing
+constant checking and numeric folding. The AST retains the checked multiplier
+beside `decl.lod`. Pack generation passes it on without changing simplification
+or generated draws. Default 1 preserves earlier pack/content identities;
+other values distinguish geometry handles even for the same source/layout.
+Spec/user docs and editor hover describe composition. Five new diagnostic
+fixtures cover zero, negative, nonfinite, text and runtime values; the existing
+arity fixture now uses two arguments. Tests and pack/runtime contracts are in
+assets-and-files.md, Asset LOD tolerance multiplier.
+
 ## LOD error tolerance setting (2026-10-31)
 
 The approved `Draw.LODPixels(float pixels)` / `Draw.SetLODPixels(float pixels)`

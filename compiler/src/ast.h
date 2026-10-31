@@ -728,6 +728,7 @@ typedef struct decl {
     bool sample_raw;
     // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
     bool lod;
+    float lod_multiplier; // [LOD(multiplier)]: positive finite error tolerance multiplier, default 1
     // [BlendShapes("jawOpen", "default*")] before a SkinnedMesh asset: the only shapes its import keeps, by name
     // patterns where * is any run of characters (blend_shapes_kept); none when the attribute names none
     bool blend_shapes_chosen;

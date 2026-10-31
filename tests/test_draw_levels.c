@@ -119,6 +119,44 @@ TIDE_TEST(draw_levels_are_picked_by_how_big_a_mesh_is)
 }
 
 // The tolerance follows the selected destination and ordinary scoped restoration.
+TIDE_TEST(draw_levels_asset_multiplier_composes_with_destination_tolerance)
+{
+    tide_draw_list d = {0};
+    frame(&d);
+    const uint32_t mesh = leveled_mesh(&d);
+    tide_mesh_levels levels = two_levels;
+    levels.multiplier = 2.0f;
+    tide_draw_mesh_levels(&d, mesh, &levels);
+    const tide_float4x4 transform = at(0.0f, 8.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    tide_draw_instance(&d, mesh, transform, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_set_lod_pixels(&d, 4.0f);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2); // Effective 8 pixels.
+    tide_draw_instance(&d, mesh, transform, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    const tide_draw_command *runs[3];
+    TIDE_REQUIRE(runs_of(&d, runs, 3) == 2);
+    TIDE_CHECK(mesh_of(&d, runs[0])->level == 1 && mesh_of(&d, runs[1])->level == 2);
+    levels.multiplier = 1.0f;
+    tide_draw_mesh_levels(&d, mesh, &levels);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1); // Draw's 4 alone is insufficient.
+    levels.multiplier = 0.25f;
+    tide_draw_mesh_levels(&d, mesh, &levels);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1); // Effective 1 pixel.
+    tide_draw_unset_lod_pixels(&d);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 0);
+    tide_draw_set_lod(&d, 2);
+    TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 2);
+    tide_draw_unset_lod(&d);
+    const float invalid[] = {0.0f, -1.0f, NAN, INFINITY};
+    for (uint32_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        levels.multiplier = invalid[i];
+        tide_draw_mesh_levels(&d, mesh, &levels);
+        TIDE_CHECK(d.meshes[mesh - 1u].lod_multiplier == 1.0f);
+        TIDE_CHECK(tide_draw_mesh_level(&d, mesh, transform) == 1);
+    }
+    tide_draw_free(&d);
+}
+
 TIDE_TEST(draw_levels_pixel_tolerance_is_scoped_and_destination_local)
 {
     tide_draw_list d = {0};

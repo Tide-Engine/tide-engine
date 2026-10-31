@@ -5,6 +5,7 @@
 #include "tide/pack.h"
 
 #include <stdlib.h>
+#include <float.h>
 #include <string.h>
 
 #include "tide/net.h"
@@ -1014,6 +1015,9 @@ bool tide_pack_list_levels(const tide_list indices, tide_mesh_levels *levels)
     }
     memcpy(found.center, &words[0], sizeof found.center);
     memcpy(&found.radius, &words[3], sizeof found.radius);
+    memcpy(&found.multiplier, &words[27], sizeof found.multiplier);
+    if (!(found.multiplier >= 0.0f) || found.multiplier > FLT_MAX) return false;
+    if (found.multiplier == 0.0f) found.multiplier = 1.0f;
     float before = 0.0f;
     for (uint32_t i = 0; i < found.count; i++) {
         memcpy(&found.error[i], &words[6u + i * 3u], sizeof(float));

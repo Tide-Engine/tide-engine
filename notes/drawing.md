@@ -1,5 +1,16 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Asset tolerance multiplies draw tolerance (2026-10-31)
+
+Each leveled mesh retains `lod_multiplier` from `tide_mesh_levels.multiplier`,
+normalized to positive finite with C zero/invalid values defaulting to 1.
+Picking multiplies its existing allowed error by this value in double, avoiding
+overflow/underflow in the multiplication while preserving the default's float
+threshold. Ordinary, bulk, shaded and skinned paths share this pick. Forced
+levels bypass it. Recording/gathering/append order is unchanged. Pack identity
+and native ASan/WASM validation are in assets-and-files.md, Asset LOD tolerance
+multiplier. There are no additional runtime functions or owned resources.
+
 ## Automatic LOD pixel tolerance (2026-10-31)
 
 Follow-up: `GUI.Draw` generated setup no longer copies the removed global

@@ -1,5 +1,13 @@
 # The language server and the editors
 
+## LOD attribute multiplier hover (2026-10-31)
+
+LOD hover now explains `[LOD(2)]`, positive finite constants and multiplication
+with the destination's pixel tolerance. Attribute value expressions use the
+existing expression traversal for references and hover. The expanded native
+ASan `lsp_levels_of_detail` check and full language-server suite pass.
+Language and asset contracts are in language.md/assets-and-files.md.
+
 ## LOD pixel tolerance completion (2026-10-31)
 
 Ordinary builtin setting registration supplies LODPixels/SetLODPixels on Draw

@@ -2639,7 +2639,9 @@ static void parse_attributes(parser *p)
             parse_args(p, a.call);
         } else if (accept(p, T_LPAREN)) {
             if (!at(p, T_RPAREN)) {
-                if (str_eq_c(a.name, "Stage")) {
+                if (str_eq_c(a.name, "LOD")) {
+                    do vec_push(a.values, parse_expr(p)); while (accept(p, T_COMMA));
+                } else if (str_eq_c(a.name, "Stage")) {
                     vec_push(a.args, parse_qname(p, "an enum member, like 'RenderStages.Objects'"));
                     while (accept(p, T_COMMA)) vec_push(a.values, parse_expr(p));
                 } else {

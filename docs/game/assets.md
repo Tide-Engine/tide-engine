@@ -332,6 +332,7 @@ That's all there is to write. There are no distances to set, no levels to author
 - **Your code reads the full mesh.** `rock.vertices` and `rock.indices` are what they are without `[LOD]`, for the match too: a collider built from a rock's triangles is built from all of them, on every machine.
 - **It works on a [`SkinnedMesh<V>`](./animation.md) too:** `[LOD] asset SkinnedMesh<Corner> hero = "art/hero.glb";`. Its levels are made from the model at rest, weighing how each vertex follows its bones so joints keep the vertices that bend them, and a pose deforms a level as it deforms the full mesh.
 - **A list or a map of meshes** takes it for every file: `[LOD] asset List<Mesh<Corner>> rocks = "art/rocks/*.glb";`.
+- **An asset can accept more error:** `[LOD(2)] asset Mesh<Corner> rock = "art/rock.glb";` multiplies the draw's pixel tolerance by 2. `[LOD]` means 1. The argument must be a positive finite constant number; fractions below 1 keep more detail. It applies to every file in a list or map and works on skinned meshes too. The generated levels stay the same.
 - **They're made once.** tide keeps a mesh's levels in the game's `.tide/` folder, by what's in the file, so later builds don't make them again.
 
 **A game's vert isn't known to the pick.** Where the mesh is and how big it is come from the file's own geometry and the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been: draw such a mesh with `Draw.LOD(0)`, below, or leave `[LOD]` off it.
@@ -345,7 +346,7 @@ Draw.LODPixels(4)
 }
 ```
 
-`Draw.SetLODPixels(4);` applies to following window draws. A render target has its own tolerance: `shadow.SetLODPixels(4);`. Both forms restore 1 with no arguments; a block restores the previous value when it ends, including an early exit. Nonpositive or nonfinite values also use 1. This changes selection among the levels already built; it doesn't generate more levels. Pixels are counted through the same camera and resolution as automatic selection.
+`Draw.SetLODPixels(4);` applies to following window draws. A render target has its own tolerance: `shadow.SetLODPixels(4);`. The asset's multiplier applies too: `[LOD(2)]` allows 2 pixels normally and 8 in that shadow pass. Both draw-setting forms restore 1 with no arguments; a block restores the previous value when it ends, including an early exit. Nonpositive or nonfinite draw-setting values also use 1. This changes selection among the levels already built; it doesn't generate more levels. Pixels are counted through the same camera and resolution as automatic selection.
 
 **`Draw.LOD` names the level** instead of picking it, a [draw setting](./draw-settings.md) with the two forms the others have. A named level overrides the pixel tolerance. `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last level is its last:
 
