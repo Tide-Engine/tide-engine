@@ -30,10 +30,16 @@ made by `make_stalk.mjs`).
   chosen: it can't hold the scale exporters put in skin matrices, and the
   game blended matrices already.
 - **Frames:** `BakedFrame { int4 rows; float4 blend; }`, two instance
-  attributes. Rows blend linearly in row form, the fade pair likewise, then one
-  matrix a corner (`Skin`), so a corner reads 2 or 4 rows of each bone. The
-  weights are summed unconditionally (no per-vertex branch). `HeaviestBone`
-  is the frame's `blend.w`.
+  attributes. `SkinRows` (what `BakedSkin` and `Skin` go through) reads each
+  of the four joints' two rows (`Weighed`), lerps and sums them by weight in
+  row form, and does it again for the fade pair only when fading; the
+  per-instance branches (fade, `HeaviestBone`'s one-bone path in `blend.w`)
+  are the same for every corner of an instance. No per-bone range check (a
+  joint past the skeleton reads another bone's row or zeros, never outside
+  the list) and no per-weight branch: both cost more than they saved
+  (notes/benchmarks.md, Baked poses, the second round). `BoneSkin` and
+  `Socket` keep their identity for a bone that isn't there. `BakedBone.Point`
+  and `Direction` apply rows without making a matrix.
 - **AddClip:** `steps = max(1, ceil(duration * rate - 1e-4))`, rows at
   `duration * k / steps`, `steps + 1` of them, or `steps` for a loop; one for
   a clip with no duration. `At` clamps, wraps a loop, and NaN reads row 0.
@@ -56,8 +62,10 @@ made by `make_stalk.mjs`).
 - Gaps: per-bone layers (lower body one row, upper another, joined at a bone:
   Combat's `Joined`/`Shift`) are a separate design; baking at build time;
   automatic culling bounds (a custom vert has none: `Draw.Bounds`); the
-  heaviest bone by distance in the vert; tangents in `BakedSkin`; the GPU
-  cost gap below.
+  heaviest bone by distance in the vert; tangents in `BakedSkin`; baking a
+  row walks each bone's ancestors (`pose.Model`), about 44 µs a row of the
+  benchmark's 64-deep chain: a call for all of a pose's model matrices at once
+  would make it one pass, a runtime function that awaits the owner.
 
 ## Asset LOD tolerance multiplier (2026-10-31)
 

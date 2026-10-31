@@ -22,7 +22,42 @@ held between 11% and 17% (the GPU's clocks moved between sessions, so only
 alternating runs compare). Neither the mesh (the same vertex lists gave the
 same gap) nor per-vertex weight branches (removed) explain it, and reading a
 bone's three float4s as one element instead of three reads changed nothing
-measurable. Open: find the rest of it.
+measurable.
+
+### Second round, the same day: as cheap as no skinning
+
+The owner: "we need to ensure its as performant as we can make it since that
+is the reason it exists". Variant verts in one build, switched by the host and
+run alternately, found the cost (10,000 characters, GPU ms): the prelude's
+`Skin` 5.72; a flat vert with no per-bone range check, no "is there a next
+row" branch and the four bones summed directly 4.64; the same with the fade
+and heaviest-bone paths kept as per-instance branches, written with
+`BakedBone` methods, 4.70; that with a branch skipping zero weights 4.75 to
+4.85 here (every corner of this model has four bones) and no better on the
+Synty character bannerlord-duel draws (11.76 against 11.85: its tiny far
+triangles are bound by rasterizing). So the per-bone check and branches,
+repeated four times a corner, were the cost; struct-returning helpers and a
+matrix against dot products cost nothing measurable. `SkinRows` is now that
+shape, and `HeaviestBone` a real one-bone path. On OpenGL the old gap was
+mostly noise (0-11%); Vulkan's was steady.
+
+Rows `baked-poses-20261031b` (3 repeats; one round's GPU spiked for both GPU
+modes alike):
+
+| 10,000 characters | View ms | GPU ms |
+|---|---|---|
+| `static` (the mesh unskinned) | 0.64 | 4.28-4.29 |
+| `baked_clip` | 0.37-0.39 | 4.42-4.71 |
+| `gpu_clip` (hand-written) | 2.38-2.44 | 4.94-4.96 |
+| `independent_poses` | 10.5 | 7.65-7.80 |
+
+At 1,000 the baked draw is the unskinned one's 0.476 ms. Here the frame is
+bound by rasterizing thousands of small characters, so skinning is close to
+free; a mesh with many more vertices a character would show it again.
+Baking 3,000 rows of this 64-deep chain takes ~134 ms at load (`pose.Model`
+walks each bone's ancestors; a realistic rig of ~6 deep is several times
+less). Web performance wasn't measured: a debug browser run of 10,000 was too
+slow to finish.
 
 ## 64-bit handles, before and after (2026-10-30)
 

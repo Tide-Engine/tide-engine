@@ -573,11 +573,13 @@ struct Soldier
 
 vert Skinned(mut SoldierCorner corner, Soldier item, BakedPoses poses)
 {
-    var skin = poses.Skin(item.frame, corner.joints, corner.weights);
-    corner.position = Math.Mul(skin, float4(corner.position, 1)).xyz;
-    corner.normal = Math.Normalize(Math.Mul(skin, float4(corner.normal, 0)).xyz);
+    var skin = poses.SkinRows(item.frame, corner.joints, corner.weights);
+    corner.position = skin.Point(corner.position);
+    corner.normal = Math.Normalize(skin.Direction(corner.normal));
 }
 ```
+
+`SkinRows` gives the corner's skinning as the top three rows of its matrix (a `BakedBone`), whose `Point` and `Direction` move a position and a direction; `poses.Skin` gives the same as a `float4x4`. Each reads every one of the corner's four bones, as a branch on a weight costs the GPU more than the reads it would save.
 
 `poses.Socket(frame, socket)` is where a socket is in the model in that frame. A prop drawn instanced over the same items follows its bearer's hand with it:
 
@@ -588,7 +590,7 @@ vert InHand(mut Corner corner, Soldier item, BakedPoses poses)
 }
 ```
 
-`Skin`, `BoneSkin` and `Socket` are ordinary methods, the same on the CPU: a system can ask where a far soldier's sword is from the rows it's drawn with.
+`SkinRows`, `Skin`, `BoneSkin` and `Socket` are ordinary methods, the same on the CPU: a system can ask where a far soldier's sword is from the rows it's drawn with.
 
 The poses go to helpers whole (`float4x4 Grip(BakedPoses poses, BakedFrame frame)`), as any struct that holds lists can in code the GPU runs: see [Passing on what holds a list](./shaders.md#passing-on-what-holds-a-list).
 
@@ -601,7 +603,7 @@ Draw the same items into a shadow map's target with the same vert and no frag: `
 - **Memory:** 48 bytes a bone a row. A 65-bone character with 3,000 rows is 9.4 MB. One table holds 699,050 bones' rows (a list on the GPU is at most 1024 by 2048 pixels, three a bone): about 10,700 rows of 65 bones. Use a table for each model, or fewer rows, past that.
 - **Rate:** between rows the matrices blend linearly. That's smooth for most motion at 15 to 30 rows a second; a joint turning fast between two rows comes out short of its length halfway (a quarter turn between two rows shortens a limb by about 30% halfway; an eighth by 8%). More rows a second is the remedy, at their memory. A fade between two clips blends the same way.
 - **Bind pose:** a mesh with bones is the model at rest, so rows are right where the rest pose is the pose the model was bound in, as exported models usually are.
-- **GPU:** each corner reads two rows of each of its four bones, four in a fade, one bone's with `HeaviestBone`. 10,000 characters of 3,072 vertices and 64 bones took 5.7 ms of an RTX 4080 SUPER, where each sampled on the CPU took 10.5 ms of the CPU and 7.8 of the GPU, with 41 MB sent each frame; recording them took 0.39 ms.
+- **GPU:** each corner reads two rows of each of its four bones, four in a fade, one bone's with `HeaviestBone`. 10,000 characters of 3,072 vertices and 64 bones took 4.4 to 4.7 ms of an RTX 4080 SUPER, where the same mesh drawn unskinned took 4.3 and each character sampled on the CPU took 10.5 ms of the CPU and 7.8 of the GPU, with 41 MB sent each frame; recording them took 0.38 ms.
 
 ## Load while playing
 
