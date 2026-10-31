@@ -374,6 +374,8 @@ static const field *optional_field_in(const decl *d, const decl **in)
     return NULL;
 }
 
+static bool holds_data(type t);
+
 // Whether the GPU has values of type `t`; says why not, at `at`.
 static bool type_fits(emit *em, const type t, const loc at)
 {
@@ -401,6 +403,13 @@ static bool type_fits(emit *em, const type t, const loc at)
         return true;
     }
     const char *why = "the GPU runs on bools, ints, floats, vectors, matrices, colors and structs of those";
+    if (holds_data(t)) {
+        refuse(em, at, "%s holds a list, so code the GPU runs reads its fields, or passes it to a function or calls its method, "
+                       "by the name the frag or vert was given it: it can't be made, kept in a local, returned or picked there",
+               type_name(t));
+        diag_note("read its fields where it was given, or pass that name on to a function that takes one");
+        return false;
+    }
     if (t.kind == TY_STRUCT && t.decl == em->prog->random) { // Its state is a long, and the code that steps it the CPU's
         refuse(em, at, "a Random can't go to the GPU: its state is 64 bits, and the GPU's ints are 32");
         diag_note("roll on the type, 'Random.NextInt(6)': a frag has a generator of its pixel's own there, and a vert of its "
@@ -1879,6 +1888,107 @@ static const char *data_word(const type t)
     return t.kind == TY_LIST ? "list" : t.kind == TY_GRID ? "grid" : t.kind == TY_MAP ? "map" : "set";
 }
 
+// ---------------------------------------------------------------------------
+// Structs that hold lists
+//
+// A struct, a singleton or a component with a list, a grid, a map or a set
+// among its fields is no GPU value, as a list isn't. But one the frag or vert
+// was given (the draw's values, a singleton, a component) can go to a
+// function, `float4x4 Skin(Poses poses, int bone)`, and have methods called
+// on it, `poses.Skin(bone)`, as a list can: the function is handed nothing
+// for it, and reads its fields where the frag or vert would, as everything
+// the engine supplies is the stage's own (put_bound: the uniforms, and each
+// instance's attributes, are the shader's globals in both languages), and its
+// lists as the frag's textures of numbers (data_of), by its type and field.
+// What a function reads of one is noted on its parameter, or on the method
+// for its receiver, as its body is checked once (given_reads, self_reads),
+// and each call reads that of what it passes (pass_given_reads).
+
+static bool holds_data(const type t)
+{
+    if (!is_struct_like(t) || !t.decl) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (is_data(t.decl->fields.items[i].type)) return true;
+    }
+    const decl *part = t.kind == TY_STRUCT ? NULL : t.decl->local_part;
+    for (int i = 0; part && i < part->fields.count; i++) {
+        if (is_data(part->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+// A method of a type that holds a list: its receiver is given, never passed.
+static bool given_self(const decl *fn)
+{
+    return fn && fn->owner && !fn->is_operator && !fn->is_interpolate && fn->kind != DECL_SHADER
+        && holds_data((type){fn->owner->kind == DECL_COMPONENT ? TY_COMPONENT
+                             : fn->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, fn->owner});
+}
+
+// Whether `e` names a struct that holds a list, one the code was given: the
+// frag's or vert's own, or a function's parameter, which stands for its caller's.
+static bool names_given(const emit *em, const expr *e)
+{
+    return e && e->kind == E_NAME && e->bind == BIND_PARAM && holds_data(e->param->type)
+        && (is_bound(em, e->param) || e->param->function_param);
+}
+
+static bool *reads_room(bool **reads, const decl *d)
+{
+    if (!*reads && d) *reads = arena_alloc((size_t)(d->fields.count + 1) * sizeof(bool));
+    return *reads;
+}
+
+// While checking: that the code reads field `f` (a local field where `local`)
+// of what `object` names, a field of what the frag or vert was given, or of a
+// struct a function was given, or of a method's receiver where `object` is
+// NULL. A grid's is a texture of numbers of the frag's or vert's (data_of).
+static void note_given_field(emit *em, const expr *object, const field *f, const bool local)
+{
+    if (!em->checking || !f) return;
+    if (!object) { // The method's receiver
+        decl *fn = em->code;
+        const decl *holds = local ? fn->owner->local_part : fn->owner;
+        bool *reads = reads_room(local ? &fn->self_local_reads : &fn->self_reads, holds);
+        if (reads) reads[field_index(holds, f)] = true;
+        return;
+    }
+    param *p = (param *)(uintptr_t)object->param;
+    const decl *holds = local ? p->type.decl->local_part : p->type.decl;
+    if (!holds) return;
+    if (!is_bound(em, p)) { // A function's: its callers read it of what they pass
+        bool *reads = reads_room(local ? &p->given_local_reads : &p->given_reads, holds);
+        reads[field_index(holds, f)] = true;
+        return;
+    }
+    param *own = &em->root->params.items[param_index(em->root, p)];
+    if (f->type.kind != TY_GRID) {
+        if (local && own->local_reads) own->local_reads[field_index(holds, f)] = true;
+        else if (!local && own->reads) own->reads[field_index(holds, f)] = true;
+        return;
+    }
+    const shader_sample sample = {param_index(em->root, p), field_index(holds, f), local, 0, NULL, 0, READ_DATA, true, true};
+    for (int i = 0; i < em->root->samples.count; i++) {
+        const shader_sample *s = &em->root->samples.items[i];
+        if (s->param == sample.param && s->field == sample.field && s->local == sample.local && !s->asset
+            && s->read == READ_DATA) return;
+    }
+    vec_push(em->root->samples, sample);
+}
+
+// While checking: what a call's function reads of a struct it's given, the
+// code that passes it reads of what it passes (`object`, NULL for its own receiver).
+static void pass_given_reads(emit *em, const expr *object, const decl *type_decl, const bool *reads, const bool *local_reads)
+{
+    for (int k = 0; reads && k < type_decl->fields.count; k++) {
+        if (reads[k]) note_given_field(em, object, &type_decl->fields.items[k], false);
+    }
+    const decl *part = type_decl->local_part;
+    for (int k = 0; local_reads && part && k < part->fields.count; k++) {
+        if (local_reads[k]) note_given_field(em, object, &part->fields.items[k], true);
+    }
+}
+
 // A data_ref for a value of type `t`, which no texture is found for yet.
 static data_ref data_unknown(const type t)
 {
@@ -2022,12 +2132,17 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
         return true;
     }
     const decl *asset = NULL;
-    const param *p = NULL;
+    const decl *source = NULL;     // Whose field it is: the struct, singleton or component's
+    const expr *object = NULL;     // ...as the code names it, NULL for a method's receiver
     if (e->kind == E_NAME && e->bind == BIND_ASSET && e->constant) {
         asset = e->constant;
     } else if (e->kind == E_MEMBER && e->field && e->object->kind == E_NAME && e->object->bind == BIND_PARAM
-               && is_bound(em, e->object->param) && is_struct_like(e->object->param->type)) {
-        p = e->object->param;
+               && is_struct_like(e->object->param->type)
+               && (is_bound(em, e->object->param) || names_given(em, e->object))) {
+        object = e->object;
+        source = object->param->type.decl;
+    } else if (e->kind == E_NAME && e->bind == BIND_FIELD && e->field && given_self(em->code)) { // A field of its receiver
+        source = em->code->owner;
     } else if (e->kind == E_MEMBER && e->object->type.kind == TY_MESH) { // tree.vertices, tree.indices
         refuse(em, e->at, "a Mesh's vertices and indices aren't read as lists in code the GPU runs: the draw sends them, as the "
                           "mesh they are");
@@ -2037,34 +2152,18 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
         return false;
     }
     if (d->map ? !map_fits(em, e->type, e->at) : !type_fits(em, d->element, e->at)) return true;
-    if (p) { // A field's elements: what's read of them is noted on the field, for every frag and vert that reads it
+    if (source) { // A field's elements: what's read of them is noted on the field, for every frag and vert that reads it
         field *held = (field *)(uintptr_t)e->field;
         d->leaves = em->checking ? leaves_room(&held->gpu_leaves, e->type) : held->gpu_leaves;
     }
     if (em->checking) {
-        if (asset) {
-            note_asset(em, asset);
-        } else if (d->grid) {
-            const decl *holds = e->local_field ? p->type.decl->local_part : p->type.decl;
-            const shader_sample sample = {param_index(em->root, p), field_index(holds, e->field), e->local_field, 0, NULL, 0,
-                                          READ_DATA, true, true};
-            bool known = false;
-            for (int i = 0; i < em->root->samples.count; i++) {
-                const shader_sample *s = &em->root->samples.items[i];
-                known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && !s->asset
-                      && s->read == READ_DATA;
-            }
-            if (!known) vec_push(em->root->samples, sample);
-        } else if (e->local_field) {
-            em->root->params.items[param_index(em->root, p)].local_reads[field_index(p->type.decl->local_part, e->field)] = true;
-        } else {
-            em->root->params.items[param_index(em->root, p)].reads[field_index(p->type.decl, e->field)] = true;
-        }
+        if (asset) note_asset(em, asset);
+        else note_given_field(em, object, e->field, e->local_field);
         return true;
     }
     for (int i = 0; i < em->sh->textures.count; i++) {
         const shader_texture *t = &em->sh->textures.items[i];
-        if (t->read == READ_DATA && t->asset == asset && t->source == (p ? p->type.decl : NULL) && t->field == (p ? e->field : NULL)) {
+        if (t->read == READ_DATA && t->asset == asset && t->source == source && t->field == (source ? e->field : NULL)) {
             d->texture = i;
         }
     }
@@ -2606,6 +2705,13 @@ static void ex_name(emit *em, const expr *e)
             return;
         }
         if (em->checking && em->code == em->root) em->root->params.items[param_index(em->root, p)].whole = true;
+        if (holds_data(p->type)) { // A function's struct that holds a list: it's its caller's, read by its fields
+            refuse(em, e->at, "'" STR_FMT "' holds a list, so code the GPU runs reads it by its fields or passes it on by its "
+                              "name: it's not a value to keep or pick", STR_ARG(e->name));
+            diag_note("read its fields, '" STR_FMT "." STR_FMT "', or pass '" STR_FMT "' to a function that takes a '%s'",
+                      STR_ARG(e->name), STR_ARG(p->type.decl->fields.items[0].name), STR_ARG(e->name), type_name(p->type));
+            return;
+        }
         if (is_sampled(p->type)) { // A function's texture is sampled, or passed on: it's no value, and nothing is written for it
             type_fits(em, p->type, e->at);
             return;
@@ -2614,6 +2720,11 @@ static void ex_name(emit *em, const expr *e)
         return;
     }
     case BIND_FIELD:
+        if (given_self(em->code)) { // A field of a receiver that holds a list: its caller's (Structs that hold lists)
+            note_given_field(em, NULL, e->field, e->local_field);
+            if (type_fits(em, e->type, e->at)) put_bound(em, em->code->owner, e->field, e->type);
+            return;
+        }
         put_self(em);
         sb_printf(em->o, ".%s", field_name(e->field));
         return;
@@ -2764,9 +2875,11 @@ static void ex_member(emit *em, const expr *e)
         return;
     }
     // A field of what the engine supplies
-    if (obj->kind == E_NAME && obj->bind == BIND_PARAM && is_bound(em, obj->param) && e->field) {
+    if (obj->kind == E_NAME && obj->bind == BIND_PARAM && (is_bound(em, obj->param) || names_given(em, obj)) && e->field) {
         const param *p = obj->param;
-        if (em->checking && e->local_field) {
+        if (!is_bound(em, p)) { // A struct that holds a list, the function's: its caller's (Structs that hold lists)
+            note_given_field(em, obj, e->field, e->local_field);
+        } else if (em->checking && e->local_field) {
             em->root->params.items[param_index(em->root, p)].local_reads[field_index(p->type.decl->local_part, e->field)] = true;
         } else if (em->checking) {
             em->root->params.items[param_index(em->root, p)].reads[field_index(p->type.decl, e->field)] = true;
@@ -3986,7 +4099,17 @@ static bool takes_data(const param *p)
 // ...or that, or a texture it samples: neither is an argument.
 static bool is_given(const param *p)
 {
-    return takes_data(p) || is_sampled(p->type);
+    return takes_data(p) || is_sampled(p->type) || holds_data(p->type);
+}
+
+// A struct that holds a list, where a function is given one: it has to be
+// one the frag or vert was given, by its name (Structs that hold lists).
+static void refuse_given(emit *em, const expr *arg, const type t)
+{
+    refuse(em, arg->at, "a %s that holds a list goes to code the GPU runs by its name, as the frag or vert was given it",
+           type_name(t));
+    diag_note("pass the frag's or vert's own parameter, its singleton, its component or the draw's values, or a function's "
+              "parameter that stands for one");
 }
 
 // A call of a function or method of the game's. A mut argument is the
@@ -4007,6 +4130,10 @@ static void ex_user_call(emit *em, const expr *e)
         const expr *arg = i < e->args.count ? e->args.items[i] : NULL;
         int number = -1;
         bool named = arg != NULL;
+        if (holds_data(p->type) && arg && !names_given(em, arg)) {
+            refuse_given(em, arg, p->type);
+            named = false;
+        }
         if (takes_data(p)) {
             spec[i].data = data_unknown(p->type);
             if (arg && !data_of(em, arg, &spec[i].data)) {
@@ -4032,11 +4159,29 @@ static void ex_user_call(emit *em, const expr *e)
         for (int k = 0; k < parts; k++) spec[i].data.leaves[k] |= read[k];
     }
     if (em->checking) pass_samples(em, fn, e, spec, own); // ...and the textures it samples, the code samples
+    // ...and what it reads of a struct that holds a list, of what the code passes (Structs that hold lists)
+    for (int i = 0; em->checking && i < fn->params.count && i < e->args.count; i++) {
+        const param *p = &fn->params.items[i];
+        if (holds_data(p->type) && names_given(em, e->args.items[i]))
+            pass_given_reads(em, e->args.items[i], p->type.decl, p->given_reads, p->given_local_reads);
+    }
     const bool method = fn->owner && !fn->is_operator && !fn->is_interpolate;
+    const bool given = method && given_self(fn); // Its receiver holds a list: it's handed nothing for it
+    if (given) {
+        const expr *receiver = e->kind == E_METHOD ? e->object : NULL;
+        if (receiver && !names_given(em, receiver)) {
+            refuse_given(em, receiver, receiver->type);
+        } else if (!receiver && !given_self(em->code)) {
+            refuse(em, e->at, "'" STR_FMT "' is a method of '" STR_FMT "', which holds a list: in code the GPU runs it's called on "
+                              "one the frag or vert was given, by its name", STR_ARG(fn->name), STR_ARG(fn->owner->name));
+        } else if (em->checking) {
+            pass_given_reads(em, receiver, fn->owner, fn->self_reads, fn->self_local_reads);
+        }
+    }
     const bool statement = em->statement == e;
     sb_printf(em->o, "%s%s(", function_name(fn), suffix.data ? suffix.data : "");
     bool first = true;
-    if (method) {
+    if (method && !given) {
         const expr *receiver = e->kind == E_METHOD ? e->object : NULL;
         first = false;
         if (!receiver) { // Another of its own type's methods: on the same value
@@ -5533,7 +5678,12 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
     if (wgsl) sb_printf(&head, "fn %s%s(", function_name(fn), suffix);
     else sb_printf(&head, "%s %s%s(", value ? ty(em, fn->return_type) : "void", function_name(fn), suffix);
     bool first = true;
-    if (method) {
+    if (method && given_self(fn)) { // Its receiver holds a list: it's handed nothing for it (Structs that hold lists)
+        if (fn->is_mut_method) {
+            refuse(em, fn->at, "'" STR_FMT "' changes the '" STR_FMT "' it's called on, and code the GPU runs only reads one that "
+                               "holds a list", STR_ARG(fn->name), STR_ARG(fn->owner->name));
+        }
+    } else if (method) {
         const type self = {fn->owner->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, fn->owner};
         if (type_fits(em, self, fn->at)) {
             if (wgsl) sb_printf(&head, fn->is_mut_method ? "tide_self: ptr<function, %s>" : "tide_self: %s", ty(em, self));

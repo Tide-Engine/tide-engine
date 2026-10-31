@@ -359,6 +359,8 @@ typedef struct param {
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
     bool whole;          // ...or reads it as a value, all its fields at once
     bool *gpu_leaves;    // A function's list, grid, map or set, in code the GPU runs: the parts of an element it reads (field.gpu_leaves)
+    bool *given_reads;   // A function's struct, singleton or component that holds a list, in code the GPU runs: the fields it
+    bool *given_local_reads; // reads of it, and of its local fields, which each caller then reads of what it passed (given_struct)
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
     // A function's or method's singleton that it starts a task with, itself or through a function it passes it to:
     // the task gets the world's own again each time it goes on, so every call passes its own parameter, never a copy
@@ -888,6 +890,7 @@ typedef struct decl {
     type_kind gpu_only_reads;     // ...what it reads there: TY_GRID for a grid it takes, or the type it samples
     VEC(const struct decl *) gpu_data; // A function the GPU runs: the assets whose list or grid it reads the numbers of by name, in what it calls too
     VEC(function_sample) gpu_samples;  // ...and the textures it samples, its parameters' and assets', in what it calls too
+    bool *self_reads, *self_local_reads; // A method of a type that holds a list, in code the GPU runs: the fields it reads of its receiver
     VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its mesh draw calls read, which it doesn't take itself
 } decl;
 

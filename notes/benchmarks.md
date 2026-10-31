@@ -1,5 +1,29 @@
 # Benchmarks
 
+## Baked poses (2026-10-31)
+
+`bench_skinned --modes baked` draws the fixture's 64-bone, 3,072-vertex
+character through `BakedPoses` (its Move clip at 60 rows a second, looping),
+each character's frame worked out on the CPU and all of them one
+`Draw.Instanced`. Release, Ryzen 9 7900X / RTX 4080 SUPER, Vulkan, rows
+`baked-poses-20261031` in `bench/results/skinned.jsonl` (3 repeats, medians
+of 100 frames). 10,000 characters:
+
+| Mode | View ms | GPU ms | Uploaded a frame |
+|---|---|---|---|
+| `gpu_clip` (hand-written resident palettes, phase on the GPU) | 2.33 | 4.97 | 0 |
+| `baked_clip` | 0.39 | 5.65 to 5.81 | 0 |
+| `independent_poses` (a sampled Pose each) | 10.3 to 10.5 | 7.7 to 7.85 | 41 MB |
+
+At 1,000: view 0.04 ms against 0.23, GPU 0.57 against 0.53. The baked vert
+is ~13% more GPU than the hand-written one, which derives its phase on the
+GPU and has no fade, socket or heaviest-bone path; run alternately the gap
+held between 11% and 17% (the GPU's clocks moved between sessions, so only
+alternating runs compare). Neither the mesh (the same vertex lists gave the
+same gap) nor per-vertex weight branches (removed) explain it, and reading a
+bone's three float4s as one element instead of three reads changed nothing
+measurable. Open: find the rest of it.
+
 ## 64-bit handles, before and after (2026-10-30)
 
 What widening handles to 64 bits (notes/ecs.md, 64-bit handles) cost, in

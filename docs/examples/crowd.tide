@@ -1,0 +1,125 @@
+settings { title = "Crowd"; }
+
+local scene Main { }
+
+// One model, read twice: as a skinned model for its skeleton and clips, and as
+// a mesh with its bones in each corner, which the GPU skins.
+asset SkinnedMesh<Vertex3> stalkModel = "assets/crowd/stalk.glb";
+asset Mesh<BakedVertex> stalk = "assets/crowd/stalk.glb";
+
+const int ACROSS = 64;              // 64 by 64: 4,096 stalks
+const float SPACING = 1.1;
+const float HEAVIEST_FROM = 30;     // Metres beyond which each corner follows its heaviest bone alone
+
+struct Plant
+{
+    float3 at;
+    float phase;
+    Color tint;
+    float bowedAt = -100;
+    BakedFader fader;
+}
+
+// A bud on a stalk's tip: where, and the stalk's frame, for its vert
+struct Bud
+{
+    float4x4 transform;
+    BakedFrame frame;
+}
+
+local singleton Field
+{
+    bool made;
+    BakedPoses poses;
+    BakedClip sway;
+    BakedClip bow;
+    List<Plant> plants;
+    List<BakedInstance> stalks;
+    List<Bud> buds;
+    List<Vertex3> bud;
+    List<int> budFaces;
+    float time;
+    float turn;
+}
+
+frag Lit(BakedVertex vertex, out Color color, BakedInstance item, Instance instance)
+{
+    float3 normal = instance.Normal(vertex.normal);
+    float light = 0.35 + 0.65 * Math.Max(Math.Dot(normal, Math.Normalize(float3(0.4, 1, 0.3))), 0);
+    float tip = Math.Saturate(vertex.position.y / 3);
+    color = Math.Lerp(item.tint * 0.55, item.tint, tip) * light;
+    color.a = 1;
+}
+
+// The bud follows the tip's socket, as the rows carry it
+vert OnTip(mut Vertex3 corner, Bud item, BakedPoses poses)
+{
+    corner.position = Math.Mul(poses.Socket(item.frame, 0), float4(corner.position, 1)).xyz;
+}
+
+frag BudColor(Vertex3 corner, out Color color)
+{
+    color = Color(1, 0.85, 0.35);
+}
+
+void Make(mut Field field)
+{
+    field.made = true;
+    // Every frame of both clips, 30 a second, posed once: 60 rows and 46 more
+    field.poses = BakedPoses.Of(stalkModel.defaultPose);
+    field.sway = field.poses.AddClip(stalkModel.animations.sway, 30, Playback.Loop);
+    field.bow = field.poses.AddClip(stalkModel.animations.bow, 30);
+    field.poses.AddSocket(stalkModel.skeleton.bones.bone5, float4x4.Translate(float3(0, 0.5, 0)));
+    for (int z = 0; z < ACROSS; z++)
+    {
+        for (int x = 0; x < ACROSS; x++)
+        {
+            int seed = Math.Hash(int2(x, z));
+            float jitter = (seed & 255) / 255.0;
+            field.plants.Add(Plant {
+                at = float3((x - ACROSS / 2) * SPACING + jitter * 0.4, 0, (z - ACROSS / 2) * SPACING - jitter * 0.3),
+                phase = ((seed >> 8) & 1023) / 512.0,
+                tint = Color(0.25 + 0.2 * jitter, 0.55 + 0.25 * ((seed >> 20) & 255) / 255.0, 0.3) });
+        }
+    }
+    float s = 0.09;
+    field.bud = [Vertex3 { position = float3(0, s, 0) }, Vertex3 { position = float3(s, 0, 0) },
+                 Vertex3 { position = float3(0, 0, s) }, Vertex3 { position = float3(-s, 0, 0) },
+                 Vertex3 { position = float3(0, 0, -s) }, Vertex3 { position = float3(0, -s, 0) }];
+    field.budFaces = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1, 5, 2, 1, 5, 3, 2, 5, 4, 3, 5, 1, 4];
+}
+
+view Show(mut Field field)
+{
+    if (!field.made) Make(field);
+    float dt = Math.Min(Frame.dt, 0.1);
+    field.time += dt;
+    field.turn += dt * 0.08;
+    var eye = float3(Math.Sin(field.turn) * 42, 20, Math.Cos(field.turn) * 42);
+    Draw.Clear(Color(0.55, 0.7, 0.85));
+    Draw.SetCamera(eye, quaternion.LookRotation(Math.Normalize(float3(0, -2, 0) - eye), float3(0, 1, 0)), 50);
+    Draw.Plane(float3(0, 0, 0), float2(ACROSS * SPACING + 4), Color(0.32, 0.27, 0.2));
+
+    // Each stalk sways; now and then one bows, and the fader eases it from
+    // one clip to the other and back, where it would snap
+    field.stalks.Clear();
+    field.buds.Clear();
+    int second = int(field.time);
+    for (int i = 0; i < field.plants.count; i++)
+    {
+        mut var plant = field.plants[i];
+        if (field.time - plant.bowedAt > 3 && (Math.Hash(int2(i, second)) & 63) == 0) plant.bowedAt = field.time;
+        float since = field.time - plant.bowedAt;
+        mut var frame = since < field.bow.duration ? plant.fader.Play(field.bow, since, dt)
+                                                   : plant.fader.Play(field.sway, field.time + plant.phase, dt);
+        var to = plant.at - eye;
+        frame = frame.HeaviestBone(Math.Dot(to, to) > HEAVIEST_FROM * HEAVIEST_FROM);
+        field.plants[i] = plant;
+        var place = float4x4.Translate(plant.at);
+        field.stalks.Add(BakedInstance { transform = place, frame = frame, tint = plant.tint });
+        field.buds.Add(Bud { transform = place, frame = frame });
+    }
+    // All of them in two draws: the stalks, and the buds on their tips
+    Draw.Instanced(stalk, field.stalks, BakedSkin, Lit, field.poses);
+    Draw.Instanced(field.bud, field.budFaces, field.buds, OnTip, BudColor, field.poses);
+}

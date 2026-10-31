@@ -209,6 +209,7 @@ tide_e2e_test(mesh_values)
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(mesh_bones) # A Mesh with joints and weights: the model at rest, with its skeleton's bones
+tide_e2e_test(baked_poses) # Baked poses: clips baked into rows, frames, linear blends, fades, heaviest bones and sockets
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
 tide_e2e_test(value_fresh) # Fresh pose constructors/conditional values skip copies while borrowed branches retain isolation
 tide_e2e_test(retargeting) # Automatic humanoid characterization, calibrated pose transfer and manual corrections

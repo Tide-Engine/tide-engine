@@ -2,7 +2,7 @@
 // The host selects count/mode/time; no match simulation or playback clock is timed.
 local scene Main { }
 
-enum Stages { Prepare, Objects }
+enum Stages { Prepare, Objects, Crowd }
 
 struct Corner
 {
@@ -33,6 +33,29 @@ local singleton GpuClip
 
 asset SkinnedMesh<Corner> character = "model.gltf";
 asset Mesh<Corner> staticCharacter = "model.gltf";
+asset Mesh<GpuCorner> bakedCharacter = "model.gltf";
+
+// The same clip baked by the engine (BakedPoses, 60 rows a second, looping):
+// each character's frame worked out on the CPU, skinned on the GPU.
+local singleton Baked
+{
+    BakedPoses poses;
+    BakedClip clip;
+    List<BakedItem> items;
+}
+
+struct BakedItem
+{
+    float4x4 transform;
+    BakedFrame frame;
+}
+
+vert BakedPlay(mut GpuCorner corner, BakedItem item, BakedPoses poses)
+{
+    var skin = poses.Skin(item.frame, corner.joints, corner.weights);
+    corner.position = Math.Mul(skin, float4(corner.position, 1)).xyz;
+    corner.normal = Math.Normalize(Math.Mul(skin, float4(corner.normal, 0)).xyz);
+}
 
 local singleton Workload
 {
@@ -89,7 +112,7 @@ frag GpuLit(GpuCorner corner, out Color color)
 }
 
 [Stage(Stages.Prepare)]
-view Prepare(mut Workload work)
+view Prepare(mut Workload work, mut Baked baked)
 {
     Draw.Clear(Color(0.035, 0.045, 0.06));
     Draw.SetCamera(float4x4.Translate(float3(0, 0, -5)), float4x4.Ortho(160.0 / 9.0, 10, 0.1, 100));
@@ -101,6 +124,11 @@ view Prepare(mut Workload work)
     work.rows = (work.count + work.columns - 1) / work.columns;
     work.scale = 4 / Math.Sqrt(float(work.count));
     if (work.mode == 2) work.sharedPose = character.animations.move.Sample(work.seconds, Playback.Loop);
+    if (work.mode == 5 && baked.poses.rows == 0)
+    {
+        baked.poses = BakedPoses.Of(character.defaultPose);
+        baked.clip = baked.poses.AddClip(character.animations.move, 60, Playback.Loop);
+    }
 
     // The host runs this setup frame outside timing after resetting local state.
     // Spawns settle after that frame, so every measured frame has exactly count.
@@ -112,7 +140,7 @@ view Prepare(mut Workload work)
 }
 
 [Stage(Stages.Objects)]
-view Show(local Character item, Workload work, GpuClip clip)
+view Show(local Character item, Workload work, GpuClip clip, mut Baked baked)
 {
     int i = item.index;
     float x = (float(i % work.columns) + 0.5) * (160.0 / 9.0 / float(work.columns)) - 80.0 / 9.0;
@@ -122,9 +150,20 @@ view Show(local Character item, Workload work, GpuClip clip)
     else if (work.mode == 1) Draw.SkinnedMesh(character, transform, Lit);
     else if (work.mode == 2) Draw.SkinnedMesh(character, transform, work.sharedPose, Lit);
     else if (work.mode == 4) Draw.Mesh(clip.vertices, clip.indices, transform, GpuSkin, GpuLit);
+    else if (work.mode == 5) baked.items.Add(BakedItem { transform = transform,
+                                                         frame = baked.clip.At((work.seconds + float(i) / float(work.count)) * baked.clip.duration) });
     else
     {
         var pose = character.animations.move.Sample(work.seconds + float(i) / float(work.count), Playback.Loop);
         Draw.SkinnedMesh(character, transform, pose, Lit);
     }
+}
+
+// The baked characters, all in one instanced draw
+[Stage(Stages.Crowd)]
+view DrawBaked(mut Baked baked, Workload work)
+{
+    if (work.mode != 5) return;
+    Draw.Instanced(bakedCharacter, baked.items, BakedPlay, GpuLit, baked.poses);
+    baked.items.Clear();
 }

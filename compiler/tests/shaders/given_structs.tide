@@ -1,0 +1,102 @@
+// Structs, singletons and components that hold lists, in code the GPU runs: passed to functions whole and called
+// methods on, by the name the frag or vert was given them. Nothing is handed to the function for them; what it
+// reads of them is the frag's or vert's own uniforms, attributes and textures of numbers, and only what's read of
+// them is sent: Poses.unused never is.
+scene Main { }
+
+struct Boned
+{
+    float3 position;
+    int4 joints;
+}
+
+struct Poses
+{
+    int bones;
+    float unused;
+    List<float4> table;
+
+    float4x4 Skin(int row, int bone)
+    {
+        int at = (row * bones + bone) * 3;
+        return Rows(table[at], table[at + 1], table[at + 2]);
+    }
+
+    // A method that calls another on the same value
+    float4x4 Blend(int row, int next, int bone, float t)
+    {
+        var a = Skin(row, bone);
+        var b = Skin(next, bone);
+        return float4x4(Math.Lerp(a.c0, b.c0, t), Math.Lerp(a.c1, b.c1, t), Math.Lerp(a.c2, b.c2, t), Math.Lerp(a.c3, b.c3, t));
+    }
+}
+
+float4x4 Rows(float4 a, float4 b, float4 c)
+{
+    return float4x4(float4(a.x, b.x, c.x, 0), float4(a.y, b.y, c.y, 0), float4(a.z, b.z, c.z, 0), float4(a.w, b.w, c.w, 1));
+}
+
+local singleton Skins
+{
+    int count;
+    float scale = 1;
+    List<float4x4> hips;
+    Map<int, float> lift;
+    Grid2<int> marks = Grid2(4, 4);
+}
+
+// A singleton passed on through two functions, its list, map and grid read in the last
+float4x4 Hip(Skins skins, int row)
+{
+    return Pass(skins, row);
+}
+
+float4x4 Pass(Skins s, int row)
+{
+    mut float up = 0;
+    s.lift.TryGet(row, out up);
+    var hips = s.hips;
+    mut var m = hips[row % Math.Max(s.count, 1)];
+    m.c3.y += up + s.marks[row % 4, 0];
+    return m;
+}
+
+float Total(Skins skins)
+{
+    mut float sum = 0;
+    foreach (var h in skins.hips) sum += h.c3.y;
+    return sum * skins.scale;
+}
+
+struct Item
+{
+    float4x4 transform;
+    int4 rows;
+    float t;
+}
+
+vert Play(mut Boned corner, Item item, Poses poses, Skins skins)
+{
+    var m = poses.Blend(item.rows.x, item.rows.y, corner.joints.x, item.t);
+    var h = Hip(skins, item.rows.x);
+    corner.position = Math.Mul(Math.Mul(h, m), float4(corner.position, 1)).xyz;
+    corner.position.y += Total(skins);
+}
+
+frag Lit(Boned corner, out Color color, Skins skins)
+{
+    color = Color(Total(skins), 1, 1, 1);
+}
+
+local singleton Keep
+{
+    Poses poses;
+    List<Boned> corners;
+    List<int> indices;
+    List<Item> items;
+}
+
+view Show(Keep keep)
+{
+    Draw.Instanced(keep.corners, keep.indices, keep.items, Play, Lit, keep.poses);
+}

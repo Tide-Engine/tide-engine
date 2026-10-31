@@ -1,5 +1,50 @@
 # Code the GPU runs: frags and verts
 
+## Structs that hold lists, passed on whole (2026-10-31)
+
+The owner, of a game passing each list of its crowd's poses by name through
+every helper because a struct holding them was refused there: "ideally we
+lift that limit instead of working around it". A struct, singleton or
+component holding a list, grid, map or set now goes to a GPU function, and
+its methods are called, where it is the frag's/vert's own bound parameter or a
+function parameter standing for one. Rules are Provisional in the spec (Lists
+and arrays on the GPU); users' docs are `docs/game/shaders.md`, Passing on
+what holds a list.
+
+- **Nothing is passed for it** (`compiler/src/shader.c`, Structs that hold
+  lists). `holds_data` marks the types; `is_given` now includes them, so the
+  function's head and every call leave the parameter out, and a method of such
+  a type (`given_self`) has no `tide_self`. Its reads resolve by type and
+  field, as the frag's own: a plain field through `put_bound(type decl,
+  field)` (uniform words and instance attributes are module-scope in both GLSL
+  and WGSL: the vertex inputs are copied into `var<private>` globals), a data
+  field through `data_of`, whose texture lookup is by `source` decl and field
+  (no longer by the bound parameter), and an implicit field in such a method
+  (`BIND_FIELD`) through the method's owner. No suffix is added: a shader has
+  one source of each type, so one body serves every call.
+- **What a function reads of one is noted on it,** as its body is checked
+  once: `param.given_reads`/`given_local_reads` for a parameter,
+  `decl.self_reads`/`self_local_reads` for a method's receiver
+  (`note_given_field`). Each call, after `need_function`, hands those to what
+  it passed (`pass_given_reads`): the root's bound parameter's `reads`, a
+  grid's `READ_DATA` sample, or the calling function's own record. So a
+  function reached first from one frag still makes another frag send what it
+  reads, and unread fields are never sent.
+- **Refusals:** an argument or receiver that isn't such a name
+  (`refuse_given`), a `mut` method or parameter, and the struct as a value
+  (a local, a literal, a result: `type_fits`'s message for `holds_data`, and
+  `ex_name` for a function's parameter named whole).
+- Not built: one that's a field of another (`keep.poses.rows` read in a frag:
+  `data_of` resolves one level), and a `Texture` field of one sampled in a
+  function (`texture_of` still wants the frag's own parameter).
+- Tests: `compiler/tests/shaders/given_structs` (a method calling a method, a
+  singleton through two functions reading its list, map and grid, a foreach,
+  a field nothing reads unsent; GLSL/WGSL pins, SPIR-V and HLSL), errors
+  `gpu_given_struct_local` and `gpu_given_struct_made`, and the pixels of
+  `tide_platform_baked` (a socket read through a function given the poses, a
+  frag passing a singleton's list to a function) on Vulkan, OpenGL, WebGL and
+  WebGPU. Every existing shader golden is unchanged.
+
 ## Shipping shader identifiers (2026-10-27)
 
 Owner-requested follow-up to release metadata removal. shader_names.c performs

@@ -1,0 +1,113 @@
+// Baked poses (docs/game/animation.md, Crowds): a model's clips baked into rows once, and each instance's frame
+// skinned from them. The same methods run on the CPU as on the GPU, so this checks their numbers here; the GPU's
+// pixels are platform/tests/baked.tide's. arm.glb is baked_poses_make.mjs's: a root, an elbow a metre up it, and a
+// triangle with a corner on the root, one at the elbow's end and one beside the elbow, half on each.
+scene Main { }
+
+asset SkinnedMesh<Vertex3> arm = "assets/baked/arm.glb";
+asset Mesh<BakedVertex> body = "assets/baked/arm.glb";
+asset SkinnedMesh<Vertex3> legs = "assets/mesh_bones/legs.glb";
+
+singleton Seen
+{
+    int bones;
+    int rows;
+    BakedClip bend;
+    BakedClip rise;
+    BakedClip hold;
+    int other;                  // Add of another skeleton's pose
+    int full;                   // Add past the GPU's room
+    BakedFrame between;         // bend at 0.6 s
+    BakedFrame ended;           // ...past its end
+    BakedFrame before;          // ...before 0
+    BakedFrame unknown;         // ...at NaN seconds
+    BakedFrame round;           // rise, looping, at 2.5 s
+    BakedFrame wrapped;         // ...at 1.75 s, on to its first row
+    BakedFrame still;           // hold at 3 s
+    float3 tipBent;             // The elbow's end, bend's middle row
+    float3 besideBent;          // The corner half on each bone
+    float3 tipHalfway;          // ...between two rows
+    float3 tipFaded;            // bend's end faded a quarter over rest
+    float3 besideAlone;         // ...the corner beside the elbow on its heaviest bone alone
+    float3 socket;              // A socket at the elbow's end, bend's end
+    float3 socketByPose;        // ...where pose.Model puts it
+    float3 noSocket;            // One there isn't
+    float3 farBone;             // A bone the skeleton hasn't got
+    float poseError;            // Every corner at every bend row against the CPU's own skinning of that pose
+    BakedFrame faded;           // A fader's jump from bend to rise
+    BakedFrame settled;         // ...once it has faded
+    BakedFrame twice;           // ...a jump in a fade's first half: from what it faded from
+    BakedFrame cut;             // ...after Cut
+}
+
+float3 Skinned(BakedPoses poses, BakedFrame frame, BakedVertex v)
+{
+    return Math.Mul(poses.Skin(frame, v.joints, v.weights), float4(v.position, 1)).xyz;
+}
+
+event(Spawned) Bake(with Main, mut Seen seen)
+{
+    mut var poses = BakedPoses.Of(arm.defaultPose);
+    seen.bones = poses.bones;
+    seen.bend = poses.AddClip(arm.animations.bend, 4);
+    seen.rise = poses.AddClip(arm.animations.rise, 2, Playback.Loop);
+    seen.hold = poses.AddClip(arm.animations.hold, 30);
+    seen.other = poses.Add(legs.defaultPose);
+    seen.rows = poses.rows;
+    mut var crowded = poses;
+    crowded.rows = 2097152 / (crowded.bones * 3);
+    seen.full = crowded.Add(arm.defaultPose);
+
+    seen.between = seen.bend.At(0.6);
+    seen.ended = seen.bend.At(5);
+    seen.before = seen.bend.At(-1);
+    seen.unknown = seen.bend.At(Math.Sqrt(-1.0));
+    seen.round = seen.rise.At(2.5);
+    seen.wrapped = seen.rise.At(1.75);
+    seen.still = seen.hold.At(3);
+
+    var tip = body.vertices[1];
+    var beside = body.vertices[2];
+    seen.tipBent = Skinned(poses, BakedFrame.Row(2), tip);
+    seen.besideBent = Skinned(poses, BakedFrame.Row(2), beside);
+    seen.tipHalfway = Skinned(poses, BakedFrame.Between(1, 2, 0.5), tip);
+    seen.tipFaded = Skinned(poses, BakedFrame.Row(4).FadedFrom(BakedFrame.Row(0), 0.25), tip);
+    seen.besideAlone = Skinned(poses, BakedFrame.Row(2).HeaviestBone(true), beside);
+
+    var elbow = arm.skeleton.bones.elbow;
+    int s = poses.AddSocket(elbow, float4x4.Translate(float3(0, 1, 0)));
+    seen.socket = poses.Socket(BakedFrame.Row(4), s).c3.xyz;
+    var bent = arm.animations.bend.Sample(1);
+    seen.socketByPose = Math.Mul(bent.Model(elbow), float4x4.Translate(float3(0, 1, 0))).c3.xyz;
+    seen.noSocket = poses.Socket(BakedFrame.Row(4), 5).c3.xyz;
+    seen.farBone = poses.BoneSkin(BakedFrame.Row(4), 99).c3.xyz;
+
+    // The rows are the poses: a corner skinned from a row is where the pose's own bones put it
+    for (int k = 0; k < seen.bend.count; k++)
+    {
+        var pose = arm.animations.bend.Sample(seen.bend.duration * k / (seen.bend.count - 1));
+        for (int i = 0; i < body.vertices.count; i++)
+        {
+            var v = body.vertices[i];
+            mut var by = float3(0);
+            for (int j = 0; j < 4; j++)
+            {
+                int bone = j == 0 ? v.joints.x : j == 1 ? v.joints.y : j == 2 ? v.joints.z : v.joints.w;
+                float w = j == 0 ? v.weights.x : j == 1 ? v.weights.y : j == 2 ? v.weights.z : v.weights.w;
+                if (w <= 0 || !arm.skeleton.bones.TryGetAt(bone, out var b)) continue;
+                var skin = Math.Mul(pose.Model(b), Math.Inverse(arm.defaultPose.Model(b)));
+                by += Math.Mul(skin, float4(v.position, 1)).xyz * w;
+            }
+            seen.poseError = Math.Max(seen.poseError, Math.Length(Skinned(poses, BakedFrame.Row(seen.bend.first + k), v) - by));
+        }
+    }
+
+    mut var fader = BakedFader { };
+    fader.Play(seen.bend, 0.5, 0.016);
+    seen.faded = fader.Play(seen.rise, 0, 0.05);
+    seen.settled = fader.Play(seen.rise, 0.1, 0.2);
+    fader.Play(seen.bend, 0, 0.05);
+    seen.twice = fader.Play(seen.hold, 0, 0.05);
+    fader.Cut();
+    seen.cut = fader.Play(seen.bend, 0.5, 0.016);
+}

@@ -490,6 +490,119 @@ Debug.Log($"head is {hero.skeleton.NameOf(head)} ({head})"); // head is head (Bo
 
 Imported model and animation content participates in the game's match compatibility, including assets read by its vertex defaults. Those dependencies include reads through constants, implicit struct defaults, operators and helper functions, and through another mesh's defaults. Changing their content requires the corresponding game build; a mismatched pack is refused before it replaces the running pack. Unrelated images and other visual assets can still reload without changing model compatibility.
 
+## Crowds: baked poses
+
+A character drawn with its own `Pose` costs a sample and a palette on the CPU every frame. A crowd seen from afar doesn't need that: every pose it can show (each clip's frames, idles, the poses your own code makes) is worked out once, kept on the GPU, and each instance only says which of them it shows. Thousands of characters are then one instanced draw, with nothing sampled or uploaded per frame.
+
+::: tide-example crowd A field of 4,096 animated stalks
+
+<<< @/examples/crowd.tide
+
+:::
+
+Read the model twice: as a `SkinnedMesh` for its skeleton and clips, and as a [mesh with bones](./assets.md#meshes), whose vertices carry `joints` and `weights`, for the GPU to skin. `BakedVertex` is such a vertex struct (`position`, `normal`, `uv`, `joints`, `weights`); `[LOD]` on the mesh gives each instance its level as usual.
+
+```csharp
+asset SkinnedMesh<Vertex3> knightModel = "art/knight.fbx";
+[LOD] asset Mesh<BakedVertex> knight = "art/knight.fbx";
+
+local singleton Crowd
+{
+    BakedPoses poses;
+    BakedClip walk;
+    BakedClip strike;
+    List<BakedInstance> items;
+}
+
+void Bake(mut Crowd crowd)
+{
+    crowd.poses = BakedPoses.Of(knightModel.defaultPose);
+    crowd.walk = crowd.poses.AddClip(knightModel.animations.walk, 30, Playback.Loop);
+    crowd.strike = crowd.poses.AddClip(knightModel.animations.strike, 15);
+}
+
+view DrawCrowd(mut Crowd crowd, Fighter fighter)
+{
+    crowd.items.Add(BakedInstance { transform = fighter.transform, frame = crowd.walk.At(fighter.walked) });
+}
+
+[After(DrawCrowd)]
+view DrawAll(mut Crowd crowd)
+{
+    Draw.Instanced(knight, crowd.items, BakedSkin, KnightLit, crowd.poses);
+    crowd.items.Clear();
+}
+```
+
+### Rows
+
+A `BakedPoses` is a table of rows: each row is one pose of the skeleton, kept as each bone's skinning. Make it with `BakedPoses.Of(model.defaultPose)`, then fill it once:
+
+- `poses.AddClip(clip, rate[, playback])` adds a clip's rows, `rate` a second in whole steps over its duration, and returns a `BakedClip` (`first`, `count`, `duration`, `loops`). A clip of another file plays on the model as `pose.Sample` binds it; a retargeted clip is an ordinary clip. `Playback.Loop` leaves out the row at the clip's end, which is its start.
+- `poses.Add(pose)` adds any pose of the model's skeleton and returns its row's number: a clip blended, layered or edited with your own IK, sampled where you like. It returns -1 for a pose of another skeleton, or once the table is full.
+- `poses.AddSocket(bone[, offset])` returns a socket's number: a place on a bone, such as a sword's grip in a hand, which every row then carries (below).
+
+Hand the table to each draw after its frag: the GPU keeps it as long as it doesn't change, so filling it again every frame would send it every frame.
+
+### Frames
+
+A `BakedFrame` says what an instance shows: a row, the row it's going on to and how far, and another such pair it fades from. Make one with `clip.At(seconds)` (between the two rows round that time, held at the clip's ends or wrapped where it loops), `BakedFrame.Row(row)` or `BakedFrame.Between(row, next, t)`. `frame.FadedFrom(from, shown)` shows `frame` that much (0 to 1) over `from`; `frame.HeaviestBone(true)` has each corner follow its heaviest bone alone, cheaper for instances far enough away that joints blending can't be seen.
+
+A jump between clips snaps unless it fades. Keep a `BakedFader` for each instance, in a local field, and let it fade for you:
+
+```csharp
+component Fighter { local BakedFader fader; }
+
+var frame = attacking ? fighter.fader.Play(crowd.strike, sinceStrike, Frame.dt)
+                      : fighter.fader.Play(crowd.walk, walked, Frame.dt);
+```
+
+`Play` knows a clip by its first row. For rows of your own, `fader.Show(frame, kind, dt)` takes your number for what the frame is: a change of it is a jump. A jump fades from what was shown over `fadeSeconds` (0.2 by default), eased; a second jump while the first is less than half done fades from what the first was fading from. After an instance was out of sight, `fader.Cut()` makes its next frame snap.
+
+### Your own vert, and props
+
+`BakedSkin` draws `BakedVertex` meshes for `BakedInstance` items. With a vertex or an item of your own, write the vert, which calls the same skinning:
+
+```csharp
+struct Soldier
+{
+    float4x4 transform;
+    BakedFrame frame;
+    float team;
+}
+
+vert Skinned(mut SoldierCorner corner, Soldier item, BakedPoses poses)
+{
+    var skin = poses.Skin(item.frame, corner.joints, corner.weights);
+    corner.position = Math.Mul(skin, float4(corner.position, 1)).xyz;
+    corner.normal = Math.Normalize(Math.Mul(skin, float4(corner.normal, 0)).xyz);
+}
+```
+
+`poses.Socket(frame, socket)` is where a socket is in the model in that frame. A prop drawn instanced over the same items follows its bearer's hand with it:
+
+```csharp
+vert InHand(mut Corner corner, Soldier item, BakedPoses poses)
+{
+    corner.position = Math.Mul(poses.Socket(item.frame, SWORD), float4(corner.position, 1)).xyz;
+}
+```
+
+`Skin`, `BoneSkin` and `Socket` are ordinary methods, the same on the CPU: a system can ask where a far soldier's sword is from the rows it's drawn with.
+
+The poses go to helpers whole (`float4x4 Grip(BakedPoses poses, BakedFrame frame)`), as any struct that holds lists can in code the GPU runs: see [Passing on what holds a list](./shaders.md#passing-on-what-holds-a-list).
+
+### Shadows and culling
+
+Draw the same items into a shadow map's target with the same vert and no frag: `shadow.Instanced(knight, crowd.items, BakedSkin, crowd.poses)`. Skinned in a vert, instances have no bounds the engine can cull by: give the draw [`Draw.Bounds`](./draw-settings.md) that hold a character in any pose, or cull them yourself before adding them.
+
+### What it costs
+
+- **Memory:** 48 bytes a bone a row. A 65-bone character with 3,000 rows is 9.4 MB. One table holds 699,050 bones' rows (a list on the GPU is at most 1024 by 2048 pixels, three a bone): about 10,700 rows of 65 bones. Use a table for each model, or fewer rows, past that.
+- **Rate:** between rows the matrices blend linearly. That's smooth for most motion at 15 to 30 rows a second; a joint turning fast between two rows comes out short of its length halfway (a quarter turn between two rows shortens a limb by about 30% halfway; an eighth by 8%). More rows a second is the remedy, at their memory. A fade between two clips blends the same way.
+- **Bind pose:** a mesh with bones is the model at rest, so rows are right where the rest pose is the pose the model was bound in, as exported models usually are.
+- **GPU:** each corner reads two rows of each of its four bones, four in a fade, one bone's with `HeaviestBone`. 10,000 characters of 3,072 vertices and 64 bones took 5.7 ms of an RTX 4080 SUPER, where each sampled on the CPU took 10.5 ms of the CPU and 7.8 of the GPU, with 41 MB sent each frame; recording them took 0.39 ms.
+
 ## Load while playing
 
 `SkinnedMesh<Vertex3>.Decode(bytes)` and its contracted form decode a self-contained GLB, returning a model `fails IOError`. Invalid data, external-resource references or missing contract requirements give `IOError.InvalidData`. Models and animation values can be stored after decoding.

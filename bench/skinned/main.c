@@ -21,9 +21,9 @@
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
 
-enum { WIDTH = 1024, HEIGHT = 576, MAX_COUNTS = 16, MAX_CHARACTERS = 10000, MODES = 5, DRAIN_FRAMES = 16, CLIP_FRAMES = 60 };
+enum { WIDTH = 1024, HEIGHT = 576, MAX_COUNTS = 16, MAX_CHARACTERS = 10000, MODES = 6, DRAIN_FRAMES = 16, CLIP_FRAMES = 60 };
 enum { RECORD, SUBMIT, READBACK, TOTAL, CALLS, UPLOAD, GPU, METRICS };
-static const char *mode_names[MODES] = {"static", "omitted_rest", "shared_pose", "independent_poses", "gpu_clip"};
+static const char *mode_names[MODES] = {"static", "omitted_rest", "shared_pose", "independent_poses", "gpu_clip", "baked_clip"};
 static int counts[MAX_COUNTS] = {1, 10, 100, 1000};
 static int selected_modes[MODES] = {0, 1, 2, 3};
 static int selected_mode_count = 4, mode_at;
@@ -139,7 +139,7 @@ static bool read_counts(const char *text)
 
 static bool read_modes(const char *text)
 {
-    static const char *short_names[MODES] = {"static", "rest", "shared", "independent", "gpu"};
+    static const char *short_names[MODES] = {"static", "rest", "shared", "independent", "gpu", "baked"};
     int parsed[MODES], n = 0;
     const char *at = text;
     while (*at) {
@@ -457,7 +457,7 @@ static int frame(void *user, const float seconds)
     tide_platform_draw(&draw);
     const uint64_t submitted = tide_time_now_ns();
     const uint64_t uploaded = tide_platform_gpu_written() - before_upload;
-    if (mode == 4 && frame_at >= warmup_frames && warmup_frames > 0
+    if ((mode == 4 || mode == 5) && frame_at >= warmup_frames && warmup_frames > 0
         && (uploaded != 0 || tide_platform_draw_calls() != 2u)) {
         fprintf(stderr, "skinned: GPU clip lost warmed residency or instancing\n"); return 1;
     }
@@ -489,11 +489,11 @@ static int frame(void *user, const float seconds)
 
 static void help(void)
 {
-    puts("usage: bench_skinned [--counts 1,10,100,1000] [--modes static,rest,shared,independent,gpu]\n"
+    puts("usage: bench_skinned [--counts 1,10,100,1000] [--modes static,rest,shared,independent,gpu,baked]\n"
          "                     [--frames 100] [--warmup 20] [--repeat 3]\n"
          "                     [--save label] [--capture image.png] [--verify-gpu] [--subframe 0..1]\n"
          "Each count runs static, omitted-rest, shared-pose and independently sampled-pose views.\n"
-         "The opt-in gpu mode interpolates resident 60 Hz palettes; it is a visual approximation.\n"
+         "The opt-in gpu mode interpolates resident 60 Hz palettes; baked does the same through BakedPoses.\n"
          "CPU view recording and submission, GPU execution, and desktop completion/readback are separate.\n"
          "--frames counts measured frames per workload; all runs end automatically.\n"
          "Counts are 1 to 10000, at most 16 entries; --modes selects a subset.\n"

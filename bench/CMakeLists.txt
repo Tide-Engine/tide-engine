@@ -81,11 +81,16 @@ if(NOT TIDE_ANDROID)
             QUERY "counts=1,10&frames=2&warmup=1&repeat=1" WEBGPU EXPECT "renderer: WebGPU")
         tide_add_web_test(bench_skinned_gpu_clip TARGET bench_skinned
             QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=gpu&verify-gpu&subframe=0.5" WEBGPU EXPECT "GPU clip reference:")
+        tide_add_web_test(bench_skinned_baked TARGET bench_skinned
+            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=baked" WEBGPU EXPECT "baked_clip")
     else()
         add_test(NAME bench_skinned COMMAND bench_skinned --counts 1,10 --frames 2 --warmup 1 --repeat 1)
         tide_gpu_test(bench_skinned)
         add_test(NAME bench_skinned_gpu_clip COMMAND bench_skinned --counts 10 --modes gpu --frames 2 --warmup 1 --repeat 1 --verify-gpu --subframe 0.5)
         tide_gpu_test(bench_skinned_gpu_clip)
+        # Baked poses: kept on the GPU (no upload once warm) and drawn in one instanced call
+        add_test(NAME bench_skinned_baked COMMAND bench_skinned --counts 10 --modes baked --frames 2 --warmup 1 --repeat 1)
+        tide_gpu_test(bench_skinned_baked)
     endif()
 endif()
 

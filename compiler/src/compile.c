@@ -153,6 +153,14 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         token *toks = lex(src);
         if (!toks || !parse_file(prog, src, toks, false)) return false;
     }
+    if (baked_prelude_wanted(texts, lens, count)) {
+        source *src = NEW(source);
+        src->path = BAKED_PRELUDE_PATH;
+        src->text = baked_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+    }
 
     diag_phase("lexing and parsing");
     if (opts->editor_prefab) {

@@ -1,5 +1,64 @@
 # Assets and local files
 
+## Baked poses for crowds (2026-10-31)
+
+Asked for from bannerlord-duel (the owner: "would it make sense to put this
+GPU accelerated skinning stuff in Tide? ... its the second time we are
+building something similar"), whose Combat package (`combat/crowd.tide`,
+`combat/farmen.tide`) posed a few thousand rows once, kept every row's skin
+matrices in `List<float4x4>`s and skinned far fighters in a vert. API, names
+and storage were left to the engine; all are Provisional in the spec (Skinned
+meshes and animation). Users' docs: `docs/game/animation.md`, Crowds: baked
+poses, with the `crowd` example (4,096 stalks, `docs/examples/assets/crowd/`,
+made by `make_stalk.mjs`).
+
+- **Tide code that comes with the compiler,** as fills are: `<tide>/baked.tide`
+  (`baked_prelude_lines` in `compiler/src/builtins.c`), compiled with a game
+  whose text names `BakedPoses`, `BakedFrame`, `BakedClip`, `BakedFader`,
+  `BakedSkin`, `BakedInstance` or `BakedVertex` (`baked_prelude_wanted`, also
+  in the language server). No runtime function, generated-C change or engine
+  storage: the table is an ordinary `List<BakedBone>` the draw's values carry,
+  which the draw list keeps on the GPU by its version (uploaded once). Its
+  methods take the table whole on the GPU through Structs that hold lists
+  (`notes/shaders.md`).
+- **Storage:** a row is each bone's `pose.Model(bone) * inverse(rest.Model(bone))`
+  as its top three rows (`BakedBone`, 48 bytes, three pixels of the list's
+  texture, one read). A mesh with bones is the model at rest, so this is the
+  right skinning where rest is the bind pose (the game's assumption too).
+  `Add` refuses another skeleton (by bone count) and past 699,050 bone-rows
+  (1024 x 2048 pixels / 3). Quaternion + translation (32 bytes) was not
+  chosen: it can't hold the scale exporters put in skin matrices, and the
+  game blended matrices already.
+- **Frames:** `BakedFrame { int4 rows; float4 blend; }`, two instance
+  attributes. Rows blend linearly in row form, the fade pair likewise, then one
+  matrix a corner (`Skin`), so a corner reads 2 or 4 rows of each bone. The
+  weights are summed unconditionally (no per-vertex branch). `HeaviestBone`
+  is the frame's `blend.w`.
+- **AddClip:** `steps = max(1, ceil(duration * rate - 1e-4))`, rows at
+  `duration * k / steps`, `steps + 1` of them, or `steps` for a loop; one for
+  a clip with no duration. `At` clamps, wraps a loop, and NaN reads row 0.
+- **Sockets** cost nothing a row: `Socket = BoneSkin(bone) * (rest.Model(bone)
+  * offset)`, the constant kept a socket (`BakedSocket`), so they can be added
+  after rows.
+- **BakedFader** follows the game's rule: a change of kind (a clip's first row)
+  starts a fade over `fadeSeconds` eased by SmoothStep; a jump with the fade
+  under half done keeps the old `from`.
+- The struct holds a `Pose` (rest, for `AddClip`) and CPU-only lists; only
+  `bones`, `skins` and `sockets` are sent.
+- Tests: `tidec_e2e_baked_poses` (`baked_poses_make.mjs`'s two-bone
+  `arm.glb`: row counts, frames at ends/loops/NaN, positions from rows and
+  between them against hand-worked values, fades, the heaviest bone, sockets
+  against `pose.Model`, every corner of every row against the CPU's own
+  skinning of that pose, refusals, the fader), `tide_platform_baked` (pixels
+  on Vulkan, OpenGL, WebGL, WebGPU, twice), `tidec_shaders_baked`, and
+  `bench_skinned_baked` (residency: no upload once warm, one draw).
+- Measured: `notes/benchmarks.md`, Baked poses.
+- Gaps: per-bone layers (lower body one row, upper another, joined at a bone:
+  Combat's `Joined`/`Shift`) are a separate design; baking at build time;
+  automatic culling bounds (a custom vert has none: `Draw.Bounds`); the
+  heaviest bone by distance in the vert; tangents in `BakedSkin`; the GPU
+  cost gap below.
+
 ## Asset LOD tolerance multiplier (2026-10-31)
 
 The owner chose multiplication: `[LOD(2)]` with `SetLODPixels(4)` allows 8

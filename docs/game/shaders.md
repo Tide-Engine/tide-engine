@@ -544,6 +544,37 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights, Board board)
 - A function that takes a grid is the GPU's alone: frags, verts and the functions they call call it. On the CPU a grid's cells are read through its component or singleton, `board.owner[x, y]`. A grid's local is in a frag, a vert or such a function.
 - A function samples the texture it takes too, a grid among them: see [In a function](#in-a-function).
 
+### Passing on what holds a list
+
+A struct, a singleton or a component that holds lists, grids, maps or sets goes to a function whole, and its methods are called on it, so the code that reads it needn't name each list:
+
+```csharp
+struct Poses
+{
+    int bones;
+    List<float4> rows;
+
+    float4 Row(int row, int bone)
+    {
+        return rows[row * bones + bone];
+    }
+}
+
+float4 Hips(Poses poses, int row)
+{
+    return poses.Row(row, 0);
+}
+
+vert Play(mut Corner corner, Item item, Poses poses)
+{
+    corner.position += Hips(poses, item.row).xyz;
+}
+```
+
+- It's the one the frag or vert was given, by its name: its own parameter (the draw's values, a singleton, a component), or a function's parameter that stands for one. Nothing is handed to the function for it: its fields are read where the frag or vert reads them, and only the fields some code reads are sent.
+- It's read, never changed: a `mut` method or parameter is an error. It isn't kept in a local, made, returned or picked between there, as a list isn't.
+- A struct that holds no list is a value as before, passed and kept like any other.
+
 ### Arrays
 
 An [array of a fixed length](../language/text-and-lists.md#arrays) is a value like a vector: `float[8]`, `Stop[4]`. As a field of a component, a singleton or a draw's values it's sent with the other fields the code reads, and in code it's a local, a parameter or a function's result like any other value:

@@ -2616,27 +2616,35 @@ static const char *const draw_prelude_lines[] = {
     "}",
 };
 
-const char *draw_prelude(size_t *len)
+// A prelude's lines as one text, each ended by a newline: made once.
+static const char *joined(const char *const *lines, const size_t count, char **text, size_t *length)
 {
-    static char *text;
-    static size_t length;
-    if (!text) {
-        const size_t count = sizeof draw_prelude_lines / sizeof draw_prelude_lines[0];
-        for (size_t i = 0; i < count; i++) length += strlen(draw_prelude_lines[i]) + 1;
-        text = malloc(length + 1);
-        if (!text) {
+    if (!*text) {
+        size_t n = 0;
+        for (size_t i = 0; i < count; i++) n += strlen(lines[i]) + 1;
+        *text = malloc(n + 1);
+        if (!*text) {
             fprintf(stderr, "tidec: out of memory\n");
             exit(1);
         }
         size_t at = 0;
         for (size_t i = 0; i < count; i++) {
-            const size_t n = strlen(draw_prelude_lines[i]);
-            memcpy(text + at, draw_prelude_lines[i], n);
-            text[at + n] = '\n';
-            at += n + 1;
+            const size_t k = strlen(lines[i]);
+            memcpy(*text + at, lines[i], k);
+            (*text)[at + k] = '\n';
+            at += k + 1;
         }
-        text[at] = '\0';
+        (*text)[at] = '\0';
+        *length = n;
     }
+    return *text;
+}
+
+const char *draw_prelude(size_t *len)
+{
+    static char *text;
+    static size_t length;
+    joined(draw_prelude_lines, sizeof draw_prelude_lines / sizeof draw_prelude_lines[0], &text, &length);
     *len = length;
     return text;
 }
@@ -2737,6 +2745,351 @@ bool draw_prelude_wanted(const char *const *texts, const size_t *lens, const int
                 while (last > 0 && arg[last - 1] != '.') last--;
                 if (n > last && declares_fill(texts, lens, count, arg + last, n - last)) return true;
             }
+        }
+    }
+    return false;
+}
+
+// Baked poses' own Tide code: a crowd's animation, posed once on the CPU and
+// kept on the GPU, each instance skinned there from the rows it shows
+// (BAKED_PRELUDE_PATH). A line each, as the fills' are.
+static const char *const baked_prelude_lines[] = {
+    "// Baked poses: a crowd's animation, posed once on the CPU and kept on the",
+    "// GPU, where each instance is skinned from the rows it shows. A row is one",
+    "// pose's skinning: for each bone, its model matrix times the inverse of its",
+    "// rest one, as three float4s (the matrix's top three rows). A mesh with bones",
+    "// (`Mesh<V>` with `joints` and `weights`) is the model at rest, so a corner",
+    "// goes where its bones' rows take it.",
+    "",
+    "// Where one instance is in a BakedPoses: the row it shows, going on to",
+    "// another, and the rows it fades from after a jump between clips.",
+    "struct BakedFrame",
+    "{",
+    "    int4 rows;      // x: the row shown, y: the row it goes on to; z and w: the same of the rows it fades from",
+    "    float4 blend;   // x: how far x is on to y; y: how far z is on to w; z: how much x and y show over z and w (1: all); w: 1 where each corner follows its heaviest bone alone",
+    "",
+    "    // This frame shown `shown` of the way (0 to 1) over `from`, which it fades from.",
+    "    BakedFrame FadedFrom(BakedFrame from, float shown)",
+    "    {",
+    "        return BakedFrame { rows = int4(rows.x, rows.y, from.rows.x, from.rows.y),",
+    "                            blend = float4(blend.x, from.blend.x, Math.Saturate(shown), blend.w) };",
+    "    }",
+    "",
+    "    // ...each corner following its heaviest bone alone (or not): a far",
+    "    // instance's, cheaper, where joints blending can't be seen.",
+    "    BakedFrame HeaviestBone(bool alone)",
+    "    {",
+    "        return BakedFrame { rows = rows, blend = float4(blend.x, blend.y, blend.z, alone ? 1 : 0) };",
+    "    }",
+    "}",
+    "",
+    "namespace BakedFrame",
+    "{",
+    "    // One row, still.",
+    "    BakedFrame Row(int row)",
+    "    {",
+    "        return BakedFrame { rows = int4(row, row, row, row), blend = float4(0, 0, 1, 0) };",
+    "    }",
+    "",
+    "    // `t` of the way (0 to 1) from one row to the next.",
+    "    BakedFrame Between(int row, int next, float t)",
+    "    {",
+    "        return BakedFrame { rows = int4(row, next, row, next), blend = float4(Math.Saturate(t), 0, 1, 0) };",
+    "    }",
+    "}",
+    "",
+    "// A clip's rows in a BakedPoses: `count` of them from `first`, evenly over",
+    "// its `duration`. A clip that loops has no row at its end, which is its start.",
+    "struct BakedClip",
+    "{",
+    "    int first;",
+    "    int count;",
+    "    float duration;",
+    "    bool loops;",
+    "",
+    "    // Its frame `seconds` in: between the two rows round it. Past the end it",
+    "    // stays on its last row, or goes round where it loops; before 0, its first.",
+    "    BakedFrame At(float seconds)",
+    "    {",
+    "        if (count <= 1 || !(duration > 0)) return BakedFrame.Row(first);",
+    "        int steps = loops ? count : count - 1;",
+    "        mut float along = seconds / duration;",
+    "        if (loops) along = along - Math.Floor(along);",
+    "        along = Math.Clamp(along, 0, 1) * steps;",
+    "        int whole = Math.Min(int(Math.Floor(along)), steps);",
+    "        int row = loops ? whole % steps : whole;",
+    "        int next = loops ? (row + 1) % steps : Math.Min(row + 1, steps);",
+    "        return BakedFrame.Between(first + row, first + next, along - whole);",
+    "    }",
+    "}",
+    "",
+    "// One bone's skinning in a row: the top three rows of its matrix, whose",
+    "// fourth is 0, 0, 0, 1. Blended as rows, a matrix is made once a corner.",
+    "struct BakedBone",
+    "{",
+    "    float4 x;",
+    "    float4 y;",
+    "    float4 z;",
+    "",
+    "    float4x4 Matrix()",
+    "    {",
+    "        return float4x4(float4(x.x, y.x, z.x, 0), float4(x.y, y.y, z.y, 0), float4(x.z, y.z, z.z, 0), float4(x.w, y.w, z.w, 1));",
+    "    }",
+    "",
+    "    BakedBone Times(float w)",
+    "    {",
+    "        return BakedBone { x = x * w, y = y * w, z = z * w };",
+    "    }",
+    "",
+    "    BakedBone Plus(BakedBone b)",
+    "    {",
+    "        return BakedBone { x = x + b.x, y = y + b.y, z = z + b.z };",
+    "    }",
+    "",
+    "    BakedBone Toward(BakedBone b, float t)",
+    "    {",
+    "        return BakedBone { x = Math.Lerp(x, b.x, t), y = Math.Lerp(y, b.y, t), z = Math.Lerp(z, b.z, t) };",
+    "    }",
+    "}",
+    "",
+    "namespace BakedBone",
+    "{",
+    "    BakedBone Of(float4x4 m)",
+    "    {",
+    "        return BakedBone { x = float4(m.c0.x, m.c1.x, m.c2.x, m.c3.x), y = float4(m.c0.y, m.c1.y, m.c2.y, m.c3.y),",
+    "                           z = float4(m.c0.z, m.c1.z, m.c2.z, m.c3.z) };",
+    "    }",
+    "}",
+    "",
+    "// A place on a bone that rows carry (BakedPoses.AddSocket)",
+    "struct BakedSocket",
+    "{",
+    "    int bone;",
+    "    BakedBone at;           // Where it is in the model at rest",
+    "}",
+    "",
+    "// A model's poses, baked. Made for its rest pose, `BakedPoses.Of(model.defaultPose)`,",
+    "// filled once (rows from clips, `AddClip`, or from poses the game makes,",
+    "// `Add`), then given to each draw of its instances, after the frag: the GPU",
+    "// keeps its rows while they don't change.",
+    "struct BakedPoses",
+    "{",
+    "    int bones;              // Bones a row: the skeleton's",
+    "    int rows;               // Rows so far",
+    "    List<BakedBone> skins;  // Row by row, bone by bone",
+    "    List<BakedSocket> sockets;",
+    "    List<float4x4> unbind;  // Each bone's rest model matrix, inverted",
+    "    List<float4x4> restAt;  // ...and as it is",
+    "    Pose rest;",
+    "",
+    "    // A row of `pose`, a pose of the model's skeleton: its number, or -1 for",
+    "    // a pose of another skeleton, or once the rows hold as many bones as the",
+    "    // GPU's list does (699,050: 1024 by 2048 pixels, three a bone).",
+    "    mut int Add(Pose pose)",
+    "    {",
+    "        if (pose.skeleton.bones.count != bones || bones <= 0) return -1;",
+    "        if ((rows + 1) * bones > 699050) return -1;",
+    "        for (int b = 0; b < bones; b++)",
+    "        {",
+    "            mut var m = float4x4.identity;",
+    "            if (pose.skeleton.bones.TryGetAt(b, out var bone)) m = Math.Mul(pose.Model(bone), unbind[b]);",
+    "            skins.Add(BakedBone.Of(m));",
+    "        }",
+    "        rows++;",
+    "        return rows - 1;",
+    "    }",
+    "",
+    "    // A clip's rows, `rate` a second (whole steps over its duration), as it",
+    "    // plays on this model: one of another file binds by its bones' names, as",
+    "    // `pose.Sample` binds it. Its rows stop where the GPU holds no more.",
+    "    mut BakedClip AddClip(Animation clip, float rate, Playback playback)",
+    "    {",
+    "        float duration = Math.Max(clip.duration, 0);",
+    "        bool loops = playback == Playback.Loop;",
+    "        mut int steps = 1;",
+    "        if (duration > 0 && rate > 0) steps = Math.Max(1, int(Math.Ceil(duration * rate - 0.0001)));",
+    "        int count = duration > 0 ? (loops ? steps : steps + 1) : 1;",
+    "        mut var made = BakedClip { first = rows, duration = duration, loops = loops && duration > 0 };",
+    "        mut var pose = rest;",
+    "        for (int k = 0; k < count; k++)",
+    "        {",
+    "            pose.Sample(clip, duration * k / steps, Playback.Clamp);",
+    "            if (Add(pose) < 0) break;",
+    "            made.count++;",
+    "        }",
+    "        return made;",
+    "    }",
+    "",
+    "    mut BakedClip AddClip(Animation clip, float rate)",
+    "    {",
+    "        return AddClip(clip, rate, Playback.Clamp);",
+    "    }",
+    "",
+    "    // A place on a bone that rows carry, as a prop in a hand: `offset` from",
+    "    // the bone, in its space. Its number, for Socket; -1 for a bone of none",
+    "    // of the skeleton's.",
+    "    mut int AddSocket(Bone bone, float4x4 offset)",
+    "    {",
+    "        if (bone.index < 0 || bone.index >= bones) return -1;",
+    "        sockets.Add(BakedSocket { bone = bone.index, at = BakedBone.Of(Math.Mul(restAt[bone.index], offset)) });",
+    "        return sockets.count - 1;",
+    "    }",
+    "",
+    "    mut int AddSocket(Bone bone)",
+    "    {",
+    "        return AddSocket(bone, float4x4.identity);",
+    "    }",
+    "",
+    "    // One bone's rows in `frame`, blended. Identity for a bone the skeleton hasn't got.",
+    "    BakedBone BoneRows(BakedFrame frame, int bone)",
+    "    {",
+    "        if (bone < 0 || bone >= bones) return BakedBone { x = float4(1, 0, 0, 0), y = float4(0, 1, 0, 0), z = float4(0, 0, 1, 0) };",
+    "        mut var a = skins[frame.rows.x * bones + bone];",
+    "        if (frame.blend.x > 0) a = a.Toward(skins[frame.rows.y * bones + bone], frame.blend.x);",
+    "        if (frame.blend.z < 1)",
+    "        {",
+    "            mut var b = skins[frame.rows.z * bones + bone];",
+    "            if (frame.blend.y > 0) b = b.Toward(skins[frame.rows.w * bones + bone], frame.blend.y);",
+    "            a = b.Toward(a, Math.Saturate(frame.blend.z));",
+    "        }",
+    "        return a;",
+    "    }",
+    "",
+    "    // One bone's skinning in `frame`: its model matrix there times its rest one inverted.",
+    "    float4x4 BoneSkin(BakedFrame frame, int bone)",
+    "    {",
+    "        return BoneRows(frame, bone).Matrix();",
+    "    }",
+    "",
+    "    // A corner's skinning in `frame`, by its bones and their weights, which",
+    "    // sum to 1: each bone's blended, by weight. Its heaviest bone's alone",
+    "    // where the frame says (HeaviestBone).",
+    "    float4x4 Skin(BakedFrame frame, int4 joints, float4 weights)",
+    "    {",
+    "        if (frame.blend.w > 0.5) return BoneRows(frame, joints.x).Matrix();",
+    "        var m = BoneRows(frame, joints.x).Times(weights.x).Plus(BoneRows(frame, joints.y).Times(weights.y))",
+    "                .Plus(BoneRows(frame, joints.z).Times(weights.z)).Plus(BoneRows(frame, joints.w).Times(weights.w));",
+    "        return m.Matrix();",
+    "    }",
+    "",
+    "    // Where socket `socket` is in `frame`, in the model: its bone's",
+    "    // skinning times where it is at rest. Identity for one there isn't.",
+    "    float4x4 Socket(BakedFrame frame, int socket)",
+    "    {",
+    "        if (socket < 0 || socket >= sockets.count) return float4x4.identity;",
+    "        var s = sockets[socket];",
+    "        return Math.Mul(BoneSkin(frame, s.bone), s.at.Matrix());",
+    "    }",
+    "}",
+    "",
+    "namespace BakedPoses",
+    "{",
+    "    // Poses baked for a model whose rest pose is `rest`: the pose its mesh",
+    "    // with bones is at, `model.defaultPose`.",
+    "    BakedPoses Of(Pose rest)",
+    "    {",
+    "        mut var poses = BakedPoses { bones = rest.skeleton.bones.count, rest = rest };",
+    "        for (int b = 0; b < poses.bones; b++)",
+    "        {",
+    "            mut var m = float4x4.identity;",
+    "            if (rest.skeleton.bones.TryGetAt(b, out var bone)) m = rest.Model(bone);",
+    "            poses.restAt.Add(m);",
+    "            poses.unbind.Add(Math.Inverse(m));",
+    "        }",
+    "        return poses;",
+    "    }",
+    "}",
+    "",
+    "// What an instance shows, kept from frame to frame (a local field of its",
+    "// entity's): a jump to another clip, or other rows, fades from what it",
+    "// showed over `fadeSeconds`, where it would snap.",
+    "struct BakedFader",
+    "{",
+    "    float fadeSeconds = 0.2;",
+    "    BakedFrame shown;       // What it showed last, without its fade",
+    "    BakedFrame from;        // What it fades from",
+    "    int motion;             // What it showed: a clip's first row, or the game's own number",
+    "    bool showing;           // Whether it has shown anything (Cut: not)",
+    "    float faded = 1;        // How far its fade is, 0 to 1",
+    "",
+    "    // `clip`, `seconds` in, `dt` after the last frame.",
+    "    mut BakedFrame Play(BakedClip clip, float seconds, float dt)",
+    "    {",
+    "        return Show(clip.At(seconds), clip.first, dt);",
+    "    }",
+    "",
+    "    // `frame`, of `kind` (the game's number for what it shows: a change of",
+    "    // it is a jump), `dt` after the last frame. A jump in the middle of a",
+    "    // fade fades from whichever of the two showed more.",
+    "    mut BakedFrame Show(BakedFrame frame, int kind, float dt)",
+    "    {",
+    "        if (showing && kind != motion)",
+    "        {",
+    "            if (faded >= 0.5) from = shown;",
+    "            faded = 0;",
+    "        }",
+    "        if (!showing) faded = 1;",
+    "        motion = kind;",
+    "        showing = true;",
+    "        shown = frame;",
+    "        faded = Math.Saturate(faded + Math.Max(dt, 0) / Math.Max(fadeSeconds, 0.000001));",
+    "        if (faded >= 1) return frame;",
+    "        return frame.FadedFrom(from, Math.SmoothStep(0, 1, faded));",
+    "    }",
+    "",
+    "    // The next frame shown snaps, with no fade: after a time unseen.",
+    "    mut void Cut()",
+    "    {",
+    "        showing = false;",
+    "    }",
+    "}",
+    "",
+    "// A mesh with bones, as BakedSkin reads it: an `asset Mesh<BakedVertex>` of",
+    "// a skinned model's file.",
+    "struct BakedVertex",
+    "{",
+    "    float3 position;",
+    "    float3 normal;",
+    "    float2 uv;",
+    "    int4 joints;",
+    "    float4 weights;",
+    "}",
+    "",
+    "// An instance BakedSkin draws: where, which frame, and a tint for the frag.",
+    "struct BakedInstance",
+    "{",
+    "    float4x4 transform = float4x4.identity;",
+    "    BakedFrame frame;",
+    "    Color tint = Color.white;",
+    "}",
+    "",
+    "// The vert that skins a BakedVertex from its instance's frame:",
+    "// `Draw.Instanced(mesh, items, texture, BakedSkin, MyFrag, poses)`.",
+    "vert BakedSkin(mut BakedVertex vertex, BakedInstance item, BakedPoses poses)",
+    "{",
+    "    var skin = poses.Skin(item.frame, vertex.joints, vertex.weights);",
+    "    vertex.position = Math.Mul(skin, float4(vertex.position, 1)).xyz;",
+    "    vertex.normal = Math.Normalize(Math.Mul(skin, float4(vertex.normal, 0)).xyz);",
+    "}",
+};
+
+const char *baked_prelude(size_t *len)
+{
+    static char *text;
+    static size_t length;
+    joined(baked_prelude_lines, sizeof baked_prelude_lines / sizeof baked_prelude_lines[0], &text, &length);
+    *len = length;
+    return text;
+}
+
+bool baked_prelude_wanted(const char *const *texts, const size_t *lens, const int count)
+{
+    // Its types' names: a game that bakes poses names BakedPoses, and one that draws them a BakedFrame or BakedSkin
+    static const char *const names[] = {"BakedPoses", "BakedFrame", "BakedClip", "BakedFader", "BakedSkin", "BakedInstance",
+                                        "BakedVertex"};
+    for (int f = 0; f < count; f++) {
+        for (size_t k = 0; k < sizeof names / sizeof names[0]; k++) {
+            if (has_text(texts[f], lens[f], names[k])) return true;
         }
     }
     return false;

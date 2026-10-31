@@ -1,0 +1,44 @@
+// expect: Poses holds a list, so code the GPU runs reads its fields, or passes it to a function or calls its method, by the name the frag or vert was given it: it can't be made, kept in a local, returned or picked there
+// expect: read its fields where it was given, or pass that name on to a function that takes one
+scene Main { }
+
+struct Boned
+{
+    float3 position;
+    int4 joints;
+}
+
+struct Poses
+{
+    int bones;
+    List<float4> table;
+}
+
+float Bones(Poses poses)
+{
+    var kept = poses;
+    return kept.bones;
+}
+
+struct Item
+{
+    float4x4 transform;
+}
+
+vert Play(mut Boned corner, Item item, Poses poses)
+{
+    corner.position.x += Bones(poses);
+}
+
+local singleton Keep
+{
+    Poses poses;
+    List<Boned> corners;
+    List<int> indices;
+    List<Item> items;
+}
+
+view Show(Keep keep)
+{
+    Draw.Instanced(keep.corners, keep.indices, keep.items, Play, keep.poses);
+}
