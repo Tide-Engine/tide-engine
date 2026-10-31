@@ -327,16 +327,28 @@ That's all there is to write. There are no distances to set, no levels to author
 - **A level is fewer of the mesh's own triangles.** Each has about half the triangles of the one before, over the same vertices: none is added or moved, so the pack grows by the levels' triangles alone, about as much again as the mesh's own. Open edges stay where they are, and so do the seams where a texture or a color changes, so no hole opens and no texture tears.
 - **Static layouts with a `float4 tangent` preserve opposite handedness signs as separate seams.** Tangent `xyz` adds no simplification error metric. Other vertex layouts and skinned meshes retain their previous LOD behavior and cache keys.
 - **A mesh of under 1,000 triangles gets no levels.** Levels only pay by the triangles they take off a draw, and picking one costs a little for each instance, so such a mesh draws exactly as if it weren't marked, with nothing picked. A bigger mesh's chain goes on to levels of a few dozen triangles, and stops before one of under 64: a crowd far off draws each figure that small.
-- **A draw picks the simplest level that looks the same.** Each level knows how far its surface, and what's on it, is from the full mesh's. A normal or a color is off by as much as the patch it's off on: a bevel shaded a little differently counts for the bevel's size, not the whole mesh's. A draw takes the simplest level whose difference is under a pixel where the mesh is, so a mesh drawn large keeps all its detail at any distance.
+- **A draw picks by estimated visual error on screen.** Each level knows how far its surface, and what's on it, is from the full mesh's. A normal or a color is off by as much as the patch it's off on: a bevel shaded a little differently counts for the bevel's size, not the whole mesh's. A draw takes the simplest level within its pixel tolerance, 1 by default. A mesh drawn large keeps more detail at any distance.
 - **Each instance picks its own.** `Draw.Instanced` over a field of rocks draws the near ones whole and the far ones simple: one GPU draw for each level in use, the instances of each in the order the list has them. A view that runs for each entity is grouped the same way.
 - **Your code reads the full mesh.** `rock.vertices` and `rock.indices` are what they are without `[LOD]`, for the match too: a collider built from a rock's triangles is built from all of them, on every machine.
 - **It works on a [`SkinnedMesh<V>`](./animation.md) too:** `[LOD] asset SkinnedMesh<Corner> hero = "art/hero.glb";`. Its levels are made from the model at rest, weighing how each vertex follows its bones so joints keep the vertices that bend them, and a pose deforms a level as it deforms the full mesh.
 - **A list or a map of meshes** takes it for every file: `[LOD] asset List<Mesh<Corner>> rocks = "art/rocks/*.glb";`.
+- **An asset can accept more error:** `[LOD(2)] asset Mesh<Corner> rock = "art/rock.glb";` multiplies the draw's pixel tolerance by 2. `[LOD]` means 1. The argument must be a positive finite constant number; fractions below 1 keep more detail. It applies to every file in a list or map and works on skinned meshes too. The generated levels stay the same.
 - **They're made once.** tide keeps a mesh's levels in the game's `.tide/` folder, by what's in the file, so later builds don't make them again.
 
 **A game's vert isn't known to the pick.** Where the mesh is and how big it is come from the file's own geometry and the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been: draw such a mesh with `Draw.LOD(0)`, below, or leave `[LOD]` off it.
 
-**`Draw.LOD` names the level** instead of picking it, a [draw setting](./draw-settings.md) with the two forms the others have. `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last level is its last:
+**`Draw.LODPixels` controls the quality/performance tradeoff** while each mesh still picks automatically. The default is 1 pixel of estimated visual error. Higher values allow coarser meshes at the same distance; positive values below 1 keep more detail:
+
+```csharp
+Draw.LODPixels(4)
+{
+    Draw.Instanced(rock, scenery.transforms, Look);
+}
+```
+
+`Draw.SetLODPixels(4);` applies to following window draws. A render target has its own tolerance: `shadow.SetLODPixels(4);`. The asset's multiplier applies too: `[LOD(2)]` allows 2 pixels normally and 8 in that shadow pass. Both draw-setting forms restore 1 with no arguments; a block restores the previous value when it ends, including an early exit. Nonpositive or nonfinite draw-setting values also use 1. This changes selection among the levels already built; it doesn't generate more levels. Pixels are counted through the same camera and resolution as automatic selection.
+
+**`Draw.LOD` names the level** instead of picking it, a [draw setting](./draw-settings.md) with the two forms the others have. A named level overrides the pixel tolerance. `0` is the full mesh, `1` the first simpler one, and a number past a mesh's last level is its last:
 
 ```csharp
 Draw.LOD(0)
@@ -361,7 +373,7 @@ view Cast(Lamp lamp, Viewer viewer, Rock rock)
 It takes what `Draw.Camera` takes for a 3D camera: a position, a rotation and a field of view, or a transform and a projection (`Draw.CameraTransform()` and `Draw.CameraProjection()` give the window's). With nothing, `SetLODCamera()`, the destination's own camera picks again. A level that's named wins over a camera that's named.
 
 ::: info
-That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level or a camera to pick by, are decided. How the levels are made, the pixel a level may be off by, the two settings' names and each rule above are how it works today, and may still change. A way to say how many pixels a level may be off by, for a weak machine, isn't in the language yet.
+That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level, a pixel tolerance or a camera to pick by, are decided. How the levels are made and the other rules above are how it works today, and may still change.
 :::
 
 ### Blend shapes to keep

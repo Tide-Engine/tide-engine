@@ -1,6 +1,7 @@
 #include "tide/draw.h"
 
 #include <stddef.h>
+#include <float.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -722,6 +723,7 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
             case TIDE_DRAW_SAVED_STENCIL: p->stencil = s->value; break;
             case TIDE_DRAW_SAVED_LOD: p->lod = s->value; break;
             case TIDE_DRAW_SAVED_LOD_CAMERA: p->lod_camera = s->value; break;
+            case TIDE_DRAW_SAVED_LOD_PIXELS: p->lod_pixels = s->pixels; break;
             case TIDE_DRAW_SAVED_FRUSTUM_CULLING: p->no_frustum_culling = s->value; break;
             case TIDE_DRAW_SAVED_BOUNDS: p->bounds = s->bounds; break;
             case TIDE_DRAW_SAVED_CAMERA_2D: p->camera_2d = s->value; break;
@@ -995,9 +997,27 @@ void tide_draw_screen_size(tide_draw_list *d, const tide_float2 size)
     d->screen = size.x > 0.0f && size.y > 0.0f && size.x <= 3.0e38f && size.y <= 3.0e38f ? size : tide_f2(0.0f, 0.0f);
 }
 
-void tide_draw_lod_pixels(tide_draw_list *d, const float pixels)
+void tide_draw_set_lod_pixels(tide_draw_list *d, const float pixels)
 {
-    d->lod_pixels = pixels > 0.0f && pixels <= 3.0e38f ? pixels : 0.0f;
+    d->place.lod_pixels = pixels > 0.0f && pixels <= FLT_MAX ? pixels : 0.0f;
+}
+
+void tide_draw_unset_lod_pixels(tide_draw_list *d)
+{
+    d->place.lod_pixels = 0.0f;
+}
+
+uint32_t tide_draw_push_lod_pixels(tide_draw_list *d, const float pixels)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_LOD_PIXELS)->pixels = d->place.lod_pixels;
+    tide_draw_set_lod_pixels(d, pixels);
+    return mark;
+}
+
+uint32_t tide_draw_push_no_lod_pixels(tide_draw_list *d)
+{
+    return tide_draw_push_lod_pixels(d, 0.0f);
 }
 
 // What the selected destination's commands do with its stencil: its own, as the stencil is. It
@@ -1284,6 +1304,7 @@ void tide_draw_defaults(tide_draw_list *d)
         tide_draw_place *p = i ? &d->targets[i - 1u].place : &d->place;
         p->camera_2d = p->camera_3d = p->clip = p->moved = p->stencil = p->tinted = 0;
         p->lod = p->lod_camera = 0;
+        p->lod_pixels = 0.0f;
         p->no_frustum_culling = 0;
         p->bounds = (tide_draw_bounds){0};
         p->blend = TIDE_BLEND_ALPHA;
@@ -2545,6 +2566,7 @@ void tide_draw_mesh_levels(tide_draw_list *d, const uint32_t mesh, const tide_me
     m->level_indices = grow(m->level_indices, 0, &m->level_index_capacity, levels->index_count, sizeof(uint32_t), 192u);
     memcpy(m->center, levels->center, sizeof m->center);
     m->radius = levels->radius >= 0.0f ? levels->radius : 0.0f;
+    m->lod_multiplier = levels->multiplier > 0.0f && levels->multiplier <= FLT_MAX ? levels->multiplier : 1.0f;
     float before = 0.0f;
     for (uint32_t level = 0; level < levels->count && level < TIDE_MESH_LEVELS; level++) {
         const uint32_t first = levels->first[level], count = levels->indices[level];
@@ -2632,7 +2654,7 @@ static lod_view lod_view_kept(tide_draw_list *d)
     }
     uint32_t seen[4] = {d->frame + 1u, p->lod_camera ? p->lod_camera : p->camera_3d};
     memcpy(&seen[2], &height, sizeof height);
-    memcpy(&seen[3], &d->lod_pixels, sizeof d->lod_pixels);
+    memcpy(&seen[3], &p->lod_pixels, sizeof p->lod_pixels);
     if (memcmp(seen, d->lod_seen, sizeof seen) != 0) {
         const lod_view fresh = lod_view_of(d);
         memcpy(d->lod_seen, seen, sizeof seen);
@@ -2666,7 +2688,7 @@ static lod_view lod_view_of(const tide_draw_list *d)
     const tide_float4x4 *c = &camera.matrix;
     // Up the screen, clip space is 2 for the destination's height, whatever its shape is
     const float up = tide_sqrt_f(c->c0.y * c->c0.y + c->c1.y * c->c1.y + c->c2.y * c->c2.y);
-    const float pixels = d->lod_pixels > 0.0f ? d->lod_pixels : 1.0f;
+    const float pixels = p->lod_pixels > 0.0f ? p->lod_pixels : 1.0f;
     view.scale = up * height * 0.5f / pixels;
     view.w[0] = c->c0.w, view.w[1] = c->c1.w, view.w[2] = c->c2.w, view.w[3] = c->c3.w;
     view.w_length = tide_sqrt_f(c->c0.w * c->c0.w + c->c1.w * c->c1.w + c->c2.w * c->c2.w);
@@ -2691,7 +2713,8 @@ static inline uint32_t pick_level(const tide_draw_mesh_data *m, const lod_view *
     const float big = tide_sqrt_f(sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz));
     const float away = view->w[0] * cx + view->w[1] * cy + view->w[2] * cz + view->w[3] - m->radius * big * view->w_length;
     if (!(away > 0.0f)) return 0; // Around the camera, or behind it, or nowhere a number says
-    const float allowed = away / (big * view->scale);
+    // Widen only the asset multiplication: default assets retain the original float threshold.
+    const double allowed = (double)(away / (big * view->scale)) * (double)m->lod_multiplier;
     uint32_t level = 0;
     while (level < m->levels && m->level_error[level] <= allowed) level++;
     return level;

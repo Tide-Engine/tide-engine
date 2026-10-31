@@ -1,0 +1,7 @@
+// expect: Draw.LODPixels sets it around a block
+// expect: Draw.SetLODPixels(...);
+scene Main { }
+view Show()
+{
+    Draw.LODPixels(4);
+}

@@ -14448,8 +14448,8 @@ static void check_asset_decl(checker *c, decl *k)
             check_parts_attribute(k, attr, typed, read);
         } else if (str_eq_c(attr->name, "LOD")) {
             // Levels of detail (docs/spec.md): a mesh's, made as the game is built
-            if (attr->args.count || attr->values.count) {
-                diag_error(attr->at, "LOD takes nothing: '[LOD]'");
+            if (attr->args.count || attr->values.count > 1) {
+                diag_error(attr->at, "LOD takes an optional error tolerance multiplier: '[LOD]' or '[LOD(2)]'");
             } else if (k->lod) {
                 diag_error(attr->at, "'" STR_FMT "' already has a LOD", STR_ARG(k->name));
             } else if (typed && kind != ASSET_MESH && kind != ASSET_SKINNED) {
@@ -14459,6 +14459,23 @@ static void check_asset_decl(checker *c, decl *k)
                           "'[LOD] asset Mesh<Vertex3> rock = \"art/rock.glb\";'");
             } else {
                 k->lod = true;
+                k->lod_multiplier = 1.0f;
+                if (attr->values.count) {
+                    expr *value = attr->values.items[0];
+                    float multiplier;
+                    if (!is_constant(c, value)) {
+                        diag_error(value->at, "a LOD multiplier must be a positive finite constant number");
+                        suggest_constant(c, value);
+                    } else {
+                        const type t = check_constant_expr(c, value, true, T_FLOAT_);
+                        if (t.kind != TY_ERROR) {
+                            if (!type_assignable(T_FLOAT_, t) || !setting_float(value, &multiplier, 0)
+                                || !(multiplier > 0.0f) || multiplier - multiplier != 0.0f) {
+                                diag_error(value->at, "a LOD multiplier must be a positive finite constant number");
+                            } else k->lod_multiplier = multiplier;
+                        }
+                    }
+                }
             }
         }
     }

@@ -1,5 +1,26 @@
 # Runtime written by Claude for now
 
+## Asset LOD multiplier metadata (2026-10-31)
+
+Under the drawing/pack maintenance exceptions, the approved `[LOD(multiplier)]`
+adds `tide_mesh_levels.multiplier` and `tide_draw_mesh_data.lod_multiplier`.
+The existing pack writer/reader and `tide_draw_mesh_levels` carry it; no new
+runtime entry point is introduced. Pack word 27 was reserved and now holds
+the multiplier, zero meaning 1. Hosts/libraries rebuild for the C structure
+changes; simulation, snapshots and generated mesh values retain their layouts.
+Contracts and native ASan/WASM tests are recorded in assets-and-files.md.
+
+## Destination LOD pixel tolerance (2026-10-31)
+
+Within the draw-list maintenance exception and the owner's approved tolerance
+task, generated settings call `tide_draw_set_lod_pixels`,
+`tide_draw_unset_lod_pixels`, `tide_draw_push_lod_pixels` and
+`tide_draw_push_no_lod_pixels`. These replace the former C-only global
+`tide_draw_lod_pixels` with destination-local state and ordinary block cleanup.
+`lod_pixels` moves from `tide_draw_list` to `tide_draw_place`; hosts, libraries
+and generated games rebuild together. No match state or simulation changes.
+Contracts and native ASan/WASM validation are recorded in drawing.md.
+
 ## Parts and non-uniform retarget scale (2026-10-30)
 
 Under the skinned/retarget maintenance exceptions: `tide_skinned_data_decode_parts`

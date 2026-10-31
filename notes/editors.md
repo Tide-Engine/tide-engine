@@ -1,5 +1,21 @@
 # The language server and the editors
 
+## LOD attribute multiplier hover (2026-10-31)
+
+LOD hover now explains `[LOD(2)]`, positive finite constants and multiplication
+with the destination's pixel tolerance. Attribute value expressions use the
+existing expression traversal for references and hover. The expanded native
+ASan `lsp_levels_of_detail` check and full language-server suite pass.
+Language and asset contracts are in language.md/assets-and-files.md.
+
+## LOD pixel tolerance completion (2026-10-31)
+
+Ordinary builtin setting registration supplies LODPixels/SetLODPixels on Draw
+and render targets, with pixel/default semantics in hover and the usual
+block/Set quick fixes. `lsp_levels_of_detail` checks both receivers' completion
+and the float/no-argument setter hover. The full native ASan `tidels_tests`
+suite passes. Runtime and compiler contracts are in drawing.md/language.md.
+
 ## Ordinary mesh handles and members (2026-10-30)
 
 Mesh<V> now canonicalizes to the existing static Asset<Mesh<V>> handle. Member

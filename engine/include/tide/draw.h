@@ -1120,6 +1120,7 @@ typedef struct tide_draw_place {
     uint32_t blend;   // tide_blend: how the commands to come go over what's there
     uint32_t lod;        // 0: a mesh with levels of detail has one picked. Else 1 + the level every one draws at
     uint32_t lod_camera; // 0: the pick is through `camera_3d`. Else 1 + the place in cameras_3d of the camera it's through
+    float lod_pixels; // How many pixels a level may be off by to be picked; 0 is 1
     uint32_t no_frustum_culling; // Zero enables rejection against this destination's camera
     tide_draw_bounds bounds;    // Optional mesh-local bounds, before the instance and Draw.Transform
     uint32_t tinted;  // Whether `tint` is anything but white: it's unset otherwise
@@ -1182,6 +1183,7 @@ typedef struct tide_draw_saved {
     uint32_t target;  // Whose, for a destination's own: 0 for the window, or 1 + its place in tide_draw_list.targets
     union {
         uint32_t value; // What a place has for its blend, a camera, a clip, its depth, its cull or its stencil
+        float pixels;
         tide_color tint;
         struct {
             tide_draw_transform transform;
@@ -1208,6 +1210,7 @@ enum {
     TIDE_DRAW_SAVED_STENCIL,
     TIDE_DRAW_SAVED_LOD,
     TIDE_DRAW_SAVED_LOD_CAMERA,
+    TIDE_DRAW_SAVED_LOD_PIXELS,
     TIDE_DRAW_SAVED_FRUSTUM_CULLING,
     TIDE_DRAW_SAVED_BOUNDS,
 };
@@ -1240,6 +1243,7 @@ typedef struct tide_mesh {
 // (tide/pack.h); a mesh of C's is given them with tide_draw_mesh_levels.
 enum { TIDE_MESH_LEVELS = 7 }; // After the full mesh, at the most
 typedef struct tide_mesh_levels {
+    float multiplier; // Asset error tolerance multiplier; zero defaults to 1
     float center[3];
     float radius;
     uint32_t count;
@@ -1278,6 +1282,7 @@ typedef struct tide_draw_mesh_data {
     uint32_t levels;
     float center[3], radius;                   // A ball the mesh is in, in its own units
     float level_error[TIDE_MESH_LEVELS];       // How far each is off, never less than the one before
+    float lod_multiplier;                    // Asset tolerance multiplier, normalized to positive finite (default 1)
     uint32_t level_first[TIDE_MESH_LEVELS];    // Its triangles in `level_indices`...
     uint32_t level_count[TIDE_MESH_LEVELS];    // ...three indices each
     uint32_t level_mesh[TIDE_MESH_LEVELS];     // 1 + the place it last had, or 0
@@ -1529,7 +1534,6 @@ typedef struct tide_draw_list {
     tide_float2 screen;
     tide_float2 screen_scale; // Frame-host physical pixels per logical pixel, independently on x/y; zero means 1
     tide_target_pixels_fn target_pixels; // Borrowed frame metadata; no GPU readback
-    float lod_pixels;  // How many pixels a level may be off by to be picked; 0 is 1
     uint32_t leveled;  // Whether the frame drew a level: its runs may want gathering (tide_draw_gather_levels)
     uint8_t *level_room; // Where the instances of a draw are sorted by their levels
     uint32_t level_room_capacity;
@@ -1726,7 +1730,7 @@ uint32_t tide_draw_push_stencil(tide_draw_list *d, tide_stencil stencil);
 // destination's own, as its cull is.
 //
 // A mesh that has levels (tide_draw_mesh_levels) draws the simplest whose
-// error covers less than a pixel of the destination (tide_draw_lod_pixels),
+// error is within the destination's pixel tolerance (tide_draw_set_lod_pixels),
 // each instance its own, by its transform, the ball the mesh is in and the
 // destination's 3D camera. A mesh with none, and a draw into a list nobody
 // told the window's size (tide_draw_screen_size), draws whole.
@@ -1766,9 +1770,13 @@ void tide_draw_unset_bounds(tide_draw_list *d);
 uint32_t tide_draw_push_bounds(tide_draw_list *d, tide_float3 center, tide_float3 size);
 uint32_t tide_draw_push_no_bounds(tide_draw_list *d);
 
-// How many pixels a level may be off by and still be picked, for every
-// destination: 1 until it's said, and for a number that isn't above 0.
-void tide_draw_lod_pixels(tide_draw_list *d, float pixels);
+// How many pixels a level may be off by and still be picked, for the selected
+// destination: 1 by default, also for nonpositive or nonfinite values. A forced
+// level wins. Scoped forms restore the previous tolerance when popped.
+void tide_draw_set_lod_pixels(tide_draw_list *d, float pixels);
+void tide_draw_unset_lod_pixels(tide_draw_list *d);
+uint32_t tide_draw_push_lod_pixels(tide_draw_list *d, float pixels);
+uint32_t tide_draw_push_no_lod_pixels(tide_draw_list *d);
 
 // Which level of `mesh` (what tide_draw_mesh_slot gave) an instance at
 // `transform` draws at through the selected destination's settings, as the

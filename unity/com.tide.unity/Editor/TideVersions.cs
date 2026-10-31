@@ -17,7 +17,8 @@ namespace Tide.Editor
     // The tide this package builds with: the one its own commit is. Unity locks a git package's commit in the
     // project's Packages/packages-lock.json, so a branch of the project has one: a release tag the package follows
     // (#v0.5.0-nightly.12) is that version, and any other commit the version the site says it is, the highest
-    // release at it or before it (tide-engine.dev/releases/for/<commit>). Versions are installed side by side, each
+    // release at exactly it (tide-engine.dev/releases/for/<commit>). An ancestor release is only a suggestion for
+    // switching both the package and compiler in Tide Versions. Versions are installed side by side, each
     // whole, in TIDE_VERSIONS or the versions folder of where tide's installer puts tide
     // (%LOCALAPPDATA%\Tide\versions\<version>, ~/.tide/versions/<version>), downloaded from the site once, and
     // checked against the release's SHA256SUMS. A package in a folder (file:, embedded) has no commit: the tide set
@@ -86,7 +87,9 @@ namespace Tide.Editor
         [Serializable]
         sealed class Cached
         {
+            public int format;
             public string commit, version;
+            public long checkedAt;
         }
 
         // A commit the site couldn't be asked about lately, and why: asked again a minute on, not at each repaint
@@ -106,7 +109,8 @@ namespace Tide.Editor
             try
             {
                 var kept = JsonUtility.FromJson<Cached>(File.ReadAllText(CachePath));
-                if (kept != null && kept.commit == commit && !string.IsNullOrEmpty(kept.version)) return kept.version;
+                if (kept != null && kept.format == 2 && kept.commit == commit && !string.IsNullOrEmpty(kept.version)
+                    && DateTimeOffset.UtcNow.ToUnixTimeSeconds() - kept.checkedAt < 600) return kept.version;
             }
             catch (Exception)
             {
@@ -115,7 +119,8 @@ namespace Tide.Editor
             try
             {
                 var answer = Encoding.UTF8.GetString(Fetch($"{Site}/releases/for/{commit}"));
-                var tag = JsonUtility.FromJson<Release>(answer)?.tag_name;
+                var release = JsonUtility.FromJson<Release>(answer);
+                var tag = release?.tag_name;
                 var version = OfTag(tag);
                 if (version == null)
                 {
@@ -123,8 +128,17 @@ namespace Tide.Editor
                     Failed(commit, why);
                     return null;
                 }
+                if (!release.exact)
+                {
+                    why = $"no matching compiler is published for package commit {Short(commit)}. " +
+                        $"Open Window > Tide > Versions to switch the package and compiler together to {version} or another release, " +
+                        "or check again after publication. For engine development, launch Unity with -tide-command <path>";
+                    Failed(commit, why);
+                    return null;
+                }
                 Directory.CreateDirectory(TideLibrary.BuildFolder);
-                File.WriteAllText(CachePath, JsonUtility.ToJson(new Cached { commit = commit, version = version }));
+                File.WriteAllText(CachePath, JsonUtility.ToJson(new Cached { format = 2, commit = commit, version = version,
+                    checkedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() }));
                 return version;
             }
             catch (Exception e)
@@ -140,6 +154,12 @@ namespace Tide.Editor
             failedCommit = commit;
             failedWhy = why;
             failedAt = DateTime.UtcNow;
+        }
+
+        public static void Refresh()
+        {
+            failedCommit = failedWhy = null;
+            if (File.Exists(CachePath)) File.Delete(CachePath);
         }
 
         static string Short(string commit) => commit != null && commit.Length > 8 ? commit.Substring(0, 8) : commit;
@@ -170,17 +190,29 @@ namespace Tide.Editor
         }
 
         [Serializable]
-        sealed class Asset
+        internal sealed class Asset
         {
             public string name, browser_download_url;
         }
 
         [Serializable]
-        sealed class Release
+        internal sealed class Release
         {
             public string tag_name;
+            public bool exact, prerelease;
             public Asset[] assets;
         }
+
+        [Serializable]
+        sealed class ReleaseList { public Release[] releases; }
+
+        internal static Release[] Published()
+            => JsonUtility.FromJson<ReleaseList>("{\"releases\":" + Encoding.UTF8.GetString(Fetch($"{Site}/releases.json")) + "}")?.releases
+                ?? Array.Empty<Release>();
+
+        internal static bool CanInstall(Release release)
+            => OfTag(release.tag_name) != null && Array.Exists(release.assets ?? Array.Empty<Asset>(), a => a.name == PackageName)
+                && Array.Exists(release.assets ?? Array.Empty<Asset>(), a => a.name == "SHA256SUMS");
 
         // An address's bytes, waited for on the editor's thread: the site's, or a file's (file://, for tests and
         // mirrors). Through UnityWebRequest, as .NET's HttpClient in the editor can time out on every address.

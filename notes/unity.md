@@ -9,6 +9,54 @@ reads it into `Pipeline.alphaToCoverage` and sets `_TideAlphaToMask` on the
 material, which the ShaderLab tide unity writes takes as
 `AlphaToMask [_TideAlphaToMask]` (0 by default). Not run in Unity here.
 
+## Versions window and unpublished dev packages (2026-10-31)
+
+The owner's TideUnity project downloaded 0.6.0-nightly.6 (embed ABI 7) for
+its dev package (ABI 8). The compiler selection and download were working;
+calling an ancestor release the package's matching version was wrong. Owner
+requested an editor window for updating and switching versions.
+
+Window > Tide > Versions, also Manage Tide versions in Project Settings >
+Tide, shows the package revision/commit, required ABI, selected compiler
+version/path, stable/nightly releases, and Check for updates. Use version
+installs that release's compiler with the existing checksum/version checks
+before asking UPM to switch the package to the same tag. A download failure
+leaves the project pin unchanged; a UPM failure is shown and restores building
+with the previous selection. The build service stops during a switch and its
+IDE cache is cleared. UPM owns manifest/lock changes and script reloads.
+Automatic building resumes when enabled. Update / switch to dev re-adds its
+Git URL to refresh the branch. No local package or launch override is replaced.
+Switching is disabled during Play, compilation and another switch. Choosing
+an old release also restores that release's UI (which may predate this window).
+
+Git commit resolution now requires the site's exact flag; an ancestor is only
+a suggestion for choosing a release in this window. Untagged dev ahead of a
+published compiler cannot build with that older compiler. The old unversioned
+ancestor cache is ignored; successful format-2 lookups expire after ten minutes,
+failed lookups retry after one minute, and Check for updates clears both.
+Release tags still select their own version directly; local and -tide-command
+development selections retain their existing behavior. The endpoint addition
+and deployment boundary are recorded in releases-and-ci.md. No engine ABI,
+runtime, compiler semantics or generated game code changes.
+
+Validation: Unity 6000.6.0f1 EditMode VersionTests 12/12, including an actual
+checkout-built ABI-5 host, legacy ancestor cache invalidation, refusing ancestor
+and missing-proof responses, refreshing after publication/expiration, release
+listing/availability, URL preservation, version ordering and the menu. Existing
+download/checksum/version/launch/cache checks remain; a failed compiler download
+through the window leaves the manifest unchanged and clears the switching guard.
+Node 24.22.1 release tests
+11/11 and docs production build pass (the existing unstaged game-page 404s).
+The window's actual Change action also passes in a scratch editor: a local Git
+fixture tagged v9.9.9-test.1 and a file-based release site exercise checksum
+installation, UPM Client.Add, package registration/script reload, both manifest
+and lock pins and the final pinned compiler selection. Its compiler fixture is
+discovery-only, never executed; automatic builds are disabled. All Unity runs
+use TIDE_HIDDEN, batchmode, nographics and noAudio. No owner project is changed.
+The window's pixels, other operating systems and native/web game execution are
+not exercised; this changes editor/version selection only.
+
+
 ## Embed ABI 8: 8-byte handle slots (2026-10-30)
 
 Text, list and grid fields are 8 bytes in the game's C and a map or a set 32

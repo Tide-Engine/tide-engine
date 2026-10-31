@@ -3931,8 +3931,9 @@ static void describe(const occurrence *o, sb *out)
              "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
             {"LOD", "[LOD]",
              "Has this mesh's levels of detail made as the game is built: simpler versions of it over its own vertices, each "
-             "about half the triangles of the one before. A draw of it then picks the simplest that's within a pixel of the "
-             "full mesh where it's drawn, each instance its own, with nothing to tune. It goes before an asset that's a "
+             "about half the triangles of the one before. `[LOD(2)]` accepts a positive finite constant multiplier "
+             "for the draw's pixel error tolerance, default 1: with `Draw.SetLODPixels(4)` it allows 8 pixels. "
+             "Each instance picks its own level. It goes before an asset that's a "
              "`Mesh<V>` or a `SkinnedMesh<V>` (alone, or a list or a map of them). Code still reads the full mesh: "
              "`vertices` and `indices` are what they are without it. `Draw.LOD` names a level, and `Draw.LODCamera` the "
              "camera to pick through."},

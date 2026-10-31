@@ -7009,7 +7009,6 @@ static void gen_container(gen *g, const expr *e)
     if (e->gui & GUI_DRAW) {
         line(g, o, "tide_ui->list.screen_scale = tide_draw->screen_scale;");
         line(g, o, "tide_ui->list.target_pixels = tide_draw->target_pixels;");
-        line(g, o, "tide_ui->list.lod_pixels = tide_draw->lod_pixels;");
         line(g, o, "tide_draw_list *const tide_draw = &tide_ui->list;");
         line(g, o, "(void)tide_draw;");
     }
@@ -20080,7 +20079,7 @@ static bool rest_mesh(const asset_match *item, const mesh_file *m, mesh_file *re
     return true;
 }
 
-static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, const bool lod, const bool skinned,
+static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, const float lod, const bool skinned,
                       const bool rest, uint64_t offsets[2])
 {
     mesh_file rested;
@@ -20125,7 +20124,12 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
     uint8_t leveled[32];
     const bool has = lod && mesh_levels(g, m, skinned ? item->skinned : NULL, skinned ? item->skinned_size : 0u,
                                         tangent_sides, &levels, leveled);
-    if (has) tide_sha256_add(&s, leveled, sizeof leveled);
+    if (has) {
+        tide_sha256_add(&s, leveled, sizeof leveled);
+        levels.multiplier = lod;
+        // Tolerance variants share generated chains, but must have distinct pack/draw identities.
+        if (lod != 1.0f) tide_sha256_add(&s, &lod, sizeof lod);
+    }
     tide_sha256_end(&s, content);
     tide_pack_mesh_levels(b, content, bytes, (uint32_t)whole.size, m->vertices, m->index, m->indices, has ? &levels : NULL, offsets);
     free(bytes);
@@ -20183,7 +20187,7 @@ static void build_pack(gen *g)
             const uint32_t laid = mesh_layout_number(g, vertex);
             if (!v->many) {
                 uint64_t at[3];
-                pack_mesh(g, &b, &v->items[0], vertex, d->lod, weighted, weighted && !skinned, at + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[0], vertex, d->lod ? d->lod_multiplier : 0.0f, weighted, weighted && !skinned, at + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;
@@ -20197,7 +20201,7 @@ static void build_pack(gen *g)
             uint64_t *names = malloc(sizeof(uint64_t) * (size_t)(v->count ? v->count : 1));
             if (!meshes || !names) abort();
             for (int k = 0; k < v->count; k++) {
-                pack_mesh(g, &b, &v->items[k], vertex, d->lod, weighted, weighted && !skinned, meshes + stride * k + (skinned ? 1 : 0));
+                pack_mesh(g, &b, &v->items[k], vertex, d->lod ? d->lod_multiplier : 0.0f, weighted, weighted && !skinned, meshes + stride * k + (skinned ? 1 : 0));
                 if (skinned) {
                     uint8_t hash[32];
                     uint32_t chars;

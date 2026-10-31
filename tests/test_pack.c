@@ -1658,7 +1658,7 @@ static uint8_t *build_levels(size_t *size, const bool lead)
     const corner tree[4] = {{{0, 0, 0}, {0, 0, 1}, 0}, {{1, 0, 0}, {0, 0, 1}, 0}, {{1, 1, 0}, {0, 0, 1}, 0}, {{0, 1, 0}, {0, 0, 1}, 0}};
     static const uint32_t whole[12] = {0, 2, 1, 0, 3, 2, 0, 3, 1, 1, 3, 2};
     static const uint32_t simpler[9] = {0, 2, 1, 0, 3, 2, 0, 2, 1};
-    const tide_mesh_levels levels = {.center = {0.5f, 0.5f, 0.0f}, .radius = 0.75f, .count = 2, .error = {0.01f, 0.25f},
+    const tide_mesh_levels levels = {.multiplier = 2.0f, .center = {0.5f, 0.5f, 0.0f}, .radius = 0.75f, .count = 2, .error = {0.01f, 0.25f},
                                      .first = {0, 6}, .indices = {6, 3}, .index = simpler, .index_count = 9};
     hash_of("tree.glb with levels", h);
     tide_pack_mesh_levels(&b, h, tree, sizeof(corner), 4, whole, 12, &levels, leveled_blocks);
@@ -1713,6 +1713,7 @@ TIDE_TEST(pack_meshes_have_levels_of_detail_beside_their_lists)
         TIDE_REQUIRE(tide_pack_list_levels(tree.indices, &found));
         TIDE_CHECK(found.count == 2 && found.index_count == 9 && found.radius == 0.75f && found.center[1] == 0.5f);
         TIDE_CHECK(found.error[0] == 0.01f && found.error[1] == 0.25f);
+        TIDE_CHECK(found.multiplier == 2.0f);
         TIDE_CHECK(found.first[0] == 0 && found.indices[0] == 6 && found.first[1] == 6 && found.indices[1] == 3);
         TIDE_REQUIRE(found.index != NULL);
         TIDE_CHECK(found.index[0] == 0 && found.index[1] == 2 && found.index[8] == 1);
@@ -1759,6 +1760,7 @@ TIDE_TEST(pack_levels_of_detail_spoiled_are_none)
         {7, 10}, {8, 12}, {8, 5}, {11, 7},      // A level past the indices, or not whole triangles
         {6, 0x7FC00000u}, {9, 0}, {9, 0xFF800000u}, // An error that's no number, or under the level before's
         {3, 0x7FC00000u}, {3, 0xBF800000u}, {1, 0x7F800000u}, // A ball that's none
+        {27, 0x7FC00000u}, {27, 0xBF800000u}, {27, 0x7F800000u}, // Invalid asset multipliers
     };
     tide_mesh_levels found;
     for (size_t i = 0; i < sizeof spoils / sizeof spoils[0]; i++) {
@@ -1780,6 +1782,9 @@ TIDE_TEST(pack_levels_of_detail_spoiled_are_none)
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     const tide_mesh_lists tree = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
     TIDE_CHECK(tide_pack_list_levels(tree.indices, &found) && found.count == 2);
+    words[27] = 0; // The formerly reserved/default word still means multiplier 1.
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(tide_pack_list_levels(tree.indices, &found) && found.multiplier == 1.0f);
     tide_pack_unload();
     free(bytes);
 }

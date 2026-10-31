@@ -365,8 +365,9 @@ The package builds with the version of `tide` its own commit is, which Unity
 locks in `Packages/packages-lock.json`, so a branch of the project and everyone
 on it build with one. A package that follows a release tag
 (`...com.tide.unity#v0.5.0-nightly.12`) is that version; any other commit is
-the highest release at it or before it, which the site answers
-(`https://tide-engine.dev/releases/for/<commit>`, kept in `Library/Tide`).
+a release built at exactly that commit, which the site answers
+(`https://tide-engine.dev/releases/for/<commit>`, cached briefly in `Library/Tide`).
+An older release is a suggestion for switching versions, never a matching compiler.
 Versions are installed side by side in the `versions` folder of where the
 installer puts `tide` (`%LOCALAPPDATA%\Tide\versions\<version>`,
 `~/.tide/versions/<version>`), or in the folder `TIDE_VERSIONS` names. A
@@ -387,8 +388,20 @@ fails explicitly. If Play reports an embed ABI mismatch, rebuild the development
 compiler to match the package or relaunch normally. Tide checks the existing host
 before entering Play. Updated VS Code and JetBrains plugins follow the active
 selection and return to the pin when that editor exits, including after a crash.
-A development package newer than the latest published compiler needs a matching
-development build or release tag.
+Open **Window > Tide > Versions**, or **Manage Tide versions** in Project
+Settings > Tide, to see the package, compiler version and available releases.
+**Use version** installs the selected release's compiler and switches the Unity
+package to the same Git tag. Unity reloads scripts, then resumes automatic
+builds when enabled. Commit `Packages/manifest.json` and `packages-lock.json`
+to share the selection. A failed download leaves the package pin unchanged.
+The window lists stable and nightly releases and disables releases without a
+compiler download for this machine.
+
+**Update / switch to dev** refreshes the development package. If it is ahead of
+published compilers, builds wait for a matching release; **Check for updates**
+retries the lookup after publication. Choose a release in the window to get a
+published package/compiler pair, or launch with a matching development compiler.
+Local folder packages are shown but are not switched by this window.
 
 In a Unity project the game is the whole of `Assets`: every `.tide` file in it,
 as every C# script is, but those in folders Unity leaves out (hidden ones, and

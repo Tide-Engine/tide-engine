@@ -1,5 +1,44 @@
 # Assets and local files
 
+## Asset LOD tolerance multiplier (2026-10-31)
+
+The owner chose multiplication: `[LOD(2)]` with `SetLODPixels(4)` allows 8
+pixels of estimated error. `[LOD]`, `[LOD()]` and `[LOD(1)]` mean 1. The
+optional argument is a positive finite constant float/int expression (named
+constants and arithmetic included); invalid/extra arguments are errors. Lists,
+maps, static meshes, weighted Mesh layouts and SkinnedMesh use the same pack
+path. Draws through the original vertex/index lists retain the multiplier.
+
+The simplifier, cached chain keys, levels, errors and floors are unchanged.
+Nondefault multipliers enter the packed mesh's content hash after its chain
+hash, preventing shared geometry identities from hiding different selection
+rules. Default mesh identities and pack bytes stay unchanged. The levels
+block's formerly unused word 27 stores the float multiplier; zero means 1.
+Block size and pack version remain unchanged. `tide_pack_list_levels` rejects
+negative/nonfinite multipliers and returns a normalized positive value.
+The draw mesh keeps it and multiplies the allowed error; forced levels win.
+
+Validation: 84 drawing and 26 pack-related C tests pass on native Windows ASan
+and WASM, as does the expanded LOD e2e on both. They cover composition,
+fractions, all asset collection forms, skinned/instanced/list draws, unchanged
+chain errors, malformed metadata and zero/default metadata. Native compiler
+LOD maker and asset-file/variant suites, ten attribute diagnostic fixtures and
+the full language-server suite pass. Production docs build passes with the
+usual unstaged-example 404s. No GPU backend changed or GPU pixel tests run;
+other native platforms remain CI coverage.
+
+## Exposed automatic LOD tolerance (2026-10-31)
+
+The pixel tolerance previously listed as missing below is now available as
+`Draw.LODPixels` / `Draw.SetLODPixels`, also on render targets, default 1.
+The owner's goal is a quality/performance tradeoff; increasing tolerance permits
+coarser existing levels at the same distance. No importer, simplifier, cache,
+pack, triangle floor or error weight changes. Triangle density remains outside
+the selection rule. Runtime contracts and native ASan/WASM validation are in
+drawing.md; language/editor integration is in language.md. The LOD e2e fixture
+checks changed picks, nested/default scopes, target independence, restoration
+and forced-level priority against the imported mesh's recorded errors.
+
 ## Pack format 3: 64-bit offsets and handles (2026-10-30)
 
 `TIDE_PACK_VERSION` is 3 (notes/ecs.md, 64-bit handles). The header's region
@@ -1272,7 +1311,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 ## Levels of detail (agreed and built 2026-10-11)
 
 - `docs/spec.md`, Levels of detail, has the design: the owner decided opt-in with `[LOD]` on a mesh asset's declaration (opt-out was the first proposal; "that way no surprises for the user"), everything else automatic and made at build time with a cache, a pick for each instance of `Draw.Instanced`, skinned meshes included, and two overrides (a level by its number, and a camera for a target to pick through; "they probably want it to match the visuals the main camera rendered"). Every other rule there is a pick, Provisional. `docs/game/assets.md` (Levels of detail) is the users' page. What's built, and what code relies on:
-  - **The language** (`compiler/src/check.c`): `[LOD]` is read with the asset's other attributes, in the loop that reads `[Filter]`, and sets `decl.lod`; it takes nothing, goes once, and is an error on an asset that isn't `ASSET_MESH` or `ASSET_SKINNED`, and on any declaration that's no asset (in the declarations' attribute loop, which also suggests it for `[Lod]`). `Draw.LOD`, `Draw.SetLOD`, `Draw.LODCamera` and `Draw.SetLODCamera` are `add_setting` signatures in `builtins.c`, so both forms, each one's misuse and quick fix, a target's own and the editors' completion and hover are the family's code. The forms with no arguments are settings of no parameters, as `Screen` is, whose block form is `tide_draw_push_no_lod` or `tide_draw_push_no_lod_camera`.
+  - **The language** (`compiler/src/check.c`): `[LOD]` is read with the asset's other attributes, in the loop that reads `[Filter]`, and sets `decl.lod`; it originally took nothing and now accepts an optional multiplier (2026-10-31, above), goes once, and is an error on an asset that isn't `ASSET_MESH` or `ASSET_SKINNED`, and on any declaration that's no asset (in the declarations' attribute loop, which also suggests it for `[Lod]`). `Draw.LOD`, `Draw.SetLOD`, `Draw.LODCamera` and `Draw.SetLODCamera` are `add_setting` signatures in `builtins.c`, so both forms, each one's misuse and quick fix, a target's own and the editors' completion and hover are the family's code. The forms with no arguments are settings of no parameters, as `Screen` is, whose block form is `tide_draw_push_no_lod` or `tide_draw_push_no_lod_camera`.
   - **Nothing in generated draw code changed.** A level is found by the mesh's indices' list (below), so `Draw.Mesh(rock, ...)`, `Draw.Mesh(rock.vertices, rock.indices, ...)`, a list's element and a map's value are all the same calls they were. A game with no `[LOD]` and none of the settings generates the C it did.
   - **Making the levels** (`compiler/src/mesh_lod.c`, `mesh_lod.h`; tidec's alone, nothing of it is in the engine or a game): edges collapsed onto one of their ends, the cheapest first from a heap, by quadrics. Vertices are numbered by their position's bits (`place`), and again by position with uvs and colors (`chart`): topology and the planes are a position's, so a mesh whose every triangle has corners of its own is still a surface, and a seam is a position with two charts. A collapse is refused where the edge isn't a side of one triangle (for a position on an open edge) or of two (inside), where another position is next to both ends (the surface would fold), where a vertex's chart has nothing beside it along the edge (a seam would tear) and where a triangle that stays would turn more than `TURN_LEAST` or go flat. A position gathers its triangles' planes by area, and ten times an open edge's own plane; a vertex gathers what its values (uv, uv2 and color times their weights, then the normal times its) do over its triangles, as a slope and where from, Hoppe's way. What a collapse costs is both ends' planes at the end it goes to, over their weight, plus what the moved vertices' values were against the ones they take, summed over the area they held them on (not averaged: see the crowd's two gaps below), plus, for a skinned mesh, the edge's length times how differently the two follow their bones (`mesh_lod_source.apart`). A level's error is the square root of the dearest collapse so far, times the mesh's extent. Corners at a position are a linked list through their triangles' corners, so a collapse splices two lists; a position with more than `FAN_MOST` (96) corners stays.
     - **Everything is `+ - * /` and `sqrt` on doubles in a fixed order**, with `#pragma STDC FP_CONTRACT OFF`, and ties in the heap go by the positions' numbers, so a file gives the same levels wherever it's built. Nothing reads a level but a draw, so this is for packs that are the same bytes, not for the match.
@@ -1312,7 +1351,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 
       Picked is no slower than whole in any row now. The first row's mesh has no levels, so its three numbers are the same draws as an unmarked mesh's (its two a-draw-each numbers differ by the run's noise; the instanced one is faster as one call records in 0.18 ms where 40,000 take 2.2). The machine was busier than for the numbers above, so set rows against each other, not against those.
   - **Validation:** full native debug (2,135 tests) and web debug (2,106) suites pass after merging `origin/dev` through `e6a4133a` (texture compression and idle GPU assets among it, in the same renderer and pack files), with the pixel test on OpenGL 3.3, WebGL 2 and WebGPU, and the docs site builds. Linux, macOS, MinGW, Android and the sanitizers are a requested CI run's.
-  - **Not built:** a setting in the language for the pixels a level may be off by (`tide_draw_lod_pixels` is there for C); levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. The first real exporter's model measured is the crowd's below; the weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) were tuned on it alone.
+  - **Not built:** levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. The pixel tolerance is now exposed (2026-10-31, above). The first real exporter's model measured is the crowd's below; the weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) were tuned on it alone.
   - **A crowd's two gaps: the pick kept the full mesh, and the chain ended at its first level** (2026-10-30; the Bannerlord duel's battle of 20,000, `tools/army` in that repository, Tide 0.5.0-nightly.59). Its far fighters are `[LOD] asset Mesh<CrowdCorner>` of Synty's `PolygonSyntyCharacter.fbx` (4,896 triangles; `joints` and `weights`, so read skinned, at rest, in metres, radius 1.12) drawn as one `Draw.Instanced` through a vert that skins on the GPU, about 10,600 of them 30 to 150 m off at 960 by 540.
     - **The cause of both was the values' share of a collapse's cost.** It was the area-weighted mean of how far a vertex's values (normal, uv, color, times their weights) were from what they became, in the mesh's whole extent: a normal turned 28 degrees on a 4 cm patch of the model (a bevel or a buckle, its corners sharing a position and a uv but not a normal) cost as much as a surface 0.49 m off. One such collapse, at 4,136 triangles left, made the 2,448-triangle level 1 say 0.495 m (the pick allows 0.06 m at 30 m), and the next level would have said 0.63, over half the reach, so the chain ended. Traced by the cost's three parts: the planes' share stayed under 2 cm, the bones' (`bones_apart`) under 3 cm, and uvs gave nothing (their share was 0 throughout); with normals unweighed the chain went on to 611 triangles at 2 cm. The rest bounds and the instance's transform through the vert's struct were right: once levels said what they're off by, the same draw picked them.
     - **Now** (`weigh` in `mesh_lod.c`): the values' share is summed over the area they held, not averaged, so a value off by e over a patch L across costs as much as a surface off by e times L, and `WEIGHT_NORMAL` and `WEIGHT_COLOR` are 2 (they were 0.5): a normal 30 degrees off, or a color off by half, over a pixel is a pixel off. The weights were picked on the crowd: at 0.5 the far fighters' shading went darker and the far band's color moved (mean red 111 to 103) at 24.9 M vertices; at 1, 31.3 M and still darker; at 2, 45.6 M with each band's color as close to the full mesh's as `Draw.LOD(1)`'s (which the duel's agent found the same by eye); at 4, 81.1 M. Pixels more than 32 off the full mesh in the furthest band: 8% for level 1 forced, 16% for level 3, 21% picked at 2. Most of that is the crowd's aliasing, a figure there being a few pixels.

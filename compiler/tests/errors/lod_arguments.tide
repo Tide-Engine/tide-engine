@@ -1,5 +1,5 @@
-// expect: LOD takes nothing: '[LOD]'
-[LOD(2)] asset Mesh<Vertex3> ball = "../e2e/assets/lod/ball.glb";
+// expect: LOD takes an optional error tolerance multiplier: '[LOD]' or '[LOD(2)]'
+[LOD(2, 4)] asset Mesh<Vertex3> ball = "../e2e/assets/lod/ball.glb";
 
 scene Main
 {

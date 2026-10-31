@@ -17,15 +17,30 @@ repository's `notes/unity.md`.
    https://github.com/Tide-Engine/tide-engine.git?path=/unity/com.tide.unity#v0.5.0-nightly.12
    ```
 
-   or `#dev` to follow the newest.
+   or `#dev` for engine development (it may be ahead of published compilers).
 2. The package builds with the `tide` of its own commit, which Unity locks in
    `Packages/packages-lock.json`: a release tag is that version, any other
-   commit the newest release at it or before it. The first time, it asks to
+   commit requires a release built at exactly that commit. The first time, it asks to
    install that version, beside any other `tide`, in
    `%LOCALAPPDATA%\Tide\versions` or `~/.tide/versions` (or the folder
    `TIDE_VERSIONS` names). A build server (Unity in batch mode, as GameCI runs
    it) installs it with no question and nothing installed beforehand: keep
    `TIDE_VERSIONS` in its cache to download it once.
+
+   Open **Window > Tide > Versions** (also **Manage Tide versions** in Project
+   Settings > Tide) to see the project's package, compiler and available stable
+   and nightly releases. **Use version** installs that release's compiler and
+   switches the Unity package to its matching Git tag. Unity reloads scripts and
+   resumes automatic builds when enabled. Commit the changed package manifest
+   and lock file so teammates use the same version. A failed download leaves
+   the package pin unchanged.
+
+   **Update / switch to dev** refreshes the development package; it does not
+   substitute an older compiler if that commit has no published release.
+   **Check for updates** retries release resolution after publication. An
+   unpublished commit reports the gap and directs you to this window to choose
+   a release or use a matching development compiler. Local folder packages stay
+   under your control; this window switches Git packages only.
 
    To test a local Tide compiler/runtime, launch Unity with
    `-tide-command "<local Tide>/bin/tide"` (`tide.exe` on Windows). This overrides
