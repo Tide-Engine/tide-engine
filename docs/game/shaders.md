@@ -871,9 +871,11 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
   - `this.world`, a `float3`: where on the mesh the pixel is, in the world.
   - `this.position`, a `float2`: where it is in the destination's logical pixels from the top left, as [`Draw.Screen`](./views.md#on-the-screen)'s.
   - `this.depth`: how far it is, from 0 at the camera's near side to 1.
-  - `this.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture. Nothing is written for it: no color, no depth and no [stencil](./draw-settings.md#stencil).
+  - `this.Discard()` leaves the pixel undrawn, and ends the frag there: for holes. Nothing is written for it: no color, no depth and no [stencil](./draw-settings.md#stencil). For an edge cut out of a texture, [`this.Cutout`](#cut-outs) is smoother.
+  - `this.Cutout(alpha)` and `this.Coverage(share)` say how much of the pixel the frag covers: see [Cut-outs](#cut-outs).
+  - `this.Ddx(v)`, `this.Ddy(v)` and `this.Fwidth(v)` say how fast a value changes across the pixel: see [How fast a value changes](#how-fast-a-value-changes).
 
-`this` is context accessed through its fields and `Discard()`: it can't be copied, stored or passed whole. It belongs to the frag itself: a vert has no pixel yet (its `this` is its vertex, [as it's placed](#where-a-vertex-lands)), and an ordinary function a frag calls has no implicit `this`. Pass any pixel coordinates a helper needs as ordinary values. An old built-in `Pixel pixel` parameter is an error that says to remove it and use `this`; a game can still declare a type of its own named `Pixel`.
+`this` is context accessed through its fields and methods: it can't be copied, stored or passed whole. It belongs to the frag itself: a vert has no pixel yet (its `this` is its vertex, [as it's placed](#where-a-vertex-lands)), and an ordinary function a frag calls has no implicit `this`. Pass any pixel coordinates a helper needs as ordinary values. An old built-in `Pixel pixel` parameter is an error that says to remove it and use `this`; a game can still declare a type of its own named `Pixel`.
 
 ```csharp
 frag Leaves(BoxVertex vertex, out Color color, Models models)
@@ -885,23 +887,55 @@ frag Leaves(BoxVertex vertex, out Color color, Models models)
 
 The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw.SetCamera` reads it too, and take that.
 
-### Cut-outs
+### How fast a value changes
 
-An edge `this.Discard()` cuts is decided once a pixel, so it's a staircase however many [samples](./render-targets.md#smooth-edges) the target has: leaves, grass, hair and fences alias where the triangles around them are smooth. `[Cutout]` before a frag says its alpha is where it's there, in place of the discard:
+`this.Ddx(v)` is how much `v` changes from this pixel to the next one across, `this.Ddy(v)` to the next one down, and `this.Fwidth(v)` the two's sizes added: `Math.Abs(this.Ddx(v)) + Math.Abs(this.Ddy(v))`. `v` is a `float`, a float vector or a `Color`, and what comes back is of its type. It's how a frag knows how big a pixel is in its own units, wherever the mesh is, however it's turned, scaled or far away. A signed distance over it is an edge one pixel wide:
 
 ```csharp
-[Cutout]
-frag Leaves(BoxVertex vertex, out Color color, Models models)
+frag Ring(Vertex3 vertex, out Color color)
 {
-    color = models.leaves.Sample(vertex.uv);  // There where its alpha is 0.5 or more
+    var d = Math.Abs(Math.Length(vertex.uv - float2(0.5)) - 0.4) - 0.02;  // Under 0 on the ring
+    var edge = Math.Saturate(0.5 - d / this.Fwidth(d));                    // 1 inside, 0 outside, a pixel between
+    color = Color(1, 1, 1, edge);
 }
 ```
 
-- **Its edge is as smooth as its target's samples.** The engine sharpens the alpha the frag wrote (after the [tint](./draw-settings.md)) to a pixel, by how fast it changes from one pixel to the next, and the GPU makes it the share of each pixel's samples the frag covers (alpha to coverage): an edge pixel is part the leaf's color and part what's behind it, as a triangle's edge is. A texture's soft or blurred alpha, or its smaller images far away, still give an edge one pixel wide.
+The GPU answers by comparing each pixel with its neighbors, and it only can before any branch or loop: a neighbor in another branch has no value to compare. So the frag works `v` out a first time as it starts, asks there, and the call has that answer wherever it is: in an `if`, in a loop, after `this.Discard()`. You write nothing for it. What it asks of you is a `v` the frag can work out as it starts, as a [`Sample` between smaller images](#textures) does: made of the frag's parameters, `this`, constants, functions of them, textures read, and variables declared with `var` and never assigned again. A `v` made of a variable that changes, or one a loop counts, is an error that says so.
+
+- `this.Ddy` goes down the destination's rows, as `this.position` counts them, on every backend and in a target too.
+- A `v` the frag works out as it starts costs working it out twice, on pixels a branch would have skipped too.
+
+### Cut-outs
+
+An edge `this.Discard()` cuts is decided once a pixel, so it's a staircase however many [samples](./render-targets.md#smooth-edges) the target has: leaves, grass, hair and fences alias where the triangles around them are smooth. `this.Cutout(alpha)` says the frag is there where `alpha` is 0.5 or more, in place of the discard:
+
+```csharp
+frag Leaves(BoxVertex vertex, out Color color, Models models)
+{
+    color = models.leaves.Sample(vertex.uv);
+    this.Cutout(color.a);  // There where its alpha is 0.5 or more
+}
+```
+
+- **Its edge is as smooth as its target's samples.** The engine sharpens the alpha to a pixel by how fast it changes (`(alpha - 0.5) / this.Fwidth(alpha) + 0.5`), and the GPU makes it the share of each pixel's samples the frag covers (alpha to coverage): an edge pixel is part the leaf's color and part what's behind it, as a triangle's edge is. A texture's soft or blurred alpha, or its smaller images far away, still give an edge one pixel wide.
 - **Into a target of one sample, it's cut at 0.5**, as the discard would: in the window, in a target without `samples`, and in a [shadow map](#a-shadow-map), whose casters with holes can be the same frag as the scene's.
-- **What it covers, it covers wholly.** A cut-out isn't see-through: where its alpha is 0.6, it's its color, not 60% of it, and it writes its depth and [stencil](./draw-settings.md#stencil) at the samples it covers and nowhere else, so it needs no sorting and no `Depth.Read`. Under `Blend.Alpha`, which is every draw's at first, a covered sample is replaced; `Blend.Add` and `Blend.Multiply` add and multiply its color whole there. With samples, the target's alpha at an edge pixel's covered samples is how much the frag covered: a scene drawn over an opaque clear stays opaque inside, and close to it along its edges.
-- **Only its first output.** The alpha of the pixel's color says what's covered, for all of a frag's [outputs](#several-outputs); the others are finished as any frag's are.
-- A frag can still call `this.Discard()` as well: what it discards is left out, whatever its alpha.
+- **What it covers, it covers wholly.** A cut-out isn't see-through: its color's own alpha isn't read, and it's drawn as if it were 1. It writes its depth and [stencil](./draw-settings.md#stencil) at the samples it covers and nowhere else, so it needs no sorting and no `Depth.Read`. Under `Blend.Alpha`, which is every draw's at first, a covered sample is replaced; `Blend.Add` and `Blend.Multiply` add and multiply its color whole there. With samples, the target's alpha at an edge pixel's covered samples is how much the frag covered: a scene drawn over an opaque clear stays opaque inside, and close to it along its edges.
+- **The tint's alpha fades it the same way:** under `Draw.Tint` with an alpha of 0.5, the share is halved, so a cut-out fades out by covering less, not by blending.
+- **Anywhere in the frag:** in a branch too, and more than once, the last it reaches counting. A pixel whose path says nothing is covered whole. It's a statement of its own, in the frag itself.
+- **The pixel's color says what's covered, for all of a frag's [outputs](#several-outputs);** the others are finished as any frag's are. `this.Discard()` still discards.
+
+`this.Coverage(share)` is the same, with the share as it's given, from 0 to 1, and nothing sharpened: with 4 samples, `this.Coverage(0.5)` covers two of them, which dithers a fade or a soft edge where blending would need sorting. Into a target of one sample, it's there from 0.5. A frag sharpens its own way with `this.Fwidth`, at another cutoff, say:
+
+```csharp
+frag Hair(Vertex3 vertex, out Color color, Strands strands)
+{
+    color = strands.color;
+    var alpha = strands.mask.Sample(vertex.uv).a;
+    this.Coverage(Math.Saturate((alpha - 0.3) / this.Fwidth(alpha) + 0.5));  // Cut at 0.3, a pixel wide
+}
+```
+
+A frag says how much it covers one way: `this.Cutout` and `this.Coverage` in one frag is an error.
 
 ## What the GPU runs
 

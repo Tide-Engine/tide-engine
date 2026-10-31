@@ -3497,10 +3497,11 @@ static bool liftable(const emit *em, const expr *e, const int depth)
                                                                     && e->object->bind != BIND_PARAM && e->object->bind != BIND_CONST);
         if (e->call == CALL_GRID) { // A texture read at its own pixels asks nothing of the pixels around
             const int filter = known_filter(e);
-            return (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) && (filter == 0 || filter == 1)
+            return (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) && (filter >= -1 && filter <= 2)
                 && liftable(em, e->args.items[0], depth + 1) && (e->args.count < 2 || e->object->type.kind != TY_DEPTH_TEXTURE
                                                                  || liftable(em, e->args.items[1], depth + 1));
         }
+        if (e->call == CALL_DERIVATIVE) return liftable(em, e->args.items[0], depth + 1); // Asked as it starts too
         if (e->call == CALL_FUNCTION || e->call == CALL_METHOD) {
             const decl *fn = e->method;
             if (!fn || fn->is_extern || fn->is_mut_method || fn->rolls) return false; // One that rolls would roll twice
@@ -3970,11 +3971,70 @@ static void ex_sample(emit *em, const expr *e)
         sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
         return;
     }
+    if (em->lifting && em->root->is_frag && read == READ_COLOR && (filter == 2 || (!filter_said && em->prog->names_trilinear))) {
+        // Worked out as the frag starts (ex_derivative), outside any branch: the GPU picks its smaller images itself
+        if (em->l == WGSL) sb_printf(em->o, "textureSample(pixels%d, sampler%d, ", slot, slot);
+        else sb_printf(em->o, "texture(pixels%d, ", slot);
+        ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
+        sb_put(em->o, straight ? "))" : ")");
+        return;
+    }
     if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     else sb_printf(em->o, "textureLod(pixels%d, ", slot);
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
     // A depth is one number: WGSL gives it as that, at a level that's an int, and GLSL as a color's red
     sb_put(em->o, straight ? ", 0.0))" : read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
+}
+
+// this.Ddx(v), this.Ddy(v) and this.Fwidth(v), in a frag: a GPU says how fast
+// a value changes from one pixel to the next only outside branches and loops
+// (WGSL refuses the shader otherwise, and GLSL gives anything), and a frag's
+// code can be anywhere. So, as for a Sample between a texture's smaller
+// images, the frag works v out a first time as it starts and asks there
+// (`tide_d<n>`, collected in emit.grads), and the call is that answer. A v it
+// can't work out there is an error. Written while lifting, it's asked in place.
+static void ex_derivative(emit *em, const expr *e)
+{
+    // A pixel down is the next row as `this.position` counts them: WGSL's. OpenGL's rows go up in the window, and
+    // down in a target's pass, which it draws upside down: there `tide_gpu_height` (gpu_gl.c's) is above 0
+    const bool up = em->l != WGSL && str_eq_c(e->name, "Ddy");
+    const char *fn = str_eq_c(e->name, "Ddx") ? (em->l == WGSL ? "dpdx" : "dFdx")
+                   : str_eq_c(e->name, "Ddy") ? (em->l == WGSL ? "dpdy" : "((tide_gpu_height > 0 ? 1.0 : -1.0) * dFdy")
+                   : "fwidth";
+    const char *close = up ? "))" : ")";
+    const expr *v = e->args.items[0];
+    if (em->lifting) {
+        sb_printf(em->o, "%s(", fn);
+        ex(em, v);
+        sb_put(em->o, close);
+        return;
+    }
+    if (!liftable(em, v, 0)) {
+        refuse(em, v->at, "'this.%.*s' asks how fast a value changes as the frag starts, and this one can't be worked "
+                          "out there: it's made of a variable that changes, or of one a loop counts",
+               e->name.len, e->name.ptr);
+        diag_note("a GPU says how fast a value changes from pixel to pixel only before any branch or loop: make it of the "
+                  "frag's parameters, constants and variables declared with 'var' and never assigned again");
+        return;
+    }
+    const int at = em->grad_count++;
+    sb *const out = em->o;
+    const int defuse = em->defuse;
+    const expr *statement = em->statement;
+    em->o = &em->grads;
+    em->defuse = 0;
+    em->statement = NULL;
+    em->lifting++;
+    const char *t = ty(em, e->type);
+    if (em->l == WGSL) sb_printf(em->o, "    let tide_d%d: %s = %s(", at, t, fn);
+    else sb_printf(em->o, "    %s tide_d%d = %s(", t, at, fn);
+    ex_as(em, v, e->type);
+    sb_printf(em->o, "%s;\n", close);
+    em->lifting--;
+    em->o = out;
+    em->defuse = defuse;
+    em->statement = statement;
+    sb_printf(em->o, "tide_d%d", at);
 }
 
 // Whether a function's parameter is a list or a grid, which it's written for and not handed.
@@ -4129,6 +4189,9 @@ static void ex_call(emit *em, const expr *e)
         return;
     case CALL_NORMAL:
         ex_normal(em, e);
+        return;
+    case CALL_DERIVATIVE:
+        ex_derivative(em, e);
         return;
     case CALL_CONSTRUCT:
         ex_construct(em, e);
@@ -5387,7 +5450,11 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
         st_assign(em, s, true);
         break;
     case S_EXPR:
-        if (s->value->kind == E_METHOD && s->value->call == CALL_DISCARD) {
+        if (s->value->kind == E_METHOD && s->value->call == CALL_COVER) { // How much of the pixel it covers, finished as it ends
+            sb_put(em->o, "tide_cover = ");
+            ex_as(em, s->value->args.items[0], (type){TY_FLOAT, NULL});
+            sb_put(em->o, ";\n");
+        } else if (s->value->kind == E_METHOD && s->value->call == CALL_DISCARD) {
             if (em->code != em->root) refuse(em, s->at, "a pixel is left undrawn in the frag itself, not in a function it calls");
             sb_put(em->o, em->l == WGSL ? "discard;\n" : "discard;\n");
             if (em->l == WGSL) { // WGSL goes on running a discarded pixel's code
@@ -6013,6 +6080,7 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
         sb_printf(o, wgsl ? "    var %s: vec4f = %s(1.0, 1.0, 1.0, 1.0);\n" : "    vec4 %s = %s(1.0, 1.0, 1.0, 1.0);\n",
                   output_name(false, k), f4);
     }
+    if (sh->frag && sh->frag->cutout) sb_put(o, "    tide_cover = 1.0;\n"); // Whole, where it doesn't say
     if (sh->frag) {
         const type vertex = {TY_STRUCT, (decl *)v};
         sb_printf(o, "    %s(%s(", function_name(sh->frag), ty(em, vertex));
@@ -6069,30 +6137,33 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
     for (int k = 0; k < outputs; k++) {
         const char *color = output_name(false, k);
         if (k == 0 && sh->frag && sh->frag->cutout) {
-            // A cut-out's alpha, sharpened to a pixel by how fast it changes, is how much of the pixel it covers,
-            // which the GPU makes the share of its samples (alpha to coverage) where its target has them. A
-            // target of one sample (`tide_screen.w` below 0) has it cut at 0.5. What it covers it covers wholly,
-            // so its color isn't times its alpha, and doesn't go to white for a draw that multiplies
+            // A cut-out says how much of the pixel it covers (this.Cutout, this.Coverage), into `tide_cover`, times
+            // its tint's alpha. Cutout's is an alpha, sharpened here to a pixel by how fast it changes. The GPU
+            // makes it the share of the pixel's samples drawn into (alpha to coverage) where the target has them;
+            // a target of one sample (`tide_screen.w` below 0) has it cut at 0.5. What it covers it covers wholly,
+            // so its color's own alpha isn't read, its color isn't times one, and it doesn't go to white for a
+            // draw that multiplies
+            const bool sharpen = !sh->frag->raw_coverage;
             if (wgsl) {
                 sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
-                             "    var tide_cover: f32 = (%s.a - 0.5) / max(fwidth(%s.a), 0.0001) + 0.5;\n"
-                             "    if (tide_block.tide_screen.w < 0.0) {\n"
-                             "        if (tide_cover < 0.5) {\n"
+                             "    var tide_share: f32 = tide_cover * tide_block.tide_tint.a;\n", color, color);
+                if (sharpen) sb_put(o, "    tide_share = (tide_share - 0.5) / max(fwidth(tide_share), 0.0001) + 0.5;\n");
+                sb_printf(o, "    if (tide_block.tide_screen.w < 0.0) {\n"
+                             "        if (tide_share < 0.5) {\n"
                              "            discard;\n"
                              "        }\n"
-                             "        tide_cover = 1.0;\n"
+                             "        tide_share = 1.0;\n"
                              "    }\n"
-                             "    %s = vec4f(%s.rgb, clamp(tide_cover, 0.0, 1.0));\n",
-                          color, color, color, color, color, color);
+                             "    %s = vec4f(%s.rgb, clamp(tide_share, 0.0, 1.0));\n", color, color);
             } else {
                 sb_printf(o, "    %s = %s * tide_tint;\n"
-                             "    float tide_cover = (%s.a - 0.5) / max(fwidth(%s.a), 0.0001) + 0.5;\n"
-                             "    if (tide_screen.w < 0.0) {\n"
-                             "        if (tide_cover < 0.5) discard;\n"
-                             "        tide_cover = 1.0;\n"
+                             "    float tide_share = tide_cover * tide_tint.a;\n", color, color);
+                if (sharpen) sb_put(o, "    tide_share = (tide_share - 0.5) / max(fwidth(tide_share), 0.0001) + 0.5;\n");
+                sb_printf(o, "    if (tide_screen.w < 0.0) {\n"
+                             "        if (tide_share < 0.5) discard;\n"
+                             "        tide_share = 1.0;\n"
                              "    }\n"
-                             "    %s.a = clamp(tide_cover, 0.0, 1.0);\n",
-                          color, color, color, color, color);
+                             "    %s.a = clamp(tide_share, 0.0, 1.0);\n", color);
             }
             continue;
         }
@@ -6195,6 +6266,7 @@ static void write_glsl(program *prog, shader *sh)
             }
         }
         put_dice_variable(&em, &o, stage_rolls(sh, stage));
+        if (stage == STAGE_FRAG && sh->frag && sh->frag->cutout) sb_put(&o, "float tide_cover;\n"); // What it covers
         put_structs(&em, &o);
         put_helpers(&em, &o);
         if (em.functions.data) sb_put(&o, em.functions.data);
@@ -6218,6 +6290,7 @@ static void write_wgsl(program *prog, shader *sh)
     put_uniforms(sh, WGSL, &o);
     put_wgsl_inputs(sh, &o);
     put_dice_variable(&em, &o, rolls);
+    if (sh->frag && sh->frag->cutout) sb_put(&o, "var<private> tide_cover: f32;\n"); // What it covers
     sb_put(&o, "struct tide_corner {\n    @builtin(position) tide_at: vec4f,\n");
     put_varyings(&em, &o, "");
     sb_put(&o, "}\n");

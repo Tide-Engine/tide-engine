@@ -4542,35 +4542,57 @@ view ImageMeasurements(Art art, mut ImageSizes sizes)
     Draw.Mesh(art.targetQuad, art.faces, heroColors, SizedImage, ImageMetadata);
 }
 
-// Cut-outs (pass 24): a [Cutout] frag's alpha is where it's there. A sheet
-// whose alpha climbs a 64th a pixel, from left to right, is drawn into a
-// target of 4 samples, where its edge pixel is half covered, and into one of
-// a sample, where it's cut; what it covers it covers wholly, where its alpha
-// is barely over half. A card cut the same way, into a target of depth
-// alone, stores depth only where it's there.
+// Cut-outs (pass 24): a frag that says how much of its pixel it covers. A
+// sheet whose alpha climbs a 64th a pixel, from left to right, cut out with
+// this.Cutout, is drawn into a target of 4 samples, where its edge pixel is
+// half covered, and into one of a sample, where it's cut; what it covers it
+// covers wholly, where its alpha is barely over half. Its bottom rows are
+// discarded too. A sheet that covers three quarters of each pixel as it's
+// given (this.Coverage) covers that share of the samples, and is whole in
+// one sample. A card cut out, into a target of depth alone, stores depth only
+// where it's there. And how fast values change across a pixel
+// (this.Ddx, Ddy and Fwidth), into the window and into a target: the same
+// numbers, the same way round, on every backend.
 local singleton Cuts
 {
-    RenderTarget smooth; // 64 pixels by 64 whatever the display, 4 samples
-    RenderTarget sharp;  // ...and one
-    RenderTarget depth;  // ...depth alone
-    DepthTexture stored; // ...as a frag reads it
-    List<Vertex> sheet;  // 64 across from its corner, its uv.x from 0 to 1
-    List<Vertex3> card;  // 2 by 2 around the origin, the same
+    RenderTarget smooth;  // 64 pixels by 64 whatever the display, 4 samples
+    RenderTarget sharp;   // ...and one
+    RenderTarget shared;  // ...4 samples, for the share
+    RenderTarget whole;   // ...and one
+    RenderTarget depth;   // ...depth alone
+    RenderTarget probe;   // ...one, for the slopes
+    DepthTexture stored;  // ...as a frag reads it
+    List<Vertex> sheet;   // 64 across from its corner, its uv.x from 0 to 1
+    List<Vertex3> card;   // 2 by 2 around the origin, the same
     bool made;
 }
 
-// Its alpha is half at the middle of the sheet's 32nd pixel, and red
-[Cutout]
+// There from the middle of the sheet's 32nd pixel on, and red; its bottom tenth is discarded
 frag Edge(Vertex vertex, out Color color)
 {
-    color = Color(1, 0, 0, vertex.uv.x + 0.5 / 64);
+    if (vertex.uv.y > 0.9) this.Discard();
+    color = Color.red;
+    this.Cutout(vertex.uv.x + 0.5 / 64);
 }
 
 // ...and the card's
-[Cutout]
 frag Edge3(Vertex3 vertex, out Color color)
 {
-    color = Color(1, 0, 0, vertex.uv.x + 0.5 / 64);
+    color = Color.red;
+    this.Cutout(vertex.uv.x + 0.5 / 64);
+}
+
+// Three quarters of each pixel, as it's given
+frag Share(Vertex vertex, out Color color)
+{
+    color = Color.red;
+    this.Coverage(0.75);
+}
+
+// A pixel across in pixels, a pixel down in the uv's 64ths, and a 64th across in halves: 1, 1 and 0.5
+frag Slopes(Vertex vertex, out Color color)
+{
+    color = Color(this.Ddx(this.position.x), this.Ddy(vertex.uv.y) * 64, this.Fwidth(vertex.uv.x) * 32);
 }
 
 frag StoredDepth(Vertex vertex, out Color color, Cuts cuts)
@@ -4588,7 +4610,10 @@ view Cutouts(Art art, mut Cuts cuts)
         cuts.made = true;
         cuts.smooth = RenderTarget(64, 64, 1, samples: 4);
         cuts.sharp = RenderTarget(64, 64, 1);
+        cuts.shared = RenderTarget(64, 64, 1, samples: 4);
+        cuts.whole = RenderTarget(64, 64, 1);
         cuts.depth = RenderTarget(64, 64, 1, Format.Depth);
+        cuts.probe = RenderTarget(64, 64, 1);
         cuts.stored = cuts.depth.depth;
         cuts.sheet = [Vertex { }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
                       Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
@@ -4601,6 +4626,15 @@ view Cutouts(Art art, mut Cuts cuts)
     cuts.sharp.Clear(Color.black);
     cuts.sharp.SetScreen();
     cuts.sharp.Mesh(cuts.sheet, art.faces, Edge);
+    cuts.shared.Clear(Color.black);
+    cuts.shared.SetScreen();
+    cuts.shared.Mesh(cuts.sheet, art.faces, Share);
+    cuts.whole.Clear(Color.black);
+    cuts.whole.SetScreen();
+    cuts.whole.Mesh(cuts.sheet, art.faces, Share);
+    cuts.probe.Clear(Color.black);
+    cuts.probe.SetScreen();
+    cuts.probe.Mesh(cuts.sheet, art.faces, Slopes);
     // From 10 in front of the card, a box 2 by 2 with no perspective: the card fills it
     cuts.depth.Clear(Color.white);
     cuts.depth.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(2, 2, 0.1, 30));
@@ -4618,6 +4652,22 @@ view Cutouts(Art art, mut Cuts cuts)
     Draw.Transform(float2(128, 0))
     {
         Draw.Mesh(cuts.sheet, art.faces, StoredDepth);
+    }
+    Draw.Transform(float2(192, 0))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, Slopes);
+    }
+    Draw.Transform(float2(0, 64))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.shared.color, Filter.Point);
+    }
+    Draw.Transform(float2(64, 64))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.whole.color, Filter.Point);
+    }
+    Draw.Transform(float2(192, 64))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.probe.color, Filter.Point);
     }
 }
 

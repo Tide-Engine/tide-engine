@@ -975,11 +975,6 @@ TIDE_TEST(lsp_levels_of_detail)
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "[LOD]") && has(hover, "levels of detail made as the game is built") && has(hover, "Draw.LODCamera"));
     TIDE_CHECK(has(hover, "[LOD(2)]") && has(hover, "positive finite constant multiplier"));
-    // [Cutout]: offered before a frag, explained, refused off one
-    TIDE_CHECK(offers(complete("[$] frag Leaf(Vertex3 vertex, out Color color) { color = Color.white; }\nscene Main { }\n"), "Cutout"));
-    open_document("[Cut$out] component Leaf { float x; }\nscene Main { }\n");
-    TIDE_CHECK(has(last_sent(), "Cutout says a frag's alpha is where it's there, and 'Leaf' isn't a frag"));
-    TIDE_CHECK(has(request("textDocument/hover"), "alpha to coverage"));
     open_document("[Lod] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
     // [BlendShapes], beside them: offered, explained, refused off an asset, suggested for a misspelling.
@@ -1530,6 +1525,7 @@ TIDE_TEST(lsp_shaders_complete)
 
     const char *pixel = complete(IN_FRAG("var x = this.$"));
     TIDE_CHECK(offers(pixel, "position") && offers(pixel, "depth") && offers(pixel, "world") && offers(pixel, "Discard"));
+    TIDE_CHECK(offers(pixel, "Fwidth") && offers(pixel, "Ddx") && offers(pixel, "Cutout") && offers(pixel, "Coverage"));
     TIDE_CHECK(has(pixel, "Where the pixel is on the screen"));
     const char *position = complete(IN_FRAG("var x = this.position.$"));
     TIDE_CHECK(offers(position, "x") && offers(position, "y") && !offers(position, "z") && !offers(position, "Discard"));

@@ -3,7 +3,7 @@
 ## Embed ABI 9: a pipeline's alpha to coverage (2026-10-31)
 
 `TIDE_EMBED_RENDER_PIPELINE` has one word more, `alpha_to_coverage`, after
-`outputs` (a `[Cutout]` frag into a target with samples: notes/render-targets.md,
+`outputs` (a cut-out frag into a target with samples: notes/render-targets.md,
 Cut-outs), so `TIDE_EMBED_ABI` and `TideLibrary.Abi` are 9. `TideRender.cs`
 reads it into `Pipeline.alphaToCoverage` and sets `_TideAlphaToMask` on the
 material, which the ShaderLab tide unity writes takes as
