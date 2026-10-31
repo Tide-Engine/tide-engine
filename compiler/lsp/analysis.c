@@ -998,7 +998,7 @@ static void walk_value(const expr *e)
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
                    || e->call == CALL_PARENT || e->call == CALL_TRANSFORM
                    || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
-                   || e->call == CALL_DISCARD || e->call == CALL_NORMAL) {
+                   || e->call == CALL_DISCARD || e->call == CALL_NORMAL || e->call == CALL_DERIVATIVE || e->call == CALL_COVER) {
             // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard(), instance.Normal(n)
             o.kind = OCC_METHOD;
             if (e->call == CALL_TRANSFORM) o.component = e->type_decl;
@@ -2066,7 +2066,10 @@ static void format_data_decl(const decl *d, sb *out)
         format_routine(d->methods.items[i], out);
         sb_put(out, ";\n");
     }
-    if (d == A.prog->pixel) sb_put(out, "\n    void Discard();\n"); // Its one method (pixel_calls)
+    if (d == A.prog->pixel) { // Its methods (pixel_calls)
+        sb_put(out, "\n    void Discard();\n    void Cutout(float alpha);\n    void Coverage(float share);\n"
+                    "    T Ddx<T>(T v);\n    T Ddy<T>(T v);\n    T Fwidth<T>(T v);\n");
+    }
     if (d == A.prog->instance) sb_put(out, "\n    float3 Normal(float3 normal);\n"); // ...and an Instance's (instance_calls)
     sb_put(out, "}");
 }
@@ -2359,6 +2362,26 @@ static const method_form pixel_calls[] = {
     {"Discard", "Discard()",
      "Leaves the pixel undrawn, and ends the frag there: what's behind it stays. A statement of its own, in the frag "
      "itself."},
+    {"Cutout", "Cutout(float alpha)",
+     "Makes the frag a cut-out, like a leaf, grass or hair: the pixel is there where `alpha` is 0.5 or more, in place "
+     "of `this.Discard()`. Its edge is as smooth as the target's samples (`RenderTarget.Window(samples: 4)`): the "
+     "alpha, sharpened to a pixel by how fast it changes, is the share of the pixel's samples it covers (alpha to "
+     "coverage), each with its color whole and its depth. Into a target of one sample, a shadow map's too, it's cut "
+     "at 0.5. A cut-out isn't see-through: its color's own alpha isn't read. A statement of its own, in the frag."},
+    {"Coverage", "Coverage(float share)",
+     "Makes the frag a cut-out that covers this share of the pixel, from 0 to 1, as it's given: with samples, that "
+     "share of them, which dithers a fade or a soft edge; into a target of one sample, it's there from 0.5. "
+     "`this.Fwidth` sharpens it the frag's own way. A statement of its own, in the frag."},
+    {"Ddx", "Ddx(float v) -> float",
+     "How much `v` changes from this pixel to the next one across: a float or a float vector, of the same type. The "
+     "frag works `v` out as it starts and asks there, as a GPU answers only outside branches, so `v` is made of the "
+     "frag's parameters, constants and variables never assigned again."},
+    {"Ddy", "Ddy(float v) -> float",
+     "How much `v` changes from this pixel to the next one down, as `Ddx` across."},
+    {"Fwidth", "Fwidth(float v) -> float",
+     "How much `v` changes across this pixel: `Math.Abs(this.Ddx(v)) + Math.Abs(this.Ddy(v))`. A signed distance "
+     "over it is a smooth edge one pixel wide at any size, turned, scaled or in 3D: "
+     "`Math.Saturate(0.5 - d / this.Fwidth(d))`."},
 };
 
 static const method_form instance_calls[] = {

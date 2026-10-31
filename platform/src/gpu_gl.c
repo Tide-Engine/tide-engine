@@ -915,6 +915,7 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     glViewport(0, 0, width, height);
     glDisable(GL_CULL_FACE); // Either side of a triangle draws, until a pipeline says otherwise (gl_use)
     glDisable(GL_STENCIL_TEST); // ...and no stencil test
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE); // ...and no alpha is coverage
     pass_stencil = 0;
     glEnable(GL_SCISSOR_TEST);
     glScissor(0, 0, width, height);
@@ -1035,6 +1036,9 @@ static void gl_use(const tide_gpu_id pipeline)
         // counterclockwise for OpenGL
         glFrontFace(pass_texture ? GL_CCW : GL_CW);
     }
+    // A cut-out's alpha is the share of a pixel's samples it draws into (a pass on a target of one has none)
+    if (current->desc.alpha_to_coverage) glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     set_stencil(current);
 }
 

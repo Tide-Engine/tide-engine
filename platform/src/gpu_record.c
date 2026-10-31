@@ -262,7 +262,7 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     const size_t name_size = strlen(name);
     const uint32_t textures = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
     op(TIDE_EMBED_RENDER_PIPELINE, 4u * (3u + 1u + 2u * TIDE_GPU_MAX_SLOTS + 1u + 3u * TIDE_GPU_MAX_ATTRIBUTES + 2u
-                                         + textures + 7u + 1u) + name_size);
+                                         + textures + 8u + 1u) + name_size);
     u32(id);
     u32((uint32_t)key);
     u32((uint32_t)(key >> 32));
@@ -288,6 +288,7 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     u32((uint32_t)desc->stencil_op);
     u32(desc->into);
     u32(desc->outputs);
+    u32(desc->alpha_to_coverage);
     u32((uint32_t)name_size);
     bytes(name, name_size);
     return id;

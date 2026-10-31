@@ -45,5 +45,5 @@ char *tide_wgsl_to_hlsl(const char *wgsl, char *error, size_t error_size);
 // list ("Hidden/Tide/..."), and its render state is its material's
 // properties (_TideSrcColor, _TideDstColor, _TideSrcAlpha, _TideDstAlpha,
 // _TideZTest, _TideZWrite, _TideCull, _TideStencilRef, _TideStencilComp,
-// _TideStencilPass), which TideRender.cs sets from a pipeline's. Malloc'd.
+// _TideStencilPass, _TideAlphaToMask), which TideRender.cs sets from a pipeline's. Malloc'd.
 char *tide_hlsl_unity_shader(const char *hlsl, const char *name);

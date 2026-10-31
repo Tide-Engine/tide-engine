@@ -1,5 +1,24 @@
 # The docs site
 
+## Newton removal (2026-10-31)
+
+Owner retired the slow experimental Newton package. Its public page and
+sidebar entry are removed, along with references in the package overview,
+usage guide, README and sharding spec. Eight bundled packages remain, including
+two physics integrations (Box2D and Box3D). No redirect or alternate Newton
+integration is introduced. Removal/build validation is in notes/newton.md.
+
+
+## Unity version selection (2026-10-31)
+
+The CLI's Unity guide and package README document Window > Tide > Versions,
+paired package/compiler switching, dev updates and unpublished-commit handling.
+The release endpoint adds an exact-match flag; releases-and-ci.md and unity.md
+record its contracts and regression tests. Node 24.22.1 docs production build
+passes with the existing allowed unstaged game/example 404s. Normal dev
+deployment publishes the endpoint; no manual deployment was requested.
+
+
 ## Compact desktop minimize example (2026-10-29)
 
 The owner requested improving or removing gui-desktop because it overflowed

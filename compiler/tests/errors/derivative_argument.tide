@@ -1,0 +1,6 @@
+// expect: 'this.Fwidth' takes one float, float vector or Color: how fast it changes across the pixel is what it gives
+scene Main { }
+frag Edge(Vertex3 vertex, out Color color)
+{
+    color = Color(this.Fwidth(true ? 1 : 0), 0, 0);
+}

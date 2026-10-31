@@ -1357,7 +1357,8 @@ typedef enum tide_shader_read {
 //   transform the draw is in), then `tide_screen`, a float4: the target's
 //   pixels in a logical one across and down, the target's height in its own
 //   pixels, and 1 where the draw multiplies what's there (TIDE_BLEND_MULTIPLY:
-//   its color goes to white as its alpha goes to 0) or 0; then `tide_tint`,
+//   its color goes to white as its alpha goes to 0) or 0, or for a cut-out
+//   (`cutout`), -1 where its target has one sample; then `tide_tint`,
 //   a float4 the pixel's color is multiplied by (see tide_draw_set_tint).
 //   After them, `uniform_floats` float4s and `uniform_ints` int4s of the
 //   game's.
@@ -1403,6 +1404,11 @@ typedef struct tide_shader {
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
     uint8_t outputs; // The colors its fragment stage writes: 1 for 0, TIDE_TARGET_COLORS at the most
     bool blit;       // Drawn by blits (tide_draw_blit) over a whole destination, rather than as a mesh
+    // A cut-out ([Cutout]): its fragment stage writes how much of a pixel it covers as its first color's alpha,
+    // with that color whole. Into a target with samples the GPU makes that alpha the share of the pixel's samples
+    // it covers (alpha to coverage), and a blend by its alpha replaces what's there; into one of a sample, its
+    // uniforms' `screen.w` is below 0, and it cuts at 0.5 itself.
+    bool cutout;
     uint32_t bounds_position; // 1 + float3 position's byte offset, only for undeformed 3D geometry; 0: unknown
 } tide_shader;
 

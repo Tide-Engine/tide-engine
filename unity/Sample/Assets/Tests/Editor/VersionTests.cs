@@ -70,8 +70,8 @@ public class VersionTests
         File.WriteAllText(Path.Combine(site, "releases", $"v{Version}.json"), Release());
     }
 
-    string Release() =>
-        $"{{\"tag_name\": \"v{Version}\", \"prerelease\": true, \"assets\": [" +
+    string Release(bool exact = true) =>
+        $"{{\"tag_name\": \"v{Version}\", \"exact\": {exact.ToString().ToLowerInvariant()}, \"prerelease\": true, \"assets\": [" +
         $"{{\"name\": \"{TideVersions.PackageName}\", \"browser_download_url\": \"{new Uri(Path.Combine(site, TideVersions.PackageName)).AbsoluteUri}\"}}, " +
         $"{{\"name\": \"SHA256SUMS\", \"browser_download_url\": \"{new Uri(Path.Combine(site, "SHA256SUMS")).AbsoluteUri}\"}}]}}";
 
@@ -160,7 +160,7 @@ public class VersionTests
         var development = TideToolchain.LaunchCommand(Environment.GetCommandLineArgs(), out _) != null;
         UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Error,
             new System.Text.RegularExpressions.Regex(development ? @"its ABI is 5.*-tide-command.*Restart Unity without -tide-command"
-                : @"its ABI is 5.*Selected tide:.*install the package's version"));
+                : @"its ABI is 5.*Selected tide:.*Window > Tide > Versions"));
         Assert.IsFalse(TideBuildService.HostReady(host));
     }
 
@@ -191,6 +191,61 @@ public class VersionTests
     }
 
     [Test]
+    public void AnAncestorReleaseIsNeverOfferedAsAMatchingCompiler()
+    {
+        const string commit = "234567890abcdef1234567890abcdef123456789";
+        var answer = Path.Combine(site, "releases", "for", commit);
+        var cache = Path.Combine(TideLibrary.BuildFolder, "version.json");
+        Directory.CreateDirectory(TideLibrary.BuildFolder);
+        File.WriteAllText(cache, $"{{\"commit\":\"{commit}\",\"version\":\"{Version}\"}}");
+        File.WriteAllText(answer, Release(false));
+        Assert.IsNull(TideVersions.Wanted(commit, "dev", out var why), "the legacy ancestor cache must be ignored");
+        StringAssert.Contains("no matching compiler", why);
+        StringAssert.Contains("Window > Tide > Versions", why);
+        StringAssert.Contains(Version, why);
+        File.WriteAllText(answer, Release());
+        TideVersions.Refresh();
+        Assert.AreEqual(Version, TideVersions.Wanted(commit, "dev", out why), why);
+    }
+
+    [Test]
+    public void AnOldServerAnswerDoesNotProveAMatchAndExpiredAnswersAreRefreshed()
+    {
+        const string commit = "34567890abcdef1234567890abcdef1234567890";
+        var answer = Path.Combine(site, "releases", "for", commit);
+        File.WriteAllText(answer, Release().Replace("\"exact\": true, ", ""));
+        Assert.IsNull(TideVersions.Wanted(commit, "dev", out _));
+        TideVersions.Refresh();
+        Directory.CreateDirectory(TideLibrary.BuildFolder);
+        File.WriteAllText(Path.Combine(TideLibrary.BuildFolder, "version.json"),
+            $"{{\"format\":2,\"commit\":\"{commit}\",\"version\":\"1.0.0\",\"checkedAt\":0}}");
+        File.WriteAllText(answer, Release());
+        Assert.AreEqual(Version, TideVersions.Wanted(commit, "dev", out var why), why);
+    }
+
+    [Test]
+    public void VersionChoicesKeepTheRepositoryAndPackagePath()
+    {
+        const string package = "com.tide.unity@https://github.com/Tide-Engine/tide-engine.git?path=/unity/com.tide.unity";
+        Assert.AreEqual(package.Substring("com.tide.unity@".Length) + "#v" + Version,
+            TideVersionsWindow.PackageUrl(package + "#dev", "v" + Version));
+        Assert.AreEqual(package.Substring("com.tide.unity@".Length) + "#dev",
+            TideVersionsWindow.PackageUrl(package + "#v1.0.0", "dev"));
+        Assert.Throws<ArgumentException>(() => TideVersionsWindow.PackageUrl("com.tide.unity@file:../local", "dev"));
+        Assert.Throws<ArgumentException>(() => TideVersionsWindow.PackageUrl(package, "not-a-version"));
+        Assert.Greater(TideVersionsWindow.CompareVersions("v1.0.0-nightly.10", "v1.0.0-nightly.9"), 0);
+        Assert.Greater(TideVersionsWindow.CompareVersions("v1.0.0", "v1.0.0-nightly.10"), 0);
+        Assert.Greater(TideVersionsWindow.CompareVersions("v1.1.0-nightly.1", "v1.0.0"), 0);
+        File.WriteAllText(Path.Combine(site, "releases.json"), "[" + Release() + "]");
+        var releases = TideVersions.Published();
+        Assert.AreEqual(1, releases.Length);
+        Assert.IsTrue(TideVersions.CanInstall(releases[0]));
+        releases[0].assets = Array.Empty<TideVersions.Asset>();
+        Assert.IsFalse(TideVersions.CanInstall(releases[0]));
+        Assert.IsTrue(UnityEditor.Menu.GetEnabled("Window/Tide/Versions"));
+    }
+
+    [Test]
     public void AVersionInstallsBesideTheOthers()
     {
         Publish(Version);
@@ -216,5 +271,30 @@ public class VersionTests
         StringAssert.Contains("another version", error);
         Assert.IsNull(TideVersions.Executable(Version));
         Assert.IsFalse(Directory.Exists(versions) && Directory.GetDirectories(versions).Length > 0, "nothing left in versions");
+    }
+
+    [Test]
+    public void AFailedCompilerDownloadLeavesThePackagePinUnchanged()
+    {
+        Publish(Version, new string('0', 64));
+        var manifest = Path.Combine(TideSettings.ProjectFolder, "Packages", "manifest.json");
+        var before = File.ReadAllText(manifest);
+        var editing = TideSettings.instance.buildWhileEditing;
+        TideSettings.instance.buildWhileEditing = false;
+        var window = UnityEngine.ScriptableObject.CreateInstance<TideVersionsWindow>();
+        try
+        {
+            window.Change("com.tide.unity@https://github.com/Tide-Engine/tide-engine.git?path=/unity/com.tide.unity#dev", "v" + Version);
+            Assert.IsFalse(TideVersionsWindow.Switching);
+            Assert.AreEqual(before, File.ReadAllText(manifest));
+            Assert.IsNull(TideVersions.Executable(Version));
+            var error = (string)typeof(TideVersionsWindow).GetField("error", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(window);
+            StringAssert.Contains("damaged", error);
+        }
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(window);
+            TideSettings.instance.buildWhileEditing = editing;
+        }
     }
 }

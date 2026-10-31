@@ -1,5 +1,17 @@
 # No Tide code can corrupt memory
 
+## Packed local-field migration alignment (2026-10-31)
+
+Migration's attached local rows may start at any byte offset in packed state.
+Their generated defaults require the destination C type's alignment. The
+runtime now uses its existing aligned value scratch and byte-copies each row
+to the packed output; the format and retained values stay unchanged. A portable
+regression asserts the callback's alignment across every eight-byte offset
+and varying row counts, before doing a typed store. It fails before the fix
+and passes on Windows ASan and WASI. Contracts and affected-test validation:
+hot-reload.md, Aligned defaults for packed local rows. No new runtime API.
+
+
 ## 64-bit handles (2026-10-30)
 
 Handles are 64 bits (notes/ecs.md, 64-bit handles); what checks them is as

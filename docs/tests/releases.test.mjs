@@ -237,6 +237,8 @@ test('a commit is the highest release at it or before it', async () => {
     const body = (await get(handle, '/releases/for/aaaaaaa4')).body;
     assert.doesNotMatch(body, /someone|secret-repo|github/i);
     assert.equal(JSON.parse(body).assets[0].browser_download_url, `${origin}/releases/v0.3.0-nightly.2/tide-windows-x64.zip`);
+    assert.equal(JSON.parse(body).exact, false, 'an ancestor is a suggestion, not a matching compiler');
+    assert.equal(JSON.parse((await get(handle, '/releases/for/aaaaaaa1')).body).exact, true);
     // Kept a while: asked again, GitHub isn't; later, a release made since counts
     const asked = hub.asked.length;
     await tagOf('aaaaaaa2');
@@ -244,6 +246,7 @@ test('a commit is the highest release at it or before it', async () => {
     hub.commits.aaaaaaa2 = { at: 'v0.3.0-nightly.1', after: ['v0.2.0'] };
     clock += 11 * 60_000;
     assert.equal(await tagOf('aaaaaaa2'), 'v0.3.0-nightly.1');
+    assert.equal(JSON.parse((await get(handle, '/releases/for/aaaaaaa2')).body).exact, true);
 });
 
 test('tags order as semantic versioning does', async () => {

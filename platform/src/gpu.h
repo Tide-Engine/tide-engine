@@ -226,6 +226,9 @@ typedef struct tide_gpu_pipeline_desc {
     // `texture_depth_2d` with a `sampler`; one that's compared is a
     // `sampler2DShadow`, and a `texture_depth_2d` with a `sampler_comparison`.
     // A cube is a `samplerCube`, and a `texture_cube<f32>` with a `sampler`.
+    // OpenGL's are handed `uniform int tide_gpu_height`, above 0 in a pass on
+    // a target, which is drawn upside down, and 0 in the window's: tidec's
+    // this.Ddy reads it, for which way a row down goes.
     const char *glsl_vertex, *glsl_fragment;
     const char *wgsl;
     // Vulkan's: the WGSL as SPIR-V (tidec translates it, and the renderer's
@@ -266,6 +269,11 @@ typedef struct tide_gpu_pipeline_desc {
     // with its `layout(location = i)` where there are several; WGSL's, the
     // `@location(i)`s of what `fragment` returns.
     uint32_t outputs;
+    // Alpha to coverage: the alpha of its first output is the share of each
+    // pixel's samples it draws into, depth and stencil too, and what it
+    // leaves of them is as it was. Only for targets of colors and samples
+    // (`into`); the renderer gives none for others.
+    bool alpha_to_coverage;
 } tide_gpu_pipeline_desc;
 
 typedef struct tide_gpu {

@@ -898,6 +898,77 @@ static void run_alpha_checks(const char *when)
     }
 }
 
+// Cut-outs (`Cutouts` in shaders.tide): this.Cutout's red sheet, there from
+// the middle of its 32nd pixel (31 from 0), through a target of 4 samples at
+// the window's left, one of a sample beside it, and a target of depth alone's
+// depth at 128 on; this.Coverage's three quarters below them. Red is what's
+// covered: in between only at the edge with samples, and whole wherever its
+// alpha is half or more. And at 192, the slopes a frag asks for, drawn into
+// the window and, below, into a target: 1, 1 and 0.5.
+static void run_cut_checks(const char *when)
+{
+    static const struct {
+        float x, y;
+        float low, high; // What its red is between
+        const char *what;
+    } wanted[] = {
+        {29, 32, 0, 0.03f, "a cut-out leaves out what its alpha is under half for, into a target with samples"},
+        {31, 32, 0.15f, 0.85f, "and covers some of the samples of the pixel its edge crosses: alpha to coverage"},
+        {33, 32, 0.97f, 1, "and all of those past it, whole, where its alpha is little over half"},
+        {40, 60, 0, 0.03f, "and a cut-out still discards"},
+        {64 + 29, 32, 0, 0.03f, "into a target of one sample, it's cut where its alpha is under half"},
+        {64 + 33, 32, 0.97f, 1, "and is there, whole, where it's over half"},
+        {32, 96, 0.5f, 0.95f, "a frag that covers three quarters of a pixel as it's given covers that share of its samples"},
+        {64 + 32, 96, 0.97f, 1, "and is there, whole, in a target of one sample"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    static const struct {
+        float y;
+        const char *what;
+    } slopes[] = {
+        {32, "a frag's slopes, this.Ddx, this.Ddy and this.Fwidth: a pixel across, a pixel down and a 64th, in the window"},
+        {96, "and the same, the same way round, in a target"},
+    };
+    local.Art.targetPass = 24;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT + 4];
+    uint32_t got[COUNT + 4];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
+    // The depth target's left and right quarters: one side of the card is cut, whichever way its camera sees it
+    points[COUNT] = tide_f2(128 + 16.5f, 32.5f);
+    points[COUNT + 1] = tide_f2(128 + 48.5f, 32.5f);
+    for (int i = 0; i < 2; i++) points[COUNT + 2 + i] = tide_f2(192 + 32.5f, slopes[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT + 4, got);
+    for (int i = 0; i < COUNT; i++) {
+        const float red = (float)(got[i] >> 24) / 255.0f;
+        const bool ok = red >= wanted[i].low && red <= wanted[i].high && (got[i] >> 8 & 0xFFFFu) == 0;
+        printf("%s: %s%s (0x%08X, red from %.2f to %.2f)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               (double)wanted[i].low, (double)wanted[i].high);
+        if (!ok) failures++;
+    }
+    const float left = (float)(got[COUNT] >> 24) / 255.0f, right = (float)(got[COUNT + 1] >> 24) / 255.0f;
+    const float nearer = left < right ? left : right, farther = left < right ? right : left;
+    const bool ok = farther > 0.97f && nearer < 0.8f;
+    printf("%s: into a target of depth alone, a cut-out stores depth only where it's there%s (0x%08X, 0x%08X)\n",
+           ok ? "ok" : "FAIL", when, (unsigned)got[COUNT], (unsigned)got[COUNT + 1]);
+    if (!ok) failures++;
+    for (int i = 0; i < 2; i++) {
+        const uint32_t c = got[COUNT + 2 + i];
+        const int want[3] = {255, 255, 128};
+        bool fine = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(c >> (24 - 8 * k) & 0xFFu) - want[k];
+            fine = fine && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0xFFFF80FF)\n", fine ? "ok" : "FAIL", slopes[i].what, when, (unsigned)c);
+        if (!fine) failures++;
+    }
+}
+
 // Textures that are numbers (`Raws` in shaders.tide): [Raw] ones are
 // read as their file or their grid has them, where a texture of colors has no
 // color in a pixel with no alpha. Squares of 32 pixels, 40 apart.
@@ -1625,6 +1696,7 @@ static void run_prewarmed_checks(void)
     run_height_checks(when);
     run_mipmap_checks(2, when);
     run_alpha_checks(when);
+    run_cut_checks(when);
     run_raw_checks(when);
     run_cube_checks(2, when);
     run_list_checks(0, when);
@@ -1668,6 +1740,7 @@ static int frame(void *user, const float seconds)
         run_height_checks(", on another device");
         run_mipmap_checks(2, ", on another device");
         run_alpha_checks(", on another device");
+        run_cut_checks(", on another device");
         run_raw_checks(", on another device");
         run_cube_checks(2, ", on another device");
         run_list_checks(0, ", on another device");
@@ -1700,6 +1773,8 @@ static int frame(void *user, const float seconds)
     run_mipmap_checks(2, ", again");
     run_mipmap_checks(4, ", with other pixels drawn into the target");
     run_alpha_checks("");
+    run_cut_checks("");
+    run_cut_checks(", again");
     run_raw_checks("");
     run_cube_checks(2, "");
     run_cube_checks(2, ", again");

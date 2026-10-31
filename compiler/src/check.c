@@ -7852,6 +7852,57 @@ static type check_parse_call(checker *c, expr *e, const type result)
 
 #include "visibility_check.inc"
 
+// A frag's this.Ddx(v), this.Ddy(v) and this.Fwidth(v): how much a float or a
+// float vector changes from this pixel to the next one across, down, and the
+// two's sizes added, of the same type. The frag works v out as it starts and
+// asks there (shader.c, ex_derivative), as the GPU only answers outside
+// branches. And this.Cutout(alpha) and this.Coverage(share), statements: how
+// much of the pixel the frag covers, which makes it a cut-out (decl.cutout).
+// The arguments were checked.
+static type check_pixel_method(checker *c, expr *e, const bool derivative)
+{
+    const str name = e->object->kind == E_THIS ? str_from("this") : e->object->name;
+    const type t = e->args.count == 1 ? e->args.items[0]->type : T_ERR;
+    if (t.kind == TY_ERROR && e->args.count == 1) return T_ERR; // Said already
+    if (derivative) {
+        if (e->args.count != 1 || (t.kind != TY_FLOAT && t.kind != TY_FLOAT2 && t.kind != TY_FLOAT3 && t.kind != TY_FLOAT4
+                                   && t.kind != TY_COLOR)) {
+            diag_error(e->at, "'" STR_FMT "." STR_FMT "' takes one float, float vector or Color: how fast it changes across "
+                       "the pixel is what it gives", STR_ARG(name), STR_ARG(e->name));
+            diag_note("like 'this.Fwidth(distance)', of a value the frag can work out as it starts");
+            return T_ERR;
+        }
+        e->call = CALL_DERIVATIVE;
+        return t;
+    }
+    if (e->args.count != 1 || (t.kind != TY_FLOAT && t.kind != TY_INT)) {
+        diag_error(e->at, "'" STR_FMT "." STR_FMT "' takes one float: %s", STR_ARG(name), STR_ARG(e->name),
+                   str_eq_c(e->name, "Cutout") ? "the alpha that says where the frag is there, from 0.5 on"
+                                               : "the share of the pixel the frag covers, from 0 to 1");
+        return T_ERR;
+    }
+    if (c->statement_call != e || c->short_circuit_depth > 0 || c->branch_depth > 0) {
+        diag_error(e->at, "'" STR_FMT "." STR_FMT "(...)' is a statement of its own: it says how much of the pixel the "
+                   "frag covers", STR_ARG(name), STR_ARG(e->name));
+        return T_ERR;
+    }
+    decl *frag = c->method && c->method->kind == DECL_SHADER && c->method->is_frag ? c->method : NULL;
+    const bool raw = str_eq_c(e->name, "Coverage");
+    if (frag && frag->cutout && frag->raw_coverage != raw) {
+        diag_error(e->at, "a frag says how much of its pixel it covers one way: '%s' and '%s' are both here",
+                   raw ? "this.Cutout" : "this.Coverage", raw ? "this.Coverage" : "this.Cutout");
+        diag_note("'Cutout(alpha)' sharpens the alpha to a pixel's edge itself; 'Coverage(share)' takes the share as "
+                  "it's given, which 'this.Fwidth' can sharpen in the frag's own way");
+        return T_ERR;
+    }
+    if (frag) {
+        frag->cutout = true;
+        frag->raw_coverage = raw;
+    }
+    e->call = CALL_COVER;
+    return T_VOID_;
+}
+
 static type check_method(checker *c, expr *e)
 {
     // A qualified primitive alias's constructor has the parser's method form.
@@ -8104,8 +8155,13 @@ static type check_method(checker *c, expr *e)
     if (names_snapped_field(c, e, obj)) return check_field_snap(c, e);
     if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // this.Discard(): the frag's pixel isn't drawn
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        const bool derivative = str_eq_c(e->name, "Ddx") || str_eq_c(e->name, "Ddy") || str_eq_c(e->name, "Fwidth");
+        const bool cover = str_eq_c(e->name, "Cutout") || str_eq_c(e->name, "Coverage");
+        if (derivative || cover) return check_pixel_method(c, e, derivative);
         if (!str_eq_c(e->name, "Discard") || e->args.count) {
-            diag_error(e->at, "a frag's pixel has one method, 'Discard()', which leaves it undrawn; the rest are its fields");
+            diag_error(e->at, "a frag's pixel has the methods 'Discard()', which leaves it undrawn, 'Cutout(alpha)' and "
+                              "'Coverage(share)', which say how much of it the frag covers, and 'Ddx(v)', 'Ddy(v)' and "
+                              "'Fwidth(v)', how fast a value changes across it; the rest are its fields");
             return T_ERR;
         }
         if (c->statement_call != e || c->short_circuit_depth > 0 || c->branch_depth > 0) {
@@ -13185,7 +13241,7 @@ static bool stands_alone(const expr *e)
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
-        || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_TASK
+        || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_COVER || call == CALL_TASK
         || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
             || skinned_changes_pose(called->skin_operation)))
         || called->io_operation
@@ -19767,6 +19823,13 @@ static void check_attributes(checker *c)
                 } else if (attr->values.count > 0 || attr->args.count > 0) {
                     diag_error(attr->at, "Sparse takes nothing: '[Sparse]'");
                 }
+                continue;
+            }
+            if (str_eq_c(attr->name, "Cutout")) { // It's code: the frag says it
+                diag_error(attr->at, "a frag says it's a cut-out in its code, with 'this.Cutout(alpha)': there's no "
+                                     "Cutout attribute");
+                diag_note("'this.Cutout(color.a);' in the frag cuts it where the alpha is under 0.5, with edges as smooth "
+                          "as its target's samples");
                 continue;
             }
             const bool before = str_eq_c(attr->name, "Before");

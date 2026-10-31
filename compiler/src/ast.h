@@ -874,6 +874,8 @@ typedef struct decl {
 
     // Frags and verts (DECL_SHADER), and the functions they call
     bool is_frag;                 // A frag; else a vert
+    bool cutout;                  // A frag that says how much of its pixel it covers (this.Cutout or this.Coverage): drawn with alpha to coverage
+    bool raw_coverage;            // ...with this.Coverage(share): the share as given, not sharpened
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
     bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
@@ -975,6 +977,8 @@ typedef enum builtin_call {
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
+    CALL_DERIVATIVE, // this.Ddx(v), this.Ddy(v) and this.Fwidth(v), in a frag: how fast v changes across a pixel; `name` says which
+    CALL_COVER,     // this.Cutout(alpha) and this.Coverage(share), in a frag: how much of the pixel it covers; `name` says which
     CALL_NORMAL,    // instance.Normal(normal), in a frag or a vert: the mesh's normal as it is in the world
     CALL_SKINNED,   // Deterministic model lookup, sampling and pose operations.
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first

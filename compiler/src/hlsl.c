@@ -2450,6 +2450,7 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
             "        _TideStencilRef (\"\", Float) = 0\n"
             "        _TideStencilComp (\"\", Float) = 8\n"
             "        _TideStencilPass (\"\", Float) = 0\n"
+            "        _TideAlphaToMask (\"\", Float) = 0\n"
             "    }\n",
             name);
     // Twice: for GPUs whose shaders read buffers, and for OpenGL ES 3.0 and WebGL 2, which read them as textures
@@ -2463,6 +2464,7 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
                  "            ZTest [_TideZTest]\n"
                  "            ZWrite [_TideZWrite]\n"
                  "            Cull [_TideCull]\n"
+                 "            AlphaToMask [_TideAlphaToMask]\n"
                  "            Stencil\n"
                  "            {\n"
                  "                Ref [_TideStencilRef]\n"

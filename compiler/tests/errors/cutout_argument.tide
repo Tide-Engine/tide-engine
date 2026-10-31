@@ -1,0 +1,7 @@
+// expect: 'this.Coverage' takes one float: the share of the pixel the frag covers, from 0 to 1
+scene Main { }
+frag Leaf(Vertex3 vertex, out Color color)
+{
+    color = Color.white;
+    this.Coverage(vertex.uv);
+}

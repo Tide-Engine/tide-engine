@@ -1525,6 +1525,7 @@ TIDE_TEST(lsp_shaders_complete)
 
     const char *pixel = complete(IN_FRAG("var x = this.$"));
     TIDE_CHECK(offers(pixel, "position") && offers(pixel, "depth") && offers(pixel, "world") && offers(pixel, "Discard"));
+    TIDE_CHECK(offers(pixel, "Fwidth") && offers(pixel, "Ddx") && offers(pixel, "Cutout") && offers(pixel, "Coverage"));
     TIDE_CHECK(has(pixel, "Where the pixel is on the screen"));
     const char *position = complete(IN_FRAG("var x = this.position.$"));
     TIDE_CHECK(offers(position, "x") && offers(position, "y") && !offers(position, "z") && !offers(position, "Discard"));

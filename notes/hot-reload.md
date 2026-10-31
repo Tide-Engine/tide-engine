@@ -1,5 +1,35 @@
 # Hot reloading
 
+## Aligned defaults for packed local rows (2026-10-31)
+
+Run 41206262777's Linux UBSan failure in tide_platform_migrate is a real
+migration alignment bug. Attached local fields are tightly packed after
+counts/entity IDs, so their output rows need not meet the C type's alignment.
+The 64-bit text handle made Unit_local require eight-byte alignment, exposing
+carry_value calling generated typed defaults directly on an unaligned row.
+
+Attached rows now migrate in the existing malloc-aligned new_value buffer,
+then copy into the packed writer, just as component columns already do.
+Source field reads already use memcpy. Header singleton/input destinations
+remain naturally aligned by their generated layout. There is no allocation
+per row, new runtime function, ABI/layout/packed-format change or change in
+migration's field/default/entity/born rules.
+
+migrate_local_defaults_are_aligned_at_every_packed_offset checks all eight
+header offsets with one, two and three rows, widening an eight-byte local
+record to sixteen bytes. Its default callback asserts alignment before any
+typed store, so it detects the defect on Windows ASan too. It verifies kept
+64-bit values, new defaults, entity IDs, born identities and exact consumption.
+The new test fails on the old runtime and passes with the fix. The existing
+generated local-field migration and byte-preservation cases remain unchanged.
+
+Validation: Clang 23.1.2, Windows ASan migration 14/14, embed 17/17 and travel
+10/10; WASI migration 14/14 on Node 24.22.1. No Linux/UBSan run is available
+locally; the normal dev push supplies that coverage. No old run is retried or
+extra workflow dispatched. Full suites are unnecessary for this localized
+migration path; docs/spec semantics are unchanged.
+
+
 ## Migration's empty heap (2026-10-30)
 
 With 64-bit handles (notes/ecs.md) a packed heap's numbers are `uint64_t`, so
