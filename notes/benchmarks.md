@@ -2,6 +2,56 @@
 
 ## Baked poses (2026-10-31)
 
+### OpenGL investigation
+
+Release build of `4facf2ea0`, Windows/Ryzen 9 7900X/RTX 4080 SUPER,
+NVIDIA 617.42, TIDE_HIDDEN=1. Static was compared first. Final reproduction:
+
+```
+bench_skinned --counts 10000 --modes static,gpu,baked --frames 100 --warmup 30 --repeat 1
+```
+
+Run OpenGL (`TIDE_BACKEND=opengl`), Vulkan (`TIDE_BACKEND=vulkan`), repeated
+three times sequentially. No builds or other agent GPU runs overlapped these
+measurements; other desktop activity was uncontrolled. Saved rows in
+`bench/results/skinned.jsonl` have labels
+`opengl-investigation-20261031-final-{opengl,vulkan}-r{1,2,3}`.
+Range of three process medians, GPU milliseconds:
+
+| 10,000 characters | OpenGL | Vulkan | GL overhead, medians of the three runs |
+|---|---:|---:|---:|
+| static | 4.404-4.418 | 4.293-4.314 | 2.4% |
+| gpu_clip | 7.149-7.227 | 4.664-4.674 | 53.7% |
+| baked_clip | 7.053-7.086 | 4.418-4.433 | 59.3% |
+
+Every row has 100 completed samples, one instanced mesh draw plus the clear,
+and zero texture-upload bytes per measured frame. This fixture submits 18,144
+indices per character, not just its 3,072 unique vertices. Temporary hardware
+invocation queries give about 65.144 million VS invocations per draw on both
+backends. A matched baked capture is byte-identical between APIs.
+
+The first three alternating pairs, before diagnostic edits and not saved to
+JSONL, gave GL static 4.414-4.710, gpu 7.416-7.510, baked 7.361-7.883; Vulkan
+4.285-4.851, 4.668-4.673, 4.434-4.691 respectively. A separate 500-frame pair
+with clock sampling gave GL 7.111/7.048 against Vulkan 4.670/4.432 for
+gpu/baked, both at comparable warm clocks. The additional saved block with
+labels lacking `final-` had larger variability (GL gpu 7.740-10.618, Vulkan
+4.684-6.418); those observations are retained, not pooled with the final block.
+
+**There is no before/after improvement to claim.** Temporary renderer and
+shader probes did not produce a safe fix, and all production edits were
+reverted. Disabling timers, changing upload hints/uniform orphaning, texture
+allocation/type, instance batching, bounds-check shape, and using Vulkan's
+shader through GLSL translation or direct OpenGL SPIR-V did not close the gap.
+Removing deformation does. The measured problem is the full multi-fetch
+vertex workload on this driver's OpenGL execution path, rather than all
+draws, extra vertex invocations, visibly different geometry, or timing alone.
+The exact driver/hardware bottleneck and a possible workaround remain open;
+this is not a claim about every OpenGL driver. `notes/rendering.md`, Desktop
+OpenGL skinning investigation, records the controls, rejected probes, limits
+and passing native pixel/timing validation. No simulation arithmetic or
+determinism expectation changed.
+
 `bench_skinned --modes baked` draws the fixture's 64-bone, 3,072-vertex
 character through `BakedPoses` (its Move clip at 60 rows a second, looping),
 each character's frame worked out on the CPU and all of them one

@@ -1,5 +1,86 @@
 # The platform layer and the renderer
 
+## Desktop OpenGL skinning investigation (2026-10-31)
+
+On Windows, RTX 4080 SUPER driver 617.42, `bench_skinned` reproduces a
+substantial OpenGL GPU cost for both resident-palette skinning paths, while
+the unskinned control is close to Vulkan. Measurements and reproduction are
+in benchmarks.md, Baked poses / OpenGL investigation. **No production code
+change was retained.** The evidence isolates the gap to execution of the
+texture-heavy vertex workload through this driver's OpenGL path; it does not
+identify the driver's internal scheduling/cache/compiler bottleneck, prove an
+inherent OpenGL limitation, or prove that no possible workaround exists.
+
+Measurement controls, with temporary instrumentation removed afterward:
+
+- Both timers surround the same `draw_list` region, after CPU expansion and
+  resource preparation, before readback. Disabling GL queries leaves completion
+  plus readback at about 8 ms for both skin modes. This is real elapsed work,
+  not just incompatible query units or a delayed result assigned to a frame.
+  Every ordinary measured workload collected all 100 GPU samples.
+- The benchmark reads back the entire frame after drawing. Its CPU submission
+  is tens of microseconds; completion/readback reflects the GPU gap too. These
+  are headless, synchronously read-back frames, not presented game FPS.
+- Pipeline-statistics probes count about 65,144,000 vertex invocations on
+  **both** APIs, for 181,440,000 submitted indices (18,144 per instance).
+  The asset has 3,072 unique vertices, but the indexed draw does not execute
+  each unique vertex just once. Different post-transform reuse is not the gap.
+- A baked capture at 10,000 characters, 30 warmup + 5 measured frames, is
+  byte-identical on the two APIs (1024x576). Vulkan is not omitting visible
+  deformation in that comparison.
+- A longer 100-warmup/500-frame pair still gives GL 7.11/7.05 ms against
+  Vulkan 4.67/4.43 (gpu/baked). `nvidia-smi` at 100 ms intervals shows both
+  in P0 around 2.79-2.82 GHz graphics and 11,501 MHz memory once warm.
+  Desktop load was not controlled; a later saved block slowed both APIs,
+  so those rows are retained separately from the final alternating block.
+
+Exclusion experiments (diagnostics only; not proposed language or backend
+contracts):
+
+- GL_STATIC_DRAW for initially empty buffers; orphaning the 4 KB uniform
+  buffer before writes; data-texture MAX_LEVEL=0; immutable one-level RGBA32I
+  storage; first-vertex provoking convention; base-instance draws divided into
+  groups of 100 or 1,000: none closes the gap. Resident mesh buffers already
+  have initial data and use STATIC_DRAW. GPU/baked warm frames upload no
+  texture bytes. Vertex formats, strides and divisors match Vulkan's descriptor.
+- GLSL list readers use one element bounds check around 4 texels (gpu_clip)
+  or 3 (baked), not one check per texel. Early-return readers, and even a
+  diagnostic removal of those checks, remain slow. The unchecked version is
+  unsafe and was discarded. Zero-initialized GLSL results required by ANGLE
+  remain unchanged.
+- Nearest `textureLod` reads at texel centers, float palette textures with
+  matching sampler types, and integer buffer textures with flattened indices
+  all remain around 7-8 ms. Merely changing the texture allocation or fetch
+  spelling is not a demonstrated fix.
+- Translating the existing Vulkan SPIR-V to GLSL 330 with SPIRV-Cross still
+  gives about 7.1/7.6 ms on GL. Compiling the equivalent shaders to OpenGL
+  SPIR-V with glslang and loading them through ShaderBinary/SpecializeShader
+  gives about 7.7/7.1 ms. Bindings, varyings and clip conversion were adapted
+  for these probes. Neither Tide's separate GLSL writer nor just the driver's
+  GLSL parser explains the measured gap.
+- Removing skinning gives about 4.5-4.7 ms through the custom vertex layout.
+  Keeping position-only or normal-only skinning remains about 7-8 ms. One
+  live palette fetch instead of skinning is 4.82/4.75 ms, and a small ALU-only
+  perturbation is 4.75/4.69. The full multi-fetch deformation workload matters;
+  the mere presence of a vertex texture is not a fixed 3 ms penalty.
+- Making the GL offscreen Y flip branchless, or unconditional for this
+  offscreen-only diagnostic, does not close the gap.
+
+GL program-binary inspection exposes NVIDIA intermediate assembly, including
+the expected texture fetches and branches, not final hardware occupancy.
+Vulkan executable statistics report 56/64 vertex registers for gpu/baked,
+but offer no internal representations; without comparable GL hardware
+statistics these numbers cannot establish a register-pressure cause.
+
+Validation after restoring production sources: Windows ASan passes all 13
+focused CTests for draw (including Vulkan descriptor sets), targets, shaders,
+skinned, baked and GPU timing, including their OpenGL twins. No shared code,
+shader generator, runtime, pixel expectation or determinism pin changed; no
+web test was run for this notes/results-only change. Other GPUs/drivers,
+Android, macOS and hardware-level profiling remain open. A future workaround
+needs equivalent-work measurements and all affected backend pixel tests; these
+negative probes are not a reason to remove bounds checks or change game code.
+
 ## Twelve shader textures and recorded ABI 6 (2026-10-25)
 
 The approved material/skinning boundary completion raises the internal texture
