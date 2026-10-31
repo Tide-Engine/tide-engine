@@ -44,6 +44,7 @@ typedef struct gl_pipeline {
     uint32_t program;            // 1 + its program's place (gl_program); 0: a place that's free
     GLuint vao;
     tide_gpu_pipeline_desc desc;
+    bool vertex_binding; // Formats set once, attributes sharing each of desc's buffer slots
 } gl_pipeline;
 
 typedef struct gl_target {
@@ -110,6 +111,7 @@ static bool pass_texture; // Its rows go from the top, as uploaded textures' do
 static gl_target *pass_target; // What the pass draws into: NULL for the window
 
 bool tide_gpu_gl_no_floats;
+bool tide_gpu_gl_no_vertex_binding;
 static GLint pass_stencil; // The number its pipelines' stencil tests compare with (gl_stencil)
 
 // A pipeline's stencil test and what it stores, as OpenGL has them, with the
@@ -508,6 +510,25 @@ static uint32_t program_for(const tide_gpu_pipeline_desc *desc)
     return place + 1u;
 }
 
+static const GLint attribute_counts[] = {1, 2, 3, 4, 4, 1, 2, 3, 4}; // By tide_gpu_attribute_format
+
+#if !defined(__wasm__) && !defined(__ANDROID__)
+static bool shared_vertex_bindings(const tide_gpu_pipeline_desc *desc)
+{
+    if (!tide_gl.vertex_binding || tide_gpu_gl_no_vertex_binding) return false;
+    // Keep unusual C-host layouts on the legacy path. 2047-byte relative
+    // offsets and 2048-byte strides fit every implementation of the newer
+    // API. A zero stride means tightly packed only in the legacy API.
+    for (uint32_t i = 0; i < desc->slot_count; i++) {
+        if (desc->slots[i].stride > 2048u) return false;
+    }
+    for (uint32_t i = 0; i < desc->attribute_count; i++) {
+        if (desc->attributes[i].offset > 2047u || !desc->slots[desc->attributes[i].slot].stride) return false;
+    }
+    return true;
+}
+#endif
+
 static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
 {
     const uint32_t program = program_for(desc);
@@ -522,8 +543,30 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
     *p = (gl_pipeline){.program = program, .desc = *desc};
     glGenVertexArrays(1, &p->vao);
     glBindVertexArray(p->vao);
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    p->vertex_binding = shared_vertex_bindings(desc);
+    if (p->vertex_binding) {
+        for (uint32_t slot = 0; slot < desc->slot_count; slot++) {
+            glVertexBindingDivisor(slot, desc->slots[slot].per_instance ? 1u : 0u);
+        }
+    }
+#endif
     for (uint32_t i = 0; i < desc->attribute_count; i++) {
         glEnableVertexAttribArray(i);
+#if !defined(__wasm__) && !defined(__ANDROID__)
+        if (p->vertex_binding) {
+            const tide_gpu_attribute_format format = desc->attributes[i].format;
+            glVertexAttribBinding(i, desc->attributes[i].slot);
+            if (format >= TIDE_GPU_INT) {
+                glVertexAttribIFormat(i, attribute_counts[format], GL_INT, desc->attributes[i].offset);
+            } else {
+                const bool bytes = format == TIDE_GPU_BYTES4;
+                glVertexAttribFormat(i, attribute_counts[format], bytes ? GL_UNSIGNED_BYTE : GL_FLOAT, bytes,
+                                     desc->attributes[i].offset);
+            }
+            continue; // Legacy Divisor would reset this attribute's shared binding.
+        }
+#endif
         if (desc->slots[desc->attributes[i].slot].per_instance) glVertexAttribDivisor(i, 1);
     }
     current = NULL; // The pipelines may have moved
@@ -1074,9 +1117,14 @@ static void gl_sample(const uint32_t slot, const tide_gpu_id texture, tide_gpu_f
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)
 {
-    static const GLint counts[] = {1, 2, 3, 4, 4, 1, 2, 3, 4};
     const tide_gpu_pipeline_desc *d = &current->desc;
     glBindVertexArray(current->vao); // Writing an index buffer binds another
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (current->vertex_binding) {
+        glBindVertexBuffer(slot, buffer, (GLintptr)offset, (GLsizei)d->slots[slot].stride);
+        return;
+    }
+#endif
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     for (uint32_t i = 0; i < d->attribute_count; i++) {
         if (d->attributes[i].slot != slot) continue;
@@ -1084,10 +1132,10 @@ static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const siz
         const GLsizei stride = (GLsizei)d->slots[slot].stride;
         const void *at = (const void *)(offset + d->attributes[i].offset);
         if (format >= TIDE_GPU_INT) { // Ints stay ints: the other call would hand the shader floats
-            glVertexAttribIPointer(i, counts[format], GL_INT, stride, at);
+            glVertexAttribIPointer(i, attribute_counts[format], GL_INT, stride, at);
         } else {
             const bool bytes = format == TIDE_GPU_BYTES4;
-            glVertexAttribPointer(i, counts[format], bytes ? GL_UNSIGNED_BYTE : GL_FLOAT, bytes, stride, at);
+            glVertexAttribPointer(i, attribute_counts[format], bytes ? GL_UNSIGNED_BYTE : GL_FLOAT, bytes, stride, at);
         }
     }
 }

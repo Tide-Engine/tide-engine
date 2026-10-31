@@ -1,8 +1,8 @@
 #pragma once
 
 // OpenGL as the platform layer uses it: the part OpenGL 3.3, OpenGL ES 3 and
-// WebGL 2 share, plus core desktop timer queries, and only what the renderer
-// calls (gpu_gl.c). No system
+// WebGL 2 share, plus desktop timer queries and optional vertex bindings,
+// and only what the renderer calls (gpu_gl.c). No system
 // header: Windows' stops at OpenGL 1.1, and each platform keeps its own
 // elsewhere.
 //
@@ -252,6 +252,10 @@ void glGetInternalformativ(GLenum target, GLenum format, GLenum name, GLsizei co
 typedef uint64_t GLuint64;
 
 enum {
+    GL_MAJOR_VERSION = 0x821B,
+    GL_MINOR_VERSION = 0x821C,
+    GL_NUM_EXTENSIONS = 0x821D,
+    GL_EXTENSIONS = 0x1F03,
     GL_QUERY_COUNTER_BITS = 0x8864,
     GL_QUERY_RESULT = 0x8866,
     GL_QUERY_RESULT_AVAILABLE = 0x8867,
@@ -269,6 +273,19 @@ enum {
     V(GetQueryObjectiv, (GLuint query, GLenum name, GLint *out), (query, name, out))                                   \
     V(GetQueryObjectui64v, (GLuint query, GLenum name, GLuint64 *out), (query, name, out))
 
+// OpenGL 4.3 or ARB_vertex_attrib_binding: attributes sharing a buffer can
+// share one binding, with formats set once. Optional on our desktop 3.3
+// context; GetStringi checks the extension where the version is older.
+#define TIDE_GL_VERTEX_BINDING_FUNCTIONS(V, R)                                                                         \
+    R(const unsigned char *, GetStringi, (GLenum name, GLuint index), (name, index))                                  \
+    V(BindVertexBuffer, (GLuint binding, GLuint buffer, GLintptr offset, GLsizei stride),                              \
+      (binding, buffer, offset, stride))                                                                              \
+    V(VertexAttribFormat, (GLuint attribute, GLint size, GLenum type, GLboolean normalized, GLuint offset),            \
+      (attribute, size, type, normalized, offset))                                                                    \
+    V(VertexAttribIFormat, (GLuint attribute, GLint size, GLenum type, GLuint offset), (attribute, size, type, offset)) \
+    V(VertexAttribBinding, (GLuint attribute, GLuint binding), (attribute, binding))                                  \
+    V(VertexBindingDivisor, (GLuint binding, GLuint divisor), (binding, divisor))
+
 // Windows' OpenGL functions are stdcall, which only 32-bit x86 tells from
 // the default.
 #ifdef _WIN32
@@ -282,6 +299,8 @@ enum {
 typedef struct tide_gl_functions {
     TIDE_GL_FUNCTIONS(TIDE_GL_MEMBER_V, TIDE_GL_MEMBER_R)
     TIDE_GL_TIMER_FUNCTIONS(TIDE_GL_MEMBER_V, TIDE_GL_MEMBER_R)
+    TIDE_GL_VERTEX_BINDING_FUNCTIONS(TIDE_GL_MEMBER_V, TIDE_GL_MEMBER_R)
+    bool vertex_binding; // Supported by this context, with all five binding functions present
 } tide_gl_functions;
 #undef TIDE_GL_MEMBER_V
 #undef TIDE_GL_MEMBER_R
@@ -289,7 +308,7 @@ typedef struct tide_gl_functions {
 extern tide_gl_functions tide_gl;
 
 // Looks every function up with `find` (glfwGetProcAddress), in the context
-// that's current. False, having said which, if the context lacks one.
+// that's current. False, having said which, if the context lacks a required one.
 typedef void (*tide_gl_proc)(void);
 bool tide_gl_load(tide_gl_proc (*find)(const char *name));
 
@@ -305,6 +324,7 @@ bool tide_gl_load(tide_gl_proc (*find)(const char *name));
     }
 TIDE_GL_FUNCTIONS(TIDE_GL_CALL_V, TIDE_GL_CALL_R)
 TIDE_GL_TIMER_FUNCTIONS(TIDE_GL_CALL_V, TIDE_GL_CALL_R)
+TIDE_GL_VERTEX_BINDING_FUNCTIONS(TIDE_GL_CALL_V, TIDE_GL_CALL_R)
 #undef TIDE_GL_CALL_V
 #undef TIDE_GL_CALL_R
 

@@ -1462,6 +1462,57 @@ static void shaded(void)
     shaded_checks();
 }
 
+#if !defined(__wasm__) && !defined(__ANDROID__)
+// An absolute attribute offset can exceed shared bindings' relative-offset
+// limit while its vertex stride is small. Draw it between ordinary bindings,
+// then repeat with the same VAOs so the fallback cannot leave stale state.
+static void large_gl_attribute_offset(void)
+{
+    if (strcmp(tide_platform_renderer(), "OpenGL 3.3") != 0) return;
+    const tide_gpu *gpu = &tide_gpu_gl;
+    float vertices[512 + 6] = {0};
+    const float triangle[6] = {-1, -1, 3, -1, -1, 3};
+    memcpy(vertices + 512, triangle, sizeof triangle);
+    const tide_gpu_id buffer = gpu->buffer(TIDE_GPU_VERTICES, sizeof vertices, vertices);
+    const tide_gpu_id target = gpu->target(TIDE_GPU_TARGET_COLOR, 3, 1);
+    tide_gpu_pipeline_desc desc = {
+        .name = "large absolute vertex offset",
+        .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                       "void main() { gl_Position = vec4(position, 0, 1); }\n",
+        .glsl_fragment = "layout(std140) uniform uniforms { vec4 tint; };\n"
+                         "out vec4 color;\nvoid main() { color = tint; }\n",
+        .slots = {{.stride = 2 * sizeof(float)}}, .slot_count = 1,
+        .attributes = {{.slot = 0, .format = TIDE_GPU_FLOAT2}}, .attribute_count = 1,
+        .uniform_size = sizeof(tide_color), .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR,
+    };
+    const tide_gpu_id ordinary = gpu->pipeline(&desc);
+    desc.attributes[0].offset = 512 * sizeof(float);
+    const tide_gpu_id large = gpu->pipeline(&desc);
+    const tide_gpu_id pipelines[3] = {ordinary, large, ordinary};
+    const tide_color colors[3] = {red, green, blue};
+    const uint8_t expected[12] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255};
+    for (int frame = 0; frame < 2; frame++) {
+        gpu->begin(target, true);
+        for (int column = 0; column < 3; column++) {
+            gpu->scissor(column, 0, 1, 1);
+            gpu->use(pipelines[column]);
+            gpu->uniforms(&colors[column], sizeof colors[column]);
+            gpu->vertices(0, buffer, column == 1 ? 0 : 512 * sizeof(float));
+            gpu->draw(0, 3, 1);
+        }
+        gpu->end();
+        uint8_t actual[sizeof expected] = {0};
+        gpu->target_read(target, actual);
+        expect(memcmp(actual, expected, sizeof expected) == 0,
+               "a large absolute vertex offset draws between ordinary bindings, including reused VAOs");
+    }
+    gpu->pipeline_free(large);
+    gpu->pipeline_free(ordinary);
+    gpu->target_free(target);
+    gpu->buffer_free(buffer);
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // What a uv past a texture's edges reads: the pixels at its edge, the texture
 // again, or again the other way round each time
@@ -4508,6 +4559,9 @@ static int frame(void *user, const float seconds)
         meshes_3d();
         primitives();
         shaded();
+#if !defined(__wasm__) && !defined(__ANDROID__)
+        large_gl_attribute_offset();
+#endif
         transient_data_textures();
         wraps();
         mipmaps();
@@ -4551,6 +4605,9 @@ int main(const int argc, char **argv)
 {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--bench") == 0) benching = true;
+#if !defined(__wasm__) && !defined(__ANDROID__)
+        else if (strcmp(argv[i], "--legacy-vertex-bindings") == 0) tide_gpu_gl_no_vertex_binding = true;
+#endif
         else if (strcmp(argv[i], "--frames-bench") == 0) frames_benching = true;
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
         else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];

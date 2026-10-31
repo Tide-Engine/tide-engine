@@ -5,7 +5,7 @@
 ### OpenGL investigation
 
 Release build of `4facf2ea0`, Windows/Ryzen 9 7900X/RTX 4080 SUPER,
-NVIDIA 617.42, TIDE_HIDDEN=1. Static was compared first. Final reproduction:
+NVIDIA 617.42, TIDE_HIDDEN=1. Static was compared first. Baseline reproduction:
 
 ```
 bench_skinned --counts 10000 --modes static,gpu,baked --frames 100 --warmup 30 --repeat 1
@@ -16,7 +16,7 @@ three times sequentially. No builds or other agent GPU runs overlapped these
 measurements; other desktop activity was uncontrolled. Saved rows in
 `bench/results/skinned.jsonl` have labels
 `opengl-investigation-20261031-final-{opengl,vulkan}-r{1,2,3}`.
-Range of three process medians, GPU milliseconds:
+Before the fix, range of three process medians, GPU milliseconds:
 
 | 10,000 characters | OpenGL | Vulkan | GL overhead, medians of the three runs |
 |---|---:|---:|---:|
@@ -38,19 +38,37 @@ gpu/baked, both at comparable warm clocks. The additional saved block with
 labels lacking `final-` had larger variability (GL gpu 7.740-10.618, Vulkan
 4.684-6.418); those observations are retained, not pooled with the final block.
 
-**There is no before/after improvement to claim.** Temporary renderer and
-shader probes did not produce a safe fix, and all production edits were
-reverted. Disabling timers, changing upload hints/uniform orphaning, texture
-allocation/type, instance batching, bounds-check shape, and using Vulkan's
-shader through GLSL translation or direct OpenGL SPIR-V did not close the gap.
-Removing deformation does. The measured problem is the full multi-fetch
-vertex workload on this driver's OpenGL execution path, rather than all
-draws, extra vertex invocations, visibly different geometry, or timing alone.
-The exact driver/hardware bottleneck and a possible workaround remain open;
-this is not a claim about every OpenGL driver. `notes/rendering.md`, Desktop
-OpenGL skinning investigation, records the controls, rejected probes, limits
-and passing native pixel/timing validation. No simulation arithmetic or
-determinism expectation changed.
+The initial texture-heavy-shader diagnosis was corrected by a control keeping
+all attributes live with cheap ALU and no texture reads: GPU/baked still cost
+7.088/7.035 ms. Removing skinning had let the driver discard the joint/weight
+attributes. The cause is the legacy GL attribute setup's separate binding per
+attribute; sharing the existing buffer slots closes the gap without changing
+the shaders or geometry. Details and excluded hypotheses: rendering.md,
+Shared desktop OpenGL vertex bindings.
+
+Three further rounds alternate legacy GL, shared-binding GL, then Vulkan in
+one release build, same command above. Rows
+`opengl-binding-20261031-{legacy,shared,vulkan}-r{1,2,3}` label the temporary
+binding-only toggle honestly with `+vertex-binding-probe` in the revision.
+GPU ms, ranges of the three process medians:
+
+| Mode | GL before | GL shared bindings | Vulkan control |
+|---|---:|---:|---:|
+| static | 4.392-4.429 | 4.295-4.309 | 4.293-4.307 |
+| gpu_clip | 7.114-7.200 | 4.623-4.645 | 4.659-4.673 |
+| baked_clip | 7.053-7.117 | 4.345-4.358 | 4.425-4.430 |
+
+Medians of run medians: gpu_clip 7.150 -> 4.645 ms (35.0% less GPU time),
+baked_clip 7.054 -> 4.350 ms (38.3% less). OpenGL is now comparable to Vulkan.
+All 27 rows retain 100 samples, two draws and zero texture uploads. The final
+implementation configures formats at pipeline creation and binds only each
+stream at drawing; the probe configured both each draw. Both use the same
+shared attribute bindings. Earlier raw results remain for the investigation
+history, not as evidence that an inherent OpenGL penalty remains.
+The finished implementation's `opengl-binding-20261031-production` rows give
+4.272/4.611/4.336 ms for static/gpu/baked. Matched OpenGL before/after captures
+of all three modes (10,000 characters, 30 warmup + 5 frames, 1024x576) are
+byte-identical.
 
 `bench_skinned --modes baked` draws the fixture's 64-bone, 3,072-vertex
 character through `BakedPoses` (its Move clip at 60 rows a second, looping),

@@ -473,6 +473,9 @@ void tide_gpu_record_close(void);
 // A test's: has OpenGL make its targets as a device that can't draw into
 // floats does, while it's set. The targets there already stay as they are.
 extern bool tide_gpu_gl_no_floats;
+// A test's: make subsequent OpenGL pipelines use the 3.3 vertex attribute
+// path even where shared vertex bindings are supported. Set before opening.
+extern bool tide_gpu_gl_no_vertex_binding;
 // A test's: how many pipelines of games' shaders the renderer has (platform.c),
 // so a test sees whether a draw made one.
 uint32_t tide_platform_shader_pipelines(void);

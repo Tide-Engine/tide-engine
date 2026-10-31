@@ -1,85 +1,90 @@
 # The platform layer and the renderer
 
-## Desktop OpenGL skinning investigation (2026-10-31)
+## Shared desktop OpenGL vertex bindings (2026-10-31)
 
-On Windows, RTX 4080 SUPER driver 617.42, `bench_skinned` reproduces a
-substantial OpenGL GPU cost for both resident-palette skinning paths, while
-the unskinned control is close to Vulkan. Measurements and reproduction are
-in benchmarks.md, Baked poses / OpenGL investigation. **No production code
-change was retained.** The evidence isolates the gap to execution of the
-texture-heavy vertex workload through this driver's OpenGL path; it does not
-identify the driver's internal scheduling/cache/compiler bottleneck, prove an
-inherent OpenGL limitation, or prove that no possible workaround exists.
+The desktop OpenGL skinning gap was vertex input setup. Legacy
+`glVertexAttribPointer` / `glVertexAttribIPointer` give each attribute its own
+buffer binding, even when those attributes share an interleaved stream. The
+10/11 live attributes in `bench_skinned`'s GPU/baked modes cost about 7.1 ms on
+the RTX 4080 SUPER (driver 617.42), against Vulkan's 4.4-4.7 ms. Configuring
+attributes against shared input slots gives OpenGL 4.3-4.6 ms with unchanged
+shader sources, buffers, draws and pixels. See benchmarks.md, Baked poses /
+OpenGL investigation, for the alternating measurements.
 
-Measurement controls, with temporary instrumentation removed afterward:
+**The decisive control:** a cheap ALU-only shader retaining all the joint,
+weight and instance attributes still took 7.088/7.035 ms, without any texture
+reads. Earlier no-skinning and one-fetch controls allowed the driver to remove
+attributes and were misleading. The initial inference that this was texture-
+heavy vertex-shader execution was wrong. Changing only how the existing
+attributes share bindings closes the gap. The driver's internal reason for
+the legacy binding cost is not established; no universal threshold or claim
+about other vendors follows from this one device.
 
-- Both timers surround the same `draw_list` region, after CPU expansion and
-  resource preparation, before readback. Disabling GL queries leaves completion
-  plus readback at about 8 ms for both skin modes. This is real elapsed work,
-  not just incompatible query units or a delayed result assigned to a frame.
-  Every ordinary measured workload collected all 100 GPU samples.
-- The benchmark reads back the entire frame after drawing. Its CPU submission
-  is tens of microseconds; completion/readback reflects the GPU gap too. These
-  are headless, synchronously read-back frames, not presented game FPS.
-- Pipeline-statistics probes count about 65,144,000 vertex invocations on
-  **both** APIs, for 181,440,000 submitted indices (18,144 per instance).
-  The asset has 3,072 unique vertices, but the indexed draw does not execute
-  each unique vertex just once. Different post-transform reuse is not the gap.
-- A baked capture at 10,000 characters, 30 warmup + 5 measured frames, is
-  byte-identical on the two APIs (1024x576). Vulkan is not omitting visible
-  deformation in that comparison.
-- A longer 100-warmup/500-frame pair still gives GL 7.11/7.05 ms against
-  Vulkan 4.67/4.43 (gpu/baked). `nvidia-smi` at 100 ms intervals shows both
-  in P0 around 2.79-2.82 GHz graphics and 11,501 MHz memory once warm.
-  Desktop load was not controlled; a later saved block slowed both APIs,
-  so those rows are retained separately from the final alternating block.
+Implementation and contracts:
 
-Exclusion experiments (diagnostics only; not proposed language or backend
-contracts):
+- `desktop/gl.c` checks OpenGL 4.3 or `GL_ARB_vertex_attrib_binding` and all
+  five optional entry points. A function address alone is not support.
+- Each GL pipeline chooses its path once. The shared path assigns attribute
+  formats and relative offsets with VertexAttribFormat/IFormat, maps them to
+  the existing descriptor slots with VertexAttribBinding, and sets per-slot
+  VertexBindingDivisor. Drawing only binds each slot's buffer/base offset/
+  stride with BindVertexBuffer. Integer, normalized byte and float formats
+  keep their existing interpretation.
+- Legacy attribute-pointer/divisor calls never modify a shared-path VAO:
+  those calls reset attribute-to-binding associations. Pipeline setup and
+  later buffer changes consistently use the selected path.
+- Older desktop contexts, WebGL and Android retain the existing path. A
+  pipeline also falls back for relative offsets above 2047, strides above
+  2048, or a used zero-stride slot. These conservative bounds fit the new
+  API's guaranteed limits; zero stride means tightly packed only in the old
+  API. This preserves prior layout behavior, subject to the device's existing
+  limits (newer GL also limits legacy strides). No version requirement increased.
+- The private `tide_gpu_gl_no_vertex_binding` test hook forces legacy setup
+  before pipelines are created. It is not a game API or environment setting.
+  No shader generator, simulation/runtime contract, draw order, upload bytes,
+  shader arithmetic, snapshot/hash pin or public API changed.
 
-- GL_STATIC_DRAW for initially empty buffers; orphaning the 4 KB uniform
-  buffer before writes; data-texture MAX_LEVEL=0; immutable one-level RGBA32I
-  storage; first-vertex provoking convention; base-instance draws divided into
-  groups of 100 or 1,000: none closes the gap. Resident mesh buffers already
-  have initial data and use STATIC_DRAW. GPU/baked warm frames upload no
-  texture bytes. Vertex formats, strides and divisors match Vulkan's descriptor.
-- GLSL list readers use one element bounds check around 4 texels (gpu_clip)
-  or 3 (baked), not one check per texel. Early-return readers, and even a
-  diagnostic removal of those checks, remain slow. The unchecked version is
-  unsafe and was discarded. Zero-initialized GLSL results required by ANGLE
-  remain unchanged.
-- Nearest `textureLod` reads at texel centers, float palette textures with
-  matching sampler types, and integer buffer textures with flattened indices
-  all remain around 7-8 ms. Merely changing the texture allocation or fetch
-  spelling is not a demonstrated fix.
-- Translating the existing Vulkan SPIR-V to GLSL 330 with SPIRV-Cross still
-  gives about 7.1/7.6 ms on GL. Compiling the equivalent shaders to OpenGL
-  SPIR-V with glslang and loading them through ShaderBinary/SpecializeShader
-  gives about 7.7/7.1 ms. Bindings, varyings and clip conversion were adapted
-  for these probes. Neither Tide's separate GLSL writer nor just the driver's
-  GLSL parser explains the measured gap.
-- Removing skinning gives about 4.5-4.7 ms through the custom vertex layout.
-  Keeping position-only or normal-only skinning remains about 7-8 ms. One
-  live palette fetch instead of skinning is 4.82/4.75 ms, and a small ALU-only
-  perturbation is 4.75/4.69. The full multi-fetch deformation workload matters;
-  the mere presence of a vertex texture is not a fixed 3 ms penalty.
-- Making the GL offscreen Y flip branchless, or unconditional for this
-  offscreen-only diagnostic, does not close the gap.
+Measurement controls and rejected probes (temporary instrumentation removed):
 
-GL program-binary inspection exposes NVIDIA intermediate assembly, including
-the expected texture fetches and branches, not final hardware occupancy.
-Vulkan executable statistics report 56/64 vertex registers for gpu/baked,
-but offer no internal representations; without comparable GL hardware
-statistics these numbers cannot establish a register-pressure cause.
+- Both timers surround the same shared draw region, after CPU preparation
+  and before readback. Disabling GL queries leaves the slow completion time.
+  Every ordinary measured workload collects all 100 samples. These are
+  headless frames with full synchronous readback, not presented game FPS.
+- Both APIs execute about 65,144,000 vertex invocations for 181,440,000
+  submitted indices. The asset's 3,072 unique vertices are not executed just
+  once each. Extra invocations do not explain the gap; equal counts alone
+  cannot establish cache locality or scheduling equivalence.
+- A matched 10,000-character baked frame is byte-identical across GL/Vulkan.
+  A longer 500-frame pair reproduces the gap at comparable warm P0 clocks
+  (about 2.79-2.82 GHz graphics, 11,501 MHz memory). Desktop load remains
+  uncontrolled; slower saved runs are kept separately, not silently dropped.
+- Static buffer hints, uniform orphaning, immutable data textures, MAX_LEVEL=0,
+  float versus integer textures, buffer textures, instance draw splitting,
+  first provoking vertex, and a branchless/unconditional offscreen Y flip
+  did not close it. Resident mesh buffers already used STATIC_DRAW.
+- Early-return GLSL list readers, diagnostic unchecked readers, nearest
+  textureLod, Vulkan SPIR-V translated back to GLSL, and direct OpenGL SPIR-V
+  ingestion did not close it. Unchecked readers were discarded; all original
+  bounds checks remain. Removing only position or normal skinning did not
+  help either: those controls still kept the additional attributes live.
 
-Validation after restoring production sources: Windows ASan passes all 13
-focused CTests for draw (including Vulkan descriptor sets), targets, shaders,
-skinned, baked and GPU timing, including their OpenGL twins. No shared code,
-shader generator, runtime, pixel expectation or determinism pin changed; no
-web test was run for this notes/results-only change. Other GPUs/drivers,
-Android, macOS and hardware-level profiling remain open. A future workaround
-needs equivalent-work measurements and all affected backend pixel tests; these
-negative probes are not a reason to remove bounds checks or change game code.
+Validation: all 14 focused Windows ASan CTests pass: draw, targets, shaders,
+skinned, baked and GPU timing on Vulkan and OpenGL, Vulkan descriptor sets,
+and the new forced-legacy draw run. The draw fixture checks a 2048-byte
+absolute attribute offset with an 8-byte stride, between ordinary shared
+bindings and again on reused VAOs. This exercises per-pipeline fallback
+without exceeding the device's stride limit. Existing draw checks cover
+normalized bytes, float and integer fields, per-instance divisors, nonzero
+buffer offsets, indexed/nonindexed draws and pipeline recreation. Matched
+before/after captures of static, gpu_clip and baked_clip are byte-identical.
+All 13 focused web-debug draw/targets/shaders/skinned/baked CTests also pass,
+including RGBA fallback, WebGL, ANGLE D3D11 and WebGPU, using Node 24.22.1
+and the muted browser runners. These checks include the incoming
+`Pose.Models()` compiler/runtime dependency after merging `origin/dev`.
+
+Other GPU vendors/drivers, real older desktop contexts, Android and macOS
+hardware remain unmeasured. The forced-legacy test exercises the retained
+fallback on this machine; it does not substitute for those hardware checks.
 
 ## Twelve shader textures and recorded ABI 6 (2026-10-25)
 
@@ -616,7 +621,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - The renderer is written once, against `platform/src/gpu.h`: buffers, textures, pipelines, targets and passes, whichever API is under them (shared, agreed, rather than a renderer per backend). It's shaped by WebGPU, the strictest: a pipeline is made once with its shaders, the vertices it reads and how it blends and tests depth; its uniforms are one block of bytes; drawing happens in passes that start cleared or as they were left, so a clear inside a list is drawn (a triangle over the target, which the clip cuts, and which sets depth back). Clip space is OpenGL's, and pixels and rows count from the top left; each backend turns those into its own. Compute joins it when Tide code computes on the GPU.
   - Backends so far: Vulkan on desktop (`platform/src/gpu_vk.c`, the default where the machine has 1.3: see Vulkan, above), OpenGL (`platform/src/gpu_gl.c`: OpenGL 3.3 on desktop where there's no Vulkan, OpenGL ES 3 on Android, WebGL 2 on the web) and, on the web, WebGPU (`platform/web/gpu_web.c`, whose functions are the page's: `tide.js` has the WebGPU objects, as it has WebGL's). The window says which draws (`tide_window_gpu`), and `tide_platform_renderer` names it; the stats overlay shows it.
   - The web draws with WebGPU by default, and with WebGL 2 only where that isn't possible (agreed): the browser has none, gives no device, or only its software one, which is slower than WebGL on a GPU. The page asks for the device before the program starts (`tide.js`), as asking takes a while and the program can't wait for an answer. `Tide.backend`, or `backend=` in the page's address, is `webgpu` (the software one too, and no falling back) or `webgl`: for tests, and for a player whose browser gets one of them wrong. A device that goes away while the game runs (a driver that starts over) takes what was made on it: the page asks for another, and the renderer, which sees it's another (`tide_gpu.epoch`, `gpu_ready` in `platform/src/platform.c`), forgets what it had there and makes it again as lists draw, from the copies the lists and the font keep. Nothing draws meanwhile. `tide_platform_draw_webgpu` loses its device on purpose and checks its pixels again. A canvas that draws with WebGPU can't go to WebGL, so with no device to be had again it stays as it is, and the page says to reload.
-  - `platform/src/gl.h` is OpenGL as its backend uses it: only the functions it calls, which the three share, with no system header. On the web they're the page's (`tide.js` has each by its C name), on Android libGLESv3's, and on desktop they're looked up in the window's context through GLFW (`platform/desktop/gl.c`). A function it starts calling is added there and in `tide.js`, and it uses no extensions, but for one, which adds no function: drawing into float images (see A target holds several color images, below).
+  - `platform/src/gl.h` is OpenGL as its backend uses it: only the functions it calls, which the three share, with no system header. On the web they're the page's (`tide.js` has each by its C name), on Android libGLESv3's, and on desktop they're looked up in the window's context through GLFW (`platform/desktop/gl.c`). Shared functions are added there and in `tide.js`. Desktop-only optional functions are loaded separately: timer queries and shared vertex bindings (OpenGL 4.3 or `ARB_vertex_attrib_binding`, above). Float render targets also use extension support (see A target holds several color images, below).
   - The renderer's own shaders (shapes, text, clears, the built-in meshes) are in `platform/src/shaders.h`, each written by hand for every backend: GLSL (one source, with a version line per platform, attributes at fixed locations, uniforms in a std140 block) and WGSL. A change to one goes to the other, and the same tests check both draw the same pixels. A game's shaders are tidec's, from its `frag` and `vert` declarations (below).
   - A pipeline samples up to 8 textures (`pixels0`... in GLSL; in WGSL, texture i and its sampler at bindings 1 + 2i and 2 + 2i), each through a sampler of the backend's, nearest, blended or between its mipmaps too, and clamped, repeated or mirrored past its edges (`sample`'s `filter` and `wrap`), so one texture can be read several ways in a draw (OpenGL's are sampler objects, bound by unit). Its vertex attributes are floats or ints (`TIDE_GPU_INT`...), 16 at most, and its uniform block 4096 bytes at most (`TIDE_GPU_MAX_UNIFORMS`), of which a game's shader has 3984 of its own (`TIDE_SHADER_UNIFORM_BYTES`, which tidec checks at the draw) after the engine's 96 (its camera, the screen and the tint): 255 float4s in all, as Android's emulator links no shader whose block is 256, counting its members as the vertex shader's uniform vectors; on WebGPU a draw's uniforms take as many 256 byte slots of the uniform buffer as they need. A texture that's a target's depth is read as a number or compared, through samplers of its own, which take no wrap (see A target says what it holds, below). `pipeline_free` lets one go.
   - A backend sets all the state it draws with at each pass, so nothing depends on what drew before it: a pass on another target or, on the web, the build this one took over from (see Hot reloading).
