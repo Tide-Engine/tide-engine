@@ -2,6 +2,11 @@
 
 ## Automatic LOD pixel tolerance (2026-10-31)
 
+Follow-up: `GUI.Draw` generated setup no longer copies the removed global
+`lod_pixels` field. Its draw list uses ordinary destination-local settings,
+as its other settings do. The native ASan and WASM `gui_custom` fixtures
+exercise these generated blocks and pass.
+
 The owner approved exposing the existing error tolerance for performance.
 `Draw.LODPixels(pixels) { ... }` and `Draw.SetLODPixels(pixels);` also work on
 render targets. Each destination owns `tide_draw_place.lod_pixels`; the former

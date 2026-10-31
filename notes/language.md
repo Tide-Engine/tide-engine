@@ -6,7 +6,8 @@ The approved `Draw.LODPixels(float pixels)` / `Draw.SetLODPixels(float pixels)`
 setting uses ordinary `add_setting` registration, including no-argument forms
 and render-target receivers. It inherits local-only capabilities, setting-form
 diagnostics, cleanup on early exit, and editor completion/hover. There is no
-new code-generation branch. The default is 1 pixel; higher values allow coarser
+new code-generation branch; GUI.Draw setup stops copying the removed global
+tolerance field, keeping ordinary destination-local settings. The default is 1 pixel; higher values allow coarser
 automatic levels, positive fractions retain detail, and invalid values reset.
 Forced levels override it. Spec and user docs describe the public contract.
 Runtime state/boundary and native ASan/WASM validation are in drawing.md.

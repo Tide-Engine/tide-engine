@@ -7009,7 +7009,6 @@ static void gen_container(gen *g, const expr *e)
     if (e->gui & GUI_DRAW) {
         line(g, o, "tide_ui->list.screen_scale = tide_draw->screen_scale;");
         line(g, o, "tide_ui->list.target_pixels = tide_draw->target_pixels;");
-        line(g, o, "tide_ui->list.lod_pixels = tide_draw->lod_pixels;");
         line(g, o, "tide_draw_list *const tide_draw = &tide_ui->list;");
         line(g, o, "(void)tide_draw;");
     }
