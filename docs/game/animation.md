@@ -479,6 +479,8 @@ var weaponTransform = Math.Mul(characterTransform, pose.Model(hand));
 Draw.Mesh(sword, weaponTransform);
 ```
 
+For many bones at once, `pose.Models()` gives every bone's model matrix in one pass from the root, a `List<float4x4>` indexed by `bone.index`, each exactly what `Model` gives: cheaper than a `Model` call for each bone, which walks that bone's ancestors every time.
+
 Systems can use the same matrices for sockets or hitboxes. Sampling leaves entity movement to your own systems; it does not extract root-motion deltas or send animation events. Bone references carry their skeleton identity, so use the character's pose when accessing its bones. An incompatible blend leaves the destination unchanged.
 
 A `Bone` says which bone it is: `bone.index` is its place in the skeleton (`skeleton.bones.TryGetAt(bone.index, out var same)` gives it back), `skeleton.NameOf(bone)` its source name (empty for a default `Bone` or one of another skeleton), and `a == b` whether two are the same bone of the same skeleton. In text a bone shows its index, and an animation its name:
@@ -542,7 +544,7 @@ A `BakedPoses` is a table of rows: each row is one pose of the skeleton, kept as
 - `poses.Add(pose)` adds any pose of the model's skeleton and returns its row's number: a clip blended, layered or edited with your own IK, sampled where you like. It returns -1 for a pose of another skeleton, or once the table is full.
 - `poses.AddSocket(bone[, offset])` returns a socket's number: a place on a bone, such as a sword's grip in a hand, which every row then carries (below).
 
-Hand the table to each draw after its frag: the GPU keeps it as long as it doesn't change, so filling it again every frame would send it every frame.
+Rows are made at load, wherever your code first fills the table: each is one `pose.Models()` and a multiply a bone, so 3,000 rows of a 64-bone character take about 19 ms. Hand the table to each draw after its frag: the GPU keeps it as long as it doesn't change, so filling it again every frame would send it every frame.
 
 ### Frames
 

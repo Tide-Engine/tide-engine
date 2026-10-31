@@ -327,6 +327,10 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
         count = 2;
         changes = true;
         result = T_VOID_;
+    } else if (kind == SKIN_POSE && str_eq_c(e->name, "Models")) {
+        e->skin_operation = SKIN_OP_POSE_MODELS;
+        names = "";
+        result = list_of(c->prog, (type){TY_FLOAT4X4, NULL});
     } else if (kind == SKIN_POSE && str_eq_c(e->name, "Model")) {
         e->skin_operation = SKIN_OP_POSE_MODEL;
         args[0] = decl_type(c->prog->bone);

@@ -194,6 +194,7 @@ static void gen_skin_expr(gen *g, sb *o, const expr *e)
         sb_printf(o, ", %s)", place_where(g, e->object));
         return;
     } else if (op == SKIN_OP_POSE_MODEL) sb_put(o, "tide_skin_pose_model(");
+    else if (op == SKIN_OP_POSE_MODELS) sb_put(o, "tide_skin_pose_models(");
     else if (op == SKIN_OP_POSE_INDEX) {
         sb_put(o, "(*tide_skin_pose_ref(");
         gen_expr(g, o, e->object);

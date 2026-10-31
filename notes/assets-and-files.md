@@ -62,10 +62,9 @@ made by `make_stalk.mjs`).
 - Gaps: per-bone layers (lower body one row, upper another, joined at a bone:
   Combat's `Joined`/`Shift`) are a separate design; baking at build time;
   automatic culling bounds (a custom vert has none: `Draw.Bounds`); the
-  heaviest bone by distance in the vert; tangents in `BakedSkin`; baking a
-  row walks each bone's ancestors (`pose.Model`), about 44 µs a row of the
-  benchmark's 64-deep chain: a call for all of a pose's model matrices at once
-  would make it one pass, a runtime function that awaits the owner.
+  heaviest bone by distance in the vert; tangents in `BakedSkin`.
+  Rows are made with `pose.Models()` (one pass; notes/runtime-ownership.md):
+  3,000 rows of the benchmark's 64-deep chain 134 ms -> 19 ms at load.
 
 ## Asset LOD tolerance multiplier (2026-10-31)
 

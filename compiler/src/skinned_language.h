@@ -21,6 +21,7 @@ typedef enum skinned_operation {
     SKIN_OP_POSE_SAMPLE,
     SKIN_OP_POSE_BLEND,
     SKIN_OP_POSE_MODEL,
+    SKIN_OP_POSE_MODELS,
     SKIN_OP_POSE_INDEX,
     SKIN_OP_DECODE,
     SKIN_OP_BLEND_SHAPES,

@@ -1857,6 +1857,42 @@ tide_float4x4 tide_skinned_model(const tide_list data, const tide_list transform
     return out;
 }
 
+tide_list tide_skinned_models(const tide_list data, const tide_list transforms, const uint32_t where)
+{
+    tide_list out = {0};
+    model_facts *f = known_model(data);
+    const int32_t count = tide_list_count(transforms);
+    if (count <= 0) return out;
+    // Made before the scratch mark, so a list in the scratch area outlives the reset below
+    tide_list_resize(&out, count, sizeof(tide_float4x4), where);
+    if (tide_list_count(out) != count) return (tide_list){0};
+    const uint64_t mark = tide_scratch_mark();
+    const tide_float4x4 *global = NULL;
+    model_seen m;
+    bool opened = false;
+    if (f && f->key.kind == KEY_PACK) {
+        // Known bytes in the pack: no need to open them again (as tide_skinned_model).
+        if (!f->valid) {
+            if (open_model(data, &m)) {
+                f->valid = nodes_valid(&m.view) ? 1 : -1;
+                close_model(&m);
+            }
+        }
+        const tide_skinned_data_view v = {.data = tide_pack_span(tide_handle_offset(data.at) + sizeof(tide_block), f->size),
+                                          .size = f->size, .nodes = f->nodes, .node_at = f->node_at};
+        if (v.data && f->valid > 0) global = global_matrices(&v, transforms, true, NULL);
+    } else if (open_model(data, &m)) {
+        opened = true;
+        if (f && !f->valid) f->valid = nodes_valid(&m.view) ? 1 : -1;
+        global = global_matrices(&m.view, transforms, f ? f->valid > 0 : false, NULL);
+    }
+    const bool made = global != NULL;
+    if (made) memcpy(tide_list_at_mut(out, 0, sizeof(tide_float4x4)), global, (size_t)count * sizeof(tide_float4x4));
+    tide_scratch_reset(mark);
+    if (opened) close_model(&m);
+    return made ? out : (tide_list){0};
+}
+
 static tide_list palette_of(const tide_skinned_data_view *v, const tide_list transforms, const bool verified,
                             const tide_bone_transform *captured)
 {

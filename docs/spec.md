@@ -2006,6 +2006,7 @@ The CPU operations are:
 | Mutable `pose` | `.Blend(Pose other, float weight)` | Blends toward `other` in place |
 | `pose` | `[Bone bone]` | Parent-local `BoneTransform` |
 | `pose` | `.Model(Bone bone)` | Accumulated model-space `float4x4` |
+| `pose` | `.Models()` | `List<float4x4>`: every bone's `Model`, by `bone.index`, bit for bit, in one pass (2026-10-31, the owner's "OK" to the proposal; Provisional); empty for a pose of no model |
 | `HumanoidRig` | `.Auto(Pose referencePose)` | A partially or fully discovered `HumanoidRig` |
 | Mutable `rig` | `.referencePose`, `[HumanoidBone bone]` | Editable calibration `Pose`, typed `Bone` assignments |
 | `rig` | `.GetStatus(HumanoidBone bone)` | `HumanoidBoneStatus` |

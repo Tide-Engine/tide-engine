@@ -2609,6 +2609,8 @@ static const method_form pose_calls[] = {
      "Blends a writable pose toward a compatible pose in parent-local space. Weight is clamped to 0 through 1."},
     {"Model", "Model(Bone bone) -> float4x4",
      "Returns a node's accumulated transform in model space, without inverse-bind offsets. Use it for sockets and hitboxes."},
+    {"Models", "Models() -> List<float4x4>",
+     "Returns every bone's model matrix at once, indexed by bone.index: what Model gives for each, in one pass from the root."},
     {"Retarget", "Retarget(Pose source, RetargetMap mapping) -> bool",
      "Transfers a source pose through a prepared mapping into this writable target pose with deterministic CPU math. "
      "Returns false and leaves the target unchanged for incompatible or invalid input. The result keeps the target skeleton for blending and sockets."},
