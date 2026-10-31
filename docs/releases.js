@@ -5,7 +5,7 @@
 //   GET /releases/<tag>.json        one version, by its tag (v0.3.0)
 //   GET /releases/<tag>/<file>      a file of it: a redirect to the download
 //   GET /releases/for/<commit>      the version a commit of tide's source is: the highest whose tag is that commit
-//                                   or one before it (Unity's Tide package, whose commit its project locks)
+//                                   or one before it, with exact=true only for the same commit
 //
 // The releases are a private GitHub repository's. This asks GitHub for them
 // with a token that can only read that repository (TIDE_RELEASES_TOKEN, with
@@ -111,22 +111,22 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
     // The version `commit` is: the highest release whose tag is the commit or one of those before it, as GitHub
     // compares them (`ahead`: the commit came after the tag), or null for a commit after none or not the
     // repository's. Kept a while, as a release made later at it or before it can be a higher one.
-    const versions = new Map(); // commit -> { at, release }
+    const versions = new Map(); // commit -> { at, result: { release, exact } }
     const versionOf = async (commit) => {
         const had = versions.get(commit);
-        if (had && now() - had.at < commitAge) return had.release;
+        if (had && now() - had.at < commitAge) return had.result;
         const candidates = [...await releases()].sort((a, b) => compareTags(b.tag, a.tag)).slice(0, commitsTried);
         let found = null;
         for (const r of candidates) {
             const compared = await ask(`/compare/${r.tag}...${commit}`);
             if (!compared) return null; // GitHub knows no such commit
             if (compared.status === 'ahead' || compared.status === 'identical') {
-                found = r;
+                found = { release: r, exact: compared.status === 'identical' };
                 break;
             }
         }
         if (versions.size >= commitsKept) versions.delete(versions.keys().next().value);
-        versions.set(commit, { at: now(), release: found });
+        versions.set(commit, { at: now(), result: found });
         return found;
     };
 
@@ -180,7 +180,7 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
             if (parts.length === 2 && parts[0] === 'for') {
                 const commit = parts[1].toLowerCase();
                 const found = commitPattern.test(commit) ? await versionOf(commit) : null;
-                if (found) json(res, 200, shown(found, origin));
+                if (found) json(res, 200, { ...shown(found.release, origin), exact: found.exact });
                 else text(res, 404, 'No release is that commit or one before it.\n');
                 return true;
             }

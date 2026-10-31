@@ -1,5 +1,20 @@
 # Releases, installing and CI
 
+## Exact release proof for Unity version selection (2026-10-31)
+
+The existing /releases/for/<commit> answer retains its nearest ancestor release
+as a switching suggestion and now includes exact: true only when GitHub's
+comparison says identical. Unity no longer mistakes ahead for a matching
+package/compiler pair; the new Versions window switches both to a chosen tag
+(unity.md). No private repository metadata is added to the response. The list,
+download endpoints, caching and publishing workflow retain their contracts.
+The extended release tests pass 11/11 on Node 24.22.1, including exact vs
+ancestor and refresh after publication; docs production build passes.
+Normal docs deployment supplies the flag after the dev push. Until deployment,
+a response without it cannot prove an exact match; release-tag selections work
+directly. No extra deployment or workflow was dispatched.
+
+
 ## Distribution-mode package smoke builds (2026-10-30)
 
 check.yml's two shipping web builds and Google Play AAB build now request
