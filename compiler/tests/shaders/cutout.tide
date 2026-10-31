@@ -1,0 +1,44 @@
+// What tidec writes for a [Cutout] frag: after its tint, its alpha sharpened
+// to a pixel by how fast it changes across it (fwidth) is how much of the
+// pixel it covers. Where the draw's target has one sample (`tide_screen.w`
+// below 0) it's cut at 0.5 and drawn whole; elsewhere the GPU makes it the
+// share of the samples covered. Its color isn't times its alpha, and doesn't
+// go to white for a draw that multiplies: what it covers it covers wholly.
+// A second output is finished as any frag's is, and a frag that also
+// discards still does.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    List<Corner> mesh;
+    List<int> faces;
+    Grid2<Color> leaf = Grid2(8, 8);
+    RenderTarget scene;
+}
+
+[Cutout]
+frag Leaf(Corner vertex, out Color color, Texture leaf)
+{
+    color = leaf.Sample(vertex.uv);
+}
+
+[Cutout]
+frag Glowing(Corner vertex, out Color color, out Color glow, Texture leaf)
+{
+    if (vertex.uv.y > 0.9) this.Discard();
+    color = leaf.Sample(vertex.uv, Filter.Trilinear);
+    glow = Color(1, 0.5, 0, 0.5);
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.mesh, art.faces, float4x4.identity, art.leaf, Leaf);
+    art.scene.Mesh(art.mesh, art.faces, float4x4.identity, art.leaf, Glowing);
+}

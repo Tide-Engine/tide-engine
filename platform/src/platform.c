@@ -3263,6 +3263,15 @@ static void index_shaders(void)
     }
 }
 
+// Whether a cut-out (tide_shader.cutout) drawn into targets that hold `into`
+// has the GPU make its alpha the share of a pixel's samples it covers: where
+// they have samples, and colors to have them in. At the others its shader
+// cuts at 0.5 itself, as `screen.w` below 0 says (draw_shaded).
+static bool covers_by_samples(const tide_gpu_target_format into)
+{
+    return tide_gpu_target_colors(into) > 0u && tide_gpu_target_samples(into) > 1u;
+}
+
 // The pipeline of a shader of the game's for one way of blending, one thing
 // done with stencil (`state`: stencil_state) and, for a 3D one, one thing done
 // with depth and one side left out, made if there's none: it reads a mesh's
@@ -3324,6 +3333,10 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         .into = into,
         .outputs = tide_shader_outputs(shader),
     };
+    if (shader->cutout) { // What a cut-out covers it covers wholly, its alpha the share of the samples it covers
+        if (desc.blend == TIDE_GPU_BLEND_ALPHA) desc.blend = TIDE_GPU_BLEND_REPLACE;
+        desc.alpha_to_coverage = covers_by_samples(into);
+    }
     for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc.reads[i] = gpu_read(shader, i);
     for (uint32_t i = 0; i < shader->attribute_count; i++) {
         desc.attributes[i].slot = 0;
@@ -4186,7 +4199,8 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
     }
     block.engine.screen[0] = scale.x, block.engine.screen[1] = scale.y;
     block.engine.screen[2] = (float)draw_pixel_height;
-    block.engine.screen[3] = s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f;
+    block.engine.screen[3] = shader->cutout && !covers_by_samples(frame_targets[s->target].into) ? -1.0f // It cuts itself
+                           : s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f;
     block.engine.tint[0] = run->tint.r, block.engine.tint[1] = run->tint.g;
     block.engine.tint[2] = run->tint.b, block.engine.tint[3] = run->tint.a;
     if (own) memcpy(block.bytes + sizeof(shaded_uniforms), list->uniforms + run->uniforms, own);

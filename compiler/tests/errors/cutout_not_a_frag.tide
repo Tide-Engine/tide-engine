@@ -1,0 +1,5 @@
+// expect: Cutout says a frag's alpha is where it's there, and 'Wave' isn't a frag
+// expect: it goes before a frag: '[Cutout] frag Leaf(Vertex3 vertex, out Color color) { ... }'
+scene Main { }
+[Cutout]
+vert Wave(mut Vertex3 vertex) { vertex.position.y += 1; }

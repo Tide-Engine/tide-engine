@@ -872,6 +872,7 @@ typedef struct decl {
 
     // Frags and verts (DECL_SHADER), and the functions they call
     bool is_frag;                 // A frag; else a vert
+    bool cutout;                  // A frag with [Cutout]: its alpha is where it's there, cut at 0.5, its edge as smooth as its target's samples
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
     bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order

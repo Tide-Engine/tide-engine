@@ -1,0 +1,4 @@
+// expect: Cutout says a frag's alpha is where it's there, and 'Leaf' isn't a frag
+scene Main { }
+[Cutout]
+component Leaf { float x; }

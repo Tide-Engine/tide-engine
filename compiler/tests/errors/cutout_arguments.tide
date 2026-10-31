@@ -1,0 +1,5 @@
+// expect: Cutout takes nothing: '[Cutout]' cuts where the alpha is under 0.5
+// expect: to cut elsewhere, scale the alpha the frag writes: at 0.3, 'color.a = alpha / 0.6'
+scene Main { }
+[Cutout(2)]
+frag Leaf(Vertex3 vertex, out Color color) { color = Color.white; }

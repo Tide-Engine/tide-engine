@@ -507,14 +507,15 @@ TIDE_TEST(embed_render_pipeline_carries_actual_texture_reads)
         const uint8_t *packet = tide_gpu_record_end(&size);
         // Independent ABI 6 offsets: id/key (3), slots (7), attributes (49), uniform size/count (2).
         const uint32_t reads_at = 61;
-        TIDE_REQUIRE(size >= 8u + (reads_at + textures + 8u) * 4u);
+        TIDE_REQUIRE(size >= 8u + (reads_at + textures + 9u) * 4u);
         TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_PIPELINE);
         TIDE_CHECK(u32_at(packet, 4) + 8u == size && u32_at(packet, 8) == pipeline);
         TIDE_CHECK(u32_at(packet, 8u + (reads_at - 1u) * 4u) == textures);
         for (uint32_t i = 0; i < textures; i++)
             TIDE_CHECK(u32_at(packet, 8u + (reads_at + i) * 4u) == i % 5u);
         TIDE_CHECK(u32_at(packet, 8u + (reads_at + textures) * 4u) == TIDE_GPU_BLEND_ALPHA);
-        const uint32_t name_at = 8u + (reads_at + textures + 8u) * 4u;
+        TIDE_CHECK(u32_at(packet, 8u + (reads_at + textures + 7u) * 4u) == 0u); // alpha_to_coverage
+        const uint32_t name_at = 8u + (reads_at + textures + 9u) * 4u;
         TIDE_CHECK(u32_at(packet, name_at - 4u) == 8 && memcmp(packet + name_at, "capacity", 8) == 0);
     }
 }

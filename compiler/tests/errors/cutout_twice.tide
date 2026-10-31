@@ -1,0 +1,4 @@
+// expect: 'Leaf' is a Cutout already
+scene Main { }
+[Cutout, Cutout]
+frag Leaf(Vertex3 vertex, out Color color) { color = Color.white; }

@@ -3950,6 +3950,13 @@ static void describe(const occurrence *o, sb *out)
              "bone stays. For packs of many outfits on one skeleton, like `[Parts(\"Body_LOD0\", \"Helmet_LOD0\")]`. "
              "A file none of whose parts match is refused, naming some. It goes before an asset that's a `SkinnedMesh<V>`; "
              "a humanoid profile's reference takes the same list as `\"parts\"`."},
+            {"Cutout", "[Cutout]",
+             "The frag after it is a cut-out, like a leaf, a tuft of grass or hair: its alpha says where it's there "
+             "(0.5 and above) and where it isn't, in place of `this.Discard()`. Its edge is as smooth as the target "
+             "it's drawn into has samples (`RenderTarget.Window(samples: 4)`): the alpha, sharpened to a pixel by how "
+             "fast it changes, is how many of a pixel's samples it covers (alpha to coverage), each with its color "
+             "whole and its depth. Into a target of one sample, a shadow map's too, it's cut at 0.5. What it covers "
+             "it covers wholly: a cut-out isn't see-through."},
             {"Json", "[Json(\"key\")]",
              "This field's key in JSON, where it isn't the field's name: `[Json(\"max_players\")] int maxPlayers;`. "
              "`Json.Read` fills the field from that key and `Json.Write` writes it under it. It goes before a struct's "
@@ -9784,6 +9791,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "LOD", CK_FUNCTION, "[LOD]",
                  "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
                  "LOD");
+            item(&c, "Cutout", CK_FUNCTION, "[Cutout]",
+                 "A frag whose alpha is where it's there, cut at 0.5, with edges as smooth as its target's samples "
+                 "(alpha to coverage).",
+                 "Cutout");
         }
         break;
 

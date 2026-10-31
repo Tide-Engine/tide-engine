@@ -16237,6 +16237,12 @@ static void check_shader_decl(const checker *c, decl *d)
     d->fails = T_VOID_;
     d->outputs = 0;
     d->place = NULL;
+    // [Cutout], read here as its shaders are written while draws are checked; check_attributes says what's wrong with one
+    d->cutout = false;
+    for (int a = 0; a < d->attributes.count && d->is_frag; a++) {
+        const attribute *attr = &d->attributes.items[a];
+        if (str_eq_c(attr->name, "Cutout") && attr->args.count == 0 && attr->values.count == 0) d->cutout = true;
+    }
     const param *color = NULL;
     const param *source_texture = NULL;
     for (int i = 0; i < d->params.count; i++) {
@@ -19769,6 +19775,19 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Cutout")) { // Its alpha says where it's there (put_fragment_main)
+                if (d->kind != DECL_SHADER || !d->is_frag) {
+                    diag_error(attr->at, "Cutout says a frag's alpha is where it's there, and '" STR_FMT "' isn't a frag",
+                               STR_ARG(d->name));
+                    diag_note("it goes before a frag: '[Cutout] frag Leaf(Vertex3 vertex, out Color color) { ... }'");
+                } else if (attr->values.count > 0 || attr->args.count > 0) {
+                    diag_error(attr->at, "Cutout takes nothing: '[Cutout]' cuts where the alpha is under 0.5");
+                    diag_note("to cut elsewhere, scale the alpha the frag writes: at 0.3, 'color.a = alpha / 0.6'");
+                } else if (attribute_named(d, "Cutout") != attr) { // Read with the frag (check_shader_decl)
+                    diag_error(attr->at, "'" STR_FMT "' is a Cutout already", STR_ARG(d->name));
+                }
+                continue;
+            }
             const bool before = str_eq_c(attr->name, "Before");
             if (!before && !str_eq_c(attr->name, "After")) {
                 diag_error(attr->at, "unknown attribute '" STR_FMT "'", STR_ARG(attr->name));
@@ -19791,13 +19810,15 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "LOD");
                 suggest_consider_c(&s, "BlendShapes");
                 suggest_consider_c(&s, "Parts");
+                suggest_consider_c(&s, "Cutout");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
                           "entities gain and lose, Channel and Unordered, which order a command's delivery, Filter and "
                           "Wrap, which say how an asset that's drawn with is sampled, LOD, which has a mesh asset's levels of "
-                          "detail made, and Bus, which marks the enum of the audio buses");
+                          "detail made, Bus, which marks the enum of the audio buses, and Cutout, for a frag whose alpha "
+                          "is where it's there");
                 continue;
             }
             if (attr->values.count > 0) {
