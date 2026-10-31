@@ -155,6 +155,7 @@ frag Copy(Vertex vertex, out Color color, Texture source)
 - **It costs memory:** as many colors and depths a pixel as it has samples, plus the color they come to. Four samples at the window's size is about four and a half times a plain target. A frag still runs once for each pixel a triangle covers, so drawing costs little more.
 - **A device may have fewer.** 4 is there on everything Tide draws with, for images of bytes. Where a device hasn't got what's asked, the target is drawn with the most it has under that, and the engine says so once in the game's output. WebGPU has 1 and 4 alone: 2 is 4 there, and 8 is 4.
 - **Everything draws into it** as into any target: shapes, text, meshes, frags, clears, [stencil](./draw-settings.md#stencil). What's in it persists from frame to frame, like any target's.
+- **Edges a frag cuts with `this.Discard()` aren't smoothed:** the frag decides once a pixel. A frag with [`[Cutout]`](./shaders.md#cut-outs) has its alpha say where it's there instead, and those edges are as smooth as the triangles' (alpha to coverage).
 
 ## Several colors
 

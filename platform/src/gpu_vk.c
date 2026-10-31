@@ -1838,8 +1838,10 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
     };
     const uint32_t colors = tide_gpu_target_colors(desc->into);
     const uint32_t samples = colors ? tide_gpu_target_samples(desc->into) : 1u;
+    // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several
+    const VkBool32 coverage = desc->alpha_to_coverage && samples > 1u ? VK_TRUE : VK_FALSE;
     const VkPipelineMultisampleStateCreateInfo multisample = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, NULL, 0,
-                                                              (VkSampleCountFlagBits)samples, VK_FALSE, 0.0f, NULL, VK_FALSE, VK_FALSE};
+                                                              (VkSampleCountFlagBits)samples, VK_FALSE, 0.0f, NULL, coverage, VK_FALSE};
     static const VkCompareOp tests[] = {VK_COMPARE_OP_ALWAYS, VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL,
                                         VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL,
                                         VK_COMPARE_OP_GREATER_OR_EQUAL}; // By tide_gpu_stencil_test

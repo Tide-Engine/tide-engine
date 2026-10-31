@@ -4542,13 +4542,93 @@ view ImageMeasurements(Art art, mut ImageSizes sizes)
     Draw.Mesh(art.targetQuad, art.faces, heroColors, SizedImage, ImageMetadata);
 }
 
+// Cut-outs (pass 24): a [Cutout] frag's alpha is where it's there. A sheet
+// whose alpha climbs a 64th a pixel, from left to right, is drawn into a
+// target of 4 samples, where its edge pixel is half covered, and into one of
+// a sample, where it's cut; what it covers it covers wholly, where its alpha
+// is barely over half. A card cut the same way, into a target of depth
+// alone, stores depth only where it's there.
+local singleton Cuts
+{
+    RenderTarget smooth; // 64 pixels by 64 whatever the display, 4 samples
+    RenderTarget sharp;  // ...and one
+    RenderTarget depth;  // ...depth alone
+    DepthTexture stored; // ...as a frag reads it
+    List<Vertex> sheet;  // 64 across from its corner, its uv.x from 0 to 1
+    List<Vertex3> card;  // 2 by 2 around the origin, the same
+    bool made;
+}
+
+// Its alpha is half at the middle of the sheet's 32nd pixel, and red
+[Cutout]
+frag Edge(Vertex vertex, out Color color)
+{
+    color = Color(1, 0, 0, vertex.uv.x + 0.5 / 64);
+}
+
+// ...and the card's
+[Cutout]
+frag Edge3(Vertex3 vertex, out Color color)
+{
+    color = Color(1, 0, 0, vertex.uv.x + 0.5 / 64);
+}
+
+frag StoredDepth(Vertex vertex, out Color color, Cuts cuts)
+{
+    float depth = cuts.stored.Sample(vertex.uv);
+    color = Color(depth, depth, depth);
+}
+
+[After(ImageMeasurements)]
+view Cutouts(Art art, mut Cuts cuts)
+{
+    if (art.targetPass != 24) return;
+    if (!cuts.made)
+    {
+        cuts.made = true;
+        cuts.smooth = RenderTarget(64, 64, 1, samples: 4);
+        cuts.sharp = RenderTarget(64, 64, 1);
+        cuts.depth = RenderTarget(64, 64, 1, Format.Depth);
+        cuts.stored = cuts.depth.depth;
+        cuts.sheet = [Vertex { }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+        cuts.card = [Vertex3 { position = float3(-1, -1, 0) }, Vertex3 { position = float3(1, -1, 0), uv = float2(1, 0) },
+                     Vertex3 { position = float3(1, 1, 0), uv = float2(1, 1) }, Vertex3 { position = float3(-1, 1, 0), uv = float2(0, 1) }];
+    }
+    cuts.smooth.Clear(Color.black);
+    cuts.smooth.SetScreen();
+    cuts.smooth.Mesh(cuts.sheet, art.faces, Edge);
+    cuts.sharp.Clear(Color.black);
+    cuts.sharp.SetScreen();
+    cuts.sharp.Mesh(cuts.sheet, art.faces, Edge);
+    // From 10 in front of the card, a box 2 by 2 with no perspective: the card fills it
+    cuts.depth.Clear(Color.white);
+    cuts.depth.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(2, 2, 0.1, 30));
+    cuts.depth.SetCull(Cull.None);
+    cuts.depth.Mesh(cuts.card, art.faces, float4x4.identity, Edge3);
+
+    Draw.Clear(Color.black);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Mesh(cuts.sheet, art.faces, cuts.smooth.color, Filter.Point);
+    Draw.Transform(float2(64, 0))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.sharp.color, Filter.Point);
+    }
+    Draw.Transform(float2(128, 0))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, StoredDepth);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals', 21 the models' and 22 the places'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals', 21 the models', 22 the places',
+    // 23 the image sizes' and 24 the cut-outs'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

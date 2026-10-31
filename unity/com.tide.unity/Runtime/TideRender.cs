@@ -80,6 +80,7 @@ namespace Tide
             public Vector4[] attributes = new Vector4[16];
             public Vector4[] slots = new Vector4[3];
             public int uniformSize, textureCount, blend, depth, cull, stencilTest, stencilOp;
+            public bool alphaToCoverage; // A cut-out's into a target with samples: its alpha is the share it covers
             public int looked, made; // The frame its shader was last looked for, while it isn't there, and the pipeline's
             public readonly Dictionary<int, Material> materials = new Dictionary<int, Material>();
             // Its attributes and slots, which each draw takes with it: a material keeps no array of its shader's that
@@ -166,6 +167,7 @@ namespace Tide
         static readonly int ZTest = Shader.PropertyToID("_TideZTest"), ZWrite = Shader.PropertyToID("_TideZWrite");
         static readonly int Cull = Shader.PropertyToID("_TideCull"), StencilRef = Shader.PropertyToID("_TideStencilRef");
         static readonly int StencilComp = Shader.PropertyToID("_TideStencilComp"), StencilPass = Shader.PropertyToID("_TideStencilPass");
+        static readonly int AlphaToMask = Shader.PropertyToID("_TideAlphaToMask");
         static readonly int Attributes = Shader.PropertyToID("_TideAttributes"), Slots = Shader.PropertyToID("_TideSlots");
         static readonly int Flip = Shader.PropertyToID("_TideFlip"), Height = Shader.PropertyToID("_TideHeight");
         static readonly int Linear = Shader.PropertyToID("_TideLinear");
@@ -842,6 +844,7 @@ namespace Tide
             made.stencilTest = (int)W(at++);
             made.stencilOp = (int)W(at++);
             at += 2; // into, outputs: the target says what it holds
+            made.alphaToCoverage = W(at++) != 0;
             var nameLength = (int)W(at++);
             made.name = Marshal.PtrToStringAnsi((IntPtr)(p + 4 * at), nameLength);
             made.properties = new MaterialPropertyBlock();
@@ -916,6 +919,7 @@ namespace Tide
             m.SetFloat(StencilComp, (float)tests[Math.Min(p.stencilTest, 7)]);
             m.SetFloat(StencilPass, (float)ops[Math.Min(p.stencilOp, 5)]);
             m.SetFloat(StencilRef, stencil);
+            m.SetFloat(AlphaToMask, p.alphaToCoverage ? 1f : 0f);
             p.materials[key] = m;
             return m;
         }

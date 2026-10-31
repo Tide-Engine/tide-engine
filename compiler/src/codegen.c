@@ -23262,6 +23262,7 @@ static void gen_shaders(gen *g)
         // The colors its frag writes, where that's more than the pixel's: one for each color image of a target
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
         if (sh->blit) sb_put(o, "    .blit = true,\n");
+        if (sh->frag && sh->frag->cutout) sb_put(o, "    .cutout = true,\n"); // Its alpha is its coverage
         sb_put(o, "};\n\n");
 
         // A list its code reads goes as a texture of numbers: what writes an element's, floats then ints,

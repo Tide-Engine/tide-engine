@@ -967,6 +967,11 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(last_sent(), "LOD has simpler versions of a mesh made") && has(last_sent(), "'Rock' isn't a mesh"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "[LOD]") && has(hover, "levels of detail made as the game is built") && has(hover, "Draw.LODCamera"));
+    // [Cutout]: offered before a frag, explained, refused off one
+    TIDE_CHECK(offers(complete("[$] frag Leaf(Vertex3 vertex, out Color color) { color = Color.white; }\nscene Main { }\n"), "Cutout"));
+    open_document("[Cut$out] component Leaf { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "Cutout says a frag's alpha is where it's there, and 'Leaf' isn't a frag"));
+    TIDE_CHECK(has(request("textDocument/hover"), "alpha to coverage"));
     open_document("[Lod] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
     // [BlendShapes], beside them: offered, explained, refused off an asset, suggested for a misspelling.

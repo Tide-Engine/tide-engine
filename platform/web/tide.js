@@ -2147,12 +2147,12 @@
             for (const key of t.groups) bindGroups.delete(key);
         },
         gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, reads, readsHigh, blend, depth, cull, into, outputs, stencilTest,
-            stencilOp) {
+            stencilOp, alphaToCoverage) {
             building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [], attributes: [],
                 stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
                 reads: Array.from({ length: textures }, (unused, i) => (i < 8 ? reads >>> 3 * i : readsHigh >>> 3 * (i - 8)) & 7), // Two banks of 3-bit tide_gpu_read values
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
-                into: colorFormats(into), outputs, samples: samplesOf(into) };
+                into: colorFormats(into), outputs, samples: samplesOf(into), coverage: !!alphaToCoverage };
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
@@ -2180,7 +2180,8 @@
                     i < b.outputs ? { format, blend: blends[b.blend] } : { format, writeMask: 0 }) },
                 // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
                 primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
-                multisample: { count: b.samples },
+                // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several
+                multisample: { count: b.samples, alphaToCoverageEnabled: b.coverage && b.samples > 1 },
                 // Either side of a triangle tests stencil the same way, against all 8 bits
                 depthStencil: { format: depthFormat, ...depths[b.depth], stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },

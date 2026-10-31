@@ -6068,6 +6068,34 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
     }
     for (int k = 0; k < outputs; k++) {
         const char *color = output_name(false, k);
+        if (k == 0 && sh->frag && sh->frag->cutout) {
+            // A cut-out's alpha, sharpened to a pixel by how fast it changes, is how much of the pixel it covers,
+            // which the GPU makes the share of its samples (alpha to coverage) where its target has them. A
+            // target of one sample (`tide_screen.w` below 0) has it cut at 0.5. What it covers it covers wholly,
+            // so its color isn't times its alpha, and doesn't go to white for a draw that multiplies
+            if (wgsl) {
+                sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
+                             "    var tide_cover: f32 = (%s.a - 0.5) / max(fwidth(%s.a), 0.0001) + 0.5;\n"
+                             "    if (tide_block.tide_screen.w < 0.0) {\n"
+                             "        if (tide_cover < 0.5) {\n"
+                             "            discard;\n"
+                             "        }\n"
+                             "        tide_cover = 1.0;\n"
+                             "    }\n"
+                             "    %s = vec4f(%s.rgb, clamp(tide_cover, 0.0, 1.0));\n",
+                          color, color, color, color, color, color);
+            } else {
+                sb_printf(o, "    %s = %s * tide_tint;\n"
+                             "    float tide_cover = (%s.a - 0.5) / max(fwidth(%s.a), 0.0001) + 0.5;\n"
+                             "    if (tide_screen.w < 0.0) {\n"
+                             "        if (tide_cover < 0.5) discard;\n"
+                             "        tide_cover = 1.0;\n"
+                             "    }\n"
+                             "    %s.a = clamp(tide_cover, 0.0, 1.0);\n",
+                          color, color, color, color, color);
+            }
+            continue;
+        }
         if (wgsl) {
             sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
                          "    %s = vec4f(%s.rgb * %s.a, %s.a);\n"

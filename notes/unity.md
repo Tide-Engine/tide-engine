@@ -1,5 +1,14 @@
 # Unity as a front end
 
+## Embed ABI 9: a pipeline's alpha to coverage (2026-10-31)
+
+`TIDE_EMBED_RENDER_PIPELINE` has one word more, `alpha_to_coverage`, after
+`outputs` (a `[Cutout]` frag into a target with samples: notes/render-targets.md,
+Cut-outs), so `TIDE_EMBED_ABI` and `TideLibrary.Abi` are 9. `TideRender.cs`
+reads it into `Pipeline.alphaToCoverage` and sets `_TideAlphaToMask` on the
+material, which the ShaderLab tide unity writes takes as
+`AlphaToMask [_TideAlphaToMask]` (0 by default). Not run in Unity here.
+
 ## Embed ABI 8: 8-byte handle slots (2026-10-30)
 
 Text, list and grid fields are 8 bytes in the game's C and a map or a set 32

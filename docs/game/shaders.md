@@ -885,6 +885,24 @@ frag Leaves(BoxVertex vertex, out Color color, Models models)
 
 The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw.SetCamera` reads it too, and take that.
 
+### Cut-outs
+
+An edge `this.Discard()` cuts is decided once a pixel, so it's a staircase however many [samples](./render-targets.md#smooth-edges) the target has: leaves, grass, hair and fences alias where the triangles around them are smooth. `[Cutout]` before a frag says its alpha is where it's there, in place of the discard:
+
+```csharp
+[Cutout]
+frag Leaves(BoxVertex vertex, out Color color, Models models)
+{
+    color = models.leaves.Sample(vertex.uv);  // There where its alpha is 0.5 or more
+}
+```
+
+- **Its edge is as smooth as its target's samples.** The engine sharpens the alpha the frag wrote (after the [tint](./draw-settings.md)) to a pixel, by how fast it changes from one pixel to the next, and the GPU makes it the share of each pixel's samples the frag covers (alpha to coverage): an edge pixel is part the leaf's color and part what's behind it, as a triangle's edge is. A texture's soft or blurred alpha, or its smaller images far away, still give an edge one pixel wide.
+- **Into a target of one sample, it's cut at 0.5**, as the discard would: in the window, in a target without `samples`, and in a [shadow map](#a-shadow-map), whose casters with holes can be the same frag as the scene's.
+- **What it covers, it covers wholly.** A cut-out isn't see-through: where its alpha is 0.6, it's its color, not 60% of it, and it writes its depth and [stencil](./draw-settings.md#stencil) at the samples it covers and nowhere else, so it needs no sorting and no `Depth.Read`. Under `Blend.Alpha`, which is every draw's at first, a covered sample is replaced; `Blend.Add` and `Blend.Multiply` add and multiply its color whole there. With samples, the target's alpha at an edge pixel's covered samples is how much the frag covered: a scene drawn over an opaque clear stays opaque inside, and close to it along its edges.
+- **Only its first output.** The alpha of the pixel's color says what's covered, for all of a frag's [outputs](#several-outputs); the others are finished as any frag's are.
+- A frag can still call `this.Discard()` as well: what it discards is left out, whatever its alpha.
+
 ## What the GPU runs
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:

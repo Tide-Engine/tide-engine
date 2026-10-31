@@ -266,6 +266,11 @@ typedef struct tide_gpu_pipeline_desc {
     // with its `layout(location = i)` where there are several; WGSL's, the
     // `@location(i)`s of what `fragment` returns.
     uint32_t outputs;
+    // Alpha to coverage: the alpha of its first output is the share of each
+    // pixel's samples it draws into, depth and stencil too, and what it
+    // leaves of them is as it was. Only for targets of colors and samples
+    // (`into`); the renderer gives none for others.
+    bool alpha_to_coverage;
 } tide_gpu_pipeline_desc;
 
 typedef struct tide_gpu {
