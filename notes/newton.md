@@ -29,6 +29,14 @@ remaining package directories, no newton. Docs production build passes with
 the existing unstaged-example 404s, and the removed page is absent from output.
 Linux UBSan, macOS, MinGW and Android remain normal CI coverage.
 
+Integration: merged origin/dev 53e709e70 cleanly. The spec's independent shader
+and sharding edits both survive. Incoming Cutout shader/compiler/embed changes
+were rebuilt for Windows ASan and WASI; the selected native compiler, LSP,
+SPIR-V/HLSL, embed, Vulkan and OpenGL checks pass 11/11. Merged docs production
+build passes. Selected WASI shader/compiler checks, including WebGL, D3D11 and
+WebGPU, pass 9/9. Full suites above precede that merge; they are not repeated
+for the unrelated incoming feature.
+
 
 ## Layouts with 64-bit handles (2026-10-30)
 
