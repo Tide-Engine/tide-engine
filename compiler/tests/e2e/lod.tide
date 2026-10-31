@@ -128,6 +128,37 @@ view Show(mut Art art)
             Draw.SkinnedMesh(arm, At(2.2));
             Draw.SkinnedMesh(arm, At(900));
             break;
+        case 6: // Pixel tolerance, nested defaults and independent target settings
+            Draw.SetLODPixels(4);
+            Draw.Mesh(ball, At(6));
+            Draw.LODPixels(0.25)
+            {
+                Draw.Mesh(ball, At(6));
+                Draw.LODPixels()
+                {
+                    Draw.Mesh(ball, At(6));
+                }
+                Draw.Mesh(ball, At(6));
+            }
+            Draw.Mesh(ball, At(6));
+            art.shadow.SetLODCamera(Draw.CameraTransform(), Draw.CameraProjection());
+            art.shadow.SetLODPixels(100);
+            art.shadow.Mesh(ball, At(6));
+            Draw.Mesh(ball, At(6));
+            art.shadow.LODPixels()
+            {
+                art.shadow.Mesh(ball, At(6));
+            }
+            art.shadow.Mesh(ball, At(6));
+            art.shadow.SetLODPixels();
+            art.shadow.Mesh(ball, At(6));
+            Draw.LOD(0)
+            {
+                Draw.Mesh(ball, At(6));
+            }
+            Draw.SetLODPixels();
+            Draw.Mesh(ball, At(6));
+            break;
     }
 }
 

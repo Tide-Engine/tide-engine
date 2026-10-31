@@ -1,5 +1,18 @@
 # Language features, as tidec builds them
 
+## LOD error tolerance setting (2026-10-31)
+
+The approved `Draw.LODPixels(float pixels)` / `Draw.SetLODPixels(float pixels)`
+setting uses ordinary `add_setting` registration, including no-argument forms
+and render-target receivers. It inherits local-only capabilities, setting-form
+diagnostics, cleanup on early exit, and editor completion/hover. There is no
+new code-generation branch. The default is 1 pixel; higher values allow coarser
+automatic levels, positive fractions retain detail, and invalid values reset.
+Forced levels override it. Spec and user docs describe the public contract.
+Runtime state/boundary and native ASan/WASM validation are in drawing.md.
+Two new diagnostic fixtures pin block/Set misuse; language-server tests check
+window/target completion and both setter signatures in hover.
+
 ## Fresh pose and conditional value copies (2026-10-30)
 
 Performance review found generated playback helpers copying the result of

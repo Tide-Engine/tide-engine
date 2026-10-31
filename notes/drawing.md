@@ -1,5 +1,30 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Automatic LOD pixel tolerance (2026-10-31)
+
+The owner approved exposing the existing error tolerance for performance.
+`Draw.LODPixels(pixels) { ... }` and `Draw.SetLODPixels(pixels);` also work on
+render targets. Each destination owns `tide_draw_place.lod_pixels`; the former
+draw-list-wide field is removed. Zero represents the default 1 pixel. Positive
+finite values are accepted, including fractions; all other values restore 1.
+No-argument forms restore 1, blocks restore their previous value on exit, and
+frame/reset defaults clear every destination. Forced LOD levels still win.
+
+The retained single-instance camera calculation includes the selected
+destination's tolerance in its key; bulk and shaded draws read the same state.
+Generation, chains, error weights, ordering and simulation remain unchanged.
+Triangle density is not a selection criterion. The C setter is now
+`tide_draw_set_lod_pixels`; its unset and two push functions follow the other
+settings. Hosts and games rebuild for the changed draw structures.
+
+Validation: 83 drawing-related C tests pass on Windows ASan and WASM, including
+fractional/coarser selection, nested/default scopes, restoring another target,
+invalid values, forced levels and frame/default resets. LOD, draw-settings and
+render-target e2e fixtures pass on both. The native language-server suite and
+six LOD diagnostic fixtures pass. The production docs build passes (expected
+unstaged example 404s). No backend code changed; GPU pixels and other native
+platforms were not exercised for this change.
+
 ## Fills (2026-10-29)
 
 `Draw.Rect(rect, radius|radii, fill)` and `Draw.Shape(shape, fill)` with a

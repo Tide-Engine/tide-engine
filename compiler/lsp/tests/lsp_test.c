@@ -929,7 +929,7 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
 }
 
-// Levels of detail: [LOD], and the two settings naming a level and a camera, each with both forms, on Draw and on a target.
+// Levels of detail: [LOD], level, pixel tolerance and camera settings, on Draw and on a target.
 TIDE_TEST(lsp_levels_of_detail)
 {
     start();
@@ -945,9 +945,16 @@ TIDE_TEST(lsp_levels_of_detail)
     const char *draw = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(draw, "LOD") && offers(draw, "SetLOD") && offers(draw, "LODCamera") && offers(draw, "SetLODCamera"));
     TIDE_CHECK(has(draw, "LOD(${1:level})\\n{\\n\\t$0\\n}") && has(draw, "\"SetLOD(${1:level})\""));
+    TIDE_CHECK(offers(draw, "LODPixels") && offers(draw, "SetLODPixels"));
     const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget shadow; }\nview V(Look look)\n{\n"
                                   "    look.shadow.$\n}\n");
     TIDE_CHECK(offers(target, "LOD") && offers(target, "SetLODCamera"));
+    TIDE_CHECK(offers(target, "LODPixels") && offers(target, "SetLODPixels"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetLODPix$els(4);\n}\n");
+    const char *pixels = request("textDocument/hover");
+    TIDE_CHECK(has(pixels, "Draw.SetLODPixels(float pixels)") && has(pixels, "Draw.SetLODPixels()"));
+    TIDE_CHECK(has(pixels, "Higher values") && has(pixels, "1 by default"));
 
     open_document("scene Main { }\nview V()\n{\n    Draw.SetLO$D(1);\n}\n");
     const char *set = request("textDocument/hover");

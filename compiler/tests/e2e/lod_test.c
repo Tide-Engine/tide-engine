@@ -289,6 +289,34 @@ TIDE_TEST(lod_skinned_meshes_have_levels)
     finish();
 }
 
+// Tolerance changes selection, with scoped restoration and independent destinations.
+TIDE_TEST(lod_pixel_tolerance_controls_automatic_quality)
+{
+    start();
+    frame(6);
+    run runs[20];
+    const uint32_t count = runs_of(runs, 20);
+    const uint32_t tolerance[12] = {4, 0, 1, 0, 4, 100, 4, 1, 100, 1, 0, 1};
+    const uint32_t targets[12] = {0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0};
+    uint32_t drawn = 0;
+    TIDE_REQUIRE(count > 0);
+    const tide_draw_mesh_data *ball = whole_of(&runs[0]);
+    TIDE_REQUIRE(level_at(ball, 6.0f, window_scale / 100.0f) > level_at(ball, 6.0f, window_scale));
+    for (uint32_t i = 0; i < count; i++) {
+        TIDE_CHECK(whole_of(&runs[i]) == ball);
+        for (uint32_t k = 0; k < runs[i].count; k++) {
+            TIDE_REQUIRE(drawn < 12);
+            const float pixels = tolerance[drawn] ? (float)tolerance[drawn] : 0.25f;
+            const uint32_t expected = drawn == 10 ? 0 : level_at(ball, 6.0f, window_scale / pixels);
+            TIDE_CHECK(mesh_of(&runs[i])->level == expected);
+            TIDE_CHECK((runs[i].target != 0) == (targets[drawn] != 0));
+            drawn++;
+        }
+    }
+    TIDE_CHECK(drawn == 12);
+    finish();
+}
+
 // A pack loaded again has the same levels, and a mesh drawn after it is
 // filled from it as before.
 TIDE_TEST(lod_levels_come_back_with_the_pack)

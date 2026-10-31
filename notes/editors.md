@@ -1,5 +1,13 @@
 # The language server and the editors
 
+## LOD pixel tolerance completion (2026-10-31)
+
+Ordinary builtin setting registration supplies LODPixels/SetLODPixels on Draw
+and render targets, with pixel/default semantics in hover and the usual
+block/Set quick fixes. `lsp_levels_of_detail` checks both receivers' completion
+and the float/no-argument setter hover. The full native ASan `tidels_tests`
+suite passes. Runtime and compiler contracts are in drawing.md/language.md.
+
 ## Ordinary mesh handles and members (2026-10-30)
 
 Mesh<V> now canonicalizes to the existing static Asset<Mesh<V>> handle. Member

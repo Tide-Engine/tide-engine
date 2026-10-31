@@ -772,6 +772,12 @@ static void build_signatures(void)
     add_setting("Draw", "LOD", "tide_draw_push_no_lod", "tide_draw_unset_lod", NULL, "",
                 "Back to each mesh marked `[LOD]` picking its own level of detail, by how big it is on screen, as each "
                 "frame starts.", 0);
+    add_setting("Draw", "LODPixels", "tide_draw_push_lod_pixels", "tide_draw_set_lod_pixels", NULL, "pixels",
+                "How many screen pixels of estimated error an automatic LOD may have: 1 by default. Higher values "
+                "allow coarser meshes at the same distance; values below 1 retain more detail. Nonpositive or "
+                "nonfinite values restore 1. A forced LOD level wins over this tolerance.", 1, &T_F);
+    add_setting("Draw", "LODPixels", "tide_draw_push_no_lod_pixels", "tide_draw_unset_lod_pixels", NULL, "",
+                "Restore the default automatic LOD error tolerance of 1 pixel.", 0);
     add_setting("Draw", "LODCamera", "tide_draw_push_lod_camera_3d", "tide_draw_set_lod_camera_3d", NULL,
                 "position, rotation, fieldOfView",
                 "The camera the meshes marked `[LOD]` pick their level of detail through, in place of the one they're "

@@ -1,5 +1,17 @@
 # Assets and local files
 
+## Exposed automatic LOD tolerance (2026-10-31)
+
+The pixel tolerance previously listed as missing below is now available as
+`Draw.LODPixels` / `Draw.SetLODPixels`, also on render targets, default 1.
+The owner's goal is a quality/performance tradeoff; increasing tolerance permits
+coarser existing levels at the same distance. No importer, simplifier, cache,
+pack, triangle floor or error weight changes. Triangle density remains outside
+the selection rule. Runtime contracts and native ASan/WASM validation are in
+drawing.md; language/editor integration is in language.md. The LOD e2e fixture
+checks changed picks, nested/default scopes, target independence, restoration
+and forced-level priority against the imported mesh's recorded errors.
+
 ## Pack format 3: 64-bit offsets and handles (2026-10-30)
 
 `TIDE_PACK_VERSION` is 3 (notes/ecs.md, 64-bit handles). The header's region
@@ -1312,7 +1324,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 
       Picked is no slower than whole in any row now. The first row's mesh has no levels, so its three numbers are the same draws as an unmarked mesh's (its two a-draw-each numbers differ by the run's noise; the instanced one is faster as one call records in 0.18 ms where 40,000 take 2.2). The machine was busier than for the numbers above, so set rows against each other, not against those.
   - **Validation:** full native debug (2,135 tests) and web debug (2,106) suites pass after merging `origin/dev` through `e6a4133a` (texture compression and idle GPU assets among it, in the same renderer and pack files), with the pixel test on OpenGL 3.3, WebGL 2 and WebGPU, and the docs site builds. Linux, macOS, MinGW, Android and the sanitizers are a requested CI run's.
-  - **Not built:** a setting in the language for the pixels a level may be off by (`tide_draw_lod_pixels` is there for C); levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. The first real exporter's model measured is the crowd's below; the weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) were tuned on it alone.
+  - **Not built:** levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. The pixel tolerance is now exposed (2026-10-31, above). The first real exporter's model measured is the crowd's below; the weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) were tuned on it alone.
   - **A crowd's two gaps: the pick kept the full mesh, and the chain ended at its first level** (2026-10-30; the Bannerlord duel's battle of 20,000, `tools/army` in that repository, Tide 0.5.0-nightly.59). Its far fighters are `[LOD] asset Mesh<CrowdCorner>` of Synty's `PolygonSyntyCharacter.fbx` (4,896 triangles; `joints` and `weights`, so read skinned, at rest, in metres, radius 1.12) drawn as one `Draw.Instanced` through a vert that skins on the GPU, about 10,600 of them 30 to 150 m off at 960 by 540.
     - **The cause of both was the values' share of a collapse's cost.** It was the area-weighted mean of how far a vertex's values (normal, uv, color, times their weights) were from what they became, in the mesh's whole extent: a normal turned 28 degrees on a 4 cm patch of the model (a bevel or a buckle, its corners sharing a position and a uv but not a normal) cost as much as a surface 0.49 m off. One such collapse, at 4,136 triangles left, made the 2,448-triangle level 1 say 0.495 m (the pick allows 0.06 m at 30 m), and the next level would have said 0.63, over half the reach, so the chain ended. Traced by the cost's three parts: the planes' share stayed under 2 cm, the bones' (`bones_apart`) under 3 cm, and uvs gave nothing (their share was 0 throughout); with normals unweighed the chain went on to 611 triangles at 2 cm. The rest bounds and the instance's transform through the vert's struct were right: once levels said what they're off by, the same draw picked them.
     - **Now** (`weigh` in `mesh_lod.c`): the values' share is summed over the area they held, not averaged, so a value off by e over a patch L across costs as much as a surface off by e times L, and `WEIGHT_NORMAL` and `WEIGHT_COLOR` are 2 (they were 0.5): a normal 30 degrees off, or a color off by half, over a pixel is a pixel off. The weights were picked on the crowd: at 0.5 the far fighters' shading went darker and the far band's color moved (mean red 111 to 103) at 24.9 M vertices; at 1, 31.3 M and still darker; at 2, 45.6 M with each band's color as close to the full mesh's as `Draw.LOD(1)`'s (which the duel's agent found the same by eye); at 4, 81.1 M. Pixels more than 32 off the full mesh in the furthest band: 8% for level 1 forced, 16% for level 3, 21% picked at 2. Most of that is the crowd's aliasing, a figure there being a few pixels.

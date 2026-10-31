@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Destination LOD pixel tolerance (2026-10-31)
+
+Within the draw-list maintenance exception and the owner's approved tolerance
+task, generated settings call `tide_draw_set_lod_pixels`,
+`tide_draw_unset_lod_pixels`, `tide_draw_push_lod_pixels` and
+`tide_draw_push_no_lod_pixels`. These replace the former C-only global
+`tide_draw_lod_pixels` with destination-local state and ordinary block cleanup.
+`lod_pixels` moves from `tide_draw_list` to `tide_draw_place`; hosts, libraries
+and generated games rebuild together. No match state or simulation changes.
+Contracts and native ASan/WASM validation are recorded in drawing.md.
+
 ## Parts and non-uniform retarget scale (2026-10-30)
 
 Under the skinned/retarget maintenance exceptions: `tide_skinned_data_decode_parts`
