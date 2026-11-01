@@ -139,6 +139,7 @@ if(NOT TIDE_ANDROID)
                           "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
                  GlobalIllumination "${PROJECT_SOURCE_DIR}/packages/globalillumination/world.tide"
+                                    "${PROJECT_SOURCE_DIR}/packages/globalillumination/placement.tide"
                                     "${PROJECT_SOURCE_DIR}/packages/globalillumination/sampling.tide"
                                     "${PROJECT_SOURCE_DIR}/packages/globalillumination/globalillumination.tide"
         HOST globalillumination/main.c)

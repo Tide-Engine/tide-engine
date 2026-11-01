@@ -27,7 +27,7 @@ material draws for outgoing diffuse radiance plus emission. Capture shading
 excludes ambient, indirect and direct specular; material view callbacks use the
 capture eye while geometry deformation retains the main eye. Capture helpers
 draw both sides. Lit's optional second color output has normalized radial
-distance R, one-sided geometric back-face G, geometry hit B and alpha one.
+distance R, one-sided unperturbed vertex-normal back-face G, geometry hit B and alpha one.
 Black-cleared B=0 denotes a miss/far range; double-sided cards do not mark solid
 interior back faces. One-color targets drop that output normally. No backend
 or engine ABI changed.

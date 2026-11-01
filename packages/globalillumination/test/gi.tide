@@ -3,6 +3,7 @@ using Render3D;
 scene Main;
 asset Mesh3D giQuad = "quad.obj";
 asset Mesh3D giBox = "cube.obj";
+asset Mesh3D giSphere = "../../../docs/examples/assets/render3d/sphere.obj";
 asset SkinnedMesh3D giSkin = "skinning.gltf";
 
 singleton GIFixture
@@ -30,6 +31,8 @@ local singleton GIProbe
     float3 emission = float3(0.2, 0.1, 0.05);
     int synthetic;
     int sampleCount;
+    bool showOffset;
+    int offsetIndex;
     float3[16] positions;
     float3[16] normals;
 }
@@ -81,6 +84,31 @@ system BuildGIWorld(mut GIFixture fixture)
     if (fixture.scenario == 5)
         Spawn(MeshRenderer { mesh = giQuad }, Material,
             Transform { localScale = float3(0.1) });
+    if (fixture.scenario == 6)
+    {
+        Spawn(MeshRenderer { mesh = giBox }, Material { baseColor = Color(0.85, 0.85, 0.85), roughness = 0.85 },
+            Transform { localPosition = float3(0, -0.15, 0), localScale = float3(8, 0.3, 8) });
+        Spawn(MeshRenderer { mesh = giBox }, Material { baseColor = Color(0.85, 0.85, 0.85), roughness = 0.85 },
+            Transform { localPosition = float3(0, 3, 4.15), localScale = float3(8, 6, 0.3) });
+        Spawn(MeshRenderer { mesh = giBox }, Material { baseColor = Color(0.85, 0.1, 0.07), roughness = 0.9 },
+            Transform { localPosition = float3(-4.15, 3, 0), localScale = float3(0.3, 6, 8) });
+        Spawn(MeshRenderer { mesh = giBox }, Material { baseColor = Color(0.05, 0.6, 0.8), roughness = 0.9 },
+            Transform { localPosition = float3(4.15, 3, 0), localScale = float3(0.3, 6, 8) });
+        Spawn(MeshRenderer { mesh = giSphere }, Material { baseColor = Color(0.9, 0.9, 0.9), roughness = 0.65 },
+            Transform { localPosition = float3(1.3, 1, -0.6), localScale = float3(1) });
+        Spawn(MeshRenderer { mesh = giBox }, Material { emission = float3(6, 4.5, 2.5), roughness = 1 },
+            Transform { localPosition = float3(0, 5.6, 1), localScale = float3(3, 0.08, 2) });
+        Spawn(PointLight { intensity = float3(95, 80, 65), range = 18, castShadows = true },
+            Transform { localPosition = float3(0, 5.2, 0.5) });
+    }
+    if (fixture.scenario == 7 || fixture.scenario == 8)
+    {
+        if (fixture.scenario == 7)
+            Spawn(MeshRenderer { mesh = giBox }, Material,
+                Transform { localScale = float3(8, 8, 0.05) });
+        Spawn(MeshRenderer { mesh = giQuad }, Material { emission = float3(2, 1, 0.5) },
+            Transform { localPosition = float3(0, 0, 2), localScale = float3(4, 4, 1) });
+    }
 }
 
 system MoveGIWorld(with GIMoving, mut Transform transform, GIFixture fixture)
@@ -97,16 +125,17 @@ system AddFarGIObject(mut GIFixture fixture)
 }
 
 [Before(Stages.Prepare)]
-view ConfigureGIProbe(mut Renderer renderer, mut GlobalIllumination.Environment environment, mut GIProbe probe)
+view ConfigureGIProbe(mut Renderer renderer, mut GlobalIllumination.Environment environment, mut GIProbe probe, GIFixture fixture)
 {
     if (probe.dispose) GlobalIllumination.Dispose(environment);
     renderer.enabled = !probe.disabled;
     environment.settings = probe.settings;
     renderer.camera = Camera { position = float3(0, 0, -2), rotation = quaternion.identity,
                                verticalFov = 60deg, near = 0.1, far = 100 };
-    renderer.shadows = false;
-    renderer.shadowResolution = 16;
-    renderer.maxLights = 1;
+    renderer.shadows = fixture.scenario == 6;
+    renderer.shadowResolution = fixture.scenario == 6 ? 512 : 16;
+    renderer.maxShadowMaps = 6;
+    renderer.maxLights = fixture.scenario == 6 ? 2 : 1;
     renderer.background = Color.black;
     renderer.ambientIrradiance = probe.ambient;
     probe.bounded = GlobalIllumination.ClampSettings(probe.raw);
@@ -152,17 +181,26 @@ struct ControlledIncoming { int mode; int face; }
 frag PartialVisibility(Vertex vertex, out Color light, out Color moments,
                        GlobalIllumination.Environment environment, GIProbe probe)
 {
+    if (int(Math.Floor(vertex.uv.y * float(environment.layout.atlasRows * 19))) % 19 == 18)
+    {
+        light = Color.black;
+        moments = Color(float3(128.0 / 255.0), 1);
+        return;
+    }
     int column = int(Math.Floor(vertex.uv.x * 32));
     float3 radiance = probe.synthetic == 6 ? float3(column % 2 == 0 ? 0.2 : 0.8) : float3(0.2, 0.1, 0.05);
     light = Color(radiance * Math.PI, 1);
-    float unit = environment.layout.spacing / environment.layout.far;
-    moments = probe.synthetic == 6 ? Color(1, 1, 0, 1) : Color(0, 0.7 * unit * unit, 0, 1);
+    // Inverse projective depth and its standard deviation. Mode 4 supplies
+    // uncertain finite visibility; mode 6 has no blocker in any direction.
+    moments = probe.synthetic == 6 ? Color(0, 0, 0, 1) : Color(2, 1, 0, 1);
 }
 
 frag GIIncoming(Vertex vertex, out Color light, out Color data, ControlledIncoming incoming)
 {
-    bool dark = incoming.mode == 3 && incoming.face != 0;
-    light = dark ? Color.black : Color(0.2, 0.1, 0.05);
+    bool dark = (incoming.mode == 3 && incoming.face != 0)
+        || (incoming.mode == 7 && (incoming.face != 0
+            || int(Math.Floor(vertex.uv.x * 32)) != 17 || int(Math.Floor(vertex.uv.y * 32)) != 17));
+    light = dark ? Color.black : incoming.mode == 7 ? Color(20, 10, 5) : Color(0.2, 0.1, 0.05);
     // R is radial distance/far, G a one-sided backface, B says a hit exists.
     data = incoming.mode == 2 ? Color(0.001, 0, 1, 1)
          : incoming.mode == 5 ? Color(0.1, 1, 1, 1) : Color(0, 0, 0, 1);
@@ -182,7 +220,7 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
         ResetTarget(environment.resources.atlas);
         environment.resources.atlas.Screen()
         {
-            float height = float(environment.layout.atlasRows * 18);
+            float height = float(environment.layout.atlasRows * 19);
             environment.resources.atlas.Mesh([
                 Vertex { position = float2(0, 0), uv = float2(0, 0) }, Vertex { position = float2(576, 0), uv = float2(1, 0) },
                 Vertex { position = float2(576, height), uv = float2(1, 1) }, Vertex { position = float2(0, height), uv = float2(0, 1) }
@@ -197,8 +235,10 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
         target.Screen()
         {
             target.Mesh([
-                Vertex { position = float2(0, 0) }, Vertex { position = float2(32, 0) },
-                Vertex { position = float2(32, 32) }, Vertex { position = float2(0, 32) }
+                Vertex { position = float2(0, 0), uv = float2(0, 0) },
+                Vertex { position = float2(32, 0), uv = float2(1, 0) },
+                Vertex { position = float2(32, 32), uv = float2(1, 1) },
+                Vertex { position = float2(0, 32), uv = float2(0, 1) }
             ], [0, 1, 2, 0, 2, 3], GIIncoming, ControlledIncoming { mode = probe.synthetic, face = face });
         }
     }
@@ -208,12 +248,53 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
 
 struct GIWitness { float3 position; float3 normal; }
 
-frag ReadGIWitness(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness)
+frag ReadGIWitness(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness, GIProbe probe)
 {
+    if (probe.showOffset)
+    {
+        color = Color(GlobalIllumination.ProbeOffset(environment.distance, probe.offsetIndex,
+            environment.layout.atlasRows) + float3(128.0 / 255.0), 1);
+        return;
+    }
     float3 light = GlobalIllumination.Sample(environment.irradiance, environment.distance,
         environment.layout, environment.settings.intensity, environment.initialized,
         witness.position, witness.normal) / Math.PI;
     color = Color(light, 1);
+}
+
+local singleton GIPlacementAudit
+{
+    bool enabled;
+    bool compare;
+    bool stable = true;
+    int relocated;
+    int index = -1;
+    float3 offset;
+    float maxFraction;
+    List<float3> reference;
+}
+
+[After(GlobalIllumination.Update)]
+view AuditGIPlacement(GlobalIllumination.Environment environment, mut GIPlacementAudit audit)
+{
+    if (!audit.enabled || !environment.ready) return;
+    audit.relocated = 0;
+    audit.maxFraction = 0;
+    for (var i = 0; i < environment.initialized; i++)
+    {
+        float3 offset = environment.offsets[i] / environment.layout.spacing;
+        float length = Math.Length(offset);
+        audit.maxFraction = Math.Max(audit.maxFraction, length);
+        if (length > 0.00001)
+        {
+            audit.relocated++;
+            if (audit.index < 0) { audit.index = i; audit.offset = offset; }
+        }
+        if (audit.compare && (audit.reference.count != environment.layout.total
+            || Math.LengthSq(environment.offsets[i] - audit.reference[i]) > 0)) audit.stable = false;
+    }
+    if (environment.initialized == environment.layout.total && audit.reference.count == 0)
+        audit.reference = environment.offsets;
 }
 
 [Stage(Stages.Present, 1)]
@@ -234,4 +315,91 @@ view GIWitnesses(Renderer renderer, GIProbe probe, GlobalIllumination.Environmen
                 GIWitness { position = probe.positions[i], normal = probe.normals[i] });
         }
     }
+}
+
+// CPU geometry witnesses run only when explicitly requested by the host test.
+// They share the actual cube/sphere assets used by automatic probe placement.
+local singleton GIPlacementProbe
+{
+    bool enabled;
+    bool done;
+    bool cubeClosed;
+    bool sphereClosed;
+    bool planeClosed;
+    float3 invalidPoint;
+    float4x4 invalidTransform = float4x4.identity;
+    float invalidRadius;
+    GlobalIllumination.GeometryHit[16] hits;
+    float3 relocated;
+    float3 retained;
+    float3 unresolved;
+    float3 largeUnresolved;
+}
+
+[Before(Stages.Prepare)]
+view GIPlacementWitnesses(mut GIPlacementProbe probe)
+{
+    if (!probe.enabled || probe.done) return;
+    probe.done = true;
+    var cube = GlobalIllumination.BuildPlacementMesh(giBox);
+    var sphere = GlobalIllumination.BuildPlacementMesh(giSphere);
+    var plane = GlobalIllumination.BuildPlacementMesh(giQuad);
+    probe.cubeClosed = cube.closed;
+    probe.sphereClosed = sphere.closed;
+    probe.planeClosed = plane.closed;
+    probe.hits[0] = GlobalIllumination.PlacementSurface(cube, float4x4.identity, float3(0), 1);
+    probe.hits[1] = GlobalIllumination.PlacementSurface(cube, float4x4.identity, float3(1, 0, 0), 2);
+    probe.hits[2] = GlobalIllumination.PlacementSurface(cube,
+        float4x4.TRS(float3(0), quaternion.identity, float3(-2, 1, 3)), float3(-2, 0, 0), 2);
+    probe.hits[3] = GlobalIllumination.PlacementSurface(cube,
+        float4x4(float4(1, 0, 0, 0), float4(1, 1, 0, 0), float4(0, 0, 1, 0), float4(0, 0, 0, 1)),
+        float3(0.8, 0.1, 0), 1);
+    probe.hits[4] = GlobalIllumination.PlacementSurface(sphere, float4x4.identity, float3(-0.55, -0.25, -0.15), 1);
+    mut GlobalIllumination.PlacementMesh room = cube;
+    for (var i = 0; i < room.triangles.count; i++)
+    {
+        float3 saved = room.triangles[i].b;
+        room.triangles[i].b = room.triangles[i].c;
+        room.triangles[i].c = saved;
+    }
+    probe.hits[5] = GlobalIllumination.PlacementSurface(room, float4x4.identity, float3(0), 1);
+    probe.hits[6] = GlobalIllumination.PlacementSurface(plane, float4x4.identity, float3(0, 0, -0.01), 1);
+    probe.hits[7] = GlobalIllumination.PlacementSurface(cube,
+        float4x4.TRS(float3(0), quaternion.identity, float3(1, 0, 1)), float3(0), 1);
+    probe.hits[8] = GlobalIllumination.PlacementSurface(cube, float4x4.identity, probe.invalidPoint, 1);
+    probe.hits[9] = GlobalIllumination.PlacementSurface(cube, probe.invalidTransform, float3(0), 1);
+    probe.hits[10] = GlobalIllumination.PlacementSurface(cube, float4x4.identity, float3(0), probe.invalidRadius);
+    mut GlobalIllumination.PlacementMesh separated = default;
+    for (var side = 0; side < 2; side++)
+    {
+        float3 offset = float3(side == 0 ? -2 : 2, 0, 0);
+        foreach (var triangle in cube.triangles)
+            separated.triangles.Add(GlobalIllumination.PlacementTriangle {
+                a = triangle.a + offset, b = triangle.b + offset, c = triangle.c + offset,
+                source = triangle.source + side * cube.triangles.count
+            });
+    }
+    separated.BuildBranch(0, separated.triangles.count);
+    separated.closed = cube.closed;
+    separated.valid = true;
+    probe.hits[11] = GlobalIllumination.PlacementSurface(separated, float4x4.identity, float3(0), 2);
+    probe.hits[12] = GlobalIllumination.PlacementSurface(cube, float4x4.identity, float3(1, 0, 0), 0.49);
+    probe.hits[13] = GlobalIllumination.PlacementSurface(cube, float4x4.identity, float3(0.5, 0, 0), 1);
+    probe.hits[14] = GlobalIllumination.PlacementSurface(cube,
+        float4x4.TRS(float3(0), quaternion.identity, float3(0.00000001, 1, 1)), float3(0), 1);
+    probe.hits[15] = GlobalIllumination.PlacementSurface(cube, float4x4.identity, float3(0.50001, 0, 0), 1);
+    mut GlobalIllumination.WorldBounds bounds = default;
+    bounds.staticBounds.Add(GlobalIllumination.StaticBounds { placement = cube });
+    var unit = GlobalIllumination.PlacementInstance {
+        slot = 0, transform = float4x4.identity,
+        bounds = GlobalIllumination.LocalBounds { valid = true, minimum = float3(-0.5), maximum = float3(0.5) }
+    };
+    probe.relocated = GlobalIllumination.RelocateProbe(bounds, [unit], float3(0.4, 0, 0), float3(0), 1);
+    probe.retained = GlobalIllumination.RelocateProbe(bounds, [unit], float3(0.4, 0, 0), probe.relocated, 1);
+    probe.unresolved = GlobalIllumination.RelocateProbe(bounds, [unit], float3(0), float3(0), 1);
+    var huge = GlobalIllumination.PlacementInstance {
+        slot = 0, transform = float4x4.TRS(float3(0), quaternion.identity, float3(1e24)),
+        bounds = GlobalIllumination.LocalBounds { valid = true, minimum = float3(-5e23), maximum = float3(5e23) }
+    };
+    probe.largeUnresolved = GlobalIllumination.RelocateProbe(bounds, [huge], float3(4.8e23, 0, 0), float3(0), 1e22);
 }

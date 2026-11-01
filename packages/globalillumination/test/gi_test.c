@@ -175,8 +175,7 @@ TIDE_TEST(globalillumination_update_budget_freeze_invalidation_and_disposal)
     tide_world_tick(&world);
     frame();
     TIDE_CHECK(environment->initialized == 1 && environment->cursor == 1);
-    const uint64_t ids[] = {environment->resources.atlas.id, environment->resources.projection.id,
-        environment->resources.partialProjection.id,
+    const uint64_t ids[] = {environment->resources.atlas.id, environment->resources.rays.id,
         environment->resources.face0.id, environment->resources.face1.id, environment->resources.face2.id,
         environment->resources.face3.id, environment->resources.face4.id, environment->resources.face5.id};
     local.GIProbe.settings.enabled = false;
@@ -226,5 +225,74 @@ TIDE_TEST(globalillumination_settings_and_probe_count_remain_bounded)
     frame();
     TIDE_CHECK(local.GlobalIllumination_Environment.resources.atlas.size.width <= 2048);
     TIDE_CHECK(local.GlobalIllumination_Environment.resources.atlas.size.height <= 2048);
+    finish();
+}
+
+TIDE_TEST(globalillumination_placement_geometry_uses_closed_surfaces_and_world_distances)
+{
+    start(0);
+    local.GIPlacementProbe.enabled = true;
+    local.GIPlacementProbe.invalidPoint = tide_f3(NAN, 0, 0);
+    local.GIPlacementProbe.invalidTransform.c0.x = INFINITY;
+    local.GIPlacementProbe.invalidRadius = INFINITY;
+    frame();
+    const GIPlacementProbe *probe = &local.GIPlacementProbe;
+    const GlobalIllumination_GeometryHit *hit = probe->hits.at;
+    TIDE_CHECK(probe->done && probe->cubeClosed && probe->sphereClosed && !probe->planeClosed);
+    TIDE_CHECK(hit[0].found && hit[0].insideKnown && hit[0].inside);
+    TIDE_CHECK(fabsf(hit[0].distance - 0.5f) < 1e-6f);
+    TIDE_CHECK(fabsf(tide_dot_f3(hit[0].point, hit[0].normal) - 0.5f) < 1e-6f);
+    TIDE_CHECK(hit[1].found && hit[1].insideKnown && !hit[1].inside);
+    TIDE_CHECK(fabsf(hit[1].distance - 0.5f) < 1e-6f && hit[1].normal.x > 0.999f);
+    // Reflection/nonuniform scale must preserve the actual outward direction.
+    TIDE_CHECK(hit[2].found && hit[2].insideKnown && !hit[2].inside);
+    TIDE_CHECK(fabsf(hit[2].distance - 1) < 1e-6f && hit[2].point.x == -1 && hit[2].normal.x < -0.999f);
+    // The sheared face is x-y=.5; its closest point and distance are analytic.
+    TIDE_CHECK(hit[3].found && hit[3].insideKnown && !hit[3].inside);
+    TIDE_CHECK(fabsf(hit[3].distance - 0.141421356f) < 1e-6f);
+    TIDE_CHECK(fabsf(hit[3].point.x - 0.7f) < 1e-6f && fabsf(hit[3].point.y - 0.2f) < 1e-6f);
+    TIDE_CHECK(fabsf(hit[3].normal.x - 0.707106781f) < 1e-6f && fabsf(hit[3].normal.y + 0.707106781f) < 1e-6f);
+    // This is the embedded probe from the contact image, in sphere-local space.
+    // The faceted mesh lies slightly inside its analytic unit-sphere envelope.
+    TIDE_CHECK(hit[4].found && hit[4].insideKnown && hit[4].inside);
+    TIDE_CHECK(hit[4].distance > 0.35f && hit[4].distance < 0.4f);
+    TIDE_CHECK(tide_dot_f3(hit[4].point, hit[4].normal) > 0.95f);
+    // Reversing a closed shell creates an inward-facing room, not a solid.
+    TIDE_CHECK(hit[5].found && hit[5].insideKnown && !hit[5].inside);
+    TIDE_CHECK(hit[6].found && !hit[6].insideKnown && !hit[6].inside);
+    TIDE_CHECK(fabsf(hit[6].distance - 0.01f) < 1e-6f && hit[6].normal.z < -0.999f);
+    TIDE_CHECK(!hit[7].found && !hit[8].found && !hit[9].found && !hit[10].found);
+    // Two closed parts leave free space inside their common enclosing bounds.
+    TIDE_CHECK(hit[11].found && hit[11].insideKnown && !hit[11].inside);
+    TIDE_CHECK(fabsf(hit[11].distance - 1.5f) < 1e-6f);
+    TIDE_CHECK(!hit[12].found);
+    TIDE_CHECK(hit[13].found && hit[13].distance == 0 && hit[13].normal.x > 0.999f);
+    TIDE_CHECK(hit[14].found && hit[14].insideKnown && hit[14].inside);
+    TIDE_CHECK(fabsf(hit[14].distance - 5e-9f) < 1e-13f);
+    TIDE_CHECK(hit[15].found && !hit[15].inside && hit[15].normal.x > 0.999f);
+    TIDE_CHECK(hit[15].distance > 9e-6f && hit[15].distance < 11e-6f);
+    TIDE_CHECK(fabsf(probe->relocated.x - 0.18f) < 1e-6f && probe->relocated.y == 0 && probe->relocated.z == 0);
+    TIDE_CHECK(probe->retained.x == probe->relocated.x && probe->retained.y == 0 && probe->retained.z == 0);
+    TIDE_CHECK(tide_dot_f3(probe->unresolved, probe->unresolved) == 0);
+    // Squared distances exceed binary32 range here; the relocation bound must
+    // still reject an escape beyond 45% spacing instead of accepting Inf<=Inf.
+    TIDE_CHECK(probe->largeUnresolved.x == 0 && probe->largeUnresolved.y == 0 && probe->largeUnresolved.z == 0);
+    finish();
+}
+
+TIDE_TEST(globalillumination_world_updates_relocate_and_hold_bounded_capture_positions)
+{
+    start(6);
+    local.GIProbe.settings.updatesPerFrame = 16;
+    local.GIPlacementAudit.enabled = true;
+    frame();
+    const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
+    const int cycle = (environment->layout.total + 15) / 16;
+    for (int at = 0; at < cycle; at++) frame();
+    TIDE_CHECK(environment->initialized == environment->layout.total);
+    TIDE_CHECK(local.GIPlacementAudit.relocated > 0 && local.GIPlacementAudit.maxFraction <= 0.450001f);
+    local.GIPlacementAudit.compare = true;
+    for (int at = 0; at < cycle; at++) frame();
+    TIDE_CHECK(local.GIPlacementAudit.stable);
     finish();
 }

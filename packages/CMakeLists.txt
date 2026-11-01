@@ -30,7 +30,7 @@ set(render3d_sources render3d/pbr.tide render3d/materials.tide render3d/vertex.t
 
 add_library(tide_globalillumination STATIC globalillumination/cache.c)
 target_link_libraries(tide_globalillumination PUBLIC tide_render3d)
-set(gi_sources globalillumination/world.tide globalillumination/sampling.tide
+set(gi_sources globalillumination/world.tide globalillumination/placement.tide globalillumination/sampling.tide
     globalillumination/globalillumination.tide)
 tide_add_game(tide_globalillumination_test SOURCES globalillumination/test/gi.tide NAME game
     PACKAGES Render3D ${render3d_sources} GlobalIllumination ${gi_sources}

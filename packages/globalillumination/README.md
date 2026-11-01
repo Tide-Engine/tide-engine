@@ -45,12 +45,17 @@ view ConfigureGI(mut GlobalIllumination.Environment environment)
 | `intensity` | `1` | Received irradiance multiplier, clamped to 0–16 |
 | `debug` | `false` | Show probe positions, gathered light and invalid probes |
 
-Coverage is padded and aligned to a stable world-space lattice. The package
-increases actual spacing when necessary to fit `maxProbes`. Geometry moving
-inside the retained coverage does not rebuild the field. Expansion beyond it,
-changed layout controls or an empty/repopulated scene can restart its lighting.
-Local mesh bounds are cached per asset-pack generation; meshes are not scanned
-vertex by vertex every frame.
+Coverage uses padded, stable world-space grid anchors. The package increases
+actual spacing when necessary to fit `maxProbes`. Before refreshing a probe, it
+can move the capture position into nearby free space or away from a surface,
+within 45% of the actual spacing from its anchor. Established free positions
+remain in place until they lose clearance. This relocation keeps the same
+probe count and requires no authored volumes.
+
+Geometry moving inside retained coverage does not rebuild the grid. Expansion
+beyond it, changed layout controls, pack changes or an empty/repopulated scene
+can restart its lighting. Bounds and placement geometry are cached per asset-pack
+generation; meshes are not scanned vertex by vertex every frame.
 
 Updates are progressive. A full refresh takes approximately
 `ceil(environment.layout.total / updatesPerFrame)` rendered frames. Lower
@@ -59,11 +64,14 @@ increase memory and refresh latency. Raising the update budget does more scene
 capture and convolution work each frame. Zero freezes the current captured
 lighting; changing lights or geometry will then leave it stale.
 
-Each update reuses six 32×32 raster captures. The retained field stores
-directional irradiance and visibility, rejects probes with excessive back-face
-hits, and interpolates trustworthy visible neighbors. Debug markers are magenta
-until captured, orange/red for rejected probes and otherwise shaded by gathered
-irradiance. The package does not relocate rejected probes.
+Each update reuses six 32×32 raster captures. Positive cosine integration gathers
+diffuse directional irradiance. The retained field stores that irradiance and
+visibility, rejects probes with excessive back-face hits, and interpolates
+trustworthy visible neighbors, using actual capture positions for visibility
+and orientation weights while retaining grid-aligned blending. Probes that
+cannot be relocated within the bound can remain rejected. Debug markers show
+the capture positions: magenta until captured, orange/red for rejected probes
+and otherwise shaded by gathered irradiance.
 
 ## Current limits
 
@@ -73,6 +81,14 @@ promise uniform lighting detail across arbitrarily large worlds. Thin geometry,
 small emitters and sparse valid probes can still cause missed light or leaks.
 Bounds use authored rest geometry for skinned or custom-deformed meshes, so
 large animation/deformation excursions are not automatically included.
+
+Relocation uses the triangles of opaque, single-sided static meshes without
+custom vertex deformation. Recognized closed solids can move an embedded
+probe outward; open meshes provide surface clearance without defining a solid
+interior. Skinned, cutout, double-sided and custom-deformed surfaces still
+appear in captures, but do not guide relocation. Capture-based rejection
+remains necessary, and relocation cannot guarantee a usable probe in every
+tight gap or contact region.
 
 Opaque and cutout static/skinned surfaces appear in captures. Transparent
 surfaces receive GI but do not appear in the captured field. Surface callbacks

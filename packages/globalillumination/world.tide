@@ -32,6 +32,8 @@ struct StaticBounds
 {
     Asset<Render3D.Mesh3D> mesh;
     LocalBounds bounds;
+    bool placementReady;
+    PlacementMesh placement;
 }
 
 struct SkinBounds

@@ -22,7 +22,7 @@ struct Surface
     float occlusion = 1;
 }
 
-// The default callback leaves the caller's material and geometric normal alone.
+// The default callback leaves the caller's material and shading normal alone.
 void StandardSurface(SurfaceInput input, mut Surface surface)
 {
 }

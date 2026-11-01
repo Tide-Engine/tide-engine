@@ -229,7 +229,7 @@ views; draw window UI in `[After(Render3D.Stages.Present)]` views.
 
 Assign `material.shader = Render3D.Lit { surface = CustomSurface }` in a view.
 The callback is `Func<SurfaceInput, mut Surface, void>`: input contains `world`,
-`normal`, world-space `tangent`/`bitangent`, `uv` and `viewDirection`; the
+the interpolated vertex `normal`, world-space `tangent`/`bitangent`, `uv` and `viewDirection`; the
 initialized surface contains linear `albedo`, world-space `normal`, `roughness`,
 `metallic`, linear HDR `emission` and `occlusion = 1`.
 Owned plain-value captures work; resource and heap captures do not. Callbacks

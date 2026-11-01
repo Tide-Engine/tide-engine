@@ -58,16 +58,31 @@ update budget without changing the match, networking, snapshots or hashes.
 
 The package computes bounds from visible Render3D mesh assets and their world
 transforms. A padded probe lattice covers those receivers, including floors
-and walls. Probe positions remain aligned to world space. Geometry moving
-inside the retained coverage does not move the grid; expansion beyond it can
-rebuild the field. Coverage is retained rather than shrinking around every
-small movement. An empty scene releases the targets.
+and walls. Its anchors remain aligned to world space. Geometry moving inside
+retained coverage does not move the grid; expansion beyond it can rebuild the
+field. Coverage is retained rather than shrinking around every small movement.
+An empty scene releases the targets.
 
-Asset-local bounds are scanned once per mesh per asset-pack generation, then
-cached. World transforms are applied to those bounds each frame. Pack changes
-invalidate the cache. Skinned and custom-deformed meshes currently use their
-authored rest geometry for this coverage calculation; large excursions beyond
-those bounds are not automatically tracked.
+Before refreshing a probe, the package checks nearby mesh triangles and can
+relocate the capture position out of a recognized solid or away from a surface.
+Movement is limited to 45% of actual probe spacing from the anchor, preserving
+the probe budget and grid coverage. An established free position stays fixed
+until it loses surface clearance. Blending stays aligned to the grid; visibility
+and orientation weights use the actual capture positions. Games need no
+placement volumes or per-object GI setup.
+
+Opaque, single-sided static meshes without custom vertex deformation guide
+relocation. Closed geometry can classify an embedded probe; open geometry only
+provides surface clearance. Cutout, skinned, double-sided and custom-deformed
+surfaces remain in captures but do not guide relocation. Tight gaps, deep solid
+interiors and ambiguous geometry can leave probes unusable within the movement
+bound; capture-based rejection still handles them.
+
+Asset-local bounds and placement geometry are cached once per mesh per asset-pack
+generation. World transforms are applied to bounds each frame. Pack changes
+invalidate these caches and restart the captured field. Skinned and custom-deformed
+meshes currently use their authored rest geometry for coverage; large excursions
+beyond those bounds are not automatically tracked.
 
 `probeSpacing` is a request, not a guarantee. Actual spacing increases when
 needed to keep the field under `maxProbes`. The current implementation uses
@@ -84,13 +99,15 @@ emission. They exclude ambient irradiance, previous indirect light and direct
 specular reflection, so the field provides one diffuse bounce without recursive
 feedback. Transparent materials receive GI but do not appear in captures.
 
-Gathered irradiance and directional visibility are retained between frames.
+Directional irradiance is gathered with positive cosine weights for diffuse
+transport, then retained with directional visibility between frames.
 Probe back-face hits identify locations inside one-sided solid geometry;
 probes with excessive back-face coverage are rejected during interpolation.
 Visible valid neighbors are normalized together, with a confidence check when
 none is trustworthy. This avoids treating every occluded neighbor as black
 incident light. Thin double-sided cards do not classify a probe as inside a
-solid. Invalid probes are not automatically relocated.
+solid. Probes that cannot find usable nearby space within the relocation bound
+can remain rejected.
 
 New fields start dark and fill progressively. A full update cycle takes
 approximately `ceil(environment.layout.total / updatesPerFrame)` rendered
@@ -109,7 +126,8 @@ attenuates received GI without darkening direct light or emission.
 
 ## Debug and lifetime
 
-Set `debug = true` to show small octahedral markers at probe positions.
+Set `debug = true` to show small octahedral markers at actual capture positions,
+including relocated probes.
 Uncaptured probes are magenta, rejected probes are orange/red, and valid probes
 show their gathered lighting. Markers are drawn after transparent objects and
 before post-processing.

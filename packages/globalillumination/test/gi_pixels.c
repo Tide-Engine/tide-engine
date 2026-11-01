@@ -125,6 +125,12 @@ static bool synthetic_cases(void)
     CHECK((pixels[0] >> 24) > 5u);
     CHECK(rgb(pixels[1], 0, 0, 0, true, 3));
     CHECK(abs((int)(pixels[2] >> 24) - (int)(pixels[3] >> 24)) <= 3);
+    // One bright incident ray has no contribution to the opposite hemisphere.
+    // Truncated SH9 reconstructed a positive rear lobe for this exact input.
+    probe->synthetic = 7;
+    CHECK(render(pixels, 1));
+    CHECK((pixels[0] >> 24) > 15u);
+    CHECK(rgb(pixels[1], 0, 0, 0, true, 1));
     probe->synthetic = 4;
     for (int at = 0; at < 8; at++) probe->positions.at[at] = tide_f3((at - 4) * 0.01f, 0, 0);
     CHECK(render(pixels, 1));
@@ -232,15 +238,66 @@ static bool direct_bounce_case(void)
     return true;
 }
 
+static bool sphere_contact_case(void)
+{
+    start(6);
+    GIProbe *probe = &local.GIProbe;
+    probe->settings.maxProbes = 512;
+    probe->sampleCount = 8;
+    local.GIPlacementAudit.enabled = true;
+    for (int at = 0; at < 8; at++) {
+        // Two close floor samples on each side of the visible sphere contact.
+        probe->positions.at[at] = tide_f3(1.0f + (float)at * 0.08f, 0, -0.8f);
+        probe->normals.at[at] = tide_f3(0, 1, 0);
+    }
+    uint32_t pixels[MAX_POINTS];
+    CHECK(refresh(pixels, 1));
+    for (int at = 0; at < 8; at++) {
+        const unsigned light = (pixels[at] >> 24) + (pixels[at] >> 16 & 255u) + (pixels[at] >> 8 & 255u);
+        CHECK(light > 3u);
+    }
+    CHECK(local.GIPlacementAudit.index >= 0);
+    probe->showOffset = true;
+    probe->offsetIndex = local.GIPlacementAudit.index;
+    CHECK(render(pixels, 1));
+    const tide_float3 offset = local.GIPlacementAudit.offset;
+    CHECK(rgb(pixels[0], offset.x + 128.0 / 255, offset.y + 128.0 / 255, offset.z + 128.0 / 255, true, 2));
+    cleanup();
+    return true;
+}
+
+static bool thin_wall_case(void)
+{
+    for (int hidden = 0; hidden <= 1; hidden++) {
+        start(hidden ? 8 : 7);
+        GIProbe *probe = &local.GIProbe;
+        probe->settings.probeSpacing = 3;
+        probe->sampleCount = 3;
+        for (int at = 0; at < 3; at++) {
+            probe->positions.at[at] = tide_f3((float)(at - 1), 0, -0.1f);
+            probe->normals.at[at] = tide_f3(0, 0, 1);
+        }
+        uint32_t pixels[MAX_POINTS];
+        CHECK(refresh(pixels, 1));
+        for (int at = 0; at < 3; at++) {
+            if (!hidden) CHECK(rgb(pixels[at], 0, 0, 0, true, 2));
+            else CHECK((pixels[at] >> 24) > 15u);
+        }
+        cleanup();
+    }
+    return true;
+}
+
 static int frame(void *context, const float seconds)
 {
     (void)context;
     (void)seconds;
     printf("renderer: %s\n", tide_platform_renderer());
-    const bool passed = synthetic_cases() && room_cases() && direct_bounce_case();
+    const bool passed = synthetic_cases() && room_cases() && direct_bounce_case() && sphere_contact_case()
+        && thin_wall_case();
     tide_draw_free(&draw);
     if (!passed) return 1;
-    puts("ok: world GI automatic wall/floor coverage, isotropic integral, directionality, invalid probes, visibility, emissive/direct bounce and unchanged match hashes");
+    puts("ok: world GI automatic coverage, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes");
     return 0;
 }
 

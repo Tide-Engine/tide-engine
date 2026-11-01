@@ -402,7 +402,7 @@ view ConfigureMaterials(mut Render3D.Material material)
 | Callback data | Meaning |
 |---|---|
 | `SurfaceInput.world` | World-space position |
-| `SurfaceInput.normal` | World-space geometric normal |
+| `SurfaceInput.normal` | World-space interpolated vertex normal, before normal mapping |
 | `SurfaceInput.tangent`, `SurfaceInput.bitangent` | World-space tangent frame, including transform/UV handedness |
 | `SurfaceInput.uv` | Scaled/offset UVs for the UV hook; final UVs, including parallax, for coverage and surface |
 | `SurfaceInput.viewDirection` | Normalized direction from the surface toward the camera, or the probe during GI capture |

@@ -10,14 +10,74 @@ struct Resources
     RenderTarget face4;
     RenderTarget face5;
     RenderTarget atlas;
-    RenderTarget projection;
-    RenderTarget partialProjection;
+    RenderTarget rays;
     List<Vertex> quad;
-    List<Vertex> projectionQuad;
-    List<Vertex> partialQuad;
+    List<Vertex> rayQuad;
     List<int> indices;
     List<Vertex3> markers;
     List<int> markerIndices;
+}
+
+struct PlacementInstance
+{
+    int slot;
+    float4x4 transform;
+    LocalBounds bounds;
+}
+
+int PlacementSlot(mut WorldBounds bounds, Entity entity, Asset<Mesh3D> mesh)
+{
+    // CollectWorldBounds has already populated the identity cache this frame.
+    if (!bounds.staticSlots.TryGet(entity, out var slot)) return -1;
+    int index = slot - 1;
+    if (index < 0 || index >= bounds.staticBounds.count || bounds.staticBounds[index].mesh != mesh) return -1;
+    if (!bounds.staticBounds[index].placementReady)
+    {
+        mut StaticBounds cached = bounds.staticBounds[index];
+        cached.placement = BuildPlacementMesh(mesh.Value);
+        cached.placementReady = true;
+        bounds.staticBounds[index] = cached;
+    }
+    return index;
+}
+
+float3 RelocateProbe(WorldBounds bounds, List<PlacementInstance> instances,
+                     float3 anchor, float3 previous, float spacing)
+{
+    // Keep an established free position. Separate trigger and target clearance
+    // prevent tiny transform changes from continually moving the capture eye.
+    float trigger = spacing * 0.04;
+    float clearance = spacing * 0.08;
+    float limit = spacing * 0.45;
+    mut float3 position = anchor + previous;
+    // Three correction steps plus a final clearance check keep each scheduled
+    // probe to at most four neighborhood scans.
+    for (var attempt = 0; attempt < 4; attempt++)
+    {
+        mut GeometryHit obstruction = default;
+        mut float depth = 0;
+        foreach (var instance in instances)
+        {
+            float3 nearest = Math.Clamp(position, instance.bounds.minimum, instance.bounds.maximum);
+            if (Math.LengthSq(double3(nearest) - double3(position)) > double(trigger) * double(trigger)) continue;
+            GeometryHit hit = PlacementSurface(bounds.staticBounds[instance.slot].placement,
+                instance.transform, position, spacing);
+            if (!hit.found) continue;
+            bool embedded = hit.insideKnown && hit.inside;
+            float overlap = embedded ? hit.distance + clearance : hit.distance < trigger ? clearance - hit.distance : 0;
+            if (overlap > depth) { depth = overlap; obstruction = hit; }
+        }
+        if (depth <= 0) return position - anchor;
+        // PlacementSurface computes its feature direction in double, including
+        // edge/corner clearance. Keep bound comparisons wide at large worlds.
+        float3 candidate = obstruction.point + obstruction.normal * clearance;
+        if (!FiniteBoundsValue(candidate)
+            || Math.LengthSq(double3(candidate) - double3(anchor)) > double(limit) * double(limit)) return previous;
+        position = candidate;
+    }
+    // Unresolved overlaps retain the prior capture point. Raster back-face
+    // rejection remains the final validity check; no light is fabricated here.
+    return previous;
 }
 
 // Including this optional package opts into GI; it can also be disabled locally.
@@ -31,6 +91,9 @@ local singleton Environment
     int cursor;
     int updates;
     int rayCount = 384;
+    long generation;
+    List<float3> offsets;
+    float3 captureOffset;
     Texture light0;
     Texture light1;
     Texture light2;
@@ -45,10 +108,8 @@ local singleton Environment
     Texture data5;
     Texture irradiance;
     Texture distance;
-    Texture projection;
-    Texture projectionData;
-    Texture partialProjection;
-    Texture partialProjectionData;
+    Texture rayLight;
+    Texture rayData;
 }
 
 void Dispose(mut Environment environment)
@@ -60,13 +121,15 @@ void Dispose(mut Environment environment)
     environment.resources.face4.Dispose();
     environment.resources.face5.Dispose();
     environment.resources.atlas.Dispose();
-    environment.resources.projection.Dispose();
-    environment.resources.partialProjection.Dispose();
+    environment.resources.rays.Dispose();
     environment.resources = default;
     environment.ready = false;
     environment.initialized = 0;
     environment.cursor = 0;
     environment.updates = 0;
+    environment.generation = 0;
+    environment.offsets = default;
+    environment.captureOffset = float3(0);
     environment.light0 = default;
     environment.light1 = default;
     environment.light2 = default;
@@ -81,10 +144,8 @@ void Dispose(mut Environment environment)
     environment.data5 = default;
     environment.irradiance = default;
     environment.distance = default;
-    environment.projection = default;
-    environment.projectionData = default;
-    environment.partialProjection = default;
-    environment.partialProjectionData = default;
+    environment.rayLight = default;
+    environment.rayData = default;
 }
 
 bool LayoutChanged(FieldLayout a, FieldLayout b)
@@ -104,9 +165,16 @@ void PrepareResources(mut Environment environment, FieldLayout layout)
     environment.resources.face3 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
     environment.resources.face4 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
     environment.resources.face5 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
-    environment.resources.atlas = RenderTarget(576, layout.atlasRows * 18, 1, Format.Rgba16f, Format.Rgba16f);
-    environment.resources.projection = RenderTarget(9, 1, 1, Format.Rgba16f, Format.Rgba16f);
-    environment.resources.partialProjection = RenderTarget(9, 16, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.atlas = RenderTarget(576, layout.atlasRows * 19, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.rays = RenderTarget(64, 6, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.rayLight = environment.resources.rays.color;
+    environment.rayData = environment.resources.rays.colors[1];
+    environment.resources.rayQuad = [
+        Vertex { position = float2(0, 0), uv = float2(0, 0) },
+        Vertex { position = float2(64, 0), uv = float2(1, 0) },
+        Vertex { position = float2(64, 6), uv = float2(1, 1) },
+        Vertex { position = float2(0, 6), uv = float2(0, 1) }
+    ];
     environment.light0 = environment.resources.face0.color;
     environment.light1 = environment.resources.face1.color;
     environment.light2 = environment.resources.face2.color;
@@ -121,27 +189,11 @@ void PrepareResources(mut Environment environment, FieldLayout layout)
     environment.data5 = environment.resources.face5.colors[1];
     environment.irradiance = environment.resources.atlas.color;
     environment.distance = environment.resources.atlas.colors[1];
-    environment.projection = environment.resources.projection.color;
-    environment.projectionData = environment.resources.projection.colors[1];
-    environment.partialProjection = environment.resources.partialProjection.color;
-    environment.partialProjectionData = environment.resources.partialProjection.colors[1];
-    environment.resources.partialQuad = [
-        Vertex { position = float2(0, 0), uv = float2(0, 0) },
-        Vertex { position = float2(9, 0), uv = float2(1, 0) },
-        Vertex { position = float2(9, 16), uv = float2(1, 1) },
-        Vertex { position = float2(0, 16), uv = float2(0, 1) }
-    ];
-    environment.resources.projectionQuad = [
-        Vertex { position = float2(0, 0), uv = float2(0, 0) },
-        Vertex { position = float2(9, 0), uv = float2(1, 0) },
-        Vertex { position = float2(9, 1), uv = float2(1, 1) },
-        Vertex { position = float2(0, 1), uv = float2(0, 1) }
-    ];
     environment.resources.quad = [
         Vertex { position = float2(0, 0), uv = float2(0, 0) },
         Vertex { position = float2(18, 0), uv = float2(1, 0) },
-        Vertex { position = float2(18, 18), uv = float2(1, 1) },
-        Vertex { position = float2(0, 18), uv = float2(0, 1) }
+        Vertex { position = float2(18, 19), uv = float2(1, 1) },
+        Vertex { position = float2(0, 19), uv = float2(0, 1) }
     ];
     environment.resources.indices = [0, 1, 2, 0, 2, 3];
     environment.resources.markers = [
@@ -153,6 +205,7 @@ void PrepareResources(mut Environment environment, FieldLayout layout)
         3, 4, 0, 3, 1, 4, 3, 5, 1, 3, 0, 5];
     ResetTarget(environment.resources.atlas);
     environment.resources.atlas.Clear(Color.black);
+    environment.offsets.Resize(layout.total);
     environment.ready = true;
 }
 
@@ -179,17 +232,13 @@ quaternion FaceRotation(int face)
 void IntegrateProbe(mut Environment environment, int probe)
 {
     if (!environment.ready || probe < 0 || probe >= environment.layout.total) return;
-    ResetTarget(environment.resources.partialProjection);
-    environment.resources.partialProjection.SetScreen();
-    environment.resources.partialProjection.Mesh(environment.resources.partialQuad,
-        environment.resources.indices, Project);
-    ResetTarget(environment.resources.projection);
-    environment.resources.projection.SetScreen();
-    environment.resources.projection.Mesh(environment.resources.projectionQuad,
-        environment.resources.indices, ReduceProjection);
+    environment.captureOffset = environment.offsets[probe] / environment.layout.spacing;
+    ResetTarget(environment.resources.rays);
+    environment.resources.rays.SetScreen();
+    environment.resources.rays.Mesh(environment.resources.rayQuad, environment.resources.indices, PackRays);
     ResetTarget(environment.resources.atlas);
     environment.resources.atlas.SetScreen();
-    environment.resources.atlas.Transform(float2(probe % 32, probe / 32) * 18)
+    environment.resources.atlas.Transform(float2(probe % 32, probe / 32) * float2(18, 19))
     {
         environment.resources.atlas.Mesh(environment.resources.quad, environment.resources.indices, Convolve);
     }
@@ -199,11 +248,11 @@ void IntegrateProbe(mut Environment environment, int probe)
 float3 Indirect(SurfaceInput input, Surface surface, Texture irradiance, Texture distance,
                  FieldLayout layout, float intensity, int initialized)
 {
-    return Sample(irradiance, distance, layout, intensity, initialized, input.world, surface.normal);
+    return Sample(irradiance, distance, layout, intensity, initialized, input.world, surface.normal, input.normal);
 }
 
 [After(Render3D.Stages.Shadows), After(CollectWorldBounds), Before(Render3D.Stages.Color)]
-view Update(mut Environment environment, WorldBounds bounds, mut Render3D.Renderer renderer, World world,
+view Update(mut Environment environment, mut WorldBounds bounds, mut Render3D.Renderer renderer, World world,
             query (MeshRenderer mesh, Material material) meshes,
             query (SkinnedMeshRenderer mesh, Material material) skins)
 {
@@ -217,17 +266,31 @@ view Update(mut Environment environment, WorldBounds bounds, mut Render3D.Render
         if (environment.ready) GlobalIllumination.Dispose(environment);
         return;
     }
+    if (environment.ready && environment.generation != bounds.generation)
+        GlobalIllumination.Dispose(environment);
     PrepareResources(environment, bounds.layout);
+    environment.generation = bounds.generation;
     // Resolve stored hierarchy once per eligible instance, shared by all six
     // faces and every probe in this frame. Borrowed material rows stay live.
     mut List<float4x4> transforms = [];
     mut List<float4x4> skinTransforms = [];
+    mut List<PlacementInstance> placements = [];
     int budget = Math.Min(settings.updatesPerFrame, environment.layout.total);
     if (budget > 0)
     {
         foreach (var object in meshes)
-            if (object.mesh.visible && object.material.mode != SurfaceMode.Transparent)
-                transforms.Add(world.LocalToWorld(object.entity));
+        {
+            if (!object.mesh.visible || object.material.mode == SurfaceMode.Transparent) continue;
+            float4x4 transform = world.LocalToWorld(object.entity);
+            transforms.Add(transform);
+            // Cutout coverage, skinning and arbitrary deformation are raster
+            // facts; authored solid triangles cannot classify their interiors.
+            if (object.material.mode != SurfaceMode.Opaque || object.material.doubleSided || object.material.vertex != null) continue;
+            int slot = PlacementSlot(bounds, object.entity, object.mesh.mesh);
+            if (slot < 0 || !bounds.staticBounds[slot].placement.valid) continue;
+            LocalBounds placed = TransformBounds(bounds.staticBounds[slot].bounds, transform);
+            if (placed.valid) placements.Add(PlacementInstance { slot = slot, transform = transform, bounds = placed });
+        }
         foreach (var object in skins)
             if (object.mesh.visible && object.material.mode != SurfaceMode.Transparent)
                 skinTransforms.Add(world.LocalToWorld(object.entity));
@@ -235,7 +298,10 @@ view Update(mut Environment environment, WorldBounds bounds, mut Render3D.Render
     for (var update = 0; update < budget; update++)
     {
         int probe = environment.cursor;
-        float3 position = ProbePosition(environment.layout, probe);
+        float3 anchor = ProbePosition(environment.layout, probe);
+        environment.offsets[probe] = RelocateProbe(bounds, placements, anchor,
+            environment.offsets[probe], environment.layout.spacing);
+        float3 position = anchor + environment.offsets[probe];
         mut Render3D.Renderer capture = renderer;
         capture.diffuseCapture = true;
         capture.captureEye = position;
@@ -246,7 +312,8 @@ view Update(mut Environment environment, WorldBounds bounds, mut Render3D.Render
             ResetTarget(capture.hdr);
             capture.hdr.Clear(Color.black);
             capture.hdr.SetCamera(float4x4.TRS(position, FaceRotation(face), float3(1)),
-                float4x4.PerspectiveFov(Math.PI * 0.5, 1, 0.02, environment.layout.far));
+                float4x4.PerspectiveFov(Math.PI * 0.5, 1,
+                    Math.Min(0.02, environment.layout.spacing * 0.01), environment.layout.far));
             mut int index = 0;
             foreach (var object in meshes)
             {
@@ -282,7 +349,7 @@ frag DebugProbe(Vertex3 vertex, out Color color, Environment environment, ProbeI
     if (probe.index >= environment.initialized) { color = Color(0.2, 0, 0.2); return; }
     float2 uv = AtlasUV(probe.index, environment.layout.atlasRows, vertex.position);
     Color validity = environment.distance.Sample(uv, Filter.Bilinear, Wrap.Clamp);
-    if (validity.b > 0.25) { color = Color(1, 0.05, 0); return; }
+    if (validity.b >= 0.25) { color = Color(1, 0.05, 0); return; }
     Color light = environment.irradiance.Sample(uv, Filter.Bilinear, Wrap.Clamp);
     color = Color(ClampHdr(float3(light.r, light.g, light.b) / Math.PI), 1);
 }
@@ -295,7 +362,7 @@ view DebugProbes(Environment environment, Render3D.Renderer renderer)
     {
         for (var probe = 0; probe < environment.layout.total; probe++)
             renderer.hdr.Mesh(environment.resources.markers, environment.resources.markerIndices,
-                float4x4.TRS(ProbePosition(environment.layout, probe), quaternion.identity, float3(environment.layout.spacing * 0.05)),
+                float4x4.TRS(ProbePosition(environment.layout, probe) + environment.offsets[probe], quaternion.identity, float3(environment.layout.spacing * 0.05)),
                 DebugProbe, ProbeIndex { index = probe });
     }
 }

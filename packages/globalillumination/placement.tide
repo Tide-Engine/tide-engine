@@ -1,0 +1,390 @@
+namespace GlobalIllumination;
+
+// Asset-local geometry, built once per pack generation. Vertex seams are welded
+// solely for topology; retained triangles preserve their authored positions.
+struct PlacementTriangle
+{
+    float3 a;
+    float3 b;
+    float3 c;
+    int source;
+}
+
+struct PlacementNode
+{
+    float3 minimum;
+    float3 maximum;
+    int first;
+    int count;
+    int escape;
+}
+
+struct PlacementMesh
+{
+    List<PlacementTriangle> triangles;
+    List<PlacementNode> nodes;
+    bool closed;
+    bool valid;
+
+    mut void BuildBranch(int first, int count)
+    {
+        int index = nodes.count;
+        PlacementTriangle triangle = triangles[first];
+        mut PlacementNode node = PlacementNode {
+            minimum = Math.Min(triangle.a, Math.Min(triangle.b, triangle.c)),
+            maximum = Math.Max(triangle.a, Math.Max(triangle.b, triangle.c)),
+            first = first, count = count
+        };
+        for (var i = first + 1; i < first + count; i++)
+        {
+            PlacementTriangle next = triangles[i];
+            node.minimum = Math.Min(node.minimum, Math.Min(next.a, Math.Min(next.b, next.c)));
+            node.maximum = Math.Max(node.maximum, Math.Max(next.a, Math.Max(next.b, next.c)));
+        }
+        nodes.Add(node);
+        if (count > 4)
+        {
+            float3 span = node.maximum - node.minimum;
+            int axis = span.x >= span.y && span.x >= span.z ? 0 : span.y >= span.z ? 1 : 2;
+            int left = count / 2;
+            PlacementPartition(triangles, first, first + count, first + left, axis);
+            BuildBranch(first, left);
+            BuildBranch(first + left, count - left);
+            nodes[index].count = 0;
+        }
+        nodes[index].escape = nodes.count;
+    }
+}
+
+struct GeometryHit
+{
+    bool found;
+    bool inside;
+    bool insideKnown;
+    float3 point;
+    float3 normal;
+    float distance;
+}
+
+struct PlacementWeld
+{
+    float3 point;
+    int next;
+}
+
+struct PlacementEdge
+{
+    int count;
+    int orientation;
+}
+
+bool PlacementFinite(float value) { return value >= -1e30 && value <= 1e30; }
+bool PlacementFinite(float3 value)
+{
+    return PlacementFinite(value.x) && PlacementFinite(value.y) && PlacementFinite(value.z);
+}
+
+int PlacementWeldIndex(mut Map<int, int> heads, mut List<PlacementWeld> points, float3 value, float tolerance)
+{
+    // Exported trigonometric seams/poles can contain 1e-16 instead of zero.
+    // Snap only this tiny origin neighborhood, not ordinary nearby positions.
+    float3 point = float3(Math.Abs(value.x) <= tolerance ? 0 : value.x,
+                          Math.Abs(value.y) <= tolerance ? 0 : value.y,
+                          Math.Abs(value.z) <= tolerance ? 0 : value.z);
+    int hash = Math.Hash(point);
+    int head = heads[hash];
+    mut int at = head;
+    while (at > 0)
+    {
+        PlacementWeld candidate = points[at - 1];
+        if (candidate.point.x == point.x && candidate.point.y == point.y && candidate.point.z == point.z)
+            return at - 1;
+        at = candidate.next;
+    }
+    int index = points.count;
+    points.Add(PlacementWeld { point = point, next = head });
+    heads[hash] = index + 1;
+    return index;
+}
+
+void PlacementAddEdge(mut Map<long, PlacementEdge> edges, int a, int b)
+{
+    long key = (long(Math.Min(a, b)) << 32) | long(Math.Max(a, b));
+    mut PlacementEdge edge = edges[key];
+    edge.count++;
+    edge.orientation += a < b ? 1 : -1;
+    edges[key] = edge;
+}
+
+double PlacementKey(PlacementTriangle triangle, int axis)
+{
+    double3 centroid = (double3(triangle.a) + double3(triangle.b) + double3(triangle.c)) / 3d;
+    return axis == 0 ? centroid.x : axis == 1 ? centroid.y : centroid.z;
+}
+
+void PlacementSwap(mut List<PlacementTriangle> triangles, int a, int b)
+{
+    PlacementTriangle saved = triangles[a];
+    triangles[a] = triangles[b];
+    triangles[b] = saved;
+}
+
+// Three-way median selection stays balanced when many centroids coincide.
+void PlacementPartition(mut List<PlacementTriangle> triangles, int first, int end, int middle, int axis)
+{
+    mut int lo = first;
+    mut int hi = end;
+    while (hi - lo > 1)
+    {
+        double a = PlacementKey(triangles[lo], axis);
+        double b = PlacementKey(triangles[lo + (hi - lo) / 2], axis);
+        double c = PlacementKey(triangles[hi - 1], axis);
+        double pivot = Math.Max(Math.Min(a, b), Math.Min(Math.Max(a, b), c));
+        mut int less = lo;
+        mut int scan = lo;
+        mut int greater = hi;
+        while (scan < greater)
+        {
+            double key = PlacementKey(triangles[scan], axis);
+            if (key < pivot) { PlacementSwap(triangles, less, scan); less++; scan++; }
+            else if (key > pivot) { greater--; PlacementSwap(triangles, scan, greater); }
+            else scan++;
+        }
+        if (middle < less) hi = less;
+        else if (middle >= greater) lo = greater;
+        else return;
+    }
+}
+
+PlacementMesh BuildPlacementMesh(Render3D.Mesh3D mesh)
+{
+    mut PlacementMesh result = default;
+    // Resolve each live geometry list once; immutable lists are borrowed for
+    // construction and no source handles/pointers are retained in the cache.
+    var vertices = mesh.vertices;
+    var indices = mesh.indices;
+    if (vertices.count == 0 || indices.count < 3) return result;
+    mut Map<int, int> heads = [];
+    mut List<PlacementWeld> points = [];
+    mut List<int> welded = [];
+    welded.Resize(vertices.count);
+    mut float3 minimum = vertices[0].position;
+    mut float3 maximum = minimum;
+    foreach (var vertex in vertices)
+    {
+        if (!PlacementFinite(vertex.position)) return default;
+        minimum = Math.Min(minimum, vertex.position);
+        maximum = Math.Max(maximum, vertex.position);
+    }
+    float tolerance = float(Math.Cmax(double3(maximum) - double3(minimum)) * 1e-12d);
+    for (var i = 0; i < vertices.count; i++)
+    {
+        float3 point = vertices[i].position;
+        if (!PlacementFinite(point)) return default;
+        welded[i] = PlacementWeldIndex(heads, points, point, tolerance);
+    }
+    mut Map<long, PlacementEdge> edges = [];
+    mut bool closed = indices.count % 3 == 0;
+    for (var at = 0; at + 2 < indices.count; at += 3)
+    {
+        int a = indices[at];
+        int b = indices[at + 1];
+        int c = indices[at + 2];
+        if (a < 0 || b < 0 || c < 0 || a >= welded.count || b >= welded.count || c >= welded.count)
+            return default;
+        if (welded[a] == welded[b] || welded[b] == welded[c] || welded[c] == welded[a]) continue;
+        float3 pa = vertices[a].position;
+        float3 pb = vertices[b].position;
+        float3 pc = vertices[c].position;
+        double3 cross = Math.Cross(double3(pb) - double3(pa), double3(pc) - double3(pa));
+        // Collapsed exporter pole triangles carry no surface or boundary edges.
+        if (Math.LengthSq(cross) <= 0d) continue;
+        result.triangles.Add(PlacementTriangle { a = pa, b = pb, c = pc, source = at / 3 });
+        PlacementAddEdge(edges, welded[a], welded[b]);
+        PlacementAddEdge(edges, welded[b], welded[c]);
+        PlacementAddEdge(edges, welded[c], welded[a]);
+    }
+    foreach (var edge in edges)
+        if (edge.value.count != 2 || edge.value.orientation != 0) closed = false;
+    if (result.triangles.count == 0) return default;
+    result.BuildBranch(0, result.triangles.count);
+    result.closed = closed;
+    result.valid = true;
+    return result;
+}
+
+double3 PlacementTransform(float4x4 transform, double3 point)
+{
+    return double3(transform.c0.xyz) * point.x + double3(transform.c1.xyz) * point.y
+        + double3(transform.c2.xyz) * point.z + double3(transform.c3.xyz);
+}
+
+double PlacementBoxDistance(PlacementNode node, float4x4 transform, double3 world)
+{
+    mut double3 minimum = PlacementTransform(transform, double3(node.minimum));
+    mut double3 maximum = minimum;
+    for (var i = 1; i < 8; i++)
+    {
+        double3 corner = double3((i & 1) == 0 ? node.minimum.x : node.maximum.x,
+                                 (i & 2) == 0 ? node.minimum.y : node.maximum.y,
+                                 (i & 4) == 0 ? node.minimum.z : node.maximum.z);
+        double3 point = PlacementTransform(transform, corner);
+        minimum = Math.Min(minimum, point);
+        maximum = Math.Max(maximum, point);
+    }
+    double3 delta = world - Math.Clamp(world, minimum, maximum);
+    return Math.LengthSq(delta);
+}
+
+// Closest point on a triangle, with double intermediates for thin triangles and
+// large/nonuniform instances. Degenerate local triangles were removed at build.
+double3 PlacementClosest(double3 point, double3 a, double3 b, double3 c)
+{
+    double3 ab = b - a;
+    double3 ac = c - a;
+    double3 ap = point - a;
+    double d1 = Math.Dot(ab, ap);
+    double d2 = Math.Dot(ac, ap);
+    if (d1 <= 0d && d2 <= 0d) return a;
+    double3 bp = point - b;
+    double d3 = Math.Dot(ab, bp);
+    double d4 = Math.Dot(ac, bp);
+    if (d3 >= 0d && d4 <= d3) return b;
+    double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0d && d1 >= 0d && d3 <= 0d) return a + ab * (d1 / (d1 - d3));
+    double3 cp = point - c;
+    double d5 = Math.Dot(ab, cp);
+    double d6 = Math.Dot(ac, cp);
+    if (d6 >= 0d && d5 <= d6) return c;
+    double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0d && d2 >= 0d && d6 <= 0d) return a + ac * (d2 / (d2 - d6));
+    double va = d3 * d6 - d5 * d4;
+    if (va <= 0d && d4 - d3 >= 0d && d5 - d6 >= 0d)
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    double sum = va + vb + vc;
+    if (sum <= 0d) return a;
+    return a + ab * (vb / sum) + ac * (vc / sum);
+}
+
+bool PlacementRayBox(PlacementNode node, double3 origin, double3 direction)
+{
+    double3 a = (double3(node.minimum) - origin) / direction;
+    double3 b = (double3(node.maximum) - origin) / direction;
+    double3 minimum = Math.Min(a, b);
+    double3 maximum = Math.Max(a, b);
+    return Math.Cmax(minimum) <= Math.Cmin(maximum) && Math.Cmin(maximum) >= 0d;
+}
+
+// Signed crossings distinguish outward closed solids from inward room shells.
+// A ray touching a mesh edge/vertex is ambiguous, so retry another fixed ray.
+// -2147483647 means ambiguous, otherwise the oriented winding count there.
+int PlacementRayWinding(PlacementMesh mesh, double3 origin, double3 direction)
+{
+    mut int winding = 0;
+    mut int at = 0;
+    while (at < mesh.nodes.count)
+    {
+        PlacementNode node = mesh.nodes[at];
+        if (node.escape <= at || node.escape > mesh.nodes.count || node.count < 0
+            || node.count > mesh.triangles.count || node.first < 0
+            || node.first > mesh.triangles.count - node.count) return -2147483647;
+        if (!PlacementRayBox(node, origin, direction)) { at = node.escape; continue; }
+        for (var i = node.first; i < node.first + node.count; i++)
+        {
+            PlacementTriangle triangle = mesh.triangles[i];
+            double3 a = double3(triangle.a);
+            double3 ab = double3(triangle.b) - a;
+            double3 ac = double3(triangle.c) - a;
+            double3 cross = Math.Cross(direction, ac);
+            double determinant = Math.Dot(ab, cross);
+            double scale = Math.Sqrt(Math.LengthSq(ab) * Math.LengthSq(cross));
+            if (Math.Abs(determinant) <= scale * 1e-12d) continue;
+            double inverse = 1d / determinant;
+            double3 delta = origin - a;
+            double u = Math.Dot(delta, cross) * inverse;
+            double3 other = Math.Cross(delta, ab);
+            double v = Math.Dot(direction, other) * inverse;
+            double t = Math.Dot(ac, other) * inverse;
+            if (u < -1e-10d || v < -1e-10d || u + v > 1d + 1e-10d || t < 0d) continue;
+            if (u <= 1e-10d || v <= 1e-10d || u + v >= 1d - 1e-10d || t == 0d) return -2147483647;
+            winding += determinant < 0d ? 1 : -1;
+        }
+        at++;
+    }
+    return winding;
+}
+
+GeometryHit PlacementSurface(PlacementMesh mesh, float4x4 transform, float3 world, float radius)
+{
+    mut GeometryHit result = default;
+    if (!mesh.valid || mesh.nodes.count == 0 || !PlacementFinite(world)
+        || !PlacementFinite(radius) || radius < 0
+        || !PlacementFinite(transform.c0.xyz) || !PlacementFinite(transform.c1.xyz)
+        || !PlacementFinite(transform.c2.xyz) || !PlacementFinite(transform.c3.xyz)
+        || transform.c0.w != 0 || transform.c1.w != 0 || transform.c2.w != 0 || transform.c3.w != 1) return result;
+    double3 x = double3(transform.c0.xyz);
+    double3 y = double3(transform.c1.xyz);
+    double3 z = double3(transform.c2.xyz);
+    double determinant = Math.Dot(x, Math.Cross(y, z));
+    double scale = Math.Sqrt(Math.LengthSq(x) * Math.LengthSq(y) * Math.LengthSq(z));
+    if (scale <= 0d || Math.Abs(determinant) <= scale * 1e-12d) return result;
+    double3 query = double3(world);
+    mut double nearest = double(radius) * double(radius);
+    mut double3 closest = double3(0d);
+    mut double3 normal = double3(0d);
+    mut int source = 2147483647;
+    mut int at = 0;
+    while (at < mesh.nodes.count)
+    {
+        PlacementNode node = mesh.nodes[at];
+        if (node.escape <= at || node.escape > mesh.nodes.count || node.count < 0
+            || node.count > mesh.triangles.count || node.first < 0
+            || node.first > mesh.triangles.count - node.count) return default;
+        if (PlacementBoxDistance(node, transform, query) > nearest) { at = node.escape; continue; }
+        for (var i = node.first; i < node.first + node.count; i++)
+        {
+            PlacementTriangle triangle = mesh.triangles[i];
+            double3 a = PlacementTransform(transform, double3(triangle.a));
+            double3 b = PlacementTransform(transform, double3(triangle.b));
+            double3 c = PlacementTransform(transform, double3(triangle.c));
+            double3 point = PlacementClosest(query, a, b, c);
+            double distance = Math.LengthSq(query - point);
+            if (distance > nearest || (distance == nearest && triangle.source >= source)) continue;
+            double3 face = Math.Cross(b - a, c - a);
+            double length = Math.Length(face);
+            if (length <= 0d) continue;
+            normal = face / length * (determinant < 0d ? -1d : 1d);
+            nearest = distance;
+            closest = point;
+            source = triangle.source;
+            result.found = true;
+        }
+        at++;
+    }
+    if (!result.found) return result;
+    if (mesh.closed)
+    {
+        double3 delta = query - double3(transform.c3.xyz);
+        double3 local = double3(Math.Dot(delta, Math.Cross(y, z)),
+            Math.Dot(delta, Math.Cross(z, x)), Math.Dot(delta, Math.Cross(x, y))) / determinant;
+        for (var ray = 0; ray < 3; ray++)
+        {
+            double3 direction = ray == 0 ? double3(1d, 0.371390676d, 0.529113818d)
+                : ray == 1 ? double3(0.194731d, 1d, 0.614719d) : double3(0.783139d, 0.276751d, 1d);
+            int winding = PlacementRayWinding(mesh, local, direction);
+            if (winding == -2147483647) continue;
+            result.insideKnown = true;
+            result.inside = winding > 0;
+            break;
+        }
+    }
+    double distance = Math.Sqrt(nearest);
+    // The nearest-point direction supplies the feature normal at edges and
+    // corners too. At zero distance use the render-oriented geometric normal.
+    if (distance > 0d)
+        normal = (result.inside ? closest - query : query - closest) / distance;
+    result.point = float3(closest);
+    result.normal = float3(normal);
+    result.distance = float(distance);
+    return result;
+}

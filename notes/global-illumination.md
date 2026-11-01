@@ -1,6 +1,135 @@
 # Global Illumination package
 
-## Separate automatic-coverage implementation (2026-11-01)
+## Spatial quality follow-up (2026-11-01)
+
+The owner's "wobbling" report means uneven bands in the still image, not
+temporal instability. This pass addresses spatial reconstruction and probe
+coverage; it adds no temporal filter. It remains on `feat/render3d-gi` and must
+not be merged to dev without the owner's instruction.
+
+### Geometry-aware capture placement
+
+World-space lattice anchors and the total probe budget stay fixed. Before each
+scheduled capture, the package checks nearby eligible instances and can move a
+probe out of a closed solid or away from a surface. Target clearance is .08
+spacing; correction starts below .04 spacing. An established free offset is
+retained. Three correction steps and a final check may move at most .45 spacing from
+the anchor; an unresolved location retains its previous offset and remains
+subject to raster back-face rejection. No boxes are authored or treated as
+solid geometry.
+
+`placement.tide` caches actual local triangles in a balanced preorder BVH per
+asset/pack generation. Node bounds and candidate triangles are transformed for
+world-space closest-point distances, with double intermediates and double
+relocation-bound comparisons. Mirrors, nonuniform scale and shear preserve
+render-oriented feature normals. Singular/nonfinite queries fail conservatively.
+Triangle traversal has checked forward escape/range guards.
+
+Topology welds equal positions, additionally snapping coordinates within the
+largest local axis extent times 1e-12 of zero only for the weld. This closes the
+example sphere's tiny trigonometric seam/pole residues; retained noncollapsed
+triangle positions are unchanged. A closed mesh requires two opposite
+incidences for every welded edge. Signed winding with deterministic oblique
+rays distinguishes outward solids from inward room shells and reversed cavity
+boundaries; ambiguous edge hits retry, then remain unknown. Open meshes supply
+unsigned surface clearance, never an inferred filled AABB.
+
+Only visible opaque single-sided static meshes without custom vertex callbacks
+guide relocation. Cutout, skinned, double-sided and deformed meshes still use
+the existing raster capture/rejection path; CPU authored triangles do not claim
+to classify their current occupied volume. BVHs build lazily when updates run.
+Pack-generation changes now restart capture history as well as bounds/geometry
+caches. Disabling releases local caches and GPU resources as before.
+
+Probe records are now 18x19: the original 18-square irradiance/moment tile and
+gutters plus a metadata row encoding offset/spacing + 128/255. Zero is exactly
+representable in the Rgba8 fallback. Pixel-center metadata reads use the same
+bilinear/clamp sampler as distance moments, preserving two final GI texture
+bindings and the fully mapped skinning path's twelve-binding limit. Visibility,
+facing and debug positions use the actual capture position; interpolation cells
+remain anchored to the lattice. The maximum atlas is 576x1216, within 2048.
+Capture near clipping scales down with spacing to remain below small clearances.
+
+### Positive angular reconstruction
+
+The previous SH9 truncation produced a positive rear lobe for narrow incident
+light and extra bands on the sphere. Irradiance now uses nonnegative cosine
+quadrature over the same 384 symmetric capture rays. A small per-direction
+quadrature correction preserves PI*L for uniform incoming light. Back-face rays
+remain in the normalization denominator, so rejected radiance is not restored.
+
+A 64x6 two-color scratch target packs each ray once per updated probe. One
+output holds radiance with front-face coverage alpha; the other holds encoded
+direction with solid-angle alpha. Ordinary texture reads recover straight
+channels, so convolution explicitly restores the required alpha factors. Its
+inner loop uses two coherent image reads rather than repeatedly decoding six
+cube faces and reconstructing rays. The SH projection/reduction targets and
+passes are removed. The six captures and final two-atlas sampling boundary stay
+the same.
+
+Visibility stores inverse projective depth in R and its standard-deviation
+channel in G, with the per-probe back-face fraction in B. Captures currently
+write zero G; numerical sigma is max(G, mean * .001, 1e-5). For a probe-relative displacement
+v, the receiver metric is spacing / (abs(v.x)+abs(v.y)+abs(v.z)). A capture's
+radial depth is converted to the same metric using its ray direction. This
+metric is affine over an octahedral fold for a planar occluder. Misses contribute
+zero inverse depth. Four capture pixels first interpolate inverse axial cube
+depth, then convert to the octahedral metric. This avoids point-sampled angular
+error and subtracting nearly equal half-float first and second moments.
+
+The receiver uses four atlas texels as a visibility PCF, comparing each tap
+against the plane through the actual receiver with its unperturbed vertex
+normal. The normal bias only chooses interpolation coordinates and cannot move
+the occlusion endpoint through a thin wall. Taps meeting the plane behind the
+probe have no support. Plane intersections far from the receiver are smoothly
+downweighted by 1 / (1 + (distance / (.5 * spacing))^4). Near-zero plane distance
+smoothly falls back to point-depth comparison. Filtered probability is cubed
+once. A max(mean * .01, 1e-5) comparison margin avoids turning capture/half-float
+rounding into coplanar self-occlusion. The same default is exercised by the
+physical thin-wall blocking and open-emitter control.
+
+Visibility retains cubic probability suppression and aggregate confidence
+gating, while removing the lowest-20%-probability zero-support region that
+made contact fringes overly sharp. Eight trilinear neighbors remain; facing is
+max(dot(N, towardProbe), 0)^2 + .01, regularized at the probe. The small floor
+retains free dark support without giving grazing probes enough weight to print
+shadow-terminator contours. Rejected probes remain in the confidence denominator
+so usable coverage fades continuously. Wider spatial kernels and renderer
+derivative/curvature inputs were inspected but were unnecessary after the PCF
+correction; no Render3D API change remains. Uniform-bounded neighbor/tap loops
+retain the same iteration and bilinear evaluation order without forcing static
+expansion of the whole sampler on software drivers.
+This is still bounded single-bounce diffuse GI: sparse support, thin geometry,
+small emitters and coarse world coverage remain quality limits.
+
+All seven affected native Windows ASan CTests pass, including Vulkan validation
+and OpenGL, as do all nine affected web-debug CTests across scoped runs on
+WebGL, ANGLE D3D11 and WebGPU. The original twelve-texture mapped-skinning
+oracles remain intact. New checks cover actual sphere-contact light, a physical
+thin wall and its open-emitter control, a narrow incident ray with no rear lobe,
+nonzero bounded/stable world offsets and their GPU metadata, plus independent
+closed/open/inward/reflected/sheared/degenerate geometry queries and large-world
+relocation bounds. Match hashes remain unchanged. The production docs build
+passes on Node 24.22.1 with the existing allowed unstaged-example 404s.
+
+An initial software WebGL pixel run exceeded its existing 120-second runner.
+Uniform-bounded loops bring mapped-skinning WebGL from 67.9 to 4.36 seconds;
+the unchanged pixel oracles then pass in 106.17 seconds. No timeout or assertion
+was relaxed. The optimized native capture is pixel-identical to the accepted
+pre-optimization result. Native captures at 160 and 256 frames are identical;
+GI-disabled output is identical to the earlier implementation. This report
+concerns spatial artifacts, not a new temporal claim.
+
+The same-scene final captures are in
+`bench/results/globalillumination-spatial-20261101/captures/`. The reported black
+contact fringe and secondary sphere bands are removed. Small corner occlusion
+lobes remain; no general leak-free or path-traced quality claim is made.
+Other native OS/mobile hardware, Unity and device-loss recovery remain
+unavailable local coverage. Final paired cost measurements follow this code
+commit. The earlier measurements below describe their pinned SH-based source,
+not this implementation. Work remains on the feature branch only.
+
+## Initial separate automatic-coverage implementation (2026-11-01)
 
 The owner approved implementing GI as its own optional package depending on
 Render3D, with automatic coverage across rendered geometry, no authored probe
@@ -66,7 +195,7 @@ Eligible world transforms are resolved once per frame and reused across all
 faces and probes; borrowed query rows supply current material resources.
 
 The first capture image is radiance. The second has R normalized radial
-distance, G one-sided geometric back-face flag, B geometry-hit flag and alpha
+distance, G one-sided unperturbed vertex-normal back-face flag, B geometry-hit flag and alpha
 one. Empty black B=0 means far/unoccluded; this preserves nearby distance
 precision without per-face auxiliary clear draws. Double-sided cards have no
 solid interior and do not mark back faces.
