@@ -68,6 +68,7 @@ set(package_sources --package Render3D
     "${root}/packages/render3d/materials.tide"
     "${root}/packages/render3d/vertex.tide"
     "${root}/packages/render3d/post.tide"
+    "${root}/packages/render3d/gi.tide"
     "${root}/packages/render3d/render3d.tide")
 file(WRITE "${OUT}/game.tide"
     "scene Main;\n"

@@ -137,8 +137,8 @@ static inspection inspect(void)
             TIDE_CHECK(destination == renderer->hdr.id && phase <= 2);
             if (skin) {
                 result.skins += (int)run->count;
-                // Lit's eight bindings plus the two GPU skinning resources.
-                TIDE_CHECK(run->shader->texture_count == 10);
+                // Lit's ten bindings (including GI) plus two skinning resources.
+                TIDE_CHECK(run->shader->texture_count == 12);
             } else result.statics += (int)run->count;
             if (command->blend == TIDE_BLEND_ALPHA) {
                 TIDE_CHECK(command->depth == TIDE_DEPTH_READ && world.SkinningFixture.scenario == 3);
