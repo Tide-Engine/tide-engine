@@ -296,7 +296,7 @@ TIDE_TEST(render3d_match_local_light_hierarchy_and_full_cone_angles)
     dispose(&world, &local, &draw, &gui);
 }
 
-TIDE_TEST(render3d_point_face_matrices_boundaries_four_textures_and_batched_shadow_order)
+TIDE_TEST(render3d_point_face_matrices_boundaries_texture_bindings_and_batched_shadow_order)
 {
     static tide_world world;
     static tide_local local;
@@ -354,11 +354,11 @@ TIDE_TEST(render3d_point_face_matrices_boundaries_four_textures_and_batched_shad
                 if (run->count >= 2) batched = true;
             } else {
                 TIDE_CHECK(hdr_started && !presented && destination == local.Render3D_Renderer.hdr.id);
-                TIDE_CHECK(run->shader->texture_count == 8);
+                TIDE_CHECK(run->shader->texture_count == 10);
                 int bound = 0;
-                for (int texture = 0; texture < 8; texture++) bound += run->textures[texture] != 0;
+                for (int texture = 0; texture < 10; texture++) bound += run->textures[texture] != 0;
                 // Base color, shadow atlas and the two light/view data lists.
-                // The four omitted material maps bind the neutral fallback.
+                // Omitted material maps and disabled GI bind neutral fallbacks.
                 TIDE_CHECK(bound == 4);
                 color_draws++;
             }

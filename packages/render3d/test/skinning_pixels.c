@@ -169,6 +169,9 @@ static bool scenario(int number, bool reverse)
     world.SkinningFixture.reverse = reverse;
     tide_world_tick(&world);
     tide_local_init(&local);
+    // Fully mapped posed/deformed draws exercise all twelve live bindings,
+    // including the extra capture cameras. The normal oracle uses albedo zero.
+    local.SkinningProbe.gi = number == 2;
     gui.width = WIDTH; gui.height = HEIGHT;
     const uint64_t hash = tide_world_hash(&world);
     uint64_t hdr = 0, shadow = 0;
@@ -187,6 +190,7 @@ static bool scenario(int number, bool reverse)
                     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
                     CHECK(tide_world_hash(&world) == hash);
                     CHECK(local.Render3D_Renderer.ready && local.SkinningProbe.views == 1);
+                    if (number == 2) CHECK(local.Render3D_Renderer.giState.initialized > 0);
                     if (hdr) CHECK(hdr == local.Render3D_Renderer.hdr.id && shadow == local.Render3D_Renderer.shadowMap.id);
                     hdr = local.Render3D_Renderer.hdr.id;
                     shadow = local.Render3D_Renderer.shadowMap.id;
