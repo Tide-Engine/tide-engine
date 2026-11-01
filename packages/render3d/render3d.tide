@@ -1,7 +1,7 @@
 // Forward PBR. Configure before Prepare and draw HUDs after Present.
 namespace Render3D;
 
-enum Stages { Prepare, Lights, Shadows, GI, Color, Opaque, Transparent, PostPrepare, Bloom, PostProcess, Present }
+enum Stages { Prepare, Lights, Shadows, Color, Opaque, Transparent, PostPrepare, Bloom, PostProcess, Present }
 
 struct MeshVertex
 {
@@ -139,28 +139,17 @@ local singleton Renderer
     BloomSettings bloom;
     List<PostEffect> postEffects;
     float3 ambientIrradiance;
-    GISettings gi;
-    GIState giState;
-    GIResources giResources;
-    // Capture shading uses a probe eye; geometry callbacks retain the main eye.
-    bool giCapture;
-    float3 giEye;
-    // Sampled resources are direct singleton fields under shader binding rules.
-    Texture giLight0;
-    Texture giLight1;
-    Texture giLight2;
-    Texture giLight3;
-    Texture giLight4;
-    Texture giLight5;
-    DepthTexture giDepth0;
-    DepthTexture giDepth1;
-    DepthTexture giDepth2;
-    DepthTexture giDepth3;
-    DepthTexture giDepth4;
-    DepthTexture giDepth5;
-    Texture giIrradiance;
-    // Moments are target outputs with alpha one, preserving numeric channels.
-    Texture giDistance;
+    // Providers return linear incident diffuse irradiance. Textures are explicit
+    // so optional packages need no implicit singleton or resource captures.
+    IndirectLight indirect = Render3D.NoIndirect;
+    Texture indirect0;
+    Texture indirect1;
+    // Diffuse captures reuse the material pipeline and emit optional geometry
+    // metadata to color attachment one: radial distance R, backface G, hit B.
+    // Geometry hooks retain the main eye; black clears have no geometry hit.
+    bool diffuseCapture;
+    float3 captureEye;
+    float captureFar = 1000;
     int maxLights = 32;
     bool shadows = true;
     int maxShadowMaps = 8; // Cascades and point faces are reserved together.
@@ -204,7 +193,6 @@ local singleton Renderer
 
 void Dispose(mut Renderer renderer)
 {
-    DisposeGI(renderer);
     DisposePost(renderer);
     renderer.hdr.Dispose();
     renderer.shadowMap.Dispose();
@@ -234,7 +222,6 @@ void ResetTarget(RenderTarget target)
 view Prepare(mut Renderer renderer)
 {
     PreparePostResources(renderer);
-    PrepareGIResources(renderer);
     if (!renderer.enabled)
     {
         if (renderer.ready) Dispose(renderer);
@@ -824,7 +811,7 @@ view DrawMesh(MeshRenderer mesh, Material material, Renderer renderer, World wor
 
 void DrawMaterial(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform)
 {
-    renderer.hdr.Cull(material.doubleSided ? Cull.None : Cull.Back)
+    renderer.hdr.Cull(renderer.diffuseCapture || material.doubleSided ? Cull.None : Cull.Back)
     {
         if (material.vertex is Deform binding)
             renderer.hdr.Mesh(mesh.mesh.Value, transform, binding, material.shader, Maps(material, transform));
@@ -843,7 +830,7 @@ view DrawSkinnedMesh(SkinnedMeshRenderer mesh, Material material, Renderer rende
 void DrawSkinnedMaterial(Renderer renderer, SkinnedMeshRenderer mesh, Material material, float4x4 transform)
 {
     var vertex = Deform { vertex = VertexHook(material) };
-    renderer.hdr.Cull(material.doubleSided ? Cull.None : Cull.Back)
+    renderer.hdr.Cull(renderer.diffuseCapture || material.doubleSided ? Cull.None : Cull.Back)
     {
         if (mesh.preparedPose is Pose pose)
             renderer.hdr.SkinnedMesh(mesh.mesh.Value, transform, pose, vertex, material.shader, Maps(material, transform));

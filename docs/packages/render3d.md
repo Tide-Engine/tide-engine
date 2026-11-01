@@ -1,10 +1,10 @@
 ---
-description: "Render static and skinned meshes with PBR materials, shadows, opt-in diffuse global illumination, bloom and custom HDR effects."
+description: "Render static and skinned meshes with PBR materials, shadows, indirect-lighting extensions, bloom and custom HDR effects."
 ---
 
 # Render3D
 
-`render3d` is an optional package for 3D meshes with opaque, cutout and transparent materials. Add mesh and material components to match entities, then spawn directional, point or spot lights. The package draws shadows, lights meshes into an HDR target and presents through one camera. Diffuse global illumination is opt-in. Lights and ambient irradiance default to zero; with GI disabled and neither configured, only material emission contributes.
+`render3d` is an optional package for 3D meshes with opaque, cutout and transparent materials. Add mesh and material components to match entities, then spawn directional, point or spot lights. The package draws shadows, lights meshes into an HDR target and presents through one camera. Lights and ambient irradiance default to zero; without an indirect-lighting provider and neither configured, only material emission contributes. Automatic diffuse GI is supplied by the separate optional [Global Illumination package](./globalillumination.md).
 
 ## Add the package
 
@@ -128,7 +128,7 @@ view BindMaps(mut Render3D.Material material)
 
 The field annotation controls numeric sampling, including through GPU texture helpers. It does not create a new texture type or let a Raw image pass through an ordinary `Texture` local, return value or draw argument. See [Textures that are numbers](../game/shaders.md#textures-that-are-numbers) for the complete binding rules.
 
-Set `Renderer.ambientIrradiance` to a nonnegative **linear** RGB irradiance to see diffuse ambient light. Its default is zero. The contribution is `albedo * (1 - metallic) * ambientIrradiance * occlusion / Math.PI`. AO affects diffuse ambient and enabled [probe GI](#opt-in-diffuse-global-illumination); it does not darken direct lights or emission. There is no environment specular reflection or automatic occlusion bake. With zero ambient irradiance and GI disabled, an AO slider has no lighting contribution to change.
+Set `Renderer.ambientIrradiance` to a nonnegative **linear** RGB irradiance to see diffuse ambient light. Its default is zero. The contribution is `albedo * (1 - metallic) * ambientIrradiance * occlusion / Math.PI`. AO affects diffuse ambient and irradiance returned by an [indirect-lighting provider](#indirect-lighting-providers); it does not darken direct lights or emission. There is no environment specular reflection or automatic occlusion bake. With zero ambient irradiance and no indirect-lighting provider, an AO slider has no lighting contribution to change.
 
 Height mapping is a single-sample UV parallax offset. It changes the sampled pattern as you orbit; it does not move vertices, change depth, create a new silhouette or displace shadow geometry. Use modest scales, especially near grazing angles. This is not tessellation, relief mapping or refraction.
 
@@ -140,74 +140,57 @@ Height mapping is a single-sample UV parallax offset. It changes the sampled pat
 
 Choose **PBR maps**, **Cutout** or **Blend** to move between the exhibits. In PBR maps, compare zero/positive normal and height strengths, turn ORM off, then vary roughness, metallic, AO and emission. AO is visible because this demo explicitly supplies ambient irradiance. The height slider changes the material through an ordinary targeted command. In Cutout, adjust the cutoff and watch the leaf shadow change with it. Orbit behind the leaves to see both sides. In Blend, adjust opacity and orbit around the overlapping cards and opaque sphere. The demo's original PNGs and quad are reproducible with `python docs/examples/assets/render3d/make_materials.py` in a checkout.
 
-## Opt-in diffuse global illumination
+## Indirect-lighting providers
 
-Render3D includes an experimental realtime diffuse GI prototype. Enable it
-explicitly to bounce light from lit surfaces and emissive materials onto nearby
-surfaces. It uses one bounded volume of probes. GI starts disabled and allocates
-no probe targets or capture work while disabled.
+Render3D accepts diffuse indirect irradiance from another package or a game's
+own provider. The optional [Global Illumination package](./globalillumination.md)
+uses this interface for automatic scene coverage and bounced light. Render3D
+itself owns no probe grid, GI history or GI targets.
 
-```csharp
-[Before(Render3D.Stages.Prepare)]
-view ConfigureGI(mut Render3D.Renderer renderer)
-{
-    renderer.gi.enabled = true;
-    renderer.gi.center = float3(0, 2, 0);
-    renderer.gi.size = float3(8, 3, 8);
-    renderer.gi.counts = int3(3);
-    renderer.gi.updatesPerFrame = 1;
-    renderer.gi.debug = true;
-}
-```
+`Render3D.IndirectLight` is
+`Func<SurfaceInput, Surface, Texture, Texture, float3>`. Set
+`Renderer.indirect` to the callback and `indirect0` / `indirect1` to its two
+explicit source images. The callback receives the final material surface and
+returns nonnegative linear **irradiance**, before albedo, metallic weight,
+material AO and the Lambert `1 / Math.PI` factor. Render3D applies those factors
+through its ordinary indirect PBR evaluation. Do not include them again in the
+provider's return value. Ambient irradiance remains a separate additive term.
 
-| `GISettings` field | Default | Meaning |
-|---|---|---|
-| `enabled` | `false` | Enable probe GI on this machine |
-| `center` | `float3(0)` | World-space center, clamped to −1,000,000–1,000,000 on each axis |
-| `size` | `float3(10)` | Full width, height and depth in world units, clamped to 0.1–100 each |
-| `counts` | `int3(3)` | Probes per axis, clamped to 2–4 each |
-| `updatesPerFrame` | `1` | Probes refreshed each frame, clamped to 0–4; 0 freezes updates |
-| `intensity` | `1` | Multiplier on gathered irradiance, clamped to 0–16 |
-| `debug` | `false` | Show the probe positions and gathered lighting |
+The default `Render3D.NoIndirect` returns zero and samples no images. Games
+using Render3D alone retain its original texture-binding requirements. Provider
+callbacks can capture plain numeric values; GPU resources must come through the
+two texture arguments, following the ordinary [shader callback rules](../game/shaders.md).
+Configure the provider before `Stages.Color`; a pass that gathers lighting can
+run after `Stages.Shadows` and before `Stages.Color`.
 
-Probes update in round-robin order. Each updated probe captures six small views
-of the visible opaque and cutout meshes, including skinned meshes and their
-shared vertex deformation. Captures include diffuse direct reflection and
-emission; they exclude ambient irradiance, previously gathered GI and specular
-reflection. This supplies one diffuse bounce. Transparent surfaces receive GI
-but do not appear in the captures. Material AO attenuates received GI in the
-same way as diffuse ambient light.
+## Diffuse captures
 
-Changes to geometry, lighting or emission appear as the probes refresh. With
-the default 27 probes and one update per frame, a complete refresh takes 27
-frames. A newly enabled volume starts dark and fills progressively. Moving or
-resizing the volume, or changing its probe counts, invalidates its captured
-lighting. Receivers outside the volume get no probe GI. Disabling GI releases
-its resources; enabling it again starts a fresh volume. All GI settings,
-history and resources are local presentation state, outside match hashes and
-snapshots. A GPU device reset loses captured lighting; updates refill it. A
-volume frozen with `updatesPerFrame = 0` cannot recover that lighting until
-updates resume.
+Lighting packages can reuse the material pipeline for diffuse captures. On a
+copy of `Renderer`, set `diffuseCapture = true`, set `captureEye` to the capture
+position and `captureFar` to its positive distance scale, then direct `hdr` to
+the capture target and call the ordinary material drawing helpers.
 
-Probes span both boundaries of the volume on each axis. Set `debug = true` to
-show small octahedron markers, shaded by their gathered lighting; probes that
-have not been captured yet are magenta. Place the volume so its probe positions
-are in open space. There is no
-automatic placement, inside-geometry detection or probe relocation. Visibility
-weighting reduces light leaking through geometry, but coarse captures can miss
-thin walls or small emitters. Each face is 16×16 pixels, with an 8×8 directional
-irradiance record per probe. The capture far plane is twice the volume's diagonal;
-surfaces beyond the capture range contribute nothing. Probe density controls spatial detail and refresh
-latency; this prototype has no performance guarantee for a particular scene or
-device.
+Capture shading contains diffuse direct reflection and emission. It excludes
+ambient irradiance, the indirect provider and direct specular reflection, so a
+capture does not recursively gather its own indirect result. Surface and UV
+callbacks see the capture view direction. Vertex deformation callbacks retain
+the main-camera `VertexInput.eye`, shared with the ordinary color and shadow
+passes. Captures draw both triangle sides; transparent objects are omitted by
+the gathering package.
 
-Captures reuse the selected lights and existing shadow atlas. Keep shadow
-coverage large enough for the surfaces visible from the probes: camera-fitted
-directional cascades can leave such surfaces outside their shadow coverage.
-Material surface callbacks use the probe's view direction during capture;
-vertex callbacks retain the main-camera `VertexInput.eye`, including after
-skinning. GI supplies no glossy reflections, automatic sky lighting or light
-baking.
+`Lit` also writes optional color attachment 1 as numeric metadata with alpha 1:
+
+| Channel | Value |
+|---|---|
+| R | Surface-to-`captureEye` radial distance divided by `captureFar`, clamped to 0–1 |
+| G | 1 for a geometric back face of a one-sided material; 0 otherwise |
+| B | 1 where geometry was drawn |
+| A | 1 |
+
+A black clear has B = 0 and therefore means no geometry hit. Double-sided cards
+do not mark back faces as solid interiors. A target with one color attachment
+simply drops this metadata output. These capture settings do not modify match
+state or replace the camera's ordinary presentation pass.
 
 ## Cutout, transparency and sidedness
 
@@ -279,7 +262,7 @@ view ConfigureVertex(mut Render3D.Material material)
 The mutable vertex is mesh-local, after skinning and before the object's world
 transform. `VertexInput.world` is its world position before the callback;
 `localToWorld` is the effective draw transform, and `eye` is the main camera in
-color, shadow and GI capture passes. The callback can change position, normal, tangent,
+color, shadow and diffuse capture passes. The callback can change position, normal, tangent,
 UV and color. Update normals/tangents when the deformation requires it; changing
 position does not derive them automatically. Plain captures become shared draw
 uniforms. Set `material.vertex = null` to restore the ordinary static path and
@@ -310,7 +293,8 @@ skip-draw behavior.
 | `bloom` | Disabled | Built-in scene-linear bloom settings |
 | `postEffects` | Empty list | Ordered custom HDR callbacks after bloom |
 | `ambientIrradiance` | `float3(0)` | Linear diffuse ambient irradiance, multiplied by material AO |
-| `gi` | Disabled | Settings for the opt-in diffuse probe GI prototype |
+| `indirect` | `Render3D.NoIndirect` | Optional callback returning linear diffuse irradiance |
+| `indirect0`, `indirect1` | Empty images | Explicit images supplied to the indirect provider |
 | `maxLights` | `32` | Maximum retained lights; negative values act as 0 |
 | `shadows` | `true` | Enable shadow casting and sampling |
 | `maxShadowMaps` | `8` | Shadow-view budget, clamped to 0–16 |
@@ -377,7 +361,6 @@ The package owns these named view stages, in order:
 | `Render3D.Stages.Prepare` | Prepare retained targets and reset per-frame light data |
 | `Render3D.Stages.Lights` | Collect and select lights, allocate shadow views and clear the atlas |
 | `Render3D.Stages.Shadows` | Draw all visible shadow casters |
-| `Render3D.Stages.GI` | Capture and update enabled diffuse GI probes |
 | `Render3D.Stages.Color` | Set the scene camera and clear the HDR target |
 | `Render3D.Stages.Opaque` | Draw opaque meshes with their materials |
 | `Render3D.Stages.Transparent` | Draw sorted transparent meshes after opaque/cutout geometry |
@@ -509,8 +492,8 @@ are enabled, with the collapsed toolbar clear of the stats corner.
 
 ## Lighting and current limits
 
-Lighting uses a metallic-roughness BRDF with GGX specular, Smith visibility, Schlick Fresnel and Lambert diffuse. Direct contributions from all retained lights are summed with optional diffuse ambient irradiance and enabled probe GI; nonnegative emission is added once, including with zero lights. Presentation multiplies linear HDR RGB by `exposure`, applies Reinhard tone mapping (`x / (1 + x)`) and encodes sRGB once. Keep callback emission and lighting values linear; do not encode them before presentation.
+Lighting uses a metallic-roughness BRDF with GGX specular, Smith visibility, Schlick Fresnel and Lambert diffuse. Direct contributions from all retained lights are summed with optional diffuse ambient irradiance and provider-supplied indirect irradiance; nonnegative emission is added once, including with zero lights. Presentation multiplies linear HDR RGB by `exposure`, applies Reinhard tone mapping (`x / (1 + x)`) and encodes sRGB once. Keep callback emission and lighting values linear; do not encode them before presentation.
 
 Base-map sampling currently filters display-space texels **before** decoding them to linear light. This can produce different edges and mip colors from linear-light filtering; automatic hardware sRGB sampling is not part of this slice. On devices unable to render into float targets, the engine's existing [RGBA8 fallback](../game/render-targets.md#what-a-target-holds) clips HDR values before tone mapping.
 
-The current path draws static and skinned mesh assets, with an opt-in diffuse probe GI prototype. It has no `LightMode`, baked or area lights, environment specular, glossy GI or light baker. Model texture and metallic/roughness import is not automatic: declare and bind the maps explicitly. Height is UV parallax and transparency is sorted alpha blending, subject to the limits above.
+The current path draws static and skinned mesh assets, with an optional indirect-lighting provider. Automatic probe GI belongs to the separate [Global Illumination package](./globalillumination.md). It has no `LightMode`, baked or area lights, environment specular, glossy GI or light baker. Model texture and metallic/roughness import is not automatic: declare and bind the maps explicitly. Height is UV parallax and transparency is sorted alpha blending, subject to the limits above.

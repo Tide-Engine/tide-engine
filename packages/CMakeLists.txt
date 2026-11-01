@@ -26,14 +26,19 @@ target_include_directories(tide_render3d_transparent PRIVATE "${PROJECT_SOURCE_D
 target_link_libraries(tide_render3d_transparent PRIVATE tide_render3d)
 add_test(NAME tide_render3d_transparent COMMAND tide_render3d_transparent)
 set(render3d_sources render3d/pbr.tide render3d/materials.tide render3d/vertex.tide
-    render3d/post.tide render3d/gi.tide render3d/render3d.tide)
+    render3d/post.tide render3d/render3d.tide)
 
-tide_add_game(tide_render3d_gi SOURCES render3d/test/gi.tide NAME game
-    PACKAGES Render3D ${render3d_sources}
-    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/gi_test.c)
-target_include_directories(tide_render3d_gi PRIVATE "${PROJECT_SOURCE_DIR}/tests")
-target_link_libraries(tide_render3d_gi PRIVATE tide_render3d)
-add_test(NAME tide_render3d_gi COMMAND tide_render3d_gi)
+add_library(tide_globalillumination STATIC globalillumination/cache.c)
+target_link_libraries(tide_globalillumination PUBLIC tide_render3d)
+set(gi_sources globalillumination/world.tide globalillumination/sampling.tide
+    globalillumination/globalillumination.tide)
+tide_add_game(tide_globalillumination_test SOURCES globalillumination/test/gi.tide NAME game
+    PACKAGES Render3D ${render3d_sources} GlobalIllumination ${gi_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" globalillumination/test/gi_test.c)
+target_include_directories(tide_globalillumination_test PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_globalillumination_test PRIVATE tide_globalillumination)
+add_test(NAME tide_globalillumination COMMAND tide_globalillumination_test)
+
 tide_add_game(tide_render3d_pbr SOURCES render3d/test/pbr.tide NAME game
     PACKAGES Render3D render3d/pbr.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pbr_test.c)
@@ -80,18 +85,34 @@ target_link_libraries(tide_render3d_shadows PRIVATE tide_render3d)
 add_test(NAME tide_render3d_shadows COMMAND tide_render3d_shadows)
 
 if(TARGET tide_platform AND NOT TIDE_ANDROID)
-    tide_add_game(tide_render3d_gi_pixels SOURCES render3d/test/gi.tide NAME game
-        PACKAGES Render3D ${render3d_sources} HOST render3d/test/gi_pixels.c)
-    target_link_libraries(tide_render3d_gi_pixels PRIVATE tide_platform tide_render3d)
+    tide_add_game(tide_globalillumination_skinning SOURCES render3d/test/skinning.tide
+        globalillumination/test/skinning.tide NAME game
+        PACKAGES Render3D ${render3d_sources} GlobalIllumination ${gi_sources}
+        HOST render3d/test/skinning_pixels.c)
+    target_link_libraries(tide_globalillumination_skinning PRIVATE tide_platform tide_globalillumination)
     if(TIDE_WEB)
-        tide_web_page(tide_render3d_gi_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
-        tide_add_web_test(tide_render3d_gi_pixels TARGET tide_render3d_gi_pixels
-            WEBGPU EXPECT "ok: Render3D GI" D3D11)
+        tide_web_page(tide_globalillumination_skinning SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_globalillumination_skinning TARGET tide_globalillumination_skinning
+            WEBGPU EXPECT "ok: Render3D posed UV silhouettes" D3D11)
     else()
-        add_test(NAME tide_render3d_gi_pixels COMMAND tide_render3d_gi_pixels)
-        add_test(NAME tide_render3d_gi_pixels_opengl COMMAND tide_render3d_gi_pixels)
-        tide_gpu_test(tide_render3d_gi_pixels)
-        tide_gpu_test(tide_render3d_gi_pixels_opengl OPENGL)
+        add_test(NAME tide_globalillumination_skinning COMMAND tide_globalillumination_skinning)
+        add_test(NAME tide_globalillumination_skinning_opengl COMMAND tide_globalillumination_skinning)
+        tide_gpu_test(tide_globalillumination_skinning)
+        tide_gpu_test(tide_globalillumination_skinning_opengl OPENGL)
+    endif()
+    tide_add_game(tide_globalillumination_pixels SOURCES globalillumination/test/gi.tide NAME game
+        PACKAGES Render3D ${render3d_sources} GlobalIllumination ${gi_sources}
+        HOST globalillumination/test/gi_pixels.c)
+    target_link_libraries(tide_globalillumination_pixels PRIVATE tide_platform tide_globalillumination)
+    if(TIDE_WEB)
+        tide_web_page(tide_globalillumination_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_globalillumination_pixels TARGET tide_globalillumination_pixels
+            WEBGPU EXPECT "ok: world GI automatic" D3D11)
+    else()
+        add_test(NAME tide_globalillumination_pixels COMMAND tide_globalillumination_pixels)
+        add_test(NAME tide_globalillumination_pixels_opengl COMMAND tide_globalillumination_pixels)
+        tide_gpu_test(tide_globalillumination_pixels)
+        tide_gpu_test(tide_globalillumination_pixels_opengl OPENGL)
     endif()
     tide_add_game(tide_render3d_shadows_pixels SOURCES render3d/test/shadows.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadows_pixels.c)

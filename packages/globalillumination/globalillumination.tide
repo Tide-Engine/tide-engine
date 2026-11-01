@@ -1,0 +1,281 @@
+using Render3D;
+namespace GlobalIllumination;
+
+struct Resources
+{
+    RenderTarget face0;
+    RenderTarget face1;
+    RenderTarget face2;
+    RenderTarget face3;
+    RenderTarget face4;
+    RenderTarget face5;
+    RenderTarget atlas;
+    RenderTarget projection;
+    List<Vertex> quad;
+    List<Vertex> projectionQuad;
+    List<int> indices;
+    List<Vertex3> markers;
+    List<int> markerIndices;
+}
+
+// Including this optional package opts into GI; it can also be disabled locally.
+local singleton Environment
+{
+    Settings settings;
+    FieldLayout layout;
+    Resources resources;
+    bool ready;
+    int initialized;
+    int cursor;
+    int updates;
+    int rayCount = 384;
+    Texture light0;
+    Texture light1;
+    Texture light2;
+    Texture light3;
+    Texture light4;
+    Texture light5;
+    Texture data0;
+    Texture data1;
+    Texture data2;
+    Texture data3;
+    Texture data4;
+    Texture data5;
+    Texture irradiance;
+    Texture distance;
+    Texture projection;
+    Texture projectionData;
+}
+
+void Dispose(mut Environment environment)
+{
+    environment.resources.face0.Dispose();
+    environment.resources.face1.Dispose();
+    environment.resources.face2.Dispose();
+    environment.resources.face3.Dispose();
+    environment.resources.face4.Dispose();
+    environment.resources.face5.Dispose();
+    environment.resources.atlas.Dispose();
+    environment.resources.projection.Dispose();
+    environment.resources = default;
+    environment.ready = false;
+    environment.initialized = 0;
+    environment.cursor = 0;
+    environment.updates = 0;
+    environment.light0 = default;
+    environment.light1 = default;
+    environment.light2 = default;
+    environment.light3 = default;
+    environment.light4 = default;
+    environment.light5 = default;
+    environment.data0 = default;
+    environment.data1 = default;
+    environment.data2 = default;
+    environment.data3 = default;
+    environment.data4 = default;
+    environment.data5 = default;
+    environment.irradiance = default;
+    environment.distance = default;
+    environment.projection = default;
+    environment.projectionData = default;
+}
+
+bool LayoutChanged(FieldLayout a, FieldLayout b)
+{
+    return a.spacing != b.spacing || Math.LengthSq(a.minimum - b.minimum) > 0
+        || a.counts.x != b.counts.x || a.counts.y != b.counts.y || a.counts.z != b.counts.z;
+}
+
+void PrepareResources(mut Environment environment, FieldLayout layout)
+{
+    if (environment.ready && !LayoutChanged(environment.layout, layout)) return;
+    GlobalIllumination.Dispose(environment);
+    environment.layout = layout;
+    environment.resources.face0 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.face1 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.face2 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.face3 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.face4 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.face5 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.atlas = RenderTarget(576, layout.atlasRows * 18, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.projection = RenderTarget(9, 1, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.light0 = environment.resources.face0.color;
+    environment.light1 = environment.resources.face1.color;
+    environment.light2 = environment.resources.face2.color;
+    environment.light3 = environment.resources.face3.color;
+    environment.light4 = environment.resources.face4.color;
+    environment.light5 = environment.resources.face5.color;
+    environment.data0 = environment.resources.face0.colors[1];
+    environment.data1 = environment.resources.face1.colors[1];
+    environment.data2 = environment.resources.face2.colors[1];
+    environment.data3 = environment.resources.face3.colors[1];
+    environment.data4 = environment.resources.face4.colors[1];
+    environment.data5 = environment.resources.face5.colors[1];
+    environment.irradiance = environment.resources.atlas.color;
+    environment.distance = environment.resources.atlas.colors[1];
+    environment.projection = environment.resources.projection.color;
+    environment.projectionData = environment.resources.projection.colors[1];
+    environment.resources.projectionQuad = [
+        Vertex { position = float2(0, 0), uv = float2(0, 0) },
+        Vertex { position = float2(9, 0), uv = float2(1, 0) },
+        Vertex { position = float2(9, 1), uv = float2(1, 1) },
+        Vertex { position = float2(0, 1), uv = float2(0, 1) }
+    ];
+    environment.resources.quad = [
+        Vertex { position = float2(0, 0), uv = float2(0, 0) },
+        Vertex { position = float2(18, 0), uv = float2(1, 0) },
+        Vertex { position = float2(18, 18), uv = float2(1, 1) },
+        Vertex { position = float2(0, 18), uv = float2(0, 1) }
+    ];
+    environment.resources.indices = [0, 1, 2, 0, 2, 3];
+    environment.resources.markers = [
+        Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(-1, 0, 0) },
+        Vertex3 { position = float3(0, 1, 0) }, Vertex3 { position = float3(0, -1, 0) },
+        Vertex3 { position = float3(0, 0, 1) }, Vertex3 { position = float3(0, 0, -1) }
+    ];
+    environment.resources.markerIndices = [2, 0, 4, 2, 4, 1, 2, 1, 5, 2, 5, 0,
+        3, 4, 0, 3, 1, 4, 3, 5, 1, 3, 0, 5];
+    ResetTarget(environment.resources.atlas);
+    environment.resources.atlas.Clear(Color.black);
+    environment.ready = true;
+}
+
+RenderTarget FaceTarget(Environment environment, int face)
+{
+    if (face == 0) return environment.resources.face0;
+    if (face == 1) return environment.resources.face1;
+    if (face == 2) return environment.resources.face2;
+    if (face == 3) return environment.resources.face3;
+    if (face == 4) return environment.resources.face4;
+    return environment.resources.face5;
+}
+
+quaternion FaceRotation(int face)
+{
+    if (face == 0) return quaternion.LookRotation(float3(1, 0, 0), float3(0, 1, 0));
+    if (face == 1) return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 1, 0));
+    if (face == 2) return quaternion.LookRotation(float3(0, 1, 0), float3(0, 0, -1));
+    if (face == 3) return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
+    if (face == 4) return quaternion.identity;
+    return quaternion.LookRotation(float3(0, 0, -1), float3(0, 1, 0));
+}
+
+void IntegrateProbe(mut Environment environment, int probe)
+{
+    if (!environment.ready || probe < 0 || probe >= environment.layout.total) return;
+    ResetTarget(environment.resources.projection);
+    environment.resources.projection.SetScreen();
+    environment.resources.projection.Mesh(environment.resources.projectionQuad,
+        environment.resources.indices, Project);
+    ResetTarget(environment.resources.atlas);
+    environment.resources.atlas.SetScreen();
+    environment.resources.atlas.Transform(float2(probe % 32, probe / 32) * 18)
+    {
+        environment.resources.atlas.Mesh(environment.resources.quad, environment.resources.indices, Convolve);
+    }
+    environment.initialized = Math.Max(environment.initialized, probe + 1);
+}
+
+float3 Indirect(SurfaceInput input, Surface surface, Texture irradiance, Texture distance,
+                 FieldLayout layout, float intensity, int initialized)
+{
+    return Sample(irradiance, distance, layout, intensity, initialized, input.world, surface.normal);
+}
+
+[After(Render3D.Stages.Shadows), After(CollectWorldBounds), Before(Render3D.Stages.Color)]
+view Update(mut Environment environment, WorldBounds bounds, mut Render3D.Renderer renderer, World world,
+            query (MeshRenderer mesh, Material material) meshes,
+            query (SkinnedMeshRenderer mesh, Material material) skins)
+{
+    environment.updates = 0;
+    Settings settings = ClampSettings(environment.settings);
+    renderer.indirect = Render3D.NoIndirect;
+    renderer.indirect0 = default;
+    renderer.indirect1 = default;
+    if (!settings.enabled || !renderer.enabled || !renderer.ready || !bounds.ready)
+    {
+        if (environment.ready) GlobalIllumination.Dispose(environment);
+        return;
+    }
+    PrepareResources(environment, bounds.layout);
+    // Resolve stored hierarchy once per eligible instance, shared by all six
+    // faces and every probe in this frame. Borrowed material rows stay live.
+    mut List<float4x4> transforms = [];
+    mut List<float4x4> skinTransforms = [];
+    int budget = Math.Min(settings.updatesPerFrame, environment.layout.total);
+    if (budget > 0)
+    {
+        foreach (var object in meshes)
+            if (object.mesh.visible && object.material.mode != SurfaceMode.Transparent)
+                transforms.Add(world.LocalToWorld(object.entity));
+        foreach (var object in skins)
+            if (object.mesh.visible && object.material.mode != SurfaceMode.Transparent)
+                skinTransforms.Add(world.LocalToWorld(object.entity));
+    }
+    for (var update = 0; update < budget; update++)
+    {
+        int probe = environment.cursor;
+        float3 position = ProbePosition(environment.layout, probe);
+        mut Render3D.Renderer capture = renderer;
+        capture.diffuseCapture = true;
+        capture.captureEye = position;
+        capture.captureFar = environment.layout.far;
+        for (var face = 0; face < 6; face++)
+        {
+            capture.hdr = FaceTarget(environment, face);
+            ResetTarget(capture.hdr);
+            capture.hdr.Clear(Color.black);
+            capture.hdr.SetCamera(float4x4.TRS(position, FaceRotation(face), float3(1)),
+                float4x4.PerspectiveFov(Math.PI * 0.5, 1, 0.02, environment.layout.far));
+            mut int index = 0;
+            foreach (var object in meshes)
+            {
+                if (!object.mesh.visible || object.material.mode == SurfaceMode.Transparent) continue;
+                DrawMaterial(capture, object.mesh, object.material, transforms[index]);
+                index++;
+            }
+            index = 0;
+            foreach (var object in skins)
+            {
+                if (!object.mesh.visible || object.material.mode == SurfaceMode.Transparent) continue;
+                DrawSkinnedMaterial(capture, object.mesh, object.material, skinTransforms[index]);
+                index++;
+            }
+        }
+        IntegrateProbe(environment, probe);
+        environment.cursor = (probe + 1) % environment.layout.total;
+        environment.updates++;
+    }
+    FieldLayout layout = environment.layout;
+    float intensity = settings.intensity;
+    int initialized = environment.initialized;
+    renderer.indirect = (SurfaceInput input, Surface surface, Texture a, Texture b) =>
+        Indirect(input, surface, a, b, layout, intensity, initialized);
+    renderer.indirect0 = environment.irradiance;
+    renderer.indirect1 = environment.distance;
+}
+
+struct ProbeIndex { int index; }
+
+frag DebugProbe(Vertex3 vertex, out Color color, Environment environment, ProbeIndex probe)
+{
+    if (probe.index >= environment.initialized) { color = Color(0.2, 0, 0.2); return; }
+    float2 uv = AtlasUV(probe.index, environment.layout.atlasRows, vertex.position);
+    Color validity = environment.distance.Sample(uv, Filter.Bilinear, Wrap.Clamp);
+    if (validity.b > 0.25) { color = Color(1, 0.05, 0); return; }
+    Color light = environment.irradiance.Sample(uv, Filter.Bilinear, Wrap.Clamp);
+    color = Color(ClampHdr(float3(light.r, light.g, light.b) / Math.PI), 1);
+}
+
+[After(Render3D.Stages.Transparent), Before(Render3D.Stages.PostPrepare)]
+view DebugProbes(Environment environment, Render3D.Renderer renderer)
+{
+    if (!environment.ready || !environment.settings.debug || !renderer.enabled || !renderer.ready) return;
+    renderer.hdr.Cull(Cull.None), renderer.hdr.Depth(Depth.Read), renderer.hdr.Blend(Blend.Replace)
+    {
+        for (var probe = 0; probe < environment.layout.total; probe++)
+            renderer.hdr.Mesh(environment.resources.markers, environment.resources.markerIndices,
+                float4x4.TRS(ProbePosition(environment.layout, probe), quaternion.identity, float3(environment.layout.spacing * 0.05)),
+                DebugProbe, ProbeIndex { index = probe });
+    }
+}

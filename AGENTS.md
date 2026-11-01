@@ -182,6 +182,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
 | `packages/render3d/`, default PBR, light components, shadows and HDR presentation | `notes/render3d.md` |
+| `packages/globalillumination/`, automatic world coverage, diffuse probes and visibility | `notes/global-illumination.md` |
 | `packages/cornerculling/`, conservative CPU box occlusion and candidate caches | `notes/corner-culling.md` |
 | `packages/box3d/`, resident state | `notes/box3d.md` |
 | `packages/rooms/` | `notes/rooms-package.md` |

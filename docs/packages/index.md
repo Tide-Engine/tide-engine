@@ -4,7 +4,7 @@ description: "Find Tide's optional rendering, visibility, physics, multiplayer m
 
 # Packages
 
-Packages add shared Tide code and C libraries to a game. This source tree contains eight optional packages: a 3D renderer, CPU visibility queries, two physics integrations, two multiplayer menus, a Steam integration and Opus voice chat. Each package has its own page here, with setup, API examples and current limits. Use a checkout or installation containing the packages you need.
+Packages add shared Tide code and C libraries to a game. This source tree contains nine optional packages: a 3D renderer, global illumination, CPU visibility queries, two physics integrations, two multiplayer menus, a Steam integration and Opus voice chat. Each package has its own page here, with setup, API examples and current limits. Use a checkout or installation containing the packages you need.
 
 ## Bundled packages
 
@@ -13,6 +13,7 @@ The name in the first column is what you pass to `tide add` or write in `tide.pa
 | Package | Namespace | What it provides | Documentation |
 |---|---|---|---|
 | `render3d` | `Render3D` | Static/skinned PBR meshes, lights, shadows, transparency, vertex hooks, bloom and HDR effects | [Render3D](./render3d.md) |
+| `globalillumination` | `GlobalIllumination` | Experimental diffuse world GI with automatic probe coverage; depends on Render3D | [Global Illumination](./globalillumination.md) |
 | `cornerculling` | `CornerCulling` | Conservative CPU box occlusion, cached queries and a spatial tree | [Corner Culling](./cornerculling.md) |
 | `box2d` | `Box2D` | Deterministic 2D rigid bodies, shapes, collisions and queries | [Box2D](./box2d.md) |
 | `box3d` | `Box3D` | Deterministic 3D rigid bodies, shapes, collisions and queries | [Box3D](./box3d.md) |

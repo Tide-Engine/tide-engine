@@ -108,7 +108,6 @@ if(NOT TIDE_ANDROID)
                           "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
-                          "${PROJECT_SOURCE_DIR}/packages/render3d/gi.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
         HOST render3d/main.c render3d/direct.c)
     target_link_libraries(bench_render3d PRIVATE tide_platform tide_render3d)
@@ -128,6 +127,31 @@ if(NOT TIDE_ANDROID)
         add_test(NAME bench_render3d_opengl COMMAND bench_render3d --quick)
         tide_gpu_test(bench_render3d)
         tide_gpu_test(bench_render3d_opengl OPENGL)
+    endif()
+endif()
+
+# Optional world GI: the same room with frozen lighting and bounded refresh work.
+if(NOT TIDE_ANDROID)
+    tide_add_game(bench_globalillumination NAME game SOURCES globalillumination/game.tide
+        PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
+                 GlobalIllumination "${PROJECT_SOURCE_DIR}/packages/globalillumination/world.tide"
+                                    "${PROJECT_SOURCE_DIR}/packages/globalillumination/sampling.tide"
+                                    "${PROJECT_SOURCE_DIR}/packages/globalillumination/globalillumination.tide"
+        HOST globalillumination/main.c)
+    target_link_libraries(bench_globalillumination PRIVATE tide_platform tide_globalillumination)
+    if(TIDE_WEB)
+        tide_web_page(bench_globalillumination SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(bench_globalillumination TARGET bench_globalillumination QUERY "quick"
+            WEBGPU EXPECT "GlobalIllumination benchmark correctness passed" SECONDS 240)
+    else()
+        add_test(NAME bench_globalillumination COMMAND bench_globalillumination --quick)
+        add_test(NAME bench_globalillumination_opengl COMMAND bench_globalillumination --quick)
+        tide_gpu_test(bench_globalillumination)
+        tide_gpu_test(bench_globalillumination_opengl OPENGL)
     endif()
 endif()
 

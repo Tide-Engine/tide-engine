@@ -1,5 +1,42 @@
 # Render3D package
 
+## General indirect provider and diffuse capture boundary (2026-11-01)
+
+The owner approved the separate optional Global Illumination package and
+continuing implementation with automatic world coverage, quality and bounded
+cost. All work stays on `feat/render3d-gi`; dev retains the GI revert below.
+`notes/global-illumination.md` records the package's field, cache, captures,
+sampling, gaps and validation. The older bounded-volume sections below remain
+historical and do not describe the current Render3D API.
+
+Render3D now supplies `IndirectLight`, an explicit-resource callback
+`Func<SurfaceInput, Surface, Texture, Texture, float3>`. The local renderer owns
+`indirect = Render3D.NoIndirect`, `indirect0` and `indirect1`; NoIndirect returns
+zero without sampling. Lit calls the provider with the final material surface
+and applies its returned linear irradiance through EvaluateIndirectPbr, keeping
+albedo, metallic weighting, AO and Lambert normalization in Render3D. Ambient
+remains additive. Providers capture numeric values; their resource inputs are
+the two explicit images. Compile spikes verify the ordinary/no-provider and
+numeric-capture provider paths without a compiler or runtime change. Render3D
+alone retains eight static/ten skinned texture bindings; the GI provider adds
+two. Probe settings/resources, GI lifecycle and the GI stage are removed from
+Render3D. External gathering can run between Shadows and Color.
+
+`diffuseCapture`, `captureEye` and `captureFar` let another package reuse the
+material draws for outgoing diffuse radiance plus emission. Capture shading
+excludes ambient, indirect and direct specular; material view callbacks use the
+capture eye while geometry deformation retains the main eye. Capture helpers
+draw both sides. Lit's optional second color output has normalized radial
+distance R, one-sided geometric back-face G, geometry hit B and alpha one.
+Black-cleared B=0 denotes a miss/far range; double-sided cards do not mark solid
+interior back faces. One-color targets drop that output normally. No backend
+or engine ABI changed.
+
+The guide and package README document the general boundary and link to the
+separate GI guide. The production docs build passes on Node 24.22.1 with the
+existing allowed unstaged-example 404s. Native/web execution and performance validation are recorded
+by the coordinating task with the package, not inferred from compile spikes.
+
 ## GI prototype withdrawn from dev (2026-11-01)
 
 After inspecting actual captures, the owner rejected the authored-volume model

@@ -1,0 +1,269 @@
+using Render3D;
+namespace GlobalIllumination;
+
+float3 FaceDirection(int face, float2 uv)
+{
+    float2 p = uv * 2 - float2(1);
+    if (face == 0) return Math.Normalize(float3(1, -p.y, -p.x));
+    if (face == 1) return Math.Normalize(float3(-1, -p.y, p.x));
+    if (face == 2) return Math.Normalize(float3(p.x, 1, p.y));
+    if (face == 3) return Math.Normalize(float3(p.x, -1, -p.y));
+    if (face == 4) return Math.Normalize(float3(p.x, -p.y, 1));
+    return Math.Normalize(float3(-p.x, -p.y, -1));
+}
+
+// Octahedral borders reflect into the opposite edge. Each probe has its own
+// one-texel gutter, so bilinear reads never mix neighboring probe records.
+float2 WrapOct(float2 uv)
+{
+    mut float2 result = uv;
+    if (result.x < 0) result = float2(-result.x, 1 - result.y);
+    else if (result.x > 1) result = float2(2 - result.x, 1 - result.y);
+    if (result.y < 0) result = float2(1 - result.x, -result.y);
+    else if (result.y > 1) result = float2(1 - result.x, 2 - result.y);
+    return result;
+}
+
+float3 OctDirection(float2 uv)
+{
+    float2 p = WrapOct(uv) * 2 - float2(1);
+    mut float3 direction = float3(p, 1 - Math.Abs(p.x) - Math.Abs(p.y));
+    if (direction.z < 0)
+        direction = float3((1 - Math.Abs(p.y)) * (p.x >= 0 ? 1 : -1),
+                           (1 - Math.Abs(p.x)) * (p.y >= 0 ? 1 : -1), direction.z);
+    return Math.Normalize(direction);
+}
+
+float2 OctUV(float3 direction)
+{
+    float3 n = Math.Normalize(direction);
+    float scale = Math.Abs(n.x) + Math.Abs(n.y) + Math.Abs(n.z);
+    if (scale <= 0) return float2(0.5);
+    float3 p = n / scale;
+    float2 folded = p.z >= 0 ? p.xy
+        : float2((1 - Math.Abs(p.y)) * (p.x >= 0 ? 1 : -1),
+                 (1 - Math.Abs(p.x)) * (p.y >= 0 ? 1 : -1));
+    return folded * 0.5 + float2(0.5);
+}
+
+float2 AtlasUV(int probe, int rows, float3 direction)
+{
+    float2 tile = float2(probe % 32, probe / 32) * 18;
+    return (tile + float2(1) + OctUV(direction) * 16) / float2(576, rows * 18);
+}
+
+float3 CaptureLight(Texture light0, Texture light1, Texture light2,
+                      Texture light3, Texture light4, Texture light5, int face, float2 uv)
+{
+    mut Color light = Color.black;
+    if (face == 0) light = light0.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 1) light = light1.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 2) light = light2.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 3) light = light3.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 4) light = light4.Sample(uv, Filter.Point, Wrap.Clamp);
+    else light = light5.Sample(uv, Filter.Point, Wrap.Clamp);
+    return ClampHdr(float3(light.r, light.g, light.b));
+}
+
+Color CaptureData(Texture data0, Texture data1, Texture data2,
+                   Texture data3, Texture data4, Texture data5, int face, float2 uv)
+{
+    mut Color data = Color.black;
+    if (face == 0) data = data0.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 1) data = data1.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 2) data = data2.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 3) data = data3.Sample(uv, Filter.Point, Wrap.Clamp);
+    else if (face == 4) data = data4.Sample(uv, Filter.Point, Wrap.Clamp);
+    else data = data5.Sample(uv, Filter.Point, Wrap.Clamp);
+    return data;
+}
+
+// Real SH basis in a fixed order, shared by projection and reconstruction.
+// Lambert convolution preserves bands 0..2 with factors PI, 2*PI/3, PI/4.
+float SHBasis(int index, float3 direction)
+{
+    if (index == 0) return 0.2820947918;
+    if (index == 1) return 0.4886025119 * direction.y;
+    if (index == 2) return 0.4886025119 * direction.z;
+    if (index == 3) return 0.4886025119 * direction.x;
+    if (index == 4) return 1.0925484306 * direction.x * direction.y;
+    if (index == 5) return 1.0925484306 * direction.y * direction.z;
+    if (index == 6) return 0.3153915653 * (3 * direction.z * direction.z - 1);
+    if (index == 7) return 1.0925484306 * direction.x * direction.z;
+    return 0.5462742153 * (direction.x * direction.x - direction.y * direction.y);
+}
+
+frag Project(Vertex vertex, out Color coefficient, out Color validity, Environment environment)
+{
+    int index = Math.Clamp(int(Math.Floor(vertex.uv.x * 9)), 0, 8);
+    mut float3 projected = float3(0);
+    mut float backfaces = 0;
+    mut float sphereWeight = 0;
+    // A bounded uniform loop avoids expanding hundreds of texture branches
+    // into the shader on software compilers. Each ray is integrated nine times,
+    // once for each coefficient, instead of once per directional atlas texel.
+    int rayCount = Math.Clamp(environment.rayCount, 1, 384);
+    for (var sample = 0; sample < rayCount; sample++)
+    {
+        int face = sample / 64;
+        int y = (sample / 8) % 8;
+        int x = sample % 8;
+        int px = x < 4 ? 2 + x * 4 : 17 + (x - 4) * 4;
+        int py = y < 4 ? 2 + y * 4 : 17 + (y - 4) * 4;
+        float2 uv = (float2(px, py) + float2(0.5)) / 32;
+        float2 plane = uv * 2 - float2(1);
+        float lengthSq = 1 + Math.Dot(plane, plane);
+        float solidAngle = 1 / (lengthSq * Math.Sqrt(lengthSq));
+        float3 ray = FaceDirection(face, uv);
+        float3 radiance = CaptureLight(environment.light0, environment.light1, environment.light2,
+            environment.light3, environment.light4, environment.light5, face, uv);
+        Color data = CaptureData(environment.data0, environment.data1, environment.data2,
+            environment.data3, environment.data4, environment.data5, face, uv);
+        float back = data.b > 0.5 ? Math.Clamp(data.g, 0, 1) : 0;
+        projected += radiance * ((1 - back) * SHBasis(index, ray) * solidAngle);
+        backfaces += back * solidAngle;
+        sphereWeight += solidAngle;
+    }
+    float band = index == 0 ? Math.PI : index < 4 ? 2 * Math.PI / 3 : Math.PI / 4;
+    float scale = 4 * Math.PI * band / Math.Max(sphereWeight, 0.00001);
+    // Higher bands contain signed coefficients. Do not apply a radiance clamp
+    // until they have been reconstructed into outgoing directional irradiance.
+    coefficient = Color(Math.Clamp(projected * scale, float3(-65504), float3(65504)), 1);
+    validity = Color(backfaces / Math.Max(sphereWeight, 0.00001), 0, 0, 1);
+}
+
+struct FaceCoordinate { int face; float2 uv; }
+
+FaceCoordinate FaceUV(float3 direction)
+{
+    float3 magnitude = Math.Abs(direction);
+    mut int face = 0;
+    mut float2 plane = float2(0);
+    if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z)
+    {
+        float inverse = 1 / Math.Max(magnitude.x, 0.00001);
+        face = direction.x >= 0 ? 0 : 1;
+        plane = float2(direction.x >= 0 ? -direction.z : direction.z, -direction.y) * inverse;
+    }
+    else if (magnitude.y >= magnitude.z)
+    {
+        float inverse = 1 / Math.Max(magnitude.y, 0.00001);
+        face = direction.y >= 0 ? 2 : 3;
+        plane = float2(direction.x, direction.y >= 0 ? direction.z : -direction.z) * inverse;
+    }
+    else
+    {
+        float inverse = 1 / Math.Max(magnitude.z, 0.00001);
+        face = direction.z >= 0 ? 4 : 5;
+        plane = float2(direction.z >= 0 ? direction.x : -direction.x, -direction.y) * inverse;
+    }
+    return FaceCoordinate { face = face, uv = plane * 0.5 + float2(0.5) };
+}
+
+frag Convolve(Vertex vertex, out Color irradiance, out Color moments, Environment environment)
+{
+    float3 direction = OctDirection((vertex.uv * 18 - float2(1)) / 16);
+    mut float3 light = float3(0);
+    for (var index = 0; index < 9; index++)
+    {
+        Color coefficient = environment.projection.Sample(float2((float(index) + 0.5) / 9, 0.5),
+            Filter.Point, Wrap.Clamp);
+        light += float3(coefficient.r, coefficient.g, coefficient.b) * SHBasis(index, direction);
+    }
+    Color validity = environment.projectionData.Sample(float2(0.5), Filter.Point, Wrap.Clamp);
+    float3 reference = Math.Abs(direction.z) < 0.999 ? float3(0, 0, 1) : float3(0, 1, 0);
+    float3 tangent = Math.Normalize(Math.Cross(reference, direction));
+    float3 bitangent = Math.Cross(direction, tangent);
+    mut float mean = 0;
+    mut float second = 0;
+    // Local taps preserve occluder direction and cube-face seams. The separable
+    // [1,2,1] kernel is normalized by 16 and crosses faces using the same rays.
+    for (var y = -1; y <= 1; y++)
+    {
+        for (var x = -1; x <= 1; x++)
+        {
+            float3 ray = Math.Normalize(direction + (tangent * float(x) + bitangent * float(y)) * 0.08);
+            FaceCoordinate tap = FaceUV(ray);
+            Color data = CaptureData(environment.data0, environment.data1, environment.data2,
+                environment.data3, environment.data4, environment.data5, tap.face, tap.uv);
+            float distance = data.b > 0.5 ? Math.Clamp(data.r, 0, 1) : 1;
+            float weight = float((x == 0 ? 2 : 1) * (y == 0 ? 2 : 1)) / 16;
+            mean += distance * weight;
+            second += distance * distance * weight;
+        }
+    }
+    irradiance = Color(ClampHdr(light), 1);
+    moments = Color(mean, second, Math.Clamp(validity.r, 0, 1), 1);
+}
+
+float ProbeVisibility(float mean, float second, float distance)
+{
+    if (distance <= mean) return 1;
+    float variance = Math.Max(second - mean * mean, 0.0000001);
+    float difference = distance - mean;
+    float probability = variance / (variance + difference * difference);
+    float visibility = Math.Saturate((probability - 0.2) / 0.8);
+    return visibility * visibility * visibility;
+}
+
+float3 Sample(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
+                int initialized, float3 world, float3 normal)
+{
+    if (initialized <= 0 || intensity <= 0 || layout.total <= 0) return float3(0);
+    float3 n = Math.Normalize(normal);
+    if (Math.LengthSq(n) < 0.5) return float3(0);
+    float3 position = world + n * (layout.spacing * 0.04);
+    // The package covers receivers automatically. Extrapolate at a working-set
+    // edge with smooth distance falloff; never introduce a hard world-space box.
+    float3 rawGrid = (position - layout.minimum) / layout.spacing;
+    float3 grid = Math.Clamp(rawGrid, float3(0), float3(layout.counts - int3(1)));
+    float beyond = Math.Length(rawGrid - grid);
+    float fade = 1 / (1 + beyond * beyond);
+    int3 lower = Math.Min(int3(Math.Floor(grid)), layout.counts - int3(2));
+    float3 fraction = grid - float3(lower);
+    mut float3 result = float3(0);
+    mut float weightSum = 0;
+    mut float baseSum = 0;
+    for (var z = 0; z < 2; z++)
+    {
+        for (var y = 0; y < 2; y++)
+        {
+            for (var x = 0; x < 2; x++)
+            {
+                int3 coordinate = lower + int3(x, y, z);
+                int probe = coordinate.x + layout.counts.x * (coordinate.y + layout.counts.y * coordinate.z);
+                if (probe >= initialized) continue;
+                float3 axis = float3(x == 0 ? 1 - fraction.x : fraction.x,
+                    y == 0 ? 1 - fraction.y : fraction.y, z == 0 ? 1 - fraction.z : fraction.z);
+                float3 probePosition = layout.minimum + float3(coordinate) * layout.spacing;
+                float3 delta = position - probePosition;
+                Color moments = distance.Sample(AtlasUV(probe, layout.atlasRows, delta), Filter.Bilinear, Wrap.Clamp);
+                if (moments.b >= 0.25) continue;
+                float3 toward = probePosition - world;
+                float receiverDistance = Math.Length(toward);
+                float alignment = Math.Max(Math.Dot(n, toward) / Math.Max(receiverDistance, 0.000001), 0);
+                // Direction has no limit at a probe position. Give its own
+                // irradiance full weight there and approach angular weighting
+                // continuously across the same radius as the receiver bias.
+                float facing = Math.Lerp(1, alignment,
+                    Math.Saturate(receiverDistance / (layout.spacing * 0.04)));
+                float baseWeight = axis.x * axis.y * axis.z * facing * facing;
+                if (baseWeight <= 0) continue;
+                float visibility = ProbeVisibility(moments.r, moments.g, Math.Length(delta) / Math.Max(layout.far, 0.1));
+                baseSum += baseWeight;
+                float weight = baseWeight * visibility;
+                Color sampled = irradiance.Sample(AtlasUV(probe, layout.atlasRows, n), Filter.Bilinear, Wrap.Clamp);
+                result += ClampHdr(float3(sampled.r, sampled.g, sampled.b)) * weight;
+                weightSum += weight;
+            }
+        }
+    }
+    // Normalize only trusted visible probes. A separate confidence gate rejects
+    // the all-blocked case without treating occluded neighbors as black light.
+    // Confidence must vanish continuously with each probe's interpolation
+    // weight. An unweighted maximum jumps as a neighbor leaves the cell.
+    float confidence = weightSum / Math.Max(baseSum, 0.0000001);
+    float trusted = Math.SmoothStep(0.00001, 0.001, confidence);
+    return weightSum > 0.0000001 ? ClampHdr(result / weightSum * (intensity * fade * trusted)) : float3(0);
+}
+

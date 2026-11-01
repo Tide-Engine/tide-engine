@@ -135,11 +135,21 @@ Coverage MaterialCoverage(SurfaceInput input, float alpha, float cutoff,
     return coverage;
 }
 
-frag Lit(MeshVertex vertex, out Color color, Instance instance, Material material, Renderer renderer,
+// Providers own the interpretation of two explicit images and any plain-value
+// captures. Returning zero keeps the default direct-light path unchanged.
+using IndirectLight = Func<SurfaceInput, Surface, Texture, Texture, float3>;
+
+float3 NoIndirect(SurfaceInput input, Surface surface, Texture first, Texture second)
+{
+    return float3(0);
+}
+
+frag Lit(MeshVertex vertex, out Color color, out Color captureData,
+         Instance instance, Material material, Renderer renderer,
          MaterialMaps maps, Func<SurfaceInput, mut Surface, void> surface)
 {
     float3 normal = instance.Normal(vertex.normal);
-    float3 viewDirection = Math.Normalize((renderer.giCapture ? renderer.giEye : renderer.eye) - this.world);
+    float3 viewDirection = Math.Normalize((renderer.diffuseCapture ? renderer.captureEye : renderer.eye) - this.world);
     SurfaceInput frame = MaterialInput(this.world, normal, vertex.tangent,
         instance.Normal(TangentPlaneNormal(vertex.normal, vertex.tangent)),
         instance.Normal(TangentPlaneSecond(vertex.normal, vertex.tangent)),
@@ -179,12 +189,14 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
     surface(input, result);
     mut float3 radiance = Math.Max(result.emission, float3(0));
     // Preserve the original opaque path's arithmetic when indirect is disabled.
-    if (!renderer.giCapture && (renderer.ambientIrradiance.x > 0 || renderer.ambientIrradiance.y > 0 || renderer.ambientIrradiance.z > 0))
+    if (!renderer.diffuseCapture && (renderer.ambientIrradiance.x > 0 || renderer.ambientIrradiance.y > 0 || renderer.ambientIrradiance.z > 0))
         radiance += EvaluateIndirectPbr(result, renderer.ambientIrradiance);
-    if (!renderer.giCapture && renderer.gi.enabled && renderer.giState.ready)
-        radiance += EvaluateIndirectPbr(result, SampleGI(renderer.giIrradiance, renderer.giDistance,
-            renderer.giState.settings, renderer.giState.initialized, renderer.giState.atlasRows,
-            renderer.giState.far, this.world, result.normal));
+    if (!renderer.diffuseCapture)
+    {
+        float3 irradiance = renderer.indirect(input, result, renderer.indirect0, renderer.indirect1);
+        if (irradiance.x > 0 || irradiance.y > 0 || irradiance.z > 0)
+            radiance += EvaluateIndirectPbr(result, irradiance);
+    }
     foreach (var light in renderer.lights)
     {
         float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(light.position - this.world);
@@ -209,7 +221,7 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
                 visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
                                               light.kind == LightKind.Point);
         }
-        if (renderer.giCapture)
+        if (renderer.diffuseCapture)
         {
             // Capture outgoing diffuse radiance only. Neither ambient nor
             // previously gathered GI feeds the one-bounce probe solution.
@@ -222,6 +234,17 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
     }
     float alpha = material.mode == SurfaceMode.Transparent ? coverage.alpha : 1;
     color = Color(radiance.x, radiance.y, radiance.z, alpha);
+    captureData = Color(0, 0, 0, 1);
+    if (renderer.diffuseCapture)
+    {
+        // Distance and sidedness are numeric target channels with alpha one.
+        // Blue marks geometry hits so black clears mean unoccluded far range.
+        // Double-sided cards have no solid interior and never mark backfaces.
+        float distance = Math.Clamp(Math.Length(renderer.captureEye - this.world)
+            / Math.Max(renderer.captureFar, 0.001), 0, 1);
+        float backface = !material.doubleSided && Math.Dot(normal, viewDirection) < 0 ? 1 : 0;
+        captureData = Color(distance, backface, 1, 1);
+    }
 }
 
 frag ShadowCutout(MeshVertex vertex, out Color color, Instance instance, Material material,

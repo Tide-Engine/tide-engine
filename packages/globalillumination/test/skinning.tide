@@ -1,0 +1,9 @@
+// Reuse the independent mapped-normal/posed-silhouette pixel oracles with a
+// live GI provider and capture cameras. The normal material has zero albedo.
+[Before(Render3D.Stages.Prepare)]
+view ConfigureGISkinning(mut GlobalIllumination.Environment environment, SkinningFixture fixture)
+{
+    environment.settings.enabled = fixture.scenario == 2;
+    environment.settings.maxProbes = 125;
+    environment.settings.updatesPerFrame = 1;
+}

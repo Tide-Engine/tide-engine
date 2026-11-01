@@ -1,0 +1,325 @@
+namespace GlobalIllumination;
+
+// Quality and work controls; placement is derived from rendered geometry.
+struct Settings
+{
+    bool enabled = true;
+    float probeSpacing = 1.5;
+    int maxProbes = 512;
+    int updatesPerFrame = 4;
+    float intensity = 1;
+    bool debug;
+}
+
+struct FieldLayout
+{
+    float3 minimum;
+    float spacing;
+    int3 counts;
+    int total;
+    int atlasRows;
+    float far;
+}
+
+struct LocalBounds
+{
+    float3 minimum;
+    float3 maximum;
+    bool valid;
+}
+
+struct StaticBounds
+{
+    Asset<Render3D.Mesh3D> mesh;
+    LocalBounds bounds;
+}
+
+struct SkinBounds
+{
+    Asset<Render3D.SkinnedMesh3D> mesh;
+    LocalBounds bounds;
+}
+
+// Local geometry facts are read once per pack generation. Entity-to-slot
+// maps avoid searching the distinct asset list for every instance each frame.
+local singleton WorldBounds
+{
+    FieldLayout layout;
+    bool ready;
+    long generation;
+    int staticScans;
+    int skinnedScans;
+    int geometryCount;
+    List<StaticBounds> staticBounds;
+    List<SkinBounds> skinnedBounds;
+    Map<Entity, int> staticSlots;
+    Map<Entity, int> skinnedSlots;
+    float3 minimum;
+    float3 maximum;
+    float requestedSpacing;
+    int requestedMaxProbes;
+}
+
+// Package-local C bridge to the existing pack generation counter. This is
+// presentation cache metadata, never simulation state or an engine ABI.
+extern long GIAssetGeneration();
+
+Settings ClampSettings(Settings settings)
+{
+    return Settings {
+        enabled = settings.enabled,
+        probeSpacing = Math.Clamp(settings.probeSpacing, 0.1, 1000),
+        maxProbes = Math.Clamp(settings.maxProbes, 125, 2048),
+        updatesPerFrame = Math.Clamp(settings.updatesPerFrame, 0, 16),
+        intensity = Math.Clamp(settings.intensity, 0, 16),
+        debug = settings.debug
+    };
+}
+
+bool FiniteBoundsValue(float value)
+{
+    // Values beyond this leave too little binary32 precision for a useful
+    // bounded field. Refuse that geometry instead of generating NaN layout.
+    return value >= -1e30 && value <= 1e30;
+}
+
+bool FiniteBoundsValue(float3 value)
+{
+    return FiniteBoundsValue(value.x) && FiniteBoundsValue(value.y) && FiniteBoundsValue(value.z);
+}
+
+LocalBounds MeshBounds(Render3D.Mesh3D mesh)
+{
+    mut LocalBounds result = default;
+    foreach (var vertex in mesh.vertices)
+    {
+        if (!FiniteBoundsValue(vertex.position)) return default;
+        result.minimum = result.valid ? Math.Min(result.minimum, vertex.position) : vertex.position;
+        result.maximum = result.valid ? Math.Max(result.maximum, vertex.position) : vertex.position;
+        result.valid = true;
+    }
+    return result;
+}
+
+LocalBounds SkinBoundsOf(Render3D.SkinnedMesh3D mesh)
+{
+    // Rest geometry is the available CPU bound. Arbitrary deformation/poses
+    // can exceed it; the raster capture itself still uses the prepared pose.
+    mut LocalBounds result = default;
+    foreach (var vertex in mesh.vertices)
+    {
+        if (!FiniteBoundsValue(vertex.position)) return default;
+        result.minimum = result.valid ? Math.Min(result.minimum, vertex.position) : vertex.position;
+        result.maximum = result.valid ? Math.Max(result.maximum, vertex.position) : vertex.position;
+        result.valid = true;
+    }
+    return result;
+}
+
+LocalBounds StaticLocalBounds(mut WorldBounds world, Entity entity, Asset<Render3D.Mesh3D> mesh)
+{
+    if (world.staticSlots.TryGet(entity, out var slot))
+    {
+        int index = slot - 1;
+        if (index >= 0 && index < world.staticBounds.count && world.staticBounds[index].mesh == mesh)
+            return world.staticBounds[index].bounds;
+    }
+    mut int found = -1;
+    for (var index = 0; index < world.staticBounds.count; index++)
+    {
+        if (world.staticBounds[index].mesh == mesh) { found = index; break; }
+    }
+    if (found < 0)
+    {
+        found = world.staticBounds.count;
+        world.staticBounds.Add(StaticBounds { mesh = mesh, bounds = MeshBounds(mesh.Value) });
+        world.staticScans++;
+    }
+    world.staticSlots[entity] = found + 1;
+    return world.staticBounds[found].bounds;
+}
+
+LocalBounds SkinnedLocalBounds(mut WorldBounds world, Entity entity, Asset<Render3D.SkinnedMesh3D> mesh)
+{
+    if (world.skinnedSlots.TryGet(entity, out var slot))
+    {
+        int index = slot - 1;
+        if (index >= 0 && index < world.skinnedBounds.count && world.skinnedBounds[index].mesh == mesh)
+            return world.skinnedBounds[index].bounds;
+    }
+    mut int found = -1;
+    for (var index = 0; index < world.skinnedBounds.count; index++)
+    {
+        if (world.skinnedBounds[index].mesh == mesh) { found = index; break; }
+    }
+    if (found < 0)
+    {
+        found = world.skinnedBounds.count;
+        world.skinnedBounds.Add(SkinBounds { mesh = mesh, bounds = SkinBoundsOf(mesh.Value) });
+        world.skinnedScans++;
+    }
+    world.skinnedSlots[entity] = found + 1;
+    return world.skinnedBounds[found].bounds;
+}
+
+LocalBounds TransformBounds(LocalBounds bounds, float4x4 transform)
+{
+    if (!bounds.valid) return default;
+    mut LocalBounds result = default;
+    for (var index = 0; index < 8; index++)
+    {
+        float3 corner = float3((index & 1) == 0 ? bounds.minimum.x : bounds.maximum.x,
+                               (index & 2) == 0 ? bounds.minimum.y : bounds.maximum.y,
+                               (index & 4) == 0 ? bounds.minimum.z : bounds.maximum.z);
+        float3 position = Math.Mul(transform, float4(corner, 1)).xyz;
+        if (!FiniteBoundsValue(position)) return default;
+        result.minimum = result.valid ? Math.Min(result.minimum, position) : position;
+        result.maximum = result.valid ? Math.Max(result.maximum, position) : position;
+        result.valid = true;
+    }
+    return result;
+}
+
+LocalBounds JoinBounds(LocalBounds first, LocalBounds second)
+{
+    if (!first.valid) return second;
+    if (!second.valid) return first;
+    return LocalBounds {
+        valid = true, minimum = Math.Min(first.minimum, second.minimum),
+        maximum = Math.Max(first.maximum, second.maximum)
+    };
+}
+
+FieldLayout BuildLayout(float3 minimum, float3 maximum, float spacing, int maxProbes)
+{
+    if (!FiniteBoundsValue(minimum) || !FiniteBoundsValue(maximum)
+        || minimum.x > maximum.x || minimum.y > maximum.y || minimum.z > maximum.z) return default;
+    // Avoid a spacing smaller than binary32 can represent at this world
+    // coordinate, which would collapse distinct probes onto the same point.
+    double magnitude = Math.Cmax(Math.Max(Math.Abs(double3(minimum)), Math.Abs(double3(maximum))));
+    mut double step = Math.Max(double(Math.Clamp(spacing, 0.1, 1000)), magnitude * 1e-6d);
+    int limit = Math.Clamp(maxProbes, 125, 2048);
+    // Work in double while fitting integer cell counts, before narrowing the
+    // bounded layout. At most 112 doublings cover the accepted world range.
+    for (var attempt = 0; attempt < 112; attempt++)
+    {
+        // Half-cell lattice avoids putting probes exactly on common integer
+        // walls/floors. Quarter-cell padding includes the receiver normal bias
+        // without spending the probe budget on two extra nodes per axis.
+        double3 lower = Math.Floor(double3(minimum) / step - double3(0.75d));
+        double3 upper = Math.Ceil(double3(maximum) / step - double3(0.25d));
+        double3 span = upper - lower + double3(1d);
+        int3 counts = int3(Math.Clamp(span, double3(2d), double3(2049d)));
+        long total = long(counts.x) * long(counts.y) * long(counts.z);
+        if (total <= long(limit))
+        {
+            float actualSpacing = float(step);
+            float3 origin = float3((lower + double3(0.5d)) * step);
+            float far = float(Math.Clamp(step * Math.Sqrt(Math.Dot(double3(counts - int3(1)),
+                double3(counts - int3(1)))) * 2d, 0.1d, 1000000d));
+            if (!FiniteBoundsValue(origin * 0.125) || !FiniteBoundsValue(actualSpacing) || far <= 0) return default;
+            return FieldLayout {
+                minimum = origin, spacing = actualSpacing, counts = counts,
+                total = int(total), atlasRows = (int(total) + 31) / 32, far = far
+            };
+        }
+        step *= 2d;
+    }
+    return default;
+}
+
+float3 ProbePosition(FieldLayout layout, int index)
+{
+    if (layout.total <= 0 || index < 0 || index >= layout.total) return float3(0);
+    int3 coordinate = int3(index % layout.counts.x,
+        (index / layout.counts.x) % layout.counts.y,
+        index / (layout.counts.x * layout.counts.y));
+    return layout.minimum + float3(coordinate) * layout.spacing;
+}
+
+bool SameLayout(FieldLayout first, FieldLayout second)
+{
+    return first.minimum.x == second.minimum.x && first.minimum.y == second.minimum.y
+        && first.minimum.z == second.minimum.z && first.spacing == second.spacing
+        && first.counts.x == second.counts.x && first.counts.y == second.counts.y
+        && first.counts.z == second.counts.z && first.total == second.total;
+}
+
+void ClearWorldBounds(mut WorldBounds world)
+{
+    world = default;
+}
+
+[After(Render3D.Stages.Prepare), Before(Render3D.Stages.Lights)]
+view CollectWorldBounds(mut WorldBounds bounds, Environment environment, Render3D.Renderer renderer,
+    World world, query (Render3D.MeshRenderer mesh, with Render3D.Material) meshes,
+    query (Render3D.SkinnedMeshRenderer mesh, with Render3D.Material) skins)
+{
+    Settings settings = ClampSettings(environment.settings);
+    if (!renderer.enabled || !settings.enabled)
+    {
+        ClearWorldBounds(bounds);
+        return;
+    }
+    long generation = GIAssetGeneration();
+    if (bounds.generation != generation)
+    {
+        ClearWorldBounds(bounds);
+        bounds.generation = generation;
+    }
+    // Entity generations prevent stale reuse; bound the retained lookup maps
+    // as a world repeatedly spawns and destroys objects without a pack reload.
+    if (bounds.staticSlots.count > 4096) bounds.staticSlots.Clear();
+    if (bounds.skinnedSlots.count > 4096) bounds.skinnedSlots.Clear();
+    mut LocalBounds observed = default;
+    bounds.geometryCount = 0;
+    foreach (var object in meshes)
+    {
+        if (!object.mesh.visible) continue;
+        LocalBounds local = StaticLocalBounds(bounds, object.entity, object.mesh.mesh);
+        LocalBounds placed = TransformBounds(local, world.LocalToWorld(object.entity));
+        if (!placed.valid) continue;
+        observed = JoinBounds(observed, placed);
+        bounds.geometryCount++;
+    }
+    foreach (var object in skins)
+    {
+        if (!object.mesh.visible) continue;
+        LocalBounds local = SkinnedLocalBounds(bounds, object.entity, object.mesh.mesh);
+        LocalBounds placed = TransformBounds(local, world.LocalToWorld(object.entity));
+        if (!placed.valid) continue;
+        observed = JoinBounds(observed, placed);
+        bounds.geometryCount++;
+    }
+    if (!observed.valid)
+    {
+        bounds.ready = false;
+        bounds.layout = default;
+        return;
+    }
+    bool reset = !bounds.ready || bounds.requestedSpacing != settings.probeSpacing
+        || bounds.requestedMaxProbes != settings.maxProbes;
+    if (reset)
+    {
+        bounds.minimum = observed.minimum;
+        bounds.maximum = observed.maximum;
+    }
+    else
+    {
+        float3 coveredMax = bounds.layout.minimum
+            + float3(bounds.layout.counts - int3(1)) * bounds.layout.spacing;
+        float margin = bounds.layout.spacing * 0.2;
+        if (observed.minimum.x >= bounds.layout.minimum.x + margin
+            && observed.minimum.y >= bounds.layout.minimum.y + margin
+            && observed.minimum.z >= bounds.layout.minimum.z + margin
+            && observed.maximum.x <= coveredMax.x - margin
+            && observed.maximum.y <= coveredMax.y - margin
+            && observed.maximum.z <= coveredMax.z - margin) return;
+        bounds.minimum = Math.Min(bounds.minimum, observed.minimum);
+        bounds.maximum = Math.Max(bounds.maximum, observed.maximum);
+    }
+    bounds.layout = BuildLayout(bounds.minimum, bounds.maximum, settings.probeSpacing, settings.maxProbes);
+    bounds.ready = bounds.layout.total > 0;
+    bounds.requestedSpacing = settings.probeSpacing;
+    bounds.requestedMaxProbes = settings.maxProbes;
+}
