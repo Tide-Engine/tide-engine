@@ -1,0 +1,56 @@
+using Render3D;
+
+scene Main;
+singleton FoliageSimulation { int marker = 173; }
+local singleton FoliageResults
+{
+    float3[16] light;
+    float3[4] transmitted;
+    float3 ordinary;
+    float3 disabled;
+}
+
+view EvaluateFoliage(mut FoliageResults results)
+{
+    float3 n = float3(0, 0, 1);
+    float3 white = float3(1);
+    mut Surface surface = Surface { normal = n, albedo = float3(0.5), roughness = 1 };
+    results.ordinary = EvaluateDirectPbr(surface, n, n, white, 1);
+    ApplyThinLeaf(surface, LeafSettings { transmission = 0, thickness = 3 });
+    results.disabled = EvaluateDirectPbr(surface, n, n, white, 1);
+    ApplyThinLeaf(surface, LeafSettings { transmission = 0.5 });
+    results.light[0] = EvaluateDirectPbr(surface, n, -n, white, 1);
+    results.light[1] = EvaluateDirectPbr(surface, n, n, white, 1);
+    results.light[2] = EvaluateDirectPbr(surface, n, -n, float3(2, 4, 8), 0.25);
+    results.light[3] = EvaluateDirectPbr(surface, n, -n, white, 0);
+    results.light[4] = EvaluateDirectPbr(surface, -n, -n, white, 1);
+    results.light[5] = EvaluateDirectPbr(surface, n, float3(0), white, 1);
+    results.light[6] = EvaluateDirectPbr(surface, n, float3(1, 0, 0), white, 1);
+    results.light[7] = EvaluateDirectPbr(surface, n * 4, -n * 3, white, 1);
+    surface.metallic = 1;
+    results.light[8] = EvaluateDirectPbr(surface, n, -n, white, 1);
+    surface.metallic = 0;
+    surface.normal = float3(0);
+    results.light[9] = EvaluateDirectPbr(surface, n, -n, white, 1);
+    surface.normal = n;
+    ApplyThinLeaf(surface, LeafSettings { transmission = 0.5, transmissionColor = float3(0.5, 1, 0.25), thickness = Math.Log(2) });
+    results.transmitted[0] = surface.transmission;
+    results.light[10] = EvaluateDirectPbr(surface, n, -n, white, 1);
+    ApplyThinLeaf(surface, LeafSettings { transmission = 2, transmissionColor = float3(-1, 0.5, 2), thickness = -1 });
+    results.transmitted[1] = surface.transmission;
+    results.light[11] = EvaluateDirectPbr(surface, n, -n, float3(-1, 2, 4), 2);
+    mut LeafSettings settings = LeafSettings { transmission = 0.25, transmissionColor = float3(1, 0.5, 0.25) };
+    Func<SurfaceInput, mut Surface, void> captured = ThinLeaf(settings);
+    settings.transmission = 1;
+    captured(SurfaceInput {}, surface);
+    results.transmitted[2] = surface.transmission;
+    results.light[12] = EvaluateDirectPbr(surface, n, -n, white, 1);
+    ApplyThinLeaf(surface, LeafSettings { transmission = 1, thickness = 80 });
+    results.transmitted[3] = surface.transmission;
+    results.light[13] = EvaluateDirectPbr(surface, n, -n, white, 1);
+    surface.transmission = float3(0.5);
+    surface.emission = float3(2, 3, 4);
+    results.light[14] = EvaluatePbr(surface, n, -n, white, 0);
+    surface.normal = -n;
+    results.light[15] = EvaluateDirectPbr(surface, -n, n, white, 1);
+}

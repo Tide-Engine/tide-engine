@@ -1,0 +1,55 @@
+{
+  "base_revision": "76582cce51399ba02b9168862320d43b998404b2",
+  "binary_sha256": "4c9ec2a8a0ad6e6dbeabf1673323b5dee4a381c93cfd12975d90c8b25c2babb7",
+  "sources": {
+    "bench/forest/bark-0.obj": "c9551b15fddfcf768988f115e26c1b4755cd83760cbc870358122317ef849380",
+    "bench/forest/bark-1.obj": "758a46c7d4859e3e88e4b5105537b88b2d5dcf03c9a0e051e1215acbf3753278",
+    "bench/forest/bark-2.obj": "b7d22be9a97450cbfe4e78153c196eca8f3de9d5cbf494c2b379e8f62f3617f7",
+    "bench/forest/game.tide": "92854341c52463372e47c973c1a2d65fb077cd8cfe5228694785a3ef5e35cfb2",
+    "bench/forest/leaves-0.obj": "c1e126659127e8bcb903a79b0450a7866bc0c9e04164dc4703bc9e247937fc4a",
+    "bench/forest/leaves-1.obj": "e36e66faf6cfef59c4a762a3121af699cf20fb1439cf5fe5f975da8ffa4fdbd2",
+    "bench/forest/leaves-2.obj": "e79c0ea09fbd8a73d86308b6fb4414cde1274441add1ba1357ca8cb352ae6031",
+    "bench/forest/main.c": "b647f05cd8a3038b4ac6c017e1e3f4ed93c5034dbfbf84fa7e124141d40cfa39",
+    "bench/forest/make-assets.mjs": "4799574b497e92022025a81a27d0cf5601d48f8389ec491259aa999584315c27",
+    "bench/forest/terrain.obj": "d1410f66c99a8b388b1bb1af6fa1f400082645648c01275761f1ab04d23ed7c6",
+    "packages/render3d/materials.tide": "1d62391ab6783694fa18a778163d69fbb064f42eaf2116cc24676bbf343cf4bc",
+    "packages/render3d/pbr.tide": "c2121e68df9a46f94940a20ae1e38e4f8c2e4e2ca3f454101116ade06121d60e",
+    "packages/render3d/post.tide": "3e2d44fc90d8006fa4dfe690de0012e21be2fffc2da2f3a5cbd326fca52533c5",
+    "packages/render3d/render3d.tide": "95e9027005e63e99eb1a443ce7314fe7b1bd4e22eaa81897f2492732154edc47",
+    "packages/render3d/vertex.tide": "7a36d5680f19ee0e5893509c76cc0e6d23baf231f3187e2535d44c28269c95b9",
+    "packages/render3d/wind.tide": "d45072fb3db8809220c769d5663acde55c2fd7c78b3643a05410142d559b74f5",
+    "packages/render3d/transparent.c": "e68e605d24e552ff9628235d09ab81349f09734dce5218b85e6b289866fd6900"
+  },
+  "configuration": "release preset; Clang 23.1.2 -O2; no sanitizers; Vulkan; 1920x1080; four 1024px cascade cells; 20 warmup/100 measured frames; 3 separate processes per case",
+  "method": "Shared Local\\TideClaudeContinuationBenchmark mutex via existing gate.ps1, 5-second initial quiet guard; no task builds/tests during batch; other desktop activity and clocks uncontrolled.",
+  "sources_normalized_lf_sha256": {
+    "bench/forest/bark-0.obj": "c9551b15fddfcf768988f115e26c1b4755cd83760cbc870358122317ef849380",
+    "bench/forest/bark-1.obj": "758a46c7d4859e3e88e4b5105537b88b2d5dcf03c9a0e051e1215acbf3753278",
+    "bench/forest/bark-2.obj": "b7d22be9a97450cbfe4e78153c196eca8f3de9d5cbf494c2b379e8f62f3617f7",
+    "bench/forest/game.tide": "92854341c52463372e47c973c1a2d65fb077cd8cfe5228694785a3ef5e35cfb2",
+    "bench/forest/leaves-0.obj": "c1e126659127e8bcb903a79b0450a7866bc0c9e04164dc4703bc9e247937fc4a",
+    "bench/forest/leaves-1.obj": "e36e66faf6cfef59c4a762a3121af699cf20fb1439cf5fe5f975da8ffa4fdbd2",
+    "bench/forest/leaves-2.obj": "e79c0ea09fbd8a73d86308b6fb4414cde1274441add1ba1357ca8cb352ae6031",
+    "bench/forest/main.c": "b647f05cd8a3038b4ac6c017e1e3f4ed93c5034dbfbf84fa7e124141d40cfa39",
+    "bench/forest/make-assets.mjs": "4799574b497e92022025a81a27d0cf5601d48f8389ec491259aa999584315c27",
+    "bench/forest/terrain.obj": "d1410f66c99a8b388b1bb1af6fa1f400082645648c01275761f1ab04d23ed7c6",
+    "packages/render3d/materials.tide": "1d62391ab6783694fa18a778163d69fbb064f42eaf2116cc24676bbf343cf4bc",
+    "packages/render3d/pbr.tide": "c2121e68df9a46f94940a20ae1e38e4f8c2e4e2ca3f454101116ade06121d60e",
+    "packages/render3d/post.tide": "3e2d44fc90d8006fa4dfe690de0012e21be2fffc2da2f3a5cbd326fca52533c5",
+    "packages/render3d/render3d.tide": "a9476120e171ee0bf559b2e0d5d5ab31a18ff6d85006077126de2e9849421c46",
+    "packages/render3d/vertex.tide": "7a36d5680f19ee0e5893509c76cc0e6d23baf231f3187e2535d44c28269c95b9",
+    "packages/render3d/wind.tide": "d45072fb3db8809220c769d5663acde55c2fd7c78b3643a05410142d559b74f5",
+    "packages/render3d/transparent.c": "e68e605d24e552ff9628235d09ab81349f09734dce5218b85e6b289866fd6900"
+  },
+  "capture_sha256": {
+    "forest-100000-ground.png": "df67b8177f48702f17d989d97cbd164fdd0bf38173df45d7e072c3d4fc33013b",
+    "forest-10000-canopy.png": "29bf8483bc10b8c40c3a3f68deff2a3b7b62dbb9ad930117629ec10c015177ab",
+    "forest-100k-wide.png": "477e92612f51144c19f4809c55799fa7b6850c87b76aeb1a8a9a1e9ab4a96fe5"
+  },
+  "validation": {
+    "native": "24 unique focused Windows ASan CTests pass across original and corrected runs; Vulkan/OpenGL. Final differing/mixed wind-bounds fixture and final forest smoke pass.",
+    "web": "32 unique focused WASI/WebGL/ANGLE D3D11/WebGPU CTests pass across original and corrected runs.",
+    "docs": "npm --prefix docs run build passed; existing unstaged-example prerender 404 notices.",
+    "limits": "Software web correctness smoke only; no web hardware scaling, Android, other native OSes or Unity execution."
+  }
+}

@@ -97,6 +97,10 @@ component Material
     local Func<SurfaceInput, mut Coverage, void> coverage = Render3D.StandardCoverage;
     local Lit shader = Lit { surface = Render3D.StandardSurface };
     local Deform? vertex;
+    // Full mesh-local bounds AFTER deformation, shared by color and shadows.
+    local bool customBounds;
+    local float3 boundsCenter;
+    local float3 boundsSize;
 }
 
 enum LightKind { Directional, Point, Spot }
@@ -499,6 +503,9 @@ struct ShadowBatch
     float4x4 first;
     List<float4x4> transforms;
     bool deformed;
+    bool customBounds;
+    float3 boundsCenter;
+    float3 boundsSize;
     Func<VertexInput, mut MeshVertex, void> firstVertex;
     List<ShadowInstance> instances;
 }
@@ -543,7 +550,14 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material mat
         bool deformed = caster.material.vertex is Deform;
         if (current.count > 0 &&
             (current.mesh != caster.mesh.mesh || current.mirrored != mirrored ||
-             current.doubleSided != caster.material.doubleSided || current.deformed != deformed))
+             current.doubleSided != caster.material.doubleSided || current.deformed != deformed ||
+             current.customBounds != caster.material.customBounds ||
+             (caster.material.customBounds && (current.boundsCenter.x != caster.material.boundsCenter.x ||
+                 current.boundsCenter.y != caster.material.boundsCenter.y ||
+                 current.boundsCenter.z != caster.material.boundsCenter.z ||
+                 current.boundsSize.x != caster.material.boundsSize.x ||
+                 current.boundsSize.y != caster.material.boundsSize.y ||
+                 current.boundsSize.z != caster.material.boundsSize.z))))
         {
             batches.Add(current);
             current = default;
@@ -552,6 +566,9 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material mat
         current.mirrored = mirrored;
         current.doubleSided = caster.material.doubleSided;
         current.deformed = deformed;
+        current.customBounds = caster.material.customBounds;
+        current.boundsCenter = caster.material.boundsCenter;
+        current.boundsSize = caster.material.boundsSize;
         mut Func<VertexInput, mut MeshVertex, void> hook = StandardVertex;
         if (caster.material.vertex is Deform binding) hook = binding.vertex;
         if (current.count == 0)
@@ -588,29 +605,14 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material mat
         // nested transforms again for every light view.
         for (var i = 0; i < batches.count; i++)
         {
-            renderer.shadowMap.SetCull(batches[i].doubleSided ? Cull.None : Cull.Back);
-            if (batches[i].deformed)
+            if (batches[i].customBounds)
             {
-                if (batches[i].count == 1)
-                    renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
-                        DeformShadow { deform = batches[i].firstVertex }, ShadowTile { uvRect = shadow.uvRect });
-                else
-                {
-                    // Keep callback captures in shared uniforms, as in the
-                    // color pass. Their size does not consume vertex attributes.
-                    // Equal adjacent captures still batch in the draw list.
-                    for (var item = 0; item < batches[i].instances.count; item++)
-                        renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].instances[item].transform,
-                            DeformShadow { deform = batches[i].instances[item].vertex },
-                            ShadowTile { uvRect = shadow.uvRect });
-                }
+                renderer.shadowMap.Bounds(batches[i].boundsCenter, batches[i].boundsSize)
+                    {
+                        CastBatch(renderer, batches, i, shadow);
+                    }
             }
-            else if (batches[i].count == 1)
-                renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
-                                        AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
-            else
-                renderer.shadowMap.Instanced(batches[i].mesh.Value, batches[i].transforms,
-                                            AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
+            else CastBatch(renderer, batches, i, shadow);
         }
         if (cutoutTransforms.count > 0)
         {
@@ -628,6 +630,34 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material mat
     renderer.shadowMap.SetClip();
 }
 
+// Read the prepared list in place, preserving borrowed nested instance lists.
+void CastBatch(Renderer renderer, List<ShadowBatch> batches, int i, ShadowView shadow)
+{
+    renderer.shadowMap.SetCull(batches[i].doubleSided ? Cull.None : Cull.Back);
+    if (batches[i].deformed)
+    {
+        if (batches[i].count == 1)
+            renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
+                DeformShadow { deform = batches[i].firstVertex }, ShadowTile { uvRect = shadow.uvRect });
+        else
+        {
+            // Keep callback captures in shared uniforms, as in the
+            // color pass. Their size does not consume vertex attributes.
+            // Equal adjacent captures still batch in the draw list.
+            for (var item = 0; item < batches[i].instances.count; item++)
+                renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].instances[item].transform,
+                    DeformShadow { deform = batches[i].instances[item].vertex },
+                    ShadowTile { uvRect = shadow.uvRect });
+        }
+    }
+    else if (batches[i].count == 1)
+        renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
+                                AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
+    else
+        renderer.shadowMap.Instanced(batches[i].mesh.Value, batches[i].transforms,
+                                    AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
+}
+
 MaterialMaps Maps(Material material, float4x4 transform)
 {
     return MaterialMaps {
@@ -640,6 +670,18 @@ MaterialMaps Maps(Material material, float4x4 transform)
 }
 
 void CastMasked(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform, float4 rect)
+{
+    if (material.customBounds)
+    {
+        renderer.shadowMap.Bounds(material.boundsCenter, material.boundsSize)
+            {
+                CastMaskedGeometry(renderer, mesh, material, transform, rect);
+            }
+    }
+    else CastMaskedGeometry(renderer, mesh, material, transform, rect);
+}
+
+void CastMaskedGeometry(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform, float4 rect)
 {
     renderer.shadowMap.SetCull(material.doubleSided ? Cull.None : Cull.Back);
     if (material.vertex is Deform binding)
@@ -691,6 +733,19 @@ view CastSkinned(Renderer renderer, World world,
 }
 
 void CastSkinnedMaterial(Renderer renderer, SkinnedMeshRenderer mesh, Material material,
+                         float4x4 transform, float4 rect)
+{
+    if (material.customBounds)
+    {
+        renderer.shadowMap.Bounds(material.boundsCenter, material.boundsSize)
+            {
+                CastSkinnedMaterialGeometry(renderer, mesh, material, transform, rect);
+            }
+    }
+    else CastSkinnedMaterialGeometry(renderer, mesh, material, transform, rect);
+}
+
+void CastSkinnedMaterialGeometry(Renderer renderer, SkinnedMeshRenderer mesh, Material material,
                          float4x4 transform, float4 rect)
 {
     renderer.shadowMap.SetCull(material.doubleSided ? Cull.None : Cull.Back);
@@ -800,6 +855,18 @@ view DrawMesh(MeshRenderer mesh, Material material, Renderer renderer, World wor
 
 void DrawMaterial(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform)
 {
+    if (material.customBounds)
+    {
+        renderer.hdr.Bounds(material.boundsCenter, material.boundsSize)
+            {
+                DrawMaterialGeometry(renderer, mesh, material, transform);
+            }
+    }
+    else DrawMaterialGeometry(renderer, mesh, material, transform);
+}
+
+void DrawMaterialGeometry(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform)
+{
     renderer.hdr.Cull(material.doubleSided ? Cull.None : Cull.Back)
     {
         if (material.vertex is Deform binding)
@@ -817,6 +884,18 @@ view DrawSkinnedMesh(SkinnedMeshRenderer mesh, Material material, Renderer rende
 }
 
 void DrawSkinnedMaterial(Renderer renderer, SkinnedMeshRenderer mesh, Material material, float4x4 transform)
+{
+    if (material.customBounds)
+    {
+        renderer.hdr.Bounds(material.boundsCenter, material.boundsSize)
+            {
+                DrawSkinnedMaterialGeometry(renderer, mesh, material, transform);
+            }
+    }
+    else DrawSkinnedMaterialGeometry(renderer, mesh, material, transform);
+}
+
+void DrawSkinnedMaterialGeometry(Renderer renderer, SkinnedMeshRenderer mesh, Material material, float4x4 transform)
 {
     var vertex = Deform { vertex = VertexHook(material) };
     renderer.hdr.Cull(material.doubleSided ? Cull.None : Cull.Back)

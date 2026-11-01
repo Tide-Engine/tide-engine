@@ -1,5 +1,43 @@
 # Benchmarks
 
+## Forest scale stress (2026-11-01)
+
+The owner requested Render3D foliage and a large forest stress test. `bench_forest`
+uses the production ECS/material path with shared wind and thin-leaf lighting,
+three fixed cameras and setup-selected detailed/medium/coarse tree meshes.
+100,000 planted trees cover 1.74 km, with two mesh entities per tree. The fixture
+and controls are documented in bench/forest/README.md; implementation/validation
+contracts are in render3d.md.
+
+Windows release O2, Clang 23.1.2, Ryzen 9 7900X / RTX 4080 SUPER driver 617.42,
+Vulkan 1920x1080. Three processes per case, 20 warmup/100 measured frames each.
+Medians of process medians, CPU recording / GPU ms: wide 1,000 2.55/5.04,
+10,000 11.15/6.36, 50,000 48.51/22.73, 100,000 113.70/36.67; canopy 10,000 16.05/9.49;
+ground 100,000 164.02/31.96. Full-detail canopy 10,000 is 16.69/12.61. Ground/wide
+100,000 main-target foliage counts are 78,286/96,479, with 24/6 total calls.
+The overview's 50,000/100,000 camera is beyond caster range: these rows contain no
+tree shadow casters. Canopy/ground supplement exercises actual nearby shadows.
+
+All 21 rows verify 2,100 measured frames/completed GPU queries, unchanged hashes,
+positive independent main-target bark/foliage counts and zero warmed texture
+uploads. At 10,000 canopy, geometry levels reduce submitted indices from 11.94M to
+4.08M with 8,262 main instances of each kind. Representations differ visually.
+CPU recording is the major large-count limit despite GPU batching. Source
+inspection suggests full entity/query/material traversals and per-mesh capture
+work, without measured attribution or a handwritten equivalent. This is not a
+claim of playable 100,000 performance, dynamic LOD/impostors or shipping FPS.
+
+The shared benchmark mutex and 5-second initial quiet guard separate both batches
+from task builds/tests. No clock or per-run contention monitoring was used;
+other desktop activity is uncontrolled. All runs/spreads are retained, including
+large GPU variation. CPU/GPU intervals overlap and are not added; native readback
+is a separate synchronization interval. No software-web timing claim is made.
+
+[Evidence, ranges, source/binary identities, verifier and reproduction](../bench/results/forest-20261101/README.md).
+24 focused native ASan and 32 web correctness CTests pass across initial/corrected
+selections, plus the docs build; limitations are recorded in render3d.md.
+
+
 ## Baked poses (2026-10-31)
 
 ### OpenGL investigation

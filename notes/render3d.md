@@ -1,5 +1,67 @@
 # Render3D package
 
+## Foliage wind, thin leaves and forest stress (2026-11-01)
+
+The owner approved the first foliage slice and requested a large forest stress
+scene. The package now supplies plain shared `Wind` values and `ApplyWind`,
+plus `LeafSettings`, `ApplyThinLeaf` and the captured `ThinLeaf` surface callback.
+No compiler, language, backend, runtime entry point or ABI changes are needed.
+
+Wind has a game-owned local clock. Root-world travelling gusts combine slow
+height-squared bend and height-scaled flutter using smooth triangle waves, with
+no per-vertex trig or noise texture. Local y <= 0 anchors; the analytic shear
+Jacobian corrects normals/tangents. Color/UV/tangent sign stay intact. Callers
+choose response weights explicitly; no vertex-color convention silently changes
+tint/coverage. Shared species captures keep compatible draws instanced.
+
+Thin-sheet transmission is a linear RGB diffuse fraction, attenuated by optical
+thickness and each light's normal attenuation/visibility. It reduces reflected
+diffuse, leaves specular intact and defaults zero on ordinary Surface values.
+LeafSettings are captured uniforms rather than new Material instance attributes;
+this preserves saturated mapped/skinned attribute layouts. This approximation
+has opaque/cutout shadow maps, not colored multi-leaf transport or volumetric SSS.
+
+Attached local Material.customBounds/boundsCenter/boundsSize provide full
+mesh-local post-deformation boxes for static/skinned color and shadow passes.
+Scopes restore target state; false preserves existing automatic/unknown bounds.
+Opaque prepared batches split by enabled flag and box values. Generated C review
+confirms CastBatch borrows its handle and nested lists without per-cascade clones.
+
+The new CPU wind fixture covers roots/disabled/placement, finite-difference
+normals, frame captures/hashes, actual opaque/cutout culling and differing/mixed
+opaque bounds. Its guarded first tick permits C scenario setup before spawning.
+Thin-leaf CPU checks use analytic lighting budgets and bitwise zero-transmission
+controls. GPU witnesses cover two sides, optical tint/thickness, cutout holes,
+real occluder shadows and independently predicted moving color/shadow silhouettes
+at two wind extrema and 1x/2x sizes. Existing package regressions remain unchanged.
+
+`bench/forest` uses the ordinary ECS/material renderer with two meshes per tree,
+shared callbacks built once each frame, a 2.4 km terrain and three fixed cameras.
+It supports 100,000 planted trees across 1.74 km. Procedurally authored geometry
+uses 292/114/32 triangles per detailed/medium/far tree, selected once at setup
+for that fixed camera (90/280 m thresholds). This is not dynamic LOD switching
+or an impostor baker. Casters are limited to 260 m, receivers to 160 m; high wide
+cameras can consequently have no tree shadow work. Tree representation and culling
+counts accompany timing rows. Independent bark/foliage command witnesses prevent
+a terrain-only image from passing the smoke. Generator assertions cover maximum
+wind displacement at the smallest tree scale; review expanded far bounds XZ
+from 14 to 16. No tree counts were reduced to make the workload pass.
+
+Windows Clang 23.1.2 ASan and WASI/web Release builds pass focused package and
+forest correctness, including Vulkan/OpenGL and WebGL/D3D11/WebGPU. The first
+combined CTest selections included unbuilt post targets, corrected by building
+and running those targets; a leaf WebGPU expected-output prefix and a stale
+forest build were corrected without changing assertions/tolerances. Production
+docs build passes with existing unstaged-example prerender 404 notices.
+Other native OSes/mobile/Unity execution remain unavailable locally. Final
+measurements and reproduction are in notes/benchmarks.md and the forest evidence.
+
+Remaining work: authored production tree art, branch-specific weight conventions,
+coverage-preserving alpha mipmaps/AA, camera-moving representation transitions,
+impostor baking and any further submission optimization indicated by stress runs.
+Gaussian splats are not part of this slice. No language proposal was implemented.
+
+
 ## GPU fixture use-after-free resolved (2026-10-29)
 
 The owner requested investigating the intermittent native skinning crash rather
