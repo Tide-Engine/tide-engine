@@ -129,6 +129,17 @@ unavailable local coverage. Final paired cost measurements follow this code
 commit. The earlier measurements below describe their pinned SH-based source,
 not this implementation. Work remains on the feature branch only.
 
+The paired optimized run uses code commit 8838029c9 against the preserved
+ba070987a executable, in adjacent alternating processes after correctness work
+ended. On the queried RTX 4080 SUPER / Ryzen 9 7900X at 960x720, default four
+updates/frame costs 1.0608 ms whole-frame GPU and .0896 ms CPU recording, versus
+.6434 ms and .0861 ms earlier. Frozen updated GI is .7728 ms GPU; runtime-disabled
+GI is .1490 ms. This is a measured quality/cost tradeoff: the higher-fidelity
+receiver lookup adds cost, while CPU recording stays near .09 ms in this room.
+All 1,800 GPU samples, process-median ranges, source/binary identities and method
+are retained in the [spatial report](../bench/results/globalillumination-spatial-20261101/README.md).
+No general hardware/game-FPS claim is made, and no dev merge is authorized.
+
 ## Initial separate automatic-coverage implementation (2026-11-01)
 
 The owner approved implementing GI as its own optional package depending on

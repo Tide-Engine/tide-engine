@@ -1,0 +1,74 @@
+[
+  {
+    "version": "baseline",
+    "mode": "off",
+    "cpu_record_ms": 0.0095,
+    "cpu_submit_ms": 0.0226,
+    "gpu_ms": 0.146048,
+    "gpu_min_ms": 0.145952,
+    "gpu_max_ms": 0.146368,
+    "gpu_samples": 300,
+    "probes": 0,
+    "uploads": 0.0
+  },
+  {
+    "version": "baseline",
+    "mode": "frozen",
+    "cpu_record_ms": 0.0101,
+    "cpu_submit_ms": 0.0225,
+    "gpu_ms": 0.280416,
+    "gpu_min_ms": 0.280416,
+    "gpu_max_ms": 0.280576,
+    "gpu_samples": 300,
+    "probes": 384,
+    "uploads": 0.0
+  },
+  {
+    "version": "baseline",
+    "mode": "update4",
+    "cpu_record_ms": 0.0861,
+    "cpu_submit_ms": 0.1623,
+    "gpu_ms": 0.643392,
+    "gpu_min_ms": 0.60256,
+    "gpu_max_ms": 0.644544,
+    "gpu_samples": 300,
+    "probes": 384,
+    "uploads": 0.0
+  },
+  {
+    "version": "spatial",
+    "mode": "off",
+    "cpu_record_ms": 0.0096,
+    "cpu_submit_ms": 0.0232,
+    "gpu_ms": 0.149024,
+    "gpu_min_ms": 0.148928,
+    "gpu_max_ms": 0.14912,
+    "gpu_samples": 300,
+    "probes": 0,
+    "uploads": 0.0
+  },
+  {
+    "version": "spatial",
+    "mode": "frozen",
+    "cpu_record_ms": 0.0129,
+    "cpu_submit_ms": 0.0302,
+    "gpu_ms": 0.772768,
+    "gpu_min_ms": 0.70416,
+    "gpu_max_ms": 0.774976,
+    "gpu_samples": 300,
+    "probes": 384,
+    "uploads": 0.0
+  },
+  {
+    "version": "spatial",
+    "mode": "update4",
+    "cpu_record_ms": 0.0896,
+    "cpu_submit_ms": 0.1538,
+    "gpu_ms": 1.0608,
+    "gpu_min_ms": 1.049696,
+    "gpu_max_ms": 1.12384,
+    "gpu_samples": 300,
+    "probes": 384,
+    "uploads": 0.0
+  }
+]
