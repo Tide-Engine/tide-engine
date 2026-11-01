@@ -171,7 +171,7 @@ static bool inspect_commands(void)
             shadow_items += (int)run->count;
             continue;
         }
-        CHECK(destination == renderer->hdr.id && run->shader->texture_count <= 10);
+        CHECK(destination == renderer->hdr.id && run->shader->texture_count <= 8);
         for (uint32_t item = 0; item < run->count; item++) {
             const unsigned char *packet = draw.instances + run->first + (size_t)item * stride;
             tide_float4x4 transform;

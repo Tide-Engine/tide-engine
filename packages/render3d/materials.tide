@@ -139,7 +139,7 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
          MaterialMaps maps, Func<SurfaceInput, mut Surface, void> surface)
 {
     float3 normal = instance.Normal(vertex.normal);
-    float3 viewDirection = Math.Normalize((renderer.giCapture ? renderer.giEye : renderer.eye) - this.world);
+    float3 viewDirection = Math.Normalize(renderer.eye - this.world);
     SurfaceInput frame = MaterialInput(this.world, normal, vertex.tangent,
         instance.Normal(TangentPlaneNormal(vertex.normal, vertex.tangent)),
         instance.Normal(TangentPlaneSecond(vertex.normal, vertex.tangent)),
@@ -179,12 +179,8 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
     surface(input, result);
     mut float3 radiance = Math.Max(result.emission, float3(0));
     // Preserve the original opaque path's arithmetic when indirect is disabled.
-    if (!renderer.giCapture && (renderer.ambientIrradiance.x > 0 || renderer.ambientIrradiance.y > 0 || renderer.ambientIrradiance.z > 0))
+    if (renderer.ambientIrradiance.x > 0 || renderer.ambientIrradiance.y > 0 || renderer.ambientIrradiance.z > 0)
         radiance += EvaluateIndirectPbr(result, renderer.ambientIrradiance);
-    if (!renderer.giCapture && renderer.gi.enabled && renderer.giState.ready)
-        radiance += EvaluateIndirectPbr(result, SampleGI(renderer.giIrradiance, renderer.giDistance,
-            renderer.giState.settings, renderer.giState.initialized, renderer.giState.atlasRows,
-            renderer.giState.far, this.world, result.normal));
     foreach (var light in renderer.lights)
     {
         float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(light.position - this.world);
@@ -209,16 +205,7 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
                 visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
                                               light.kind == LightKind.Point);
         }
-        if (renderer.giCapture)
-        {
-            // Capture outgoing diffuse radiance only. Neither ambient nor
-            // previously gathered GI feeds the one-bounce probe solution.
-            float3 diffuse = Math.Clamp(result.albedo, float3(0), float3(1))
-                * (1 - Math.Clamp(result.metallic, 0, 1)) / Math.PI;
-            radiance += diffuse * light.intensity * (attenuation * visibility
-                * Math.Saturate(Math.Dot(Math.Normalize(result.normal), toward)));
-        }
-        else radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
+        radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
     }
     float alpha = material.mode == SurfaceMode.Transparent ? coverage.alpha : 1;
     color = Color(radiance.x, radiance.y, radiance.z, alpha);

@@ -26,14 +26,7 @@ target_include_directories(tide_render3d_transparent PRIVATE "${PROJECT_SOURCE_D
 target_link_libraries(tide_render3d_transparent PRIVATE tide_render3d)
 add_test(NAME tide_render3d_transparent COMMAND tide_render3d_transparent)
 set(render3d_sources render3d/pbr.tide render3d/materials.tide render3d/vertex.tide
-    render3d/post.tide render3d/gi.tide render3d/render3d.tide)
-
-tide_add_game(tide_render3d_gi SOURCES render3d/test/gi.tide NAME game
-    PACKAGES Render3D ${render3d_sources}
-    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/gi_test.c)
-target_include_directories(tide_render3d_gi PRIVATE "${PROJECT_SOURCE_DIR}/tests")
-target_link_libraries(tide_render3d_gi PRIVATE tide_render3d)
-add_test(NAME tide_render3d_gi COMMAND tide_render3d_gi)
+    render3d/post.tide render3d/render3d.tide)
 tide_add_game(tide_render3d_pbr SOURCES render3d/test/pbr.tide NAME game
     PACKAGES Render3D render3d/pbr.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pbr_test.c)
@@ -80,19 +73,6 @@ target_link_libraries(tide_render3d_shadows PRIVATE tide_render3d)
 add_test(NAME tide_render3d_shadows COMMAND tide_render3d_shadows)
 
 if(TARGET tide_platform AND NOT TIDE_ANDROID)
-    tide_add_game(tide_render3d_gi_pixels SOURCES render3d/test/gi.tide NAME game
-        PACKAGES Render3D ${render3d_sources} HOST render3d/test/gi_pixels.c)
-    target_link_libraries(tide_render3d_gi_pixels PRIVATE tide_platform tide_render3d)
-    if(TIDE_WEB)
-        tide_web_page(tide_render3d_gi_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
-        tide_add_web_test(tide_render3d_gi_pixels TARGET tide_render3d_gi_pixels
-            WEBGPU EXPECT "ok: Render3D GI" D3D11)
-    else()
-        add_test(NAME tide_render3d_gi_pixels COMMAND tide_render3d_gi_pixels)
-        add_test(NAME tide_render3d_gi_pixels_opengl COMMAND tide_render3d_gi_pixels)
-        tide_gpu_test(tide_render3d_gi_pixels)
-        tide_gpu_test(tide_render3d_gi_pixels_opengl OPENGL)
-    endif()
     tide_add_game(tide_render3d_shadows_pixels SOURCES render3d/test/shadows.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadows_pixels.c)
     target_link_libraries(tide_render3d_shadows_pixels PRIVATE tide_platform tide_render3d)

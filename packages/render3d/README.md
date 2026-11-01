@@ -4,8 +4,8 @@ Optional 3D rendering with opaque, cutout and transparent mesh/material componen
 and spot lights, a shadow atlas, linear PBR lighting and HDR tone mapping. The
 package owns its lighting, shadow, color and presentation passes and includes a
 small C helper for transparent-object sorting. Its namespace
-is `Render3D`. Diffuse GI is opt-in. Lights and ambient irradiance default to
-zero; with GI disabled and neither configured, only material emission contributes.
+is `Render3D`. Lights and ambient irradiance default to zero; with neither
+configured, only material emission contributes.
 
 ## Using it
 
@@ -192,51 +192,9 @@ re-enabling recreates them. `Render3D.Dispose(renderer)` releases them explicitl
 Call it before `Stages.Prepare`: disposing after `Present` still invalidates that
 frame's recorded draws and presentation.
 
-## Opt-in diffuse GI prototype
-
-Enable `renderer.gi.enabled` in a view before `Stages.Prepare` to add one diffuse
-bounce from lit and emissive surfaces. It defaults to `false`, with no probe
-targets or capture work while disabled. Configure one world-space volume:
-
-```csharp
-[Before(Render3D.Stages.Prepare)]
-view ConfigureGI(mut Render3D.Renderer renderer)
-{
-    renderer.gi.enabled = true;
-    renderer.gi.center = float3(0, 2, 0);
-    renderer.gi.size = float3(8, 3, 8);
-    renderer.gi.counts = int3(3);
-    renderer.gi.updatesPerFrame = 1;
-    renderer.gi.debug = true;
-}
-```
-
-`GISettings` defaults: `center = float3(0)`, full `size = float3(10)`,
-`counts = int3(3)` (2–4 per axis), `updatesPerFrame = 1` (0–4),
-`intensity = 1` (0–16), `debug = false`. Size clamps to 0.1–100 per axis and
-center to ±1,000,000 per axis. Probes refresh in round-robin order;
-zero updates freezes the current result. Debug shows octahedron markers shaded
-by their lighting; uncaptured probes are magenta.
-Moving/resizing the volume or changing counts resets its lighting. Disabling GI
-releases its resources; re-enabling starts dark and fills progressively. A device
-reset loses captured lighting, which cannot refill while updates are frozen.
-
-Captures include opaque/cutout static and skinned meshes with their material
-and vertex hooks, using diffuse direct reflection plus emission. Ambient and
-previous GI do not feed captures. Transparent surfaces receive GI but do not
-appear in captures. AO affects received GI as well as diffuse ambient.
-
-This is an experimental bounded-volume implementation. Keep probes out of
-solids; automatic placement, inside-geometry detection and relocation are not
-provided. Coarse captures and progressive refresh limit detail and responsiveness,
-and visibility weighting cannot guarantee leak-free walls. Captures reuse the
-selected lights and main-camera shadow atlas, so ensure shadow coverage includes
-the captured surfaces. Receivers outside the volume get no GI. There is no
-glossy GI or automatic sky lighting. Full details: [package guide](https://tide-engine.dev/packages/render3d#opt-in-diffuse-global-illumination).
-
 ## Ordering and custom surfaces
 
-The package views run `Prepare → Lights → Shadows → GI → Color → Opaque → Transparent → PostPrepare → Bloom → PostProcess → Present`, from
+The package views run `Prepare → Lights → Shadows → Color → Opaque → Transparent → PostPrepare → Bloom → PostProcess → Present`, from
 `Render3D.Stages`. All casters finish before color rendering. Configure camera,
 lighting and attached local material fields in `[Before(Render3D.Stages.Prepare)]`
 views; draw window UI in `[After(Render3D.Stages.Present)]` views.
@@ -297,7 +255,7 @@ blending and playback clocks. Skinned maps need authored UV tangents.
 Set `material.vertex = Render3D.Deform { vertex = MyVertex }` for a shared
 `Func<VertexInput, mut MeshVertex, void>` callback. It runs after skinning in
 mesh-local space, before the draw transform, for both color and shadow passes.
-Input contains the pre-deformation `world` position, main-camera `eye` (also in GI captures) and
+Input contains the pre-deformation `world` position, main-camera `eye` and
 `localToWorld`. Update normals/tangents when needed. Plain captures are shared
 uniforms; `null` preserves the original static path and automatic bounds.
 Custom-deformed/skinned meshes need explicit conservative bounds for culling.
@@ -322,16 +280,15 @@ additional game resources through ordinary shader parameters: between
 
 ## Current scope
 
-One camera; static and skinned mesh assets with material maps and scalar values,
-plus the opt-in diffuse probe GI prototype.
+One camera; static and skinned mesh assets with material maps and scalar values.
 No `LightMode`, baked or area lights, environment specular,
-glossy GI or light baker in this slice.
+GI, probes or light baker in this slice.
 Model texture and metallic/roughness import is not automatic.
 
 The package requests RGBA16F, sums direct light in linear HDR and adds nonnegative
 emission once, even with zero lights. Optional diffuse ambient contributes
 `albedo * (1 - metallic) * ambientIrradiance * occlusion / Math.PI`.
-AO affects this term and enabled probe GI, not direct lights or emission. This supplies no
+AO only affects this term, not direct lights or emission. This supplies no
 environment specular or automatic occlusion bake.
 It then applies linear exposure, Reinhard tone mapping and one sRGB encode.
 Base-map filtering currently happens in display space before decoding; it is not

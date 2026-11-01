@@ -12,7 +12,6 @@ local singleton SkinningProbe
 {
     bool initialized;
     bool disabled;
-    bool gi;
     bool hook = true;
     bool mutateAfter;
     int poseMode = 1; // 0: omitted rest; 1: sampled Slide; 2: explicit invalid Pose.
@@ -100,7 +99,6 @@ system BuildSkinning(mut SkinningFixture fixture)
 view ConfigureSkinning(mut Render3D.Renderer renderer, mut SkinningProbe probe)
 {
     renderer.enabled = !probe.disabled;
-    renderer.gi = Render3D.GISettings { enabled = probe.gi, counts = int3(2), updatesPerFrame = 1 };
     renderer.background = Color.black;
     renderer.camera = Render3D.Camera {
         position = float3(0, 0, probe.side > 0 ? -6 : 6),
