@@ -176,6 +176,7 @@ TIDE_TEST(globalillumination_update_budget_freeze_invalidation_and_disposal)
     frame();
     TIDE_CHECK(environment->initialized == 1 && environment->cursor == 1);
     const uint64_t ids[] = {environment->resources.atlas.id, environment->resources.projection.id,
+        environment->resources.partialProjection.id,
         environment->resources.face0.id, environment->resources.face1.id, environment->resources.face2.id,
         environment->resources.face3.id, environment->resources.face4.id, environment->resources.face5.id};
     local.GIProbe.settings.enabled = false;

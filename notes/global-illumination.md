@@ -72,9 +72,12 @@ precision without per-face auxiliary clear draws. Double-sided cards have no
 solid interior and do not mark back faces.
 
 Each probe projects a symmetric 8x8 ray grid on each face (384 rays) into
-nine signed spherical-harmonic coefficients in a retained 9x1 scratch target.
-Lambert band factors are applied during projection. The bounded uniform loop
-avoids excessive software-driver unrolling. A second pass expands coefficients
+nine signed spherical-harmonic coefficients. Sixteen independent 24-ray groups
+write a retained 9x16 scratch target, then reduce into 9x1. Lambert band factors
+are applied during reduction. Partial sums and weights share a scale that keeps
+HDR half floats finite and cancels during normalization. The bounded uniform
+loops avoid excessive software-driver unrolling and long serial texture-read
+chains in a nine-fragment draw. A second pass expands coefficients
 into nonnegative directional irradiance and gathers a local 3x3 seam-aware
 kernel of capture distances. This avoids repeating full-sphere integration for
 every atlas texel. Constant incoming radiance reconstructs PI times that light.
@@ -140,3 +143,14 @@ no timing result is claimed here before measurement. Mobile/other native OSes,
 Unity execution, device-loss recovery and large-world performance remain
 unavailable local coverage. Work stays on the feature branch, without a PR or
 merge to dev.
+
+### Parallel projection follow-up
+
+The first optimized local cost run identified probe updates as the dominant
+work. Projection now splits the same 384 rays over sixteen independent groups
+before reducing nine coefficients. This adds one small GPU pass per updated
+probe, preserves the final sampling layout and adds no CPU readback. The same
+seven scoped native ASan checks pass, including analytic light/visibility and
+continuity pixels, real bounce, mapped skinning and benchmark correctness.
+Browser validation and repeated optimized measurements are being recorded
+against this source revision before the branch-only handback.

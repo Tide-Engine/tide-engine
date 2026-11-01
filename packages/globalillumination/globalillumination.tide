@@ -11,8 +11,10 @@ struct Resources
     RenderTarget face5;
     RenderTarget atlas;
     RenderTarget projection;
+    RenderTarget partialProjection;
     List<Vertex> quad;
     List<Vertex> projectionQuad;
+    List<Vertex> partialQuad;
     List<int> indices;
     List<Vertex3> markers;
     List<int> markerIndices;
@@ -45,6 +47,8 @@ local singleton Environment
     Texture distance;
     Texture projection;
     Texture projectionData;
+    Texture partialProjection;
+    Texture partialProjectionData;
 }
 
 void Dispose(mut Environment environment)
@@ -57,6 +61,7 @@ void Dispose(mut Environment environment)
     environment.resources.face5.Dispose();
     environment.resources.atlas.Dispose();
     environment.resources.projection.Dispose();
+    environment.resources.partialProjection.Dispose();
     environment.resources = default;
     environment.ready = false;
     environment.initialized = 0;
@@ -78,6 +83,8 @@ void Dispose(mut Environment environment)
     environment.distance = default;
     environment.projection = default;
     environment.projectionData = default;
+    environment.partialProjection = default;
+    environment.partialProjectionData = default;
 }
 
 bool LayoutChanged(FieldLayout a, FieldLayout b)
@@ -99,6 +106,7 @@ void PrepareResources(mut Environment environment, FieldLayout layout)
     environment.resources.face5 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
     environment.resources.atlas = RenderTarget(576, layout.atlasRows * 18, 1, Format.Rgba16f, Format.Rgba16f);
     environment.resources.projection = RenderTarget(9, 1, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.partialProjection = RenderTarget(9, 16, 1, Format.Rgba16f, Format.Rgba16f);
     environment.light0 = environment.resources.face0.color;
     environment.light1 = environment.resources.face1.color;
     environment.light2 = environment.resources.face2.color;
@@ -115,6 +123,14 @@ void PrepareResources(mut Environment environment, FieldLayout layout)
     environment.distance = environment.resources.atlas.colors[1];
     environment.projection = environment.resources.projection.color;
     environment.projectionData = environment.resources.projection.colors[1];
+    environment.partialProjection = environment.resources.partialProjection.color;
+    environment.partialProjectionData = environment.resources.partialProjection.colors[1];
+    environment.resources.partialQuad = [
+        Vertex { position = float2(0, 0), uv = float2(0, 0) },
+        Vertex { position = float2(9, 0), uv = float2(1, 0) },
+        Vertex { position = float2(9, 16), uv = float2(1, 1) },
+        Vertex { position = float2(0, 16), uv = float2(0, 1) }
+    ];
     environment.resources.projectionQuad = [
         Vertex { position = float2(0, 0), uv = float2(0, 0) },
         Vertex { position = float2(9, 0), uv = float2(1, 0) },
@@ -163,10 +179,14 @@ quaternion FaceRotation(int face)
 void IntegrateProbe(mut Environment environment, int probe)
 {
     if (!environment.ready || probe < 0 || probe >= environment.layout.total) return;
+    ResetTarget(environment.resources.partialProjection);
+    environment.resources.partialProjection.SetScreen();
+    environment.resources.partialProjection.Mesh(environment.resources.partialQuad,
+        environment.resources.indices, Project);
     ResetTarget(environment.resources.projection);
     environment.resources.projection.SetScreen();
     environment.resources.projection.Mesh(environment.resources.projectionQuad,
-        environment.resources.indices, Project);
+        environment.resources.indices, ReduceProjection);
     ResetTarget(environment.resources.atlas);
     environment.resources.atlas.SetScreen();
     environment.resources.atlas.Transform(float2(probe % 32, probe / 32) * 18)

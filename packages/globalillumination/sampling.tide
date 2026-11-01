@@ -99,11 +99,12 @@ frag Project(Vertex vertex, out Color coefficient, out Color validity, Environme
     mut float3 projected = float3(0);
     mut float backfaces = 0;
     mut float sphereWeight = 0;
-    // A bounded uniform loop avoids expanding hundreds of texture branches
-    // into the shader on software compilers. Each ray is integrated nine times,
-    // once for each coefficient, instead of once per directional atlas texel.
+    // Sixteen independent groups avoid putting the entire 384-ray dependency
+    // chain in just nine fragments. Reduction preserves the same ray samples.
     int rayCount = Math.Clamp(environment.rayCount, 1, 384);
-    for (var sample = 0; sample < rayCount; sample++)
+    int first = Math.Clamp(int(Math.Floor(vertex.uv.y * 16)), 0, 15) * 24;
+    int end = Math.Min(first + 24, rayCount);
+    for (var sample = first; sample < end; sample++)
     {
         int face = sample / 64;
         int y = (sample / 8) % 8;
@@ -124,12 +125,31 @@ frag Project(Vertex vertex, out Color coefficient, out Color validity, Environme
         backfaces += back * solidAngle;
         sphereWeight += solidAngle;
     }
+    // Scaling both coefficient sums and weights keeps partial half floats
+    // finite for HDR input; the scale cancels during the final normalization.
+    coefficient = Color(projected / 64, 1);
+    validity = Color(backfaces / 64, sphereWeight / 64, 0, 1);
+}
+
+frag ReduceProjection(Vertex vertex, out Color coefficient, out Color validity, Environment environment)
+{
+    int index = Math.Clamp(int(Math.Floor(vertex.uv.x * 9)), 0, 8);
+    mut float3 projected = float3(0);
+    mut float backfaces = 0;
+    mut float sphereWeight = 0;
+    for (var group = 0; group < 16; group++)
+    {
+        float2 uv = float2((float(index) + 0.5) / 9, (float(group) + 0.5) / 16);
+        Color partial = environment.partialProjection.Sample(uv, Filter.Point, Wrap.Clamp);
+        Color weights = environment.partialProjectionData.Sample(uv, Filter.Point, Wrap.Clamp);
+        projected += float3(partial.r, partial.g, partial.b);
+        backfaces += weights.r;
+        sphereWeight += weights.g;
+    }
     float band = index == 0 ? Math.PI : index < 4 ? 2 * Math.PI / 3 : Math.PI / 4;
-    float scale = 4 * Math.PI * band / Math.Max(sphereWeight, 0.00001);
-    // Higher bands contain signed coefficients. Do not apply a radiance clamp
-    // until they have been reconstructed into outgoing directional irradiance.
+    float scale = 4 * Math.PI * band / Math.Max(sphereWeight, 0.0000001);
     coefficient = Color(Math.Clamp(projected * scale, float3(-65504), float3(65504)), 1);
-    validity = Color(backfaces / Math.Max(sphereWeight, 0.00001), 0, 0, 1);
+    validity = Color(backfaces / Math.Max(sphereWeight, 0.0000001), 0, 0, 1);
 }
 
 struct FaceCoordinate { int face; float2 uv; }
@@ -266,4 +286,3 @@ float3 Sample(Texture irradiance, Texture distance, FieldLayout layout, float in
     float trusted = Math.SmoothStep(0.00001, 0.001, confidence);
     return weightSum > 0.0000001 ? ClampHdr(result / weightSum * (intensity * fade * trusted)) : float3(0);
 }
-
