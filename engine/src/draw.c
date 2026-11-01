@@ -11,6 +11,7 @@
 #include "tide/pack.h"
 #include "tide/page.h"
 #include "skinned_cache.h"
+#include "list_data_cache.h"
 
 static void reindex_meshes(tide_draw_list *d);
 static void reindex_textures(tide_draw_list *d);
@@ -365,6 +366,7 @@ static void free_pixels(const tide_draw_texture *t)
 void tide_draw_reset(tide_draw_list *d)
 {
     tide_skinned_draw_cache_reset(d);
+    if (d->list_data) memset(d->list_data, 0, sizeof *d->list_data);
     d->count = 0;
     d->text_used = 0;
     d->vertex_count = 0;
@@ -433,6 +435,7 @@ static void free_meshes(tide_draw_list *d)
 void tide_draw_free(tide_draw_list *d)
 {
     tide_skinned_draw_cache_free(d);
+    free(d->list_data);
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     free_meshes(d);
     free(d->commands);
@@ -1317,6 +1320,7 @@ void tide_draw_defaults(tide_draw_list *d)
 void tide_draw_forget(tide_draw_list *d)
 {
     tide_skinned_draw_cache_reset(d);
+    if (d->list_data) memset(d->list_data, 0, sizeof *d->list_data);
     const bool had_targets = d->target_count != 0;
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     d->texture_count = 0;

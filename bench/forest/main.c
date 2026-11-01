@@ -6,6 +6,7 @@
 #include <string.h>
 #include "game.h"
 #include "tide/platform.h"
+#include "tide/profile.h"
 #include "tide/time.h"
 
 extern const unsigned char tide_game_pack[];
@@ -17,9 +18,10 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
+static tide_profile profile;
 static int tree_count = 10000, frames = 100, warmup = 20, width = 1920, height = 1080;
 static int camera, shadow_resolution = 1024, frame_at, gpu_count, drain;
-static bool quick, shadows = true, wind = true, levels = true;
+static bool quick, profiling, shadows = true, wind = true, levels = true;
 static const char *capture_path, *output_path;
 static const char *const cameras[] = {"ground", "canopy", "wide"};
 static double *samples[METRICS];
@@ -168,6 +170,16 @@ static int finish(void)
             }
         }
     }
+    if (profiling) {
+        printf("profile diagnostics: instrumented averages over %d frames after %d warmup frames; not a performance comparison\n",
+            frames, warmup);
+        for (uint32_t i = 0; i < profile.views.count; i++) {
+            const tide_profile_time *view = &profile.views.items[i];
+            printf("  %-32s total %.6f ms, mean %.6f ms/frame\n", view->name, view->total, view->total / frames);
+        }
+        gui.profile = NULL;
+        tide_profile_free(&profile);
+    }
     tide_platform_gpu_timing(false);
     // Invalidate platform target IDs before releasing local renderer resources.
     tide_draw_forget(&draw);
@@ -188,6 +200,7 @@ static int frame(void *user, const float seconds)
         if (!quick) collect_gpu();
         return --drain ? TIDE_KEEP_RUNNING : finish();
     }
+    if (profiling && frame_at == warmup) tide_profile_clear(&profile);
     if (!quick && frame_at == warmup) {
         tide_platform_gpu_timing(false);
         tide_platform_gpu_timing(true);
@@ -251,11 +264,12 @@ static void help(void)
     puts("bench_forest [--count 1..100000] [--camera ground|canopy|wide]\n"
         "  [--frames 100] [--warmup 20] [--width 1920] [--height 1080]\n"
         "  [--shadows 0|1] [--wind 0|1] [--levels 0|1] [--shadow-resolution 1024]\n"
-        "  [--capture final.png] [--output file.jsonl] [--quick]\n"
+        "  [--capture final.png] [--output file.jsonl] [--profile] [--quick]\n"
         "Finite production Render3D runs. Two mesh entities per tree, plus terrain.\n"
         "Distance levels: detailed below 90m, medium below 280m, coarse beyond.\n"
         "Shadow casters within 260m; four cascades receive to 160m.\n"
         "CPU/GPU intervals overlap; native readback synchronizes and is not shipping FPS.\n"
+        "--profile adds per-view diagnostic totals and means after warmup (including profiler overhead).\n"
         "--quick uses 64 trees, 320x180, 32px shadow cells and no timing.");
 }
 
@@ -265,6 +279,7 @@ int main(const int argc, char **argv)
         const char *arg = argv[i];
         if (!strcmp(arg, "--help") || !strcmp(arg, "-h")) { help(); return 0; }
         if (!strcmp(arg, "--quick")) { quick = true; continue; }
+        if (!strcmp(arg, "--profile")) { profiling = true; continue; }
         const char *equal = strchr(arg, '=');
         const size_t length = equal ? (size_t)(equal - arg) : strlen(arg);
         const char *value = equal ? equal + 1 : i + 1 < argc ? argv[++i] : NULL;
@@ -301,6 +316,7 @@ int main(const int argc, char **argv)
     if (!tide_assets_load(tide_game_pack, tide_game_pack_size)) return 1;
     tide_world_init(&world, 1.0f / 60.0f);
     tide_local_init(&local);
+    if (profiling) gui.profile = &profile;
     world.Forest.count = tree_count;
     world.Forest.camera = camera;
     world.Forest.wind = wind;

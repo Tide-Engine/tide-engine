@@ -1529,6 +1529,7 @@ typedef struct tide_draw_list {
     uint32_t pack_slot;
     uint32_t pack_frame;
     struct tide_skinned_draw_cache *skinned; // Private frame-local palette captures
+    struct tide_list_data_cache *list_data; // Private frame-local numeric-list captures
     // The window's size in logical pixels, supplied before recording (tide_draw_screen_size).
     // With none, window frustum culling and automatic LOD selection are skipped.
     tide_float2 screen;

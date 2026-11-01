@@ -1,0 +1,24 @@
+{
+  "base_revision_full": "1f825bbe532cdfdef1318aad990b633ea480841a",
+  "binary_sha256": {
+    "before": "4c9ec2a8a0ad6e6dbeabf1673323b5dee4a381c93cfd12975d90c8b25c2babb7",
+    "after": "7acb1c1444d79abd2eb8bf952d15b97a35b7b01b8d56b19b27ffdf01c108e724"
+  },
+  "after_sources_normalized_lf_sha256": {
+    "bench/forest/game.tide": "3a179179c372f0f55c59bfc047eaf3eed7aa4cd275aa48c73c7733ccf3418eab",
+    "bench/forest/main.c": "155f45687a422e544ef6f6d720d2362e4629577f1d8b159f5f88f25e87859754",
+    "compiler/src/lane_reads_codegen.inc": "4d3fffd748909001969515155097529ddef5c0023adde35ffcebdd6ca67e1d7c",
+    "engine/src/draw.c": "f2354cf1a1030f18a1ab59e284f96d562ed3963d56f0f608a1797d6d8fe05ce6",
+    "engine/src/mesh.c": "cf39c4d1102d5ef4676039486ba736ccdd20c4a570f9834d388ddc49400dafd7",
+    "engine/src/list_data_cache.h": "84d0ce9a56317ed11ed8527dee1806490deff3e807e58993a7a5ae535ad8419e",
+    "engine/include/tide/draw.h": "9f23dba72b83ae120510e8d6be00c07dc3d273a8b8c717b000c5cf7e23f6f56b"
+  },
+  "configuration": "Clang 23.1.2; native release preset (-O2, no sanitizer); Vulkan 1920x1080; unchanged shadows/wind/detail/cameras; 20 warmup +100 measured frames per process; 3 alternating pairs per case",
+  "timing_limits": "CPU/GPU overlap; native readback synchronization recorded separately; no shipping FPS claim. Shared benchmark mutex with 5-second initial quiet guard; no task builds/tests during measurements; clocks/desktop activity uncontrolled and no per-run contention monitor.",
+  "validation": {
+    "native": "2,908 full Windows ASan CTests pass",
+    "web": "2,794 full WASI/browser Release CTests pass",
+    "pixels": "Three 1920x1080 decoded RGBA comparisons have zero changed pixels; independent recheck agrees",
+    "reviews": "Independent compiler AST drawing guard, cache lifecycle and raw evidence reviews found no blocking issue"
+  }
+}

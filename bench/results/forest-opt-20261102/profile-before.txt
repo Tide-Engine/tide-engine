@@ -1,0 +1,88 @@
+renderer: Vulkan; trees 100000; ground camera; 1739m forest; 1280x720; finite measured frames; CPU/GPU overlap; readback is not FPS
+{"benchmark":"forest","renderer":"Vulkan","revision":"unknown","machine":"unknown","compiler":"23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)","optimized":true,"platform":"native","gpu_timer_scope":"backend_elapsed_draw_interval","trees":100000,"mesh_entities":200001,"camera":"ground","extent_metres":1739.2527,"near_trees":358,"middle_trees":3511,"far_trees":96131,"distance_levels":true,"shadows":true,"wind":true,"shadow_resolution":1024,"shadow_views":4,"width":1280,"height":720,"warmup":10,"frames":80,"gpu_samples":80,"draw_calls_min":24,"draw_calls_max":24,"submitted_vertices_min":10859934,"submitted_vertices_max":10859934,"main_bark_instances_min":78286,"main_bark_instances_max":78286,"main_foliage_instances_min":78286,"main_foliage_instances_max":78286,"texture_upload_bytes_mean":0.000,"world_hash":"7c5e24427372ab09","world_unchanged":true,"process_memory_bytes":336744448,"gpu_memory_bytes":69435649,"view_record_ms":{"median":170.7481,"p95":180.0319},"cpu_submit_ms":{"median":1.56955,"p95":5.8927},"completion_readback_ms":{"median":20.48245,"p95":61.4752},"gpu_ms":{"median":19.052848,"p95":56.118112}}
+
+686975 samples over 24065 rounds (exit 0); 18538 in C:\Users\blenm\.t3\worktrees\PurrEngine\t3-bca988ba\build\forest-opt\before\bench_forest.exe
+  elsewhere     643259 samples, 3469.95% of the program's  ntdll.dll
+  elsewhere      23647 samples,  127.56% of the program's  win32u.dll
+  elsewhere        757 samples,    4.08% of the program's  VCRUNTIME140.dll
+  elsewhere        606 samples,    3.27% of the program's  nvoglv64.dll
+  elsewhere         85 samples,    0.46% of the program's  imagehlp.dll
+  elsewhere         22 samples,    0.12% of the program's  (unknown)
+  elsewhere         20 samples,    0.11% of the program's  KERNELBASE.dll
+  elsewhere         12 samples,    0.06% of the program's  amdvlk64.dll
+
+  innermost function (inlined code counts where it was written), % of the program's samples:
+    9.52%  tide_hash_more
+    7.44%  tide_function_Render3D_DrawMaterialGeometry
+    5.64%  ??:0:0
+    4.56%  bounds_visible
+    3.87%  tide_run_view_Render3D_DrawMesh
+    3.77%  add_word
+    3.59%  tide_view_BindForest
+    3.27%  tide_function_Render3D_DrawMaterial
+    2.55%  tide_query_Render3D_Cast_2
+    2.50%  mix
+    2.49%  tide_function_Render3D_Maps
+    2.47%  shaded_instances
+    2.41%  span
+    2.10%  tide_query_Render3D_DrawTransparent_2
+    2.09%  tide_draw_texture_edit
+    1.94%  tide_view_Render3D_Cast
+    1.90%  tide_heap_block_hash
+    1.72%  tide_draw_list_data
+    1.66%  tide_heap_block
+    1.24%  texture_place
+    1.22%  shaded_placed
+    1.21%  tide_texture_size
+    1.11%  tide_attached_find
+    1.11%  tide_draw_texture_source
+    1.08%  tide_gui_seed
+
+  outermost function (what it was inlined into):
+   11.73%  tide_hash_more
+    8.23%  tide_function_Render3D_DrawMaterialGeometry
+    5.74%  bounds_visible
+    5.64%  ??:0:0
+    5.48%  tide_run_view_Render3D_DrawMesh
+    5.41%  tide_run_view_Render3D_Cast
+    4.43%  tide_run_view_BindForest
+    3.97%  tide_draw_list_data
+    3.38%  tide_function_Render3D_DrawMaterial
+    3.24%  chunk_hash
+    2.94%  tide_run_view_Render3D_DrawTransparent
+    2.66%  tide_function_Render3D_Maps
+    2.60%  shaded_instances
+    2.49%  tide_hash
+    2.28%  tide_heap_block_hash
+    2.09%  tide_draw_texture_edit
+    1.94%  tide_hash_end
+    1.69%  texture_place
+    1.55%  tide_draw_texture_source
+    1.50%  list_version
+    1.35%  tide_table_cell
+    1.30%  tide_draw_push_bounds
+    1.25%  draw_to_version
+    1.22%  shaded_placed
+    1.21%  tide_texture_size
+
+  lines:
+    5.64%  ??:0:0
+    5.43%  tide_hash_more                           src\net.c:714:0
+    4.36%  tide_function_Render3D_DrawMaterialGeometry render3d\render3d.tide:873:0
+    2.82%  add_word                                 src\net.c:709:0
+    2.77%  tide_run_view_Render3D_DrawMesh          bench_forest\game.c:34653:0
+    2.54%  bounds_visible                           src\draw.c:2991:0
+    2.30%  tide_function_Render3D_Maps              render3d\render3d.tide:663:0
+    2.17%  tide_function_Render3D_DrawMaterialGeometry render3d\render3d.tide:870:0
+    2.13%  tide_query_Render3D_Cast_2               bench_forest\game.c:34534:0
+    2.11%  tide_hash_more                           src\net.c:725:0
+    1.97%  tide_draw_texture_edit                   src\draw.c:1894:0
+    1.83%  tide_function_Render3D_DrawMaterial      render3d\render3d.tide:858:0
+    1.74%  tide_query_Render3D_DrawTransparent_2    bench_forest\game.c:34723:0
+    1.33%  tide_view_BindForest                     forest\game.tide:196:0
+    1.22%  tide_heap_block_hash                     src\heap.c:194:0
+    1.13%  span                                     src\mesh.c:62:0
+    0.99%  mix                                      src\net.c:703:0
+    0.98%  tide_heap_block                          tide\heap.h:139:0
+    0.98%  tide_hash_more                           src\net.c:728:0
+    0.95%  add_word                                 src\net.c:710:0

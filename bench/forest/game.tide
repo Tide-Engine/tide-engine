@@ -111,6 +111,11 @@ void ForestBend(Render3D.VertexInput input, mut Render3D.MeshVertex vertex, Rend
     Render3D.ApplyWind(input, vertex, wind, 0.012, leaf ? 0.012 : 0);
 }
 
+Func<Render3D.VertexInput, mut Render3D.MeshVertex, void> ForestVertex(Render3D.Wind wind, bool leaf)
+{
+    return (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) => ForestBend(input, vertex, wind, leaf);
+}
+
 void ForestSurface(Render3D.SurfaceInput input, mut Render3D.Surface surface,
                    Render3D.LeafSettings settings, float3 eye)
 {
@@ -120,6 +125,11 @@ void ForestSurface(Render3D.SurfaceInput input, mut Render3D.Surface surface,
     float fog = 1 - Math.Exp(-Math.Length(input.world - eye) * 0.00065);
     surface.albedo *= 1 - fog;
     surface.emission += float3(0.56, 0.69, 0.82) * fog;
+}
+
+Func<Render3D.SurfaceInput, mut Render3D.Surface, void> ForestShader(Render3D.LeafSettings settings, float3 eye)
+{
+    return (Render3D.SurfaceInput input, mut Render3D.Surface surface) => ForestSurface(input, surface, settings, eye);
 }
 
 [Before(Render3D.Stages.Prepare)]
@@ -138,23 +148,24 @@ view ConfigureForest(Forest forest, mut ForestFrame frame, mut Render3D.Renderer
     renderer.shadowRange = 160;
     renderer.shadowDistance = 35;
     renderer.shadowCascades = 4;
-    // Construct the shared captures once, instead of allocating one callback
-    // per tree. BindForest only copies the two shared material bindings.
+    // Construct the shared captures once. Each factory has one lambda site,
+    // so bark and leaves share its capture layout as well as its shader code.
+    // BindForest only copies the two shared material bindings.
     var wind = Render3D.Wind { time = frame.time, strength = forest.wind ? 0.45 : 0 };
     frame.barkVertex = Render3D.Deform {
-        vertex = (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) => ForestBend(input, vertex, wind, false)
+        vertex = ForestVertex(wind, false)
     };
     frame.leafVertex = Render3D.Deform {
-        vertex = (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) => ForestBend(input, vertex, wind, true)
+        vertex = ForestVertex(wind, true)
     };
     var barkSettings = Render3D.LeafSettings { transmission = 0 };
     var leafSettings = Render3D.LeafSettings { transmission = 0.4,
         transmissionColor = float3(0.75, 1, 0.4), thickness = 0.2 };
     frame.barkShader = Render3D.Lit {
-        surface = (Render3D.SurfaceInput input, mut Render3D.Surface surface) => ForestSurface(input, surface, barkSettings, eye)
+        surface = ForestShader(barkSettings, eye)
     };
     frame.leafShader = Render3D.Lit {
-        surface = (Render3D.SurfaceInput input, mut Render3D.Surface surface) => ForestSurface(input, surface, leafSettings, eye)
+        surface = ForestShader(leafSettings, eye)
     };
     if (frame.initialized) return;
     frame.initialized = true;

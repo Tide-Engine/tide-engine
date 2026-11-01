@@ -55,6 +55,14 @@ It checks exact planted counts, nonempty submitted work, unchanged match state,
 and a nonempty completed native image. The independent package fixtures test
 wind deformation and leaf lighting numerically and on the GPU.
 
+`--profile` optionally attaches Tide's existing per-view profiler. It clears
+totals at the warmup boundary and prints each view's total milliseconds and
+arithmetic mean over the requested measured frames. These are diagnostic
+attribution intervals with instrumentation overhead, rather than medians or a
+performance comparison. The normal path attaches no profiler and adds no
+profiling clock reads. Match setup remains outside the view totals; with zero
+warmup, first-frame resource initialization is included.
+
 Measured runs print JSONL to stdout and optionally append it to `--output`.
 Rows include near/medium/far tree counts, submitted vertex and draw-call ranges,
 main-target bark/foliage instance ranges, mean texture-upload bytes, memory,

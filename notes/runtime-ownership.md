@@ -1,5 +1,29 @@
 # Runtime written by Claude for now
 
+## Flat shader-data capture memo (2026-11-02)
+
+Within the approved forest submission optimization and existing drawing
+maintenance exception, `tide_draw_list` gains private `list_data` metadata.
+`engine/src/list_data_cache.h` defines its eight bounded frame-local entries;
+`mesh.c` probes current ordinary flat heap lists and `draw.c` resets/frees the
+metadata alongside texture lifecycle. No generated call, runtime entry point,
+simulation storage, hash or list representation changes. Hosts, libraries and
+generated games rebuild together for the C draw-list layout change.
+
+Valid page hashes witness mutation; `heap.moves` alone does not, because unique
+pages change in place. Cache hits preserve the hash helper's moves increment so
+existing retained writable addresses must revalidate before their next write.
+Heap identities are integer values, never dereferenced retained source pointers;
+every probe resolves and bounds-checks current storage. Dirty, scratch, packed,
+immutable asset-backed and chunked lists retain the original checked path.
+Contracts and the three focused Windows ASan regressions are in drawing.md,
+Repeated flat numeric-list captures. Full integration passes all 2,908 native
+Windows sanitizer and 2,794 web-release CTests; three 1920x1080 before/after
+forest captures (10k canopy, 100k wide and 100k ground) match every RGBA pixel.
+Independent cache review found no blocking issues. The containing task's
+[measurements and reproduction](../bench/results/forest-opt-20261102/README.md)
+cover the complete optimization rather than this cache alone.
+
 ## All of a pose's model matrices (2026-10-31)
 
 Owner-approved ("OK" to the proposed `pose.Models()`): generated code calls

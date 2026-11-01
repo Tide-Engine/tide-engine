@@ -1,5 +1,46 @@
 # Render3D package
 
+## Forest preparation cost without quality changes (2026-11-02)
+
+The owner requested optimizing the foliage stress scene while preserving visual
+fidelity. The combined change adds a bounded flat shader-list capture cache in
+the drawing runtime, applies existing partial numeric-lane reads to non-drawing
+views of shader component types, and shares each forest callback factory's layout.
+No mesh, placement, camera, distance tier, wind, lighting or shadow setting changes.
+
+The opt-in benchmark --profile uses the existing per-view profiler; default runs
+attach none. Initial diagnostics attribute about 85 of 104 ms recording to main
+DrawMesh, 10 ms to Cast, 5 ms to BindForest and 3 ms to transparent collection at
+100k ground/1280x720. These are instrumented single-run averages, not isolated
+contributions or paired improvements. Whole-process sampling includes setup and
+hashing, and its percentages are not percentages of a rendered frame.
+
+Three alternating optimized Vulkan pairs per camera/count give median paired
+CPU-recording reductions of 9.4% (10k canopy), 17.6% (100k wide) and 16.2% (100k
+ground). Absolute median-of-process-medians are 16.16 to 14.82, 151.09 to 118.72
+and 148.35 to 129.58 ms. GPU variation and separate scopes prevent a GPU/FPS claim;
+per-entity recording remains expensive. No quality budget was lowered for timing.
+
+All 18 processes verify 1,800 measured frames/completed GPU queries, matching
+representation/draw/vertex/main-tree counts, zero warmed uploads and unchanged
+world hashes. Three 1920x1080 same-timestep before/after captures match every RGBA
+pixel. Independent moving wind/shadow/material fixtures remain unchanged. This
+image comparison covers those three frames, not every possible camera/state.
+
+Both full builds and suites pass: 2,908 Windows ASan CTests and 2,794 web Release
+CTests, including native Vulkan/OpenGL and WebGL/D3D11/WebGPU. New cache lifetime
+and partial-load fixtures pass; independent source reviews found no blockers.
+Native other OSes/mobile/Unity and hardware-web scaling remain untested locally.
+No extra CI was dispatched. No public language/runtime function was introduced;
+all hosts/libraries rebuild for the private draw-list cache pointer.
+
+[Measured evidence, ranges, identities, captures, diagnostics and reproduction](../bench/results/forest-opt-20261102/README.md).
+Runtime contracts belong to drawing.md/runtime-ownership.md; compiler contracts
+to language.md. Measurements cover the combined changes. A forced-inline idea
+was not successfully measured or shipped. Remaining work includes reducing
+per-mesh binding/preparation further; this is not a claim of playable 100k forests.
+
+
 ## Foliage wind, thin leaves and forest stress (2026-11-01)
 
 The owner approved the first foliage slice and requested a large forest stress
