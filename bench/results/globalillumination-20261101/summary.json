@@ -1,0 +1,67 @@
+[
+  {
+    "mode": "off",
+    "label": "GI disabled",
+    "cpu_record_ms": 0.0123,
+    "cpu_submit_ms": 0.0309,
+    "gpu_ms": 0.146432,
+    "gpu_min_ms": 0.146144,
+    "gpu_max_ms": 0.14656,
+    "gpu_samples": 300,
+    "probes": 0,
+    "draws": 24.0,
+    "upload_bytes": 0.0
+  },
+  {
+    "mode": "frozen",
+    "label": "Frozen GI",
+    "cpu_record_ms": 0.0131,
+    "cpu_submit_ms": 0.0315,
+    "gpu_ms": 0.280512,
+    "gpu_min_ms": 0.279904,
+    "gpu_max_ms": 0.280512,
+    "gpu_samples": 300,
+    "probes": 384,
+    "draws": 24.0,
+    "upload_bytes": 0.0
+  },
+  {
+    "mode": "update1",
+    "label": "1 probe/frame",
+    "cpu_record_ms": 0.0327,
+    "cpu_submit_ms": 0.0672,
+    "gpu_ms": 0.372832,
+    "gpu_min_ms": 0.371392,
+    "gpu_max_ms": 0.373312,
+    "gpu_samples": 300,
+    "probes": 384,
+    "draws": 40.69,
+    "upload_bytes": 0.0
+  },
+  {
+    "mode": "update4",
+    "label": "4 probes/frame (default)",
+    "cpu_record_ms": 0.089,
+    "cpu_submit_ms": 0.1783,
+    "gpu_ms": 0.64608,
+    "gpu_min_ms": 0.585408,
+    "gpu_max_ms": 0.649696,
+    "gpu_samples": 300,
+    "probes": 384,
+    "draws": 90.28,
+    "upload_bytes": 0.0
+  },
+  {
+    "mode": "update16",
+    "label": "16 probes/frame",
+    "cpu_record_ms": 0.3074,
+    "cpu_submit_ms": 0.6298,
+    "gpu_ms": 1.648256,
+    "gpu_min_ms": 1.645184,
+    "gpu_max_ms": 1.661472,
+    "gpu_samples": 300,
+    "probes": 384,
+    "draws": 289.35,
+    "upload_bytes": 0.0
+  }
+]

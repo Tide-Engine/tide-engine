@@ -152,5 +152,17 @@ before reducing nine coefficients. This adds one small GPU pass per updated
 probe, preserves the final sampling layout and adds no CPU readback. The same
 seven scoped native ASan checks pass, including analytic light/visibility and
 continuity pixels, real bounce, mapped skinning and benchmark correctness.
-Browser validation and repeated optimized measurements are being recorded
-against this source revision before the branch-only handback.
+The same nine scoped browser checks pass on WebGL, ANGLE D3D11 and WebGPU,
+including mapped skinning and benchmark smokes. Together with the unchanged
+Render3D checks, coverage remains 28 native and 36 web CTests across scoped runs.
+
+On the queried RTX 4080 SUPER / Ryzen 9 7900X machine, optimized Vulkan at
+960x720 with this room's 384 probes gives a median whole-frame GPU cost of
+0.6461 ms and CPU recording of 0.0890 ms with the default four updates/frame.
+Frozen GI is 0.2805 ms GPU; runtime-disabled GI is 0.1464 ms. These are medians
+of three 100-frame process medians, with all GPU samples and raw rows retained.
+They are scoped room measurements, not a general hardware or game-FPS claim;
+recording, renderer submission and GPU intervals are separate.
+[Methods, source/binary identities, ranges, raw rows and actual captures](../bench/results/globalillumination-20261101/README.md).
+The measured code is ba070987a8dca293f35275275931c2e26180a17a. Subsequent report
+changes do not alter it. This branch has not been merged to dev.

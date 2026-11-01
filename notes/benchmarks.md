@@ -1,5 +1,47 @@
 # Benchmarks
 
+## Optional world GI room workload (2026-11-01)
+
+`bench_globalillumination` (`bench/globalillumination/`) measures the separate
+optional GlobalIllumination package through production Render3D shaders. One
+fixed room has colored walls, a white box/sphere, an emissive ceiling panel and
+a shadowed point light. Camera, geometry, light inputs and exposure stay the
+same for GI off, frozen GI and one/four/sixteen probe updates per frame. Enabled
+cases share 384 automatically placed probes. Convergence, warmup and correctness
+audits are outside the measured intervals; no simulation ticks run during them.
+
+The final optimized source is ba070987a8dca293f35275275931c2e26180a17a. It projects
+the same 384 capture rays into SH9 using sixteen independent 24-ray groups in a
+9x16 target, reduces to 9x1, then reconstructs directional irradiance and gathers
+nine seam-aware distance samples per octahedral texel. The projection avoids
+repeating a full-sphere sum per output texel. Half-float intermediate rounding
+can change a receiver channel by one byte; no bit-identical pixel claim is made.
+Independent lighting and geometry oracles retain their tolerances.
+
+Controlled measurements use unsanitized Clang 23.1.2 -O2, native Vulkan at
+960x720 on the Ryzen 9 7900X / RTX 4080 SUPER, NVIDIA 617.42. Three processes per
+mode take twenty warmup and one hundred measured frames, with mode order
+forward/reverse/forward. The shared benchmark gate and a coordinated quiet
+window keep other builds and GPU tests out of the measurements. Other desktop
+activity, clocks and temperature remain uncontrolled. Completed GPU timestamp
+counts accompany every row; reported GPU costs require all one hundred samples.
+CPU recording, CPU submission, GPU time and native completion/readback stay
+separate: CPU/GPU intervals overlap and are never added or converted to game FPS.
+
+[Saved rows, source/binary identities, cost ranges and reproduction](../bench/results/globalillumination-20261101/README.md)
+retain the final controlled results. An earlier serial-projection run from
+3592b33d91d9b452363dcfbffe67d838cf178014 is retained as diagnostic evidence;
+intervening builds/tests prevent treating it as a formally paired speedup
+comparison. These room costs do not establish large-world, dynamic-geometry,
+mobile or other-GPU performance, nor a hardware-independent quality guarantee.
+
+All 28 affected native Windows ASan and 36 web-debug CTests pass across focused
+runs, plus the production docs build. Benchmark quick checks disable timing
+and retain the actual GI pipeline, update budgets, rendered receiver witness,
+twelve-texture bound and unchanged match hashes. Native Vulkan/OpenGL and web
+WebGL/WebGPU benchmark smokes pass. The implementation and these experiments
+remain on `feat/render3d-gi`; they are not merged to dev.
+
 ## Baked poses (2026-10-31)
 
 ### OpenGL investigation
