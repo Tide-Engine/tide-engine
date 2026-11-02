@@ -6,6 +6,8 @@ separate bark/foliage entities; distant rendering uses one whole-tree impostor
 and hides the foliage entity. Deterministic planting is outside frame timings.
 Mesh selection, material binding, crossfade submission and rendering run every
 frame. There is no cached direct-draw replacement.
+Foliage rows are planted before bark/proxy rows, allowing nearby leaf depth to
+reject hidden distant atlas fragments before their expensive shading.
 
 Use an ordinary optimized build for measurements and the sanitizer build for
 correctness. Runs are finite and hidden:

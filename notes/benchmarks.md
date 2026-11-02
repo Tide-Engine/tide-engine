@@ -1,5 +1,22 @@
 # Benchmarks
 
+## Quiet forest comparison and foliage-first submission (2026-11-02)
+
+After GI released the shared host, the unchanged foliage binary completed the
+twelve-process/1200-sample cohort at 06:50:05 UTC without recognized contenders.
+All common settings match and each case/mode repeats its own world hash. CPU
+view-recording medians improved with impostors, while ground GPU intervals
+regressed; canopy and wide behaved differently. This is a representation tradeoff,
+not pixel-equivalent work, shipping FPS or a universal GPU speedup.
+
+The follow-up changes only the benchmark's planting part order so near cutout
+foliage writes depth before the bark rows that carry primary atlas cards. It
+adds no renderer scan or runtime API. Five native and seven web focused forest
+checks pass. Three captures retain identical work counts, changing 4/18/0 pixels
+for ground/canopy/wide. Initial raw rows, per-pair summaries, image comparison
+and the subsequent candidate cohort are recorded in
+[the foliage report](../bench/results/foliage-quality-20261102/README.md).
+
 ## Forest foliage quality and moving representations (2026-11-02)
 
 The owner requested applying established foliage rendering techniques. The

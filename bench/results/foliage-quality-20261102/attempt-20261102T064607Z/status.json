@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "started_utc": "2026-11-02T06:46:07.3484597Z",
+  "completed_utc": "2026-11-02T06:50:05.2754296Z",
+  "executable_sha256": "5826821807a65107446675dd518dc8d3af084ad6b470ddd67326792aaf05dc7b",
+  "source_head": "4ef42996f343f407686e8aa6796d443ef73bcb51",
+  "source_dirty": false,
+  "quiet_timeout_seconds": 90,
+  "processes": 12,
+  "gpu_samples": 1200,
+  "contention": [],
+  "arguments": "--count 100000 --width 1920 --height 1080 --warmup 20 --frames 100; ground/canopy/wide; impostors 0/1; two alternating rounds",
+  "source_files": [
+    {
+      "path": "bench/forest/game.tide",
+      "sha256": "ddf5b61d315ed02615f9023c39dc52dbc69c1eea9a032d5a213db7f5a7e4c60b"
+    },
+    {
+      "path": "bench/forest/main.c",
+      "sha256": "96e384a506902132684e25a3faaf5d42ec15af11508c9b45753d165567654a08"
+    },
+    {
+      "path": "packages/render3d/impostor.tide",
+      "sha256": "fa35282fd4051559a55882a1d4e5bc9b3c7ffea938be863f8af7db2de4ad7099"
+    },
+    {
+      "path": "packages/render3d/pbr.tide",
+      "sha256": "cf1465a6b8c46464f7ec759881f6a87007b66baa6039a91ad9f3d00ab7ab177b"
+    },
+    {
+      "path": "packages/render3d/materials.tide",
+      "sha256": "9602025f3466c2a73d28b81859640973ae5284b24a9cb3690eee81f8184675e6"
+    }
+  ]
+}

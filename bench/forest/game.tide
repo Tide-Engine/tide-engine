@@ -83,9 +83,10 @@ system PlantForest(mut Forest forest)
     while (columns * columns < forest.count) columns++;
     int rows = (forest.count + columns - 1) / columns;
     float3 eye = ForestEye(forest.count, forest.camera);
-    // Group geometry/material kinds for contiguous shadow batches. All trees
-    // remain ordinary entities; there is no cached direct-draw replacement.
-    for (var part = 0; part < 2; part++)
+    // Leaf depth is recorded before the bark rows that become distant
+    // impostors, so nearby foliage can reject hidden atlas fragments early.
+    // Keep each geometry/material tier contiguous for ordinary batching.
+    for (var part = 1; part >= 0; part--)
     for (var level = 0; level < 3; level++)
     for (var i = 0; i < forest.count; i++)
     {

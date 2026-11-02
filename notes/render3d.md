@@ -1,5 +1,30 @@
 # Render3D package
 
+## Forest depth order after quiet measurements (2026-11-02)
+
+The first quiet foliage cohort completed twelve release processes and 1200 GPU
+samples without recognized contention. It exposed a ground-view GPU regression
+with the distant atlas, despite lower CPU view-recording time. Primary atlas
+cards occupy the bark rows, which were submitted before nearby cutout foliage.
+That ordering plausibly prevented early rejection behind the nearby canopy.
+
+The scoped experiment reverses only the forest's planting part order: foliage
+rows precede bark/proxy rows. It adds no renderer pass, query scan, state or API.
+Per-tree mesh/material/transform/wind values depend on tree index and remain
+the same. Entity IDs and world hashes change with planting order; each variant
+must independently preserve its own match state. Opaque shadow batches still
+precede cutout shadows, retaining each class's order. An extra package pass was
+rejected because query snapshots would add work even without impostors.
+
+Release/native-ASan/web forest builds and all five native/seven web focused
+checks pass, including the moving camera. Three 1920x1080 captures retain exact
+representation/draw/vertex counts. Ground/canopy/wide change 4/18/0 RGBA pixels
+out of 2073600 each, consistent with LESS_OR_EQUAL depth ownership at touching
+surfaces; this is not pixel equivalence. No shader expressions were edited;
+source-position changes regenerate callback identifiers, so raw shader byte
+identity is not claimed. Paired timing evidence is retained in the foliage
+report; the reordered candidate's measurement check follows this experiment.
+
 ## Foliage quality reference and moving representations (2026-11-02)
 
 The owner approved adapting established foliage techniques after identifying

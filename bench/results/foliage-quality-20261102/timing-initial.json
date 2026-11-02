@@ -1,0 +1,356 @@
+{
+  "attempt": "bench/results/foliage-quality-20261102/attempt-20261102T064607Z",
+  "binary_sha256": "5826821807a65107446675dd518dc8d3af084ad6b470ddd67326792aaf05dc7b",
+  "source_head": "4ef42996f343f407686e8aa6796d443ef73bcb51",
+  "processes": 12,
+  "gpu_samples": 1200,
+  "common_settings_match": true,
+  "world_hash_repeats_within_each_mode": true,
+  "scope": "100000 trees; mesh-only vs distant atlas; two paired process medians per camera; not FPS",
+  "metrics": {
+    "view_record_ms": {
+      "ground": {
+        "0": {
+          "process_medians": [
+            116.81545,
+            117.8712
+          ],
+          "median_of_process_medians": 117.343325,
+          "process_p95": [
+            133.0873,
+            133.1065
+          ]
+        },
+        "1": {
+          "process_medians": [
+            92.5837,
+            93.7691
+          ],
+          "median_of_process_medians": 93.1764,
+          "process_p95": [
+            106.183,
+            109.4349
+          ]
+        },
+        "paired_percent_change": [
+          -20.743617389651803,
+          -20.447827798478347
+        ]
+      },
+      "canopy": {
+        "0": {
+          "process_medians": [
+            119.0233,
+            119.1988
+          ],
+          "median_of_process_medians": 119.11105,
+          "process_p95": [
+            139.1586,
+            137.2969
+          ]
+        },
+        "1": {
+          "process_medians": [
+            95.5022,
+            96.8082
+          ],
+          "median_of_process_medians": 96.15520000000001,
+          "process_p95": [
+            106.091,
+            109.927
+          ]
+        },
+        "paired_percent_change": [
+          -19.7617609325233,
+          -18.78424950586751
+        ]
+      },
+      "wide": {
+        "0": {
+          "process_medians": [
+            88.4672,
+            89.105
+          ],
+          "median_of_process_medians": 88.7861,
+          "process_p95": [
+            111.2308,
+            107.1265
+          ]
+        },
+        "1": {
+          "process_medians": [
+            59.50885,
+            59.17995
+          ],
+          "median_of_process_medians": 59.3444,
+          "process_p95": [
+            68.2017,
+            72.3156
+          ]
+        },
+        "paired_percent_change": [
+          -32.73343114736309,
+          -33.58403007687561
+        ]
+      }
+    },
+    "cpu_submit_ms": {
+      "ground": {
+        "0": {
+          "process_medians": [
+            1.5177,
+            1.5199
+          ],
+          "median_of_process_medians": 1.5188000000000001,
+          "process_p95": [
+            10.3882,
+            5.7527
+          ]
+        },
+        "1": {
+          "process_medians": [
+            2.8698,
+            2.7611
+          ],
+          "median_of_process_medians": 2.8154500000000002,
+          "process_p95": [
+            3.1061,
+            5.2436
+          ]
+        },
+        "paired_percent_change": [
+          89.08875271792844,
+          81.66326732021842
+        ]
+      },
+      "canopy": {
+        "0": {
+          "process_medians": [
+            1.6584,
+            1.6615
+          ],
+          "median_of_process_medians": 1.65995,
+          "process_p95": [
+            5.7602,
+            5.7846
+          ]
+        },
+        "1": {
+          "process_medians": [
+            1.10655,
+            1.10645
+          ],
+          "median_of_process_medians": 1.1065,
+          "process_p95": [
+            1.1627,
+            1.141
+          ]
+        },
+        "paired_percent_change": [
+          -33.27604920405211,
+          -33.406560337044844
+        ]
+      },
+      "wide": {
+        "0": {
+          "process_medians": [
+            1.33125,
+            1.3264
+          ],
+          "median_of_process_medians": 1.3288250000000001,
+          "process_p95": [
+            1.4582,
+            1.4503
+          ]
+        },
+        "1": {
+          "process_medians": [
+            0.6437,
+            0.6425
+          ],
+          "median_of_process_medians": 0.6431,
+          "process_p95": [
+            0.6775,
+            0.6833
+          ]
+        },
+        "paired_percent_change": [
+          -51.646948356807506,
+          -51.560615199034984
+        ]
+      }
+    },
+    "completion_readback_ms": {
+      "ground": {
+        "0": {
+          "process_medians": [
+            49.98735,
+            81.37075
+          ],
+          "median_of_process_medians": 65.67905,
+          "process_p95": [
+            146.886,
+            137.2412
+          ]
+        },
+        "1": {
+          "process_medians": [
+            101.2871,
+            95.1245
+          ],
+          "median_of_process_medians": 98.2058,
+          "process_p95": [
+            123.311,
+            131.7303
+          ]
+        },
+        "paired_percent_change": [
+          102.62546424245333,
+          16.902572484584443
+        ]
+      },
+      "canopy": {
+        "0": {
+          "process_medians": [
+            70.3727,
+            71.19445
+          ],
+          "median_of_process_medians": 70.783575,
+          "process_p95": [
+            124.6271,
+            132.475
+          ]
+        },
+        "1": {
+          "process_medians": [
+            41.7277,
+            43.7864
+          ],
+          "median_of_process_medians": 42.75705,
+          "process_p95": [
+            46.6596,
+            51.3618
+          ]
+        },
+        "paired_percent_change": [
+          -40.70470509160512,
+          -38.49745310203253
+        ]
+      },
+      "wide": {
+        "0": {
+          "process_medians": [
+            42.8483,
+            41.9886
+          ],
+          "median_of_process_medians": 42.41845,
+          "process_p95": [
+            48.3077,
+            47.3509
+          ]
+        },
+        "1": {
+          "process_medians": [
+            39.98485,
+            39.58395
+          ],
+          "median_of_process_medians": 39.784400000000005,
+          "process_p95": [
+            42.0255,
+            41.8588
+          ]
+        },
+        "paired_percent_change": [
+          -6.682762209935989,
+          -5.726911590288786
+        ]
+      }
+    },
+    "gpu_ms": {
+      "ground": {
+        "0": {
+          "process_medians": [
+            44.876016,
+            76.68656
+          ],
+          "median_of_process_medians": 60.781288,
+          "process_p95": [
+            138.02928,
+            131.721344
+          ]
+        },
+        "1": {
+          "process_medians": [
+            97.914752,
+            91.788384
+          ],
+          "median_of_process_medians": 94.85156799999999,
+          "process_p95": [
+            119.92288,
+            127.250336
+          ]
+        },
+        "paired_percent_change": [
+          118.18949347018682,
+          19.692921419346487
+        ]
+      },
+      "canopy": {
+        "0": {
+          "process_medians": [
+            64.28848,
+            66.441568
+          ],
+          "median_of_process_medians": 65.365024,
+          "process_p95": [
+            116.638368,
+            127.6352
+          ]
+        },
+        "1": {
+          "process_medians": [
+            39.684432,
+            41.930336
+          ],
+          "median_of_process_medians": 40.807384,
+          "process_p95": [
+            44.638272,
+            49.54624
+          ]
+        },
+        "paired_percent_change": [
+          -38.27131703844919,
+          -36.89141111179075
+        ]
+      },
+      "wide": {
+        "0": {
+          "process_medians": [
+            39.819744,
+            38.700384
+          ],
+          "median_of_process_medians": 39.260064,
+          "process_p95": [
+            44.8448,
+            43.726272
+          ]
+        },
+        "1": {
+          "process_medians": [
+            37.92848,
+            37.716672
+          ],
+          "median_of_process_medians": 37.822576,
+          "process_p95": [
+            40.176032,
+            39.852608
+          ]
+        },
+        "paired_percent_change": [
+          -4.749563432652904,
+          -2.5418662512495915
+        ]
+      }
+    }
+  }
+}
