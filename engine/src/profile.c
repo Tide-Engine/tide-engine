@@ -1,5 +1,6 @@
 #include "tide/profile.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +16,46 @@ static void clear_totals(tide_profile_times *times)
     for (uint32_t i = 0; i < times->count; i++) times->items[i].total = 0.0;
 }
 
+static void free_source(tide_profile_time *time)
+{
+    free((void *)time->source.name);
+    free((void *)time->source.file);
+    time->source = (tide_profile_source){0};
+}
+
+static void free_times(tide_profile_times *times)
+{
+    for (uint32_t i = 0; i < times->count; i++) free_source(&times->items[i]);
+    free(times->items);
+}
+
+static bool same_text(const char *a, const char *b)
+{
+    return a == b || (a && b && strcmp(a, b) == 0);
+}
+
+static const char *copy_text(const char *text)
+{
+    if (!text) return NULL;
+    const size_t size = strlen(text) + 1u;
+    char *copy = tide_realloc(NULL, 0, size);
+    memcpy(copy, text, size);
+    return copy;
+}
+
+static void set_source(tide_profile_time *time, const tide_profile_source source)
+{
+    if (same_text(time->source.name, source.name) && same_text(time->source.file, source.file)
+        && time->source.line == source.line && time->source.column == source.column) return;
+    // Copy first: a caller may be reusing strings from this row.
+    const tide_profile_source copy = {copy_text(source.name), copy_text(source.file), source.line, source.column};
+    const uint64_t revision = time->revision + 1u;
+    free_source(time);
+    *time = (tide_profile_time){.source = copy, .revision = revision};
+    size_t n = 0;
+    for (; copy.name && copy.name[n] && n + 1u < sizeof time->name; n++) time->name[n] = copy.name[n];
+}
+
 void tide_profile_clear(tide_profile *p)
 {
     clear_totals(&p->systems);
@@ -28,15 +69,17 @@ void tide_profile_clear(tide_profile *p)
 
 void tide_profile_free(tide_profile *p)
 {
-    free(p->systems.items);
-    free(p->views.items);
-    free(p->workers.items);
+    free_times(&p->systems);
+    free_times(&p->views);
+    free_times(&p->workers);
     *p = (tide_profile){0};
 }
 
 void tide_profile_count(tide_profile_times *times, const uint32_t count)
 {
     if (count == times->count) return;
+    times->revision++;
+    for (uint32_t i = 0; i < times->count; i++) free_source(&times->items[i]);
     if (count > times->room) {
         times->items = tide_realloc(times->items, times->room * sizeof *times->items, count * sizeof *times->items);
         times->room = count;
@@ -45,21 +88,18 @@ void tide_profile_count(tide_profile_times *times, const uint32_t count)
     times->count = count;
 }
 
+void tide_profile_sources(tide_profile_times *times, const uint32_t count, const tide_profile_source *sources)
+{
+    tide_profile_count(times, count);
+    for (uint32_t i = 0; i < count; i++) set_source(&times->items[i], sources[i]);
+}
+
 void tide_profile_add(tide_profile_times *times, const uint32_t index, const char *name, const uint64_t from_ns,
                       const uint64_t to_ns)
 {
     if (index >= times->count) return;
     tide_profile_time *t = &times->items[index];
-    char copy[TIDE_PROFILE_NAME];
-    size_t n = 0;
-    for (; name && name[n] && n + 1u < sizeof copy; n++) copy[n] = name[n];
-    memset(copy + n, 0, sizeof copy - n);
-    if (memcmp(copy, t->name, sizeof copy) != 0) {
-        memcpy(t->name, copy, sizeof copy);
-        t->total = 0.0;
-        t->measured_ms = 0.0;
-        t->measurements = 0;
-    }
+    if (!same_text(t->source.name, name)) set_source(t, (tide_profile_source){.name = name});
     t->ms = ms_between(from_ns, to_ns);
     t->total += t->ms;
     t->measured_ms += t->ms;

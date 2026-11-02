@@ -150,6 +150,9 @@ int main(void)
         {{"tide", "run", "--size", "640", "480"}, 5, "UW"},
         {{"tide", "run", "--data-dir", "test saves"}, 4, "UW"},
         {{"tide", "run", "--frames", "1"}, 4, "UN"},
+        {{"tide", "run", "--frames", "1", "--profile", "report.json"}, 6, "UN"},
+        {{"tide", "run", "--profile", "report.json", "--script", "play.txt"}, 6, "UN"},
+        {{"tide", "run", "--interactive", "play.txt", "--profile", "report.json"}, 6, "UN"},
         {{"tide", "run", "--capture", "frame.png"}, 4, "UN"},
         {{"tide", "run", "--script", "play.txt"}, 4, "UN"},
         {{"tide", "run", "--interactive", "play.txt"}, 4, "UN"},
@@ -204,6 +207,43 @@ int main(void)
     call_count = 0;
     if (tide_command_main(6, duplicate) != 2 || call_count) return 1;
 
+    struct {
+        char *argv[10];
+        int argc;
+    } invalid_profiles[] = {
+        {{"tide", "run", "--profile"}, 3},
+        {{"tide", "run", "--profile", ""}, 4},
+        {{"tide", "run", "--profile", "--frames", "1"}, 5},
+        {{"tide", "run", "--profile", "report.json"}, 4},
+        {{"tide", "run", "--profile", "report.json", "--capture", "frame.png"}, 6},
+        {{"tide", "run", "--frames", "1", "--profile", "one.json", "--profile", "two.json"}, 8},
+        {{"tide", "run", "--frames", "1", "--profile-warmup", "0"}, 6},
+        {{"tide", "run", "--frames", "1", "--profile", "report.json", "--profile-warmup"}, 7},
+        {{"tide", "run", "--frames", "1", "--profile", "report.json", "--profile-warmup", "-1"}, 8},
+        {{"tide", "run", "--frames", "1", "--profile", "report.json", "--profile-warmup", "1.5"}, 8},
+        {{"tide", "run", "--frames", "1", "--profile", "report.json", "--profile-warmup", "1000000001"}, 8},
+        {{"tide", "run", "--frames", "1", "--profile", "report.json", "--profile-warmup", "99999999999999999999"}, 8},
+        {{"tide", "run", "--frames", "1", "--profile", "report.json", "--profile-warmup", "0", "--profile-warmup", "1"}, 10},
+        {{"tide", "run", "--web", "--frames", "1", "--profile", "report.json"}, 7},
+        {{"tide", "run", "--android", "--frames", "1", "--profile", "report.json"}, 7},
+        {{"tide", "run", "--server", "--frames", "1", "--profile", "report.json"}, 7},
+    };
+    for (size_t i = 0; i < sizeof invalid_profiles / sizeof invalid_profiles[0]; i++) {
+        call_count = 0;
+        calls[0] = '\0';
+        if (tide_command_main(invalid_profiles[i].argc, invalid_profiles[i].argv) != 2 || call_count) {
+            fprintf(stderr, "profile refusal %zu must fail before building, running or checking updates\n", i);
+            return 1;
+        }
+    }
+    const char *warmups[] = {"0", "1000000000"};
+    for (size_t i = 0; i < sizeof warmups / sizeof warmups[0]; i++) {
+        char *warmup[] = {"tide", "run", "--frames", "1", "--profile-warmup", (char *)warmups[i], "--profile", "report.json"};
+        call_count = 0;
+        if (tide_command_main(8, warmup) != 13 || passed_count != 6 || strcmp(passed[3], warmups[i])) return 1;
+    }
+    puts("ok: profiling requires a bounded desktop run and validates warmup before building");
+
     // Every option of the game's own command line, each once, with the game's
     // folder after them: there's room for them all, and the game is given each
     // as it was typed, but for the files, which are where the command says
@@ -211,6 +251,7 @@ int main(void)
     char *all[] = {"tide", "run", "--host", "7777", "--join", "K7QF2M", "--connect", "localhost", "--capture", "frame.png",
                    "--capture-audio", "run.wav", "--record", "run.gif", "--script", "play.txt", "--interactive", "live play.txt", "--microphone", "voice.wav", "--frames", "1",
                    "--scale", "2", "--players", "2", "--seed", "7", "--data-dir", "test saves", "--size", "640", "480",
+                   "--profile", "test profile.json", "--profile-warmup", "60",
                    "--latency", "80", "--jitter", "10", "--loss", "5", "--latency", "2:120", "game"};
     const int all_count = (int)(sizeof all / sizeof all[0]);
     call_count = 0;
@@ -226,7 +267,8 @@ int main(void)
         const char *typed = all[i + 2];
         const char *before = i > 0 ? all[i + 1] : "";
         const bool file = strcmp(before, "--capture") == 0 || strcmp(before, "--capture-audio") == 0 || strcmp(before, "--record") == 0 ||
-                          strcmp(before, "--script") == 0 || strcmp(before, "--interactive") == 0 || strcmp(before, "--microphone") == 0 || strcmp(before, "--data-dir") == 0;
+                          strcmp(before, "--script") == 0 || strcmp(before, "--interactive") == 0 || strcmp(before, "--microphone") == 0 || strcmp(before, "--data-dir") == 0 ||
+                          strcmp(before, "--profile") == 0;
         const char *expected = file ? path_absolute(typed) : typed;
         if (strcmp(passed[i], expected) != 0) {
             fprintf(stderr, "every option once: argument %d should be '%s', not '%s'\n", i, expected, passed[i]);

@@ -96,6 +96,9 @@ typedef struct tide_headless_desc {
     uint32_t player, hub;
     int argc;
     char **argv;
+    // Optional host report finalization, before GPU shutdown and before other
+    // players' exit codes are joined. Return the process's final exit code.
+    int (*finished)(int code);
 } tide_headless_desc;
 
 // Opens a headless window, in tide_platform_open's place. Ends the program
@@ -473,6 +476,9 @@ bool tide_platform_host_open(uint16_t port, tide_transport *out);
 // below in such a run, in the place of what's above.
 uint32_t tide_platform_players(void);
 uint32_t tide_platform_player(void);
+// A capture/report filename with this player's suffix in a multi-player run.
+// The returned string is owned by the caller (free).
+char *tide_platform_players_file(const char *path);
 // Takes the players who join a match this process hosts, in
 // tide_platform_host_open's place: in its room, and on `port`.
 bool tide_platform_players_open(uint16_t port, tide_transport *out);

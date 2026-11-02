@@ -1,0 +1,42 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdio.h>
+
+#include "tide/draw_profile.h"
+#include "tide/profiler.h"
+
+// A bounded, host-owned capture. Timing is wall-clock CPU work within the
+// host callback, never simulated frame time or an estimate of display FPS.
+// Collection is independent of the profiler panel and survives its clears.
+#define TIDE_PROFILE_REPORT_ROWS 8192u
+#define TIDE_PROFILE_REPORT_SOURCE_BYTES (1024u * 1024u)
+#define TIDE_PROFILE_REPORT_SAMPLES 4096u
+
+typedef struct tide_profile_report {
+    void *state;
+    tide_draw_diagnostics draw;
+} tide_profile_report;
+
+typedef struct tide_profile_report_info {
+    const char *title, *renderer, *compiler;
+    const char *executable_sha256; // NULL when unavailable, not a layout hash.
+    const uint8_t *simulation; // 32 bytes, or NULL.
+    uint64_t layout_hash;
+    uint32_t total_frames, warmup, player, players, threads;
+    uint32_t width, height;
+    float scale_x, scale_y;
+    bool optimized, sanitized;
+    int exit_code;
+} tide_profile_report_info;
+
+// Call only for measured frames. Begin snapshots the current cumulative
+// counters before starting the clock; end stops the clock before collecting.
+void tide_profile_report_begin(tide_profile_report *r, const tide_profile *p, uint32_t frame);
+void tide_profile_report_mark(tide_profile_report *r, tide_frame_part part);
+void tide_profile_report_end(tide_profile_report *r, const tide_profile *p, uint64_t draw_calls, uint64_t vertices);
+// Asynchronous GPU results have no source-frame identity. They are a separate
+// distribution, never paired with or added to a CPU frame.
+void tide_profile_report_gpu(tide_profile_report *r, double ms);
+bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const tide_profile_report_info *info);
+void tide_profile_report_free(tide_profile_report *r);

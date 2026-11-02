@@ -143,6 +143,8 @@ still performs only front-end validation, even with a preview flag.
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
+| `--profile <file.json>` | `run` only, native desktop: writes a [structured profile capture](debug-views.md#profile-captures), independently of the panels. Requires `--frames`, `--script` or `--interactive` |
+| `--profile-warmup <n>` | With `--profile`: excludes the first `n` frames from measurements (default 0). They still count toward `--frames` |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--interactive`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
@@ -182,6 +184,18 @@ artifact.
 By default, the engine is optimized in every build. In the default debug mode, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
 Use `tide run --release --stats` to test a large game at optimized speed. Release retains debug symbols, readable profiling and diagnostic names, C assertions and native debugger visualizers, and leaves out unused code, data and assets as a distribution does. Optimized stepping may skip inlined calls or show locals as unavailable. Both optimized modes leave `DEBUG` undefined. Debug, release and distribution use separate `.tide/<target>-<mode>/` caches.
+
+For repeatable measurements or an agent-readable report, use a bounded profile capture:
+
+```sh
+tide run --release --script play.txt --frames 360 --profile profile.json --profile-warmup 60
+```
+
+This plays frames 1–360 and measures frames 61–360, unless the script quits
+earlier. The JSON is written when the run ends normally, to a path relative to
+where `tide` was invoked. It measures actual CPU work even though hidden runs
+advance simulation by a fixed step. See [Profile captures](debug-views.md#profile-captures)
+for the report, culling diagnostics and comparison workflow.
 
 Choose one optimization override to experiment, for example `tide run --release -O3 --stats` or `tide build --distribution -O1`. `-O0` disables optimization; `-O1`, `-O2` and `-O3` select increasing optimization levels, which are not guaranteed to improve a particular workload. The override applies to engine sources, generated game code and game/package C/C++, including hot reload, native, web, Android, servers and `tide unity`. Prebuilt libraries keep their own optimization. Without an override, debug game code uses `-O0`, debug engine code uses `-O2`, and release/distribution use `-O2` for both.
 
@@ -681,6 +695,8 @@ tide run --frames 300 --capture menu.png --stats
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
 | `--interactive <replay.txt>` | Keeps the game alive for [dynamic input and captures](#interactive-play), saving executed actions as a replay script |
+| `--profile <file.json>` | Writes a [profile report](debug-views.md#profile-captures) when the run ends. Combine with `--frames`, `--script` or `--interactive` |
+| `--profile-warmup <n>` | Excludes the first `n` frames from the report, from 0 to 1,000,000,000; requires `--profile` |
 | `--players <n>` | Plays the game `n` times at once, as the `n` players of one match (see [Several players](#several-players)) |
 | `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/render-targets.md) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |

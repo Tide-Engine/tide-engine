@@ -4122,3 +4122,31 @@ checks. Docs production build, 230 grammar checks, 24 VS Code tests/build and
 JetBrains plugin build plus 7 headless adapter/platform tests pass. No CI, other
 operating systems, Android or sanitizers were run; opted-in JCEF/client integration
 was not run. Source/whitespace review passes.
+
+## Profiling source attribution (2026-11-02)
+
+The owner approved useful agent-facing profiling, including engine costs attributed
+to the views that request them. Generated ticks register a static
+`tide_profile_source` table with `tide_profile_sources` before scheduler dispatch;
+generated frames register the corresponding table for every view, including
+package views. Entries preserve the complete qualified/overloaded diagnostic name
+and the declaration's source file, line and column. Distribution name stripping
+keeps the existing numbered system/view identity and omits the file and location;
+the private `.names` map remains the way to resolve stripped identities.
+
+While drawing diagnostics are attached, each generated view sets
+`draw->profile_source` to its static entry, including all of that view's entities
+and additional shard worlds. The prior pointer is restored before local command
+application and local tasks, so those operations do not inherit the last view's
+attribution. The pointer is borrowed only during the call; retained diagnostics
+copy its strings. No per-entity source timer or simulation state was added.
+Unmeasured execution still reads no profiling clock. A build with no systems or
+views clears the corresponding old timing rows when given a profile.
+
+`compiler/tests/e2e/profile*` checks declaration locations, a qualified name longer
+than the panel label, view attribution/restoration, measured/unmeasured world hash
+equivalence and unchanged draw counts. The release diagnostic-name fixture checks
+normal source metadata and stripped identities without locations. Runtime copying,
+same-prefix name changes, source relocation and count changes are covered by
+`tests/test_profile.c`. Validation is recorded with the coordinated profiler work
+in `notes/standard-host.md`.

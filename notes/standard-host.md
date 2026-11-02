@@ -1,5 +1,77 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Agent-readable profile captures (2026-11-02)
+
+Owner-approved first profiling slice: `--profile <file.json>` captures the
+ordinary desktop host independently of F7/F8. `--profile-warmup <n>` excludes
+the first n frames (default zero, integer 0..1,000,000,000). It requires a
+profile path; profiling requires `--frames`, `--script` or `--interactive`.
+The existing runner still enforces a script's quit/frame cap. Profile alone
+does not open a window or select an endless run. CLI paths are made absolute
+before changing to the game folder. Web, Android and dedicated-server export
+are explicitly refused; the engine collectors are portable C and tested on WASI.
+
+The report is `schema: "tide.profile", version: 1`. It contains actual timed
+CPU work and input/match/views/render/other distributions, all measured
+system/view rows with full declaration source locations, existing worker
+queue/compute/copy categories, tick totals, asynchronous GPU samples, submitted
+draw/vertex totals, and view/destination/camera-attributed mesh-recording
+diagnostics. Drawing contracts and exact counter definitions are in drawing.md.
+Mesh-recording time includes bounds, frustum tests, LOD and instance recording
+after acquisition; it is not an isolated frustum timer. It is part of the view,
+not additional time to add to that view. Source metadata contracts are in
+language.md and runtime-ownership.md. Shipping builds retain opaque identities.
+
+`tide/profile_report.h` owns copied timing identities, bounded distributions
+and a draw collector. At each measured frame, begin snapshots cumulative row
+counters before starting its clock; end stops its clock before collecting
+deltas, then the overlay may clear its own totals. Table/row revisions identify
+counter replacement even when new totals exceed the old baseline. F7/F8 clears
+and opening/closing panels therefore preserve capture totals. No report pointer,
+timing or counter enters simulation state or affects scheduling. With profiling
+and panels disabled, generated views and draw recording read no diagnostic clocks.
+
+CPU work excludes interactive stdin waits, window presentation, headless audio
+mixing, scripted PNG readback and report collection/writing. It includes instrumentation and any
+enabled overlay work. In particular, the hidden runner's fixed simulation
+seconds are never exported as measured FPS. System rows retain their first-job
+start to last-job end span, and overlapping systems/workers must not be summed.
+GPU timing starts afresh after warmup so previous drawer samples cannot leak
+into capture. It is drained once for both report and stats, without waits or
+forced synchronization. Available means completed samples were observed; pending,
+unsupported and skipped samples are absent, not zero, and no originating frame
+or pass identity is claimed. CPU and GPU distributions are never paired or added.
+
+Metadata records executable SHA-256 when argv[0] can be opened (otherwise null),
+layout and simulation identities separately, compiler, optimization/sanitizer
+flags, renderer, dimensions/scale, thread count and process player/exit status.
+Each player gets the normal filename suffix. `tide_headless_desc.finished` lets
+the host write after replay/captures close, before GPU shutdown and the join of
+other players' exit codes. Write/close failures turn an otherwise successful
+process into exit 1 and name the report path. This is normal-run finalization,
+not crash recovery. A warmup covering the whole run writes an explicitly empty
+report with zero samples and null unknown timings.
+
+Capture storage is bounded: 8,192 timing identities with a 1 MiB string budget,
+1,024 draw rows with a separate 1 MiB string budget, and 4,096 samples per
+distribution. Longer captures retain deterministic reservoir samples for
+estimated quantiles; counts, sums, means and maxima cover every observation.
+Limits report dropped observations/calls/candidates rather than aliasing rows.
+The JSON and user docs state these semantics. No automatic redundancy claim is
+made from a low rejection rate; compare an optimized scripted workload with the
+scoped opt-out and inspect images, including other cameras/shadow destinations.
+
+Validation: full Windows ASan and optimized WebAssembly builds pass, followed
+by all 2,925 native and 2,810 web tests (including WebGL and WebGPU) on Node
+24.22.1. Focused coverage includes 23 profile/draw/worker tests, generated source
+attribution and stripped-name regressions, and CLI argument/help checks.
+`tide_platform_profile` verifies exact warmup/source/culling counts, identical
+measured/unmeasured and culling-on/off PNGs, F7/F8 transitions, empty and failed
+reports, two-player suffixes and interactive observations. The docs production
+build passes. Logs are build/profile-native-tests.log, profile-web-tests.log
+and profile-docs-build.log. Other native platforms and Android were not run
+locally. These diagnostics establish no performance improvement.
+
 ## Compact vertex counts (2026-10-30)
 
 The stats drawer formats vertices with decimal K/M/B/T/P/E suffixes, rounded

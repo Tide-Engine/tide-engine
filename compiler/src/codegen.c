@@ -3259,6 +3259,20 @@ static void gen_c_raw_literal(sb *o, const str text)
     sb_put(o, "\"");
 }
 
+static void gen_profile_source(const gen *g, sb *o, const decl *d, const char *kind)
+{
+    sb_put(o, "    {");
+    gen_c_literal(o, diagnostic_name(g, tool_name(d), kind, d->index), false);
+    const source *src = diag_source(d->at.file);
+    if (g->opts->strip_names || !src) {
+        sb_put(o, ", NULL, 0u, 0u},\n");
+    } else {
+        sb_put(o, ", ");
+        gen_c_raw_literal(o, str_from(src->path));
+        sb_printf(o, ", %du, %du},\n", d->at.line, d->at.col);
+    }
+}
+
 static void gen_c_text(gen *g, sb *o, const expr *e)
 {
     if (e->kind == E_STRING) {
@@ -20420,6 +20434,11 @@ static void gen_api(gen *g)
         sb_put(o, "};\n\n");
     }
     if (any_settles) gen_settle_item(g);
+    if (prog->systems.count) {
+        sb_put(o, "static const tide_profile_source tide_system_sources[] = {\n");
+        for (int i = 0; i < prog->systems.count; i++) gen_profile_source(g, o, prog->systems.items[i], "system");
+        sb_put(o, "};\n\n");
+    }
     // What each thread does before its first task: text finds the match's heap, and the pack its slots.
     sb_put(o, "static void tide_prepare(void *w)\n{\n");
     if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
@@ -20445,11 +20464,12 @@ static void gen_api(gen *g)
     if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     if (rows_cache_count(g)) sb_put(o, "    tide_rows_cache_prepare(w); // Serial: publish immutable plans before worker dispatch\n");
     if (prog->systems.count) {
+        sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->systems, %du, tide_system_sources);\n", prog->systems.count);
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s%s};\n",
                   prog->systems.count, any_settles ? "tide_settle_item" : "NULL", sharded(g) ? ", tide_shard_create" : ", NULL");
         sb_put(o, "    tide_run_systems(w, &tide_tick, jobs);\n");
     } else {
-        sb_put(o, "    (void)tide_prepare;\n");
+        sb_put(o, "    (void)tide_prepare;\n    if (tide_p) tide_profile_count(&tide_p->systems, 0u);\n");
     }
     sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     sb_put(o, "    tide_apply_commands(w);\n");
@@ -20541,6 +20561,11 @@ static void gen_api(gen *g)
     }
     sb_put(o, "}\n\n");
 
+    if (prog->views.count) {
+        sb_put(o, "static const tide_profile_source tide_view_sources[] = {\n");
+        for (int i = 0; i < prog->views.count; i++) gen_profile_source(g, o, prog->views.items[i], "view");
+        sb_put(o, "};\n\n");
+    }
     sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
               "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
@@ -20584,10 +20609,14 @@ static void gen_api(gen *g)
     // A host that shows where frames' time goes gave the GUI a profile
     // (tide/profile.h): each view says how long it took
     if (prog->views.count) {
-        sb_put(o, "    tide_profile *tide_p = gui->profile;\n    uint64_t tide_at = tide_profile_now(tide_p);\n");
+        sb_put(o, "    tide_profile *tide_p = gui->profile;\n");
+        sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->views, %du, tide_view_sources);\n", prog->views.count);
+        sb_put(o, "    const tide_profile_source *tide_previous_source = draw ? draw->profile_source : NULL;\n"
+                  "    uint64_t tide_at = tide_profile_now(tide_p);\n");
     }
     for (int i = 0; i < prog->views.count; i++) {
         const decl *view = prog->views.items[i];
+        sb_printf(o, "    if (draw && draw->diagnostics) draw->profile_source = &tide_view_sources[%d];\n", i);
         // With no verified world given, the one views draw is all there is: it's the confirmed one
         sb_printf(o, "    tide_run_view_%s(w, previous, alpha, %slocal, draw, gui);\n", decl_cname(view),
                   view->takes_verified ? "verified ? verified : w, verified ? verified_previous : previous, verified ? verified_alpha : alpha, " : "");
@@ -20606,7 +20635,9 @@ static void gen_api(gen *g)
         gen_c_literal(o, diagnostic_name(g, tool_name(view), "view", view->index), false);
         sb_put(o, ", tide_at);\n");
     }
-    if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n    (void)gui;\n");
+    if (prog->views.count) sb_put(o, "    if (draw) draw->profile_source = tide_previous_source;\n");
+    if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n"
+                                       "    if (gui && gui->profile) tide_profile_count(&gui->profile->views, 0u);\n");
     sb_put(o, "    tide_local_apply_commands(local);\n");
     if (world_has_tasks(g, true)) {
         sb_put(o, "    tide_local_run_tasks(w, local);\n    tide_local_apply_commands(local);\n    local->tide_frames++;\n");

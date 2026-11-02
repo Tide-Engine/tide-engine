@@ -10,3 +10,9 @@ system Hit(mut Tally tally)
 {
     tally.hits += 1;
 }
+
+// Keep the complete qualified name even when the panel abbreviates it.
+view PresentationWithANameLongerThanTheProfilerPanelCanDisplay(Tally tally)
+{
+    Debug.Assert(tally.hits >= 0);
+}
