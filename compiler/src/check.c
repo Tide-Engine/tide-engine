@@ -1476,25 +1476,41 @@ static type mesh_of(program *prog, const type vertex)
     return (type){TY_MESH, d};
 }
 
-static type asset_reference_of(const checker *c, const type mesh, const loc at)
+// Asset<Mesh<V>> (and Asset<SkinnedMesh<V>>): a model asset's identity, one hidden long. With `geometry`, a
+// static Mesh<V> itself: that identity, or, with the id negative, a mesh the game made (Mesh(vertices, indices)),
+// whose two lists are its own, in hidden fields that ordinary ownership copies, snapshots, hashes and packs.
+static type asset_reference_of(const checker *c, const type mesh, const loc at, bool geometry)
 {
+    geometry = geometry && mesh.kind == TY_MESH;
     for (int i = 0; i < c->prog->asset_refs.count; i++) {
         decl *d = c->prog->asset_refs.items[i];
-        if (d->asset_ref_of == mesh.decl) return (type){TY_STRUCT, d};
+        if (d->asset_ref_of == mesh.decl && d->asset_ref_geometry == geometry) return (type){TY_STRUCT, d};
     }
     decl *d = NEW(decl);
     d->kind = DECL_STRUCT;
     d->builtin = true;
     d->at = at;
     d->asset_ref_of = mesh.decl;
+    d->asset_ref_geometry = geometry;
     sb name_text = {0};
-    sb_printf(&name_text, "Asset<%s>", type_name(mesh));
+    if (geometry) sb_printf(&name_text, "%s", type_name(mesh));
+    else sb_printf(&name_text, "Asset<%s>", type_name(mesh));
     d->name = (str){name_text.data, (int)name_text.len};
     field id = {0};
     id.name = str_from("id");
     id.type = (type){TY_LONG, NULL};
     id.hidden = true;
     vec_push(d->fields, id);
+    if (geometry) {
+        field part = {0};
+        part.hidden = true;
+        part.name = str_from("vertices");
+        part.type = list_of(c->prog, mesh_vertex(mesh));
+        vec_push(d->fields, part);
+        part.name = str_from("indices");
+        part.type = list_of(c->prog, T_INT_);
+        vec_push(d->fields, part);
+    }
     vec_push(c->prog->asset_refs, d);
     return (type){TY_STRUCT, d};
 }
@@ -1511,6 +1527,19 @@ static bool holds_mesh(const type t)
         const type f = t.decl->fields.items[i].type;
         if (f.kind == TY_MESH || ((f.kind == TY_LIST || f.kind == TY_MAP) && holds_mesh(f))) return true;
     }
+    return false;
+}
+
+// Whether a value keeps heap data besides what a Mesh<V> in it keeps of its own: a mesh the game made has two
+// lists, which make no collection of meshes.
+static bool holds_heap_beside_meshes(const type t, const int depth)
+{
+    if (depth > 128) return false;
+    if (t.kind == TY_STRUCT && t.decl->asset_ref_geometry) return false;
+    if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) return true;
+    if (t.kind != TY_STRUCT && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+    for (int i = 0; i < t.decl->fields.count; i++)
+        if (holds_heap_beside_meshes(t.decl->fields.items[i].type, depth + 1)) return true;
     return false;
 }
 
@@ -2125,7 +2154,7 @@ static type resolve_mesh(const checker *c, const type_ref *r, const type_place p
         return T_ERR;
     }
     const type mesh = mesh_of(c->prog, vertex);
-    return place == PLACE_ASSET || c->raw_mesh ? mesh : asset_reference_of(c, mesh, at);
+    return place == PLACE_ASSET || c->raw_mesh ? mesh : asset_reference_of(c, mesh, at, true);
 }
 
 // The type `r` names, written at `place`, with errors at `at` (where the
@@ -2278,7 +2307,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
             diag_error(at, "Asset references a Mesh<V> or SkinnedMesh<V>, not %s", type_name(mesh));
             return T_ERR;
         }
-        return asset_reference_of(c, mesh, at);
+        return asset_reference_of(c, mesh, at, false);
     }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
@@ -2565,6 +2594,8 @@ static type check_instance_call(expr *e);
 static type check_depth_read(const checker *c, expr *e);
 static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
+static bool is_new_mesh(const checker *c, const expr *e);
+static type check_new_mesh(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
 static void refuse_arg_names(const expr *e, type result);
 
@@ -2689,6 +2720,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         refuse_arg_names(e, grid);
         return grid;
     }
+    if (!checked && is_new_mesh(c, e) && !authored_alias(c, e->name, e->at)) return check_new_mesh(c, e, inner);
     if (e->kind == E_DEFAULT) return check_default_value(c, e, inner);
     if (e->kind == E_NULL) {
         null_error(e, want);
@@ -5617,6 +5649,7 @@ static type check_call(checker *c, expr *e)
     if (resolve_builtin_alias(c, e->name, &builtin)) return check_construct(c, e, builtin);
     if (e->type_alias && e->type_alias->alias_type.kind == TY_GRID) return check_new_grid(c, e, e->type_alias->alias_type);
     if (is_new_grid(e)) return check_new_grid(c, e, T_VOID_); // Where nothing says its type: an error
+    if (is_new_mesh(c, e)) return check_new_mesh(c, e, T_VOID_);
 
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
 
@@ -9391,7 +9424,10 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (obj.decl->asset_ref_of->kind == DECL_MESH) {
-            if (str_eq_c(e->member, "Value")) { e->asset_ref_value = true; return obj; }
+            if (str_eq_c(e->member, "Value")) { // The Mesh<V> it names
+                e->asset_ref_value = true;
+                return asset_reference_of(c, (type){TY_MESH, obj.decl->asset_ref_of}, e->at, true);
+            }
             if (str_eq_c(e->member, "vertices") || str_eq_c(e->member, "indices")) {
                 e->mesh_part = str_eq_c(e->member, "vertices") ? 1 : 2;
                 return list_of(c->prog, e->mesh_part == 1 ? obj.decl->asset_ref_of->fields.items[0].type : T_INT_);
@@ -10601,6 +10637,69 @@ static type check_new_grid(checker *c, expr *e, const type want)
     return e->type = want;
 }
 
+static bool is_new_mesh(const checker *c, const expr *e)
+{
+    if (e->kind != E_CALL) return false;
+    if (e->type_alias) return e->type_alias->alias_type.kind == TY_STRUCT && e->type_alias->alias_type.decl->asset_ref_geometry;
+    return str_eq_c(e->name, "Mesh") && !find_local(c, e->name) && !find_param(c, e->name);
+}
+
+// Mesh(vertices, indices): a static Mesh<V> of the game's own geometry, a copy of the two lists that nothing changes
+// after, whatever happens to the lists it was made from. V comes from the vertices, or from where it goes (an alias
+// of a Mesh<V>, or a field's type, which a list literal of vertices needs).
+static type check_new_mesh(checker *c, expr *e, const type want)
+{
+    const type alias = e->type_alias ? e->type_alias->alias_type : T_VOID_;
+    const type into = alias.kind == TY_STRUCT && alias.decl->asset_ref_geometry ? alias
+                    : want.kind == TY_STRUCT && want.decl->asset_ref_geometry ? want : T_VOID_;
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Mesh is made in CPU code, and drawn: 'Draw.Mesh(Mesh(vertices, indices), transform)'");
+        return e->type = T_ERR;
+    }
+    if (e->args.count != 2) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Mesh takes its vertices and its indices: 'Mesh(vertices, indices)'");
+        diag_note("the vertices are a List<V> of a struct with a 'float3 position', and the indices a List<int>, three a "
+                  "triangle");
+        return e->type = T_ERR;
+    }
+    if (!order_named_args(e, "vertices, indices", 0)) return e->type = T_ERR;
+    type vertices = into.kind == TY_STRUCT ? check_expr_want(c, e->args.items[0], into.decl->fields.items[1].type)
+                                           : check_expr(c, e->args.items[0]);
+    const type indices = check_expr_want(c, e->args.items[1], list_of(c->prog, T_INT_));
+    if (vertices.kind == TY_ERROR || indices.kind == TY_ERROR) return e->type = T_ERR;
+    if (vertices.kind != TY_LIST || vertices.decl->fields.items[0].type.kind != TY_STRUCT) {
+        diag_error(e->args.items[0]->at, "a Mesh's vertices are a List<V> of a vertex struct, like List<Vertex3>, not %s",
+                   type_name(vertices));
+        return e->type = T_ERR;
+    }
+    const type vertex = vertices.decl->fields.items[0].type;
+    if (into.kind == TY_STRUCT && !same_type(vertex, into.decl->fields.items[1].type.decl->fields.items[0].type)) {
+        diag_error(e->args.items[0]->at, "this makes a Mesh<%s>, and it goes where a %s goes", type_name(vertex),
+                   type_name(into));
+        return e->type = T_ERR;
+    }
+    const int dims = vertex_dims(vertex.decl, e->args.items[0]->at, true);
+    if (dims == 0) return e->type = T_ERR;
+    if (dims != 3) {
+        diag_error(e->args.items[0]->at, "a Mesh is a 3D mesh, and '" STR_FMT "' is a 2D mesh's vertex: its 'position' is a "
+                   "float2", STR_ARG(vertex.decl->name));
+        diag_note("draw 2D geometry from its two lists: 'Draw.Mesh(vertices, indices)'");
+        return e->type = T_ERR;
+    }
+    if (!type_assignable(list_of(c->prog, T_INT_), indices)) {
+        diag_error(e->args.items[1]->at, "a Mesh's indices are a List<int>, three a triangle, not %s", type_name(indices));
+        return e->type = T_ERR;
+    }
+    const type mesh = asset_reference_of(c, mesh_of(c->prog, vertex), e->at, true);
+    e->call = CALL_NEW_MESH;
+    vec_push(e->arg_want, mesh.decl->fields.items[1].type);
+    vec_push(e->arg_want, mesh.decl->fields.items[2].type);
+    c->prog->uses_text = true; // It's made in the scratch area, which code clears after it runs
+    return e->type = mesh;
+}
+
 // cells.Clear(): a grid's one method, every cell back to zero.
 // texture.Sample(uv), texture.Sample(uv, Filter.Point) and texture.Sample(uv,
 // Filter.Point, Wrap.Repeat): a grid of colors read as a texture, in a frag or
@@ -11358,12 +11457,12 @@ static type check_expr_any_raw(checker *c, expr *e)
         c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
         c->method->makes_text_at = e->at;
     }
-    if (holds_mesh_reference(t, 0) && (holds_heap(t) || t.kind == TY_ARRAY) && reading_code(c))
+    if (holds_mesh_reference(t, 0) && (holds_heap_beside_meshes(t, 0) || t.kind == TY_ARRAY) && reading_code(c))
         reading_code(c)->borrows_asset_collections = true;
     if ((holds_render_resource(t) || holds_callable(t)) && !gpu_code(c)) {
         decl *code = reading_code(c);
         if (code) {
-            if ((holds_render_resource(t) || holds_mesh_reference(t, 0)) && (holds_heap(t) || t.kind == TY_ARRAY))
+            if ((holds_render_resource(t) || holds_mesh_reference(t, 0)) && (holds_heap_beside_meshes(t, 0) || t.kind == TY_ARRAY))
                 code->borrows_asset_collections = true;
             if (!code->render_resources) code->render_resources_at = e->at;
             code->render_resources = true;
@@ -14098,11 +14197,11 @@ static type use_asset(checker *c, expr *e, decl *k)
     }
     if (k->sample_raw && k->return_type.kind == TY_TEXTURE && builds(c->prog)) vec_push(c->raw_uses, e);
     type t = k->return_type;
-    if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at);
+    if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at, true);
     if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_MESH)
-        return list_of(c->prog, asset_reference_of(c, t.decl->fields.items[0].type, e->at));
+        return list_of(c->prog, asset_reference_of(c, t.decl->fields.items[0].type, e->at, true));
     if (t.kind == TY_MAP && t.decl->fields.items[1].type.kind == TY_MESH)
-        return map_of(c->prog, t.decl->fields.items[0].type, asset_reference_of(c, t.decl->fields.items[1].type, e->at), false);
+        return map_of(c->prog, t.decl->fields.items[0].type, asset_reference_of(c, t.decl->fields.items[1].type, e->at, true), false);
     return t;
 }
 
@@ -15536,7 +15635,7 @@ static void check_signature(checker *c, decl *m)
         m->return_type = T_ERR;
     }
     if ((holds_render_resource(m->return_type) || holds_mesh_reference(m->return_type, 0))
-        && (holds_heap(m->return_type) || m->return_type.kind == TY_ARRAY))
+        && (holds_heap_beside_meshes(m->return_type, 0) || m->return_type.kind == TY_ARRAY))
         m->borrows_asset_collections = true;
     if (holds_render_resource(m->return_type) || holds_callable(m->return_type)) {
         m->render_resources = true;
@@ -15608,7 +15707,7 @@ static void check_signature(checker *c, decl *m)
                 m->gpu_only_reads = TY_GRID;
             }
         }
-        if ((holds_render_resource(p->type) || holds_mesh_reference(p->type, 0)) && (holds_heap(p->type) || p->type.kind == TY_ARRAY))
+        if ((holds_render_resource(p->type) || holds_mesh_reference(p->type, 0)) && (holds_heap_beside_meshes(p->type, 0) || p->type.kind == TY_ARRAY))
             m->borrows_asset_collections = true;
         if (holds_render_resource(p->type) || holds_callable(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;

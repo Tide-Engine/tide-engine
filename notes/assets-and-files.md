@@ -1,5 +1,15 @@
 # Assets and local files
 
+## Meshes the game makes beside assets' (2026-11-02)
+
+`Mesh<V>` is now 24 bytes: an asset's id, or a made mesh's content key (negative)
+and its own two lists; `Asset<Mesh<V>>` is the 8-byte id alone and converts to
+it. Glob `#mesh-values` metadata rows grew to that layout (built with the
+skinned list/map builders, then overwritten); pack kinds and geometry are
+unchanged, and unknown ids still resolve empty. Server pruning is unaffected:
+made ids never reach the resolver switch. Compiler contracts and tests are in
+language.md, Meshes the game makes.
+
 ## Baked poses for crowds (2026-10-31)
 
 Asked for from bannerlord-duel (the owner: "would it make sense to put this

@@ -1,5 +1,63 @@
 # Language features, as tidec builds them
 
+## Meshes the game makes: Mesh(vertices, indices) (2026-11-02)
+
+Owner-approved design (one type, `Asset<Mesh<V>>` split back out, match state
+allowed, a keyed draw entry point); detailed rules are Provisional in
+docs/spec.md, Meshes the game makes. Supersedes "both spellings are one type"
+from Static mesh values keep stable IDs (2026-10-30).
+
+- **Two reference decls a mesh type.** `asset_reference_of(c, mesh, at,
+  geometry)` keeps one builtin struct per (Mesh decl, `asset_ref_geometry`).
+  The geometry one is `Mesh<V>` (type name `Mesh<V>`): hidden `long id`,
+  `List<V> vertices`, `List<int> indices`, 24 bytes. The other is
+  `Asset<Mesh<V>>`, the id alone. `resolve_mesh` and asset names (globs'
+  elements too) give the geometry decl; `Asset<...>` gives the ID-only one.
+  Skinned references are unchanged (`geometry` is forced false).
+- **Conversion** Asset -> Mesh in `type_assignable` and `gen_as`
+  (`gen_mesh_of_asset`: `{.id = (e).id}`); never back. Static `.Value` on
+  either gives the geometry decl.
+- **Ownership** is ordinary: the asset-ref decls are emitted first in the
+  struct-helper loop (`tide_own_/release_/assign_/copy_`), before the program's
+  structs that hold them. Snapshots, hashes, packing, codecs, hot-reload
+  layouts follow from the struct's fields.
+- **`Mesh(vertices, indices)`** is `CALL_NEW_MESH` (`check_new_mesh`,
+  dispatched like `Grid2(...)`, from `check_call`, from `check_expr_want_any`
+  for a list literal's vertex type, and for an alias of the type). V must be a
+  3D vertex (`vertex_dims` 3); indices a List<int>; refused in frag/vert
+  (`gpu_code`). Codegen calls the generated
+  `tide_mesh_make_<ref>(vertices, indices)`: two `tide_list_copy`s (scratch,
+  asset lists stay borrowed) and `id = tide_mesh_key(...)`, negative.
+- **Resolver**: the geometry decl's `tide_resolve_<ref>` returns its own lists
+  for `id < 0` before the asset switch; `.vertices`/`.indices` and Draw's
+  two-list expansion are unchanged.
+- **Equality** stays `tide_asset_equal_id` on ids: made meshes compare by
+  content key; a made mesh is never `default`.
+- **Draw key**: `keyed_mesh_draw` wraps an E_METHOD draw whose first argument
+  is a geometry Mesh in `(tide_draw_mesh_key(tide_draw, resolve(m), m.id),
+  draw, tide_draw_mesh_key(tide_draw, {0}, 0))`. `collect_ordered` hoists a
+  mesh made or returned by an E_CALL within a draw, so it's made once.
+- **CPU-only marking**: `holds_heap_beside_meshes` replaces `holds_heap` where
+  mesh collections set `borrows_asset_collections`; a single Mesh value's own
+  lists don't make a function CPU-only or worker-refused. Workers still refuse
+  Mesh values at their boundaries (`asset_ref_of`), JSON refuses the builtin.
+- **Glob metadata**: `#mesh-values` rows are now 24-byte Mesh values (list) or
+  40-byte map entries (value at 16), allocated by `tide_pack_skinned_list` /
+  `tide_pack_skinned_map` (same row sizes, text index) and overwritten with
+  `{id, 0, 0}`; load code reads `tide_ref_mesh` / `tide_ref_mesh_entry`.
+  Pack format and kinds are unchanged.
+
+Tests: new `mesh_runtime` E2E (24/8-byte layouts, copy independence, asset
+and made meshes mixed in lists/maps, Asset->Mesh, `.Value`, equality,
+snapshot/hash/pack/unpack round trip, three draws of copies as one instanced
+run of one GPU mesh kept across frames, the runtime key/hint contract).
+`mesh_values` re-pinned to 24/48 bytes and its reordered-pack swap to 24-byte
+metadata rows. Diagnostics: `mesh_made_arguments`, `mesh_made_2d`,
+`mesh_made_indices`, `mesh_made_not_asset`; `asset_reference_vertex` and
+`skinned_asset_reference_static` now name `Mesh<Vertex3>`; the LSP hover pin
+in `lsp_asset_meshes` follows the new text. Gaps: no LOD, skinned or 2D made
+meshes; LSP has no signature help for `Mesh(`.
+
 ## Non-drawing views of shader components (2026-11-01)
 
 The forest stress scene exposed an overly broad partial-lane fallback: a

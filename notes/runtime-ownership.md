@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## Mesh keys for meshes the game makes (2026-11-02)
+
+Owner-approved ("go with your recommendations", including a runtime entry
+point that draws a mesh at a given version): generated code calls two new
+functions in `tide/mesh.h`, implemented in `engine/src/mesh.c`.
+`tide_mesh_key(vertices, vertex_size, indices)` is called once as
+`Mesh(vertices, indices)` makes a mesh; its result is simulation state (a
+`Mesh<V>`'s id), so it's a fixed definition, the same on every platform.
+`tide_draw_mesh_key(d, lists, key)` is called around each draw of a `Mesh<V>`
+value. `tide_draw_list` gained `mesh_key_vertices`, `mesh_key_indices` and
+`mesh_key`: hosts, libraries and generated games rebuild together. Contracts
+in drawing.md, Drawing a mesh at a given version.
+
 ## Flat shader-data capture memo (2026-11-02)
 
 Within the approved forest submission optimization and existing drawing

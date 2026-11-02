@@ -1,0 +1,5 @@
+// expect: a Mesh is a 3D mesh, and 'Flat' is a 2D mesh's vertex: its 'position' is a float2
+struct Flat { float2 position; }
+singleton Shapes { List<Flat> corners; }
+scene Main;
+system Make(Shapes shapes) { var made = Mesh(shapes.corners, [0, 1, 2]); }

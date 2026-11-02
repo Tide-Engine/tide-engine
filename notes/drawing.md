@@ -1,5 +1,22 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Drawing a mesh at a given version (2026-11-02)
+
+`tide_draw_mesh_key(d, lists, key)` (tide/mesh.h, owner-approved) tells the
+next draw of exactly those two list handles that `key` is their version.
+`take_mesh_key` runs first in `mesh3_slot`, `tide_draw_mesh_shaded_instances`
+and the 2D `mesh_lists`, before any early return, and always clears the hint;
+other handles get no key. Keyed meshes use the slot id `MESH_KEYED`
+(UINT64_MAX, no handle's) for both lists, so every copy of a made mesh is one
+GPU mesh, with no list read. Generated code sets the key right before a
+`Mesh<V>` draw and clears it after; `tide_draw_reset` clears it too. Keys
+without bit 63 are none, so assets' ids keep the list-version path (and their
+pack versions and LOD). `tide_mesh_key(vertices, size, indices)` hashes counts,
+vertex size and both lists' bytes (`tide_hash_more`, flattened chunks) and sets
+bit 63. The draw-list layout gained three words: hosts, libraries and games
+rebuild together. Tests: `mesh_runtime` (one run, one mesh across copies and
+frames; a mismatched hint is ignored and cleared).
+
 ## Repeated flat numeric-list captures (2026-11-02)
 
 Forest profiling identified repeated shader-data list hashing and texture lookup

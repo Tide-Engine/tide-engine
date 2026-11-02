@@ -423,9 +423,12 @@ uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, const tide_grid g, const 
     return grid_texture(d, g, s, true);
 }
 
+static uint64_t take_mesh_key(tide_draw_list *d, tide_list vertices, tide_list indices);
+
 static void mesh_lists(tide_draw_list *d, const tide_list vertices, const tide_list indices, const uint32_t slot,
                        const tide_filter filter, const tide_wrap wrap)
 {
+    (void)take_mesh_key(d, vertices, indices); // Copied as they are, with no version
     const int32_t vertex_count = tide_list_count(vertices);
     const int32_t index_count = tide_list_count(indices);
     if (vertex_count <= 0 || index_count < 3) return;
@@ -851,8 +854,51 @@ static void mesh_levels(tide_draw_list *d, const uint32_t mesh, const tide_list 
     if (tide_handle_where(indices.at) == TIDE_IN_SCRATCH && tide_pack_list_levels(indices, &levels)) tide_draw_mesh_levels(d, mesh, &levels);
 }
 
+uint64_t tide_mesh_key(const tide_list vertices, const uint32_t vertex_size, const tide_list indices)
+{
+    // Counts and sizes first, so two splits of the same bytes are other meshes
+    const int32_t vertex_count = tide_list_count(vertices);
+    const int32_t index_count = tide_list_count(indices);
+    const int64_t shape[3] = {vertex_count, index_count, vertex_size};
+    uint64_t h = tide_hash_more(TIDE_HASH_START, shape, sizeof shape);
+    bool copied;
+    if (vertex_count > 0) {
+        void *v = tide_list_flatten(vertices, vertex_size, false, &copied);
+        h = tide_hash_more(h, v, (size_t)vertex_count * vertex_size);
+        tide_list_unflatten(vertices, v, vertex_size, false, copied);
+    }
+    if (index_count > 0) {
+        void *i = tide_list_flatten(indices, sizeof(uint32_t), false, &copied);
+        h = tide_hash_more(h, i, (size_t)index_count * sizeof(uint32_t));
+        tide_list_unflatten(indices, i, sizeof(uint32_t), false, copied);
+    }
+    return tide_hash_end(h) | UINT64_C(1) << 63;
+}
+
+void tide_draw_mesh_key(tide_draw_list *d, const tide_mesh_lists lists, const uint64_t key)
+{
+    const bool keyed = (key >> 63) != 0;
+    d->mesh_key = keyed ? key : 0;
+    d->mesh_key_vertices = keyed ? lists.vertices.at : 0;
+    d->mesh_key_indices = keyed ? lists.indices.at : 0;
+}
+
+// The key the draw list was told these two lists hold (tide_draw_mesh_key), or 0: whichever lists they are, it's
+// told no more
+static uint64_t take_mesh_key(tide_draw_list *d, const tide_list vertices, const tide_list indices)
+{
+    const uint64_t key = d->mesh_key && d->mesh_key_vertices == vertices.at && d->mesh_key_indices == indices.at ? d->mesh_key : 0;
+    d->mesh_key = d->mesh_key_vertices = d->mesh_key_indices = 0;
+    return key;
+}
+
+// A mesh the game made, by its key: one mesh wherever its copies are, as nothing writes their lists. No list's
+// place is this (a handle's offset is under 2^62)
+#define MESH_KEYED UINT64_MAX
+
 static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const tide_list indices)
 {
+    const uint64_t key = take_mesh_key(d, vertices, indices);
     const int32_t vertex_count = tide_list_count(vertices);
     const int32_t index_count = tide_list_count(indices);
     if (vertex_count <= 0 || index_count < 3) return 0;
@@ -860,12 +906,15 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
     // is what's in it, wherever it is in the scratch area: a view that runs
     // for each entity makes `[0, 1, 2]` in another place each time, and its
     // instances are still one mesh's
-    uint64_t version = list_version(vertices, sizeof(tide_vertex3));
-    const uint64_t index_version = list_version(indices, sizeof(uint32_t));
-    version = tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version));
     const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0); // No world's list's place
-    const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
-    const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
+    uint64_t version = key, id = MESH_KEYED, other = MESH_KEYED;
+    if (!key) {
+        version = list_version(vertices, sizeof(tide_vertex3));
+        const uint64_t index_version = list_version(indices, sizeof(uint32_t));
+        version = tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version));
+        id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
+        other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
+    }
     bool fill;
     const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_LISTS, id, other, version, &fill);
     if (fill) {
@@ -890,6 +939,7 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
                                      const tide_list indices, const void *instances, const uint32_t count,
                                      const void *uniforms, const uint32_t *textures, const uint64_t sampling)
 {
+    const uint64_t key = take_mesh_key(d, vertices, indices);
     if (count == 0 || !shader) return;
     const int32_t vertex_count = tide_list_count(vertices);
     const int32_t index_count = tide_list_count(indices);
@@ -897,13 +947,18 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
     // As a 3D mesh: its two lists at their versions, and how big a vertex is,
     // so no other kind of list with the same bytes is taken for it
     const uint32_t size = shader->vertex_size;
-    uint64_t version = list_version(vertices, size);
-    const uint64_t index_version = list_version(indices, sizeof(uint32_t));
-    version = tide_hash_more(version, &index_version, sizeof index_version);
-    version = tide_hash_end(tide_hash_more(version, &size, sizeof size));
-    const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
-    const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
-    const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
+    uint64_t version, id = MESH_KEYED, other = MESH_KEYED;
+    if (key) { // The mesh's key says its vertex size already
+        version = key;
+    } else {
+        version = list_version(vertices, size);
+        const uint64_t index_version = list_version(indices, sizeof(uint32_t));
+        version = tide_hash_more(version, &index_version, sizeof index_version);
+        version = tide_hash_end(tide_hash_more(version, &size, sizeof size));
+        const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
+        id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
+        other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
+    }
     bool fill;
     const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_BYTES, id, other, version, &fill);
     if (fill) {
