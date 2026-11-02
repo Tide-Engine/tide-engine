@@ -1,0 +1,764 @@
+// Building meshes in code: shapes appended to a game's own vertex and index
+// lists, normals and tangents worked out, vertices welded, meshes merged and
+// measured. Every function is generic over the game's vertex struct `V` and
+// fills the fields it has by the names a mesh asset's file fills (`position`,
+// `normal`, `uv`, `tangent`); the rest keep the struct's defaults. A `float3
+// position` is a 3D mesh's, a `float2` a 2D mesh's.
+//
+// Triangles' fronts are clockwise, as Tide's are. A uv is (0, 0) at a
+// texture's top left. Everything is ordinary math in a fixed order, so the same
+// lists give the same bits on every machine, and match code can use them.
+
+namespace Geometry;
+
+// How many corners round a shape and how many cells across one go, at the most:
+// a mistaken count makes a big mesh, not one that takes every machine's memory.
+const int MOST_STEPS = 1024;
+
+// A box that holds every position, as Unity's Bounds: where it starts and ends
+// on each axis. A 2D mesh's has z = 0.
+struct Bounds
+{
+    float3 min;
+    float3 max;
+
+    float3 Center() { return (min + max) * 0.5; }
+    float3 Size() { return max - min; }
+    float3 Extents() { return (max - min) * 0.5; }
+    bool Contains(float3 point)
+    {
+        return point.x >= min.x && point.y >= min.y && point.z >= min.z
+            && point.x <= max.x && point.y <= max.y && point.z <= max.z;
+    }
+}
+
+// A transform as appending uses it: points and directions through it, normals
+// through its inverse transpose, and whether it mirrors, which turns
+// triangles over so that their fronts stay their fronts.
+struct Placement
+{
+    float4x4 points = float4x4.identity;
+    float4x4 normals = float4x4.identity;
+    bool mirrored;
+    bool identity = true;
+}
+
+Placement PlacementOf(float4x4 transform)
+{
+    bool identity = IsIdentity(transform);
+    if (identity) return Placement { };
+    float determinant = Math.Determinant(transform);
+    // A transform that flattens has no inverse: its normals go through it as directions do
+    float4x4 normals = determinant == 0 ? transform : Math.Transpose(Math.Inverse(transform));
+    return Placement { points = transform, normals = normals, mirrored = determinant < 0, identity = false };
+}
+
+bool IsIdentity(float4x4 m)
+{
+    return m.c0.x == 1 && m.c0.y == 0 && m.c0.z == 0 && m.c0.w == 0
+        && m.c1.x == 0 && m.c1.y == 1 && m.c1.z == 0 && m.c1.w == 0
+        && m.c2.x == 0 && m.c2.y == 0 && m.c2.z == 1 && m.c2.w == 0
+        && m.c3.x == 0 && m.c3.y == 0 && m.c3.z == 0 && m.c3.w == 1;
+}
+
+// ---------------------------------------------------------------------------
+// Vertices of the game's type
+
+// A vertex of type V with what it has of these: its other fields are V's
+// defaults. A 2D vertex takes the position's x and y.
+V MakeVertex<V>(float3 position, float3 normal, float2 uv, float4 tangent)
+{
+    mut var v = V { };
+    if (V has float2 position) v.position = position.xy;
+    else v.position = position;
+    if (V has float3 normal) v.normal = normal;
+    if (V has float2 uv) v.uv = uv;
+    if (V has float4 tangent) v.tangent = tangent;
+    else if (V has float3 tangent) v.tangent = tangent.xyz;
+    return v;
+}
+
+float3 PositionOf<V>(V v)
+{
+    if (V has float2 position) return float3(v.position, 0);
+    return v.position;
+}
+
+// `v` through placement `at`: its position, normal and tangent, where it has them.
+V Moved<V>(V v, Placement at)
+{
+    if (at.identity) return v;
+    mut var moved = v;
+    if (V has float2 position) moved.position = Math.Transform(at.points, float3(v.position, 0)).xy;
+    else moved.position = Math.Transform(at.points, v.position);
+    if (V has float3 normal) moved.normal = Math.Normalize(Math.Rotate(at.normals, v.normal));
+    if (V has float4 tangent)
+    {
+        float w = at.mirrored ? -v.tangent.w : v.tangent.w;
+        moved.tangent = float4(Math.Normalize(Math.Rotate(at.points, v.tangent.xyz)), w);
+    }
+    else if (V has float3 tangent) moved.tangent = Math.Normalize(Math.Rotate(at.points, v.tangent));
+    return moved;
+}
+
+// The side the bitangent is on, as a tangent's w: +1 where the normal crossed
+// with the tangent goes the way the texture's v does, -1 where it's mirrored.
+float Handedness(float3 normal, float3 tangent, float3 vDirection)
+{
+    return Math.Dot(Math.Cross(normal, tangent), vDirection) < 0 ? -1 : 1;
+}
+
+// A triangle's tangent, as a mesh asset makes one: the way its texture's u
+// goes along it, flat to its normal, and the side its v goes.
+float4 FaceTangent(float3 a, float3 b, float3 c, float2 uvA, float2 uvB, float2 uvC, float3 normal)
+{
+    float3 e1 = b - a;
+    float3 e2 = c - a;
+    float du1 = uvB.x - uvA.x;
+    float dv1 = uvB.y - uvA.y;
+    float du2 = uvC.x - uvA.x;
+    float dv2 = uvC.y - uvA.y;
+    float determinant = du1 * dv2 - du2 * dv1;
+    float side = determinant < 0 ? -1 : 1;
+    float3 u = (e1 * dv2 - e2 * dv1) * side;
+    float3 v = (e2 * du1 - e1 * du2) * side;
+    float3 t = FlatTo(u, normal);
+    return float4(t, Handedness(normal, t, v));
+}
+
+// Direction `t` with what goes along `normal` taken out, made unit length; the
+// least-aligned axis's where nothing's left, so a tangent is always one.
+float3 FlatTo(float3 t, float3 normal)
+{
+    mut float3 n = Math.Normalize(normal);
+    if (Math.LengthSq(n) == 0) n = float3(0, 0, 1);
+    mut float3 flat = t - n * Math.Dot(n, t);
+    flat = flat - n * Math.Dot(n, flat); // Again, for what cancelling left
+    if (Math.LengthSq(flat) > Math.LengthSq(t) * 1e-12) return Math.Normalize(flat);
+    var a = Math.Abs(n);
+    mut float3 axis = float3(1, 0, 0);
+    if (a.y < a.x) axis = float3(0, 1, 0);
+    if (a.z < Math.Min(a.x, a.y)) axis = float3(0, 0, 1);
+    flat = axis - n * Math.Dot(n, axis);
+    return Math.Normalize(flat);
+}
+
+// Triangle a b c, its front clockwise, turned over where `at` mirrors.
+void Face(mut List<int> indices, Placement at, int a, int b, int c)
+{
+    indices.Add(a);
+    if (at.mirrored)
+    {
+        indices.Add(c);
+        indices.Add(b);
+    }
+    else
+    {
+        indices.Add(b);
+        indices.Add(c);
+    }
+}
+
+// A corner placed by `at`, appended.
+void PutCorner<V>(mut List<V> vertices, Placement at, float3 position, float3 normal, float2 uv, float4 tangent)
+{
+    vertices.Add(Moved(MakeVertex<V>(position, normal, uv, tangent), at));
+}
+
+int Steps(int count, int least)
+{
+    return Math.Clamp(count, least, MOST_STEPS);
+}
+
+// ---------------------------------------------------------------------------
+// Shapes. Each appends its vertices and triangles, through `transform`, and
+// returns where its first vertex is.
+
+// A flat triangle, its front clockwise: uvs (0, 0), (1, 0) and (0, 1).
+int Triangle<V>(mut List<V> vertices, mut List<int> indices, float3 a, float3 b, float3 c,
+                float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    float3 normal = Math.Normalize(Math.Cross(b - a, c - a));
+    float4 tangent = FaceTangent(a, b, c, float2(0, 0), float2(1, 0), float2(0, 1), normal);
+    PutCorner<V>(vertices, at, a, normal, float2(0, 0), tangent);
+    PutCorner<V>(vertices, at, b, normal, float2(1, 0), tangent);
+    PutCorner<V>(vertices, at, c, normal, float2(0, 1), tangent);
+    Face(indices, at, first, first + 1, first + 2);
+    return first;
+}
+
+// A 2D triangle: a 2D vertex's mesh, or a 3D one's at z = 0.
+int Triangle<V>(mut List<V> vertices, mut List<int> indices, float2 a, float2 b, float2 c,
+                float4x4 transform = float4x4.identity)
+{
+    return Triangle(vertices, indices, float3(a, 0), float3(b, 0), float3(c, 0), transform);
+}
+
+// A flat four-cornered face: its corners clockwise as its front sees them,
+// starting at its top left, uv (0, 0). Triangles a b c and a c d.
+int Quad<V>(mut List<V> vertices, mut List<int> indices, float3 a, float3 b, float3 c, float3 d,
+            float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    return QuadAt(vertices, indices, at, a, b, c, d);
+}
+
+int Quad<V>(mut List<V> vertices, mut List<int> indices, float2 a, float2 b, float2 c, float2 d,
+            float4x4 transform = float4x4.identity)
+{
+    return Quad(vertices, indices, float3(a, 0), float3(b, 0), float3(c, 0), float3(d, 0), transform);
+}
+
+int QuadAt<V>(mut List<V> vertices, mut List<int> indices, Placement at, float3 a, float3 b, float3 c, float3 d)
+{
+    int first = vertices.count;
+    mut float3 normal = Math.Normalize(Math.Cross(b - a, c - a));
+    if (Math.LengthSq(normal) == 0) normal = Math.Normalize(Math.Cross(c - a, d - a));
+    float4 tangent = FaceTangent(a, b, c, float2(0, 0), float2(1, 0), float2(1, 1), normal);
+    PutCorner<V>(vertices, at, a, normal, float2(0, 0), tangent);
+    PutCorner<V>(vertices, at, b, normal, float2(1, 0), tangent);
+    PutCorner<V>(vertices, at, c, normal, float2(1, 1), tangent);
+    PutCorner<V>(vertices, at, d, normal, float2(0, 1), tangent);
+    Face(indices, at, first, first + 1, first + 2);
+    Face(indices, at, first, first + 2, first + 3);
+    return first;
+}
+
+// A flat convex polygon, its outline clockwise as its front sees it, in
+// triangles from its first corner. Its uvs are its outline's places in the
+// rectangle around it, u along its first edge. Fewer than three corners add nothing.
+int Polygon<V>(mut List<V> vertices, mut List<int> indices, List<float3> outline,
+               float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    if (outline.count < 3) return first;
+    float3 origin = outline[0];
+    mut float3 sum = float3(0);
+    for (var k = 1; k + 1 < outline.count; k++) sum += Math.Cross(outline[k] - origin, outline[k + 1] - origin);
+    float3 normal = Math.Normalize(sum);
+    float3 right = FlatTo(outline[1] - origin, normal);
+    float3 up = Math.Cross(right, normal);
+    mut float2 low = float2(0);
+    mut float2 high = float2(0);
+    for (var k = 0; k < outline.count; k++)
+    {
+        float3 offset = outline[k] - origin;
+        float2 place = float2(Math.Dot(offset, right), -Math.Dot(offset, up));
+        low = Math.Min(low, place);
+        high = Math.Max(high, place);
+    }
+    float2 size = high - low;
+    float2 scale = float2(size.x > 0 ? 1 / size.x : 0, size.y > 0 ? 1 / size.y : 0);
+    float4 tangent = float4(right, Handedness(normal, right, -up));
+    for (var k = 0; k < outline.count; k++)
+    {
+        float3 offset = outline[k] - origin;
+        float2 place = float2(Math.Dot(offset, right), -Math.Dot(offset, up));
+        PutCorner<V>(vertices, at, outline[k], normal, (place - low) * scale, tangent);
+    }
+    for (var k = 1; k + 1 < outline.count; k++) Face(indices, at, first, first + k, first + k + 1);
+    return first;
+}
+
+int Polygon<V>(mut List<V> vertices, mut List<int> indices, List<float2> outline,
+               float4x4 transform = float4x4.identity)
+{
+    mut List<float3> flat = [];
+    for (var k = 0; k < outline.count; k++) flat.Add(float3(outline[k], 0));
+    return Polygon(vertices, indices, flat, transform);
+}
+
+// A box around the origin, `size` across: 24 vertices, a face's own four, so
+// its edges are sharp. Each face's uvs cover the texture.
+int Box<V>(mut List<V> vertices, mut List<int> indices, float3 size, float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    float3 half = size * 0.5;
+    // Each face: its outward normal and the way up as it's seen from outside
+    BoxFace(vertices, indices, at, half, float3(1, 0, 0), float3(0, 1, 0));
+    BoxFace(vertices, indices, at, half, float3(-1, 0, 0), float3(0, 1, 0));
+    BoxFace(vertices, indices, at, half, float3(0, 1, 0), float3(0, 0, 1));
+    BoxFace(vertices, indices, at, half, float3(0, -1, 0), float3(0, 0, -1));
+    BoxFace(vertices, indices, at, half, float3(0, 0, 1), float3(0, 1, 0));
+    BoxFace(vertices, indices, at, half, float3(0, 0, -1), float3(0, 1, 0));
+    return first;
+}
+
+void BoxFace<V>(mut List<V> vertices, mut List<int> indices, Placement at, float3 half, float3 normal, float3 up)
+{
+    float3 right = Math.Cross(normal, up); // As the face is seen from outside
+    QuadAt(vertices, indices, at, (normal - right + up) * half, (normal + right + up) * half, (normal + right - up) * half,
+           (normal - right - up) * half);
+}
+
+// A flat rectangle on the x-z plane, facing +y, `size` across x and z and cut
+// into cells: (cellsX + 1) * (cellsZ + 1) vertices, which a game can move to
+// make ground. Its uvs cover the texture, (0, 0) at its -x, +z corner.
+int Plane<V>(mut List<V> vertices, mut List<int> indices, float2 size, int cellsX = 1, int cellsZ = 1,
+             float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    int across = Steps(cellsX, 1);
+    int down = Steps(cellsZ, 1);
+    float4 tangent = float4(1, 0, 0, Handedness(float3(0, 1, 0), float3(1, 0, 0), float3(0, 0, -1)));
+    for (var row = 0; row <= down; row++)
+    {
+        for (var column = 0; column <= across; column++)
+        {
+            float2 uv = float2(float(column) / across, float(row) / down);
+            float3 position = float3((uv.x - 0.5) * size.x, 0, (0.5 - uv.y) * size.y);
+            PutCorner<V>(vertices, at, position, float3(0, 1, 0), uv, tangent);
+        }
+    }
+    for (var row = 0; row < down; row++)
+    {
+        for (var column = 0; column < across; column++)
+        {
+            int topLeft = first + row * (across + 1) + column;
+            int bottomLeft = topLeft + across + 1;
+            Face(indices, at, topLeft, topLeft + 1, bottomLeft + 1);
+            Face(indices, at, topLeft, bottomLeft + 1, bottomLeft);
+        }
+    }
+    return first;
+}
+
+// A ball around the origin, in rings from its top and segments around: a
+// vertex's normal is where it is, so it's smooth. Its seam repeats a column of
+// vertices, for the uvs: u around it from +x, v down from its top.
+int Sphere<V>(mut List<V> vertices, mut List<int> indices, float radius = 0.5, int rings = 16, int segments = 32,
+              float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    int down = Steps(rings, 2);
+    int around = Steps(segments, 3);
+    for (var ring = 0; ring <= down; ring++)
+    {
+        float polar = ring * Math.PI / down;
+        float sinPolar = Math.Sin(polar);
+        float cosPolar = Math.Cos(polar);
+        for (var step = 0; step <= around; step++)
+        {
+            float angle = step * Math.TAU / around;
+            float sinAngle = Math.Sin(angle);
+            float cosAngle = Math.Cos(angle);
+            float3 normal = float3(sinPolar * cosAngle, cosPolar, sinPolar * sinAngle);
+            float3 tangent = float3(-sinAngle, 0, cosAngle);
+            float3 vDirection = float3(cosPolar * cosAngle, -sinPolar, cosPolar * sinAngle);
+            float2 uv = float2(float(step) / around, float(ring) / down);
+            PutCorner<V>(vertices, at, normal * radius, normal, uv, float4(tangent, Handedness(normal, tangent, vDirection)));
+        }
+    }
+    for (var ring = 0; ring < down; ring++)
+    {
+        for (var step = 0; step < around; step++)
+        {
+            int upper = first + ring * (around + 1) + step;
+            int lower = upper + around + 1;
+            if (ring > 0) Face(indices, at, upper, upper + 1, lower);
+            if (ring + 1 < down) Face(indices, at, upper + 1, lower + 1, lower);
+        }
+    }
+    return first;
+}
+
+// A cylinder standing on the y axis around the origin, `height` tall, its
+// sides smooth and its two ends flat discs.
+int Cylinder<V>(mut List<V> vertices, mut List<int> indices, float radius = 0.5, float height = 1, int segments = 32,
+                float4x4 transform = float4x4.identity)
+{
+    return Cone(vertices, indices, radius, radius, height, segments, transform);
+}
+
+// A cone, or a cylinder narrower at one end: `bottomRadius` at its foot and
+// `topRadius` at its top, standing on the y axis around the origin. An end
+// with no radius has no disc.
+int Cone<V>(mut List<V> vertices, mut List<int> indices, float bottomRadius = 0.5, float topRadius = 0,
+            float height = 1, int segments = 32, float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    int around = Steps(segments, 3);
+    float top = height * 0.5;
+    for (var step = 0; step <= around; step++)
+    {
+        float angle = step * Math.TAU / around;
+        float sinAngle = Math.Sin(angle);
+        float cosAngle = Math.Cos(angle);
+        float3 out = float3(cosAngle, 0, sinAngle);
+        float3 normal = Math.Normalize(float3(cosAngle * height, bottomRadius - topRadius, sinAngle * height));
+        float3 tangent = float3(-sinAngle, 0, cosAngle);
+        float3 vDirection = out * (bottomRadius - topRadius) - float3(0, height, 0);
+        float4 t = float4(tangent, Handedness(normal, tangent, vDirection));
+        float u = float(step) / around;
+        PutCorner<V>(vertices, at, out * topRadius + float3(0, top, 0), normal, float2(u, 0), t);
+        PutCorner<V>(vertices, at, out * bottomRadius - float3(0, top, 0), normal, float2(u, 1), t);
+    }
+    for (var step = 0; step < around; step++)
+    {
+        int upper = first + step * 2;
+        Face(indices, at, upper, upper + 2, upper + 1);
+        Face(indices, at, upper + 2, upper + 3, upper + 1);
+    }
+    if (topRadius > 0) DiscAt(vertices, indices, at, topRadius, around, top, false);
+    if (bottomRadius > 0) DiscAt(vertices, indices, at, bottomRadius, around, -top, true);
+    return first;
+}
+
+// A flat disc around the origin on the x-z plane, facing +y. Its uvs are the
+// texture's circle, its top at +z.
+int Disc<V>(mut List<V> vertices, mut List<int> indices, float radius = 0.5, int segments = 32,
+            float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    DiscAt(vertices, indices, at, radius, Steps(segments, 3), 0, false);
+    return first;
+}
+
+void DiscAt<V>(mut List<V> vertices, mut List<int> indices, Placement at, float radius, int around, float y, bool down)
+{
+    int center = vertices.count;
+    float3 normal = down ? float3(0, -1, 0) : float3(0, 1, 0);
+    float4 tangent = float4(1, 0, 0, Handedness(normal, float3(1, 0, 0), down ? float3(0, 0, 1) : float3(0, 0, -1)));
+    PutCorner<V>(vertices, at, float3(0, y, 0), normal, float2(0.5, 0.5), tangent);
+    for (var step = 0; step <= around; step++)
+    {
+        float angle = step * Math.TAU / around;
+        float cosAngle = Math.Cos(angle);
+        float sinAngle = Math.Sin(angle);
+        // Seen from below, the texture's top is at -z, so it reads the right way round there too
+        float2 uv = float2(0.5 + cosAngle * 0.5, 0.5 + (down ? sinAngle : -sinAngle) * 0.5);
+        PutCorner<V>(vertices, at, float3(cosAngle * radius, y, sinAngle * radius), normal, uv, tangent);
+    }
+    for (var step = 0; step < around; step++)
+    {
+        int ring = center + 1 + step;
+        if (down) Face(indices, at, center, ring, ring + 1);
+        else Face(indices, at, center, ring + 1, ring);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Working on what's there
+
+// Whether a triangle's three corners are vertices of a list of `count`.
+bool Inside(int a, int b, int c, int count)
+{
+    return a >= 0 && b >= 0 && c >= 0 && a < count && b < count && c < count;
+}
+
+// Vertex i's position, read where it is, as a float3.
+float3 PositionAt<V>(List<V> vertices, int i)
+{
+    if (V has float2 position) return float3(vertices[i].position, 0);
+    return vertices[i].position;
+}
+
+// Each vertex's normal from the triangles it's in, weighed by their areas, so
+// a mesh is smooth where its triangles share vertices and sharp where they
+// don't. A vertex no triangle has gets a zero normal; a triangle with a corner
+// past the vertices is left out. V needs a `float3 position` and a `float3 normal`.
+void RecalculateNormals<V>(mut List<V> vertices, List<int> indices)
+{
+    int count = vertices.count;
+    for (var k = 0; k < count; k++) vertices[k].normal = float3(0);
+    for (var t = 0; t + 2 < indices.count; t += 3)
+    {
+        int a = indices[t];
+        int b = indices[t + 1];
+        int c = indices[t + 2];
+        if (!Inside(a, b, c, count)) continue;
+        float3 p = vertices[a].position;
+        float3 n = Math.Cross(vertices[b].position - p, vertices[c].position - p);
+        vertices[a].normal += n;
+        vertices[b].normal += n;
+        vertices[c].normal += n;
+    }
+    for (var k = 0; k < count; k++) vertices[k].normal = Math.Normalize(vertices[k].normal);
+}
+
+// Each vertex's tangent from its triangles' uvs, as a mesh asset makes the
+// ones its file hasn't got: the way the texture's u goes, weighed by each
+// corner's angle, flat to the normal, its w the side the texture's v is on. A
+// vertex whose triangles disagree about that side takes the side +1 had (a
+// mesh asset splits it in two). Where uvs say nothing, a direction flat to the
+// normal. V needs a `float3 position`, a `float3 normal`, a `float2 uv` and a `float4 tangent`.
+void RecalculateTangents<V>(mut List<V> vertices, List<int> indices)
+{
+    int count = vertices.count;
+    mut List<float3> plus = [];
+    mut List<float3> minus = [];
+    mut List<int> sides = [];
+    plus.Resize(count);
+    minus.Resize(count);
+    sides.Resize(count);
+    for (var t = 0; t + 2 < indices.count; t += 3)
+    {
+        int a = indices[t];
+        int b = indices[t + 1];
+        int c = indices[t + 2];
+        if (!Inside(a, b, c, count)) continue;
+        float3 pa = vertices[a].position;
+        float3 pb = vertices[b].position;
+        float3 pc = vertices[c].position;
+        float3 e01 = pb - pa;
+        float3 e02 = pc - pa;
+        float3 e12 = pc - pb;
+        if (Math.LengthSq(Math.Cross(e01, e02)) == 0) continue;
+        float2 ua = vertices[a].uv;
+        float du1 = vertices[b].uv.x - ua.x;
+        float dv1 = vertices[b].uv.y - ua.y;
+        float du2 = vertices[c].uv.x - ua.x;
+        float dv2 = vertices[c].uv.y - ua.y;
+        float determinant = du1 * dv2 - du2 * dv1;
+        if (determinant == 0) continue;
+        float side = determinant < 0 ? -1 : 1;
+        float3 u = Math.Normalize((e01 * dv2 - e02 * dv1) * side);
+        float3 v = Math.Normalize((e02 * du1 - e01 * du2) * side);
+        if (Math.LengthSq(u) == 0 || Math.LengthSq(v) == 0) continue;
+        float3 n01 = Math.Normalize(e01);
+        float3 n02 = Math.Normalize(e02);
+        float3 n12 = Math.Normalize(e12);
+        // At corners a, b, c: edges (ab, ac), (-ab, bc), (-ac, -bc)
+        for (var j = 0; j < 3; j++)
+        {
+            int vertex = j == 0 ? a : j == 1 ? b : c;
+            mut float3 normal = Math.Normalize(vertices[vertex].normal);
+            if (Math.LengthSq(normal) == 0) normal = float3(0, 0, 1); // As a mesh asset picks a plane for none
+            float3 flat = FlatTo(u, normal);
+            float along = Math.Dot(Math.Cross(normal, flat), v);
+            if (along == 0) continue;
+            float weight = j == 0 ? CornerAngle(n01, n02, false) : j == 1 ? CornerAngle(n01, n12, true) : CornerAngle(n02, n12, false);
+            if (along < 0)
+            {
+                minus[vertex] += flat * weight;
+                sides[vertex] = sides[vertex] | 2;
+            }
+            else
+            {
+                plus[vertex] += flat * weight;
+                sides[vertex] = sides[vertex] | 1;
+            }
+        }
+    }
+    for (var k = 0; k < count; k++)
+    {
+        bool negative = sides[k] == 2;
+        float3 direction = negative ? minus[k] : plus[k];
+        vertices[k].tangent = float4(FlatTo(direction, vertices[k].normal), negative ? -1 : 1);
+    }
+}
+
+// The angle between two unit edges at a corner (one of them turned round
+// where `opposite`), or their sine where that's too small to be one.
+float CornerAngle(float3 a, float3 b, bool opposite)
+{
+    float sine = Math.Length(Math.Cross(a, b));
+    float cosine = Math.Dot(a, b) * (opposite ? -1 : 1);
+    float angle = Math.Atan2(sine, cosine);
+    return angle > 0 ? angle : sine;
+}
+
+// Another mesh's vertices and triangles appended through `transform`: what
+// several pieces, or several copies of one, make as one mesh drawn in one
+// call. A triangle with a corner past its vertices is left out. Returns where
+// its first vertex is.
+int Append<V>(mut List<V> vertices, mut List<int> indices, List<V> fromVertices, List<int> fromIndices,
+              float4x4 transform = float4x4.identity)
+{
+    var at = PlacementOf(transform);
+    int first = vertices.count;
+    int count = fromVertices.count;
+    for (var k = 0; k < count; k++) vertices.Add(Moved(fromVertices[k], at));
+    for (var t = 0; t + 2 < fromIndices.count; t += 3)
+    {
+        int a = fromIndices[t];
+        int b = fromIndices[t + 1];
+        int c = fromIndices[t + 2];
+        if (Inside(a, b, c, count)) Face(indices, at, first + a, first + b, first + c);
+    }
+    return first;
+}
+
+// A mesh's vertices moved through `transform` where they are: positions,
+// normals and tangents, and its triangles turned over where it mirrors.
+void TransformMesh<V>(mut List<V> vertices, mut List<int> indices, float4x4 transform)
+{
+    var at = PlacementOf(transform);
+    if (at.identity) return;
+    for (var k = 0; k < vertices.count; k++) vertices[k] = Moved(vertices[k], at);
+    if (!at.mirrored) return;
+    for (var t = 0; t + 2 < indices.count; t += 3)
+    {
+        int b = indices[t + 1];
+        indices[t + 1] = indices[t + 2];
+        indices[t + 2] = b;
+    }
+}
+
+int PositionKey<V>(V v)
+{
+    return Math.Hash(PositionOf(v) + float3(0)); // + 0 makes -0 the 0 it equals
+}
+
+// Vertices that are the same, as V's `==` says, made one: the first of them
+// stays where it is in the order, and triangles name it. V declares `==`.
+// Indices past the vertices are left as they are.
+void Weld<V>(mut List<V> vertices, mut List<int> indices)
+{
+    mut Map<int, int> heads = [];
+    mut List<int> next = [];
+    mut List<V> kept = [];
+    mut List<int> to = [];
+    for (var k = 0; k < vertices.count; k++)
+    {
+        var v = vertices[k];
+        int key = PositionKey(v);
+        mut int found = -1;
+        mut int head = -1;
+        if (heads.TryGet(key, out int at)) head = at;
+        for (mut int j = head; j >= 0 && found < 0; j = next[j])
+        {
+            if (kept[j] == v) found = j;
+        }
+        if (found < 0)
+        {
+            found = kept.count;
+            kept.Add(v);
+            next.Add(head);
+            heads[key] = found;
+        }
+        to.Add(found);
+    }
+    Renumber(indices, to);
+    vertices = kept;
+}
+
+// Vertices whose positions are within `tolerance` of one already kept made
+// that one, whatever else they hold: for meshes whose normals are worked out
+// after (RecalculateNormals), and collision meshes. A tolerance of 0 or less
+// welds positions that are equal.
+void WeldPositions<V>(mut List<V> vertices, mut List<int> indices, float tolerance = 0)
+{
+    mut Map<int, int> heads = [];
+    mut List<int> next = [];
+    mut List<V> kept = [];
+    mut List<int> to = [];
+    bool near = tolerance > 0;
+    float cellSize = near ? tolerance : 1;
+    float most = tolerance * tolerance;
+    for (var k = 0; k < vertices.count; k++)
+    {
+        var v = vertices[k];
+        float3 p = PositionOf(v) + float3(0);
+        mut int found = -1;
+        int3 cell = int3(Math.Floor(p / cellSize));
+        if (near)
+        {
+            for (var n = 0; n < 27 && found < 0; n++)
+            {
+                int3 around = cell + int3(n % 3 - 1, n / 3 % 3 - 1, n / 9 - 1);
+                if (!heads.TryGet(Math.Hash(around), out int head)) continue;
+                for (mut int j = head; j >= 0 && found < 0; j = next[j])
+                {
+                    if (Math.DistanceSq(PositionAt(kept, j), p) <= most) found = j;
+                }
+            }
+        }
+        else if (heads.TryGet(Math.Hash(p), out int head))
+        {
+            for (mut int j = head; j >= 0 && found < 0; j = next[j])
+            {
+                float3 q = PositionAt(kept, j) + float3(0);
+                if (q.x == p.x && q.y == p.y && q.z == p.z) found = j;
+            }
+        }
+        if (found < 0)
+        {
+            int key = near ? Math.Hash(cell) : Math.Hash(p);
+            mut int head = -1;
+            if (heads.TryGet(key, out int at)) head = at;
+            found = kept.count;
+            kept.Add(v);
+            next.Add(head);
+            heads[key] = found;
+        }
+        to.Add(found);
+    }
+    Renumber(indices, to);
+    vertices = kept;
+}
+
+void Renumber(mut List<int> indices, List<int> to)
+{
+    for (var t = 0; t < indices.count; t++)
+    {
+        int i = indices[t];
+        if (i >= 0 && i < to.count) indices[t] = to[i];
+    }
+}
+
+// Triangles with a corner past the vertices, or two corners the same vertex,
+// taken out, and then the vertices no triangle has, the rest keeping their order.
+void RemoveUnused<V>(mut List<V> vertices, mut List<int> indices)
+{
+    int count = vertices.count;
+    mut List<int> kept = [];
+    for (var t = 0; t + 2 < indices.count; t += 3)
+    {
+        int a = indices[t];
+        int b = indices[t + 1];
+        int c = indices[t + 2];
+        if (!Inside(a, b, c, count)) continue;
+        if (a == b || b == c || a == c) continue;
+        kept.Add(a);
+        kept.Add(b);
+        kept.Add(c);
+    }
+    mut List<int> to = [];
+    to.Resize(count);
+    for (var k = 0; k < count; k++) to[k] = -1;
+    for (var t = 0; t < kept.count; t++) to[kept[t]] = 0;
+    mut List<V> used = [];
+    for (var k = 0; k < count; k++)
+    {
+        if (to[k] < 0) continue;
+        to[k] = used.count;
+        used.Add(vertices[k]);
+    }
+    for (var t = 0; t < kept.count; t++) kept[t] = to[kept[t]];
+    vertices = used;
+    indices = kept;
+}
+
+// The box around every vertex's position, or nothing for no vertices.
+Bounds? BoundsOf<V>(List<V> vertices)
+{
+    if (vertices.count == 0) return null;
+    if (V has float2 position)
+    {
+        mut float2 low = vertices[0].position;
+        mut float2 high = low;
+        for (var k = 1; k < vertices.count; k++)
+        {
+            low = Math.Min(low, vertices[k].position);
+            high = Math.Max(high, vertices[k].position);
+        }
+        return Bounds { min = float3(low, 0), max = float3(high, 0) };
+    }
+    mut float3 low = vertices[0].position;
+    mut float3 high = low;
+    for (var k = 1; k < vertices.count; k++)
+    {
+        low = Math.Min(low, vertices[k].position);
+        high = Math.Max(high, vertices[k].position);
+    }
+    return Bounds { min = low, max = high };
+}

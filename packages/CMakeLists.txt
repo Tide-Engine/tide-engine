@@ -608,3 +608,10 @@ if(TIDE_PLATFORM AND NOT TIDE_ANDROID AND NOT TIDE_WEB AND TIDE_NODE)
     tide_gpu_test(tide_voice_host)
     set_tests_properties(tide_voice_host PROPERTIES TIMEOUT 120)
 endif()
+
+# Mesh building over a game's own vertex structs: ordinary generic Tide, no C.
+tide_add_game(tide_geometry SOURCES geometry/test/game.tide NAME game
+    PACKAGES Geometry geometry/geometry.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" geometry/test/game_test.c)
+target_include_directories(tide_geometry PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_geometry COMMAND tide_geometry)
