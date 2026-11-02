@@ -1,5 +1,16 @@
 # Releases, installing and CI
 
+## Web room migration in run 41440963320 (2026-11-02)
+
+Only macOS web shard 1 failed independently: a migration joiner timed out
+before the original host left. The early-code fixture startup now waits for
+relay-confirmed registration and tests that boundary explicitly; timestamped
+ICE/connection diagnostics cover future failures. The old log cannot prove
+this startup race caused its timeout. Reproduction limits and passing scoped
+Windows web-release checks are in webrtc-and-rooms.md. No runtime, workflow
+gate, timeout or assertion was relaxed. The fix follows the ordinary direct
+dev merge/push trigger; the owner requested checking that build's outcome.
+
 ## MinGW profiler fixture in run 41405770153 (2026-11-02)
 
 The only underlying failure at 4d0d14671 was MinGW's compilation of
