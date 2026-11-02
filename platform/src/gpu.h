@@ -291,6 +291,12 @@ typedef struct tide_gpu {
     // device, and written as the backend closes. NULL for none.
     void (*pipeline_cache)(const char *file);
 
+    // Optional: the bytes of memory the device has of its own (a discrete
+    // GPU's), which the renderer keeps a share of for images not being drawn
+    // (texture_residency.h). 0 where that's unknown or the memory is the
+    // system's (an integrated GPU, a phone's); NULL for a backend that can't say.
+    uint64_t (*device_memory)(void);
+
     // Optional timing of a game's drawing, outside passes. Read returns a
     // newly completed sample in milliseconds, or -1 for none (including an
     // unsupported device). It never waits for the GPU. Reset discards pending

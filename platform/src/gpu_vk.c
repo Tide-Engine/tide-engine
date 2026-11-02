@@ -1644,6 +1644,19 @@ static int vk_target_limit(void)
     return (int)vk.properties.limits.maxImageDimension2D;
 }
 
+// A discrete GPU's own memory: its biggest heap of device-local memory. An
+// integrated GPU's (a phone's too) is the system's, so it says none.
+static uint64_t vk_device_memory(void)
+{
+    if (vk.lost || vk.properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) return 0;
+    uint64_t most = 0;
+    for (uint32_t i = 0; i < vk.memory.memoryHeapCount; i++) {
+        const VkMemoryHeap heap = vk.memory.memoryHeaps[i];
+        if ((heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && heap.size > most) most = heap.size;
+    }
+    return most;
+}
+
 static bool vk_float_targets(void)
 {
     return true; // Vulkan draws into, blends and samples blended RGBA16F on every device
@@ -2800,6 +2813,7 @@ const tide_gpu tide_gpu_vulkan = {
     .name = "Vulkan",
     .epoch = vk_epoch,
     .pipeline_cache = vk_pipeline_cache,
+    .device_memory = vk_device_memory,
     .time_begin = vk_time_begin,
     .time_end = vk_time_end,
     .time_read = vk_time_read,
