@@ -97,7 +97,10 @@ budget like the one inactive pack images have (`notes/textures.md`).
   external Foldline prototype's layout check: its debug wasm
   (`tide_query_Render_10`, "local count too large") fails to compile in Node.
   That's generated code this change doesn't touch, and engine tests don't
-  depend on it. Linux, macOS, MinGW and Android are left to CI.
+  depend on it. Linux, macOS, MinGW and Android are left to CI. After merging
+  `origin/dev`'s levels of detail for meshes a game makes (whose
+  `tide_draw_lod_collect` runs after the retention pass and gives levels to kept
+  places too), the same sets pass again: 459 native and 307 web.
 - **Not done:** no game or prototype forest was measured, only this
   workload. Another GPU/driver, Android, macOS and the web's own timings are
   unmeasured. The budget's numbers are picks (Claude's, alongside the
