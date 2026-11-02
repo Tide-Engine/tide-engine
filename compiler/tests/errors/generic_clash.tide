@@ -1,0 +1,6 @@
+// expect: 'T' is int from an argument before, and this one makes it something else
+// expect: write it in '<>', like 'Max<int>(...)'
+scene Main { }
+T Max<T>(T a, T b) { return a > b ? a : b; }
+singleton S { float x; }
+system Run(mut S s) { s.x = Max(1, 2.5); }

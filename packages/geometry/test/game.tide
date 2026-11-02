@@ -1,0 +1,108 @@
+// The Geometry package's shapes and operations over three vertex structs of
+// the game's own: one with every field a mesh asset fills, one with a position
+// and a normal, and a 2D one. game_test.c reads what each case left.
+
+using Geometry;
+
+scene Main { }
+
+struct Full
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    Color color = Color.white;
+    float4 tangent;
+}
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+
+    bool operator ==(Corner a, Corner b)
+    {
+        return a.position.x == b.position.x && a.position.y == b.position.y && a.position.z == b.position.z
+            && a.normal.x == b.normal.x && a.normal.y == b.normal.y && a.normal.z == b.normal.z;
+    }
+    bool operator !=(Corner a, Corner b) { return !(a == b); }
+}
+
+struct Flat
+{
+    float2 position;
+    Color color = Color(1, 0, 0);
+}
+
+singleton Built
+{
+    List<Full> box;
+    List<int> boxFaces;
+    List<Full> ball;
+    List<int> ballFaces;
+    List<Corner> plane;
+    List<int> planeFaces;
+    List<Full> cone;
+    List<int> coneFaces;
+    List<Flat> flat;
+    List<int> flatFaces;
+    List<Corner> merged;
+    List<int> mergedFaces;
+    List<Corner> welded;
+    List<int> weldedFaces;
+    List<Corner> near;
+    List<int> nearFaces;
+    List<Full> ground;
+    List<int> groundFaces;
+    List<Corner> trimmed;
+    List<int> trimmedFaces;
+    Bounds boxBounds;
+    bool emptyHasNoBounds;
+    Bounds mirroredBounds;
+    int mirroredFirst;
+}
+
+event(Spawned) Build(with Main, mut Built b)
+{
+    Geometry.Box(b.box, b.boxFaces, float3(2, 4, 6));
+    Geometry.Sphere(b.ball, b.ballFaces, 1, rings: 8, segments: 12);
+    Geometry.Plane(b.plane, b.planeFaces, float2(4, 2), cellsX: 4, cellsZ: 2);
+    Geometry.Cone(b.cone, b.coneFaces, bottomRadius: 1, topRadius: 0.5, height: 2, segments: 8);
+    Geometry.Quad(b.flat, b.flatFaces, float2(0, 1), float2(1, 1), float2(1, 0), float2(0, 0));
+    Geometry.Triangle(b.flat, b.flatFaces, float2(0, 0), float2(1, 0), float2(0, -1));
+
+    // Two boxes as one mesh, the second moved and mirrored on x
+    mut List<Corner> piece = [];
+    mut List<int> pieceFaces = [];
+    Geometry.Box(piece, pieceFaces, float3(1));
+    Geometry.Append(b.merged, b.mergedFaces, piece, pieceFaces);
+    b.mirroredFirst = Geometry.Append(b.merged, b.mergedFaces, piece, pieceFaces,
+                                      float4x4.TRS(float3(10, 0, 0), quaternion.identity, float3(-1, 1, 1)));
+    b.mirroredBounds = Geometry.BoundsOf(b.merged) ?? default;
+
+    // A box's 24 vertices welded: no two are equal (their normals differ), so all stay
+    Geometry.Box(b.welded, b.weldedFaces, float3(1));
+    Geometry.Weld(b.welded, b.weldedFaces);
+    // ...but by their positions alone, 8 are left; then smooth normals
+    Geometry.Box(b.near, b.nearFaces, float3(1));
+    Geometry.WeldPositions(b.near, b.nearFaces, 0.001);
+    Geometry.RecalculateNormals(b.near, b.nearFaces);
+
+    // Ground: a plane whose vertices are moved up, its normals and tangents worked out again
+    Geometry.Plane(b.ground, b.groundFaces, float2(8, 8), cellsX: 8, cellsZ: 8);
+    for (var k = 0; k < b.ground.count; k++) b.ground[k].position.y = b.ground[k].position.x * 0.5;
+    Geometry.RecalculateNormals(b.ground, b.groundFaces);
+    Geometry.RecalculateTangents(b.ground, b.groundFaces);
+
+    // A triangle whose corners repeat, one past the end, and an unused vertex
+    b.trimmed.Add(Corner { position = float3(0, 0, 0) });
+    b.trimmed.Add(Corner { position = float3(1, 0, 0) });
+    b.trimmed.Add(Corner { position = float3(9, 9, 9) });
+    b.trimmed.Add(Corner { position = float3(0, 1, 0) });
+    b.trimmedFaces = [0, 1, 3, 0, 0, 1, 0, 1, 7];
+    Geometry.RemoveUnused(b.trimmed, b.trimmedFaces);
+
+    b.boxBounds = Geometry.BoundsOf(b.box) ?? default;
+    List<Full> none = [];
+    b.emptyHasNoBounds = Geometry.BoundsOf(none) == null;
+}

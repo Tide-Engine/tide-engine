@@ -381,6 +381,7 @@ tide_e2e_test(lists_resize) # Resize: a list sized in one call, a few elements o
 tide_e2e_test(lists_out SOURCES e2e/lists_out.tide e2e/lists_out_c.c) # `out List<T>`: lists C makes
 tide_e2e_test(resident SOURCES e2e/resident.tide e2e/resident_c.c) # A match singleton's Resident field: a C library's state as the world's pages
 tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out` parameters and arguments, as C#'s
+tide_e2e_test(generics) # Generic functions: inference, <> at calls, `has`, instantiations, a plain overload winning
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
 target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=1814360554844410170ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input

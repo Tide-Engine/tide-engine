@@ -34,6 +34,9 @@ typedef struct parser {
     bool has_rest;
 } parser;
 
+static bool at_type_argument(const parser *p);
+static void parse_type_args(parser *p, struct expr *e);
+
 static token *peek_at(const parser *p, int offset)
 {
     if (p->has_rest) {
@@ -619,9 +622,10 @@ static expr *parse_primary(parser *p)
             return e;
         }
         advance(p);
-        if (at(p, T_LPAREN)) {
+        if (at(p, T_LPAREN) || (at(p, T_LT) && at_type_argument(p))) {
             expr *e = new_expr(E_CALL, t->at);
             e->name = t->text;
+            if (accept(p, T_LT)) parse_type_args(p, e); // Max<float>(a, b)
             parse_args(p, e);
             return e;
         }
@@ -657,13 +661,23 @@ static bool at_type_argument(const parser *p)
         if (k == T_LT) depth++;
         else if (k == T_GT) depth--;
         else if (k == T_SHR) depth -= 2;
-        else if (k != T_IDENT && k != T_DOT && !(k == T_COMMA && depth > 1)) return false; // Map<string, int>'s comma
+        else if (k != T_IDENT && k != T_DOT && k != T_COMMA && k != T_LBRACKET && k != T_RBRACKET && k != T_INT
+                 && k != T_QUESTION) return false; // Map<string, int>'s comma, Pick<int, float>'s, int[4], int?
         i++;
     }
     return depth == 0 && peek_at(p, i)->kind == T_LPAREN;
 }
 
 static stmt *new_stmt(stmt_kind kind, loc at);
+
+// The types in <> before a call's arguments, its '<' read: Max<float>(...).
+static void parse_type_args(parser *p, expr *e)
+{
+    do {
+        vec_push(e->type_args, parse_type(p, "a type in '<>'"));
+    } while (accept(p, T_COMMA));
+    close_angle(p, "'>' after the types");
+}
 
 // ++i, i++, --i or i--, as a value: with the assignment it makes, `i += 1`,
 // which is the whole of it where it's a statement (parse_simple).
@@ -719,13 +733,13 @@ static expr *parse_postfix(parser *p)
             expr *m = new_expr(E_METHOD, name->at);
             m->object = e;
             m->name = name->text;
-            if (accept(p, T_LT)) { // world.Get<Health>(e)
-                const type_ref *arg = parse_type(p, "a type in '<>'");
+            if (accept(p, T_LT)) { // world.Get<Health>(e), Geometry.Bounds<Corner>(...)
+                parse_type_args(p, m);
+                const type_ref *arg = m->type_args.items[0];
                 m->type_arg = arg->text;
                 m->type_arg_at = arg->name_at;
                 m->type_arg_qual_at = arg->at;
                 m->type_arg_ref = arg;
-                close_angle(p, "'>' after the type");
             }
             parse_args(p, m);
             e = m;
@@ -915,6 +929,20 @@ static expr *parse_binary(parser *p, const int min_prec)
             lhs = parse_is(p, lhs);
             continue;
         }
+        // V has float3 normal: a contextual word, as a name and then another name reads no other way
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "has") && lhs->kind == E_NAME && peek_at(p, 1)->kind == T_IDENT
+            && IS_PRECEDENCE >= min_prec) {
+            const token *word = advance(p);
+            expr *e = new_expr(E_HAS, word->at);
+            e->lhs = lhs;
+            e->pattern_ref = parse_type(p, "a field's type after 'has', like 'V has float3 normal'");
+            e->pattern = e->pattern_ref->text;
+            const token *name = expect_ident(p, "the field's name after its type, like 'V has float3 normal'");
+            e->pattern_field = name->text;
+            e->pattern_field_at = name->at;
+            lhs = e;
+            continue;
+        }
         const int prec = binary_precedence(peek(p)->kind);
         if (prec == 0 || prec < min_prec) return lhs;
         const token *op = advance(p);
@@ -1054,6 +1082,16 @@ bool attributes_before_field(const token *toks, int i)
         && !is_decl_word(t->text);
 }
 
+// `<T, U>` from token `i` on, a generic function's type parameters: where they
+// end, or `i` if there are none (or what's there isn't them).
+static int skip_type_params(const parser *p, int i)
+{
+    if (peek_at(p, i)->kind != T_LT || peek_at(p, i + 1)->kind != T_IDENT) return i;
+    int k = i + 2;
+    while (peek_at(p, k)->kind == T_COMMA && peek_at(p, k + 1)->kind == T_IDENT) k += 2;
+    return peek_at(p, k)->kind == T_GT ? k + 1 : i;
+}
+
 // [mut] Type Name(, `from` tokens on: a method or function, rather than a
 // field or a local. With `qualified`, the name can be: `float Combat.Damage(`,
 // an override's, which names what it replaces.
@@ -1065,6 +1103,7 @@ static bool at_method_from(const parser *p, const int from, const bool qualified
     if (i < 0 || peek_at(p, i)->kind != T_IDENT) return false;
     i++;
     while (qualified && peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+    i = skip_type_params(p, i); // T Max<T>(...)
     return peek_at(p, i)->kind == T_LPAREN;
 }
 
@@ -2027,9 +2066,32 @@ static decl *parse_settings(parser *p, const token *keyword)
 // no owner, a function. The checker says where methods are allowed.
 static decl *parse_method(parser *p, decl *owner)
 {
+    const parser start = *p;
     const bool is_mut = accept(p, T_MUT);
     const type_ref *ret = parse_decl_type(p, "return type");
     decl *m = new_named_decl(p, owner ? DECL_METHOD : DECL_FUNCTION, owner ? "method name" : "function name");
+    if (at(p, T_LT)) { // T Max<T>(T a, T b): a generic function, read again for each instantiation (parse_generic_instance)
+        const token *open = advance(p);
+        do {
+            const token *name = expect_ident(p, "a type parameter's name, like 'T'");
+            vec_push(m->type_params, name->text);
+            vec_push(m->type_param_at, name->at);
+        } while (accept(p, T_COMMA));
+        close_angle(p, "'>' after the type parameters");
+        if (owner) {
+            diag_error(open->at, "a method can't have type parameters of its own yet");
+            diag_note("write it as a function that takes the value, like 'void Fill<V>(mut List<V> vertices)'");
+            m->type_params.count = 0;
+        } else if (p->overriding) {
+            diag_error(open->at, "a generic function can't be virtual or replace one");
+            m->type_params.count = 0;
+        } else {
+            m->kind = DECL_GENERIC;
+            parser *saved = NEW(parser);
+            *saved = start;
+            m->generic_parser = saved;
+        }
+    }
     m->unit = p->unit;
     m->owner = owner;
     m->is_mut_method = is_mut;
@@ -3001,4 +3063,22 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         if (!recover) return false;
     }
     return true;
+}
+
+// One instantiation of generic function `generic`: its declaration read again
+// from its tokens, a syntax tree of its own that the checker annotates as it
+// checks it with the type arguments bound. It read once, so it reads again.
+decl *parse_generic_instance(const decl *generic)
+{
+    parser p = *(const parser *)generic->generic_parser;
+    p.recover = false;
+    p.has_rest = false;
+    p.pending.items = NULL;
+    p.pending.count = p.pending.cap = 0;
+    if (setjmp(p.fail)) return NULL;
+    decl *d = parse_method(&p, NULL);
+    d->kind = DECL_FUNCTION;
+    d->generic_parser = NULL;
+    d->unit = generic->unit;
+    return d;
 }

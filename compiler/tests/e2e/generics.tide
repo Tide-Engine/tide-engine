@@ -1,0 +1,116 @@
+// Generic functions: type parameters inferred from the arguments or written in
+// <>, one instantiation for each set of type arguments, `has` tests that leave
+// out the code for fields a type hasn't got, a plain function winning over a
+// generic one, and generics calling generics. generics_test.c reads the results.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+struct Dot
+{
+    float2 position;
+    int tag = 7;
+}
+
+T Max<T>(T a, T b)
+{
+    return a > b ? a : b;
+}
+
+// Two type parameters, one of them given only by what's in <>
+U Convert<T, U>(T value)
+{
+    if (U has float x) return U { x = value };
+    return U { };
+}
+
+struct Holder
+{
+    float x;
+}
+
+// A plain function and a generic one that share a name: the plain one wins
+string Describe(int value) { return "plain"; }
+string Describe<T>(T value) { return "generic"; }
+
+// Writes what V has, by name
+V Make<V>(float3 position, float3 normal)
+{
+    mut var v = V { };
+    if (V has float2 position) v.position = position.xy;
+    else v.position = position;
+    if (V has float3 normal && !(V has int tag)) v.normal = normal;
+    return v;
+}
+
+// A generic calling another, over a list of its type parameter
+int AddTwo<V>(mut List<V> vertices, float3 at)
+{
+    vertices.Add(Make<V>(at, float3(0, 1, 0)));
+    vertices.Add(Make<V>(at * 2, float3(0, 1, 0)));
+    return vertices.count;
+}
+
+// Elements of a list of anything, from a map's values
+int CountAll<K, V>(Map<K, List<V>> buckets)
+{
+    mut int total = 0;
+    foreach (var entry in buckets) total += entry.value.count;
+    return total;
+}
+
+// Recursion through the same instantiation
+int Nest<T>(T value, int n)
+{
+    if (n <= 0) return 0;
+    return 1 + Nest(value, n - 1);
+}
+
+T? FirstOr<T>(List<T> items)
+{
+    if (items.count == 0) return null;
+    return items[0];
+}
+
+singleton Results
+{
+    int bigInt;
+    float bigFloat;
+    float converted;
+    string plainPick;
+    string genericPick;
+    List<Corner> corners;
+    List<Dot> dots;
+    int cornerCount;
+    int dotCount;
+    int bucketTotal;
+    int depth;
+    bool emptyIsNull;
+    int first;
+}
+
+event(Spawned) Run(with Main, mut Results r)
+{
+    r.bigInt = Max(3, 7);
+    r.bigFloat = Max<float>(2, 1.5);
+    r.converted = Convert<int, Holder>(4).x;
+    r.plainPick = Describe(1);
+    r.genericPick = Describe(1.5);
+    r.cornerCount = AddTwo(r.corners, float3(1, 2, 3));
+    r.dotCount = AddTwo(r.dots, float3(4, 5, 6));
+    mut Map<string, List<int>> buckets = [];
+    buckets["a"].Add(1);
+    buckets["a"].Add(2);
+    buckets["b"].Add(3);
+    r.bucketTotal = CountAll(buckets);
+    r.depth = Nest(Corner { }, 5);
+    List<int> none = [];
+    r.emptyIsNull = FirstOr(none) == null;
+    List<int> some = [9, 8];
+    r.first = FirstOr(some) ?? -1;
+}

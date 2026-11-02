@@ -4,7 +4,7 @@ description: "Find Tide's optional rendering, visibility, physics, multiplayer m
 
 # Packages
 
-Packages add shared Tide code and C libraries to a game. This source tree contains eight optional packages: a 3D renderer, CPU visibility queries, two physics integrations, two multiplayer menus, a Steam integration and Opus voice chat. Each package has its own page here, with setup, API examples and current limits. Use a checkout or installation containing the packages you need.
+Packages add shared Tide code and C libraries to a game. This source tree contains nine optional packages: a 3D renderer, CPU visibility queries, mesh building, two physics integrations, two multiplayer menus, a Steam integration and Opus voice chat. Each package has its own page here, with setup, API examples and current limits. Use a checkout or installation containing the packages you need.
 
 ## Bundled packages
 
@@ -14,6 +14,7 @@ The name in the first column is what you pass to `tide add` or write in `tide.pa
 |---|---|---|---|
 | `render3d` | `Render3D` | Static/skinned PBR meshes, lights, shadows, transparency, vertex hooks, bloom and HDR effects | [Render3D](./render3d.md) |
 | `cornerculling` | `CornerCulling` | Conservative CPU box occlusion, cached queries and a spatial tree | [Corner Culling](./cornerculling.md) |
+| `geometry` | `Geometry` | Meshes built in code: shapes, normals and tangents, welding, merging and bounds over a game's own vertex structs | [Geometry](./geometry.md) |
 | `box2d` | `Box2D` | Deterministic 2D rigid bodies, shapes, collisions and queries | [Box2D](./box2d.md) |
 | `box3d` | `Box3D` | Deterministic 3D rigid bodies, shapes, collisions and queries | [Box3D](./box3d.md) |
 | `rooms` | `Rooms` | Play, Host and Join menus, room-code sharing and volume settings | [Rooms](./rooms.md) |
@@ -24,6 +25,8 @@ The name in the first column is what you pass to `tide add` or write in `tide.pa
 Choose `rooms` for a simple Play/Host/Join flow, or `lobby` when players gather before a match and browse or find games. `steam` extends `lobby` for desktop Steam builds and requires the game's own Steamworks library; that library is not bundled with Tide.
 
 Choose `render3d` for package-owned lighting and shadow passes over static or skinned mesh/material components on match entities. It has one camera, multiple directional/point/spot lights, bounded shadow maps, normal/height/ORM/emission maps, cutout shadows, sorted transparency, shared vertex deformation, bloom and an ordered HDR effect chain. Lights can be match or local entities. Its page includes interactive material, animation and effect comparisons with orbit cameras. The engine's drawing and shader APIs remain available for other rendering paths.
+
+Choose `geometry` for meshes a game makes in code: ground, levels built from pieces, shapes for prototypes. It appends to the vertex and index lists `Draw.Mesh` takes, over any vertex struct.
 
 Choose `box2d` or `box3d` for their collision APIs.
 
