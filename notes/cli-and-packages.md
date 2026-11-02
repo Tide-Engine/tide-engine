@@ -269,7 +269,9 @@ ASan DLL copy nothing extra. Validation is recorded in notes/testing.md.
 
 Owner requested using a project's pin and asking to download a missing release,
 without replacing the main installation. `versions.c` dispatches build/run,
-schedule/shaders and add/update/eject/fetch/publish after argument validation.
+schedule/shaders and add/update/eject/fetch/publish. Build/run/schedule/shaders
+now select before option validation (2026-11-02 entry below supersedes the
+original validation-first order).
 The original argv, working directory, stdio and exit code are preserved. Pin,
 help, version and installation commands describe/use the invoking installation;
 Unity package selection and the source-build `-dev` exception remain intact.
@@ -1283,3 +1285,26 @@ root or dependency graph. The CLI package test rejects an invalid unused prefab
 and accepts its corrected tree, exercising actual folder discovery. Watching
 rebuilds the normal game; there is no automatic rewrite of existing live instances
 and no tide open/native-editor command yet.
+
+
+## Pinned launcher option forwarding (2026-11-02)
+
+main.c selects build/run/schedule/shaders before version-specific validation,
+including hidden-run restrictions. A bounded discovery pass skips known option
+operands, including size/source-overlay pairs and optional host ports. Unknown
+options stop discovery: preserve the folder already found, or current directory.
+An explicit folder must precede newer options whose operand counts the launcher
+cannot know. The selected executable receives original argv and cwd and owns
+validation. No-pin/same-version/source builds retain the normal parser/errors;
+Unity exclusion, version probe and damaged-cache recursion protection are unchanged.
+Keep discovery arities in step with new parser options.
+
+versions_test.mjs exercises a real selected executable accepting unknown options,
+explicit folders from a different cwd, known options before the folder, implicit
+cwd, quoted values and a known value rejected by the launcher's validator.
+Windows ASan CLI builds pass; versions, run_exit, help and hidden CTests pass.
+The --web dispatch case uses the same host CLI; no WASM runtime code changed,
+so separate web runtime tests are not applicable. Other host OSes remain CI coverage.
+Old installed launchers require upgrade or direct cached-executable invocation:
+a project pin cannot repair released launcher binaries. No external project or pin
+was edited.

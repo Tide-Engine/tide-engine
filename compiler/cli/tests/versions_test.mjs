@@ -62,12 +62,17 @@ assert.ok(readdirSync(cache).every(name => !name.includes('-download-')));
 const invoking = spawnSync(tide, ['--version'], { env, encoding: 'utf8' }).stdout;
 if (!invoking.match(/^tide .*?-dev /)) {
     for (const args of [['schedule', game], ['shaders', game], ['build', game],
-        ['run', game, '--frames', '2'], ['fetch', game], ['publish', game],
+        ['run', game, '--frames', '2'],
+        ['run', game, '--future-profile', 'report with spaces.json'],
+        ['build', '--web', game, '--future-build', 'value'],
+        ['run', '--frames', '2', game, '--future-profile', 'report.json'],
+        ['run', '--future-profile', 'report.json'],
+        ['run', game, '--profile-warmup', 'invalid'], ['fetch', game], ['publish', game],
         ['add', 'rooms'], ['update'], ['eject', 'rooms']]) {
-        const actual = spawnSync(tide, args, { cwd: game, env, input: '', encoding: 'utf8', timeout: 30000 });
+        const actual = spawnSync(tide, args, { cwd: args.includes(game) ? work : game, env, input: '', encoding: 'utf8', timeout: 30000 });
         assert.ifError(actual.error);
         assert.equal(actual.status, 23, actual.stdout + actual.stderr);
-        assert.ok(actual.stdout.includes(`arg: ${args[0]}`));
+        for (const arg of args) assert.ok(actual.stdout.replaceAll('\r\n', '\n').includes(`arg: ${arg}\n`), actual.stdout);
     }
 }
 // A completed VERSION without its executable is repaired by an approved download.

@@ -77,6 +77,43 @@ static int use_pinned(const char *folder, int argc, char **argv)
     return code;
 }
 
+// Discover the folder without interpreting version-specific option values.
+// After an unknown option its arity is unknowable: keep the folder already
+// found (or "."). Put an explicit folder before newer options.
+static const char *dispatch_folder(int argc, char **argv)
+{
+    const char *folder = ".";
+    const char *one[] = {
+        "--port", "--max-matches", "--max-connections", "--shards", "--shard-width",
+        "--shard-most", "--shard-journal", "--join", "--connect", "--data-dir",
+        "--profile", "--profile-warmup", "--capture", "--capture-audio", "--record",
+        "--script", "--microphone", "--interactive", "--frames", "--scale",
+        "--latency", "--jitter", "--loss", "--players", "--seed", "--define",
+        "--scene", "--editor-cache", "--title", "-o", "--assets"
+    };
+    const char *zero[] = {
+        "--server", "--strip-server-assets", "--anonymous", "--udp-only",
+        "--no-open", "--release", "--distribution", "--web", "--single-file",
+        "--android", "--stats", "--debug-views"
+    };
+    for (int i = 2; i < argc; i++) {
+        const char *a = argv[i];
+        if (a[0] != '-') { folder = a; continue; }
+        int values = -1;
+        for (size_t j = 0; j < sizeof one / sizeof *one; j++)
+            if (strcmp(a, one[j]) == 0) values = 1;
+        for (size_t j = 0; j < sizeof zero / sizeof *zero; j++)
+            if (strcmp(a, zero[j]) == 0) values = 0;
+        if (strcmp(a, "--size") == 0 || strcmp(a, "--source-overlay") == 0) values = 2;
+        if (strncmp(a, "-O", 2) == 0) values = 0;
+        if (strcmp(a, "--host") == 0)
+            values = i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9' ? 1 : 0;
+        if (values < 0 || values > argc - i - 1) break;
+        i += values;
+    }
+    return folder;
+}
+
 static int command_main(const int argc, char **argv)
 {
     if (argc < 2) {
@@ -214,6 +251,11 @@ static int command_main(const int argc, char **argv)
         fprintf(stderr, "tide: unknown command '%s'\n", command);
         fprintf(stderr, "  = note: see `tide help` for commands\n");
         return 2;
+    }
+
+    if (!unity) {
+        const int selected = use_pinned(dispatch_folder(argc, argv), argc, argv);
+        if (selected >= 0) return selected;
     }
 
     // There can be no more symbols than arguments, with room for DEBUG too.
@@ -547,10 +589,6 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         open_page = false;
-    }
-    if (!unity) {
-        const int selected = use_pinned(opts.folder, argc, argv);
-        if (selected >= 0) { free(defines); return selected; }
     }
     // A run ends with its game. Do the occasional update check before it
     // starts, so the network can't keep tide alive after the window closes.
