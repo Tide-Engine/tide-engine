@@ -1,0 +1,24 @@
+renderer: Vulkan; trees 100000; ground camera; 1739m forest; 1280x720; finite measured frames; CPU/GPU overlap; readback is not FPS
+{"benchmark":"forest","renderer":"Vulkan","revision":"unknown","machine":"unknown","compiler":"23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)","optimized":true,"platform":"native","gpu_timer_scope":"backend_elapsed_draw_interval","trees":100000,"mesh_entities":200001,"camera":"ground","extent_metres":1739.2527,"near_trees":358,"middle_trees":3511,"far_trees":96131,"distance_levels":true,"shadows":true,"wind":true,"shadow_resolution":1024,"shadow_views":4,"width":1280,"height":720,"warmup":5,"frames":20,"gpu_samples":20,"draw_calls_min":24,"draw_calls_max":24,"submitted_vertices_min":10859934,"submitted_vertices_max":10859934,"main_bark_instances_min":78286,"main_bark_instances_max":78286,"main_foliage_instances_min":78286,"main_foliage_instances_max":78286,"texture_upload_bytes_mean":0.000,"world_hash":"7c5e24427372ab09","world_unchanged":true,"process_memory_bytes":321253376,"gpu_memory_bytes":69435649,"view_record_ms":{"median":90.17095,"p95":94.8353},"cpu_submit_ms":{"median":1.36205,"p95":1.4095},"completion_readback_ms":{"median":7.95715,"p95":8.477},"gpu_ms":{"median":6.97384,"p95":7.259264}}
+profile diagnostics: instrumented averages over 20 frames after 5 warmup frames; not a performance comparison
+  ConfigureForest                  total 0.020600 ms, mean 0.001030 ms/frame
+  BindForest                       total 96.559400 ms, mean 4.827970 ms/frame
+  Render3D.Prepare                 total 0.068300 ms, mean 0.003415 ms/frame
+  Render3D.PreparePose             total 0.002400 ms, mean 0.000120 ms/frame
+  Render3D.CollectDirectional      total 0.033700 ms, mean 0.001685 ms/frame
+  Render3D.CollectLocalDirectional total 0.000900 ms, mean 0.000045 ms/frame
+  Render3D.CollectSpot             total 0.002100 ms, mean 0.000105 ms/frame
+  Render3D.CollectLocalSpot        total 0.001000 ms, mean 0.000050 ms/frame
+  Render3D.CollectPoint            total 0.002400 ms, mean 0.000120 ms/frame
+  Render3D.CollectLocalPoint       total 0.000900 ms, mean 0.000045 ms/frame
+  Render3D.FinishLights            total 0.096400 ms, mean 0.004820 ms/frame
+  Render3D.Cast                    total 210.540400 ms, mean 10.527020 ms/frame
+  Render3D.CastSkinned             total 0.020600 ms, mean 0.001030 ms/frame
+  Render3D.BeginColor              total 0.044000 ms, mean 0.002200 ms/frame
+  Render3D.DrawMesh                total 1443.553100 ms, mean 72.177655 ms/frame
+  Render3D.DrawSkinnedMesh         total 0.016700 ms, mean 0.000835 ms/frame
+  Render3D.DrawTransparent         total 61.129900 ms, mean 3.056495 ms/frame
+  Render3D.PreparePost             total 0.010100 ms, mean 0.000505 ms/frame
+  Render3D.Bloom                   total 0.004200 ms, mean 0.000210 ms/frame
+  Render3D.PostProcess             total 0.004000 ms, mean 0.000200 ms/frame
+  Render3D.Present                 total 0.020900 ms, mean 0.001045 ms/frame

@@ -1,0 +1,14 @@
+{
+  "native": {
+    "tests_passed": 2908,
+    "failed": 0,
+    "seconds": 103.93,
+    "full_log_sha256": "e146324d1f75f80b994a9b9836b5b1193cacc8593109c0dc8012f32d692669da"
+  },
+  "web": {
+    "tests_passed": 2794,
+    "failed": 0,
+    "seconds": 387.22,
+    "full_log_sha256": "c0661da8256184991c6ce5ddbdc9bed722e0e5715383c6a2f7549969fc984eab"
+  }
+}

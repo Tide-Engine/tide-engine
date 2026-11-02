@@ -1,5 +1,36 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Repeated flat numeric-list captures (2026-11-02)
+
+Forest profiling identified repeated shader-data list hashing and texture lookup
+inside per-entity material recording. `tide_draw_list_data` now keeps eight
+frame-local captures in a draw-list-owned fixed-size allocation. Only ordinary
+nonchunked heap lists qualify. A probe resolves the current heap and page, then
+checks the handle, heap identity/used span, count, element size, word layout,
+writer, and the page's valid hash plus hashed byte count. It validates the
+captured texture slot's identity/version, dimensions, integer format and writer
+kind before returning it. Dirty pages always take the original hashing path.
+
+The cache retains no source/page/header pointer. Heap identity is a uintptr_t;
+current storage is resolved on every probe. Hits increment `heap.moves` exactly
+as `tide_heap_block_hash` does, preserving retained writable list/grid cache
+invalidation, and mark the texture used this frame. Reset and forget clear entries
+before texture pruning; free releases the bounded metadata. Scratch, packed,
+asset-backed, chunked and map/grid captures retain their existing paths.
+
+Three `draw_list_data_cache` regressions compare complete texture identities,
+versions, layouts and padded bytes against fresh conversion across in-place
+cached writes, COW/verified endpoints, layout/size changes, overwritten texture
+slots/kinds, empty/resize, frame/prune/forget/free, source disposal and same-offset
+reuse, scratch reuse and chunked mutations. All three pass on Windows ASan.
+The first same-offset test used different allocation size classes; it was fixed
+to exercise actual same-class reuse. Full integration passes all 2,908 native
+Windows sanitizer CTests and all 2,794 web-release CTests. Three 1920x1080
+before/after forest captures (10k canopy, 100k wide and 100k ground) have zero
+changed RGBA pixels. Independent cache review found no blocking issues.
+[Measured forest results and reproduction](../bench/results/forest-opt-20261102/README.md)
+record the complete optimization task; those timings do not isolate this cache.
+
 ## Asset tolerance multiplies draw tolerance (2026-10-31)
 
 Each leveled mesh retains `lod_multiplier` from `tide_mesh_levels.multiplier`,

@@ -38,6 +38,23 @@ component Wide
 // Teleports whole on the second tick.
 component Hops { }
 
+// Merely appearing in a shader must not force unrelated non-drawing binders
+// to gather/blend this component's numeric match fields.
+component ShaderMaterial
+{
+    float brightness;
+    float spare0;
+    float spare1;
+    float spare2;
+    local int marks;
+}
+
+local singleton MaterialSeen
+{
+    float brightness;
+    int marks;
+}
+
 local singleton Seen
 {
     float x;
@@ -66,6 +83,24 @@ event(Spawned) Setup(with Main)
 {
     Spawn(Wide { since = 0.5, radius = 1, spare3 = 9 });
     Spawn(Wide { x = 500, doing = Doing.Waiting }, Hops);
+    Spawn(ShaderMaterial { brightness = 0.2, spare0 = 1, spare1 = 2, spare2 = 3 });
+}
+
+system ChangeMaterial(mut ShaderMaterial material)
+{
+    material.brightness += 0.2;
+}
+
+view BindMaterial(mut ShaderMaterial material)
+{
+    material.marks += 1;
+}
+
+[After(BindMaterial)]
+view ReadMaterial(ShaderMaterial material, mut MaterialSeen seen)
+{
+    seen.brightness = material.brightness;
+    seen.marks = material.marks;
 }
 
 system Move(Time time, mut Wide w)
@@ -226,6 +261,19 @@ local singleton Four { int a; }
 frag Tinted(Corner vertex, out Color color, Paint paint)
 {
     color = vertex.color * paint.fade;
+}
+
+frag MaterialTint(Corner vertex, out Color color, ShaderMaterial material)
+{
+    color = vertex.color * material.brightness;
+}
+
+// Drawing views retain the conservative complete numeric component copy for
+// shader inputs, including fields absent from the view's ordinary AST reads.
+[After(Figures)]
+view DrawMaterial(ShaderMaterial material, Flat flat)
+{
+    Draw.Mesh(flat.corners, flat.faces, MaterialTint);
 }
 
 view Figures(Wide w, mut Figured fig, mut Flat flat, Time time, One one, Two two, Three three, Four four)

@@ -1,0 +1,32 @@
+[
+  {
+    "case": "10000-canopy",
+    "size": [
+      1920,
+      1080
+    ],
+    "changed_pixels": 0,
+    "before_rgba_sha256": "b40ad8e933129c114fd13ed698239d49fc9efe603719ee31b2d22b7bbe66d3d9",
+    "after_rgba_sha256": "b40ad8e933129c114fd13ed698239d49fc9efe603719ee31b2d22b7bbe66d3d9"
+  },
+  {
+    "case": "100000-ground",
+    "size": [
+      1920,
+      1080
+    ],
+    "changed_pixels": 0,
+    "before_rgba_sha256": "ec0270051c728d8ea87fac394d70eb11469e33e91e744df0e3c52f560f21c7f1",
+    "after_rgba_sha256": "ec0270051c728d8ea87fac394d70eb11469e33e91e744df0e3c52f560f21c7f1"
+  },
+  {
+    "case": "100000-wide",
+    "size": [
+      1920,
+      1080
+    ],
+    "changed_pixels": 0,
+    "before_rgba_sha256": "18bb24a1d276693eb532bc8fd9b3df3f44bebcbacf6a77355f3d32fe0badd6e7",
+    "after_rgba_sha256": "18bb24a1d276693eb532bc8fd9b3df3f44bebcbacf6a77355f3d32fe0badd6e7"
+  }
+]

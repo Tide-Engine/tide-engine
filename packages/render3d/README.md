@@ -278,6 +278,70 @@ additional game resources through ordinary shader parameters: between
 `NextPostTarget(renderer)`, draw and call `CommitPost(renderer)`.
 `defaultPresent = false` suppresses only the stock final presentation.
 
+
+## Foliage
+
+Use `Cutout` and `doubleSided = true` for leaf cards. `ThinLeaf` returns a
+surface callback with shared numeric settings:
+
+```csharp
+material.shader = Render3D.Lit {
+    surface = Render3D.ThinLeaf(Render3D.LeafSettings {
+        transmission = 0.4,
+        transmissionColor = float3(0.75, 1, 0.4),
+        thickness = 0.2
+    })
+};
+```
+
+Transmission defaults to 0.5, with white linear RGB tint and zero thickness.
+Strength/tint clamp to 0..1; nonnegative optical thickness attenuates by
+`exp(-thickness)`. Transmitted diffuse light reduces the reflected diffuse
+fraction; specular stays unchanged. Each light's attenuation and shadow visibility
+apply on both sides. Leaf shadows still use opaque/cutout depth: this thin-sheet
+approximation does not model colored shadows or transport through multiple leaves.
+Ordinary surfaces default to zero transmission. Custom callbacks can call
+`ApplyThinLeaf(surface, settings)` to compose it with their own surface edits.
+
+Capture the same `Wind` values for all plants in a frame through the shared
+vertex hook. Inside a view before `Stages.Prepare`, with a game-owned local
+`seconds` clock:
+
+```csharp
+var wind = Render3D.Wind { time = seconds, strength = 0.3 };
+material.vertex = Render3D.Deform {
+    vertex = (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) =>
+        Render3D.ApplyWind(input, vertex, wind, 0.01, 0.01)
+};
+material.customBounds = true;
+material.boundsCenter = float3(0, 5, 0);
+material.boundsSize = float3(10, 12, 10);
+```
+
+Advance the clock with `Frame.dt` and wrap it periodically. The example bounds
+assume an upright ten-unit tree; fit them to the actual asset and maximum wind
+movement. Bounds are the **full mesh-local size after deformation**, before its
+transform. Attached local `customBounds` defaults false; `boundsCenter` and
+`boundsSize` default zero. They enable culling in color and every shadow pass,
+including skinned materials, restoring destination state afterward. Negative or
+nonfinite sizes retain the draw. Undersized bounds can hide visible branches.
+
+`Wind.direction` is normalized world XZ, default `(1, 0.3)`. `strength` defaults
+to 0.3, `speed` to 1, `gustScale` to 0.04 cycles/world unit, `gustSpeed` to 0.8
+cycles/second, `gustStrength` to 0.5 and `time` to zero seconds. Nearby roots
+sample coherent travelling gusts. `ApplyWind` takes independent bend and flutter
+responses, anchors local y <= 0, and corrects normals/tangents. Bend has world
+distance per squared local height; flutter has world distance per local height.
+Strength clamps to 0..10, responses/gustStrength to 0..1, speed/gustSpeed to
+0..30, gustScale to 0..1 and height to 0..10000. The helper preserves vertex
+color and UVs and infers no asset weight channels. A custom callback using color
+as wind weights must restore its intended material tint/alpha explicitly.
+
+The repository's [forest stress scene](../../bench/forest/README.md) exercises the ordinary
+mesh/material path with ground/canopy/wide cameras and three geometry levels.
+Levels are selected for the fixed camera at setup. Automatic tree-impostor
+baking, Gaussian splats and coverage-preserving alpha mipmaps remain future work.
+
 ## Current scope
 
 One camera; static and skinned mesh assets with material maps and scalar values.
