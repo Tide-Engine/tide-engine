@@ -373,6 +373,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     tide_add_game(tidec_e2e_worker_values_visualizers VISUALIZERS
         SOURCES e2e/worker_values.tide NAME game
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/worker_values_test.c")
+    # VISUALIZERS needs debug info even in the MinGW Release preset.
+    target_compile_options(tidec_e2e_worker_values_visualizers PRIVATE -g)
     target_include_directories(tidec_e2e_worker_values_visualizers PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     if(TIDE_PLATFORM)
         target_link_libraries(tidec_e2e_worker_values_visualizers PRIVATE tide_platform)

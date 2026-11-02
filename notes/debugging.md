@@ -1,5 +1,20 @@
 # Debugging Tide code in native debuggers
 
+## Worker visualizer fixture in MinGW Release (2026-11-03)
+
+Run `41539750446` failed while compiling `tidec_e2e_worker_values_visualizers`:
+Release supplies no debug information, so Clang rejects the visualizer's
+`-fno-eliminate-unused-debug-types` as unused under `-Werror`. The fixture now
+explicitly requests `-g`, as the debugger and profiler fixtures already do.
+Its optimization, typed-list coverage and assertions stay unchanged. This is
+target-local; `tide_add_game`, generated code and language behavior do not change.
+
+Validation: the affected target builds and its CTest passes with Windows
+Clang 23.1.2 ASan. The target is excluded from web and Android configurations,
+so no web behavior changed. This checkout has no MinGW toolchain; the full
+MinGW Release build remains CI validation. All explicit visualizer fixtures
+were checked for the same missing debug-info flag.
+
 ## Views of 64-bit handles (2026-10-30)
 
 The natvis expressions (`view_block`, `view_list_items` and maps' items in
