@@ -41,6 +41,35 @@ static uint32_t directory_room(const tide_block *b)
     return (uint32_t)((((uint64_t)16u << tide_block_class(b)) - sizeof(tide_block)) / sizeof(uint64_t));
 }
 
+uint8_t *tide_list_loop_chunk(tide_list_loop *v, const uint32_t n, const uint32_t way, const bool write)
+{
+    const uint64_t chunk = v->directory[n];
+    if (write) {
+        tide_heap *heap = tide_heap_of(v->where);
+        if (!heap) return NULL; // The confirmed world's, which nothing changes
+        v->chunk[way] = (uint8_t *)(tide_heap_write(heap, chunk) + 1);
+        v->own[way] = true;
+    } else {
+        const tide_heap *heap = tide_heap_read(v->where);
+        tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
+        const tide_page *c = __atomic_load_n(&pages[chunk >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
+        v->chunk[way] = (uint8_t *)(uintptr_t)tide_page_data(c) + sizeof(tide_block);
+        v->own[way] = false;
+    }
+    v->tag[way] = n + 1u;
+    return v->chunk[way];
+}
+
+uint8_t *tide_list_loop_own(tide_list_loop *v)
+{
+    if (!v->block) return NULL; // An asset's, or the pack's: prepared before a loop that writes it
+    tide_heap *heap = tide_heap_of(v->where);
+    if (!heap) return NULL;
+    v->flat = (uint8_t *)(tide_heap_write(heap, v->block) + 1);
+    v->flat_own = true;
+    return v->flat;
+}
+
 const void *tide_list_cache_fill(tide_list_cache *c, const tide_list l, const int32_t i, const uint32_t size)
 {
     *c = (tide_list_cache){0};

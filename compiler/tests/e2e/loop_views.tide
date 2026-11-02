@@ -1,0 +1,142 @@
+// Loops that index lists whose shape they keep read and write them through a
+// view found before the loop (tide_list_loop): lists in chunks and side by
+// side, a function's local list, an asset's list read and a copy of it
+// written, indexes past either end, nested loops sharing a view, and the
+// loops that keep caches instead (they add to the list, or hand it on).
+// Each check counts; loop_views_test.c reads them, and checks a snapshot
+// taken before a tick keeps what the tick's loops wrote over.
+
+scene Main { }
+
+struct Cell
+{
+    int id;
+    float3 p;
+    float w;
+}
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> quad = "assets/meshes/quad.glb";
+
+const int BIG = 3000; // 20-byte cells: several chunks
+
+singleton Data
+{
+    List<Cell> big;
+    List<int> small;
+    List<int> order;
+    int round;
+    int checks;
+    int passed;
+    int firstFailure;
+    float weight;   // What the scattered writes leave in big[7].w
+}
+
+void Check(mut Data d, bool ok)
+{
+    d.checks++;
+    if (ok) d.passed++;
+    else if (d.firstFailure == 0) d.firstFailure = d.checks;
+}
+
+// A function's own lists, in the scratch area
+int Scratch(int n)
+{
+    mut List<int> values = [];
+    values.Resize(n);
+    for (var i = 0; i < values.count; i++) values[i] = i * 2;
+    mut int sum = 0;
+    for (var i = 0; i < values.count; i++) sum += values[i];
+    return sum;
+}
+
+// A list a mut parameter names, written through a view
+void Double(mut List<Cell> cells)
+{
+    for (var i = 0; i < cells.count; i++) cells[i].w = cells[i].w * 2;
+}
+
+system Run(mut Data d)
+{
+    d.round++;
+    if (d.round == 1)
+    {
+        for (var i = 0; i < BIG; i++) d.big.Add(Cell { id = i, p = float3(i, 0, 0), w = 1 });
+        for (var i = 0; i < 10; i++) d.small.Add(i);
+        for (var i = 0; i < BIG; i++) d.order.Add(i * 977 % BIG); // Scattered across the chunks
+        return;
+    }
+    // Scattered reads and writes of a list in chunks, two indexes going back and forth
+    for (var k = 0; k < d.order.count; k++)
+    {
+        int j = d.order[k];
+        int back = BIG - 1 - j;
+        d.big[j].w += 1;
+        d.big[back].p.y = d.big[j].p.x;
+    }
+    d.weight = d.big[7].w;
+    Check(d, d.big[7].w == d.round);
+    Check(d, d.big[BIG - 1 - 7].p.y == 7);
+
+    // Past either end: zero to read, nothing written
+    mut float outside = 0;
+    for (var k = -2; k < 2; k++)
+    {
+        outside += d.big[k * BIG].w;
+        d.big[k * BIG - 1].w = 99;
+    }
+    Check(d, outside == d.round);
+    Check(d, d.big.count == BIG);
+
+    // A list side by side, whole elements written
+    for (var i = 0; i < d.small.count; i++) d.small[i] = d.small[i] + 1;
+    Check(d, d.small[0] == d.round - 1 && d.small[9] == 9 + d.round - 1);
+
+    // Nested loops: the inner one goes on with the outer one's view
+    mut int nested = 0;
+    for (var a = 0; a < d.small.count; a++)
+    {
+        for (var b = 0; b < d.small.count; b++) nested += d.small[a] - d.small[b];
+    }
+    Check(d, nested == 0);
+
+    // A loop that adds to the list keeps the cache: what it adds is read back
+    mut List<int> grown = [];
+    for (var i = 0; i < 300; i++)
+    {
+        grown.Add(i);
+        if (i > 0) grown[i - 1] = grown[i] + grown[i - 1];
+    }
+    Check(d, grown.count == 300 && grown[0] == 1 && grown[298] == 299 + 298);
+
+    // A loop that hands the list on: written by the call, read after it
+    mut List<Cell> handed = [];
+    for (var i = 0; i < 400; i++) handed.Add(Cell { w = 1 });
+    mut float handedSum = 0;
+    for (var i = 0; i < 2; i++)
+    {
+        Double(handed);
+        handedSum += handed[399].w;
+    }
+    Check(d, handedSum == 2 + 4);
+
+    Check(d, Scratch(1000) == 999 * 1000);
+
+    // An asset's list read, and a copy of it written: the copy made its own, the asset as it was
+    mut float ys = 0;
+    for (var i = 0; i < quad.vertices.count; i++) ys += quad.vertices[i].position.y;
+    mut var corners = quad.vertices;
+    for (var i = 0; i < corners.count; i++) corners[i].position.y += 10;
+    mut bool moved = corners.count == quad.vertices.count;
+    for (var i = 0; i < corners.count; i++) moved = moved && corners[i].position.y == quad.vertices[i].position.y + 10;
+    mut float again = 0;
+    for (var i = 0; i < quad.vertices.count; i++) again += quad.vertices[i].position.y;
+    Check(d, quad.vertices.count > 0);
+    Check(d, moved);
+    Check(d, again == ys);
+}

@@ -185,6 +185,10 @@ typedef struct gen {
     sb shader_names; // Private per-stage identifier maps, never emitted into game code.
     bool heard_heap;
     bool list_caches;      // The function being generated has tide_lc, a run cache for each list it indexes (declare_list_caches)
+    // The lists the loops being generated index through a view found before the loop (tide_list_loop, loop_views):
+    // what names each (cache_key), and the view's name in C
+    VEC(const char *) lv_keys;
+    VEC(const char *) lv_names;
     VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
     size_t lc_patch;       // ...and where the array's size goes in `lc_sb`, once the body says how many (close_list_caches)
     sb *lc_sb;
@@ -1697,12 +1701,29 @@ static void cache_key(const expr *e, sb *out)
     }
 }
 
-// The slot in tide_lc of the cache for the list `list` names, in the function
-// being generated: one for each list it indexes, found again by its key.
-static int cache_slot(gen *g, const expr *list)
+// What an index follows, for its list's cache: the variable it's made from
+// (`a`, and `t + 1` or `t - 2` as `t`), so that indexes that move through a big
+// list apart, as a mesh's triangle corners do, each keep the run of elements
+// they're in, rather than taking one cache from run to run at every element.
+// Any other index shares the list's one cache.
+static void index_key(const expr *index, sb *out)
+{
+    while (index->kind == E_BINARY && (index->op == T_PLUS || index->op == T_MINUS) && index->rhs->kind == E_INT) index = index->lhs;
+    if (index->kind == E_NAME || index->kind == E_MEMBER) {
+        sb_put(out, "[");
+        cache_key(index, out);
+        sb_put(out, "]");
+    }
+}
+
+// The slot in tide_lc of the cache for the list `list` names, indexed by
+// `index`, in the function being generated: one for each list it indexes and
+// each variable it indexes it by, found again by its key.
+static int cache_slot(gen *g, const expr *list, const expr *index)
 {
     sb key = {0};
     cache_key(list, &key);
+    if (index) index_key(index, &key);
     for (int i = 0; i < g->lc_keys.count; i++) {
         if (strcmp(g->lc_keys.items[i], key.data) == 0) return i;
     }
@@ -1723,6 +1744,261 @@ static int view_slot(gen *g, const expr *map)
 }
 
 static void close_list_caches(gen *g);
+
+static void gen_expr(gen *g, sb *o, const expr *e);
+static const char *place_where(const gen *g, const expr *e);
+
+// ---------------------------------------------------------------------------
+// Loop views: a list a loop indexes, found once before the loop where the loop
+// can't change its shape (tide_list_loop in tide/list.h). What may change a
+// list's shape is code that names the list, or what holds it, other than to
+// read or write its elements or read its count: a method of it (Add, Clear,
+// ...), an assignment to it or to what holds it, an argument (which could be a
+// `mut` one), a receiver of a method. And a few things that reach state some
+// other way stop every view in the loop: a method called on the code's own
+// value, an Action, a lambda, a World, an await. A loop inside one that has a
+// view of a list goes on using it.
+
+// Whether a list of elements of type `t` can be indexed through a loop's view:
+// elements written where they are as plain bytes, with no text or containers
+// whose helpers own what they hold.
+static bool loop_viewed(const type t)
+{
+    if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) return false;
+    if (t.kind == TY_ARRAY && array_holds_heap(t.decl)) return false;
+    return !type_has_text(t) && !type_has_list(t);
+}
+
+// Whether `e` names a place by names alone: `items`, `w.vertices`, `this.items`.
+static bool place_path(const expr *e)
+{
+    while (e->kind == E_MEMBER) e = e->object;
+    return e->kind == E_NAME || e->kind == E_THIS;
+}
+
+typedef enum lv_use_kind { LV_READ, LV_WHOLE, LV_ELEMENT } lv_use_kind;
+
+typedef struct lv_use {
+    const char *key;
+    lv_use_kind kind;
+    bool writes;        // LV_ELEMENT: an element written, or handed on
+    const expr *list;   // LV_ELEMENT: the list's expression
+} lv_use;
+
+typedef struct lv_scan {
+    VEC(lv_use) uses;
+    VEC(const char *) declared; // Locals the loop declares: a list named through one of their names isn't one view
+    bool stop;          // Something in the loop reaches state other ways: no views
+} lv_scan;
+
+static void lv_record(lv_scan *s, const expr *e, const lv_use_kind kind, const bool writes)
+{
+    sb key = {0};
+    cache_key(e, &key);
+    const lv_use u = {key.data, kind, writes, e};
+    vec_push(s->uses, u);
+}
+
+// How what's being looked at is used: read, or as a whole (an assignment's target, a method's receiver), or as
+// a call's argument, which can be a `mut` one when it's a place, and is a copy when it's a list's element
+typedef enum lv_mode { LVM_READ, LVM_WHOLE, LVM_ARG } lv_mode;
+
+static void lv_stmt(lv_scan *s, const stmt *st);
+
+static void lv_expr(lv_scan *s, const expr *e, const lv_mode mode)
+{
+    if (!e || s->stop) return;
+    if (e->lambda || e->block || e->type.kind == TY_WORLD || e->type.kind == TY_QUERY) {
+        s->stop = true;
+        return;
+    }
+    if ((e->kind == E_NAME || e->kind == E_THIS || e->kind == E_MEMBER) && place_path(e)) {
+        lv_record(s, e, mode == LVM_READ ? LV_READ : LV_WHOLE, false);
+        return;
+    }
+    switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_NULL: case E_DEFAULT: case E_HAS:
+        return;
+    case E_NAME: case E_THIS:
+        return;
+    case E_MEMBER:
+        lv_expr(s, e->object, mode);
+        return;
+    case E_INDEX:
+        if (e->object->type.kind == TY_LIST && place_path(e->object)) {
+            lv_record(s, e->object, LV_ELEMENT, mode == LVM_WHOLE);
+        } else {
+            lv_expr(s, e->object, mode);
+        }
+        lv_expr(s, e->lhs, LVM_READ);
+        return;
+    case E_CALL:
+        if (e->call == CALL_METHOD || e->call == CALL_WORLD || e->call == CALL_ACTION) {
+            s->stop = true; // The code's own value's method, or what reaches entities
+            return;
+        }
+        for (int i = 0; i < e->args.count; i++) lv_expr(s, e->args.items[i], LVM_ARG);
+        return;
+    case E_METHOD:
+        if (e->call == CALL_WORLD) {
+            s->stop = true;
+            return;
+        }
+        if (e->object) lv_expr(s, e->object, LVM_WHOLE);
+        for (int i = 0; i < e->args.count; i++) lv_expr(s, e->args.items[i], LVM_ARG);
+        return;
+    case E_BINARY: case E_COALESCE:
+        lv_expr(s, e->lhs, LVM_READ);
+        lv_expr(s, e->rhs, LVM_READ);
+        return;
+    case E_UNARY: case E_DEFAULTED: case E_TRY: case E_IS:
+        lv_expr(s, e->lhs, LVM_READ);
+        return;
+    case E_CONDITIONAL:
+        lv_expr(s, e->cond, LVM_READ);
+        lv_expr(s, e->lhs, LVM_READ);
+        lv_expr(s, e->rhs, LVM_READ);
+        return;
+    case E_LITERAL:
+        for (int i = 0; i < e->inits.count; i++) lv_expr(s, e->inits.items[i].value, LVM_READ);
+        return;
+    case E_LIST: case E_INTERP:
+        for (int i = 0; i < e->args.count; i++) lv_expr(s, e->args.items[i], LVM_READ);
+        return;
+    case E_STEP:
+        lv_expr(s, e->lhs, LVM_WHOLE);
+        return;
+    default:
+        s->stop = true; // What isn't known here is taken to change anything
+        return;
+    }
+}
+
+static void lv_stmt(lv_scan *s, const stmt *st)
+{
+    if (!st || s->stop) return;
+    switch (st->kind) {
+    case S_BLOCK:
+        for (int i = 0; i < st->stmts.count; i++) lv_stmt(s, st->stmts.items[i]);
+        return;
+    case S_IF:
+        lv_expr(s, st->cond, LVM_READ);
+        lv_stmt(s, st->then_stmt);
+        lv_stmt(s, st->else_stmt);
+        return;
+    case S_WHILE: case S_FOR:
+        lv_stmt(s, st->init);
+        lv_expr(s, st->cond, LVM_READ);
+        lv_stmt(s, st->step);
+        lv_stmt(s, st->then_stmt);
+        return;
+    case S_VAR:
+        vec_push(s->declared, str_to_cstr(st->name));
+        lv_expr(s, st->value, LVM_READ);
+        return;
+    case S_ASSIGN:
+        lv_expr(s, st->target, LVM_WHOLE);
+        lv_expr(s, st->value, LVM_READ);
+        return;
+    case S_EXPR: case S_RETURN:
+        lv_expr(s, st->value, LVM_READ);
+        return;
+    case S_BREAK: case S_CONTINUE:
+        return;
+    default:
+        s->stop = true;
+        return;
+    }
+}
+
+static bool lv_starts(const char *text, const char *start)
+{
+    const size_t n = strlen(start);
+    return strncmp(text, start, n) == 0 && text[n] == '.';
+}
+
+// Whether the loop keeps list `key`'s shape, by what `scan` found of it; and
+// whether it writes its elements.
+static bool lv_keeps(const lv_scan *scan, const char *key, bool *writes)
+{
+    *writes = false;
+    sb root = {0};
+    for (const char *c = key; *c && *c != '.'; c++) sb_putn(&root, c, 1);
+    for (int i = 0; i < scan->declared.count; i++) {
+        if (strcmp(scan->declared.items[i], root.data) == 0) return false;
+    }
+    sb count = {0};
+    sb_printf(&count, "%s.count", key);
+    for (int i = 0; i < scan->uses.count; i++) {
+        const lv_use *u = &scan->uses.items[i];
+        if (strcmp(u->key, key) == 0) {
+            if (u->kind != LV_ELEMENT) return false;
+            *writes |= u->writes;
+        } else if (lv_starts(u->key, key)) {
+            if (strcmp(u->key, count.data) != 0 || u->kind != LV_READ) return false;
+        } else if (lv_starts(key, u->key)) {
+            if (u->kind == LV_WHOLE) return false;
+        }
+    }
+    return true;
+}
+
+// The view of the list `e` names, made before a loop being generated, or NULL.
+static const char *loop_view_of(const gen *g, const expr *e)
+{
+    if (!g->lv_keys.count || !place_path(e)) return NULL;
+    sb key = {0};
+    cache_key(e, &key);
+    for (int i = g->lv_keys.count - 1; i >= 0; i--) {
+        if (strcmp(g->lv_keys.items[i], key.data) == 0) return g->lv_names.items[i];
+    }
+    return NULL;
+}
+
+// Views of the lists loop `loop` indexes and keeps the shape of, found before
+// it, in a block of their own where `block` says the loop has none. Whether
+// there are any.
+static bool open_loop_views(gen *g, const stmt *loop, const bool block)
+{
+    if (!g->list_caches || g->frame || g->task || g->par_loop || g->comparing) return false;
+    lv_scan scan = {0};
+    lv_expr(&scan, loop->cond, LVM_READ);
+    lv_stmt(&scan, loop->step);
+    lv_stmt(&scan, loop->then_stmt);
+    if (scan.stop) return false;
+    sb *o = &g->c;
+    bool opened = false;
+    for (int i = 0; i < scan.uses.count; i++) {
+        const lv_use *u = &scan.uses.items[i];
+        if (u->kind != LV_ELEMENT || !loop_viewed(list_elem(u->list->type.decl))) continue;
+        bool known = false;
+        for (int k = 0; k < g->lv_keys.count && !known; k++) known = strcmp(g->lv_keys.items[k], u->key) == 0;
+        if (known) continue; // An outer loop's, or one made here already
+        bool writes;
+        if (!lv_keeps(&scan, u->key, &writes)) continue;
+        if (block && !opened) {
+            line(g, o, "{");
+            g->indent++;
+        }
+        opened = true;
+        const char *name = made_up(g, "lv");
+        const char *ec = elem_ctype(list_elem(u->list->type.decl));
+        line(g, o, "tide_list_loop %s;", name);
+        if (writes) { // An asset's or the pack's elements made its own before they're written, as a slot's are
+            indent(g, o);
+            sb_put(o, "tide_list_prepare(&(");
+            gen_expr(g, o, u->list);
+            sb_printf(o, "), sizeof(%s), %s);\n", ec, place_where(g, u->list));
+        }
+        indent(g, o);
+        sb_printf(o, "tide_list_loop_find(&%s, ", name);
+        gen_expr(g, o, u->list);
+        sb_printf(o, ", sizeof(%s));\n", ec);
+        vec_push(g->lv_keys, u->key);
+        vec_push(g->lv_names, name);
+    }
+    return opened;
+}
 
 // The run caches of the function whose body comes next: one for each list it
 // indexes (tide/list.h), through which its reads find each run once and its
@@ -2446,7 +2722,9 @@ static void gen_ptr(gen *g, sb *o, const expr *e)
         return;
     }
     if (e->kind == E_INDEX && e->object->type.kind == TY_LIST && !e->kept) {
-        if (g->list_caches) sb_printf(o, "tide_list%d_cat(&tide_lc[%d], ", e->object->type.decl->index, cache_slot(g, e->object));
+        const char *lv = loop_view_of(g, e->object);
+        if (lv) sb_printf(o, "tide_list%d_lat(&%s, ", e->object->type.decl->index, lv);
+        else if (g->list_caches) sb_printf(o, "tide_list%d_cat(&tide_lc[%d], ", e->object->type.decl->index, cache_slot(g, e->object, e->lhs));
         else sb_printf(o, "tide_list%d_at(", e->object->type.decl->index);
         gen_expr(g, o, e->object);
         sb_put(o, ", ");
@@ -2486,8 +2764,10 @@ static void gen_slot(gen *g, sb *o, const expr *e)
     const expr *holder = e->object;
     const bool map = holder->type.kind == TY_MAP;
     const bool array = holder->type.kind == TY_ARRAY;
+    const char *lv = !map && !array ? loop_view_of(g, holder) : NULL;
     if (array) sb_printf(o, "tide_array%d_slot(", holder->type.decl->index);
-    else if (!map && g->list_caches) sb_printf(o, "tide_list%d_cslot(&tide_lc[%d], ", holder->type.decl->index, cache_slot(g, holder));
+    else if (lv) sb_printf(o, "tide_list%d_lslot(&%s, ", holder->type.decl->index, lv);
+    else if (!map && g->list_caches) sb_printf(o, "tide_list%d_cslot(&tide_lc[%d], ", holder->type.decl->index, cache_slot(g, holder, e->lhs));
     else sb_printf(o, "tide_%s%d_slot(", map ? "map" : "list", holder->type.decl->index);
     if (holder->kind == E_INDEX
         && (holder->object->type.kind == TY_LIST || holder->object->type.kind == TY_MAP || holder->object->type.kind == TY_ARRAY)) {
@@ -2587,7 +2867,9 @@ static void gen_element_assign(gen *g, const stmt *s, expr *left)
     if (first->skin_operation == SKIN_OP_POSE_INDEX) {
         sb_put(o, "tide_skin_pose_slot(");
     } else if (holder->type.kind == TY_LIST) {
-        if (g->list_caches) sb_printf(o, "tide_list%d_cslot(&tide_lc[%d], ", holder->type.decl->index, cache_slot(g, holder));
+        const char *lv = loop_view_of(g, holder);
+        if (lv) sb_printf(o, "tide_list%d_lslot(&%s, ", holder->type.decl->index, lv);
+        else if (g->list_caches) sb_printf(o, "tide_list%d_cslot(&tide_lc[%d], ", holder->type.decl->index, cache_slot(g, holder, first->lhs));
         else sb_printf(o, "tide_list%d_slot(", holder->type.decl->index);
     } else if (holder->type.kind == TY_MAP) {
         sb_printf(o, "tide_map%d_slot(", holder->type.decl->index);
@@ -3982,8 +4264,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
-        if (g->list_caches) {
-            sb_printf(o, "tide_list%d_cget(&tide_lc[%d], ", e->object->type.decl->index, cache_slot(g, e->object));
+        const char *lv = loop_view_of(g, e->object);
+        if (lv) {
+            sb_printf(o, "tide_list%d_lget(&%s, ", e->object->type.decl->index, lv);
+        } else if (g->list_caches) {
+            sb_printf(o, "tide_list%d_cget(&tide_lc[%d], ", e->object->type.decl->index, cache_slot(g, e->object, e->lhs));
         } else {
             sb_printf(o, "tide_list%d_get(", e->object->type.decl->index);
         }
@@ -4169,6 +4454,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "(");
             gen_expr(g, o, e->object);
             sb_printf(o, ")." STR_FMT, STR_ARG(e->member));
+            break;
+        }
+        if (e->object->type.kind == TY_LIST && loop_view_of(g, e->object)) { // items.count in a loop that keeps its shape
+            sb_printf(o, "(int32_t)%s.count", loop_view_of(g, e->object));
             break;
         }
         if (e->object->type.kind == TY_LIST) { // items.count
@@ -7388,6 +7677,8 @@ static void gen_stmt(gen *g, const stmt *s)
             if (s->init) gen_stmt(g, s->init);
             if (g->prog->out_args) declare_outs(g, s->cond);
         }
+        const int views_before = g->lv_keys.count;
+        const bool viewed = open_loop_views(g, s, !own_block);
         const int round_mark = task_mark(g);
         bool known;
         const bool constant_condition = s->cond && fold_bool(s->cond, &known);
@@ -7417,6 +7708,11 @@ static void gen_stmt(gen *g, const stmt *s)
         g->indent--;
         line(g, o, "}");
         if (done.end_used) line(g, o, "%s:;", done.end);
+        g->lv_keys.count = g->lv_names.count = views_before;
+        if (viewed && !own_block) {
+            g->indent--;
+            line(g, o, "}");
+        }
         if (own_block) {
             g->indent--;
             line(g, o, "}");
@@ -7789,7 +8085,9 @@ static void gen_stmt(gen *g, const stmt *s)
         }
         if (target->kind == E_INDEX) { // items[i] = x
             indent(g, o);
-            if (g->list_caches) sb_printf(o, "tide_list%d_cset(&tide_lc[%d], ", target->object->type.decl->index, cache_slot(g, target->object));
+            const char *lv = loop_view_of(g, target->object);
+            if (lv) sb_printf(o, "tide_list%d_lset(&%s, ", target->object->type.decl->index, lv);
+            else if (g->list_caches) sb_printf(o, "tide_list%d_cset(&tide_lc[%d], ", target->object->type.decl->index, cache_slot(g, target->object, target->lhs));
             else sb_printf(o, "tide_list%d_set(", target->object->type.decl->index);
             if (is_slot(target->object)) { // rows[i][j] = x: the element's slot (gen_slot)
                 gen_slot(g, o, target->object);
@@ -9105,6 +9403,12 @@ static void gen_list_helpers(gen *g, const bool bodies)
             if (slotted) sb_printf(o, "TIDE_HELPER %s *tide_list%d_cslot(tide_list_cache *cache, tide_list *l, int32_t i, uint32_t where);\n", ec, k);
             if (paths) sb_printf(o, "TIDE_HELPER const %s *tide_list%d_at(tide_list l, int32_t i);\n", ec, k);
             if (paths) sb_printf(o, "TIDE_HELPER const %s *tide_list%d_cat(tide_list_cache *cache, tide_list l, int32_t i);\n", ec, k);
+            if (loop_viewed(e)) {
+                sb_printf(o, "TIDE_HELPER %s tide_list%d_lget(tide_list_loop *v, tide_list l, int32_t i);\n", vc, k);
+                sb_printf(o, "TIDE_HELPER const %s *tide_list%d_lat(tide_list_loop *v, tide_list l, int32_t i);\n", ec, k);
+                sb_printf(o, "TIDE_HELPER %s *tide_list%d_lslot(tide_list_loop *v, tide_list *l, int32_t i, uint32_t where);\n", ec, k);
+                sb_printf(o, "TIDE_HELPER void tide_list%d_lset(tide_list_loop *v, tide_list *l, int32_t i, %s value, uint32_t where);\n", k, vc);
+            }
             if (compares) {
                 sb_printf(o, "TIDE_HELPER int32_t tide_list%d_index_of(tide_list l, %s v);\n", k, vc);
                 sb_printf(o, "TIDE_HELPER bool tide_list%d_contains(tide_list l, %s v);\n", k, vc);
@@ -9125,6 +9429,20 @@ static void gen_list_helpers(gen *g, const bool bodies)
         sb_printf(o, "    const %s *p = tide_list_cached_at(cache, l, i, sizeof(%s));\n", ec, sz);
         if (e.kind == TY_STRING) sb_put(o, "    return p ? tide_text_view(*p) : TIDE_STR_EMPTY;\n}\n\n");
         else sb_printf(o, "    return p ? *p : (%s){0};\n}\n\n", ec);
+        if (loop_viewed(e)) { // Through a loop's view (tide_list_loop): the list is the view's, found before the loop
+            sb_printf(o, "static const %s tide_list%d_lzero = {0};\n", ec, k);
+            sb_printf(o, "TIDE_HELPER %s tide_list%d_lget(tide_list_loop *v, const tide_list l, const int32_t i)\n{\n"
+                         "    (void)l;\n    const %s *p = tide_list_loop_at(v, i, sizeof(%s));\n    return p ? *p : (%s){0};\n}\n\n",
+                      vc, k, ec, sz, ec);
+            sb_printf(o, "TIDE_HELPER const %s *tide_list%d_lat(tide_list_loop *v, const tide_list l, const int32_t i)\n{\n"
+                         "    (void)l;\n    const %s *p = tide_list_loop_at(v, i, sizeof(%s));\n    return p ? p : &tide_list%d_lzero;\n}\n\n",
+                      ec, k, ec, sz, k);
+            sb_printf(o, "TIDE_HELPER %s *tide_list%d_lslot(tide_list_loop *v, tide_list *l, const int32_t i, const uint32_t where)\n{\n"
+                         "    (void)l;\n    (void)where;\n    return tide_list_loop_at_mut(v, i, sizeof(%s));\n}\n\n", ec, k, sz);
+            sb_printf(o, "TIDE_HELPER void tide_list%d_lset(tide_list_loop *v, tide_list *l, const int32_t i, const %s value, const uint32_t where)\n{\n"
+                         "    (void)l;\n    (void)where;\n    %s *p = tide_list_loop_at_mut(v, i, sizeof(%s));\n    if (p) *p = value;\n}\n\n",
+                      k, vc, ec, sz);
+        }
         if (!text) sb_printf(o, "TIDE_HELPER %s tide_list%d_flatget(const %s *elements, const int32_t count, const int32_t i)\n{\n"
                                "    return (uint32_t)i < (uint32_t)count ? elements[i] : (%s){0};\n}\n\n", vc, k, ec, ec);
         // Putting a value in a slot, and taking one out: its text the list's own
@@ -13991,6 +14309,7 @@ static void gen_par_steps(gen *g, const decl *sys)
             const int inner = batch_list_inner(s);
             if (inner >= 0) gen_par_list_batch(g, sys, s, caps, inner);
             gen_par_nest(g, sys, s, 1, false, inner >= 0);
+            close_list_caches(g); // Its caches' count, in its own text, before that's used anywhere else
             g->par_flat = false;
             g->indent = 0;
             sb_put(o, "    tide_scratch_reset(tide_mark);\n}\n\n");
@@ -14057,6 +14376,7 @@ static void gen_par_steps(gen *g, const decl *sys)
         } else {
             gen_par_nest(g, sys, s, 1, true, false);
         }
+        close_list_caches(g); // Its caches' count, in its own text, before that's used anywhere else
         g->indent = 0;
         if (s->windowed) sb_put(o, "    tide_par_window_put(tide_pl, tide_lo, tide_extent, tide_own0, tide_own1, tide_wout, tide_win);\n");
         sb_put(o, "    tide_scratch_reset(tide_mark);\n}\n\n");

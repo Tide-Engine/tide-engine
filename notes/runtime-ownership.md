@@ -1,5 +1,9 @@
 # Runtime written by Claude for now
 
+## Loop views of lists (2026-11-02)
+
+Owner-approved ("im ok with redesigning things, if it doesnt touch language and is a net position = do it"): generated loops index lists through `tide_list_loop` (`tide/list.h`, new) with `tide_list_loop_chunk` and `tide_list_loop_own` (`engine/src/list.c`, new), agent-maintained as the generated-C side of list access. No existing runtime function, layout, snapshot or hash rule changed; `tide_list_cache` and its fill functions are as they were. Contracts, measurements and tests: `notes/ecs.md`, Loop views.
+
 ## Levels for meshes a game makes (2026-11-02)
 
 Owner-approved (the proposal's recommendations, `lod:` on mesh draws). Within the existing drawing maintenance
