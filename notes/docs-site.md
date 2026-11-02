@@ -1,5 +1,22 @@
 # The docs site
 
+## Render2D package example (2026-11-02)
+
+The new package guide and sidebar/overview entry link an interactive lantern
+garden. The ordinary docs-example build selects the render2d package, with
+analytic color/normal/alpha PNGs and their standard-library generator beside
+the source. Raised copper plates, cutout foliage and two shadowed point lights
+demonstrate elevation, normal maps, GI and bloom with independent controls.
+The camera and compact controls fit both 376x400 embeds and 960x540 windows.
+
+Native and web-release examples compile without warnings. Scripted native
+captures verify the toggles; narrow and wide captures were visually inspected.
+The Node 24.22.1 production docs build and selected source/rendering checks pass
+on WebGL and WebGPU, with the existing allowed unstaged-example 404s. Rendering
+contracts, backend tests, measured costs and limitations are in render2d.md.
+After merging dev's compiler and draw-resource changes, the native/web example
+rebuilds, docs build and both selected browser smoke checks pass again.
+
 ## Newton removal (2026-10-31)
 
 Owner retired the slow experimental Newton package. Its public page and

@@ -1,0 +1,492 @@
+// Height-aware cutout sprites. XY is the game plane; positive Z is elevation.
+namespace Render2D;
+
+enum Stages { Prepare, Lights, Shadows, Color, Lighting, Indirect, PostProcess, Present }
+enum SurfaceMode { Cutout, Opaque }
+enum LightKind { Directional, Point, Spot }
+
+struct Camera
+{
+    float2 position;
+    float verticalSize = 12;
+    float minHeight = -100;
+    float maxHeight = 100;
+}
+
+struct SpriteVertex { float3 position; float2 uv; }
+
+component SpriteRenderer
+{
+    float2 size = float2(1);
+    Rect uvRect = Rect(0, 0, 1, 1);
+    bool visible = true;
+    bool castShadows = true;
+}
+
+asset Texture White = "white.png";
+[Raw] asset Texture FlatNormal = "flat-normal.png";
+
+component Material
+{
+    SurfaceMode mode;
+    Color baseColor = Color.white;
+    float roughness = 0.5;
+    float metallic;
+    float specular = 1;
+    float3 emission;
+    float alphaCutoff = 0.5;
+    float normalScale = 1;
+    bool receiveShadows = true;
+    local Texture baseMap = White;
+    [Raw] local Texture normalMap;
+    local Texture emissionMap;
+}
+
+component DirectionalLight
+{
+    bool enabled = true;
+    float3 direction = float3(-1, -1, -2); // Photon travel direction.
+    float3 radiance = float3(4);
+    bool castShadows = true;
+    int priority;
+}
+
+component PointLight
+{
+    bool enabled = true;
+    float3 intensity = float3(10); // Incident light at one world unit.
+    float range = 10;
+    bool castShadows;
+    int priority;
+}
+
+component SpotLight
+{
+    bool enabled = true;
+    float3 direction = float3(0, 0, -1);
+    float3 intensity = float3(10);
+    float range = 10;
+    float innerAngle = 25deg;
+    float outerAngle = 40deg; // Full cone openings, radians.
+    bool castShadows;
+    int priority;
+}
+
+struct LightData
+{
+    LightKind kind;
+    float3 position;
+    float3 direction;
+    float3 intensity;
+    float range;
+    float innerCosine;
+    float outerCosine;
+    float outerAngle;
+    bool castShadows;
+    int priority;
+    int shadowIndex = -1;
+}
+
+struct ShadowView
+{
+    float4x4 camera;
+    float4x4 projection;
+    float4x4 worldToClip;
+    float4 uvRect;
+}
+
+local singleton Renderer
+{
+    bool enabled = true;
+    bool defaultPresent = true;
+    Camera camera;
+    Color background = Color(0.025, 0.03, 0.045);
+    float exposure = 1;
+    BloomSettings bloom;
+    float3 ambientIrradiance;
+    int maxLights = 32;
+    bool shadows = true;
+    int maxShadowMaps = 8;
+    int shadowResolution = 512;
+    float3 shadowCenter;
+    float shadowExtent = 12;
+    float shadowDistance = 100;
+    float shadowNear = 0.05;
+    float shadowBias = 0.0005;
+    float shadowSlopeBias = 0.002;
+
+    // Geometry: albedo/roughness, normal/metallic, position/flags, emission/specular.
+    RenderTarget scene;
+    Texture albedo;
+    Texture normals;
+    Texture positions;
+    Texture emissions;
+    // Lighting: complete HDR, then diffuse + emission only for one GI bounce.
+    RenderTarget hdr;
+    Texture direct;
+    Texture output;
+    float2 viewSize; // Orthographic width/height, in world units.
+    RenderTarget shadowMap;
+    DepthTexture shadow;
+    List<LightData> lights;
+    List<ShadowView> shadowViews;
+    List<SpriteVertex> vertices;
+    List<int> indices;
+    int atlasSize;
+    int activeShadowResolution;
+    int shadowAtlasLimit;
+    float shadowTexel;
+    int droppedLights;
+    int unshadowedLights;
+    bool ready;
+}
+
+void ResetTarget(RenderTarget target)
+{
+    target.SetClip();
+    target.SetTint();
+    target.SetTransform();
+    target.SetStencil();
+    target.SetBlend(Blend.Replace);
+    target.SetDepth(Depth.ReadWrite);
+    target.SetCull(Cull.None);
+    target.SetFrustumCulling();
+    target.SetBounds();
+}
+
+// Dispose before recording a frame: recorded draws retain these target aliases.
+void Dispose(mut Renderer renderer)
+{
+    renderer.scene.Dispose();
+    renderer.hdr.Dispose();
+    renderer.shadowMap.Dispose();
+    renderer.scene = default;
+    renderer.hdr = default;
+    renderer.shadowMap = default;
+    renderer.albedo = default;
+    renderer.normals = default;
+    renderer.positions = default;
+    renderer.emissions = default;
+    renderer.direct = default;
+    renderer.output = default;
+    renderer.shadow = default;
+    renderer.lights.Clear();
+    renderer.shadowViews.Clear();
+    renderer.vertices.Clear();
+    renderer.indices.Clear();
+    renderer.atlasSize = 0;
+    renderer.ready = false;
+}
+
+[Stage(Stages.Prepare)]
+view Prepare(mut Renderer renderer)
+{
+    if (!renderer.enabled)
+    {
+        if (renderer.ready) Dispose(renderer);
+        return;
+    }
+    if (!renderer.ready)
+    {
+        renderer.scene = RenderTarget.Window(Format.Rgba16f, Format.Rgba16f, Format.Rgba16f, Format.Rgba16f);
+        renderer.hdr = RenderTarget.Window(Format.Rgba16f, Format.Rgba16f);
+        renderer.albedo = renderer.scene.color;
+        renderer.normals = renderer.scene.colors[1];
+        renderer.positions = renderer.scene.colors[2];
+        renderer.emissions = renderer.scene.colors[3];
+        renderer.direct = renderer.hdr.colors[1];
+        renderer.shadowMap = RenderTarget(16, 16, 1, Format.Depth);
+        renderer.shadow = renderer.shadowMap.depth;
+        renderer.atlasSize = 16;
+        renderer.shadowAtlasLimit = 2048;
+        renderer.vertices = [
+            SpriteVertex { position = float3(-0.5, 0.5, 0), uv = float2(0, 0) },
+            SpriteVertex { position = float3(0.5, 0.5, 0), uv = float2(1, 0) },
+            SpriteVertex { position = float3(0.5, -0.5, 0), uv = float2(1, 1) },
+            SpriteVertex { position = float3(-0.5, -0.5, 0), uv = float2(0, 1) }
+        ];
+        renderer.indices = [0, 1, 2, 0, 2, 3];
+        renderer.ready = true;
+    }
+    renderer.lights.Clear();
+    renderer.shadowViews.Clear();
+    renderer.droppedLights = 0;
+    renderer.unshadowedLights = 0;
+    renderer.output = renderer.hdr.color;
+    ResetTarget(renderer.shadowMap);
+}
+
+float3 LightDirection(float4x4 transform, float3 direction)
+{
+    float3 result = Math.Normalize(Math.Mul(transform, float4(direction, 0)).xyz);
+    return Math.LengthSq(result) < 0.5 ? float3(0, 0, -1) : result;
+}
+
+void AddLight(mut Renderer renderer, LightData light)
+{
+    int limit = Math.Clamp(renderer.maxLights, 0, 256);
+    mut int slot = renderer.lights.count;
+    while (slot > 0 && light.priority > renderer.lights[slot - 1].priority) slot--;
+    if (slot >= limit) { renderer.droppedLights++; return; }
+    if (renderer.lights.count >= limit)
+    {
+        renderer.lights.RemoveAt(renderer.lights.count - 1);
+        renderer.droppedLights++;
+    }
+    renderer.lights.Insert(slot, light);
+}
+
+void AddDirectional(mut Renderer renderer, DirectionalLight light, float4x4 transform)
+{
+    if (!renderer.enabled || !renderer.ready || !light.enabled) return;
+    AddLight(renderer, LightData { kind = LightKind.Directional,
+        direction = LightDirection(transform, light.direction), intensity = Math.Clamp(light.radiance, float3(0), float3(65504)),
+        castShadows = light.castShadows, priority = light.priority });
+}
+
+void AddPoint(mut Renderer renderer, PointLight light, float4x4 transform)
+{
+    if (!renderer.enabled || !renderer.ready || !light.enabled || light.range <= 0) return;
+    AddLight(renderer, LightData { kind = LightKind.Point, position = transform.c3.xyz,
+        intensity = Math.Clamp(light.intensity, float3(0), float3(65504)), range = light.range,
+        castShadows = light.castShadows, priority = light.priority });
+}
+
+void AddSpot(mut Renderer renderer, SpotLight light, float4x4 transform)
+{
+    if (!renderer.enabled || !renderer.ready || !light.enabled || light.range <= 0) return;
+    float outer = Math.Clamp(light.outerAngle, 1deg, 179deg);
+    float inner = Math.Clamp(light.innerAngle, 0, outer);
+    AddLight(renderer, LightData { kind = LightKind.Spot, position = transform.c3.xyz,
+        direction = LightDirection(transform, light.direction),
+        intensity = Math.Clamp(light.intensity, float3(0), float3(65504)), range = light.range,
+        innerCosine = Math.Cos(inner * 0.5), outerCosine = Math.Cos(outer * 0.5), outerAngle = outer,
+        castShadows = light.castShadows, priority = light.priority });
+}
+
+[Stage(Stages.Lights)]
+view CollectDirectional(DirectionalLight light, mut Renderer renderer, World world)
+{ AddDirectional(renderer, light, world.LocalToWorld(this)); }
+[Stage(Stages.Lights)]
+view CollectLocalDirectional(local DirectionalLight light, mut Renderer renderer, World world)
+{ AddDirectional(renderer, light, world.LocalToWorld(this)); }
+[Stage(Stages.Lights, 1)]
+view CollectSpot(SpotLight light, mut Renderer renderer, World world)
+{ AddSpot(renderer, light, world.LocalToWorld(this)); }
+[Stage(Stages.Lights, 1)]
+view CollectLocalSpot(local SpotLight light, mut Renderer renderer, World world)
+{ AddSpot(renderer, light, world.LocalToWorld(this)); }
+[Stage(Stages.Lights, 2)]
+view CollectPoint(PointLight light, mut Renderer renderer, World world)
+{ AddPoint(renderer, light, world.LocalToWorld(this)); }
+[Stage(Stages.Lights, 2)]
+view CollectLocalPoint(local PointLight light, mut Renderer renderer, World world)
+{ AddPoint(renderer, light, world.LocalToWorld(this)); }
+
+quaternion PointFaceRotation(int face)
+{
+    if (face == 0) return quaternion.LookRotation(float3(1, 0, 0), float3(0, 1, 0));
+    if (face == 1) return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 1, 0));
+    if (face == 2) return quaternion.LookRotation(float3(0, 1, 0), float3(0, 0, -1));
+    if (face == 3) return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
+    if (face == 4) return quaternion.LookRotation(float3(0, 0, 1), float3(0, 1, 0));
+    return quaternion.LookRotation(float3(0, 0, -1), float3(0, 1, 0));
+}
+
+void AddShadowView(mut Renderer renderer, float4x4 camera, float4x4 projection)
+{
+    renderer.shadowMap.SetCamera(camera, projection);
+    renderer.shadowViews.Add(ShadowView { camera = camera, projection = projection,
+        worldToClip = renderer.shadowMap.WorldToClip() });
+}
+
+[Stage(Stages.Lights, 3)]
+view FinishLights(mut Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    int limit = renderer.shadows ? Math.Clamp(renderer.maxShadowMaps, 0, 16) : 0;
+    for (var i = 0; i < renderer.lights.count; i++)
+    {
+        mut var light = renderer.lights[i];
+        if (!light.castShadows) continue;
+        int required = light.kind == LightKind.Point ? 6 : 1;
+        float near = Math.Max(renderer.shadowNear, 0.001);
+        if (renderer.shadowViews.count + required > limit ||
+            (light.kind != LightKind.Directional && light.range <= near))
+        { renderer.unshadowedLights++; continue; }
+        light.shadowIndex = renderer.shadowViews.count;
+        renderer.lights[i] = light;
+        if (light.kind == LightKind.Directional)
+        {
+            float distance = Math.Max(renderer.shadowDistance, 0.2);
+            float extent = Math.Max(renderer.shadowExtent, 0.01);
+            var camera = float4x4.TRS(renderer.shadowCenter - light.direction * (distance * 0.5),
+                quaternion.LookRotation(light.direction, float3(0, 1, 0)), float3(1));
+            AddShadowView(renderer, camera, float4x4.Ortho(extent * 2, extent * 2, 0.01, distance));
+        }
+        else if (light.kind == LightKind.Spot)
+        {
+            var camera = float4x4.TRS(light.position, quaternion.LookRotation(light.direction, float3(0, 1, 0)), float3(1));
+            AddShadowView(renderer, camera, float4x4.PerspectiveFov(light.outerAngle, 1, near, light.range));
+        }
+        else
+        {
+            for (var face = 0; face < 6; face++)
+            {
+                var camera = float4x4.TRS(light.position, PointFaceRotation(face), float3(1));
+                AddShadowView(renderer, camera, float4x4.PerspectiveFov(90deg, 1, near, light.range));
+            }
+        }
+    }
+    mut int grid = 1;
+    while (grid * grid < renderer.shadowViews.count) grid++;
+    mut int cell = Math.Clamp(renderer.shadowResolution, 16, renderer.shadowAtlasLimit / grid);
+    mut int size = renderer.shadowViews.count > 0 ? cell * grid : renderer.atlasSize;
+    if (renderer.atlasSize != size) renderer.shadowMap.Resize(size, size);
+    int pixels = renderer.shadowMap.depth.size.x;
+    if (pixels > 0 && pixels < size)
+    {
+        renderer.shadowAtlasLimit = pixels;
+        cell = Math.Clamp(renderer.shadowResolution, 16, pixels / grid);
+        size = renderer.shadowViews.count > 0 ? cell * grid : pixels;
+        renderer.shadowMap.Resize(size, size);
+    }
+    renderer.atlasSize = size;
+    renderer.activeShadowResolution = renderer.shadowViews.count > 0 ? cell : 0;
+    renderer.shadowTexel = 1.0 / size;
+    for (var i = 0; i < renderer.shadowViews.count; i++)
+        renderer.shadowViews[i].uvRect = float4(
+            (float(i % grid * cell) + 2) / size, (float(i / grid * cell) + 2) / size,
+            float(cell - 4) / size, float(cell - 4) / size);
+    ResetTarget(renderer.shadowMap);
+    renderer.shadowMap.Clear(Color.white);
+}
+
+float4x4 SpriteTransform(float4x4 world, float2 size)
+{
+    return Math.Mul(world, float4x4.Scale(float3(size.x, size.y, 1)));
+}
+
+struct ShadowTile { float4 uvRect; float4 uvPart; }
+
+vert AtlasVertex(mut SpriteVertex vertex, out float4 clip, ShadowTile tile)
+{
+    float4 raw = this.clip;
+    clip = float4(raw.x * tile.uvRect.z + raw.w * (2 * tile.uvRect.x + tile.uvRect.z - 1),
+                  raw.y * tile.uvRect.w + raw.w * (1 - 2 * tile.uvRect.y - tile.uvRect.w), raw.z, raw.w);
+}
+
+float2 SpriteUV(float2 uv, float4 part)
+{
+    return part.xy + uv * part.zw;
+}
+
+float4 SpritePart(SpriteRenderer sprite)
+{
+    return float4(sprite.uvRect.x, sprite.uvRect.y, sprite.uvRect.width, sprite.uvRect.height);
+}
+
+frag ShadowCutout(SpriteVertex vertex, out Color color, Material material, ShadowTile tile)
+{
+    float2 uv = SpriteUV(vertex.uv, tile.uvPart);
+    if (material.mode == SurfaceMode.Cutout &&
+        material.baseMap.Sample(uv).a * material.baseColor.a < Math.Clamp(material.alphaCutoff, 0, 1)) this.Discard();
+    color = Color.white;
+}
+
+[Stage(Stages.Shadows)]
+view Cast(Renderer renderer, World world, query (SpriteRenderer sprite, Material material) casters)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    // Transform work happens once per caster, not once per light face. Resource
+    // context remains on each live query row; it is never retained in a list.
+    mut List<float4x4> transforms = [];
+    if (renderer.shadowViews.count > 0)
+        foreach (var caster in casters)
+            if (caster.sprite.visible && caster.sprite.castShadows)
+                transforms.Add(SpriteTransform(world.LocalToWorld(caster.entity), caster.sprite.size));
+    foreach (var shadow in renderer.shadowViews)
+    {
+        renderer.shadowMap.SetCamera(shadow.camera, shadow.projection);
+        renderer.shadowMap.Screen()
+        {
+            renderer.shadowMap.SetClip(Rect(shadow.uvRect.x * renderer.atlasSize, shadow.uvRect.y * renderer.atlasSize,
+                shadow.uvRect.z * renderer.atlasSize, shadow.uvRect.w * renderer.atlasSize));
+        }
+        mut int index = 0;
+        foreach (var caster in casters)
+        {
+            if (!caster.sprite.visible || !caster.sprite.castShadows) continue;
+            CastSprite(renderer, caster.sprite, caster.material, transforms[index], shadow.uvRect);
+            index++;
+        }
+    }
+    renderer.shadowMap.SetClip();
+}
+
+void CastSprite(Renderer renderer, SpriteRenderer sprite, Material material, float4x4 transform, float4 tile)
+{
+    renderer.shadowMap.Mesh(renderer.vertices, renderer.indices, transform,
+        AtlasVertex, ShadowCutout, ShadowTile { uvRect = tile, uvPart = SpritePart(sprite) });
+}
+
+[Stage(Stages.Color)]
+view BeginColor(mut Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    ResetTarget(renderer.scene);
+    float size = Math.Max(renderer.camera.verticalSize, 0.001);
+    float aspect = Math.Max(Screen.width, 1) / Math.Max(Screen.height, 1);
+    renderer.viewSize = float2(size * aspect, size);
+    float top = Math.Clamp(renderer.camera.maxHeight, -16000, 16000);
+    float bottom = Math.Min(Math.Clamp(renderer.camera.minHeight, -16000, 16000), top - 0.01);
+    // A reflected camera basis looks down -Z while keeping +X right and +Y up.
+    var camera = float4x4.TRS(float3(renderer.camera.position, top + 1), quaternion.identity, float3(1, 1, -1));
+    renderer.scene.SetCamera(camera, float4x4.Ortho(size * aspect, size, 0.01, top - bottom + 2));
+    renderer.scene.Clear(Color.clear);
+}
+
+struct MaterialMaps { bool normal; bool emission; float handedness = 1; float4 uvPart; }
+
+bool Mirrors(float4x4 matrix)
+{
+    return matrix.c0.x * (matrix.c1.y * matrix.c2.z - matrix.c1.z * matrix.c2.y)
+         + matrix.c0.y * (matrix.c1.z * matrix.c2.x - matrix.c1.x * matrix.c2.z)
+         + matrix.c0.z * (matrix.c1.x * matrix.c2.y - matrix.c1.y * matrix.c2.x) < 0;
+}
+
+[Stage(Stages.Color, 1)]
+view DrawSprite(SpriteRenderer sprite, Material material, Renderer renderer, World world)
+{
+    if (!renderer.enabled || !renderer.ready || !sprite.visible) return;
+    var transform = SpriteTransform(world.LocalToWorld(this), sprite.size);
+    renderer.scene.Mesh(renderer.vertices, renderer.indices, transform, Geometry, MaterialMaps {
+        normal = material.normalMap.size.x > 0 && material.normalScale != 0,
+        emission = material.emissionMap.size.x > 0 && Math.LengthSq(material.emission) > 0,
+        handedness = Mirrors(transform) ? -1 : 1, uvPart = SpritePart(sprite)
+    });
+}
+
+[Stage(Stages.Lighting)]
+view LightScene(mut Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    ResetTarget(renderer.hdr);
+    Draw.Blit(renderer.albedo, renderer.hdr, Lighting);
+    renderer.output = renderer.hdr.color;
+}
+
+struct Presentation { float exposure = 1; }
+
+frag TonemapScene(Vertex vertex, out Color color, Texture source, Presentation settings)
+{
+    Color hdr = source.Sample(vertex.uv, Filter.Point);
+    color = Color(LinearToSrgb(Tonemap(float3(hdr.r, hdr.g, hdr.b), settings.exposure)), 1);
+}
+
+[Stage(Stages.Present)]
+view Present(Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready || !renderer.defaultPresent) return;
+    Draw.Blit(renderer.output, Draw.window, TonemapScene, Presentation { exposure = renderer.exposure });
+}
