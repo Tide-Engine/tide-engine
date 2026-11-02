@@ -1,5 +1,53 @@
 # Assets and local files
 
+## Levels of detail for meshes a game makes (2026-11-02)
+
+The owner took the proposal whole ("go with you recommendations"): opt-in on the draw (`lod: multiplier`, last,
+on a 3D `Draw.Mesh`/`Draw.Instanced`), the same levels as `[LOD]`, made in the background, never blocking a frame,
+kept by contents. `mesh.WithLOD()` waits for runtime `Mesh<V>` values (another thread's design). Spec: Levels of
+detail, Decided and Provisional; users' page: `docs/game/assets.md`, Levels of detail.
+
+- **One simplifier.** `compiler/src/mesh_lod.c`'s maker moved to `engine/src/mesh_lod.c` with its header
+  `engine/include/tide/internal/mesh_lod.h`, renamed `tide_mesh_lod_*`/`TIDE_MESH_LOD_*` (the engine is linked into
+  games, so no unprefixed symbols). tidec links the engine and calls the same function; `compiler/src/mesh_lod.c`
+  keeps only the cache (`mesh_lod_cached`, `.tide/assets/lod/`). Arithmetic, order, weights and floors are
+  unchanged, so asset levels and cache keys are the same bytes (`tidec_mesh_lod`, `tidec_asset_files`,
+  `tidec_e2e_lod` pass as they were).
+- **Changes for arbitrary game values:** out of memory gives no levels instead of `abort()` (each allocation is
+  checked; `order_for_cache` leaves a level in its order where it has no room; a failed heap or index growth sets
+  `maker.failed`); `source.stop` (atomic, checked every 4,096 collapses and at each level) gives no levels at all;
+  meshes past `TIDE_MESH_LOD_VERTICES_MOST`/`_TRIANGLES_MOST` (2^26 each, where the maker's 32-bit counts could
+  overflow) get none. The existing rules still hold: indices past the vertices and degenerate triangles are left
+  out, positions that are no number make no plane, a nonfinite extent gives no levels.
+- **The draw list** (`engine/src/mesh_levels.c`, private `mesh_levels.h`; contracts in drawing.md, Levels for
+  meshes a game makes): generated code brackets the draw with `tide_draw_want_levels(d, multiplier, &layout)` and
+  `tide_draw_want_levels(d, 0, NULL)`; the mesh paths of `mesh.c` (`mesh3_slot`, `tide_draw_mesh_shaded_instances`)
+  mix the request into the slot's version (`tide_draw_lod_version`) and, after filling, ask
+  (`tide_draw_lod_request`): a kept result is given at once, otherwise a job copies positions and the weighed
+  fields out of the list's copy. `tide_draw_prepare` submits (`tide_draw_lod_submit`, two running, 256 waiting),
+  `tide_draw_reset` keeps what's done and gives it to every slot with that `lod_key` (`tide_draw_lod_collect`),
+  `tide_draw_free` stops, helps and waits (`tide_draw_lod_free`).
+- **The checker** (`check_mesh_draw`): a last argument named `lod` is taken off before the arguments are matched
+  by kind (`expr.mesh_lod`, and `mesh_lod_vertex` once the vertex is known); any other name on a mesh draw's
+  argument is an error naming `lod:`; `lod:` on a 2D mesh, on `Draw.SkinnedMesh` or of a non-number type is an
+  error. Codegen (`gen_expr`, `gen_lod_layout`) writes the comma expression and the vertex's
+  `tide_mesh_lod_layout` (1 + `offsetof` of `position`, `normal`, `uv`, `uv2`, `color`, `tangent` with matching
+  names and types). A game without `lod:` generates the C it did.
+- **Tests:** `tidec_e2e_lod_generated` (`e2e/lod_generated.tide`, `_test.c`, with a background the test runs by
+  hand): levels bit for bit `tide_mesh_lod_make`'s for the list's copy, the far draw at a level and the near one
+  (around the camera) whole, the same lists without `lod:` whole, gathering order; instances of a game's vertex
+  through a frag with multiplier 2; 800 triangles never asking; kept levels given in the frame a mesh comes back
+  and for a scratch mesh, superseded lists stopping (only two given to the background at once, the stopped ones
+  keeping nothing), a NaN multiplier being 1; NaN positions with indices under 0 and past the vertices; a list
+  freed with jobs queued (freeing helps them through). Four diagnostics: `draw_mesh_lod_2d`, `_text`,
+  `_skinned`, `_misspelled`. Native ASan (Windows) and WASI pass, with `tidec_e2e_lod`, `tidec_mesh_lod`,
+  `tidec_asset_files` and the engine's draw (98), skinned (74) and frustum tests.
+- **Not exercised:** the real platform pool's threads (the e2e's background runs on the test's thread), GPU
+  pixels of a picked generated level (the pick and the renderer's level path are the assets', already covered by
+  `levels_of_detail` in `platform/tests/draw.c`), and timings of a real game's generated meshes.
+- **Gaps:** `mesh.WithLOD()`; levels for `SkinnedMesh<V>.Decode` models (would need the bones weighed, as
+  `bones_apart` does at build time); the language server offers no completion for `lod:`.
+
 ## Baked poses for crowds (2026-10-31)
 
 Asked for from bannerlord-duel (the owner: "would it make sense to put this

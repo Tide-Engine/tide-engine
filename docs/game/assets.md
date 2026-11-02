@@ -335,6 +335,22 @@ That's all there is to write. There are no distances to set, no levels to author
 - **An asset can accept more error:** `[LOD(2)] asset Mesh<Corner> rock = "art/rock.glb";` multiplies the draw's pixel tolerance by 2. `[LOD]` means 1. The argument must be a positive finite constant number; fractions below 1 keep more detail. It applies to every file in a list or map and works on skinned meshes too. The generated levels stay the same.
 - **They're made once.** tide keeps a mesh's levels in the game's `.tide/` folder, by what's in the file, so later builds don't make them again.
 
+**A mesh your game makes gets levels with `lod:`.** Terrain chunks, generated buildings, anything built into a `List<Vertex3>` or a list of your own vertex while the game runs: write `lod:` last in its 3D `Draw.Mesh` or `Draw.Instanced`, with the same multiplier `[LOD(...)]` takes:
+
+```csharp
+view Terrain(Chunk chunk)
+{
+    Draw.Mesh(chunk.vertices, chunk.indices, chunk.transform, Look, lod: 1);
+}
+```
+
+- **The levels are the ones an asset of the same mesh would get**, made by the same code: the same floor of 1,000 triangles, the same seams kept, the same picking, and the same levels on every machine.
+- **They're made in the background**, on threads beside the frame's, never in it. Until they're there the mesh draws whole: a frame or so for a mesh of thousands of triangles, longer for a big one. Where there are no threads to make them on (a web page that isn't [cross-origin isolated](../tools/cli.md#threads-on-the-web)), such meshes draw whole.
+- **They're kept by what's in the mesh.** Drawing the same lists again costs nothing more, nor does making the same mesh again or drawing it again after a while away. Lists made again with other numbers start over: what was being made of the old ones stops. A mesh that changes every frame keeps drawing whole, which is right for one that moves its vertices.
+- **The fields weighed are your vertex's `position` (a `float3`), and `normal`, `uv`, `uv2`, `color` and `tangent` where it has them** with those names and types, as an asset's file fills them.
+- **The same lists drawn without `lod:` are another mesh**, drawn whole, and so are the same lists drawn with another multiplier. `lod: 0`, or a multiplier that's no number, is 1, as `Draw.LODPixels` takes them.
+- It's for 3D meshes: a 2D mesh draws as it is. A `SkinnedMesh` has its levels from its asset's `[LOD]`.
+
 **A game's vert isn't known to the pick.** Where the mesh is and how big it is come from the file's own geometry and the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been: draw such a mesh with `Draw.LOD(0)`, below, or leave `[LOD]` off it.
 
 **`Draw.LODPixels` controls the quality/performance tradeoff** while each mesh still picks automatically. The default is 1 pixel of estimated visual error. Higher values allow coarser meshes at the same distance; positive values below 1 keep more detail:

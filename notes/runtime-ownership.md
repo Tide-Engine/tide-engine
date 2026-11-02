@@ -1,5 +1,17 @@
 # Runtime written by Claude for now
 
+## Levels for meshes a game makes (2026-11-02)
+
+Owner-approved (the proposal's recommendations, `lod:` on mesh draws). Within the existing drawing maintenance
+exception: generated views call the new `tide_draw_want_levels(list, multiplier, layout)` (`tide/draw.h`), before
+a mesh draw and again with NULL after it, passing a compound-literal `tide_mesh_lod_layout` of 1 + field offsets.
+`tide_draw_levels_pending` is for tests and hosts. `tide_draw_prepare` now also hands waiting level jobs to the
+jobs' optional `background`; `tide_draw_reset` collects them and `tide_draw_free` stops and waits for them. The
+simplifier moved from tidec into the engine (`engine/src/mesh_lod.c`, `tide/internal/mesh_lod.h`,
+`tide_mesh_lod_make`/`_free`), agent-maintained as the draw list is; generated code doesn't call it. Draw list and
+mesh data layouts grew, so hosts, libraries and games rebuild together. Contracts: drawing.md; tests and
+validation: assets-and-files.md, both "Levels ... meshes a game makes".
+
 ## Flat shader-data capture memo (2026-11-02)
 
 Within the approved forest submission optimization and existing drawing

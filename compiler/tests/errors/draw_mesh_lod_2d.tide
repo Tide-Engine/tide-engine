@@ -1,0 +1,9 @@
+// expect: levels of detail are for 3D meshes, and 'Vertex' is a 2D mesh's vertex
+// expect: leave 'lod:' out
+scene Main { }
+
+view Show()
+{
+    List<Vertex> corners = [Vertex { position = float2(0, 0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    Draw.Mesh(corners, [0, 1, 2], lod: 1);
+}

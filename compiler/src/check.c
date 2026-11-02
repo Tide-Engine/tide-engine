@@ -6746,6 +6746,27 @@ static type check_mesh_draw(checker *c, expr *e)
     bool skinned = e->skinned = str_eq_c(e->name, "SkinnedMesh");
     const char *draw_name = e->targeted ? (skinned ? "target.SkinnedMesh" : instanced ? "target.Instanced" : "target.Mesh")
                                         : (skinned ? "Draw.SkinnedMesh" : instanced ? "Draw.Instanced" : "Draw.Mesh");
+    // `lod: multiplier`, written last: levels of detail made for a mesh the game made, while it runs (docs/spec.md,
+    // Levels of detail). Taken off the arguments, which go by what each is, and checked once the mesh's are
+    loc lod_at = e->at;
+    if (e->arg_names.count == e->args.count && e->args.count > 0 && str_eq_c(e->arg_names.items[e->args.count - 1], "lod")) {
+        e->mesh_lod = e->args.items[e->args.count - 1];
+        lod_at = e->arg_name_at.items[e->args.count - 1];
+        e->args.count--;
+        e->arg_names.count--;
+        e->arg_name_at.count--;
+    }
+    for (int i = 0; i < e->arg_names.count; i++) {
+        if (e->arg_names.items[i].len == 0) continue;
+        for (int k = 0; k < e->args.count; k++) {
+            if (e->args.items[k]->kind != E_LIST && e->args.items[k]->kind != E_DEFAULT) check_expr(c, e->args.items[k]);
+        }
+        diag_error(e->arg_name_at.items[i], "%s takes its arguments in order, and 'lod:' alone by name, last", draw_name);
+        diag_note("'lod: 1' asks for levels of detail of a mesh the game makes; leave out '" STR_FMT ":'",
+                  STR_ARG(e->arg_names.items[i]));
+        return T_ERR;
+    }
+    e->arg_names.count = e->arg_name_at.count = 0;
     // The vert and the frag it names come last, the vert first, and after
     // them a struct of values they read, the same for the whole draw
     int count = e->args.count;
@@ -6949,6 +6970,28 @@ static type check_mesh_draw(checker *c, expr *e)
     const int dims = vertex_dims(vertex, vertices->at, true);
     if (dims == 0) return T_ERR;
     e->draw_dims = dims;
+    if (e->mesh_lod) {
+        const type multiplier = check_expr_want(c, e->mesh_lod, T_FLOAT_);
+        if (multiplier.kind == TY_ERROR) return T_ERR;
+        if (multiplier.kind != TY_FLOAT && multiplier.kind != TY_INT) {
+            diag_error(e->mesh_lod->at, "'lod:' takes how many times the pixels a level may be off by, a float, and this "
+                       "is %s", type_name(multiplier));
+            diag_note("'lod: 1' for the destination's own tolerance (Draw.LODPixels), 'lod: 2' for twice it");
+            return T_ERR;
+        }
+        if (skinned) {
+            diag_error(lod_at, "%s draws a model's own levels of detail: 'lod:' is for meshes a game makes", draw_name);
+            diag_note("mark the model's asset '[LOD]' for levels made as the game is built");
+            return T_ERR;
+        }
+        if (dims != 3) {
+            diag_error(lod_at, "levels of detail are for 3D meshes, and '" STR_FMT "' is a 2D mesh's vertex",
+                       STR_ARG(vertex->name));
+            diag_note("a 2D mesh is drawn as it is: leave 'lod:' out");
+            return T_ERR;
+        }
+        e->mesh_lod_vertex = vertex;
+    }
     // A 3D mesh takes the transform that places it; a 2D one is drawn where its vertices are
     if (!instanced && dims == 3 && (count < 3 || (e->args.items[2]->type.kind != TY_FLOAT4X4 && e->args.items[2]->type.kind != TY_ERROR
                                                  && e->args.items[2]->kind != E_DEFAULT))) {

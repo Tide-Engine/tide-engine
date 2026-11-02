@@ -1,0 +1,15 @@
+// expect: Draw.SkinnedMesh draws a model's own levels of detail: 'lod:' is for meshes a game makes
+// expect: mark the model's asset '[LOD]'
+struct Corner
+{
+    float3 position;
+}
+
+asset SkinnedMesh<Corner> arm = "../e2e/assets/lod/arm.glb";
+
+scene Main { }
+
+view Show()
+{
+    Draw.SkinnedMesh(arm, float4x4.identity, lod: 1);
+}

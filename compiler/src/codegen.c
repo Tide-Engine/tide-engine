@@ -3789,8 +3789,45 @@ static void gen_visibility_call(gen *g, sb *o, const expr *e)
     sb_put(o, ")");
 }
 
+// The fields of a game's vertex a mesh's levels are weighed by, as tide_mesh_lod_layout has them: 1 + each one's
+// offset, for a field of that name and type, as an asset's levels weigh what its file fills.
+static void gen_lod_layout(sb *o, const decl *vertex)
+{
+    static const struct {
+        const char *name;
+        type_kind kind;
+    } weighed[] = {{"position", TY_FLOAT3}, {"normal", TY_FLOAT3}, {"uv", TY_FLOAT2},
+                   {"uv2", TY_FLOAT2},      {"color", TY_COLOR},    {"tangent", TY_FLOAT4}};
+    sb_put(o, "&(const tide_mesh_lod_layout){");
+    bool first = true;
+    for (size_t w = 0; w < sizeof weighed / sizeof weighed[0]; w++) {
+        for (int i = 0; i < vertex->fields.count; i++) {
+            const field *f = &vertex->fields.items[i];
+            if (!str_eq_c(f->name, weighed[w].name) || f->type.kind != weighed[w].kind) continue;
+            sb_printf(o, "%s.%s = 1u + (uint32_t)offsetof(%s, %s)", first ? "" : ", ", weighed[w].name, type_cname(vertex),
+                      field_cname(f));
+            first = false;
+        }
+    }
+    sb_put(o, "}");
+}
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
+    if (e->mesh_lod && e->mesh_lod_vertex && (e->kind == E_CALL || e->kind == E_METHOD)) {
+        // A mesh the game made, drawn with `lod:` (tide_draw_want_levels): the draw asks for its levels, and the
+        // draws after it don't. Arguments with effects of their own already ran, before the statement
+        expr call = *e;
+        call.mesh_lod = NULL;
+        sb_put(o, "(tide_draw_want_levels(tide_draw, (float)(");
+        gen_expr(g, o, e->mesh_lod);
+        sb_put(o, "), ");
+        gen_lod_layout(o, e->mesh_lod_vertex);
+        sb_put(o, "), ");
+        gen_expr(g, o, &call);
+        sb_put(o, ", tide_draw_want_levels(tide_draw, 0.0f, NULL))");
+        return;
+    }
     if (e->binding_value) {
         // Draw checking marks the argument as a stage, but it remains an
         // ordinary evaluated value. Keep hoisting/snapshot metadata on that
@@ -19842,7 +19879,7 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
 // with its triangles: its two blocks' offsets. A field a file has something
 // for, by its name, is filled from it. Any other is zeros here, and the
 // struct's own default once the pack is loaded (gen_assets).
-// How a skinned mesh's vertices follow their bones, for its levels of detail (mesh_lod_source.apart): each
+// How a skinned mesh's vertices follow their bones, for its levels of detail (tide_mesh_lod_source.apart): each
 // vertex's influences, a palette and a weight each.
 typedef struct bone_weights {
     uint32_t vertices;
@@ -19933,7 +19970,7 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
     static const char tangent_version[] = "tide levels of detail 7, values by area, of meshes of 1000 triangles and "
                                           "levels of 64 at the least, ordered for the vertex cache, with tangent "
                                           "handedness seams";
-    _Static_assert(MESH_LOD_MESH_LEAST == 1000 && MESH_LOD_TRIANGLES_LEAST == 64,
+    _Static_assert(TIDE_MESH_LOD_MESH_LEAST == 1000 && TIDE_MESH_LOD_TRIANGLES_LEAST == 64,
                    "the levels' version says the fewest triangles a mesh and a level have");
     const bool tangent_sides = tangents && !skinned;
     tide_sha256 s;
@@ -19948,13 +19985,13 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
     }
     tide_sha256_end(&s, key);
     bone_weights bones = skinned ? bone_weights_of(skinned, skinned_size, m->vertices) : (bone_weights){0};
-    const mesh_lod_source source = {
+    const tide_mesh_lod_source source = {
         .vertices = m->vertices, .position = m->position, .normal = m->normal, .uv = m->has_uvs ? m->uv : NULL,
         .uv2 = m->has_uvs2 ? m->uv2 : NULL, .color = m->has_colors ? m->color : NULL, .index = m->index, .indices = m->indices,
         .tangent = tangent_sides ? m->tangent : NULL,
-        .apart = bones.first ? bones_apart : NULL, .user = &bones, .mesh_least = MESH_LOD_MESH_LEAST,
-        .triangles_least = MESH_LOD_TRIANGLES_LEAST};
-    const mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
+        .apart = bones.first ? bones_apart : NULL, .user = &bones, .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
+        .triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST};
+    const tide_mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
     free(bones.first), free(bones.count), free(bones.palette), free(bones.weight);
     if (made->levels == 0) return false;
     *levels = (tide_mesh_levels){.radius = made->radius, .count = made->levels, .index = made->index, .index_count = made->indices};

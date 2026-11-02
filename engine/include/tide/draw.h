@@ -1240,8 +1240,17 @@ typedef struct tide_mesh {
 // level's surface is from the full mesh's, in the mesh's units, never less
 // than the level before's. `center` and `radius` are a ball all of the mesh
 // is in. A mesh marked [LOD] in Tide has them made as the game is built
-// (tide/pack.h); a mesh of C's is given them with tide_draw_mesh_levels.
+// (tide/pack.h); a mesh a game makes and draws with `lod:` has them made
+// while it runs (tide_draw_want_levels); a mesh of C's is given them with
+// tide_draw_mesh_levels.
 enum { TIDE_MESH_LEVELS = 7 }; // After the full mesh, at the most
+
+// What of a game's vertex the levels of a mesh it made are weighed by (tide_draw_want_levels): 1 + each field's
+// byte offset in the vertex, or 0 for none. `position` is a float3, `normal` a float3, `uv` and `uv2` float2s,
+// `color` a tide_color and `tangent` a float4, whose sign alone counts (a seam).
+typedef struct tide_mesh_lod_layout {
+    uint32_t position, normal, uv, uv2, color, tangent;
+} tide_mesh_lod_layout;
 typedef struct tide_mesh_levels {
     float multiplier; // Asset error tolerance multiplier; zero defaults to 1
     float center[3];
@@ -1294,6 +1303,10 @@ typedef struct tide_draw_mesh_data {
     uint32_t base, level;
     tide_draw_bounds bounds; // Cached geometry AABB; independent of the LOD sphere
     uint32_t bounds_position; // 1 + byte offset of the float3 used for the cached bounds
+    // A mesh a game made, drawn with `lod:` (tide_draw_want_levels): the key its levels are kept by, which is what's
+    // in it and how it's weighed, and the tolerance multiplier they're picked with once they're made. 0 otherwise
+    uint64_t lod_key;
+    float lod_want;
 } tide_draw_mesh_data;
 
 // TIDE_MESH_BYTES: Tide's lists, their vertices as their struct has them (see
@@ -1530,6 +1543,11 @@ typedef struct tide_draw_list {
     uint32_t pack_frame;
     struct tide_skinned_draw_cache *skinned; // Private frame-local palette captures
     struct tide_list_data_cache *list_data; // Private frame-local numeric-list captures
+    struct tide_draw_lod_builds *lod_builds; // Private: levels made in the background, and the ones kept (mesh_levels.c)
+    // What the mesh draw recorded next asks of levels made for it (tide_draw_want_levels): its tolerance
+    // multiplier, or 0 for none, and the fields they weigh
+    float lod_want;
+    tide_mesh_lod_layout lod_layout;
     // The window's size in logical pixels, supplied before recording (tide_draw_screen_size).
     // With none, window frustum culling and automatic LOD selection are skipped.
     tide_float2 screen;
@@ -2351,6 +2369,20 @@ void tide_draw_mesh_fill(tide_draw_list *d, uint32_t mesh, const tide_vertex3 *v
 // frame draws it, with the full mesh's vertices and no copy of them, so a
 // renderer has each vertex once however many levels show.
 void tide_draw_mesh_levels(tide_draw_list *d, uint32_t mesh, const tide_mesh_levels *levels);
+
+// Levels of detail for the meshes a game makes (Draw.Mesh and Draw.Instanced with `lod:`): the next mesh draw
+// of Tide's lists (tide_draw_mesh3_lists and the others in tide/mesh.h, tide_draw_mesh_shaded_instances) asks
+// for levels of its mesh, weighed by `layout`'s fields, picked with `multiplier` times the destination's pixels
+// (a nonpositive or nonfinite one is 1). NULL asks for none again, which generated code says after the draw.
+// A mesh of at least TIDE_MESH_LOD_MESH_LEAST triangles that asks is a mesh of its own, apart from the same
+// lists drawn without it; its levels are what tidec makes for an asset of the same vertices and triangles,
+// made in the background, where tide_draw_prepare is given jobs that have it (tide/jobs.h), and kept by what's
+// in the mesh. Until they're there (a frame or more, as big meshes take longer), and where there's no
+// background, it draws whole.
+void tide_draw_want_levels(tide_draw_list *d, float multiplier, const tide_mesh_lod_layout *layout);
+
+// How many meshes' levels are being made, or wait to be: for tests and hosts that want to wait for them.
+uint32_t tide_draw_levels_pending(const tide_draw_list *d);
 
 // Puts the runs of one mesh's levels that were recorded one after the other
 // together, a run a level, the finest first, each with its instances in the
