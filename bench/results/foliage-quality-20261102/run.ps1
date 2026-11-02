@@ -12,7 +12,7 @@ New-Item -ItemType Directory -Path $attempt | Out-Null
 $metadata = [ordered]@{
     status = 'waiting'; started_utc = [DateTime]::UtcNow.ToString('o'); completed_utc = $null
     executable_sha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-    source_head = (& git rev-parse HEAD); source_dirty = $true
+    source_head = (& git rev-parse HEAD); source_dirty = [bool](& git status --porcelain -- bench/forest packages/render3d compiler/src engine/include/tide/texture_blocks.h platform)
     quiet_timeout_seconds = $QuietTimeoutSeconds; processes = 0; gpu_samples = 0
     contention = @(); arguments = '--count 100000 --width 1920 --height 1080 --warmup 20 --frames 100; ground/canopy/wide; impostors 0/1; two alternating rounds'
     source_files = @()

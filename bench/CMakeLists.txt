@@ -107,6 +107,9 @@ if(NOT TIDE_ANDROID)
         PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/wind.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/fog.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/impostor.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
         HOST render3d/main.c render3d/direct.c)
