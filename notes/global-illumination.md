@@ -1,5 +1,47 @@
 # Global Illumination package
 
+## Larger continuous examples (2026-11-02)
+
+The owner requested larger examples after the adaptive district work. The
+existing GI benchmark now also builds a 48x72x18-unit atrium (315 meshes) and a
+160x120-unit courtyard (476 meshes). They combine touching receiving floors,
+closed curved arches/columns, elevated galleries, bridges, ramps and stairs.
+The two small OBJ assets are authored in the repository; their generator checks
+exact bytes, closed opposite edges and positive volume. There is no external
+environment download, baked lighting or authored probe placement.
+
+Both scenes use a sun and six shadowed spotlights with zero ambient irradiance.
+Their fixed shadow bounds cover the architecture. Nonquick runs request
+2048-square shadow cells, bias .001 and slope bias .004 to avoid severe acne
+from the broad sun volume; quick checks retain 32-square cells. The backend's
+atlas limits can reduce the requested cell size. Shadow cost/memory belongs to
+the whole example, not to GI overhead. The production Render3D/GI code and
+defaults do not change.
+
+`--scene atrium|courtyard` chooses the static examples; `--probes 125..2048`
+selects physical capacity (default 512). Hero views retain ordinary 48-unit
+residency. Whole-scene `--overview` deliberately requests distances 200/350,
+which is a different coverage workload. `--debug` displays actual active,
+relocated capture positions with enlarged distance-scaled markers. These
+static scenes reject travel/moving-light options rather than applying the
+district animation to unrelated geometry. Options also accept `--key=value`
+for browser queries.
+
+The host checks independently counted meshes and projects each example's own
+shaded wall through its actual hero camera. It retains the original >15 summed
+RGB brightness increase, match hash, convergence, capacity/budget and shader
+texture-limit checks. Overview/debug initialization still validates that same
+scene. A failed native brightness check can save a diagnostic capture but
+still fails. Source and invocation details are in
+[the benchmark guide](../bench/globalillumination/README.md).
+
+All six affected native Windows ASan CTests pass (Vulkan validation/OpenGL),
+including the retained all-budget room checks and both larger scenes. All four
+affected web-debug checks pass: retained WebGL/WebGPU room budgets and both new
+WebGPU scenes. The architectural mesh generator's byte/topology checks pass.
+Optimized native captures also pass each scene's original brightness/count/hash
+oracles. Other native OSes/mobile and large-scene WebGL are unmeasured here.
+
 ## Adaptive coverage and regional updates (2026-11-02)
 
 The owner approved replacing the world-sized uniform lattice after inspecting

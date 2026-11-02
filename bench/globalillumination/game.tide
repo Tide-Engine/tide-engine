@@ -7,7 +7,8 @@ asset Mesh3D ball = "../../docs/examples/assets/render3d/sphere.obj";
 
 singleton Workload
 {
-    bool district;
+    // 0 room, 1 district, 2 atrium, 3 courtyard (host's Scene selector).
+    int sceneKind;
     int buildings = 64;
     bool built;
 }
@@ -16,6 +17,7 @@ local singleton Controls
 {
     bool enabled;
     int updates;
+    int probes = 512;
     bool quick;
     bool debug;
     bool overview;
@@ -66,7 +68,9 @@ system Build(mut Workload workload)
 {
     if (workload.built) return;
     workload.built = true;
-    int count = workload.district ? Math.Clamp(workload.buildings, 1, 256) : 1;
+    if (workload.sceneKind == 2) { BuildAtrium(); return; }
+    if (workload.sceneKind == 3) { BuildCourtyard(); return; }
+    int count = workload.sceneKind == 1 ? Math.Clamp(workload.buildings, 1, 256) : 1;
     int columns = DistrictColumns(count);
     for (var index = 0; index < count; index++) BuildRoom(BuildingOffset(index, columns));
 }
@@ -79,10 +83,26 @@ view Configure(mut Controls controls, Workload workload, mut Render3D.Renderer r
         rotation = quaternion.LookRotation(float3(0, -0.5, 11), float3(0, 1, 0)),
         verticalFov = 47deg, near = 0.1, far = 50
     };
-    int count = workload.district ? Math.Clamp(workload.buildings, 1, 256) : 1;
+    int count = workload.sceneKind == 1 ? Math.Clamp(workload.buildings, 1, 256) : 1;
     int columns = DistrictColumns(count);
     mut float coverageDistance = 48;
-    if (controls.overview && !controls.validationView)
+    if (workload.sceneKind >= 2)
+    {
+        bool atrium = workload.sceneKind == 2;
+        mut float3 position = atrium ? float3(17, 8, 49) : float3(28, 9, 39);
+        mut float3 target = atrium ? float3(0, 3, 0) : float3(0, 3, -12);
+        if (controls.overview && !controls.validationView)
+        {
+            position = atrium ? float3(65, 50, 75) : float3(115, 85, 135);
+            target = float3(0, 4, 0);
+            coverageDistance = atrium ? 200 : 350;
+        }
+        renderer.camera = Camera {
+            position = position, rotation = quaternion.LookRotation(target - position, float3(0, 1, 0)),
+            verticalFov = 55deg, near = 0.1, far = atrium ? 220 : 400
+        };
+    }
+    else if (controls.overview && !controls.validationView)
     {
         int rows = (count + columns - 1) / columns;
         float extent = float(Math.Max(columns, rows) * 24);
@@ -109,19 +129,35 @@ view Configure(mut Controls controls, Workload workload, mut Render3D.Renderer r
     if (!controls.lightBuilt)
     {
         controls.lightBuilt = true;
-        local Spawn(PointLight { intensity = float3(95, 80, 65), range = 18, castShadows = true },
-            Transform { localPosition = float3(0, 5.2, 0.5) });
+        if (workload.sceneKind >= 2) BuildLargeLights(workload.sceneKind);
+        else local Spawn(PointLight { intensity = float3(95, 80, 65), range = 18, castShadows = true },
+                Transform { localPosition = float3(0, 5.2, 0.5) });
     }
     renderer.background = Color(0.025, 0.03, 0.04);
     renderer.exposure = 0.85;
     renderer.ambientIrradiance = float3(0);
     renderer.shadowResolution = controls.quick ? 32 : 512;
     renderer.maxShadowMaps = 6;
+    if (workload.sceneKind >= 2)
+    {
+        renderer.background = Color(0.12, 0.16, 0.2);
+        renderer.exposure = 0.85;
+        renderer.maxShadowMaps = 7;
+        // The broad fixed sun volume needs finer texels and a larger receiver
+        // bias than the small room. Quick checks retain their 32-square cells.
+        renderer.shadowResolution = controls.quick ? 32 : 2048;
+        renderer.shadowBias = 0.001;
+        renderer.shadowSlopeBias = 0.004;
+        renderer.shadowCascades = 0;
+        renderer.shadowCenter = float3(0, 6, 0);
+        renderer.shadowExtent = workload.sceneKind == 2 ? 52 : 112;
+        renderer.shadowDistance = workload.sceneKind == 2 ? 110 : 220;
+    }
     environment.settings = GlobalIllumination.Settings {
-        enabled = controls.enabled, probeSpacing = 1.5, maxProbes = 512,
+        enabled = controls.enabled, probeSpacing = 1.5, maxProbes = controls.probes,
         updatesPerFrame = controls.updates, intensity = 1,
         viewDistance = coverageDistance,
-        debug = controls.debug && !controls.validationView
+        debug = controls.debug && !controls.validationView && workload.sceneKind < 2
     };
 }
 

@@ -1,0 +1,2 @@
+# The mesh generator verifies exact bytes on every checkout.
+*.obj -text

@@ -17,6 +17,8 @@ extern const size_t tide_game_pack_size;
 enum { MODES = 5, METRICS = 5, DRAIN = 16 };
 enum { RECORD, SUBMIT, COMPLETE, TOTAL, GPU };
 enum { REFERENCE, VALIDATE_GI, CONVERGE, WARMUP, MEASURE, REPORT };
+enum { ROOM, DISTRICT, ATRIUM, COURTYARD, SCENES };
+static const char *const scene_names[SCENES] = {"room", "district", "atrium", "courtyard"};
 static const char *const mode_names[MODES] = {"off", "frozen", "update1", "update4", "update16"};
 static const int budgets[MODES] = {0, 0, 1, 4, 16};
 static tide_world world;
@@ -27,8 +29,8 @@ static uint64_t world_hash;
 static int modes[MODES] = {0, 1, 2, 3, 4}, mode_count = MODES, mode_at;
 static int width = 960, height = 720, frames = 100, warmup = 20;
 static int phase, warm_at, measured, drain, gpu_count, convergence_frames, validation_frames;
-static bool quick, district, debug, overview, travel, moving_light;
-static int buildings = 64, motion_frame, idle_capture_frames;
+static bool quick, debug, overview, travel, moving_light;
+static int scene, buildings = 64, probe_capacity = 512, motion_frame, idle_capture_frames;
 static const char *output_path, *capture_path;
 static FILE *output;
 static double *samples[METRICS];
@@ -39,6 +41,17 @@ static int frozen_initialized;
 static uint32_t max_textures;
 static double setup_record_ms, convergence_record_ms, untimed_record_ms;
 static float primary_spacing;
+
+static int expected_meshes(void)
+{
+    // Independent inventory of authored instances; not a counter supplied by
+    // scene construction. Each Pillar is a shaft, a base and a capital.
+    if (scene == ATRIUM) return 216 + 3 + 18 * 3
+        + 9 /* arches */ + 9 /* roof beams */ + 10 /* galleries and ramps */
+        + 2 /* accents */ + 5 /* roof ribs */ + 6 /* sculptures */ + 1 /* witness */;
+    if (scene == COURTYARD) return 300 + 5 + 24 * 3 + 22 + 4 + 24 + 4 * 3 + 3 + 2 + 2 + 10 + 12 + 3 + 1 + 4;
+    return 7 * (scene == DISTRICT ? buildings : 1);
+}
 
 static bool number(const char *text, const int minimum, const int maximum, int *value)
 {
@@ -108,13 +121,14 @@ static bool checked_budget(const int mode)
         fputs("GI exceeded its capture budget\n", stderr);
         return false;
     }
-    const int expected_meshes = 7 * (district ? buildings : 1);
-    if (mode && local.GlobalIllumination_WorldBounds.geometryCount != expected_meshes) {
+    const int expected_count = expected_meshes();
+    if (mode && local.GlobalIllumination_WorldBounds.geometryCount != expected_count) {
         fprintf(stderr, "GI scene has %d mesh instances, expected %d\n",
-            local.GlobalIllumination_WorldBounds.geometryCount, expected_meshes);
+            local.GlobalIllumination_WorldBounds.geometryCount, expected_count);
         return false;
     }
     if (mode && (!environment->ready || environment->activeProbes <= 0
+        || environment->layout.total != probe_capacity
         || environment->activeProbes > environment->layout.total
         || environment->initialized < 0 || environment->initialized > environment->activeProbes
         || environment->dirtyProbes < 0 || environment->dirtyProbes > environment->activeProbes)) {
@@ -136,13 +150,20 @@ static void advance_scene(void)
     local.Controls.seconds = travel || moving_light ? (float)motion_frame++ / 60.0f : 0;
 }
 
-// Read the actual adaptive allocation after timing. This is a fixed floor point
-// in the primary room, independent of the current overview/travel camera.
+static tide_float3 receiver_position(void)
+{
+    if (scene == ATRIUM) return (tide_float3){0, 2.5f, 20.41f};
+    if (scene == COURTYARD) return (tide_float3){10, 2.5f, 12.41f};
+    return (tide_float3){1.3f, 0, -0.6f};
+}
+
+// Read the actual adaptive allocation after timing at this scene's receiver,
+// independent of the current overview/travel camera.
 static void primary_probe_spacing(void)
 {
     const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
     primary_spacing = 0;
-    const tide_float3 position = {1.3f, 0, -0.6f};
+    const tide_float3 position = receiver_position();
     const int32_t count = tide_list_read_count(&local.heap, environment->blocks);
     for (int32_t index = 0; index < count; index++) {
         const GlobalIllumination_ProbeBlock *block = tide_list_read(&local.heap,
@@ -156,12 +177,40 @@ static void primary_probe_spacing(void)
     }
 }
 
-static uint32_t receiver_pixel(void)
+static bool receiver_pixel(uint32_t *pixel)
 {
-    const tide_float2 point = {(float)width * 0.4f, (float)height * 0.62f};
-    uint32_t pixel = 0;
-    tide_platform_read_pixels(&draw, &point, 1, &pixel);
-    return pixel;
+    tide_float2 point = {(float)width * 0.4f, (float)height * 0.62f};
+    if (scene >= ATRIUM) {
+        // Independent pinhole projection of the authored +Z display-wall face
+        // through this frame's actual validation camera, using double math.
+        // In particular, overview never validates an unrelated Cornell room.
+        const Render3D_Camera camera = local.Render3D_Renderer.camera;
+        const tide_float3 eye = camera.position;
+        const tide_float3 forward = tide_forward_q(camera.rotation);
+        const tide_float3 right = tide_right_q(camera.rotation);
+        const tide_float3 up = tide_up_q(camera.rotation);
+        const tide_float3 p = receiver_position();
+        const double x = p.x - eye.x, y = p.y - eye.y, z = p.z - eye.z;
+        const double depth = x * forward.x + y * forward.y + z * forward.z;
+        const double tangent = tan((double)camera.verticalFov * 0.5);
+        if (!isfinite(depth) || depth <= 0 || !isfinite(tangent) || tangent <= 0) {
+            fprintf(stderr, "GI %s receiver has invalid camera depth/FOV\n", scene_names[scene]);
+            return false;
+        }
+        const double scale = height / (2 * depth * tangent);
+        const double screen_x = floor(width * 0.5 + (x * right.x + y * right.y + z * right.z) * scale);
+        const double screen_y = floor(height * 0.5 - (x * up.x + y * up.y + z * up.z) * scale);
+        if (!isfinite(screen_x) || !isfinite(screen_y)
+            || screen_x < 0 || screen_x >= width || screen_y < 0 || screen_y >= height) {
+            fprintf(stderr, "GI %s receiver projects outside the frame: %.6g, %.6g\n",
+                scene_names[scene], screen_x, screen_y);
+            return false;
+        }
+        point = (tide_float2){(float)screen_x, (float)screen_y};
+    }
+    *pixel = 0;
+    tide_platform_read_pixels(&draw, &point, 1, pixel);
+    return true;
 }
 
 static unsigned brightness(const uint32_t color)
@@ -204,7 +253,7 @@ static void report_to(FILE *file)
         "\"capture_candidates_mean\":%.3f,\"capture_draws_mean\":%.3f,\"idle_capture_frames\":%d,"
         "\"max_shader_textures\":%u,\"gpu_samples\":%d,"
         "\"world_hash\":\"%016llx\",\"quick\":%s,\"receiver_off\":%u,\"receiver_on\":%u",
-        district ? "district" : "room", district ? buildings : 1,
+        scene_names[scene], scene == DISTRICT ? buildings : 1,
         debug ? "true" : "false", overview ? "true" : "false", travel ? "true" : "false", moving_light ? "true" : "false",
         mode_names[modes[mode_at]], width, height, frames, warmup, validation_frames, convergence_frames,
         local.GlobalIllumination_WorldBounds.geometryCount, environment->activeProbes, environment->ready ? environment->layout.total : 0,
@@ -286,7 +335,7 @@ static int frame(void *context, const float seconds)
         // Let the locally spawned point light and its shadow resources settle
         // before taking the GI-off reference, including the first mode.
         if (!untimed() || !untimed()) return 1;
-        dark_reference = receiver_pixel();
+        if (!receiver_pixel(&dark_reference)) return 1;
         phase = VALIDATE_GI;
         return TIDE_KEEP_RUNNING;
     }
@@ -302,9 +351,13 @@ static int frame(void *context, const float seconds)
             return TIDE_KEEP_RUNNING;
         }
         if (mode) {
-            lit_reference = receiver_pixel();
+            if (!receiver_pixel(&lit_reference)) return 1;
             if (brightness(lit_reference) <= brightness(dark_reference) + 15u) {
-                fprintf(stderr, "GI receiver did not brighten: %08x -> %08x\n", dark_reference, lit_reference);
+                fprintf(stderr, "GI %s receiver did not brighten: %08x -> %08x\n", scene_names[scene], dark_reference, lit_reference);
+#ifndef __wasm__
+                if (capture_path && !tide_platform_capture(capture_path))
+                    fputs("Could not save diagnostic GI capture\n", stderr);
+#endif
                 return 1;
             }
         }
@@ -388,28 +441,43 @@ int main(const int argc, char **argv)
 {
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
-        if (!strcmp(arg, "--quick")) { quick = true; width = 128; height = 96; frames = 2; warmup = 1; continue; }
-        if (!strcmp(arg, "--debug")) { debug = true; continue; }
-        if (!strcmp(arg, "--overview")) { overview = true; continue; }
-        if (!strcmp(arg, "--travel")) { travel = true; continue; }
-        if (!strcmp(arg, "--moving-light")) { moving_light = true; continue; }
-        if (!strcmp(arg, "--help")) {
+        const char *equal = strchr(arg, '=');
+        char option[64];
+        if (equal) {
+            const size_t length = (size_t)(equal - arg);
+            if (length >= sizeof option) return 2;
+            memcpy(option, arg, length);
+            option[length] = '\0';
+            arg = option;
+        }
+        if (!equal && !strcmp(arg, "--quick")) { quick = true; width = 128; height = 96; frames = 2; warmup = 1; continue; }
+        if (!equal && !strcmp(arg, "--debug")) { debug = true; continue; }
+        if (!equal && !strcmp(arg, "--overview")) { overview = true; continue; }
+        if (!equal && !strcmp(arg, "--travel")) { travel = true; continue; }
+        if (!equal && !strcmp(arg, "--moving-light")) { moving_light = true; continue; }
+        if (!equal && !strcmp(arg, "--help")) {
             puts("bench_globalillumination [--mode off|frozen|update1|update4|update16] [--frames 100] [--warmup 20]\n"
-                "  [--scene room|district] [--buildings 64] [--debug] [--overview] [--travel] [--moving-light]\n"
+                "  [--scene room|district|atrium|courtyard] [--buildings 64] [--probes 512]\n"
+                "  [--debug] [--overview] [--travel] [--moving-light]\n"
                 "  [--output file.jsonl] [--capture final.png] [--quick]\n"
                 "District has1..256 separated rooms; travel follows them at12units/second.\n"
+                "Atrium48x72x18 and courtyard160x120 are static architecture; probes125..2048.\n"
+                "Values also accept --key=value (browser query arguments).\n"
                 "Same scene/camera at960x720; quick uses128x96 and disables timing.\n"
                 "GPU and CPU overlap; native completion/readback is not pipelined FPS.");
             return 0;
         }
-        const char *value = i + 1 < argc ? argv[++i] : NULL;
+        const char *value = equal ? equal + 1 : i + 1 < argc ? argv[++i] : NULL;
         bool ok = value && *value;
         if (!strcmp(arg, "--frames")) ok = ok && number(value, 1, 10000, &frames);
         else if (!strcmp(arg, "--warmup")) ok = ok && number(value, 1, 1000, &warmup);
         else if (!strcmp(arg, "--buildings")) ok = ok && number(value, 1, 256, &buildings);
+        else if (!strcmp(arg, "--probes")) ok = ok && number(value, 125, 2048, &probe_capacity);
         else if (!strcmp(arg, "--scene")) {
-            ok = value && (!strcmp(value, "room") || !strcmp(value, "district"));
-            if (ok) district = !strcmp(value, "district");
+            ok = false;
+            if (value) for (int choice = 0; choice < SCENES; choice++) if (!strcmp(value, scene_names[choice])) {
+                scene = choice; ok = true;
+            }
         }
         else if (!strcmp(arg, "--output")) output_path = value;
         else if (!strcmp(arg, "--capture")) capture_path = value;
@@ -421,8 +489,12 @@ int main(const int argc, char **argv)
         } else ok = false;
         if (!ok) { fprintf(stderr, "Invalid GI benchmark argument: %s\n", arg); return 2; }
     }
-    if (travel && (!district || overview)) {
+    if (travel && (scene != DISTRICT || overview)) {
         fputs("--travel requires --scene district and cannot be combined with --overview\n", stderr);
+        return 2;
+    }
+    if (scene >= ATRIUM && moving_light) {
+        fputs("--moving-light is supported by room and district only; atrium/courtyard lights are static\n", stderr);
         return 2;
     }
 #ifdef __wasm__
@@ -435,12 +507,13 @@ int main(const int argc, char **argv)
     if (output_path) { output = fopen(output_path, "ab"); if (!output) return 1; }
     if (!tide_assets_load(tide_game_pack, tide_game_pack_size)) return 1;
     tide_world_init(&world, 1.0f / 60.0f);
-    world.Workload.district = district;
+    world.Workload.sceneKind = scene;
     world.Workload.buildings = buildings;
     tide_world_tick(&world);
     world_hash = tide_world_hash(&world);
     tide_local_init(&local);
     local.Controls.quick = quick;
+    local.Controls.probes = probe_capacity;
     local.Controls.debug = debug;
     local.Controls.overview = overview;
     local.Controls.travel = travel;
@@ -455,7 +528,7 @@ int main(const int argc, char **argv)
     tide_platform_open_headless(&(tide_headless_desc){.width = width, .height = height, .scale = 1, .frames = limit});
 #endif
     printf("renderer: %s; %dx%d; scene=%s; buildings=%d; %s\n", tide_platform_renderer(), width, height,
-        district ? "district" : "room", district ? buildings : 1,
+        scene_names[scene], scene == DISTRICT ? buildings : 1,
         quick ? "correctness only" : "same-scene work budget comparison; CPU/GPU overlap; readback is not FPS");
     tide_platform_background_pipelines(false);
     tide_platform_run(frame, NULL);

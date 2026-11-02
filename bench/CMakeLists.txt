@@ -130,9 +130,9 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
-# Optional world GI: the same room with frozen lighting and bounded refresh work.
+# Optional world GI: room, district and continuous large architectural examples.
 if(NOT TIDE_ANDROID)
-    tide_add_game(bench_globalillumination NAME game SOURCES globalillumination/game.tide
+    tide_add_game(bench_globalillumination NAME game SOURCES globalillumination/game.tide globalillumination/large-scenes.tide
         PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
@@ -148,11 +148,32 @@ if(NOT TIDE_ANDROID)
         tide_web_page(bench_globalillumination SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(bench_globalillumination TARGET bench_globalillumination QUERY "quick"
             WEBGPU EXPECT "GlobalIllumination benchmark correctness passed" SECONDS 240)
+        # These larger scenes use the existing real-time WebGPU runner directly.
+        # The default all-budget room smoke retains WebGL coverage and its guard.
+        foreach(scene atrium courtyard)
+            add_test(NAME bench_globalillumination_${scene}_webgpu
+                COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs"
+                    "${TIDE_BROWSER}" "$<TARGET_FILE_DIR:bench_globalillumination>/bench_globalillumination.html"
+                    "${CMAKE_CURRENT_BINARY_DIR}/bench_globalillumination_${scene}_webgpu-browser"
+                    "quick&scene=${scene}&mode=update4&probes=512&backend=webgpu"
+                    --expect "GlobalIllumination benchmark correctness passed" --seconds 240)
+            set_tests_properties(bench_globalillumination_${scene}_webgpu PROPERTIES
+                SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS webgpu TIMEOUT 290
+                PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
+        endforeach()
     else()
         add_test(NAME bench_globalillumination COMMAND bench_globalillumination --quick)
         add_test(NAME bench_globalillumination_opengl COMMAND bench_globalillumination --quick)
         tide_gpu_test(bench_globalillumination)
         tide_gpu_test(bench_globalillumination_opengl OPENGL)
+        foreach(scene atrium courtyard)
+            add_test(NAME bench_globalillumination_${scene}
+                COMMAND bench_globalillumination --quick --scene=${scene} --mode=update4 --probes=512)
+            add_test(NAME bench_globalillumination_${scene}_opengl
+                COMMAND bench_globalillumination --quick --scene ${scene} --mode update4 --probes 512)
+            tide_gpu_test(bench_globalillumination_${scene})
+            tide_gpu_test(bench_globalillumination_${scene}_opengl OPENGL)
+        endforeach()
     endif()
 endif()
 

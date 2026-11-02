@@ -1,0 +1,169 @@
+// Continuous architecture, using ordinary Render3D assets and lights. These
+// scenes author no GI volumes, probe positions or precomputed lighting.
+using Render3D;
+asset Mesh3D column = "assets/column.obj";
+asset Mesh3D arch = "assets/arch.obj";
+
+void Solid(Asset<Mesh3D> mesh, float3 position, float3 scale, Color color, quaternion rotation)
+{
+    Spawn(MeshRenderer { mesh = mesh }, Material { baseColor = color, roughness = 0.9 },
+        Transform { localPosition = position, localScale = scale, localRotation = rotation });
+}
+
+void Block(float3 position, float3 scale, Color color)
+{
+    Solid(box, position, scale, color, quaternion.identity);
+}
+
+void Pillar(float3 position, float height, Color color)
+{
+    Solid(column, position + float3(0, height * 0.5, 0), float3(1.15, height, 1.15), color, quaternion.identity);
+    Block(position + float3(0, 0.2, 0), float3(1.8, 0.4, 1.8), color);
+    Block(position + float3(0, height - 0.2, 0), float3(1.8, 0.4, 1.8), color);
+}
+
+void BuildAtrium()
+{
+    Color stone = Color(0.72, 0.7, 0.65);
+    Color pale = Color(0.84, 0.82, 0.75);
+    Color red = Color(0.64, 0.12, 0.055);
+    Color blue = Color(0.045, 0.35, 0.48);
+    // 12 by 18 touching four-unit slabs make the scale legible: 216 meshes.
+    for (var x = 0; x < 12; x++) for (var z = 0; z < 18; z++)
+        Block(float3(float(x) * 4 - 22, -0.2, float(z) * 4 - 34), float3(4, 0.4, 4),
+            (x + z) % 2 == 0 ? Color(0.7, 0.68, 0.62) : Color(0.63, 0.61, 0.56));
+    // Three enclosing walls; the open roof and south end admit direct sun.
+    Block(float3(0, 9, -36), float3(48, 18, 0.6), stone);
+    Block(float3(-24, 9, 0), float3(0.6, 18, 72), red);
+    Block(float3(24, 9, 0), float3(0.6, 18, 72), blue);
+    for (var bay = 0; bay < 9; bay++)
+    {
+        float z = float(bay) * 8 - 32;
+        Pillar(float3(-16, 0, z), 10, pale);
+        Pillar(float3(16, 0, z), 10, pale);
+        Solid(arch, float3(0, 10, z), float3(16, 7, 1.1), pale, quaternion.identity);
+        Block(float3(0, 18, z), float3(48, 0.45, 0.7), stone);
+    }
+    // Galleries are connected to the floor by two sloping ramps.
+    for (var side = 0; side < 2; side++)
+    {
+        float x = side == 0 ? -20 : 20;
+        Color accent = side == 0 ? red : blue;
+        Block(float3(x, 6, 0), float3(8, 0.5, 72), pale);
+        Block(float3(x + (side == 0 ? -3.7 : 3.7), 6.8, 0), float3(0.35, 1.2, 72), accent);
+        Block(float3(x + (side == 0 ? 3.7 : -3.7), 7, 0), float3(0.25, 0.25, 72), pale);
+        Block(float3(x, 12, 0), float3(8, 0.35, 72), accent);
+        Solid(box, float3(x, 3, 18), float3(5, 0.5, 28.8), pale, quaternion.Euler(-12deg, 0, 0));
+    }
+    Block(float3(-8, 8, -35.5), float3(6, 12, 0.3), red);
+    Block(float3(8, 8, -35.5), float3(6, 12, 0.3), blue);
+    for (var rib = 0; rib < 5; rib++)
+        Block(float3(float(rib) * 10 - 20, 18.3, 0), float3(0.35, 0.35, 72), pale);
+    for (var sculpture = 0; sculpture < 3; sculpture++)
+    {
+        float3 position = float3(float(sculpture) * 9 - 9, 0, -15);
+        Block(position + float3(0, 0.6, 0), float3(3, 1.2, 3), pale);
+        Solid(ball, position + float3(0, 2.8, 0), float3(1.6), sculpture == 1 ? blue : red, quaternion.identity);
+    }
+    // An architectural display wall. Its +Z face sees sunlit floor but no
+    // direct light, giving this scene its own physically shaded GI witness.
+    Block(float3(0, 2.5, 20), float3(6, 5, 0.8), Color(0.9, 0.9, 0.9));
+}
+
+void BuildCourtyard()
+{
+    Color stone = Color(0.7, 0.67, 0.58);
+    Color pale = Color(0.86, 0.82, 0.71);
+    Color red = Color(0.64, 0.16, 0.07);
+    Color blue = Color(0.04, 0.37, 0.45);
+    // Twenty by fifteen eight-unit slabs: 300 receiving instances, 160x120.
+    for (var x = 0; x < 20; x++) for (var z = 0; z < 15; z++)
+        Block(float3(float(x) * 8 - 76, -0.25, float(z) * 8 - 56), float3(8, 0.5, 8),
+            (x + z) % 2 == 0 ? Color(0.72, 0.68, 0.58) : Color(0.65, 0.61, 0.52));
+    Block(float3(-76, 10, 0), float3(8, 20, 120), red);
+    Block(float3(76, 10, 0), float3(8, 20, 120), blue);
+    Block(float3(0, 12, -56), float3(144, 24, 8), stone);
+    Block(float3(-52, 7, 56), float3(48, 14, 8), red);
+    Block(float3(52, 7, 56), float3(48, 14, 8), blue);
+    for (var side = 0; side < 2; side++)
+    {
+        float x = side == 0 ? -64 : 64;
+        Color accent = side == 0 ? red : blue;
+        for (var bay = 0; bay < 12; bay++)
+        {
+            float z = float(bay) * 8 - 44;
+            Pillar(float3(x, 0, z), 5, pale);
+            Block(float3(side == 0 ? -71.8 : 71.8, 13, z), float3(0.3, 8, 4), accent);
+            if (bay < 11)
+                Solid(arch, float3(x, 5, z + 4), float3(4, 3, 1), pale, quaternion.Euler(0, 90deg, 0));
+        }
+        Block(float3(side == 0 ? -70 : 70, 8.2, 0), float3(20, 0.6, 104), pale);
+        Block(float3(side == 0 ? -60.5 : 60.5, 9, 0), float3(0.4, 1.2, 104), accent);
+    }
+    // A traversable covered crossing, ramps and a broad stair create varied
+    // visibility and indirect-lit ceilings without repeating enclosed rooms.
+    for (var x = 0; x < 2; x++) for (var z = 0; z < 2; z++)
+        Pillar(float3(float(x) * 40 - 20, 0, float(z) * 8 - 12), 6, pale);
+    Block(float3(0, 9.2, -8), float3(48, 0.7, 14), stone);
+    Block(float3(0, 10, -14.5), float3(48, 1.2, 0.45), red);
+    Block(float3(0, 10, -1.5), float3(48, 1.2, 0.45), blue);
+    Solid(arch, float3(0, 6, -12), float3(20, 3, 1.2), pale, quaternion.identity);
+    Solid(arch, float3(0, 6, -4), float3(20, 3, 1.2), pale, quaternion.identity);
+    Solid(box, float3(-45, 4.6, -8), float3(43, 0.7, 8), pale, quaternion.Euler(0, 0, 12deg));
+    Solid(box, float3(45, 4.6, -8), float3(43, 0.7, 8), pale, quaternion.Euler(0, 0, -12deg));
+    for (var step = 0; step < 10; step++)
+        Block(float3(-44, float(step + 1) * 0.35, float(step) * 1.4 + 10),
+            float3(12, float(step + 1) * 0.7, 1.4), stone);
+    for (var planter = 0; planter < 6; planter++)
+    {
+        float3 position = float3(planter % 2 == 0 ? -45 : 45, 0, float(planter / 2) * 26 - 30);
+        Block(position + float3(0, 0.7, 0), float3(5, 1.4, 5), pale);
+        Solid(ball, position + float3(0, 3.5, 0), float3(2.4), Color(0.15, 0.3, 0.09), quaternion.identity);
+    }
+    Block(float3(-15, 0.6, 30), float3(5, 1.2, 5), pale);
+    Solid(column, float3(-15, 3.5, 30), float3(2, 6, 2), red, quaternion.Euler(0, 0, -18deg));
+    Solid(ball, float3(-15, 7, 30), float3(2), blue, quaternion.identity);
+    Block(float3(10, 2.5, 12), float3(8, 5, 0.8), Color(0.9, 0.9, 0.9));
+    Block(float3(25, 0.05, 30), float3(20, 0.1, 12), blue);
+    Block(float3(14.5, 0.25, 30), float3(1, 0.5, 14), pale);
+    Block(float3(35.5, 0.25, 30), float3(1, 0.5, 14), pale);
+    Block(float3(25, 0.25, 36.5), float3(20, 0.5, 1), pale);
+}
+
+void BuildLargeLights(int sceneKind)
+{
+    local Spawn(DirectionalLight { direction = float3(0.5, -1, 0.6), radiance = float3(3.8, 3.4, 2.8), castShadows = true });
+    for (var side = 0; side < 2; side++) for (var bay = 0; bay < 3; bay++)
+    {
+        float x = (side == 0 ? -1 : 1) * (sceneKind == 2 ? 14 : 48);
+        float z = float(bay) * (sceneKind == 2 ? 20 : 24) - (sceneKind == 2 ? 24 : 42);
+        // All sources are behind the witness's front plane. The six spots
+        // light galleries/arcades and do not fill its dark face directly.
+        local Spawn(SpotLight {
+            direction = float3(side == 0 ? -0.4 : 0.4, -1, -0.25),
+            intensity = sceneKind == 2 ? float3(1100, 930, 710) : float3(1800, 1550, 1250),
+            range = sceneKind == 2 ? 36 : 46, innerAngle = 50deg, outerAngle = 78deg, castShadows = true
+        }, Transform { localPosition = float3(x, sceneKind == 2 ? 12 : 14, z) });
+    }
+}
+
+// Same active anchors, relocation and shader as the package debug view; only
+// marker size grows with distance so an overview still reveals placement.
+[After(Render3D.Stages.Transparent), Before(Render3D.Stages.PostPrepare)]
+view LargeSceneProbes(Controls controls, Workload workload, GlobalIllumination.Environment environment, Render3D.Renderer renderer)
+{
+    if (workload.sceneKind < 2 || !controls.debug || controls.validationView || !environment.ready || !renderer.ready) return;
+    renderer.hdr.Cull(Cull.None), renderer.hdr.Depth(Depth.Read), renderer.hdr.Blend(Blend.Replace)
+    {
+        for (var probe = 0; probe < environment.layout.total; probe++)
+        {
+            if (!environment.active[probe]) continue;
+            float3 position = GlobalIllumination.ProbePosition(environment, probe) + environment.offsets[probe];
+            float radius = Math.Max(GlobalIllumination.ProbeSpacing(environment, probe) * 0.05,
+                Math.Length(position - renderer.camera.position) * 0.004);
+            renderer.hdr.Mesh(environment.resources.markers, environment.resources.markerIndices,
+                float4x4.TRS(position, quaternion.identity, float3(radius)),
+                GlobalIllumination.DebugProbe, GlobalIllumination.ProbeIndex { index = probe });
+        }
+    }
+}
