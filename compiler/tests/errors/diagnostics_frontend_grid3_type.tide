@@ -1,0 +1,2 @@
+// expect: expected the grid's cell type, like 'Grid3<int>'
+singleton Board { Grid3<> cells; }

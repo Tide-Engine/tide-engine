@@ -1,5 +1,36 @@
 # The docs site
 
+## Code-oriented particle package guide (2026-11-02)
+
+The package overview and sidebar include Particles, with a guide covering
+code-defined emission/movement, local ownership, capacity and timing,
+instanced 2D/3D drawing, custom shaders and explicit render targets. Its
+source-shown smoke/sparks example uses the ordinary pure-Tide package map,
+local state, pointer bursts and compact controls above the host stats corner.
+The example builder links a package target only when the package has C sources;
+a pure-Tide package's same-named test executable is not a library dependency.
+No site infrastructure, language or engine rendering behavior changed.
+Package contracts and focused validation are recorded in `notes/particles.md`.
+The production docs build passes on Node 24.22.1, with the existing allowed
+404 diagnostics for unstaged playable pages in this checkout.
+
+## Render2D package example (2026-11-02)
+
+The new package guide and sidebar/overview entry link an interactive lantern
+garden. The ordinary docs-example build selects the render2d package, with
+analytic color/normal/alpha PNGs and their standard-library generator beside
+the source. Raised copper plates, cutout foliage and two shadowed point lights
+demonstrate elevation, normal maps, GI and bloom with independent controls.
+The camera and compact controls fit both 376x400 embeds and 960x540 windows.
+
+Native and web-release examples compile without warnings. Scripted native
+captures verify the toggles; narrow and wide captures were visually inspected.
+The Node 24.22.1 production docs build and selected source/rendering checks pass
+on WebGL and WebGPU, with the existing allowed unstaged-example 404s. Rendering
+contracts, backend tests, measured costs and limitations are in render2d.md.
+After merging dev's compiler and draw-resource changes, the native/web example
+rebuilds, docs build and both selected browser smoke checks pass again.
+
 ## Newton removal (2026-10-31)
 
 Owner retired the slow experimental Newton package. Its public page and

@@ -1,0 +1,48 @@
+{
+  "feature_commit": "6c7700a5ff07bf364cf6d12d5cf838c9ef74b16d",
+  "prior_integration_commit": "059b60055",
+  "incoming_dev": "06c392e71",
+  "scope": "Runtime static Mesh values compiler/engine dependency merge. Constructors retain ordinary args and automatically fall back from shared prep; no new retained AST child or cache invalidation change. Focused native Windows ASan and web-release shared-binding, mesh value/import/runtime, LOD, ordering, diagnostics and forest checks all pass. Release rebuilt; shaders/layouts and all capture pixels/work/world hashes match baseline. No new forest implementation or paired timings.",
+  "checks": {
+    "native": {
+      "passed": 14,
+      "failed": 0,
+      "seconds": 0.62,
+      "full_log": "build/forest-batch/validation/test-native-meshvalue.log",
+      "sha256": "aefc2e6f844c351e1f2e9b4a2369db2061ee7a725cab8c9e38bdb50a06156826"
+    },
+    "web": {
+      "passed": 15,
+      "failed": 0,
+      "seconds": 13.59,
+      "full_log": "build/forest-batch/validation/test-web-meshvalue.log",
+      "sha256": "cdf78ae1efcac1a81941dbe993aca791f122b63d938732e85aa20c1a0ddea389"
+    }
+  },
+  "build_logs": {
+    "build-native-meshvalue.log": {
+      "path": "build/forest-batch/validation/build-native-meshvalue.log",
+      "sha256": "3b5c4deeb6770541bf0aacc2d450755428e51c1dcce8ab24dae3d8998834d435"
+    },
+    "build-web-meshvalue.log": {
+      "path": "build/forest-batch/validation/build-web-meshvalue.log",
+      "sha256": "4f7341d24ecfbd19ae56693d58500c5b09eee45b3745a351852ea70d7419fd8c"
+    },
+    "build-release-meshvalue.log": {
+      "path": "build/forest-batch/validation/build-release-meshvalue.log",
+      "sha256": "4dc0692b483e580bfb63b4093839dfdeb42b8cc6c0981e3883a7dfa597a9c3ca"
+    }
+  },
+  "binary_relative_path": "build/forest-batch/final-meshvalue/bench_forest.exe",
+  "binary_sha256": "44d96a72b81f76fa7c907c1950f358a1a8830cd05bf5e5a89676c388cdd77e0e",
+  "generated_c_sha256": "9e0cde5fd9f94f605696942248a1191da440ef288a1fc85d7d897cda2324a523",
+  "compiler_sources": {
+    "compiler/src/codegen.c": "9707aee78e5be9339aa6e6f237c2095b5c9f60e00c8f0ce44cdc91da4f5e27d0",
+    "compiler/src/shader_prep_codegen.inc": "5f992fef49aad1f42d104f722f18b277ca6fcc3cd9af04ffc83c65160992bc85"
+  },
+  "shader_equivalence": "shader-equivalence-meshvalue.json",
+  "pixel_equivalence": "pixel-equivalence-meshvalue.json",
+  "captures": "Three finite Vulkan correctness captures under the shared mutex; no idle-CPU requirement or timing claims. Baseline RGBA hashes, work and world match.",
+  "timing_cohort": "Original pre-merge frozen candidate retained; no new paired timings.",
+  "manual_ci_dispatched": false
+}

@@ -1,0 +1,184 @@
+// Code-authored effects. Keep emitters in local state and advance them with
+// Frame.dt. Initializers and update functions are ordinary Tide code; there
+// is no implicit clock, scene, world lookup or entity for each particle.
+namespace Particles;
+
+const int MAX_PARTICLES = 1048576;
+
+struct Particle
+{
+    float3 position;
+    float3 velocity;
+    float age;
+    float lifetime = 1;
+    // Full width and height, in the drawing camera's units.
+    float2 size = float2(0.1);
+    float2 endSize;
+    Color color = Color.white;
+    Color endColor = Color(1, 1, 1, 0);
+    // Radians: +x towards +y in 2D, billboard right towards up in 3D.
+    float rotation;
+    float angularVelocity;
+    // Optional numeric state for a game's initializer, updater or shader.
+    float4 custom;
+}
+
+struct Emitter
+{
+    List<Particle> particles;
+    Random random;
+    int capacity = 4096;
+    // Fraction of a particle due from Emit. Whole missed emissions are dropped.
+    double remainder;
+}
+
+bool Finite(float value)
+{
+    // Also accepts the largest finite float and signed zero.
+    return value == value && value - value == 0;
+}
+
+bool Finite(float2 value) { return Finite(value.x) && Finite(value.y); }
+bool Finite(float3 value) { return Finite(value.x) && Finite(value.y) && Finite(value.z); }
+bool Finite(float4 value) { return Finite(value.x) && Finite(value.y) && Finite(value.z) && Finite(value.w); }
+bool Finite(Color value) { return Finite(value.r) && Finite(value.g) && Finite(value.b) && Finite(value.a); }
+
+bool Alive(Particle particle)
+{
+    return Finite(particle.age) && Finite(particle.lifetime)
+        && particle.age >= 0 && particle.age < particle.lifetime
+        && Finite(particle.position) && Finite(particle.velocity)
+        && Finite(particle.size) && Finite(particle.endSize)
+        && Finite(particle.color) && Finite(particle.endColor)
+        && Finite(particle.rotation) && Finite(particle.angularVelocity)
+        && Finite(particle.custom);
+}
+
+float Age(Particle particle)
+{
+    return particle.lifetime > 0 ? Math.Saturate(particle.age / particle.lifetime) : 1;
+}
+
+float2 Size(Particle particle)
+{
+    float t = Age(particle);
+    return Math.Max(particle.size * (1 - t) + particle.endSize * t, float2(0));
+}
+
+// Blend alpha-weighted colors so fading to a transparent endpoint retains
+// its hue. Return straight alpha, as Tide's drawing APIs expect.
+Color Tint(Particle particle)
+{
+    float t = Age(particle);
+    float a = Math.Saturate(particle.color.a) * (1 - t);
+    float b = Math.Saturate(particle.endColor.a) * t;
+    float alpha = a + b;
+    if (alpha <= 0) return Color.clear;
+    return Color((particle.color.r * a + particle.endColor.r * b) / alpha,
+                 (particle.color.g * a + particle.endColor.g * b) / alpha,
+                 (particle.color.b * a + particle.endColor.b * b) / alpha, alpha);
+}
+
+int Limit(mut Emitter emitter)
+{
+    int limit = Math.Clamp(emitter.capacity, 0, MAX_PARTICLES);
+    if (emitter.particles.count > limit) emitter.particles.Resize(limit);
+    return limit;
+}
+
+// Add a completely authored particle; useful for event payloads or a game's
+// own spawning loop. Full emitters retain their existing particles.
+bool Add(mut Emitter emitter, Particle particle)
+{
+    int limit = Limit(emitter);
+    if (emitter.particles.count >= limit || !Alive(particle)) return false;
+    emitter.particles.Add(particle);
+    return true;
+}
+
+// At most the remaining capacity's worth of initializers run, even for an
+// enormous request. An invalid result consumes one attempt, not another roll.
+int Burst(mut Emitter emitter, int count, Func<mut Particle, mut Random, void> initialize)
+{
+    int limit = Limit(emitter);
+    int attempts = Math.Clamp(count, 0, limit - emitter.particles.count);
+    mut int added = 0;
+    for (var i = 0; i < attempts; i++)
+    {
+        mut var particle = Particle { };
+        initialize(particle, emitter.random);
+        if (!Alive(particle)) continue;
+        emitter.particles.Add(particle);
+        added++;
+    }
+    return added;
+}
+
+// Continuous emission, separate from Update so games choose their ordering.
+// New particles begin at age zero at this call's position. Call Update first
+// if they should be drawn before advancing. The fractional carry survives
+// pauses; a full pool drops whole emissions, never a delayed burst of debt.
+int Emit(mut Emitter emitter, float rate, float dt, Func<mut Particle, mut Random, void> initialize)
+{
+    if (!Finite(dt) || dt <= 0 || !Finite(rate) || rate <= 0) return 0;
+    int limit = Limit(emitter);
+    double carry = emitter.remainder >= 0 && emitter.remainder < 1 ? emitter.remainder : 0;
+    // Float inputs multiplied as doubles cannot overflow. Above 2^53 there
+    // is no representable fraction, so no large float-to-int cast is needed.
+    double due = carry + double(rate) * double(dt);
+    if (due >= 9007199254740992.0)
+    {
+        emitter.remainder = 0;
+        return Burst(emitter, limit - emitter.particles.count, initialize);
+    }
+    long whole = long(due);
+    emitter.remainder = due - double(whole);
+    int attempts = int(Math.Min(whole, long(limit - emitter.particles.count)));
+    return Burst(emitter, attempts, initialize);
+}
+
+// Semi-implicit Euler with nonnegative, reciprocal drag. A game may call
+// this from its own update function, then add forces, collisions or curves.
+void Integrate(mut Particle particle, float dt, float3 acceleration = float3(0), float drag = 0)
+{
+    if (!Finite(dt) || dt <= 0) return;
+    float damping = 1 / (1 + Math.Max(drag, 0) * dt);
+    particle.velocity = (particle.velocity + acceleration * dt) * damping;
+    particle.position += particle.velocity * dt;
+    particle.rotation += particle.angularVelocity * dt;
+}
+
+// The package owns age and expiry. The callback sees the new age and owns
+// motion; it can shorten lifetime to kill a particle. Survivors keep order.
+void Update(mut Emitter emitter, float dt, Func<mut Particle, float, void> update)
+{
+    if (!Finite(dt) || dt <= 0) return;
+    int limit = Limit(emitter);
+    int count = Math.Min(limit, emitter.particles.count);
+    mut int kept = 0;
+    for (var i = 0; i < count; i++)
+    {
+        mut var particle = emitter.particles[i];
+        if (!Alive(particle)) continue;
+        particle.age += dt;
+        if (particle.age >= particle.lifetime || !Finite(particle.age)) continue;
+        update(particle, dt);
+        if (!Alive(particle)) continue;
+        emitter.particles[kept] = particle;
+        kept++;
+    }
+    emitter.particles.Resize(kept);
+}
+
+void Update(mut Emitter emitter, float dt, float3 acceleration = float3(0), float drag = 0)
+{
+    Update(emitter, dt, (mut Particle particle, float step) => Integrate(particle, step, acceleration, drag));
+}
+
+// Keep the random stream and capacity; explicitly assign Random(seed) when
+// restarting an effect should reproduce its previous particles.
+void Clear(mut Emitter emitter)
+{
+    emitter.particles.Clear();
+    emitter.remainder = 0;
+}

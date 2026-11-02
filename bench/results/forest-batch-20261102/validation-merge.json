@@ -1,0 +1,65 @@
+{
+  "feature_commit": "6c7700a5ff07bf364cf6d12d5cf838c9ef74b16d",
+  "incoming_dev": "4bb9446060b4c534ea3b738a3241d175ab3b3d96",
+  "scope": "Generated mesh LOD operand analysis integrated into purity, reads/writes, borrows, worker, assets and evaluation ordering. Eighteen fallback scenarios; compiler/draw/mesh/Render3D/forest dependencies checked on native Windows ASan and web-release. Ordinary release rebuilt.",
+  "checks": {
+    "native_probe": {
+      "passed": 4,
+      "failed": 0,
+      "seconds": 0.51,
+      "full_log": "build/forest-batch/validation/test-native-merge-probe.log",
+      "sha256": "67147d56d030a4bab32cb31337707207ac82578e1d457716bf5e4c7a857247b4"
+    },
+    "web_probe": {
+      "passed": 4,
+      "failed": 0,
+      "seconds": 0.52,
+      "full_log": "build/forest-batch/validation/test-web-merge-probe.log",
+      "sha256": "3c9cf113b4bffd5360d8223b3b383cc18b2136fc5581b44bcdcf99b991819935"
+    },
+    "native_affected": {
+      "passed": 61,
+      "failed": 0,
+      "seconds": 17.67,
+      "full_log": "build/forest-batch/validation/test-native-merge.log",
+      "sha256": "34b1364a7ffdc5605c5970a2c28e971a73f1dc7a50ecc6d7337a1167f3fe2b0f"
+    },
+    "web_affected": {
+      "passed": 65,
+      "failed": 0,
+      "seconds": 319.82,
+      "full_log": "build/forest-batch/validation/test-web-merge.log",
+      "sha256": "29a6563ed6c9f897edd0ef7080d07bf53ee53794831ef9d548e0327153bb37a4"
+    }
+  },
+  "build_logs": {
+    "build-native-merge-probe.log": {
+      "path": "build/forest-batch/validation/build-native-merge-probe.log",
+      "sha256": "47854d8b0376c281adb38ca9338e109336341b9a29d448383e9b999883996b29"
+    },
+    "build-web-merge-probe.log": {
+      "path": "build/forest-batch/validation/build-web-merge-probe.log",
+      "sha256": "15a5cf60635878de4714380d4e604c59c232a05cb29f65dba5322880b373e69d"
+    },
+    "build-native-merge.log": {
+      "path": "build/forest-batch/validation/build-native-merge.log",
+      "sha256": "75c198b8dfa9b6f1137210361c44a0a6775f643f6721e61202b055198dc2a8fc"
+    },
+    "build-web-merge.log": {
+      "path": "build/forest-batch/validation/build-web-merge.log",
+      "sha256": "943a94780b9e0d37ea4d7f8b50f5fc1d9cf76b4db27d5759baf7b640003b1cfc"
+    },
+    "build-release-merge.log": {
+      "path": "build/forest-batch/validation/build-release-merge.log",
+      "sha256": "b66ddb882d7b98e5cb08c81f00004d5a20ab734d6a577f3abc8e209b7c7d28cb"
+    }
+  },
+  "binary_relative_path": "build/forest-batch/post-merge/bench_forest.exe",
+  "binary_sha256": "4d5483045e46cf666147d0b3163f861813b9c57f88fa0b57ddd6ed6b61a47ea7",
+  "generated_c_sha256": "6ef4f711b166af9f01d68eb9636df4855560a6ef50e3c586f33cf27ae548b807",
+  "captures": "Three finite Vulkan captures under the shared mutex; no quiet CPU guard and no performance claims from these runs. All decoded RGBA pixels, work and hashes match baseline.",
+  "shader_equivalence": "shader-equivalence-postmerge.json",
+  "pixel_equivalence": "pixel-equivalence-postmerge.json",
+  "timing_cohort": "Original measured cohort remains pinned to the pre-merge frozen candidate. No post-merge paired timing was performed.",
+  "manual_ci_dispatched": false
+}

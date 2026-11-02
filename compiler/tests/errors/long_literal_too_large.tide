@@ -1,4 +1,5 @@
 // expect: integer '9223372036854775808' is too large for long
+// expect: decimal integers go up to 9223372036854775807; use a smaller value, or a d-suffixed double if exact integer precision isn't needed
 scene Main { }
 
 const long MOST = 9223372036854775808;

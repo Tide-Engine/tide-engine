@@ -1,0 +1,5 @@
+// expect: an input has one Sample; combine the sampling logic into a single Sample() method
+input Controls {
+    Sample() { }
+    Sample() { }
+}

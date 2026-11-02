@@ -201,6 +201,7 @@ static void expr_writes(const expr *e, const param *root, byte_writes *w)
     for (int i = 0; i < e->inits.count; i++) expr_writes(e->inits.items[i].value, root, w);
     expr_writes(e->lambda_body, root, w);
     expr_writes(e->values, root, w);
+    expr_writes(e->mesh_lod, root, w);
     expr_writes(e->skin_mesh, root, w);
     expr_writes(e->skin_pose, root, w);
     expr_writes(e->callable_receiver, root, w);

@@ -1,0 +1,48 @@
+{
+  "feature_commit": "6c7700a5ff07bf364cf6d12d5cf838c9ef74b16d",
+  "prior_integration_commit": "a49ec6e4a",
+  "incoming_dev": "800330aeb",
+  "scope": "Clean merge of mesh residency renderer dependency. Native Windows ASan and web-release runtime, platform draw and forest checks; release rebuilt. Shader programs/layouts and all capture pixels/work/world hashes remain baseline-identical. No new forest implementation changes or paired timings.",
+  "checks": {
+    "native": {
+      "passed": 5,
+      "failed": 0,
+      "seconds": 12.06,
+      "full_log": "build/forest-batch/validation/test-native-residency.log",
+      "sha256": "5d902c13d382bc70eb71248e973cd3e33daa5e3eecb23b4caea3303c124f4d7d"
+    },
+    "web": {
+      "passed": 6,
+      "failed": 0,
+      "seconds": 32.41,
+      "full_log": "build/forest-batch/validation/test-web-residency.log",
+      "sha256": "dd7c8cdff6cda8ecd443e814183399fb2c69a6b253870c6abfeb9b8c690c52e6"
+    }
+  },
+  "build_logs": {
+    "build-native-residency.log": {
+      "path": "build/forest-batch/validation/build-native-residency.log",
+      "sha256": "224c5f7388f617a89fc3a5cbfb8ea819a40d867ffaabf7ff6e40f831fb59b884"
+    },
+    "build-web-residency.log": {
+      "path": "build/forest-batch/validation/build-web-residency.log",
+      "sha256": "1b91fed3bf98e86eea8ef739bb1d9897c1212073b2ea5ca0537aa693f3d7c3c2"
+    },
+    "build-release-residency.log": {
+      "path": "build/forest-batch/validation/build-release-residency.log",
+      "sha256": "a1374791df6ecb2086065119579da60516d46dd3c866eaf1fcdf43ab130fec40"
+    }
+  },
+  "binary_relative_path": "build/forest-batch/final-residency/bench_forest.exe",
+  "binary_sha256": "bfbc1e04e807cf3bdc07803829c9ce3bdb296535cdab58f7f615ad1142238ee0",
+  "generated_c_sha256": "dcfbb7f69eac0942da89350469dc0e073c1458b555ccc0405163da7d8d26444a",
+  "compiler_sources": {
+    "compiler/src/codegen.c": "b8e2b2d9e96125b974c554cca2e9d67d04570a580f1db8b1fbd6b4f6171bccb8",
+    "compiler/src/shader_prep_codegen.inc": "5f992fef49aad1f42d104f722f18b277ca6fcc3cd9af04ffc83c65160992bc85"
+  },
+  "shader_equivalence": "shader-equivalence-residency.json",
+  "pixel_equivalence": "pixel-equivalence-residency.json",
+  "captures": "Three finite Vulkan correctness captures under the shared mutex; no idle-CPU requirement or timing claims. Baseline RGBA hashes, work and world match.",
+  "timing_cohort": "Original pre-merge frozen candidate retained; no new paired timings.",
+  "manual_ci_dispatched": false
+}

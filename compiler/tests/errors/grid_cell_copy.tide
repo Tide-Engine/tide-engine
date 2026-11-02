@@ -1,4 +1,5 @@
 // expect: a grid's cell is a copy, so it can't be changed where it is
+// expect: take it out, change it, and put it back: 'mut var c = cells[p]; c.x = 5; cells[p] = c;'
 struct Cell { int id; }
 singleton Field { Grid2<Cell> cells; }
 system Paint(mut Field field)

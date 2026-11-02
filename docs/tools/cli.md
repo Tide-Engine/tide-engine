@@ -61,6 +61,19 @@ Help works without a game or complete installation and performs no command
 actions. Unknown topics or arguments return exit code 2. Bare `tide` keeps
 exit code 2; explicit help returns 0.
 
+When an option needs a value, the error shows an example and its help topic.
+For example, `tide build -o` asks for an output path; use
+`tide build -o output/game` or read `tide help -o`. Unknown options point to
+the command's help. These missing-value and unknown-option errors return
+exit code 2 before building.
+
+Package write failures name the file to check for write permissions and free
+disk space. `tide eject` keeps an existing destination folder; move that
+folder aside before requesting a fresh copy. If a cached pinned executable
+reports the wrong version or cannot run, the error names its cache folder:
+move that folder aside and rerun the command in a terminal to approve a
+fresh download of the pinned release.
+
 ## ide
 
 ```sh

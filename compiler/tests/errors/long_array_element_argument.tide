@@ -1,4 +1,4 @@
-// expect: a list's element is a copy, so 'Sum' can't change it
+// expect: an indexed element can't be a 'mut' argument to 'Sum'
 // expect: pass what holds the element as the 'mut' parameter, and which one it is
 struct Tail
 {

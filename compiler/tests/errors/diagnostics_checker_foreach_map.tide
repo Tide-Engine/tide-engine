@@ -1,0 +1,4 @@
+// expect: 'entry' is a read-only copy of a foreach element
+// expect: assign the source map's value by key: 'items[key] = value;'
+void Use(Map<int, int> values) { foreach (var entry in values) entry.value = 2; }
+scene Main;

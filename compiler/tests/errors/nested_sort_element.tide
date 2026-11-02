@@ -1,4 +1,5 @@
 // expect: a list that's an element of another is sorted as a copy, taken out and put back
+// expect: 'mut var inner = rows[i]; inner.Sort(a, b) { ... } rows[i] = inner;'
 component Table { List<List<int>> rows; }
 scene Main { }
 system Order(mut Table table)

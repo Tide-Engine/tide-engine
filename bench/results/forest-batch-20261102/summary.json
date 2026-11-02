@@ -1,0 +1,524 @@
+[
+  {
+    "trees": 10000,
+    "camera": "canopy",
+    "visible_trees": 8262,
+    "calls": 24,
+    "view_record_ms": {
+      "before": {
+        "median_of_process_medians": 14.604,
+        "range": [
+          14.516,
+          29.40645
+        ],
+        "process_medians": [
+          14.604,
+          14.516,
+          29.40645
+        ],
+        "process_p95s": [
+          24.4948,
+          18.1431,
+          37.3812
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 12.95015,
+        "range": [
+          12.29865,
+          26.7551
+        ],
+        "process_medians": [
+          12.95015,
+          12.29865,
+          26.7551
+        ],
+        "process_p95s": [
+          22.6856,
+          13.3743,
+          43.5284
+        ]
+      },
+      "per_pair_ratios": [
+        0.8867536291427007,
+        0.8472478644254616,
+        0.9098378076918499
+      ],
+      "median_paired_reduction_percent": 11.324637085729927
+    },
+    "cpu_submit_ms": {
+      "before": {
+        "median_of_process_medians": 0.2828,
+        "range": [
+          0.28125,
+          0.36235
+        ],
+        "process_medians": [
+          0.2828,
+          0.28125,
+          0.36235
+        ],
+        "process_p95s": [
+          0.3936,
+          0.3461,
+          0.6342
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 0.28855,
+        "range": [
+          0.26785,
+          0.3644
+        ],
+        "process_medians": [
+          0.28855,
+          0.26785,
+          0.3644
+        ],
+        "process_p95s": [
+          0.4084,
+          0.3083,
+          0.4502
+        ]
+      },
+      "per_pair_ratios": [
+        1.0203323903818953,
+        0.9523555555555555,
+        1.005657513453843
+      ],
+      "median_paired_reduction_percent": -0.5657513453843022
+    },
+    "gpu_ms": {
+      "before": {
+        "median_of_process_medians": 14.479536,
+        "range": [
+          9.990752,
+          23.285072
+        ],
+        "process_medians": [
+          23.285072,
+          9.990752,
+          14.479536
+        ],
+        "process_p95s": [
+          27.942784,
+          13.851296,
+          18.00048
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 13.2536,
+        "range": [
+          9.00272,
+          19.96976
+        ],
+        "process_medians": [
+          19.96976,
+          9.00272,
+          13.2536
+        ],
+        "process_p95s": [
+          25.324416,
+          9.856288,
+          16.539456
+        ]
+      },
+      "per_pair_ratios": [
+        0.8576207108142075,
+        0.9011053422204854,
+        0.9153331985223837
+      ],
+      "median_paired_reduction_percent": 9.889465777951456
+    },
+    "completion_readback_ms": {
+      "before": {
+        "median_of_process_medians": 18.87045,
+        "range": [
+          12.13645,
+          26.59795
+        ],
+        "process_medians": [
+          26.59795,
+          12.13645,
+          18.87045
+        ],
+        "process_p95s": [
+          31.6113,
+          16.3379,
+          25.6317
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 19.342,
+        "range": [
+          10.9342,
+          22.95725
+        ],
+        "process_medians": [
+          22.95725,
+          10.9342,
+          19.342
+        ],
+        "process_p95s": [
+          28.8528,
+          12.1367,
+          33.4667
+        ]
+      },
+      "per_pair_ratios": [
+        0.8631210300041919,
+        0.900938907176316,
+        1.0249888052484173
+      ],
+      "median_paired_reduction_percent": 9.906109282368403
+    }
+  },
+  {
+    "trees": 100000,
+    "camera": "wide",
+    "visible_trees": 96479,
+    "calls": 6,
+    "view_record_ms": {
+      "before": {
+        "median_of_process_medians": 262.7223,
+        "range": [
+          99.54185,
+          267.38945
+        ],
+        "process_medians": [
+          99.54185,
+          262.7223,
+          267.38945
+        ],
+        "process_p95s": [
+          139.2342,
+          533.1367,
+          763.8785
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 100.72885,
+        "range": [
+          72.49375,
+          115.54155
+        ],
+        "process_medians": [
+          72.49375,
+          115.54155,
+          100.72885
+        ],
+        "process_p95s": [
+          133.5042,
+          226.5948,
+          177.99
+        ]
+      },
+      "per_pair_ratios": [
+        0.7282740877329485,
+        0.4397858499259484,
+        0.3767121328085307
+      ],
+      "median_paired_reduction_percent": 56.02141500740516
+    },
+    "cpu_submit_ms": {
+      "before": {
+        "median_of_process_medians": 1.95375,
+        "range": [
+          1.588,
+          2.3921
+        ],
+        "process_medians": [
+          1.588,
+          1.95375,
+          2.3921
+        ],
+        "process_p95s": [
+          1.9382,
+          5.5134,
+          16.1047
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 1.6723,
+        "range": [
+          1.4885,
+          1.68615
+        ],
+        "process_medians": [
+          1.4885,
+          1.68615,
+          1.6723
+        ],
+        "process_p95s": [
+          2.0433,
+          2.2671,
+          2.0792
+        ]
+      },
+      "per_pair_ratios": [
+        0.9373425692695213,
+        0.8630326295585412,
+        0.6990928472889929
+      ],
+      "median_paired_reduction_percent": 13.696737044145879
+    },
+    "gpu_ms": {
+      "before": {
+        "median_of_process_medians": 57.831552,
+        "range": [
+          49.786528,
+          64.241792
+        ],
+        "process_medians": [
+          49.786528,
+          57.831552,
+          64.241792
+        ],
+        "process_p95s": [
+          66.653024,
+          87.788224,
+          120.93056
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 33.1488,
+        "range": [
+          26.737296,
+          39.405888
+        ],
+        "process_medians": [
+          33.1488,
+          39.405888,
+          26.737296
+        ],
+        "process_p95s": [
+          51.971744,
+          57.842496,
+          34.770304
+        ]
+      },
+      "per_pair_ratios": [
+        0.6658186728747183,
+        0.6813908089480288,
+        0.41619785450567753
+      ],
+      "median_paired_reduction_percent": 33.41813271252817
+    },
+    "completion_readback_ms": {
+      "before": {
+        "median_of_process_medians": 83.3027,
+        "range": [
+          54.43655,
+          85.2859
+        ],
+        "process_medians": [
+          54.43655,
+          85.2859,
+          83.3027
+        ],
+        "process_p95s": [
+          73.4073,
+          241.4085,
+          397.1471
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 36.54665,
+        "range": [
+          31.3787,
+          46.4053
+        ],
+        "process_medians": [
+          36.54665,
+          46.4053,
+          31.3787
+        ],
+        "process_p95s": [
+          58.5828,
+          102.5408,
+          75.2179
+        ]
+      },
+      "per_pair_ratios": [
+        0.6713623475403934,
+        0.5441145605545582,
+        0.3766828686225056
+      ],
+      "median_paired_reduction_percent": 45.58854394454418
+    }
+  },
+  {
+    "trees": 100000,
+    "camera": "ground",
+    "visible_trees": 78286,
+    "calls": 24,
+    "view_record_ms": {
+      "before": {
+        "median_of_process_medians": 126.43445,
+        "range": [
+          93.88535,
+          185.84115
+        ],
+        "process_medians": [
+          93.88535,
+          185.84115,
+          126.43445
+        ],
+        "process_p95s": [
+          109.7324,
+          217.8899,
+          165.9635
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 104.1865,
+        "range": [
+          75.88435,
+          273.7131
+        ],
+        "process_medians": [
+          75.88435,
+          273.7131,
+          104.1865
+        ],
+        "process_p95s": [
+          91.7568,
+          735.1245,
+          128.6555
+        ]
+      },
+      "per_pair_ratios": [
+        0.8082661458896409,
+        1.4728336539028088,
+        0.8240356959673569
+      ],
+      "median_paired_reduction_percent": 17.596430403264307
+    },
+    "cpu_submit_ms": {
+      "before": {
+        "median_of_process_medians": 5.13225,
+        "range": [
+          1.39425,
+          5.1573
+        ],
+        "process_medians": [
+          1.39425,
+          5.13225,
+          5.1573
+        ],
+        "process_p95s": [
+          1.7126,
+          5.5797,
+          5.543
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 5.14025,
+        "range": [
+          1.39665,
+          6.00685
+        ],
+        "process_medians": [
+          1.39665,
+          6.00685,
+          5.14025
+        ],
+        "process_p95s": [
+          1.6109,
+          103.5558,
+          5.7651
+        ]
+      },
+      "per_pair_ratios": [
+        1.0017213555675093,
+        1.170412587071947,
+        0.9966940065538169
+      ],
+      "median_paired_reduction_percent": -0.17213555675092973
+    },
+    "gpu_ms": {
+      "before": {
+        "median_of_process_medians": 31.206672,
+        "range": [
+          11.20224,
+          31.732144
+        ],
+        "process_medians": [
+          11.20224,
+          31.206672,
+          31.732144
+        ],
+        "process_p95s": [
+          14.675136,
+          55.00992,
+          45.790752
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 27.654128,
+        "range": [
+          10.108112,
+          55.897952
+        ],
+        "process_medians": [
+          10.108112,
+          55.897952,
+          27.654128
+        ],
+        "process_p95s": [
+          23.432448,
+          89.732704,
+          37.26368
+        ]
+      },
+      "per_pair_ratios": [
+        0.9023295340931814,
+        1.7912179805651816,
+        0.8714862758721881
+      ],
+      "median_paired_reduction_percent": 9.767046590681861
+    },
+    "completion_readback_ms": {
+      "before": {
+        "median_of_process_medians": 35.7628,
+        "range": [
+          13.72915,
+          36.4653
+        ],
+        "process_medians": [
+          13.72915,
+          36.4653,
+          35.7628
+        ],
+        "process_p95s": [
+          17.2747,
+          68.3294,
+          50.0219
+        ]
+      },
+      "after": {
+        "median_of_process_medians": 31.7907,
+        "range": [
+          12.02845,
+          135.16385
+        ],
+        "process_medians": [
+          12.02845,
+          135.16385,
+          31.7907
+        ],
+        "process_p95s": [
+          25.4986,
+          427.5378,
+          42.5352
+        ]
+      },
+      "per_pair_ratios": [
+        0.8761248875567678,
+        3.7066430277551534,
+        0.8889320746697686
+      ],
+      "median_paired_reduction_percent": 11.106792533023135
+    }
+  }
+]
