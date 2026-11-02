@@ -1,0 +1,11 @@
+// expect: SampleGrad reads a Texture with UV derivatives per destination pixel: use it in a frag or a function a frag calls
+// expect: vert 'Move' samples it through 'Gradient', here
+scene Main { }
+local singleton Art { Texture image; List<Vertex> corners; }
+Color Gradient(Texture source, float2 uv)
+{
+    return source.SampleGrad(uv, float2(0.1), float2(0.1));
+}
+frag Shade(Vertex vertex, out Color color, Texture source) { color = Gradient(source, vertex.uv); }
+vert Move(mut Vertex vertex, Texture source) { vertex.position += Gradient(source, vertex.uv).r; }
+view Show(Art art) { Draw.Mesh(art.corners, [0, 1, 2], art.image, Move, Shade); }

@@ -8,10 +8,13 @@ local singleton FoliageResults
     float3[4] transmitted;
     float3 ordinary;
     float3 disabled;
+    float4 defaultMask;
 }
 
 view EvaluateFoliage(mut FoliageResults results)
 {
+    SurfaceInput defaults = SurfaceInput {};
+    results.defaultMask = defaults.mask;
     float3 n = float3(0, 0, 1);
     float3 white = float3(1);
     mut Surface surface = Surface { normal = n, albedo = float3(0.5), roughness = 1 };

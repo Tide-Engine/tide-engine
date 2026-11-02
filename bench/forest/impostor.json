@@ -1,0 +1,275 @@
+{
+  "version": 1,
+  "layout": "azimuth-elevation-hemisphere",
+  "columns": 8,
+  "rows": 4,
+  "elevations": 3,
+  "tile": 128,
+  "gutter": 2,
+  "inner": 124,
+  "width": 1024,
+  "height": 512,
+  "viewCount": 24,
+  "center": [
+    -0.12436100000000039,
+    5.675873,
+    0.03468649999999984
+  ],
+  "span": 13.596961205928121,
+  "depth": 6.7984806029640605,
+  "sourceBounds": {
+    "minimum": [
+      -4.965531,
+      -0.022592,
+      -4.6214
+    ],
+    "maximum": [
+      4.716809,
+      11.374338,
+      4.690773
+    ]
+  },
+  "cutoff": 0.32,
+  "supersample": 2,
+  "barkColor": [
+    0.3,
+    0.22,
+    0.14
+  ],
+  "leafColor": [
+    1,
+    1,
+    1
+  ],
+  "coordinates": "Tide model space: OBJ X reflected, V flipped, positive depth toward bake camera",
+  "normalEncoding": "raw RGB = model normal * .5 + .5; raw A = signed camera depth / (2 * depth) + .5",
+  "maskEncoding": "raw RGBA = occlusion, roughness multiplier, metallic multiplier, optical transmittance multiplier; bark A=0",
+  "albedoEncoding": "straight display RGB with silhouette alpha; author vertex RGB ignored as wind metadata",
+  "limitations": [
+    "Rest pose; branch and individual leaf animation are not baked.",
+    "One nearest visible surface per sample; blended views and depth-plane parallax approximate disocclusion.",
+    "No baked lighting/shadows or volumetric scattering.",
+    "Per-view alpha mip coverage is kept until each tile is one texel; lower tail mips mix views.",
+    "Shrinking mip gutters require footprint-aware runtime view clamps."
+  ],
+  "views": [
+    {
+      "frame": 0,
+      "azimuth": 0,
+      "elevation": 0,
+      "visiblePixels": 3566,
+      "coverage": 0.23191987513007284,
+      "sourceFragments": 19811
+    },
+    {
+      "frame": 1,
+      "azimuth": 0.7853981633974483,
+      "elevation": 0,
+      "visiblePixels": 3218,
+      "coverage": 0.20928720083246619,
+      "sourceFragments": 18063
+    },
+    {
+      "frame": 2,
+      "azimuth": 1.5707963267948966,
+      "elevation": 0,
+      "visiblePixels": 3097,
+      "coverage": 0.2014177939646202,
+      "sourceFragments": 17311
+    },
+    {
+      "frame": 3,
+      "azimuth": 2.356194490192345,
+      "elevation": 0,
+      "visiblePixels": 3258,
+      "coverage": 0.21188865764828305,
+      "sourceFragments": 18634
+    },
+    {
+      "frame": 4,
+      "azimuth": 3.141592653589793,
+      "elevation": 0,
+      "visiblePixels": 3566,
+      "coverage": 0.23191987513007284,
+      "sourceFragments": 18641
+    },
+    {
+      "frame": 5,
+      "azimuth": 3.9269908169872414,
+      "elevation": 0,
+      "visiblePixels": 3218,
+      "coverage": 0.20928720083246619,
+      "sourceFragments": 17538
+    },
+    {
+      "frame": 6,
+      "azimuth": 4.71238898038469,
+      "elevation": 0,
+      "visiblePixels": 3097,
+      "coverage": 0.2014177939646202,
+      "sourceFragments": 17378
+    },
+    {
+      "frame": 7,
+      "azimuth": 5.497787143782138,
+      "elevation": 0,
+      "visiblePixels": 3258,
+      "coverage": 0.21188865764828305,
+      "sourceFragments": 18792
+    },
+    {
+      "frame": 8,
+      "azimuth": 0,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3379,
+      "coverage": 0.21975806451612903,
+      "sourceFragments": 19236
+    },
+    {
+      "frame": 9,
+      "azimuth": 0.7853981633974483,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3560,
+      "coverage": 0.2315296566077003,
+      "sourceFragments": 18354
+    },
+    {
+      "frame": 10,
+      "azimuth": 1.5707963267948966,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3236,
+      "coverage": 0.21045785639958375,
+      "sourceFragments": 17568
+    },
+    {
+      "frame": 11,
+      "azimuth": 2.356194490192345,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3149,
+      "coverage": 0.2047996878251821,
+      "sourceFragments": 17759
+    },
+    {
+      "frame": 12,
+      "azimuth": 3.141592653589793,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3509,
+      "coverage": 0.22821279916753381,
+      "sourceFragments": 18936
+    },
+    {
+      "frame": 13,
+      "azimuth": 3.9269908169872414,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3605,
+      "coverage": 0.23445629552549427,
+      "sourceFragments": 19441
+    },
+    {
+      "frame": 14,
+      "azimuth": 4.71238898038469,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3606,
+      "coverage": 0.2345213319458897,
+      "sourceFragments": 19610
+    },
+    {
+      "frame": 15,
+      "azimuth": 5.497787143782138,
+      "elevation": 0.7853981633974483,
+      "visiblePixels": 3561,
+      "coverage": 0.23159469302809574,
+      "sourceFragments": 19777
+    },
+    {
+      "frame": 16,
+      "azimuth": 0,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3407,
+      "coverage": 0.22157908428720083,
+      "sourceFragments": 17219
+    },
+    {
+      "frame": 17,
+      "azimuth": 0.7853981633974483,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3400,
+      "coverage": 0.2211238293444329,
+      "sourceFragments": 17297
+    },
+    {
+      "frame": 18,
+      "azimuth": 1.5707963267948966,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3407,
+      "coverage": 0.22157908428720083,
+      "sourceFragments": 17219
+    },
+    {
+      "frame": 19,
+      "azimuth": 2.356194490192345,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3400,
+      "coverage": 0.2211238293444329,
+      "sourceFragments": 17297
+    },
+    {
+      "frame": 20,
+      "azimuth": 3.141592653589793,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3407,
+      "coverage": 0.22157908428720083,
+      "sourceFragments": 17219
+    },
+    {
+      "frame": 21,
+      "azimuth": 3.9269908169872414,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3400,
+      "coverage": 0.2211238293444329,
+      "sourceFragments": 17297
+    },
+    {
+      "frame": 22,
+      "azimuth": 4.71238898038469,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3407,
+      "coverage": 0.22157908428720083,
+      "sourceFragments": 17219
+    },
+    {
+      "frame": 23,
+      "azimuth": 5.497787143782138,
+      "elevation": 1.5707963267948966,
+      "visiblePixels": 3400,
+      "coverage": 0.2211238293444329,
+      "sourceFragments": 17297
+    }
+  ],
+  "sources": [
+    {
+      "path": "bench/forest/bark-0.obj",
+      "sha256": "028da4fb120eccff20a3019fad9ba57f796c93d3c4e8fee0216d5ae96baac72a"
+    },
+    {
+      "path": "bench/forest/leaves-0.obj",
+      "sha256": "bf931f11b848da2709c1caa6ec0ef355e3a4b50055dd0ba32e773432580c32bc"
+    },
+    {
+      "path": "bench/forest/leaf-albedo.png",
+      "sha256": "5c279f35a0e2daa080f7663f1bcb301a62cff9d8a8fb626aa02fb2a0f18b2cc7"
+    },
+    {
+      "path": "bench/forest/leaf-normal.png",
+      "sha256": "8a840707704dda0c83c58688442229587d249d2b9f550044f79154e1212b5785"
+    },
+    {
+      "path": "bench/forest/leaf-mask.png",
+      "sha256": "d637605abdefeba874a0b3daefed22d33624484c374008a15b4f1e758fe74c56"
+    }
+  ],
+  "sourceTriangles": {
+    "bark": 530,
+    "leaves": 1140
+  }
+}

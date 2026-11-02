@@ -23,6 +23,7 @@ TIDE_TEST(render3d_thin_leaf_diffuse_budget_backlight_shadows_and_capture)
     const uint64_t hash = tide_world_hash(&world);
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     const FoliageResults *r = &local.FoliageResults;
+    TIDE_CHECK(r->defaultMask.x == 1 && r->defaultMask.y == 1 && r->defaultMask.z == 0 && r->defaultMask.w == 1);
     const float p = 0.3183098861837907f;
     // At normal incidence, dielectric F=.04 and specular=.01/pi.
     // Half the .48/pi diffuse budget remains reflected; the back lobe

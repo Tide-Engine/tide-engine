@@ -447,6 +447,59 @@ The current path draws static and skinned mesh assets. It has no `LightMode`, ba
 
 ## Foliage
 
+The forest quality path uses authored branch/leaf wind response, mapped leaf
+normals/transmittance, complete coverage-preserving texture mips and a distant
+source-mesh impostor prototype. See the [forest benchmark](https://github.com/Tide-Engine/tide-engine/tree/dev/bench/forest)
+for reproducible assets and moving-camera controls.
+
+`WindResponse { bend, flutter, branchPhase, leafPhase }` is the explicit authored
+overload of `ApplyWind`. Phases are cycles; no color/UV convention is imposed.
+Keep weights/phases locally constant for the analytic normal correction and
+keep connected branch responses compatible. The original scalar overload is
+unchanged. A surface callback can read `input.mask` after mapping: raw AO,
+roughness, metallic and artist alpha, default `(1,1,0,1)`. The forest uses alpha
+as additional optical transmittance for thin leaves.
+
+Configure `renderer.fog` before preparation:
+
+```csharp
+renderer.fog = Render3D.FogSettings {
+    enabled = true, density = 0.00065, start = 0,
+    color = Render3D.SrgbToLinear(float3(0.69, 0.76, 0.82))
+};
+```
+
+Fog color is linear HDR. The same distance fog affects all `Lit` surfaces after
+lighting/emission and before exposure/tonemapping, including terrain. It starts
+disabled; nonpositive density bypasses it. Custom shaders apply it explicitly.
+
+Static `MeshRenderer.meshOverride`, `hidden` and `hideShadows` are attached local
+controls, configured before `Prepare`, leaving the match's mesh identity and
+visibility untouched. Overrides are shared by color and shadow passes; `hidden`
+suppresses both and `hideShadows` only suppresses shadows.
+
+`Material.colorOverride` and `fade` are also local. Set `ditherFade = true` for
+ordered geometry coverage: outgoing `fade = 1-t` and incoming `fade = -t` use
+complementary pixel cells while retaining the leaf texture's cutout threshold.
+The package prepares the effective `renderColor` once before lighting, using
+the existing instance color budget. Configure these before `Prepare`. This
+ordered crossfade does not provide temporal antialiasing.
+
+`Material.impostor` optionally selects the baked hemisphere atlas path, using
+`baseMap` for albedo/coverage, raw `normalMap` for model normals/depth and raw
+`maskMap` for ORM/artist alpha. When enabled, the package dispatches its internal
+`ImpostorDeform` vertex stage and `ImpostorLit` fragment stage. Set the settings'
+`wind` and `bend` for shared whole-card sway; their default wind strength is
+zero. This path reserves existing corner fields for its projection payload, so
+use the offline baker's layout/settings and conservative full card bounds.
+The prototype stores one nearest rest-pose layer, with blended views and
+optional depth-plane parallax. Disoccluded geometry and independent leaf/branch
+animation are not reconstructed. Depth testing, lighting position and fog
+still use the proxy card's geometry.
+Impostors do not cast shadows. Only the three baked maps are interpreted;
+ordinary UV, height-map and emission-map controls do not apply. Constant
+emission and the configured surface callback remain available.
+
 Use `Cutout` and `doubleSided = true` for leaf cards. `ThinLeaf` returns a
 surface callback with shared numeric settings:
 
@@ -504,6 +557,11 @@ color and UVs and infers no asset weight channels. A custom callback using color
 as wind weights must restore its intended material tint/alpha explicitly.
 
 The repository's [forest stress scene](https://github.com/Tide-Engine/tide-engine/blob/dev/bench/forest/README.md) exercises the ordinary
-mesh/material path with ground/canopy/wide cameras and three geometry levels.
-Levels are selected for the fixed camera at setup. Automatic tree-impostor
-baking, Gaussian splats and coverage-preserving alpha mipmaps remain future work.
+mesh/material path with ground/canopy/wide presets, travel/orbit controls and
+three mesh levels selected every frame through local mesh references. Ordered
+crossfades connect these levels and a 24-view atlas baked from the actual
+source tree meshes. Authored DDS chains preserve leaf/impostor alpha coverage
+at the material cutoff, with Raw normal/depth and mask maps. Native and web
+backends preserve those mip chains; Unity's current draw recorder retains only
+the base image. The atlas remains a rest-pose proxy; Gaussian splats are not
+implemented. The README records controls, reproduction and measurement limits.

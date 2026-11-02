@@ -662,6 +662,32 @@ The GPU picks which copies to read by how fast the `uv` changes from one pixel t
 - Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says, and tidec warns about it: write `Filter.Bilinear` there to say that's what you want, or make the `uv` one the frag can work out as it starts.
 - A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
 
+When a UV changes in a loop or needs a different sampling footprint, give its
+derivatives explicitly with `Texture.SampleGrad`:
+
+```tide
+var dx = this.Ddx(vertex.uv);
+var dy = this.Ddy(vertex.uv);
+mut var uv = vertex.uv;
+// Adjust uv here, including in branches or loops.
+color = source.SampleGrad(uv, dx, dy, Filter.Trilinear, Wrap.Repeat);
+```
+
+`SampleGrad(float2 uv, float2 dx, float2 dy[, filter[, wrap]])` takes the UV
+change per destination pixel to the right and down. It uses those values as
+given, without working the UV out again as the frag starts. Compute derivatives
+of the original UV with `this.Ddx` and `this.Ddy`, then pass them alongside the
+adjusted UV when that is the footprint you want. It works in a frag and in its
+GPU helper functions, including after a discard and inside varying branches or
+loops. A helper takes the derivatives as ordinary `float2` parameters.
+
+The optional filter and wrap follow `Sample`'s rules and default to the texture's
+own. `Filter.Point` and `Filter.Bilinear` still read only its base image;
+`Filter.Trilinear` uses the supplied derivatives to choose its smaller images.
+Ordinary colors and `[Raw] Texture` fields keep their usual channel behavior.
+`SampleGrad` is for `Texture`; verts, CPU code, grids, cubemaps and depth textures
+do not expose it.
+
 ### In a function
 
 A function a frag or a vert calls samples too: a texture it takes as a parameter, which is the one its call names, or an asset by its name. So a lookup that several frags share is written once:
@@ -687,7 +713,7 @@ frag Shade(Corner corner, out Color color, Models models, Texture source)
 - **It isn't handed over as the code runs.** No GPU passes a texture to a function, so which texture a name stands for is settled as the shader is written, and the function is written once for each texture it's called with, as it is for [a list](#naming-a-list-and-passing-it-on). It costs nothing while it runs. A function reads the texture it takes: no `mut` or `out`, and none is returned, kept in a local or in a struct.
 - **What a `Sample` there leaves out is still the texture's**: `Soft(tiles, ...)` reads `tiles` as its declaration says, and `Soft(source, ...)` as the texture the draw gave says. Each way each texture is read counts among the draw's 12.
 - **A function that samples is the GPU's alone**: frags, verts and the functions they call call it. A view or a system that calls one is an error that says so, as nothing on the CPU reads a texture's pixels. A function that only takes a texture and passes it to C, say, is still everyone's.
-- **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, or sample in the frag.
+- **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, sample in the frag, or use `SampleGrad` with explicit derivatives passed from the frag.
 - **A [`[Raw]`](#textures-that-are-numbers) source keeps numeric sampling through GPU helpers.** Pass the original Raw asset, Raw texture field or Raw grid field expression to the helper's `Texture` parameter. The compiler specializes the helper for that source; this does not allow a Raw texture to escape through an ordinary CPU `Texture` value.
 
 ### Textures that are numbers

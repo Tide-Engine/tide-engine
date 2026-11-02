@@ -4,6 +4,20 @@
 
 Owner-approved ("im ok with redesigning things, if it doesnt touch language and is a net position = do it"): generated loops index lists through `tide_list_loop` (`tide/list.h`, new) with `tide_list_loop_chunk` and `tide_list_loop_own` (`engine/src/list.c`, new), agent-maintained as the generated-C side of list access. No existing runtime function, layout, snapshot or hash rule changed; `tide_list_cache` and its fill functions are as they were. Contracts, measurements and tests: `notes/ecs.md`, Loop views.
 
+## Authored immutable texture mip chains (2026-11-02)
+
+The approved foliage pass extends the existing `tide_texture_blocks` format
+enum with RGBA8, preserving its layout and generated-C/runtime boundary.
+`tide_texture_level_bytes` and `tide_texture_blocks_decode_level` are inline
+compiler/platform helpers, never new generated game calls. Complete descriptor
+validation precedes decoding, including clipped BC tail blocks. The existing
+base decode helper still has its original signature and delegates to level 0.
+Pack/draw borrowing and ownership are unchanged. Backend factories synchronously
+upload each authored level; unsupported BC uses an owned temporary full RGBA
+chain and frees it after upload. Unity's base-only recorder is unchanged and
+does not retain authored mip chains. Contracts and validation are recorded in
+`notes/textures.md`, Authored foliage mip coverage.
+
 ## Mesh keys for meshes the game makes (2026-11-02)
 
 Owner-approved ("go with your recommendations", including a runtime entry

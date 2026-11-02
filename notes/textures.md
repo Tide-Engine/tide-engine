@@ -1,5 +1,83 @@
 # Textures and how they are sampled
 
+## Authored foliage mip coverage and portable full chains (2026-11-02)
+
+The owner asked to apply established foliage techniques without losing distant
+leaf coverage. The scoped asset route is authored, uncompressed DDS mipmaps;
+there is no shader alpha heuristic, new Tide syntax, or generated runtime call.
+This extends the existing immutable texture-block trailer with RGBA8 format 4.
+Ordinary PNG/PSD/JPEG/TGA/BMP assets keep their existing import/compression path.
+
+- `image_file_read_mips` accepts a legacy DDS_HEADER/DDS_PIXELFORMAT containing
+  one tightly packed 2D RGBA8 or BGRA8 chain. Both base sides must be powers of
+  two from 4 through 16384, and the exact mip count and payload must describe
+  every level through 1x1. Pixel flags, channel masks, FourCC, bit depth, pitch,
+  depth and cube/volume caps are checked before allocation. DX10/compressed
+  DDS, arrays, volumes, cubes, padding, truncation and extra bytes fail with
+  export guidance. Dimensions/size arithmetic is bounded before allocation;
+  source bytes and decoded float base plus retained RGBA chain each fit the
+  existing 512 MiB image-import budget. Signatures take precedence over names.
+- The file cache owns independent decoded base colors and straight RGBA mip
+  bytes, freeing both on invalidation. Texture packing premultiplies RGB by
+  alpha separately at every authored color mip. `[Raw]` keeps all four bytes
+  independently. Textures/lists/maps retain the chain alone in the pack;
+  grids and cubemap faces use only the base pixels. Runtime Decode stays PNG
+  only. Authored chains bypass automatic BC encoding and cost a full RGBA
+  chain (about 4/3 of base RGBA) in the pack and GPU.
+- Native OpenGL/Vulkan, WebGL2 and WebGPU upload every RGBA level through the
+  existing private `texture_blocks` factory; no compression extension is
+  required. Immutable resident mip state prevents later GPU mip generation
+  from replacing the supplied levels. Unsupported-BC fallback now decodes
+  **every** original BC mip into a temporary RGBA8 chain, uploads it, and frees
+  it synchronously. An explicit exact RGBA base fallback, when present, still
+  supplies level zero. Upload/residency accounting counts the actual full
+  representation. Unity's current draw recorder has no block factory and
+  retains only the base RGBA image; authored Unity mip preservation is not
+  implemented by this pass.
+- `tide_texture_blocks_decode_level` validates the entire descriptor before
+  writing and clips partial 2x2/1x1 BC tail blocks to the destination extent.
+  The existing base decode helper delegates to level zero. Trailer/Texture
+  layouts, pack bounds checks, borrowed draw-list lifetimes and generated
+  calls stay unchanged; RGBA8 is another validated immutable representation.
+- Offline `bench/forest/alpha-mips.mjs` exports
+  `writeCoverageDDS(path,width,height,rgba,cutoff,options)` and
+  `writeMipDDS(path,width,height,rgba,{raw})`, plus pure build/encode helpers.
+  Sources are straight RGBA Uint8Arrays, POT4..16384, bounded to 128 MiB of
+  source bytes. Color filtering averages premultiplied RGB then unpremultiplies;
+  raw filtering averages independent channels. Every mip is filtered before
+  scaling, avoiding correction feedback. The coverage helper uses the original
+  `alpha >= cutoff` coverage and chooses the closest achievable uniform-alpha
+  scale in byte space at every mip. A tiny offset inside a byte-rounding
+  interval avoids a floating-point half-byte boundary losing passing texels.
+  Tied alpha values and finite texel counts make exact coverage impossible
+  for some mips; there is no promise of identical silhouettes at 1x1.
+- Atlas options `{tileWidth,tileHeight}` preserve each view's original coverage
+  independently while that tile still has at least one texel in both axes.
+  Smaller mandatory full-atlas tails use aggregate coverage. This does not
+  solve view bleeding at coarse LODs: the baker/sampler still owns gutters and
+  atlas coordinate/LOD choices. The coverage algorithm follows Ignacio
+  Castano's [Computing Alpha Mipmaps](https://www.ludicon.com/castano/blog/articles/computing-alpha-mipmaps/);
+  DDS layout follows Microsoft's legacy DDS header/pixel-format documentation.
+
+Focused regression coverage: specification-written RGBA/BGRA rectangular DDS
+chains, unsupported shapes/headers, exact-allocation cuts and byte mutations;
+RGBA and clipped BC tail decoding against an independent oracle; Raw/color
+pack bytes and premultiplication at every mip in `texture_compression`; actual
+authored mip-2 pixels, BC fallback, residency and upload counters in
+`platform/tests/draw.c`. The offline algorithm's four Node 24.22.1 tests pass,
+including independent exhaustive finite-coverage oracles for full images and
+per-view atlas tiles, color/raw filtering and complete DDS layout. Generated
+release web runtime matches source. Central native/web compilation and GPU
+validation are coordinated centrally; no timing claim is made here. Initial
+native/web builds succeeded. The first native DDS run exposed diagnostic
+priority for a non-POT width whose pitch also differed: POT validation now
+precedes the independent pitch check, retaining both errors and the existing
+strict expectation. The first WebGPU RGBA-fallback run completed every draw
+check and reported result 0; CTest rejected only its old base-only upload
+marker (65536 instead of the correct full-chain 87380 bytes). Its CMake marker
+is updated centrally. The repeated native image/runtime checks pass, and the
+corrected WebGPU fallback passes in the 47-case integrated web foliage run.
+
 ## A grid's Texture keeps a 64-bit handle (2026-10-30)
 
 A grid's handle is 64 bits now (notes/ecs.md, 64-bit handles), which
@@ -187,7 +265,7 @@ There is no sampler, runtime or GPU contract change; see `notes/language.md`.
 - Coverage: compiler compression tests use an independent decoder and repeat-build comparison; `texture_compression` E2E checks automatic opaque/alpha imports, exact Raw/small channels and append. Pack tests reject corrupt metadata without changing RGBA. Renderer tests cover pixels, premultiplied alpha, point/trilinear reads, upload/memory accounting, residency expiry, byte/count pressure, unload/draw epochs, forced RGBA fallback and WebGPU device loss. Adapter mocks check BC with/without timestamps, timestamp fallback preserving BC and explicit disablement.
 - Validation: full native/web debug builds and suites exercised 2081/2053 tests. Initial failures came from new PNGs entering an existing recursive-glob fixture, an empty optional-feature request descriptor, and forwarding the page's fallback query as a C test argument. Those were corrected, fixtures/pages rebuilt, and all seven affected native checks and sixteen web asset/runtime/renderer/timing/shader/skinning/thread checks passed; every other full-suite case passed. The production docs build passed with existing allowed missing-example placeholders. All native runs used `TIDE_HIDDEN=1`; browsers were muted. No CI or deployment was requested.
 - Merge validation: incoming `dev` editor completions/playback hints and unbuilt LOD design were retained. Two top-of-note insertion conflicts preserved both entries; the spec merged cleanly. Rebuilt the changed compiler dependency, editor tests and affected asset/animation/render targets. Eleven native and eight web dependency checks passed, including all editor transports, automatic compression, CPU/default-pose sampling and skinned pixels on both web backends. The merged production docs build passed.
-- Remaining gaps: ETC2/ASTC/mobile-specific compressed variants, DDS/KTX imports, compressed cubemaps/non-power-of-two images, per-asset quality controls, smaller CPU/download representation (built 2026-10-30: Packs keep compressed images alone, above), asynchronous uploads, mip streaming, total-memory budgets and virtual texturing. No streaming system is scaffolded here. Android and macOS hardware coverage remains CI/device work.
+- Remaining gaps: ETC2/ASTC/mobile-specific compressed variants, compressed DDS/KTX imports (authored RGBA8 DDS is built above), compressed cubemaps/non-power-of-two images, per-asset quality controls, smaller CPU/download representation (built 2026-10-30: Packs keep compressed images alone, above), asynchronous uploads, mip streaming, total-memory budgets and virtual texturing. No streaming system is scaffolded here. Android and macOS hardware coverage remains CI/device work.
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 

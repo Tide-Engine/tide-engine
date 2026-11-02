@@ -2303,6 +2303,7 @@ static uint32_t gpu_texture_index_capacity; // A power of two, or 0: at most hal
 static uint32_t gpu_frame;
 static tide_texture_idle *idle_textures;
 uint32_t tide_texture_idle_frames = TIDE_TEXTURE_IDLE_FRAMES;
+bool tide_texture_force_rgba;
 static uint32_t idle_texture_capacity;
 
 // Temporary integer-data storage detached from identities absent from this
@@ -3847,12 +3848,39 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     } else {
         if (g->texture) free_texture(g->texture);
         g->texture = t->compressed.pixels && gpu->texture_blocks
+            && (!tide_texture_force_rgba || t->compressed.format == TIDE_BLOCKS_RGBA8)
             ? gpu->texture_blocks(t->width, t->height, t->compressed) : 0;
         if (g->texture) {
             hold(held(&held_textures, &held_texture_count, g->texture), t->compressed.bytes);
             gpu_written += t->compressed.bytes;
             resident_mips = true;
-        } else g->texture = take_data_texture(t);
+        } else if (t->compressed.pixels && gpu->texture_blocks) {
+            // Preserve every authored BC mip on devices without that optional
+            // compression feature. Rebuilding mips from level zero would lose
+            // alpha coverage and any authored distant detail.
+            uint32_t levels, bytes;
+            if (tide_texture_blocks_size(t->width, t->height, TIDE_BLOCKS_RGBA8, &levels, &bytes)) {
+                uint8_t *rgba = tide_alloc(bytes);
+                uint32_t w = (uint32_t)t->width, h = (uint32_t)t->height, offset = 0;
+                bool decoded = true;
+                for (uint32_t level = 0; decoded && level < levels; level++) {
+                    if (!level && t->pixels) memcpy(rgba, t->pixels, (size_t)w * h * 4u); // Keep an explicit exact base fallback.
+                    else decoded = tide_texture_blocks_decode_level(t->compressed, t->width, t->height, level, rgba + offset);
+                    offset += w * h * 4u;
+                    if (w > 1u) w /= 2u;
+                    if (h > 1u) h /= 2u;
+                }
+                if (decoded) g->texture = gpu->texture_blocks(t->width, t->height,
+                    (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8, levels, bytes});
+                free(rgba);
+                if (g->texture) {
+                    hold(held(&held_textures, &held_texture_count, g->texture), bytes);
+                    gpu_written += bytes;
+                    resident_mips = true;
+                }
+            }
+        }
+        if (!g->texture) g->texture = take_data_texture(t);
         // A pack image that's only blocks, on a device that can't sample them: their first level, decoded
         const void *pixels = t->pixels;
         uint8_t *decoded = NULL;

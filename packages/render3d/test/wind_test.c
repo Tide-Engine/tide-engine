@@ -63,6 +63,7 @@ TIDE_TEST(render3d_wind_roots_world_direction_and_deformed_frames)
     for (int frame = 0; frame < 5; frame++) {
         p->wind.time = 0.137f + (float)frame * 0.281f;
         evaluate(&world, &local, &draw, &gui);
+        TIDE_CHECK(memcmp(&p->legacy, &p->result, sizeof p->result) == 0);
         for (int i = 0; i < 9; i++) {
             TIDE_CHECK(fabsf(p->wave.at[i] - waves[i]) < 0.000001f);
             TIDE_CHECK(fabsf(p->derivative.at[i] - derivatives[i]) < 0.000001f);
@@ -103,6 +104,104 @@ TIDE_TEST(render3d_wind_roots_world_direction_and_deformed_frames)
         tide_f4(p->result.position.x - p->vertex.position.x,
             p->result.position.y - p->vertex.position.y, p->result.position.z - p->vertex.position.z, 0));
     near3(tide_f3(placed4.x, placed4.y, placed4.z), displacement, 0.000003f);
+    p->input.localToWorld = (tide_float4x4){0};
+    evaluate(&world, &local, &draw, &gui);
+    TIDE_CHECK(memcmp(&p->vertex, &p->result, sizeof p->vertex) == 0);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+    tide_world_free(&world);
+}
+
+static void response_frame(const WindProbe *p)
+{
+    const tide_float3 tangent = tide_f3(p->result.tangent.x, p->result.tangent.y, p->result.tangent.z);
+    TIDE_CHECK(fabsf(tide_dot_f3(p->result.normal, p->dy)) < 0.003f);
+    TIDE_CHECK(fabsf(tide_dot_f3(p->result.normal, p->dz)) < 0.003f);
+    TIDE_CHECK(fabsf(tide_dot_f3(p->result.normal, tangent)) < 0.00001f);
+    TIDE_CHECK(fabsf(tide_length_f3(p->result.normal) - 1) < 0.00001f);
+    TIDE_CHECK(fabsf(tide_length_f3(tangent) - 1) < 0.00001f);
+    TIDE_CHECK(p->result.tangent.w == -1);
+    TIDE_CHECK(memcmp(&p->vertex.color, &p->result.color, sizeof p->vertex.color) == 0);
+    TIDE_CHECK(memcmp(&p->vertex.uv, &p->result.uv, sizeof p->vertex.uv) == 0);
+}
+
+TIDE_TEST(render3d_authored_wind_stiffness_branch_leaf_phase_and_frames)
+{
+    static tide_world world;
+    static tide_local local;
+    static tide_draw_list draw;
+    static tide_gui gui;
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_tick(&world);
+    tide_local_init(&local);
+    WindProbe *p = &local.WindProbe;
+    p->authored = true;
+    p->input.localToWorld = tide_identity_f4x4();
+    p->wind.direction = tide_f2(1, 0);
+    p->wind.strength = 1;
+    p->wind.speed = 0;
+    p->wind.gustScale = 0;
+    p->wind.gustStrength = 0;
+    p->vertex = (Render3D_MeshVertex){.position = {1, 2, 2}, .normal = {1, 0, 0},
+        .tangent = {0, 1, 0, -1}, .uv = {0.25f, 0.75f}, .color = {0.2f, 0.3f, 0.4f, 0.5f}};
+    p->bend = p->response.bend = .1f;
+    p->flutter = 0;
+    evaluate(&world, &local, &draw, &gui);
+    TIDE_CHECK(memcmp(&p->legacy, &p->result, sizeof p->result) == 0);
+    // With no gust or clock motion, the slow wave's crest changes the branch
+    // envelope from .3 to 1. A bend of .1 at height 2 moves .4 in world X.
+    p->response.branchPhase = .5f;
+    evaluate(&world, &local, &draw, &gui);
+    near3(p->result.position, tide_f3(1.4f, 2, 2), .000003f);
+    TIDE_CHECK(fabsf(p->dy.x - .4f) < .003f);
+    response_frame(p);
+    const Render3D_MeshVertex crest = p->result;
+    p->response.branchPhase = 1.5f;
+    evaluate(&world, &local, &draw, &gui);
+    TIDE_CHECK(memcmp(&crest, &p->result, sizeof crest) == 0);
+    p->response.bend = .05f;
+    evaluate(&world, &local, &draw, &gui);
+    near3(p->result.position, tide_f3(1.2f, 2, 2), .000003f);
+    response_frame(p);
+    // Separate leaf phases put its height wave exactly at opposite extrema.
+    // A flutter coefficient of .1 at height 2 gives +/-.2 displacement.
+    p->response.bend = 0;
+    p->response.flutter = .1f;
+    p->response.leafPhase = .04f;
+    evaluate(&world, &local, &draw, &gui);
+    near3(p->result.position, tide_f3(1.2f, 2, 2), .000003f);
+    TIDE_CHECK(fabsf(p->dy.x - .1f) < .003f);
+    response_frame(p);
+    p->response.leafPhase = .54f;
+    evaluate(&world, &local, &draw, &gui);
+    near3(p->result.position, tide_f3(.8f, 2, 2), .000003f);
+    TIDE_CHECK(fabsf(p->dy.x + .1f) < .003f);
+    response_frame(p);
+    p->response = (Render3D_WindResponse){.bend = .018f, .flutter = .014f, .branchPhase = .123f, .leafPhase = .431f};
+    p->wind.strength = .3f;
+    p->wind.speed = 1;
+    p->wind.gustScale = .04f;
+    p->wind.gustStrength = .5f;
+    p->wind.gustSpeed = .8f;
+    p->vertex.position.y = 8;
+    for (int i = 0; i < 5; i++) {
+        p->wind.time = .137f + (float)i * .281f;
+        evaluate(&world, &local, &draw, &gui);
+        response_frame(p);
+        const Render3D_MeshVertex saved = p->result;
+        p->input.eye = tide_f3(400, 10, -900);
+        evaluate(&world, &local, &draw, &gui);
+        TIDE_CHECK(memcmp(&saved, &p->result, sizeof saved) == 0);
+    }
+    p->response.bend = p->response.flutter = 0;
+    evaluate(&world, &local, &draw, &gui);
+    TIDE_CHECK(memcmp(&p->vertex, &p->result, sizeof p->vertex) == 0);
+    p->response.bend = .018f;
+    p->vertex.position.y = 0;
+    evaluate(&world, &local, &draw, &gui);
+    TIDE_CHECK(memcmp(&p->vertex, &p->result, sizeof p->vertex) == 0);
+    p->vertex.position.y = 8;
     p->input.localToWorld = (tide_float4x4){0};
     evaluate(&world, &local, &draw, &gui);
     TIDE_CHECK(memcmp(&p->vertex, &p->result, sizeof p->vertex) == 0);

@@ -107,6 +107,9 @@ if(NOT TIDE_ANDROID)
         PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/wind.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/fog.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/impostor.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
         HOST render3d/main.c render3d/direct.c)
@@ -132,11 +135,13 @@ endif()
 
 # Production foliage path across a kilometre-scale forest.
 if(NOT TIDE_ANDROID)
-    tide_add_game(bench_forest NAME game SOURCES forest/game.tide
+    tide_add_game(bench_forest NAME game SOURCES forest/game.tide forest/impostor-settings.tide
         PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/wind.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/fog.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/impostor.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
         HOST forest/main.c)
@@ -145,11 +150,17 @@ if(NOT TIDE_ANDROID)
         tide_web_page(bench_forest SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(bench_forest TARGET bench_forest QUERY "quick"
             WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11)
+        tide_add_web_test(bench_forest_motion TARGET bench_forest QUERY "motion-smoke"
+            WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11)
     else()
         add_test(NAME bench_forest COMMAND bench_forest --quick)
         add_test(NAME bench_forest_opengl COMMAND bench_forest --quick)
         tide_gpu_test(bench_forest)
         tide_gpu_test(bench_forest_opengl OPENGL)
+        add_test(NAME bench_forest_motion COMMAND bench_forest --motion-smoke)
+        add_test(NAME bench_forest_motion_opengl COMMAND bench_forest --motion-smoke)
+        tide_gpu_test(bench_forest_motion)
+        tide_gpu_test(bench_forest_motion_opengl OPENGL)
     endif()
 endif()
 
@@ -174,6 +185,10 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
 endif()
 
 if(TIDE_NODE)
+    add_test(NAME bench_forest_assets COMMAND "${TIDE_NODE}" --test
+        "${CMAKE_CURRENT_SOURCE_DIR}/forest/alpha-mips.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/forest/foliage-assets.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/forest/impostor-bake.test.mjs")
     add_test(NAME bench_compile_validation COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/compile.test.mjs")
     if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME bench_harness COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/harness.mjs"

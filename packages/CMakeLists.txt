@@ -51,7 +51,7 @@ target_include_directories(tide_render3d_transparent PRIVATE "${PROJECT_SOURCE_D
 target_link_libraries(tide_render3d_transparent PRIVATE tide_render3d)
 add_test(NAME tide_render3d_transparent COMMAND tide_render3d_transparent)
 set(render3d_sources render3d/pbr.tide render3d/materials.tide render3d/vertex.tide
-    render3d/post.tide render3d/wind.tide render3d/render3d.tide)
+    render3d/post.tide render3d/wind.tide render3d/fog.tide render3d/impostor.tide render3d/render3d.tide)
 tide_add_game(tide_render3d_pbr SOURCES render3d/test/pbr.tide NAME game
     PACKAGES Render3D render3d/pbr.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pbr_test.c)
@@ -77,6 +77,20 @@ tide_add_game(tide_render3d_materials SOURCES render3d/test/materials.tide NAME 
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/materials_test.c)
 target_include_directories(tide_render3d_materials PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_render3d_materials COMMAND tide_render3d_materials)
+
+tide_add_game(tide_render3d_lod SOURCES render3d/test/lod.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/lod_test.c)
+target_include_directories(tide_render3d_lod PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_lod PRIVATE tide_render3d)
+add_test(NAME tide_render3d_lod COMMAND tide_render3d_lod)
+
+tide_add_game(tide_render3d_impostor SOURCES render3d/test/impostor.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/impostor_test.c)
+target_include_directories(tide_render3d_impostor PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_impostor PRIVATE tide_render3d)
+add_test(NAME tide_render3d_impostor COMMAND tide_render3d_impostor)
 
 tide_add_game(tide_render3d_post SOURCES render3d/test/post.tide NAME game
     PACKAGES Render3D ${render3d_sources}
@@ -112,6 +126,19 @@ target_link_libraries(tide_render3d_shadows PRIVATE tide_render3d)
 add_test(NAME tide_render3d_shadows COMMAND tide_render3d_shadows)
 
 if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render3d_fog SOURCES render3d/test/fog.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/fog_pixels.c)
+    target_link_libraries(tide_render3d_fog PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_fog SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_fog TARGET tide_render3d_fog
+            WEBGPU EXPECT "ok: Render3D post-light fog" D3D11)
+    else()
+        add_test(NAME tide_render3d_fog COMMAND tide_render3d_fog)
+        add_test(NAME tide_render3d_fog_opengl COMMAND tide_render3d_fog)
+        tide_gpu_test(tide_render3d_fog)
+        tide_gpu_test(tide_render3d_fog_opengl OPENGL)
+    endif()
     tide_add_game(tide_render3d_foliage_pixels SOURCES render3d/test/foliage_pixels.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/foliage_pixels.c)
     target_link_libraries(tide_render3d_foliage_pixels PRIVATE tide_platform tide_render3d)

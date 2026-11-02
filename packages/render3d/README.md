@@ -337,10 +337,65 @@ Strength clamps to 0..10, responses/gustStrength to 0..1, speed/gustSpeed to
 color and UVs and infers no asset weight channels. A custom callback using color
 as wind weights must restore its intended material tint/alpha explicitly.
 
-The repository's [forest stress scene](../../bench/forest/README.md) exercises the ordinary
-mesh/material path with ground/canopy/wide cameras and three geometry levels.
-Levels are selected for the fixed camera at setup. Automatic tree-impostor
-baking, Gaussian splats and coverage-preserving alpha mipmaps remain future work.
+For authored response, the `WindResponse` overload takes `bend`, `flutter`,
+`branchPhase` and `leafPhase`. Phases are cycles; weights/phases are explicitly
+chosen by the caller and should be locally constant for exact analytic normal
+correction. Keep connected branch vertices on compatible responses so joints
+stay connected. Zero phase offsets retain the original wind arithmetic.
+
+The surface callback receives the already-sampled raw mask as `input.mask`
+(AO, roughness, metallic, artist data), defaulting to `(1,1,0,1)`. A leaf's
+alpha channel can hold optical transmittance: multiply the shared transmission
+fraction by it before `ApplyThinLeaf`. Use a normal map for leaf folds and veins.
+
+### Fog and machine-local representations
+
+Configure `renderer.fog = FogSettings { enabled = true, density = 0.00065,
+color = float3(0.4, 0.5, 0.6) }` before `Prepare`. Color is linear HDR radiance.
+`start` is an unfogged distance in world units. Every `Lit` material applies
+the same exponential fog after lighting/emission and before exposure/tonemapping;
+disabled or nonpositive density preserves the unfogged result. Custom shaders
+must apply fog explicitly. To match the HDR sky clear, use
+`SrgbToLinear(float3(renderer.background.r, renderer.background.g, renderer.background.b))`.
+
+Static `MeshRenderer` has attached local `meshOverride`, `hidden` and
+`hideShadows` controls. They select a representation or suppress its color/shadow
+submission without changing match state; defaults retain the authored mesh.
+Configure them before `Prepare`. Color, opaque shadows and cutout shadows use
+the same override. `hidden` suppresses both passes; `hideShadows` only shadows.
+
+`Material.colorOverride` optionally overrides the authored color locally.
+`Material.ditherFade` enables ordered geometry coverage, with `fade = 1` by
+default. A negative fade selects complementary destination-pixel cells for an
+incoming LOD; outgoing `1-t` and incoming `-t` cover complementary cells.
+Cutout texture alpha retains its original threshold. `PrepareMaterial` snapshots
+the effective tint/opacity in `renderColor` before lighting stages, reusing the
+existing instance color attribute instead of adding a varying. Configure these
+controls before `Prepare`; advanced extra draw passes may explicitly update and
+restore the prepared local snapshot. Ordered dithering is not temporal AA.
+
+### Distant-tree prototype
+
+`Material.impostor` configures an optional `ImpostorSettings` atlas path. The
+base map supplies albedo/coverage, raw normal map supplies model normals/depth,
+and raw mask map supplies ordinary ORM/artist data. `ApplyImpostor` orients a
+baked card and reserves its existing corner fields for the projection payload;
+use it only with the atlas material. The current atlas layout is 24 hemisphere
+views in an 8x4 grid of padded 128-pixel tiles. Use the baker's exact center,
+span and depth, and bounds covering the fully rotated/deformed card.
+
+Enabling it selects internal vertex/fragment stages instead of `Material.vertex`;
+the configured surface callback is retained. `ImpostorSettings.wind` and `bend`
+control whole-card sway (wind defaults disabled). Impostors do not cast shadows.
+This prototype uses the three baked maps above; ordinary UV/height/emission-map
+controls do not apply. Constant emission and surface edits remain available.
+
+The repository's [forest stress scene](../../bench/forest/README.md) supplies
+original tree assets, coverage-preserving DDS mip generation, an offline
+source-mesh impostor baker, moving/orbiting cameras and geometry crossfades.
+The impostor is a rest-pose, nearest-visible-layer approximation; it cannot
+recover disoccluded branches or animate individual baked leaves. Gaussian
+splats and a general runtime impostor baking system are outside this slice.
 
 ## Current scope
 

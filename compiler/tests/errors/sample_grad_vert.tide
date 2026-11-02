@@ -1,0 +1,6 @@
+// expect: SampleGrad reads a Texture with UV derivatives per destination pixel: use it in a frag or a function a frag calls
+scene Main { }
+vert Move(mut Vertex vertex, Texture source)
+{
+    vertex.position += source.SampleGrad(vertex.uv, float2(0.1), float2(0.1)).r;
+}

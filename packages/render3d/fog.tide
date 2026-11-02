@@ -1,0 +1,19 @@
+namespace Render3D;
+
+// Linear HDR distance fog. Disabled by default; color uses the same linear
+// radiance space as lighting and the HDR background, before exposure/tonemapping.
+struct FogSettings
+{
+    bool enabled;
+    float density;
+    float start;
+    float3 color;
+}
+
+float3 ApplyFog(float3 radiance, float3 world, float3 eye, FogSettings fog)
+{
+    if (!fog.enabled || !(fog.density > 0)) return radiance;
+    float distance = Math.Max(Math.Length(world - eye) - Math.Max(fog.start, 0), 0);
+    float transmission = Math.Exp(-Math.Clamp(distance * fog.density, 0, 80));
+    return radiance * transmission + Math.Max(fog.color, float3(0)) * (1 - transmission);
+}

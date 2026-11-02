@@ -2309,6 +2309,11 @@ static const method_form texture_calls[] = {
      "the frag's parameters, constants and variables that are never assigned again. A vert reads the texture's own "
      "pixels, and so does a function they call, which samples a texture it takes as a parameter, the one its call "
      "names, or an asset by its name."},
+    {"SampleGrad", "SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's, Wrap wrap = the texture's) -> Color",
+     "Samples this texture in a frag or a helper it calls, using explicit UV changes per destination pixel: "
+     "`dx` toward the right and `dy` downward. The gradients select mipmaps for `Filter.Trilinear`, including "
+     "when UVs change inside a loop. Point and Bilinear still read the base image. Omitted filter and wrap "
+     "use the texture's settings, as Sample does. Verts and CPU code cannot call SampleGrad."},
 };
 
 static const method_form depth_calls[] = {
@@ -7192,11 +7197,21 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
         if (t.kind == TY_GRID && (t.decl->dims != 2 || (t.decl->fields.items[0].type.kind != TY_COLOR
                                                          && t.decl->fields.items[0].type.kind != TY_FLOAT))) return;
-        const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
-            : find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));
-        sb detail = {0};
-        format_method(sample, t, &detail);
-        item(c, sample->name, CK_METHOD, detail.data, sample->doc, "Sample($1)");
+        if (t.kind == TY_TEXTURE) {
+            for (size_t i = 0; i < sizeof texture_calls / sizeof texture_calls[0]; i++) {
+                const method_form *sample = &texture_calls[i];
+                const bool gradients = strcmp(sample->name, "SampleGrad") == 0;
+                if (gradients && is_shader(sc->decl) && !sc->decl->is_frag) continue;
+                sb detail = {0};
+                format_method(sample, t, &detail);
+                item(c, sample->name, CK_METHOD, detail.data, sample->doc, gradients ? "SampleGrad($1, $2, $3)" : "Sample($1)");
+            }
+        } else {
+            const method_form *sample = find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));
+            sb detail = {0};
+            format_method(sample, t, &detail);
+            item(c, sample->name, CK_METHOD, detail.data, sample->doc, "Sample($1)");
+        }
         return;
     }
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
@@ -12912,7 +12927,7 @@ static bool file_hash(const char *path, const unsigned long long size, const uns
 
 static void collect_assets(void)
 {
-    static const char *const images[] = {".png", ".psd", ".jpg", ".jpeg", ".tga", ".bmp"};
+    static const char *const images[] = {".png", ".psd", ".jpg", ".jpeg", ".tga", ".bmp", ".dds"};
     static const char *const clips[] = {".wav", ".ogg", ".mp3", ".flac"};
     static const char *const models[] = {".glb", ".gltf", ".fbx", ".obj"};
     static const char *const profiles[] = {".humanoid.json"};

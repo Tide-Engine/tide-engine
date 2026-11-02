@@ -72,7 +72,7 @@ static __attribute__((unused)) void *image_realloc(void *ptr, const size_t size)
 #define STBI_FREE(ptr) image_free(ptr)
 #include <stb_image.h>
 
-typedef enum image_format { IMAGE_UNKNOWN, IMAGE_PNG, IMAGE_PSD, IMAGE_JPEG, IMAGE_BMP, IMAGE_TGA } image_format;
+typedef enum image_format { IMAGE_UNKNOWN, IMAGE_PNG, IMAGE_PSD, IMAGE_JPEG, IMAGE_BMP, IMAGE_TGA, IMAGE_DDS } image_format;
 
 static bool fail(char why[256], const char *format, ...)
 {
@@ -325,22 +325,77 @@ static const char *unsupported_magic(const uint8_t *data, const size_t size)
                      || !memcmp(data, "II\x2b\0", 4) || !memcmp(data, "MM\0\x2b", 4))) return "TIFF";
     if (size >= 4 && !memcmp(data, "\x76\x2f\x31\x01", 4)) return "OpenEXR";
     if (size >= 6 && (!memcmp(data, "#?RADI", 6) || !memcmp(data, "#?RGBE", 6))) return "Radiance HDR";
-    if (size >= 4 && !memcmp(data, "DDS ", 4)) return "DDS";
     if (size >= 12 && (!memcmp(data, "\xabKTX 11\xbb\r\n\x1a\n", 12)
                       || !memcmp(data, "\xabKTX 20\xbb\r\n\x1a\n", 12))) return "KTX";
     return NULL;
 }
 
-bool image_file_read(const uint8_t *data, const size_t size, const char *name, tide_png_image *out, char why[256])
+// Legacy DDS_HEADER + DDS_PIXELFORMAT (Microsoft's Programming Guide for DDS),
+// exactly one packed RGBA8/BGRA8 full chain. The format is deliberately narrow:
+// no compressed/DX10, cube, array, volume, padding or missing mip inference.
+static bool dds_read(const uint8_t *data, const size_t size, tide_png_image *out,
+                      tide_texture_blocks *mips, char why[256])
+{
+    if (size < 128u || memcmp(data, "DDS ", 4) || le32(data + 4) != 124u || le32(data + 76) != 32u)
+        return fail(why, "DDS image has an invalid or truncated header; export a full 2D RGBA8 mip chain");
+    const uint32_t width = le32(data + 16), height = le32(data + 12);
+    if (!dimensions(width, height, "DDS", why)) return false;
+    const uint32_t flags = le32(data + 80), red = le32(data + 92), green = le32(data + 96);
+    const uint32_t blue = le32(data + 100), alpha = le32(data + 104);
+    const bool bgra = red == UINT32_C(0x00ff0000) && blue == 255u;
+    if (flags != 0x41u || le32(data + 84) != 0u || le32(data + 88) != 32u || green != 0xff00u
+        || alpha != UINT32_C(0xff000000) || (!bgra && (red != 255u || blue != UINT32_C(0x00ff0000))))
+        return fail(why, "DDS pixel format isn't supported; export uncompressed RGBA8 or BGRA8 with alpha and a full mip chain");
+    if ((le32(data + 8) & 0x800000u) || le32(data + 24) > 1u || le32(data + 112) != 0u)
+        return fail(why, "DDS image isn't a single 2D texture; export its image alone without cube, array or volume data");
+    uint32_t levels, bytes;
+    if (!tide_texture_blocks_size((int32_t)width, (int32_t)height, TIDE_BLOCKS_RGBA8, &levels, &bytes))
+        return fail(why, "DDS image sides must be powers of two from 4 through 16384; export a full 2D RGBA8 mip chain");
+    if (le32(data + 20) && le32(data + 20) != width * 4u)
+        return fail(why, "DDS image has padded pixel rows; export tightly packed RGBA8 or BGRA8 mip levels");
+    if (le32(data + 28) != levels || size - 128u != bytes)
+        return fail(why, "DDS image has missing, truncated or extra mip data; export exactly one full RGBA8 chain through 1x1");
+    const uint64_t colors_bytes = (uint64_t)width * height * sizeof(tide_color);
+    if (size > TIDE_IMAGE_MAX_BYTES || colors_bytes + (mips ? bytes : 0u) > TIDE_IMAGE_MAX_BYTES)
+        return fail(why, "DDS image needs more than the %u MiB an image import takes (TIDE_IMAGE_MAX_BYTES); reduce its dimensions", IMAGE_MIB);
+    tide_color *colors = malloc((size_t)colors_bytes);
+    uint8_t *chain = mips ? malloc(bytes) : NULL;
+    if (!colors || (mips && !chain)) {
+        free(colors);
+        free(chain);
+        return fail(why, "DDS image couldn't allocate its decoded pixels");
+    }
+    const uint8_t *pixels = data + 128u;
+    if (chain) {
+        for (uint32_t i = 0; i < bytes; i += 4u) {
+            chain[i] = pixels[i + (bgra ? 2u : 0u)], chain[i + 1u] = pixels[i + 1u];
+            chain[i + 2u] = pixels[i + (bgra ? 0u : 2u)], chain[i + 3u] = pixels[i + 3u];
+        }
+    }
+    const size_t count = (size_t)width * height;
+    for (size_t i = 0; i < count; i++) {
+        const uint8_t *p = pixels + i * 4u;
+        colors[i] = (tide_color){(float)p[bgra ? 2 : 0] / 255.0f, (float)p[1] / 255.0f,
+                                 (float)p[bgra ? 0 : 2] / 255.0f, (float)p[3] / 255.0f};
+    }
+    *out = (tide_png_image){width, height, colors};
+    if (mips) *mips = (tide_texture_blocks){chain, TIDE_BLOCKS_RGBA8, levels, bytes};
+    return true;
+}
+
+bool image_file_read_mips(const uint8_t *data, const size_t size, const char *name, tide_png_image *out,
+                          tide_texture_blocks *mips, char why[256])
 {
     *out = (tide_png_image){0};
+    if (mips) *mips = (tide_texture_blocks){0};
     why[0] = '\0';
-    if (!data || !size) return fail(why, "image file is empty; supported image formats are PNG, PSD, JPEG, TGA and BMP");
+    if (!data || !size) return fail(why, "image file is empty; supported image formats are PNG, PSD, JPEG, TGA, BMP and RGBA8 DDS");
     image_format format = IMAGE_UNKNOWN;
     if (size >= 8 && !memcmp(data, "\x89PNG\r\n\x1a\n", 8)) format = IMAGE_PNG;
     else if (size >= 4 && !memcmp(data, "8BPS", 4)) format = IMAGE_PSD;
     else if (size >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff) format = IMAGE_JPEG;
     else if (size >= 2 && data[0] == 'B' && data[1] == 'M') format = IMAGE_BMP;
+    else if (size >= 4 && !memcmp(data, "DDS ", 4)) format = IMAGE_DDS;
     else {
         const char *unsupported = unsupported_magic(data, size);
         if (unsupported) return fail(why, "%s image import isn't supported; export PNG, PSD, JPEG, TGA or BMP", unsupported);
@@ -349,7 +404,9 @@ bool image_file_read(const uint8_t *data, const size_t size, const char *name, t
         else if (suffix(name, ".jpg") || suffix(name, ".jpeg")) format = IMAGE_JPEG;
         else if (suffix(name, ".bmp")) format = IMAGE_BMP;
         else if (suffix(name, ".tga")) format = IMAGE_TGA;
+        else if (suffix(name, ".dds")) format = IMAGE_DDS;
     }
+    if (format == IMAGE_DDS) return dds_read(data, size, out, mips, why);
     if (format == IMAGE_PNG) {
         if (size >= 24 && !memcmp(data, "\x89PNG\r\n\x1a\n", 8) && !memcmp(data + 12, "IHDR", 4)
             && !dimensions(be32(data + 16), be32(data + 20), "PNG", why)) return false;
@@ -363,7 +420,7 @@ bool image_file_read(const uint8_t *data, const size_t size, const char *name, t
         if (psd_file_read(data, size, out, psd)) return true;
         return fail(why, "PSD image %s", psd);
     }
-    if (format == IMAGE_UNKNOWN) return fail(why, "unrecognized image format; supported image formats are PNG, PSD, JPEG, TGA and BMP");
+    if (format == IMAGE_UNKNOWN) return fail(why, "unrecognized image format; supported image formats are PNG, PSD, JPEG, TGA, BMP and RGBA8 DDS");
     if (size > TIDE_IMAGE_MAX_BYTES || size > INT_MAX) {
         char have[32];
         return fail(why, "image source is %s bytes, more than the %u MiB an image import takes (TIDE_IMAGE_MAX_BYTES)", tide_count_text(size, have), IMAGE_MIB);
@@ -402,4 +459,9 @@ bool image_file_read(const uint8_t *data, const size_t size, const char *name, t
     image_free(pixels);
     *out = (tide_png_image){width, height, colors};
     return true;
+}
+
+bool image_file_read(const uint8_t *data, const size_t size, const char *name, tide_png_image *out, char why[256])
+{
+    return image_file_read_mips(data, size, name, out, NULL, why);
 }

@@ -16,7 +16,7 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 
 | Asset | Build-time source formats | What reaches the game |
 | --- | --- | --- |
-| `Texture`, `Grid2<Color>`, cubemap faces | PNG, PSD, JPEG (`.jpg`, `.jpeg`), TGA, BMP | Decoded pixels; textures and cube faces use RGBA8 |
+| `Texture`, `Grid2<Color>`, cubemap faces | PNG, PSD, JPEG (`.jpg`, `.jpeg`), TGA, BMP, [RGBA8 DDS](#authored-mipmaps) | Decoded pixels; textures and cube faces use RGBA8 |
 | `Mesh<V>` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX, OBJ | Static vertices and triangles |
 | `SkinnedMesh<V>` | glTF 2.0, binary or ASCII FBX | Geometry, skeleton and animation; see [Animation](./animation.md) |
 | `AnimationCatalog` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | Skeleton and every animation clip; see [Animation files](./animation.md#animation-files) |
@@ -27,7 +27,7 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 
 These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, runtime [`Mesh<V>.Decode`](#meshes) reads GLB, a glTF with its buffers inside it and OBJ, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
 
-WebP, TIFF, animated images, SVG, HDR/EXR and GPU texture containers such as DDS/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
+WebP, TIFF, animated images, SVG, HDR/EXR, compressed DDS and KTX/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
 
 Custom font assets (TTF/OTF) and video playback aren't built. [`Draw.Text`](./views.md#text) uses Tide's bundled font. Any file can still be packed as `List<byte>`, which preserves its bytes without interpreting them.
 
@@ -116,7 +116,7 @@ view Show(mut Player player)
 ```
 
 - An ordinary color `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`. Numeric Raw sources follow the field rules below.
-- Its exact fallback keeps a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images also have a smaller compressed GPU copy, described below.
+- Its RGBA pixels keep a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images use a smaller compressed image instead, described below.
 - `texture.size` reads its base-level dimensions as an `int2`, without uploading pixels. An image whose pixels the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
@@ -128,11 +128,29 @@ For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and r
 
 Ordinary color `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled colors can differ slightly from the source, especially around sharp color changes or faint transparency.
 
-A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes the image's largest level to RGBA as it uploads it, so it shows the same compressed colors.
+A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes every mip to RGBA as it uploads the image, preserving the prepared distant levels. That fallback uses the memory of a full RGBA mip chain.
 
 Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
 
 The renderer keeps recently hidden pack images in a bounded GPU cache, avoiding another upload when they return soon. This is whole-image residency; mip streaming and virtual textures aren't built yet.
+
+### Authored mipmaps
+
+For cutout leaves and distant sprites, ordinary averaging can make thin shapes disappear when an alpha test rejects their smaller mipmaps. Prepare a mip chain whose alpha preserves coverage at the material's exact cutoff, then import it as an ordinary texture:
+
+```csharp
+[Filter(Filter.Trilinear)]
+asset Texture leaves = "art/leaves.dds";
+
+[Raw, Filter(Filter.Trilinear)]
+asset Texture normals = "art/leaf-normal.dds";
+```
+
+The DDS must contain one tightly packed, uncompressed RGBA8 or BGRA8 2D image, with power-of-two sides from 4 through 16,384 and every mip through 1 × 1. Use the legacy DDS header with explicit RGB and alpha channel masks. DX10 headers, BC-compressed data, cubes, arrays, volumes, padded rows, missing mips and extra payloads are rejected. Source bytes and decoded pixels plus retained mips each have a 512 MiB import budget.
+
+Supply straight RGBA color pixels. The importer premultiplies RGB by alpha separately at every mip; `[Raw]` retains all channels independently. It preserves the supplied mip pixels without recompressing them. The pack and GPU hold the full RGBA8 chain, roughly a third larger than the base image. `Grid2<Color>` and cubemap declarations read only the DDS base image. Runtime `grid.Decode` remains PNG-only.
+
+Native OpenGL/Vulkan, WebGL 2 and WebGPU preserve the chain. Unity's draw recorder currently retains only the base image and does not preserve authored mipmaps. Alpha coverage also becomes approximate at tiny mips because a handful of texels cannot represent every area fraction; atlas authors should preserve each view separately and supply suitable gutters.
 
 ### Image formats
 

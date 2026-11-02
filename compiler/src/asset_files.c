@@ -41,6 +41,7 @@ typedef struct read_file {
     uint8_t hash[32];
     bool decoded;          // Tried as an image...
     tide_png_image image;  // ...and what it gave (pixels NULL when neither decodes)
+    tide_texture_blocks image_mips;
     char image_why[256];
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
     bool sound_tried, sound;
@@ -116,6 +117,7 @@ static void forget_file(read_file *f)
     free(f->data);
     free(f->sound_data);
     free(f->image.pixels);
+    free((void *)(uintptr_t)f->image_mips.pixels);
     memset(f, 0, sizeof *f);
 }
 
@@ -791,15 +793,16 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     if (kind == ASSET_GRID || kind == ASSET_TEXTURE || kind == ASSET_CUBEMAP) {
         if (!f->decoded) {
             f->decoded = true;
-            image_file_read(f->data, f->len, key, &f->image, f->image_why);
+            image_file_read_mips(f->data, f->len, key, &f->image, &f->image_mips, f->image_why);
         }
         if (!f->image.pixels) {
             diag_error(at, "'%s' can't be imported as an image: %s", key, f->image_why);
-            diag_note("a %s asset accepts PNG, RGB PSD composites, JPEG, TGA or BMP; for the file's bytes as they are, "
+            diag_note("a %s asset accepts PNG, RGB PSD composites, JPEG, TGA, BMP or RGBA8 DDS; for the file's bytes as they are, "
                       "read it as a List<byte>", kind_name(kind));
             return false;
         }
         item->image = f->image;
+        item->image_mips = f->image_mips;
     } else if (kind == ASSET_CLIP) {
         if (!f->sound_tried) {
             f->sound_tried = true;

@@ -6234,8 +6234,21 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
     TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float"));
     snprintf(program, sizeof program, "%sColor Tile(Texture image, float2 uv)\n{\n    return image.$\n}\n", types);
-    TIDE_CHECK(offers(complete(program), "Sample"));
-    TIDE_CHECK(offers(complete(program), "size"));
+    const char *texture_reads = complete(program);
+    TIDE_CHECK(offers(texture_reads, "Sample") && offers(texture_reads, "SampleGrad") && offers(texture_reads, "size"));
+    TIDE_CHECK(has(texture_reads, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's, Wrap wrap = the texture's) -> Color"));
+    TIDE_CHECK(has(texture_reads, "SampleGrad($1, $2, $3)"));
+    snprintf(program, sizeof program, "%sfrag Gradient(Vertex3 vertex, out Color color, Lamp lamp) { color = lamp.image.$ }\n", types);
+    TIDE_CHECK(offers(complete(program), "SampleGrad"));
+    snprintf(program, sizeof program, "%svert Warp(mut Vertex3 vertex, Lamp lamp) { vertex.color = lamp.image.$ }\n", types);
+    const char *vertex_reads = complete(program);
+    TIDE_CHECK(offers(vertex_reads, "Sample") && !offers(vertex_reads, "SampleGrad"));
+    snprintf(program, sizeof program, "%sfrag Gradient(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    color = lamp.image.SampleGrad(vertex.uv, float2(0.01, 0), $float2(0, 0.01));\n}\n", types);
+    open_document(program);
+    const char *gradient_signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(gradient_signature, "Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's, Wrap wrap = the texture's) -> Color"));
+    TIDE_CHECK(has(gradient_signature, "\"activeParameter\":2") && has(gradient_signature, "destination pixel"));
     snprintf(program, sizeof program, "%sint2 Size(Texture image) { return image.size; }\nview V(Lamp lamp) { Debug.Log($$\"{Size(lamp.image)}\"); }\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -6243,7 +6256,8 @@ TIDE_TEST(lsp_textures_in_functions)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "physical pixels"));
     snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.image.$ }\n", types);
-    TIDE_CHECK(offers(complete(program), "size"));
+    const char *cpu_reads = complete(program);
+    TIDE_CHECK(offers(cpu_reads, "size") && !offers(cpu_reads, "SampleGrad"));
     snprintf(program, sizeof program, "%sint2 Size(DepthTexture depth) { return depth.size; }\nview V(Lamp lamp) { Debug.Log($$\"{Size(lamp.shadow)}\"); }\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -11342,7 +11356,7 @@ TIDE_TEST(lsp_asset_path_completion)
     write_bytes("lsp_cp/art/hero.png", "png", 3);
     write_bytes("lsp_cp/art/hero.psd", "psd", 3);
     write_bytes("lsp_cp/art/tile.PSD", "psd", 3);
-    static const char *const image_names[] = {"photo.jpg", "photo.JPEG", "tile.tga", "tile.bmp"};
+    static const char *const image_names[] = {"photo.jpg", "photo.JPEG", "tile.tga", "tile.bmp", "leaves.DDS"};
     for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) {
         char path[100];
         snprintf(path, sizeof path, "lsp_cp/art/%s", image_names[i]);
@@ -11376,6 +11390,7 @@ TIDE_TEST(lsp_asset_path_completion)
     TIDE_CHECK(offers(completion, "*.psd") && offers(completion, "**/*.psd"));
     for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) TIDE_CHECK(offers(completion, image_names[i]));
     TIDE_CHECK(offers(completion, "*.jpg") && offers(completion, "**/*.jpeg") && offers(completion, "*.tga") && offers(completion, "**/*.bmp"));
+    TIDE_CHECK(offers(completion, "*.dds") && offers(completion, "**/*.dds"));
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":1,\"character\":36},\"end\":{\"line\":1,\"character\":36}},\"newText\":\"hero.png\"}"));
 
     completion = request_at(uri_main, "textDocument/completion", 2, 26, "");

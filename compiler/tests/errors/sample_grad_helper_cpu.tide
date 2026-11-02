@@ -1,0 +1,8 @@
+// expect: 'Gradient' samples a texture, which only code the GPU runs does
+scene Main { }
+local singleton Art { Texture image; }
+Color Gradient(Texture source, float2 uv)
+{
+    return source.SampleGrad(uv, float2(0.1), float2(0.1));
+}
+view Show(Art art) { Draw.Clear(Gradient(art.image, float2(0.5))); }

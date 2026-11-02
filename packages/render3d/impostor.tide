@@ -1,0 +1,400 @@
+namespace Render3D;
+
+// A rest-pose source-mesh atlas: eight azimuths, elevations 0/45/90 degrees,
+// in the first three rows of an 8x4 texture. Each 128-square tile has two pixels
+// of padding and a 124-square image. center/span/depth come from the baker.
+// Disabled is the ordinary material path; no instance attributes are added.
+struct ImpostorSettings
+{
+    bool enabled;
+    float3 center;
+    float span;
+    float depth;
+    float parallax;
+    Wind wind = Wind { strength = 0 };
+    float bend;
+}
+
+struct ImpostorBlend
+{
+    int4 frames;
+    float4 weights;
+    float3 point; // Model-space offset from the baked center.
+    float3 view;  // Model-space direction from this pixel toward the eye.
+}
+
+struct ImpostorBasis
+{
+    float3 right;
+    float3 up;
+    float3 toward;
+}
+
+struct ImpostorSelection
+{
+    int4 frames;
+    float4 weights;
+}
+
+struct ImpostorUVs
+{
+    float2 a;
+    float2 b;
+    float2 c;
+    float2 d;
+    float2 dxA;
+    float2 dyA;
+    float2 dxB;
+    float2 dyB;
+    float2 dxC;
+    float2 dyC;
+    float2 dxD;
+    float2 dyD;
+}
+
+struct ImpostorAtlas
+{
+    float3 albedo;
+    float3 normal;
+    float4 mask = float4(1, 1, 0, 1);
+    float opacity;
+}
+
+// Inverse affine direction without a matrix inverse per call. Singular
+// placements yield zero, as other forgiving rendering math does.
+float3 ImpostorLocalVector(float4x4 transform, float3 vector)
+{
+    float3 yz = Math.Cross(transform.c1.xyz, transform.c2.xyz);
+    float determinant = Math.Dot(transform.c0.xyz, yz);
+    if (!(Math.Abs(determinant) > 1e-12)) return float3(0);
+    return float3(Math.Dot(vector, yz),
+        Math.Dot(vector, Math.Cross(transform.c2.xyz, transform.c0.xyz)),
+        Math.Dot(vector, Math.Cross(transform.c0.xyz, transform.c1.xyz))) / determinant;
+}
+
+float3 ImpostorLocalPoint(float4x4 transform, float3 point)
+{
+    return ImpostorLocalVector(transform, point - transform.c3.xyz);
+}
+
+ImpostorBasis ImpostorFrameBasis(int frame)
+{
+    int picked = Math.Clamp(frame, 0, 23);
+    int azimuth = picked & 7;
+    int quarter = (azimuth + 2) & 7;
+    int elevation = picked >> 3;
+    // Exact axis cases and one shared diagonal constant keep the pole frames
+    // stable, and avoid transcendental work in every atlas lookup.
+    float odd = float(azimuth & 1);
+    float quarterOdd = float(quarter & 1);
+    float horizontalSine = (odd * 0.707106781 + float((azimuth >> 1) & 1) * (1 - odd))
+        * (1 - 2 * float(azimuth >> 2));
+    float horizontalCosine = (quarterOdd * 0.707106781 + float((quarter >> 1) & 1) * (1 - quarterOdd))
+        * (1 - 2 * float(quarter >> 2));
+    float2 horizontal = float2(horizontalSine, horizontalCosine);
+    float elevationOdd = float(elevation & 1);
+    float sine = elevationOdd * 0.707106781 + float(elevation >> 1);
+    float cosine = float(1 - (elevation >> 1)) * (1 - elevationOdd * (1 - 0.707106781));
+    float3 right = float3(horizontal.y, 0, -horizontal.x);
+    float3 toward = float3(horizontal.x * cosine, sine, horizontal.y * cosine);
+    return ImpostorBasis { right = right, up = Math.Cross(toward, right), toward = toward };
+}
+
+float2 ImpostorAngles(float3 direction)
+{
+    float azimuth = Math.Frac(Math.Atan2(direction.x, direction.z) / (2 * Math.PI) + 1);
+    float elevation = Math.Clamp(Math.Atan2(Math.Max(direction.y, 0),
+        Math.Sqrt(direction.x * direction.x + direction.z * direction.z)) / (Math.PI * 0.5), 0, 1);
+    return float2(azimuth, elevation);
+}
+
+ImpostorSelection ImpostorViews(float2 angles)
+{
+    float azimuth = Math.Frac(Math.Clamp(angles.x, -1000000, 1000000)) * 8;
+    float elevation = Math.Clamp(angles.y, 0, 1) * 2;
+    int a = Math.Clamp(int(Math.Floor(azimuth)), 0, 7);
+    int b = (a + 1) % 8;
+    int row = Math.Min(int(Math.Floor(elevation)), 1);
+    float across = Math.Clamp(azimuth - float(a), 0, 1);
+    float above = Math.Clamp(elevation - float(row), 0, 1);
+    return ImpostorSelection {
+        frames = int4(row * 8 + a, row * 8 + b, (row + 1) * 8 + a, (row + 1) * 8 + b),
+        weights = float4((1 - across) * (1 - above), across * (1 - above),
+                         (1 - across) * above, across * above)
+    };
+}
+
+ImpostorBlend PrepareImpostor(float3 point, float3 localEye, float2 angles)
+{
+    ImpostorSelection selection = ImpostorViews(angles);
+    return ImpostorBlend { frames = selection.frames, weights = selection.weights,
+        point = point, view = Math.Normalize(localEye - point) };
+}
+
+ImpostorBlend PrepareImpostor(float3 world, float3 eye, float4x4 transform, ImpostorSettings settings,
+                              float2 angles)
+{
+    return PrepareImpostor(ImpostorLocalPoint(transform, world) - settings.center,
+        ImpostorLocalPoint(transform, eye) - settings.center, angles);
+}
+
+// CPU/reference convenience; the material path uses the angular overload.
+ImpostorBlend PrepareImpostor(float3 world, float3 eye, float4x4 transform, ImpostorSettings settings)
+{
+    return PrepareImpostor(world, eye, transform, settings,
+        ImpostorAngles(ImpostorLocalPoint(transform, eye) - settings.center));
+}
+
+// Raw projection is affine in the source point. Keep it unclamped while it is
+// interpolated across a billboard; clamping its vertices would warp the image.
+float2 ProjectImpostorUV(int frame, float3 point, ImpostorSettings settings)
+{
+    int picked = Math.Clamp(frame, 0, 23);
+    ImpostorBasis basis = ImpostorFrameBasis(picked);
+    float span = Math.Clamp(settings.span, 0.001, 1000000);
+    float2 inFrame = float2(0.5 + Math.Dot(point, basis.right) / span,
+                           0.5 - Math.Dot(point, basis.up) / span);
+    return (float2(float(picked % 8), float(picked / 8)) * 128 + float2(2) + inFrame * 124)
+        / float2(1024, 512);
+}
+
+float2 ImpostorUV(int frame, float3 point, ImpostorSettings settings)
+{
+    return ClampImpostorUV(ProjectImpostorUV(frame, point, settings), frame, 2);
+}
+
+// The first two views share elevation 0 or45 degrees and differ in azimuth by
+// 45 degrees, including the 7->0 wrap. Their right projections recover XZ;
+// the first up projection recovers Y (its cosine is always at least sqrt(.5)).
+// This lets four vertex-computed UVs carry their source point implicitly.
+float3 RecoverImpostorPoint(float2 first, float2 second, int frame, ImpostorSettings settings)
+{
+    int picked = Math.Clamp(frame, 0, 15);
+    int column = picked % 8;
+    int row = picked / 8;
+    float span = Math.Clamp(settings.span, 0.001, 1000000);
+    float x = (first.x * 1024 - float(column * 128 + 64)) * (span / 124);
+    float next = (second.x * 1024 - float(((column + 1) % 8) * 128 + 64)) * (span / 124);
+    float z = x - next * 1.414213562;
+    float up = (float(row * 128 + 64) - first.y * 512) * (span / 124);
+    float sine = row == 0 ? 0 : 0.707106781;
+    float cosine = row == 0 ? 1 : 0.707106781;
+    ImpostorBasis basis = ImpostorFrameBasis(picked);
+    float3 horizontal = Math.Cross(basis.right, float3(0, 1, 0));
+    return basis.right * x + horizontal * z + float3(0, (up + sine * z) / cosine, 0);
+}
+
+ImpostorBlend PrepareProjectedImpostor(float2 first, float2 second, float3 localEye,
+                                      float2 angles, ImpostorSettings settings)
+{
+    ImpostorSelection selection = ImpostorViews(angles);
+    float3 point = RecoverImpostorPoint(first, second, selection.frames.x, settings);
+    return ImpostorBlend { frames = selection.frames, weights = selection.weights,
+        point = point, view = Math.Normalize(localEye - point) };
+}
+
+// footprint is the largest component of this.Fwidth(uv * float2(1024,512)),
+// worked out by the frag. A full footprint bounds half the next trilinear mip's
+// texel width, so the lookup stays in its view even as gutters shrink.
+float2 ClampImpostorUV(float2 uv, int frame, float footprint)
+{
+    int picked = Math.Clamp(frame, 0, 23);
+    float2 tile = float2(float(picked % 8), float(picked / 8));
+    float margin = Math.Clamp(Math.Max(footprint, 2), 2, 63);
+    return Math.Clamp(uv, (tile * 128 + float2(margin)) / float2(1024, 512),
+        (tile * 128 + float2(128 - margin)) / float2(1024, 512));
+}
+
+// Intersect the pixel's view ray with the depth plane from this captured view.
+// Depth is an approximation of the nearest visible source layer; disoccluded
+// surfaces are not recovered. Limit ray distance at oblique angles.
+float2 ImpostorParallaxUV(int frame, ImpostorBlend blend, float depthAlpha, ImpostorSettings settings)
+{
+    ImpostorBasis basis = ImpostorFrameBasis(frame);
+    float depth = Math.Clamp(settings.depth, 0.001, 1000000);
+    float plane = (Math.Clamp(depthAlpha, 0, 1) * 2 - 1) * depth;
+    float facing = Math.Max(Math.Dot(blend.view, basis.toward), 0.2);
+    float distance = Math.Clamp((plane - Math.Dot(blend.point, basis.toward)) / facing, -2 * depth, 2 * depth)
+        * Math.Clamp(settings.parallax, 0, 1);
+    return ImpostorUV(frame, blend.point + blend.view * distance, settings);
+}
+
+// Offset an already projected raw UV, rather than projecting the point again.
+// The initial depth estimate is bilinear; final atlas samples remain trilinear.
+float2 OffsetImpostorUV(float2 projected, int frame, ImpostorBlend blend, float depthAlpha,
+                        ImpostorSettings settings)
+{
+    ImpostorBasis basis = ImpostorFrameBasis(frame);
+    float depth = Math.Clamp(settings.depth, 0.001, 1000000);
+    float span = Math.Clamp(settings.span, 0.001, 1000000);
+    float plane = (Math.Clamp(depthAlpha, 0, 1) * 2 - 1) * depth;
+    float facing = Math.Max(Math.Dot(blend.view, basis.toward), 0.2);
+    float distance = Math.Clamp((plane - Math.Dot(blend.point, basis.toward)) / facing, -2 * depth, 2 * depth)
+        * Math.Clamp(settings.parallax, 0, 1);
+    return projected + float2(Math.Dot(blend.view, basis.right), -Math.Dot(blend.view, basis.up))
+        * (distance * 124 / span) / float2(1024, 512);
+}
+
+float4 ImpostorCoverage(ImpostorBlend blend, Color a, Color b, Color c, Color d)
+{
+    return blend.weights * Math.Clamp(float4(a.a, b.a, c.a, d.a), float4(0), float4(1));
+}
+
+// Return linear albedo. The incoming texture Samples are straight display RGB;
+// alpha-weighted mixing avoids black edges and blends in light-linear space.
+float3 ImpostorAlbedo(Color a, Color b, Color c, Color d, float4 weights)
+{
+    float total = Math.Max(Math.Dot(weights, float4(1)), 1e-8);
+    return (SrgbToLinear(float3(a.r, a.g, a.b)) * weights.x
+        + SrgbToLinear(float3(b.r, b.g, b.b)) * weights.y
+        + SrgbToLinear(float3(c.r, c.g, c.b)) * weights.z
+        + SrgbToLinear(float3(d.r, d.g, d.b)) * weights.w) / total;
+}
+
+// Raw normal/depth alpha is depth, not visibility. Use the corresponding
+// albedo silhouette weights, normalize after both view and mip blending, then
+// transform the model normal with Instance.Normal at the material call site.
+float3 ImpostorNormal(Color a, Color b, Color c, Color d, float4 weights)
+{
+    float3 packed = float3(a.r, a.g, a.b) * weights.x
+        + float3(b.r, b.g, b.b) * weights.y
+        + float3(c.r, c.g, c.b) * weights.z
+        + float3(d.r, d.g, d.b) * weights.w;
+    float total = Math.Dot(weights, float4(1));
+    float3 normal = packed * 2 - float3(total);
+    return Math.LengthSq(normal) > 1e-10 ? Math.Normalize(normal) : float3(0, 1, 0);
+}
+
+float4 ImpostorMask(Color a, Color b, Color c, Color d, float4 weights)
+{
+    float total = Math.Max(Math.Dot(weights, float4(1)), 1e-8);
+    return (float4(a.r, a.g, a.b, a.a) * weights.x + float4(b.r, b.g, b.b, b.a) * weights.y
+        + float4(c.r, c.g, c.b, c.a) * weights.z + float4(d.r, d.g, d.b, d.a) * weights.w) / total;
+}
+
+// A full unwarped footprint bounds half a texel of the next trilinear mip.
+// L1 lengths conservatively bound the hardware's isotropic L2 footprint.
+float ImpostorFootprint(float2 dx, float2 dy)
+{
+    float2 x = Math.Abs(dx * float2(1024, 512));
+    float2 y = Math.Abs(dy * float2(1024, 512));
+    return Math.Max(x.x + x.y, y.x + y.y);
+}
+
+// Explicit original projection gradients keep depth-plane reprojection out of
+// mip selection. They are shared by color and raw normal/mask lookups. In
+// particular, the shader never differentiates a depth Sample to sample again.
+ImpostorAtlas SampleImpostor(Texture albedo, Texture normalDepth, Texture mask,
+                             ImpostorUVs coordinates, float3 localEye, float2 angles,
+                             ImpostorSettings settings, bool hasMask)
+{
+    ImpostorBlend blend = PrepareProjectedImpostor(coordinates.a, coordinates.b, localEye, angles, settings);
+    float extentA = ImpostorFootprint(coordinates.dxA, coordinates.dyA);
+    float extentB = ImpostorFootprint(coordinates.dxB, coordinates.dyB);
+    float extentC = ImpostorFootprint(coordinates.dxC, coordinates.dyC);
+    float extentD = ImpostorFootprint(coordinates.dxD, coordinates.dyD);
+    float2 b0 = ClampImpostorUV(coordinates.a, blend.frames.x, extentA);
+    float2 b1 = ClampImpostorUV(coordinates.b, blend.frames.y, extentB);
+    float2 b2 = ClampImpostorUV(coordinates.c, blend.frames.z, extentC);
+    float2 b3 = ClampImpostorUV(coordinates.d, blend.frames.w, extentD);
+    Color d0 = normalDepth.Sample(b0, Filter.Bilinear);
+    Color d1 = normalDepth.Sample(b1, Filter.Bilinear);
+    Color d2 = normalDepth.Sample(b2, Filter.Bilinear);
+    Color d3 = normalDepth.Sample(b3, Filter.Bilinear);
+    float2 u0 = settings.parallax > 0 ? ClampImpostorUV(OffsetImpostorUV(coordinates.a, blend.frames.x, blend, d0.a, settings), blend.frames.x, extentA) : b0;
+    float2 u1 = settings.parallax > 0 ? ClampImpostorUV(OffsetImpostorUV(coordinates.b, blend.frames.y, blend, d1.a, settings), blend.frames.y, extentB) : b1;
+    float2 u2 = settings.parallax > 0 ? ClampImpostorUV(OffsetImpostorUV(coordinates.c, blend.frames.z, blend, d2.a, settings), blend.frames.z, extentC) : b2;
+    float2 u3 = settings.parallax > 0 ? ClampImpostorUV(OffsetImpostorUV(coordinates.d, blend.frames.w, blend, d3.a, settings), blend.frames.w, extentD) : b3;
+    Color c0 = albedo.SampleGrad(u0, coordinates.dxA, coordinates.dyA, Filter.Trilinear);
+    Color c1 = albedo.SampleGrad(u1, coordinates.dxB, coordinates.dyB, Filter.Trilinear);
+    Color c2 = albedo.SampleGrad(u2, coordinates.dxC, coordinates.dyC, Filter.Trilinear);
+    Color c3 = albedo.SampleGrad(u3, coordinates.dxD, coordinates.dyD, Filter.Trilinear);
+    Color n0 = normalDepth.SampleGrad(u0, coordinates.dxA, coordinates.dyA, Filter.Trilinear);
+    Color n1 = normalDepth.SampleGrad(u1, coordinates.dxB, coordinates.dyB, Filter.Trilinear);
+    Color n2 = normalDepth.SampleGrad(u2, coordinates.dxC, coordinates.dyC, Filter.Trilinear);
+    Color n3 = normalDepth.SampleGrad(u3, coordinates.dxD, coordinates.dyD, Filter.Trilinear);
+    float4 weights = ImpostorCoverage(blend, c0, c1, c2, c3);
+    mut ImpostorAtlas result = ImpostorAtlas {
+        albedo = ImpostorAlbedo(c0, c1, c2, c3, weights),
+        normal = ImpostorNormal(n0, n1, n2, n3, weights),
+        opacity = Math.Dot(weights, float4(1))
+    };
+    if (hasMask)
+    {
+        Color m0 = mask.SampleGrad(u0, coordinates.dxA, coordinates.dyA, Filter.Trilinear);
+        Color m1 = mask.SampleGrad(u1, coordinates.dxB, coordinates.dyB, Filter.Trilinear);
+        Color m2 = mask.SampleGrad(u2, coordinates.dxC, coordinates.dyC, Filter.Trilinear);
+        Color m3 = mask.SampleGrad(u3, coordinates.dxD, coordinates.dyD, Filter.Trilinear);
+        result.mask = ImpostorMask(m0, m1, m2, m3, weights);
+    }
+    return result;
+}
+
+// Capture sampling coordinates from the faced REST card. Four raw projected
+// UVs occupy uv,normal.xy,tangent.xy,tangent.zw. color.rg holds view angles;
+// normal.z,color.ba holds the model eye. All existing corner fields are payload
+// while enabled, not a geometric tangent frame or vertex tint. No new varying
+// is needed. The material bypasses its ordinary TBN/tint path for these cards.
+// Unbaked wind deformation moves position while preserving this payload, so
+// the captured image follows the sprite rather than staying pinned in space.
+void CaptureImpostor(VertexInput input, mut MeshVertex vertex, ImpostorSettings settings)
+{
+    if (!settings.enabled) return;
+    float3 localEye = ImpostorLocalPoint(input.localToWorld, input.eye) - settings.center;
+    float2 angles = ImpostorAngles(localEye);
+    ImpostorSelection selection = ImpostorViews(angles);
+    float3 point = vertex.position - settings.center;
+    float2 uv0 = ProjectImpostorUV(selection.frames.x, point, settings);
+    float2 uv1 = ProjectImpostorUV(selection.frames.y, point, settings);
+    float2 uv2 = ProjectImpostorUV(selection.frames.z, point, settings);
+    float2 uv3 = ProjectImpostorUV(selection.frames.w, point, settings);
+    vertex.uv = uv0;
+    vertex.normal = float3(uv1, localEye.x);
+    vertex.tangent = float4(uv2, uv3);
+    vertex.color.r = angles.x;
+    vertex.color.g = angles.y;
+    vertex.color.b = localEye.y;
+    vertex.color.a = localEye.z;
+}
+
+// Use the generated source card centered at settings.center. A maximum-axis
+// world scale conservatively covers nonuniform placements as well as the usual
+// uniformly scaled trees. Reserve all UV/normal/tangent/color fields as above.
+// Preserve this payload across any later wind deformation.
+void ApplyImpostor(VertexInput input, mut MeshVertex vertex, ImpostorSettings settings)
+{
+    if (!settings.enabled) return;
+    float3 center = Math.Mul(input.localToWorld, float4(settings.center, 1)).xyz;
+    float3 toward = Math.Normalize(input.eye - center);
+    if (Math.LengthSq(toward) < 0.5)
+    {
+        CaptureImpostor(input, vertex, settings);
+        return;
+    }
+    mut float3 right = Math.Cross(float3(0, 1, 0), toward);
+    if (Math.LengthSq(right) < 1e-6) right = float3(1, 0, 0);
+    right = Math.Normalize(right);
+    float3 up = Math.Cross(toward, right);
+    float scale = Math.Max(Math.Length(input.localToWorld.c0.xyz),
+        Math.Max(Math.Length(input.localToWorld.c1.xyz), Math.Length(input.localToWorld.c2.xyz)));
+    float3 localRight = ImpostorLocalVector(input.localToWorld, right) * scale;
+    float3 localUp = ImpostorLocalVector(input.localToWorld, up) * scale;
+    float2 offset = vertex.position.xy - settings.center.xy;
+    vertex.position = settings.center + localRight * offset.x + localUp * offset.y;
+    CaptureImpostor(input, vertex, settings);
+}
+
+// A distinct vertex stage keeps optional atlas projection out of the ordinary
+// Deform callback family. Only the placed card sways; its rest sampling payload
+// remains fixed to the sprite. Per-branch source animation is not reconstructed.
+vert ImpostorDeform(mut MeshVertex corner, Instance instance, Renderer renderer, MaterialMaps maps)
+{
+    ImpostorSettings settings = maps.impostor;
+    VertexInput input = VertexContext(corner.position, instance.transform, renderer.eye);
+    ApplyImpostor(input, corner, settings);
+    float3 projections = corner.normal;
+    float4 moreProjections = corner.tangent;
+    ApplyWind(input, corner, settings.wind, settings.bend, 0);
+    corner.normal = projections;
+    corner.tangent = moreProjections;
+}

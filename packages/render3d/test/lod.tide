@@ -1,0 +1,47 @@
+using Render3D;
+
+scene Main;
+asset Mesh3D LodQuad = "quad.obj";
+asset Mesh3D LodTriangle = "lod-triangle.obj";
+singleton LodSetup { bool built; }
+local singleton LodProbe
+{
+    int scenario = -1;
+    bool disabled;
+}
+
+system BuildLodFixture(mut LodSetup setup)
+{
+    if (setup.built) return;
+    setup.built = true;
+    for (var i = 0; i < 2; i++)
+        Spawn(MeshRenderer { mesh = LodQuad },
+            Material { mode = i == 0 ? SurfaceMode.Opaque : SurfaceMode.Cutout, doubleSided = true },
+            Transform { localPosition = float3(i == 0 ? -1 : 1, 0, 0) });
+    Spawn(DirectionalLight { direction = float3(0, 0, 1) });
+}
+
+[Before(Stages.Prepare)]
+view ConfigureLodRenderer(LodProbe probe, mut Renderer renderer)
+{
+    renderer.enabled = !probe.disabled;
+    renderer.camera = Camera { position = float3(0, 0, -6), rotation = quaternion.identity };
+    renderer.shadowCascades = 0;
+    renderer.shadowCenter = float3(0);
+    renderer.shadowExtent = 4;
+    renderer.shadowDistance = 12;
+    renderer.shadowResolution = 64;
+}
+
+[Before(Stages.Prepare)]
+view ConfigureLodMesh(LodProbe probe, mut MeshRenderer mesh, mut Material material)
+{
+    // The first frame deliberately leaves every attached field at its default.
+    if (probe.scenario < 0) return;
+    mesh.meshOverride = null;
+    if (probe.scenario >= 1 && probe.scenario <= 3) mesh.meshOverride = LodTriangle;
+    if (probe.scenario == 4) mesh.meshOverride = LodQuad;
+    mesh.hidden = probe.scenario == 2;
+    mesh.hideShadows = probe.scenario == 3;
+    material.impostor.enabled = probe.scenario == 5;
+}

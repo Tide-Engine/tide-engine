@@ -8,6 +8,8 @@ struct SurfaceInput
     float3 bitangent;
     float2 uv;
     float3 viewDirection;
+    // Already-sampled raw mask channels: AO, roughness, metallic, artist data.
+    float4 mask = float4(1, 1, 0, 1);
 }
 
 // Albedo and emission are linear light. Decode display-space material colors

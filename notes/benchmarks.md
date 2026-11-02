@@ -1,5 +1,34 @@
 # Benchmarks
 
+## Forest foliage quality and moving representations (2026-11-02)
+
+The owner requested applying established foliage rendering techniques. The
+forest now selects detailed/medium/coarse mesh references each frame, with
+complementary dither crossfades at 80–100 m and 250–310 m, then a source-mesh
+impostor at 430–510 m. The offline baker rasterizes the actual detailed bark
+and leaf meshes into 24 hemisphere views with albedo, raw normal/depth and
+material-mask data. Coverage-preserving authored DDS mips use the same 0.32
+cutoff as the material. Shared wind includes explicit branch/leaf response;
+scene fog applies to terrain and every tree representation. All frame work
+uses ordinary Render3D collection/draw paths and preserves match state.
+
+`bench/forest/README.md` describes the regenerated original assets, current
+mesh counts, travel/orbit/radius/height controls, bounded motion smoke and
+JSONL counters. Crossfades submit extra instances; primary level counts cover
+all planted trees, while submitted main-target counts reflect drawing/culling.
+The rest-pose atlas retains one nearest layer, approximate card sway and proxy
+geometry for depth/lighting/fog. Unity authored-mip preservation remains absent.
+Contracts are in render3d.md and textures.md. Historical forest measurements
+below remain tied to their frozen older assets/workloads.
+
+Final scoped integration passes 115 native ASan and 120 web-release checks,
+including all moving-camera representations and transitions. Native/web/release
+and documentation builds pass. The 100000-tree captures, settings, hashes and
+bounded quiet-window attempts are retained in
+[the foliage report](../bench/results/foliage-quality-20261102/README.md).
+This entry makes no timing, FPS or speedup claim. CPU/GPU intervals overlap, native readback
+synchronizes, and software browser correctness is not hardware timing evidence.
+
 ## Shared shader binding preparation (2026-11-02)
 
 The compiler reuses compatible completed numeric-list/texture bindings within a

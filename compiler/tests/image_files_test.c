@@ -330,3 +330,110 @@ TIDE_TEST(image_jpeg_scans_and_psd_pixels_are_refused_past_their_limits)
     TIDE_CHECK(!image_file_read(psd, sizeof psd, "big.psd", &image, why) && !image.pixels);
     TIDE_CHECK(!strstr(why, "at most") && strstr(why, "composite"));
 }
+
+static void dds_word(uint8_t *data, const size_t at, const uint32_t value)
+{
+    for (unsigned int i = 0; i < 4; i++) data[at + i] = (uint8_t)(value >> (i * 8u));
+}
+
+static uint8_t *authored_dds(const bool bgra, size_t *size)
+{
+    // Specification-written rectangular DDS: 8x4, 4x2, 2x1, 1x1, every mip
+    // intentionally different so replacing them by filtering cannot pass.
+    *size = 128u + (32u + 8u + 2u + 1u) * 4u;
+    uint8_t *data = calloc(*size, 1u);
+    if (!data) abort();
+    memcpy(data, "DDS ", 4);
+    dds_word(data, 4, 124u), dds_word(data, 8, 0x2100fu);
+    dds_word(data, 12, 4u), dds_word(data, 16, 8u), dds_word(data, 20, 32u), dds_word(data, 28, 4u);
+    dds_word(data, 76, 32u), dds_word(data, 80, 0x41u), dds_word(data, 88, 32u);
+    dds_word(data, 92, bgra ? 0xff0000u : 255u), dds_word(data, 96, 0xff00u);
+    dds_word(data, 100, bgra ? 255u : 0xff0000u), dds_word(data, 104, UINT32_C(0xff000000));
+    dds_word(data, 108, 0x401008u);
+    for (size_t i = 128u; i < *size; i += 4u) {
+        data[i] = bgra ? 33u : 91u, data[i + 1u] = (uint8_t)(i - 128u);
+        data[i + 2u] = bgra ? 91u : 33u, data[i + 3u] = (uint8_t)(255u - (i - 128u));
+    }
+    return data;
+}
+
+TIDE_TEST(image_dds_keeps_every_authored_rgba_and_bgra_mip_independently)
+{
+    for (unsigned int bgra = 0; bgra < 2; bgra++) {
+        size_t size;
+        uint8_t *data = authored_dds(bgra != 0, &size);
+        tide_png_image image;
+        tide_texture_blocks mips;
+        char why[256];
+        TIDE_REQUIRE(image_file_read_mips(data, size, "misleading.png", &image, &mips, why));
+        TIDE_CHECK(!why[0] && image.width == 8u && image.height == 4u && mips.levels == 4u
+                   && mips.format == TIDE_BLOCKS_RGBA8 && mips.bytes == size - 128u);
+        free(data); // Both results own their bytes.
+        for (uint32_t i = 0; i < mips.bytes; i += 4u)
+            TIDE_CHECK(mips.pixels[i] == 91u && mips.pixels[i + 1u] == (uint8_t)i
+                       && mips.pixels[i + 2u] == 33u && mips.pixels[i + 3u] == (uint8_t)(255u - i));
+        TIDE_CHECK(pixels_are(&image, mips.pixels, 0));
+        free(image.pixels), free((void *)(uintptr_t)mips.pixels);
+    }
+}
+
+TIDE_TEST(image_dds_rejects_unsupported_shapes_formats_and_incomplete_chains)
+{
+    const struct { size_t at; uint32_t value; const char *reason; } cases[] = {
+        {4, 123, "header"}, {76, 31, "header"}, {80, 4, "pixel format"}, {84, UINT32_C(0x30315844), "pixel format"},
+        {88, 24, "pixel format"}, {92, 0xff00, "pixel format"}, {104, 0, "pixel format"},
+        {8, 0x82100f, "single 2D"}, {24, 2, "single 2D"}, {112, 0x200, "single 2D"}, {20, 36, "padded"},
+        {16, 7, "powers of two"}, {28, 3, "mip data"}, {28, UINT32_MAX, "mip data"}
+    };
+    size_t size;
+    uint8_t *good = authored_dds(false, &size), *changed = malloc(size + 1u);
+    TIDE_REQUIRE(changed != NULL);
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        memcpy(changed, good, size);
+        dds_word(changed, cases[i].at, cases[i].value);
+        tide_png_image image;
+        tide_texture_blocks mips;
+        char why[256];
+        const bool ok = image_file_read_mips(changed, size, "bad.dds", &image, &mips, why);
+        if (ok || !strstr(why, cases[i].reason)) printf("    DDS case %zu: %s\n", i, why);
+        TIDE_CHECK(!ok && !image.pixels && !image.width && !mips.pixels && strstr(why, cases[i].reason));
+    }
+    memcpy(changed, good, size);
+    changed[size] = 0;
+    tide_png_image image;
+    tide_texture_blocks mips;
+    char why[256];
+    TIDE_CHECK(!image_file_read_mips(changed, size + 1u, "extra.dds", &image, &mips, why) && strstr(why, "mip data"));
+    free(good), free(changed);
+}
+
+TIDE_TEST(image_dds_exact_allocations_cut_and_corrupted_are_bounded)
+{
+    size_t size;
+    uint8_t *good = authored_dds(false, &size);
+    for (size_t cut = 0; cut < size; cut++) {
+        uint8_t *data = malloc(cut ? cut : 1u);
+        TIDE_REQUIRE(data != NULL);
+        memcpy(data, good, cut);
+        tide_png_image image;
+        tide_texture_blocks mips;
+        char why[256];
+        TIDE_CHECK(!image_file_read_mips(data, cut, "short.dds", &image, &mips, why) && !image.pixels && !mips.pixels && why[0]);
+        free(data);
+    }
+    static const uint8_t masks[] = {1, 128, 255};
+    for (size_t at = 0; at < size; at++) for (size_t variant = 0; variant < sizeof masks; variant++) {
+        uint8_t *data = malloc(size);
+        TIDE_REQUIRE(data != NULL);
+        memcpy(data, good, size);
+        data[at] ^= masks[variant];
+        tide_png_image image;
+        tide_texture_blocks mips;
+        char why[256];
+        const bool ok = image_file_read_mips(data, size, "changed.dds", &image, &mips, why);
+        if (ok) TIDE_CHECK(image.width == 8u && image.height == 4u && mips.bytes == size - 128u);
+        else TIDE_CHECK(!image.pixels && !mips.pixels && why[0]);
+        free(image.pixels), free((void *)(uintptr_t)mips.pixels), free(data);
+    }
+    free(good);
+}

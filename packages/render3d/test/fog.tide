@@ -1,0 +1,62 @@
+using Render3D;
+
+scene Main;
+asset Mesh3D quad = "quad.obj";
+singleton FogScene { bool dither; }
+local singleton FogProbe
+{
+    bool enabled;
+    float3[5] values;
+    int[5] coverage;
+    int complements;
+}
+
+system CreateFogScene(FogScene scene)
+{
+    Spawn(MeshRenderer { mesh = quad },
+        Material { baseColor = Color(0, 0, 0, scene.dither ? 0.5 : 1), emission = float3(0.8, 0, 0) },
+        Transform { localPosition = float3(scene.dither ? 0 : -0.9, 0, 3), localScale = float3(scene.dither ? 3 : 1) });
+    Spawn(MeshRenderer { mesh = quad },
+        Material { baseColor = Color(0, 0, 0, scene.dither ? -0.5 : 1), emission = float3(0, 0, 0.8) },
+        Transform { localPosition = float3(scene.dither ? 0 : 0.9, 0, 3), localScale = float3(scene.dither ? 3 : 1) });
+}
+
+[Before(Stages.Prepare)]
+view ConfigureFog(mut FogProbe probe, mut Renderer renderer)
+{
+    renderer.camera = Camera { position = float3(0), far = 20 };
+    renderer.background = Color.black;
+    renderer.shadows = false;
+    renderer.fog = FogSettings { enabled = probe.enabled, density = 8, color = float3(0.2, 0.4, 0.6) };
+    float3 original = float3(2, 4, 8);
+    probe.values[0] = ApplyFog(original, float3(0, 0, 2), float3(0), FogSettings {});
+    probe.values[1] = ApplyFog(original, float3(0, 0, 2), float3(0),
+        FogSettings { enabled = true, density = 0, color = float3(1) });
+    probe.values[2] = ApplyFog(original, float3(0, 0, 2), float3(0),
+        FogSettings { enabled = true, density = Math.Log(2), start = 1, color = float3(0.2, 0.4, 0.6) });
+    probe.values[3] = ApplyFog(original, float3(0, 0, 2), float3(0),
+        FogSettings { enabled = true, density = 1, start = 3, color = float3(1) });
+    probe.values[4] = ApplyFog(original, float3(0, 0, 200), float3(0),
+        FogSettings { enabled = true, density = 10, color = float3(-1, 0.4, 0.6) });
+    probe.complements = 0;
+    for (var step = 0; step < 5; step++)
+    {
+        mut int count = 0;
+        float fraction = float(step) * 0.25;
+        for (var y = 0; y < 4; y++)
+        for (var x = 0; x < 4; x++)
+        {
+            bool first = DitherKeep(float2(x, y), 1 - fraction);
+            bool second = fraction > 0 && DitherKeep(float2(x, y), -fraction);
+            if (first) count++;
+            if (first != second) probe.complements++;
+        }
+        probe.coverage[step] = count;
+    }
+}
+
+[Before(Stages.Prepare)]
+view BindFog(FogScene scene, mut Material material)
+{
+    material.ditherFade = scene.dither;
+}

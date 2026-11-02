@@ -8,6 +8,7 @@
 #include "mesh_files.h"
 #include "tide/png.h"
 #include "tide/skinned_data.h"
+#include "tide/texture_blocks.h"
 
 // The files an `asset` declaration resolves to (docs/spec.md, Assets): found
 // from the declaring file, read, hashed and, for a Grid2<Color>, decoded, so
@@ -40,6 +41,7 @@ typedef struct asset_match {
     size_t size;
     uint8_t hash[32];     // SHA-256 of the original file bytes
     tide_png_image image; // ASSET_GRID and ASSET_TEXTURE: its pixels
+    tide_texture_blocks image_mips; // Optional authored full RGBA8 chain, straight samples; cache-owned.
     mesh_file mesh;       // ASSET_MESH: its vertices and triangles, which stay until the file changes, as its bytes do
     const uint8_t *skinned;
     uint32_t skinned_size;
