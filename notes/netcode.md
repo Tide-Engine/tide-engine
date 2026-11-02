@@ -1,5 +1,49 @@
 # Netcode: sessions, prediction, commands
 
+## Received projections reuse decoded state (2026-11-02)
+
+Mount & Rifle now exercises the existing `reload_client_state` path for remote
+snapshots and repairs as well as solo takes. `unpack_client_state` first validates
+the delta and byte hash, copies the last accepted, never-ticked decoded projection,
+and reloads over its original bytes. Missing/refused reloads use the existing fresh
+loader. Re-serialization/hash, endpoint/frame hash and event-journal checks remain.
+Only an accepted endpoint replaces the cache; prediction never mutates it. Existing
+build-change, migration and destruction cleanup owns the cache. Games without the
+callback keep the old path. No wire, language or generated-C API changes.
+
+Cost: a remote client now retains one decoded projection and its bytes, using the
+same cache as solo takes. World pages share with snapshots; changed pages copy on
+write. This saves rebuilding static lists, maps and text during recurring repairs,
+not serialization of the delta baseline or the checks after decoding.
+
+Real-game experiment: current engine checkout, Mount & Rifle sources from
+D:/Projects/mount-and-rifle, optimized Windows build, two standard-host players,
+180 frames at 320x180, 80 ms one-way latency, 10 ms jitter, 3% loss. A scratch
+switch disabled only reload reuse in the same instrumented executable. Both runs
+decoded 41 projections, 39 eligible for reuse. Timed copy/reload-or-load work took
+10.1850 ms total fresh versus 5.7131 ms with reuse (248.4 versus 139.3 us per
+projection, 44% less). This is one paired run, not a whole-frame speedup or an
+Internet connection-time result. Scratch logs/scripts are in build/mp-probe;
+no timing calls, switches or logging remain in production.
+
+Connection investigation: the baseline 240-frame run at those network conditions
+loaded the remote initial snapshot at simulated time 0.833333 s: 56,244 compressed
+bytes, endpoint tick 19 versus advertised tick 41. This excludes room signalling,
+ICE/DTLS and actual bandwidth limits. Packing requests after the current update's
+ticks instead produced 1.05 s in the same seeded network (changed traffic also
+changes loss draws); that experiment was reverted. No initial-join improvement is
+claimed. The game's pinned nightly.14 was not changed or benchmarked here.
+
+Validation: 15 session/packet/view-time and eight visibility tests pass on Windows
+ASan and WebAssembly/WASI (Node 24.22.1). The extended view-time test uses reloads
+through lossy repairs, checks that each old world exactly matches its original
+bytes despite intervening prediction, and deliberately refuses every third reload
+to exercise fallback. Generated visibility_lists and net_alone_seen CTests pass
+on both platforms, covering unchanged-page sharing, fresh-load equivalence,
+truncated-codec rejection, prediction and solo takes. The real game's 240-frame
+two-client run also completes with the change. Other native platforms are CI's;
+actual Internet/WebRTC joining and browser rendering remain unmeasured.
+
 ## Protocol 21: 64-bit handles (2026-10-30)
 
 `PROTOCOL` is 21 (`engine/src/session.c`, and the tests that write it by hand:

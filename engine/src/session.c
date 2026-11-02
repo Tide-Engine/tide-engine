@@ -396,7 +396,9 @@ static uint8_t *pack_client_state(const tide_game *g, const void *world, const v
 static bool unpack_client_state(const tide_game *g, void *world, const void *base,
                                 const tide_player_id player, const uint32_t base_tick,
                                 const uint8_t *data, const uint32_t size, tide_entity **destroyed,
-                                uint32_t *destroyed_count, tide_event_log *events)
+                                uint32_t *destroyed_count, tide_event_log *events, const void *loaded,
+                                const uint8_t *loaded_bytes, uint32_t loaded_size,
+                                uint8_t **kept_bytes, uint32_t *kept_size)
 {
     tide_delta_reader d;
     uint64_t hash;
@@ -435,7 +437,14 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
     ok = ok && tide_delta_closed(&d) && d.bytes.at == size && tide_hash(bytes, count) == hash;
     // Loaded, the world says what it was sent: its projection is those bytes again (client_hash is another
     // hash, of its values, which frames check)
-    if (ok) ok = g->load_client_state(world, bytes, count);
+    if (ok) {
+        bool reloaded = false;
+        if (loaded && g->reload_client_state) {
+            g->copy_world(world, loaded);
+            reloaded = g->reload_client_state(world, bytes, count, loaded_bytes, loaded_size);
+        }
+        ok = reloaded || g->load_client_state(world, bytes, count);
+    }
     if (ok) {
         uint32_t again_count = 0;
         uint8_t *again = g->client_state(world, player, &again_count);
@@ -456,7 +465,10 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
     }
     else free(died);
     free(previous);
-    free(bytes);
+    if (ok && g->reload_client_state) {
+        *kept_bytes = bytes;
+        *kept_size = count;
+    } else free(bytes);
     return ok;
 }
 
@@ -3616,7 +3628,7 @@ struct tide_client {
     const tide_server *host;
     uint32_t host_due;
     uint32_t taken_from, taken_to;
-    // The last projection it took, as loaded, never ticked, and the bytes it
+    // The last projection received or taken locally, never ticked, and the bytes it
     // was loaded from: the next is loaded over it (reload_client_state),
     // keeping what's alike. NULL where the game can't, or none was taken.
     void *taken_world;
@@ -5199,9 +5211,12 @@ static void load_snapshot(tide_client *c)
     tide_entity *destroyed = NULL;
     uint32_t destroyed_count = 0;
     tide_event_log journal = {0};
+    uint8_t *kept_bytes = NULL;
+    uint32_t kept_size = 0;
     bool ok = world && (g->client_state
         ? unpack_client_state(g, world, repair && c->loaded ? world_at(c, c->verified) : NULL,
-            tide_player_from_index(c->player), c->verified, c->snapshot, c->snapshot_size, &destroyed, &destroyed_count, &journal)
+            tide_player_from_index(c->player), c->verified, c->snapshot, c->snapshot_size, &destroyed, &destroyed_count, &journal,
+            c->taken_world, c->taken_bytes, c->taken_size, &kept_bytes, &kept_size)
         : g->unpack_delta(world, base, c->snapshot, c->snapshot_size));
     for (uint32_t at = 0; ok && repair && at < journal.size;) {
         const tide_heard *heard = (const tide_heard *)(journal.bytes + at);
@@ -5213,6 +5228,7 @@ static void load_snapshot(tide_client *c)
     c->answered = false;
     c->taken_from = c->taken_to = 0; // Its worlds are this one's, or are made again
     if (!ok) { // Asked for again, whole if it was built from a world of its own
+        free(kept_bytes);
         c->asset_failed = true;
         free_world(g, world);
         free(world);
@@ -5237,7 +5253,16 @@ static void load_snapshot(tide_client *c)
             c->repair_tick = 0;
             c->repair_stream = false;
             c->need_snapshot = true;
+            free(kept_bytes);
             return;
+        }
+        if (kept_bytes) {
+            if (!c->taken_world) c->taken_world = calloc(1, g->world_size);
+            if (!c->taken_world) tide_out_of_memory();
+            g->copy_world(c->taken_world, world);
+            free(c->taken_bytes);
+            c->taken_bytes = kept_bytes;
+            c->taken_size = kept_size;
         }
         capture_view_correction(c, from + 1u);
         for (uint32_t t = from; t < tick; t++) suppress_guessed_lifecycle(c, t);
@@ -5271,6 +5296,14 @@ static void load_snapshot(tide_client *c)
         if (c->catching_up) c->verified_view = (double)tick;
         if (c->ahead > tick) predict_again(c);
         return;
+    }
+    if (kept_bytes) {
+        if (!c->taken_world) c->taken_world = calloc(1, g->world_size);
+        if (!c->taken_world) tide_out_of_memory();
+        g->copy_world(c->taken_world, world);
+        free(c->taken_bytes);
+        c->taken_bytes = kept_bytes;
+        c->taken_size = kept_size;
     }
     drop_base(c);
     c->base_failed = false;
