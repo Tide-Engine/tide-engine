@@ -13,6 +13,18 @@ struct Wind
     float time;
 }
 
+// Authored response, separate from the shared weather. Bend/flutter are the
+// same displacement coefficients as ApplyWind's scalar arguments: zero means
+// stiff. Phase offsets are cycles, normally shared by a branch or leaf card.
+// Callers choose how to store them; no color/UV channel has an implicit meaning.
+struct WindResponse
+{
+    float bend;
+    float flutter;
+    float branchPhase;
+    float leafPhase;
+}
+
 // Smooth triangle wave: cheap procedural motion without texture lookups. Phase
 // is in cycles. Its analytic derivative is continuous at the triangle corners.
 float WindWave(float phase)
@@ -77,6 +89,52 @@ void ApplyWind(VertexInput input, mut MeshVertex vertex, Wind wind, float bend, 
     vertex.position += local * amount;
     // J = I + local * (0,slope,0)^T, local.y=0. Transform tangent by J,
     // normal by inverse-transpose J; re-orthogonalize the tangent frame.
+    float3 normal = Math.Normalize(vertex.normal - float3(0, slope * Math.Dot(local, vertex.normal), 0));
+    float3 tangent = vertex.tangent.xyz + local * (slope * vertex.tangent.y);
+    vertex.normal = normal;
+    vertex.tangent = float4(Math.Normalize(tangent - normal * Math.Dot(normal, tangent)), vertex.tangent.w);
+}
+
+// Main bending and leaf detail follow separate authored phases, as in
+// Crytek's vegetation animation (GPU Gems 3, chapter 16). The travelling gust
+// remains shared in world space; a branch phase varies only the slower sway.
+// The frame correction treats response as locally constant. A branch/leaf card
+// should keep its authored weights/phases constant, rather than encode an
+// unreported spatial gradient. Color and shadow passes need the same response.
+void ApplyWind(VertexInput input, mut MeshVertex vertex, Wind wind, WindResponse response)
+{
+    float branchPhase = Math.Frac(Math.Clamp(response.branchPhase, -1000000, 1000000));
+    float phaseOffset = Math.Frac(Math.Clamp(response.leafPhase, -1000000, 1000000));
+    if (branchPhase == 0 && phaseOffset == 0)
+    {
+        // Preserve the scalar path's arithmetic exactly when no phases differ.
+        ApplyWind(input, vertex, wind, response.bend, response.flutter);
+        return;
+    }
+    float height = Math.Clamp(vertex.position.y, 0, 10000);
+    float strength = Math.Clamp(wind.strength, 0, 10);
+    float bending = Math.Clamp(response.bend, 0, 1);
+    float detail = Math.Clamp(response.flutter, 0, 1);
+    if (height <= 0 || strength <= 0 || (bending <= 0 && detail <= 0)) return;
+    float2 direction = Math.Normalize(wind.direction);
+    float3 local = WindLocalDirection(input.localToWorld, direction);
+    if (!(Math.LengthSq(local) > 0)) return;
+    float time = Math.Clamp(wind.time, -1000000, 1000000);
+    float speed = Math.Clamp(wind.speed, 0, 30);
+    float scale = Math.Clamp(wind.gustScale, 0, 1);
+    float travel = Math.Clamp(wind.gustSpeed, 0, 30);
+    float gust = Math.Clamp(wind.gustStrength, 0, 1);
+    float2 root = Math.Clamp(input.localToWorld.c3.xz, float2(-1000000), float2(1000000));
+    float phase = Math.Dot(root, direction) * scale;
+    float breeze = strength * (1 + gust * WindWave(phase - time * travel))
+        * (0.65 + 0.35 * WindWave(phase * 0.73 + time * speed * 0.17 + branchPhase));
+    float leafPhase = height * 1.73 + phase + time * speed * 3.7 + phaseOffset;
+    float leaf = WindWave(leafPhase);
+    float amount = bending * height * height * breeze + detail * height * strength * leaf;
+    mut float slope = 2 * bending * height * breeze
+        + detail * strength * (leaf + height * 1.73 * WindWaveDerivative(leafPhase));
+    if (vertex.position.y >= 10000) slope = 0;
+    vertex.position += local * amount;
     float3 normal = Math.Normalize(vertex.normal - float3(0, slope * Math.Dot(local, vertex.normal), 0));
     float3 tangent = vertex.tangent.xyz + local * (slope * vertex.tangent.y);
     vertex.normal = normal;

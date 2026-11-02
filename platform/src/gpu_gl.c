@@ -296,16 +296,22 @@ static void gl_texture_write(const tide_gpu_id texture, const void *pixels)
 
 static tide_gpu_id gl_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
 {
+    uint32_t levels, total;
+    if (!blocks.pixels || !tide_texture_blocks_size(width, height, blocks.format, &levels, &total)
+        || blocks.levels != levels || blocks.bytes != total) return 0;
+    const bool rgba = blocks.format == TIDE_BLOCKS_RGBA8;
     const GLenum format = blocks.format == TIDE_BLOCKS_BC1 ? GL_COMPRESSED_RGB_S3TC_DXT1 : GL_COMPRESSED_RGBA_S3TC_DXT5;
-    GLint count = 0;
-    glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &count);
-    if (count <= 0 || count > 4096) return 0;
-    GLint *formats = tide_alloc((size_t)count * sizeof *formats);
-    glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, formats);
-    bool supported = false;
-    for (GLint i = 0; i < count; i++) if ((GLenum)formats[i] == format) supported = true;
-    free(formats);
-    if (!supported) return 0;
+    if (!rgba) {
+        GLint count = 0;
+        glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &count);
+        if (count <= 0 || count > 4096) return 0;
+        GLint *formats = tide_alloc((size_t)count * sizeof *formats);
+        glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, formats);
+        bool supported = false;
+        for (GLint i = 0; i < count; i++) if ((GLenum)formats[i] == format) supported = true;
+        free(formats);
+        if (!supported) return 0;
+    }
     GLuint texture = 0;
     glGenTextures(1, &texture);
     textures = room(textures, &texture_names, texture, sizeof(gl_texture));
@@ -314,9 +320,9 @@ static tide_gpu_id gl_texture_blocks(const int width, const int height, const ti
     int w = width, h = height;
     uint32_t offset = 0;
     for (uint32_t level = 0; level < blocks.levels; level++) {
-        const uint32_t bytes = ((uint32_t)w + 3u) / 4u * (((uint32_t)h + 3u) / 4u)
-                             * (blocks.format == TIDE_BLOCKS_BC1 ? 8u : 16u);
-        glCompressedTexImage2D(GL_TEXTURE_2D, (GLint)level, format, w, h, 0, (GLsizei)bytes, blocks.pixels + offset);
+        const uint32_t bytes = tide_texture_level_bytes((uint32_t)w, (uint32_t)h, blocks.format);
+        if (rgba) glTexImage2D(GL_TEXTURE_2D, (GLint)level, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, blocks.pixels + offset);
+        else glCompressedTexImage2D(GL_TEXTURE_2D, (GLint)level, format, w, h, 0, (GLsizei)bytes, blocks.pixels + offset);
         offset += bytes;
         if (w > 1) w /= 2;
         if (h > 1) h /= 2;

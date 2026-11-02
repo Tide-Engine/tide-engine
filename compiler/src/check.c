@@ -7902,12 +7902,13 @@ static decl *named_enum(const checker *c, const expr *e);
 // shader binding is checked separately from the ordinary signature table.
 static void check_sample_args(checker *c, expr *e, const bool cube)
 {
+    const int filter_at = str_eq_c(e->name, "SampleGrad") ? 3 : 1;
     for (int i = 0; i < e->args.count; i++) {
         expr *arg = e->args.items[i];
         if (!arg->enum_shorthand) { check_expr(c, arg); continue; }
         const str name = arg_name(e, i);
-        const bool filter = name.len ? str_eq_c(name, "filter") : i == 1;
-        const bool wrap = !cube && (name.len ? str_eq_c(name, "wrap") : i == 2);
+        const bool filter = name.len ? str_eq_c(name, "filter") : i == filter_at;
+        const bool wrap = !cube && (name.len ? str_eq_c(name, "wrap") : i == filter_at + 1);
         check_expr_want(c, arg, filter ? (type){TY_ENUM, c->prog->filter} : wrap ? (type){TY_ENUM, c->prog->wrap} : T_ERR);
     }
 }
@@ -8531,12 +8532,12 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
     if (obj.kind == TY_TEXTURE) {
-        if (str_eq_c(e->name, "Sample")) {
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")) {
             check_sample_args(c, e, false);
             return check_grid_sample(c, e, obj);
         }
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "a Texture has Sample(uv[, filter[, wrap]]), not '" STR_FMT "'", STR_ARG(e->name));
+        diag_error(e->at, "a Texture has Sample(uv[, filter[, wrap]]) and SampleGrad(uv, dx, dy[, filter[, wrap]]), not '" STR_FMT "'", STR_ARG(e->name));
         if (str_eq_c(e->name, "Compare")) diag_note("Compare reads a render target's depth, a DepthTexture: 'target.depth'");
         return T_ERR;
     }
@@ -11026,7 +11027,16 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
 {
     const decl *shader = gpu_code(c);
     decl *function = shader ? NULL : gpu_function(c); // ...or in a function they call
+    const bool gradients = str_eq_c(e->name, "SampleGrad");
+    if (gradients && shader && !shader->is_frag) {
+        diag_error(e->at, "SampleGrad reads a Texture with UV derivatives per destination pixel: use it in a frag or a function a frag calls");
+        return T_ERR;
+    }
     if (!shader && !function) {
+        if (gradients) {
+            diag_error(e->at, "SampleGrad reads a Texture on the GPU: in a frag or a function a frag calls");
+            return T_ERR;
+        }
         diag_error(e->at, grid.kind == TY_TEXTURE ? "Sample reads a Texture on the GPU: in a frag or a vert"
                                                : "Sample reads a grid as a texture, which the GPU does: in a frag or a vert");
         if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
@@ -11061,6 +11071,34 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
                    "%s in a component or singleton", grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
+    }
+    if (gradients) {
+        if (!order_named_args(e, "uv, dx, dy, filter, wrap", 2)) return T_ERR;
+        for (int i = 0; i < e->args.count; i++) {
+            if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+        }
+        if (e->args.count < 3 || e->args.count > 5
+            || e->args.items[0]->type.kind != TY_FLOAT2 || e->args.items[1]->type.kind != TY_FLOAT2
+            || e->args.items[2]->type.kind != TY_FLOAT2
+            || (e->args.count >= 4 && (e->args.items[3]->type.kind != TY_ENUM || e->args.items[3]->type.decl != c->prog->filter))
+            || (e->args.count >= 5 && (e->args.items[4]->type.kind != TY_ENUM || e->args.items[4]->type.decl != c->prog->wrap))) {
+            diag_error(e->at, "SampleGrad takes float2 uv, float2 dx and float2 dy, then an optional Filter and Wrap: "
+                              "'texture.SampleGrad(uv, dx, dy, Filter.Trilinear, Wrap.Repeat)'");
+            return T_ERR;
+        }
+        if (e->args.count >= 4 && !e->args.items[3]->enum_member) {
+            diag_error(e->args.items[3]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a "
+                                             "texture is read before any pixel runs");
+            return T_ERR;
+        }
+        if (e->args.count >= 5 && !e->args.items[4]->enum_member) {
+            diag_error(e->args.items[4]->at, "the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror': the GPU is told "
+                                             "how a texture is read before any pixel runs");
+            return T_ERR;
+        }
+        e->call = CALL_GRID;
+        e->type_decl = grid.decl;
+        return (type){TY_COLOR, NULL};
     }
     if (!order_named_args(e, "uv, filter, wrap", 2)) return T_ERR;
     for (int i = 0; i < e->args.count; i++) {
@@ -13662,7 +13700,7 @@ static bool stands_alone(const expr *e)
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
-        || (call == CALL_GRID && !str_eq_c(called->name, "Sample"))
+        || (call == CALL_GRID && !str_eq_c(called->name, "Sample") && !str_eq_c(called->name, "SampleGrad"))
         || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || (call == CALL_JSON && called->arg_out) // int.TryParse(text, out value): the variable is the number, or 0

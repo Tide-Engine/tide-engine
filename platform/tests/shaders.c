@@ -819,6 +819,10 @@ static void run_mipmap_checks(const float lit, const char *when)
         {136, {floats ? 32 : 0, 0, 0}, "a grid of floats, sampled Trilinear"},
         {152, {drawn, 0, 0}, "a target's color, read between its smaller images: made of what was just drawn into it"},
         {168, {drawn, 0, 0}, "through a frag too"},
+        {184, {32, 64, 255}, "SampleGrad keeps carried Trilinear through two helpers and divergent fragments"},
+        {200, {0, 0, 255}, "SampleGrad keeps carried Bilinear at the base level"},
+        {216, {32, 64, 255}, "SampleGrad's explicit derivatives and Trilinear override a Point source"},
+        {232, {51, 77, 102}, "SampleGrad keeps Raw RGB and carried Repeat at explicit mip 2 through two helpers"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 14;

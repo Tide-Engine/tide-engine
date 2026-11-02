@@ -1,0 +1,7 @@
+// expect: the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror'
+scene Main { }
+frag Shade(Vertex vertex, out Color color, Texture source)
+{
+    var wrap = Wrap.Repeat;
+    color = source.SampleGrad(vertex.uv, float2(0.1), float2(0.1), .Trilinear, wrap);
+}

@@ -1,5 +1,26 @@
 # Assets and local files
 
+## Authored RGBA8 DDS mip imports (2026-11-02)
+
+The approved foliage quality pass adds narrow legacy DDS image import: a single
+tightly packed RGBA8/BGRA8 2D full chain, POT sides 4..16384, through 1x1.
+No compressed/DX10 DDS, array/cube/volume payload, padding or inferred missing
+levels. Header/masks/pitch/caps/count/exact payload bounds are validated before
+allocation under existing 512 MiB image limits. The compiler cache owns both
+base float colors and independent straight RGBA mip bytes; invalidation frees
+both. Ordinary Texture/list/map packing premultiplies each authored color mip;
+Raw packing keeps independent channels. Grids and cubemap faces consume the
+base image only. Signatures override source suffixes; runtime Decode remains
+PNG-only. Existing declarations and generated calls are unchanged.
+
+The pack's existing immutable mip trailer accepts RGBA8 format 4 and preserves
+the supplied chain instead of recompressing it. Complete upload/fallback
+contracts, finite alpha coverage algorithm and focused pending central
+validation are in `notes/textures.md`, Authored foliage mip coverage. Public
+asset/texture pages and spec format lists describe the file contract. Compressed
+DDS and KTX remain unbuilt. Unity's recorder currently retains only the base
+image; native OpenGL/Vulkan and WebGL2/WebGPU retain every authored level.
+
 ## Meshes the game makes beside assets' (2026-11-02)
 
 `Mesh<V>` is now 24 bytes: an asset's id, or a made mesh's content key (negative)

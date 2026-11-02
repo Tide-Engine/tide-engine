@@ -310,7 +310,7 @@ typedef struct tide_gpu {
     // `pixels` is all of the texture's either way, its rows one after the other, of which a part's are read
     // where they are. How it's read is each draw's to say (sample).
     tide_gpu_id (*texture)(tide_gpu_format format, int width, int height, const void *pixels);
-    // Complete immutable BC1/BC3 mip chain, or 0 when unsupported. No upload
+    // Complete immutable BC1/BC3 or authored RGBA8 mip chain, or 0 when unsupported. No upload
     // or allocation on unsupported devices; the renderer then uses RGBA.
     tide_gpu_id (*texture_blocks)(int width, int height, tide_texture_blocks blocks);
     void (*texture_write)(tide_gpu_id texture, const void *pixels);

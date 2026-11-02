@@ -2015,23 +2015,24 @@
                 [t.width, t.height]);
         },
         gpu_texture_blocks(width, height, format, levels, ptr) {
-            if (config.textureCompression === false || !device.features.has('texture-compression-bc')) return 0;
+            const rgba = format === 4;
+            if (!rgba && (config.textureCompression === false || !device.features.has('texture-compression-bc'))) return 0;
             const block = format === 1 ? 8 : 16;
-            format = format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            format = rgba ? 'rgba8unorm' : format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
             const texture = device.createTexture({ size: [width, height], format, mipLevelCount: levels, usage });
             let w = width, h = height, offset = ptr;
             for (let level = 0; level < levels; level++) {
                 const blocksWide = Math.ceil(w / 4), blocksHigh = Math.ceil(h / 4);
-                const bytes = blocksWide * blocksHigh * block;
+                const bytes = rgba ? w * h * 4 : blocksWide * blocksHigh * block;
                 const [data, dataOffset] = memoryBytes(offset, bytes);
                 device.queue.writeTexture({ texture, mipLevel: level }, data,
-                    { offset: dataOffset, bytesPerRow: blocksWide * block, rowsPerImage: blocksHigh * 4 },
-                    [blocksWide * 4, blocksHigh * 4]);
+                    { offset: dataOffset, bytesPerRow: rgba ? w * 4 : blocksWide * block, rowsPerImage: rgba ? h : blocksHigh * 4 },
+                    rgba ? [w, h] : [blocksWide * 4, blocksHigh * 4]);
                 offset += bytes;
                 w = Math.max(1, w >> 1); h = Math.max(1, h >> 1);
             }
-            return gpuAdd('texture', { texture, view: texture.createView(), width, height, format, usage,
+            return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: rgba ? width * 4 : 0, format, usage,
                 mipped: true, groups: new Set() });
         },
         // Some of its pixels, read where they are among all of them: rows the texture's own width apart

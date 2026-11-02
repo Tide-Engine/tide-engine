@@ -1,5 +1,54 @@
 # Code the GPU runs: frags and verts
 
+## Explicit Texture gradients (2026-11-02)
+
+The scoped foliage API completion adds
+`Texture.SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's,
+Wrap wrap = the texture's) -> Color`. UV derivatives are per destination pixel
+right/down. Frags and their GPU helper functions/methods accept it; CPU code,
+verts and helpers reached from verts refuse it. Other texture kinds do not
+expose it. There is no new syntax, runtime function, sampler or backend feature.
+
+- `check_grid_sample` shares ordinary source-name and Raw checks, with three
+  required float2 operands and the existing fixed-member Filter/Wrap rules.
+  All operands stay in `expr.args`, including named-argument source order.
+  `CALL_GRID`'s method name distinguishes the new operation.
+- `ex_sample` emits existing GLSL `textureGrad`/WGSL `textureSampleGrad` directly,
+  without implicit UV reconstruction. `function_sample.gradients` propagates
+  through helper chains and distinguishes explicit reads from ordinary Sample
+  diagnostics; it is absent from sampler-binding identity. Source specialization
+  retains Raw classification, defaults and binding deduplication with Sample.
+- Statements containing SampleGrad use the shader writer's existing operand
+  capture and lazy-branch lowering, also used by switch expressions. This keeps
+  its three numeric operands in written evaluation order even on GLSL. Filter
+  and wrap remain compile-time sampler metadata. Existing Sample paths and
+  shader goldens remain unchanged.
+- `shaders/sample_grad` pins both languages for direct/helper reads, changing
+  loop UVs, discard, named/shorthand arguments, Raw fields/assets, carried and
+  explicit sampling, binding deduplication and mutable operand order. Eight
+  `sample_grad_*` error fixtures cover argument types, fixed filter/wrap,
+  direct/helper/shared vert use, a CPU helper call and preservation of ordinary
+  Sample diagnostics. `platform/tests/shaders`'s
+  existing Mipmaps pass adds carried Trilinear through two helpers and a varying
+  branch, carried Bilinear, an explicit Trilinear override, and a Raw field's
+  RGB at mip 2 with carried Repeat. The Raw source has alpha 1/4 and is rendered
+  with alpha 1 so accidental unpremultiplication is visible.
+
+The compiler-only native sanitizer build succeeds without warnings. All 63
+focused CTests pass (1.14 s): every shader golden, all eight new errors, the
+updated Texture-method diagnostic, existing helper Trilinear errors/warning,
+and SampleGrad's SPIR-V validation and HLSL `/WX` checks. Existing shader goldens
+are unchanged. Inline derivative coverage exposed operand capture trying to
+store the built-in `this` receiver; captures now skip built-in record receivers
+and derivative reconstruction uses its original root expression, while helper
+bodies retain their own captures.
+
+Combined renderer/GPU validation passes in the foliage integration: 36 native
+and 47 web CTests, including the explicit-gradient mip witnesses on Vulkan,
+OpenGL, WebGL, ANGLE D3D11 and WebGPU. Public API and semantics are in `docs/game/shaders.md` and
+the spec's Mipmaps paragraph. The existing backend translators already accept
+explicit gradients; no runtime boundary changes are needed.
+
 ## Structs that hold lists, passed on whole (2026-10-31)
 
 The owner, of a game passing each list of its crowd's poses by name through

@@ -8,6 +8,7 @@
 #include "tide/platform.h"
 #include "tide/profile.h"
 #include "tide/time.h"
+#include "forest-meshes.h"
 
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
@@ -22,19 +23,26 @@ static tide_profile profile;
 static int tree_count = 10000, frames = 100, warmup = 20, width = 1920, height = 1080;
 static int camera, shadow_resolution = 1024, frame_at, gpu_count, drain;
 static bool quick, profiling, shadows = true, wind = true, levels = true;
+static bool fog = true, orbiting, motion_smoke;
+static int impostors = 1, parallax = 1, travel_speed, travel_start, orbit_start, orbit_speed = 20, start_frame;
+static int capture_every;
+static int orbit_radius, orbit_height;
 static const char *capture_path, *output_path;
 static const char *const cameras[] = {"ground", "canopy", "wide"};
 static double *samples[METRICS];
 static uint64_t world_hash, calls_min = UINT64_MAX, calls_max, vertices_min = UINT64_MAX, vertices_max, upload_sum;
 static uint32_t bark_min = UINT32_MAX, bark_max, leaves_min = UINT32_MAX, leaves_max;
+static uint32_t sprites_min = UINT32_MAX, sprites_max;
+static int level_min[4] = {INT32_MAX, INT32_MAX, INT32_MAX, INT32_MAX}, level_max[4];
+static int transitions_min = INT32_MAX, transitions_max;
 
 // Observe the prepared stream after submission, outside measured intervals.
 // The six index counts uniquely identify this fixture's authored meshes;
 // terrain and fullscreen passes cannot satisfy these witnesses.
-static bool inspect_tree_instances(uint32_t *bark, uint32_t *leaves)
+static bool inspect_tree_instances(uint32_t *bark, uint32_t *leaves, uint32_t *sprites)
 {
     uint64_t destination = 0;
-    *bark = *leaves = 0;
+    *bark = *leaves = *sprites = 0;
     for (uint32_t i = 0; i < draw.count; i++) {
         const tide_draw_command *command = &draw.commands[i];
         if (command->kind == TIDE_DRAW_TARGET) {
@@ -47,10 +55,14 @@ static bool inspect_tree_instances(uint32_t *bark, uint32_t *leaves)
         if (!run->count) continue;
         if (!run->mesh || run->mesh > draw.mesh_count) return false;
         const uint32_t indices = draw.meshes[run->mesh - 1u].index_count;
-        if (indices == 324 || indices == 126 || indices == 24) *bark += run->count;
-        else if (indices == 552 || indices == 216 || indices == 72) *leaves += run->count;
+        if (indices == 6) *sprites += run->count;
+        else for (int level = 0; level < 3; level++) {
+            if (indices == forest_bark_index_counts[level]) *bark += run->count;
+            if (indices == forest_leaf_index_counts[level]) *leaves += run->count;
+        }
     }
-    return *bark > 0 && *leaves > 0 && *bark <= (uint32_t)tree_count && *leaves <= (uint32_t)tree_count;
+    return *bark + *sprites > 0 && *leaves + *sprites > 0
+        && *bark <= (uint32_t)tree_count * 2u && *leaves <= (uint32_t)tree_count * 2u && *sprites <= (uint32_t)tree_count;
 }
 
 static bool integer(const char *text, const int least, const int most, int *out)
@@ -117,7 +129,7 @@ static void write_result(FILE *file, const summary values[METRICS])
         "\"world_hash\":\"%016llx\",\"world_unchanged\":true,"
         "\"process_memory_bytes\":%llu,\"gpu_memory_bytes\":%llu",
         tree_count, tree_count * 2 + 1, cameras[camera], sqrt((double)tree_count) * 5.5,
-        world.Forest.nearTrees, world.Forest.middleTrees, world.Forest.farTrees, levels ? "true" : "false",
+        local.ForestFrame.nearTrees, local.ForestFrame.middleTrees, local.ForestFrame.farTrees, levels ? "true" : "false",
         shadows ? "true" : "false", wind ? "true" : "false", shadow_resolution,
         tide_list_count(local.Render3D_Renderer.shadowViews), width, height, warmup, frames, gpu_count,
         (unsigned long long)calls_min, (unsigned long long)calls_max,
@@ -125,6 +137,19 @@ static void write_result(FILE *file, const summary values[METRICS])
         (double)upload_sum / frames,
         (unsigned long long)world_hash, (unsigned long long)tide_platform_memory(),
         (unsigned long long)tide_platform_gpu_memory());
+    fprintf(file, ",\"impostor_mode\":%d,\"impostor_trees\":%d,\"parallax\":%d,\"fog\":%s,"
+        "\"travel_metres_per_second\":%d,\"travel_start_metres\":%d,\"orbit\":%s,\"start_frame\":%d,"
+        "\"orbit_start_degrees\":%d,\"orbit_degrees_per_second\":%d,\"orbit_radius_metres\":%d,\"orbit_height_metres\":%d,"
+        "\"camera_eye_metres\":[%.7g,%.7g,%.7g],"
+        "\"capture_interval_frames\":%d,\"main_impostor_instances_min\":%u,\"main_impostor_instances_max\":%u,"
+        "\"primary_level_min\":[%d,%d,%d,%d],\"primary_level_max\":[%d,%d,%d,%d],"
+        "\"transition_trees_min\":%d,\"transition_trees_max\":%d",
+        impostors, local.ForestFrame.impostorTrees, parallax, fog ? "true" : "false", travel_speed, travel_start,
+        orbiting ? "true" : "false", start_frame, orbit_start, orbit_speed, orbit_radius, orbit_height,
+        (double)local.ForestFrame.eye.x, (double)local.ForestFrame.eye.y, (double)local.ForestFrame.eye.z,
+        capture_every, sprites_min, sprites_max,
+        level_min[0], level_min[1], level_min[2], level_min[3], level_max[0], level_max[1], level_max[2], level_max[3],
+        transitions_min, transitions_max);
     static const char *const names[] = {"view_record_ms", "cpu_submit_ms", "completion_readback_ms", "gpu_ms"};
     for (int i = 0; i < METRICS; i++) {
         fprintf(file, ",\"%s\":", names[i]);
@@ -153,6 +178,10 @@ static int finish(void)
         fputs("forest: rendering changed match state\n", stderr); return 1;
     }
     int result = 0;
+    if (motion_smoke && levels && impostors == 1 && !orbiting
+        && (!level_max[0] || !level_max[1] || !level_max[2] || !level_max[3] || !transitions_max)) {
+        fputs("forest: moving camera did not exercise every representation and transition\n", stderr); result = 1;
+    }
 #ifndef __wasm__
     if (capture_path && !tide_platform_capture(capture_path)) result = 1;
 #endif
@@ -205,7 +234,15 @@ static int frame(void *user, const float seconds)
         tide_platform_gpu_timing(false);
         tide_platform_gpu_timing(true);
     }
-    local.ForestFrame.time = 10.0f + (float)frame_at / 60.0f;
+    const int sequence_frame = start_frame + frame_at;
+    local.ForestFrame.time = 10.0f + (float)sequence_frame / 60.0f;
+    local.ForestFrame.travel = (float)travel_start + (float)sequence_frame * (float)travel_speed / 60.0f;
+    if (motion_smoke) local.ForestFrame.travel = -fabsf((float)frame_at - 12.0f) * 40.0f;
+    local.ForestFrame.orbiting = orbiting;
+    local.ForestFrame.orbit = (float)(orbit_start + (double)sequence_frame * orbit_speed / 60.0) * 0.017453292519943295f;
+    local.ForestFrame.orbitRadius = (float)orbit_radius;
+    local.ForestFrame.orbitHeight = (float)orbit_height;
+    local.ForestFrame.parallax = (float)parallax;
     const uint64_t start = quick ? 0 : tide_time_now_ns();
     tide_draw_reset(&draw);
     tide_draw_screen_size(&draw, tide_f2(width, height));
@@ -232,16 +269,36 @@ static int frame(void *user, const float seconds)
     }
 #endif
     const uint64_t completed = quick ? 0 : tide_time_now_ns();
-    uint32_t bark_instances, leaf_instances;
-    if (!inspect_tree_instances(&bark_instances, &leaf_instances)) {
-        fprintf(stderr, "forest: missing main-target tree draws (bark %u, foliage %u)\n", bark_instances, leaf_instances);
+    uint32_t bark_instances, leaf_instances, sprite_instances;
+    if (!inspect_tree_instances(&bark_instances, &leaf_instances, &sprite_instances)) {
+        fprintf(stderr, "forest: missing main-target tree draws (bark %u, foliage %u, impostors %u)\n", bark_instances, leaf_instances, sprite_instances);
         return 1;
     }
+    const int level_counts[] = {local.ForestFrame.nearTrees, local.ForestFrame.middleTrees,
+        local.ForestFrame.farTrees, local.ForestFrame.impostorTrees};
+    if (level_counts[0] + level_counts[1] + level_counts[2] + level_counts[3] != tree_count) {
+        fputs("forest: current representation count mismatch\n", stderr); return 1;
+    }
+#ifndef __wasm__
+    if (capture_path && capture_every > 0 && frame_at % capture_every == 0) {
+        char path[1024];
+        const int length = snprintf(path, sizeof path, "%s-%06d.png", capture_path, sequence_frame);
+        if (length < 0 || (size_t)length >= sizeof path || !tide_platform_capture(path)) return 1;
+    }
+#endif
     if (frame_at >= warmup) {
         if (bark_instances < bark_min) bark_min = bark_instances;
         if (bark_instances > bark_max) bark_max = bark_instances;
         if (leaf_instances < leaves_min) leaves_min = leaf_instances;
         if (leaf_instances > leaves_max) leaves_max = leaf_instances;
+        if (sprite_instances < sprites_min) sprites_min = sprite_instances;
+        if (sprite_instances > sprites_max) sprites_max = sprite_instances;
+        for (int i = 0; i < 4; i++) {
+            if (level_counts[i] < level_min[i]) level_min[i] = level_counts[i];
+            if (level_counts[i] > level_max[i]) level_max[i] = level_counts[i];
+        }
+        if (local.ForestFrame.transitions < transitions_min) transitions_min = local.ForestFrame.transitions;
+        if (local.ForestFrame.transitions > transitions_max) transitions_max = local.ForestFrame.transitions;
         if (calls < calls_min) calls_min = calls;
         if (calls > calls_max) calls_max = calls;
         if (vertices < vertices_min) vertices_min = vertices;
@@ -264,9 +321,13 @@ static void help(void)
     puts("bench_forest [--count 1..100000] [--camera ground|canopy|wide]\n"
         "  [--frames 100] [--warmup 20] [--width 1920] [--height 1080]\n"
         "  [--shadows 0|1] [--wind 0|1] [--levels 0|1] [--shadow-resolution 1024]\n"
-        "  [--capture final.png] [--output file.jsonl] [--profile] [--quick]\n"
+        "  [--impostors 0|1|2] [--parallax 0|1] [--fog 0|1]\n"
+        "  [--travel 0..120] [--travel-start -2000..2000] [--orbit 0|1] [--orbit-start degrees] [--orbit-speed degrees/s]\n"
+        "  [--orbit-radius metres] [--orbit-height metres]\n"
+        "  [--start-frame N] [--capture final.png] [--capture-every N] [--output file.jsonl] [--profile] [--quick] [--motion-smoke]\n"
         "Finite production Render3D runs. Two mesh entities per tree, plus terrain.\n"
-        "Distance levels: detailed below 90m, medium below 280m, coarse beyond.\n"
+        "Dynamic mesh crossfades: 80..100m and 250..310m; baked impostor 430..510m.\n"
+        "Impostors: 0 mesh-only, 1 distant, 2 forced reference (rest-pose approximation).\n"
         "Shadow casters within 260m; four cascades receive to 160m.\n"
         "CPU/GPU intervals overlap; native readback synchronizes and is not shipping FPS.\n"
         "--profile adds per-view diagnostic totals and means after warmup (including profiler overhead).\n"
@@ -280,6 +341,7 @@ int main(const int argc, char **argv)
         if (!strcmp(arg, "--help") || !strcmp(arg, "-h")) { help(); return 0; }
         if (!strcmp(arg, "--quick")) { quick = true; continue; }
         if (!strcmp(arg, "--profile")) { profiling = true; continue; }
+        if (!strcmp(arg, "--motion-smoke")) { motion_smoke = true; continue; }
         const char *equal = strchr(arg, '=');
         const size_t length = equal ? (size_t)(equal - arg) : strlen(arg);
         const char *value = equal ? equal + 1 : i + 1 < argc ? argv[++i] : NULL;
@@ -292,6 +354,16 @@ int main(const int argc, char **argv)
         else if (OPTION("--width")) ok = ok && integer(value, 64, 3840, &width);
         else if (OPTION("--height")) ok = ok && integer(value, 64, 2160, &height);
         else if (OPTION("--shadow-resolution")) ok = ok && integer(value, 16, 2048, &shadow_resolution);
+        else if (OPTION("--impostors")) ok = ok && integer(value, 0, 2, &impostors);
+        else if (OPTION("--parallax")) ok = ok && integer(value, 0, 1, &parallax);
+        else if (OPTION("--travel")) ok = ok && integer(value, 0, 120, &travel_speed);
+        else if (OPTION("--travel-start")) ok = ok && integer(value, -2000, 2000, &travel_start);
+        else if (OPTION("--orbit-start")) ok = ok && integer(value, -360, 360, &orbit_start);
+        else if (OPTION("--orbit-speed")) ok = ok && integer(value, 0, 90, &orbit_speed);
+        else if (OPTION("--orbit-radius")) ok = ok && integer(value, 1, 3000, &orbit_radius);
+        else if (OPTION("--orbit-height")) ok = ok && integer(value, 1, 1500, &orbit_height);
+        else if (OPTION("--start-frame")) ok = ok && integer(value, 0, 100000, &start_frame);
+        else if (OPTION("--capture-every")) ok = ok && integer(value, 1, 10000, &capture_every);
         else if (OPTION("--camera")) {
             ok = false;
             if (value) for (int j = 0; j < 3; j++) if (!strcmp(value, cameras[j])) { camera = j; ok = true; }
@@ -299,6 +371,8 @@ int main(const int argc, char **argv)
         else if (OPTION("--shadows")) { ok = ok && integer(value, 0, 1, &toggle); shadows = toggle != 0; }
         else if (OPTION("--wind")) { ok = ok && integer(value, 0, 1, &toggle); wind = toggle != 0; }
         else if (OPTION("--levels")) { ok = ok && integer(value, 0, 1, &toggle); levels = toggle != 0; }
+        else if (OPTION("--fog")) { ok = ok && integer(value, 0, 1, &toggle); fog = toggle != 0; }
+        else if (OPTION("--orbit")) { ok = ok && integer(value, 0, 1, &toggle); orbiting = toggle != 0; }
         else if (OPTION("--capture")) { if (ok) capture_path = value; }
         else if (OPTION("--output")) { if (ok) output_path = value; }
         else ok = false;
@@ -306,6 +380,7 @@ int main(const int argc, char **argv)
         if (!ok) { fprintf(stderr, "forest: invalid option/value: %s\n", arg); return 2; }
     }
     if (quick) { tree_count = 64; frames = 2; warmup = 1; width = 320; height = 180; shadow_resolution = 32; }
+    if (motion_smoke) { tree_count = 64; frames = 16; warmup = 0; width = 320; height = 180; shadow_resolution = 32; quick = true; }
 #ifdef __wasm__
     if (capture_path || output_path) { fputs("forest: file output is native only; web prints JSONL\n", stderr); return 2; }
 #endif
@@ -322,6 +397,8 @@ int main(const int argc, char **argv)
     world.Forest.wind = wind;
     world.Forest.shadows = shadows;
     world.Forest.distanceLevels = levels;
+    world.Forest.impostors = impostors;
+    world.Forest.fog = fog;
     world.Forest.shadowResolution = shadow_resolution;
     tide_world_tick(&world);
     world_hash = tide_world_hash(&world);

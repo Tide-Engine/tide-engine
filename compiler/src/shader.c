@@ -3609,6 +3609,12 @@ static bool liftable(const emit *em, const expr *e, const int depth)
         const bool on_value = e->kind == E_METHOD && e->object && !(e->object->kind == E_NAME && e->object->bind != BIND_LOCAL
                                                                     && e->object->bind != BIND_PARAM && e->object->bind != BIND_CONST);
         if (e->call == CALL_GRID) { // A texture read at its own pixels asks nothing of the pixels around
+            if (str_eq_c(e->name, "SampleGrad")) {
+                for (int i = 0; i < 3; i++) {
+                    if (!liftable(em, e->args.items[i], depth + 1)) return false;
+                }
+                return true;
+            }
             const int filter = known_filter(e);
             return (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) && (filter >= -1 && filter <= 2)
                 && liftable(em, e->args.items[0], depth + 1) && (e->args.count < 2 || e->object->type.kind != TY_DEPTH_TEXTURE
@@ -3794,17 +3800,17 @@ static void refuse_texture(emit *em, const expr *e)
 // Notes on a function being checked that it samples its parameter `param`,
 // or with -1 the asset `asset` names, as the Sample at `at` says.
 static void note_function_sample(decl *fn, const int param, const expr *asset, const shader_read read, const int filter,
-                                 const int wrap, const loc at)
+                                 const int wrap, const bool gradients, const loc at)
 {
     for (int i = 0; i < fn->gpu_samples.count; i++) {
         const function_sample *s = &fn->gpu_samples.items[i];
         if (s->param == param && (param >= 0 || s->asset->constant == asset->constant) && s->read == read && s->filter == filter
-            && s->wrap == wrap) {
+            && s->wrap == wrap && s->gradients == gradients) {
             return;
         }
     }
     const function_sample sample = {.param = param, .asset = param >= 0 ? NULL : asset, .read = read, .filter = filter,
-                                    .wrap = wrap, .at = at};
+                                    .wrap = wrap, .gradients = gradients, .at = at};
     vec_push(fn->gpu_samples, sample);
 }
 
@@ -3813,7 +3819,7 @@ static void ex_texture_size(emit *em, const expr *e)
     int own;
     const expr *of = texture_of(em, e->object, &own);
     if (em->code != em->root && (own >= 0 || of)) {
-        if (em->checking) note_function_sample(em->code, own, of, READ_SIZE, 0, 0, e->at);
+        if (em->checking) note_function_sample(em->code, own, of, READ_SIZE, 0, 0, false, e->at);
         if (em->checking) { sb_printf(em->o, "%s(0)", ty(em, e->type)); return; }
     }
     if (!of) {
@@ -3845,14 +3851,15 @@ static const char *texture_called(const expr *of)
 // itself, go into the frag's or vert's own samples; from a function, into
 // that function's, by its own parameters, for its callers in turn.
 //
-// A function's Sample never reads between a texture's smaller images
+// A function's ordinary Sample never reads between a texture's smaller images
 // (Filter.Trilinear): a GPU picks between them by how fast the uv changes
 // from one pixel to the next, which a frag asks as it starts, of a uv it can
 // work out there (ex_sample), and a function's uv is its call's. So one that
 // says Trilinear, or leaves its filter to a texture that says it, is an
 // error in what a frag reaches, and one that leaves it to a Texture that may
 // is a warning, as in a frag whose uv can't be worked out as it starts. A
-// vert has no pixels to compare, and reads the texture's own.
+// vert has no pixels to compare, and reads the texture's own. SampleGrad
+// supplies the footprint explicitly and is fragment-only through helpers too.
 static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec, const int *own)
 {
     for (int i = 0; i < fn->gpu_samples.count; i++) {
@@ -3861,7 +3868,7 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
         const expr *of = s.param < 0 ? s.asset : arg ? spec[s.param].sampled : NULL;
         const int mine = arg ? own[s.param] : -1;
         if (em->code != em->root && (mine >= 0 || of)) {
-            note_function_sample(em->code, mine, of, s.read, s.filter, s.wrap, s.at);
+            note_function_sample(em->code, mine, of, s.read, s.filter, s.wrap, s.gradients, s.at);
             continue;
         }
         if (!of) { // A grid with no name a Sample could go by: one that isn't a grid was refused where it's passed
@@ -3870,7 +3877,13 @@ static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec
         }
         const sampling how = sampling_of(of, s.read, s.filter, s.wrap);
         sample_slot(em, of, how);
-        if (!em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE)) continue;
+        if (s.gradients && !em->root->is_frag) {
+            refuse(em, s.at, "SampleGrad reads a Texture with UV derivatives per destination pixel: use it in a frag or a function a frag calls");
+            diag_note_at(call->at, "vert '" STR_FMT "' samples it through '" STR_FMT "', here",
+                         STR_ARG(em->root->name), STR_ARG(fn->name));
+            continue;
+        }
+        if (s.gradients || !em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE)) continue;
         const char *where = how.read == READ_CUBE ? "direction" : "uv";
         const char *what = how.read == READ_CUBE ? "cube" : "texture";
         if (how.filter == 2) {
@@ -3963,23 +3976,30 @@ static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampli
     sb_put(em->o, ", 0.0))");
 }
 
-// A Sample, or a depth's Compare: of a texture parameter, a grid or texture
+// A Sample, SampleGrad, or a depth's Compare: of a texture parameter, a grid or texture
 // field or an asset, where the frag or vert names it, and in a function, of
 // its own parameter, which is the texture its call named, or of an asset.
 static void ex_sample(emit *em, const expr *e)
 {
+    const bool gradients = str_eq_c(e->name, "SampleGrad");
+    if (gradients && !em->root->is_frag) {
+        refuse(em, e->at, "SampleGrad reads a Texture with UV derivatives per destination pixel: use it in a frag or a function a frag calls");
+        put_zero(em, e->type);
+        return;
+    }
     const type held = e->object->type;
     const bool cube = held.kind == TY_CUBEMAP;
     const shader_read read = cube ? READ_CUBE : held.kind != TY_DEPTH_TEXTURE ? READ_COLOR
                            : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
     // What the Sample says of how it reads: -1 for what it leaves to its texture
-    const int said_filter = (cube || read == READ_COLOR) && e->args.count >= 2 ? (int)e->args.items[1]->enum_member->number : -1;
-    const int said_wrap = read == READ_COLOR && e->args.count >= 3 ? (int)e->args.items[2]->enum_member->number : -1;
+    const int filter_at = gradients ? 3 : 1;
+    const int said_filter = (cube || read == READ_COLOR) && e->args.count > filter_at ? (int)e->args.items[filter_at]->enum_member->number : -1;
+    const int said_wrap = read == READ_COLOR && e->args.count > filter_at + 1 ? (int)e->args.items[filter_at + 1]->enum_member->number : -1;
     const expr *of = e->object;
     if (em->code != em->root) { // A function's: its own parameter's, which each call names, or an asset's
         int own;
         of = texture_of(em, e->object, &own);
-        if (em->checking && (own >= 0 || of)) note_function_sample(em->code, own, of, read, said_filter, said_wrap, e->at);
+        if (em->checking && (own >= 0 || of)) note_function_sample(em->code, own, of, read, said_filter, said_wrap, gradients, e->at);
         if (!of) {
             if (own < 0) refuse_texture(em, e->object);
             if (!em->checking) { // Nothing named it: refused as it was checked
@@ -3988,6 +4008,10 @@ static void ex_sample(emit *em, const expr *e)
             }
             // Which texture it is, each call says: where it's read is checked all the same
             ex_as(em, e->args.items[0], (type){cube ? TY_FLOAT3 : TY_FLOAT2, NULL});
+            if (gradients) {
+                ex_as(em, e->args.items[1], (type){TY_FLOAT2, NULL});
+                ex_as(em, e->args.items[2], (type){TY_FLOAT2, NULL});
+            }
             if (read == READ_COMPARE) ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
             return;
         }
@@ -4007,7 +4031,7 @@ static void ex_sample(emit *em, const expr *e)
     // is an error where the Sample says Trilinear, and reads the texture's own pixels where a Texture might.
     // A vert has no pixels to compare: it reads the texture's own. So does a function, whose uv is its
     // call's (pass_samples).
-    const bool lifts = read == READ_COLOR && em->root->is_frag && em->code == em->root && !em->lifting
+    const bool lifts = !gradients && read == READ_COLOR && em->root->is_frag && em->code == em->root && !em->lifting
                     && (filter == 2 || (!filter_said && em->prog->names_trilinear));
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && filter == 2 && em->checking) {
@@ -4056,6 +4080,16 @@ static void ex_sample(emit *em, const expr *e)
     if (straight) {
         need(em, H_STRAIGHT);
         sb_put(em->o, "tide_straight(");
+    }
+    if (gradients) {
+        if (em->l == WGSL) sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
+        else sb_printf(em->o, "textureGrad(pixels%d, ", slot);
+        for (int i = 0; i < 3; i++) {
+            if (i) sb_put(em->o, ", ");
+            ex_as(em, e->args.items[i], (type){TY_FLOAT2, NULL});
+        }
+        sb_put(em->o, straight ? "))" : ")");
+        return;
     }
     if (grad) {
         // As the frag starts: the uv, and what it changes by a pixel across and a pixel down
@@ -4380,7 +4414,8 @@ static void ex_call(emit *em, const expr *e)
         diag_note("work it out on the CPU, in the view, and keep the result in a component or a singleton the code reads");
         return;
     case CALL_GRID:
-        if (str_eq_c(e->name, "Sample") || (str_eq_c(e->name, "Compare") && e->object->type.kind == TY_DEPTH_TEXTURE)) {
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")
+            || (str_eq_c(e->name, "Compare") && e->object->type.kind == TY_DEPTH_TEXTURE)) {
             ex_sample(em, e);
             return;
         }
@@ -4420,7 +4455,8 @@ static void ex_call(emit *em, const expr *e)
 
 static void ex(emit *em, const expr *e)
 {
-    if (e->hoisted) {
+    // Operand captures live in the body; derivative reconstruction precedes it.
+    if (e->hoisted && !(em->lifting && em->code == em->root)) {
         sb_put(em->o, e->hoisted);
         return;
     }
@@ -5060,13 +5096,16 @@ static bool has_steps(const expr *e)
 
 typedef VEC(expr *) step_list;
 
-static bool has_switch_value(const expr *e)
+// Switch values need statements, and SampleGrad's three numeric operands
+// need source-order evaluation even where GLSL leaves argument order open.
+static bool needs_operand_order(const expr *e)
 {
     if (!e) return false;
-    if (e->kind == E_SWITCH || has_switch_value(e->object) || has_switch_value(e->cond)
-        || has_switch_value(e->lhs) || has_switch_value(e->rhs)) return true;
-    for (int i = 0; i < e->args.count; i++) if (has_switch_value(e->args.items[i])) return true;
-    for (int i = 0; i < e->inits.count; i++) if (has_switch_value(e->inits.items[i].value)) return true;
+    if (e->kind == E_SWITCH || (e->call == CALL_GRID && str_eq_c(e->name, "SampleGrad"))
+        || needs_operand_order(e->object) || needs_operand_order(e->cond)
+        || needs_operand_order(e->lhs) || needs_operand_order(e->rhs)) return true;
+    for (int i = 0; i < e->args.count; i++) if (needs_operand_order(e->args.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (needs_operand_order(e->inits.items[i].value)) return true;
     return false;
 }
 
@@ -5083,7 +5122,7 @@ static const char *switch_temp(emit *em, const type t)
 static void keep_switch_operand(emit *em, expr *e, step_list *made)
 {
     if (!e || e->hoisted || e->type.kind == TY_VOID || e->type.kind == TY_ERROR || is_data(e->type)
-        || e->bind == BIND_TYPE || e->bind == BIND_NAMESPACE || e->type.kind == TY_TEXTURE
+        || e->bind == BIND_TYPE || e->bind == BIND_NAMESPACE || e->type.kind == TY_RECORD || e->type.kind == TY_TEXTURE
         || e->type.kind == TY_DEPTH_TEXTURE || e->type.kind == TY_CUBEMAP) return;
     const char *name = switch_temp(em, e->type);
     sb_put(em->o, " = ");
@@ -5138,7 +5177,7 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
         return;
     }
     const bool shorted = e->kind == E_BINARY && !e->method && (e->op == T_AND || e->op == T_OR);
-    const bool ordering = has_switch_value(s->target) || has_switch_value(s->cond) || has_switch_value(s->value);
+    const bool ordering = needs_operand_order(s->target) || needs_operand_order(s->cond) || needs_operand_order(s->value);
     if ((e->kind == E_CONDITIONAL || shorted) && ordering) {
         expr *cond = shorted ? e->lhs : e->cond;
         st_steps(em, s, cond, sometimes, made);
@@ -5249,7 +5288,8 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
         st_steps(em, s, arg, sometimes, made);
         const bool writable = arg->is_out || (e->method && i < e->method->params.count && e->method->params.items[i].mode == PARAM_MUT)
                            || (e->arg_mut & (1u << (i < 32 ? i : 31)));
-        if (ordering && !writable) keep_switch_operand(em, arg, made);
+        const bool sampling_metadata = e->call == CALL_GRID && str_eq_c(e->name, "SampleGrad") && i >= 3;
+        if (ordering && !writable && !sampling_metadata) keep_switch_operand(em, arg, made);
     }
     for (int i = 0; i < e->inits.count; i++) {
         st_steps(em, s, e->inits.items[i].value, sometimes, made);
@@ -5497,8 +5537,8 @@ static void st(emit *em, const stmt *s)
             diag_note("a for's step can be 'i++'; change any other variable in the loop's body");
             return;
         }
-        if (has_switch_value(s->cond) || (v && has_switch_value(v->value))
-            || (s->step && (has_switch_value(s->step->value) || has_switch_value(s->step->target)))) {
+        if (needs_operand_order(s->cond) || (v && needs_operand_order(v->value))
+            || (s->step && (needs_operand_order(s->step->value) || needs_operand_order(s->step->target)))) {
             if (s->kind == S_FOR && (has_outs(s->cond) || (v && has_outs(v->value))
                 || (s->step && (has_outs(s->step->value) || has_outs(s->step->target))))) {
                 refuse(em, s->at, "a for the GPU runs declares nothing with 'out' on its own line");
@@ -5548,7 +5588,7 @@ static void st(emit *em, const stmt *s)
             return;
         }
     } else if (s->kind != S_BLOCK && (has_steps(s->target) || has_steps(s->value) || has_steps(s->cond)
-               || has_switch_value(s->target) || has_switch_value(s->value) || has_switch_value(s->cond))) {
+               || needs_operand_order(s->target) || needs_operand_order(s->value) || needs_operand_order(s->cond))) {
         st_outs(em, s->target);
         st_outs(em, s->cond);
         st_outs(em, s->value);

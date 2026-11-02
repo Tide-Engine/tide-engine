@@ -10,6 +10,7 @@ local singleton FoliagePixelProbe
     bool shadows = true;
     float strength = 0.5;
     float time;
+    bool authoredWind;
     [Filter(Filter.Point)] Grid2<Color> mask = Grid2(2, 1);
 }
 
@@ -54,10 +55,11 @@ view ConfigureFoliagePixels(mut Renderer renderer, mut FoliagePixelProbe probe, 
     probe.mask[1, 0] = Color.white;
 }
 
-void FoliagePixelWind(VertexInput input, mut MeshVertex vertex, Wind wind)
+void FoliagePixelWind(VertexInput input, mut MeshVertex vertex, Wind wind, bool authored, float phase)
 {
     vertex.position.y += 2;
-    ApplyWind(input, vertex, wind, 1, 0);
+    if (authored) ApplyWind(input, vertex, wind, WindResponse { bend = 1, branchPhase = phase });
+    else ApplyWind(input, vertex, wind, 1, 0);
 }
 
 [Before(Stages.Prepare), After(ConfigureFoliagePixels)]
@@ -67,14 +69,16 @@ view BindFoliagePixels(FoliagePatch patch, mut Material material, FoliagePixelPr
     material.shader = Lit { surface = StandardSurface };
     if (fixture.wind)
     {
+        bool authored = probe.authoredWind;
+        float phase = probe.time;
         Wind wind = Wind { direction = float2(1, 0), strength = 1, speed = 0,
-            gustScale = 0, gustSpeed = 1, gustStrength = 1, time = probe.time };
+            gustScale = 0, gustSpeed = 1, gustStrength = authored ? 0 : 1, time = authored ? 0 : probe.time };
         material.vertex = Deform {
-            vertex = (VertexInput input, mut MeshVertex vertex) => FoliagePixelWind(input, vertex, wind)
+            vertex = (VertexInput input, mut MeshVertex vertex) => FoliagePixelWind(input, vertex, wind, authored, phase)
         };
         material.customBounds = true;
-        material.boundsCenter = float3(2, 2, 0);
-        material.boundsSize = float3(6, 1, 0);
+        material.boundsCenter = float3(authored ? 3 : 2, 2, 0);
+        material.boundsSize = float3(authored ? 8 : 6, 1, 0);
         return;
     }
     if (patch.role != 1)
@@ -94,7 +98,7 @@ frag FoliageShadowWitness(Vertex vertex, out Color color, Renderer renderer, Fol
 }
 
 [Stage(Stages.Present, 1)]
-view FoliageWindShadows(Renderer renderer, FoliagePixelFixture fixture)
+view FoliageWindShadows(Renderer renderer, FoliagePixelFixture fixture, FoliagePixelProbe probe)
 {
     if (!renderer.enabled || !renderer.ready || !fixture.wind) return;
     Draw.Screen()
@@ -108,7 +112,7 @@ view FoliageWindShadows(Renderer renderer, FoliagePixelFixture fixture)
             Draw.Mesh([Vertex { position = float2(x, 2) }, Vertex { position = float2(x + 4, 2) },
                        Vertex { position = float2(x + 4, 6) }, Vertex { position = float2(x, 6) }],
                 [0, 1, 2, 0, 2, 3], FoliageShadowWitness,
-                FoliageShadowPoint { world = float3(i == 0 ? -0.3 : 2.25, 2, 1) });
+                FoliageShadowPoint { world = float3(probe.authoredWind ? (i == 0 ? 1.02 : 4) : (i == 0 ? -0.3 : 2.25), 2, 1) });
         }
     }
 }

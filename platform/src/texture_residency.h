@@ -16,6 +16,8 @@ enum { TIDE_TEXTURE_IDLE_FRAMES = 36000, TIDE_TEXTURE_IDLE_COUNT = 4096 };
 // How many lists the renderer keeps an unused image for: TIDE_TEXTURE_IDLE_FRAMES, which a test sets lower to see
 // one expire (platform.c).
 extern uint32_t tide_texture_idle_frames;
+// Private fixture control: emulate a device without BC, retaining RGBA8 mip upload.
+extern bool tide_texture_force_rgba;
 
 typedef struct tide_texture_idle {
     uint64_t bytes;

@@ -2668,6 +2668,9 @@ local singleton Mips
     Grid2<Color> stripes = Grid2(64, 64);
     Grid2<float> heights = Grid2(64, 64); // 1 in one column of each 8
     Texture kept;                         // The stripes, as a field holds them: it says Trilinear itself
+    [Raw, Filter(Filter.Trilinear), Wrap(Wrap.Repeat)]
+    Grid2<Color> numeric = Grid2(64, 64);
+    [Raw] Texture keptNumeric;
     [Filter(Filter.Trilinear)]
     RenderTarget drawn;                   // Red stripes `lit` pixels wide, 8 apart, drawn again each frame
     float lit = 2;
@@ -2708,6 +2711,39 @@ frag MipStepped(Vertex vertex, out Color color, Texture source)
     color = source.Sample(uv);
 }
 
+Color MipGradientRead(Texture source, float2 uv, float2 dx, float2 dy)
+{
+    return source.SampleGrad(uv, dx, dy);
+}
+Color MipGradientForward(Texture source, float2 uv, float2 dx, float2 dy)
+{
+    return MipGradientRead(source, uv, dx, dy);
+}
+// Explicit derivatives remain valid after a changing UV, discard and divergent branch,
+// and keep the texture's carried filter through two helpers.
+frag MipGradient(Vertex vertex, out Color color, Texture source)
+{
+    var dx = this.Ddx(vertex.uv);
+    var dy = this.Ddy(vertex.uv);
+    mut var uv = vertex.uv;
+    for (int i = 0; i < 2; i++) uv += float2(0, 0);
+    if (vertex.uv.x > 2) this.Discard();
+    if (vertex.uv.x < 0.5) color = MipGradientForward(source, uv, dx, dy);
+    else color = source.SampleGrad(uv, dx, dy);
+}
+frag MipGradientSaid(Vertex vertex, out Color color, Texture source)
+{
+    color = source.SampleGrad(vertex.uv, float2(0.125, 0), float2(0, 0.125), .Trilinear);
+}
+frag MipGradientRaw(Vertex vertex, out Color color, Mips mips)
+{
+    // An exact mip-2 texel center after Repeat; its base-level red and green are zero.
+    // Alpha stays 1/4 while RGB stays numeric through the Texture field and two helpers.
+    var value = MipGradientForward(mips.keptNumeric, float2(1.09375, -0.90625),
+                                   float2(0.0625, 0), float2(0, 0.0625));
+    color = Color(value.r, value.g, value.b, 1);
+}
+
 frag MipHeight(Vertex vertex, out Color color, Mips mips)
 {
     color = Color(mips.heights.Sample(vertex.uv, Filter.Trilinear).r, 0, 0, 1);
@@ -2731,9 +2767,12 @@ view Mipmaps(Art art, mut Mips mips)
             {
                 mips.stripes[x, y] = Color(x % 8 == 0 ? 1 : 0, y % 8 < 2 ? 1 : 0, 1);
                 mips.heights[x, y] = x % 8 == 0 ? 1 : 0;
+                mips.numeric[x, y] = Color(x < 32 ? (x % 4 == 0 ? 0.8 : 0) : 0.6,
+                                            y % 4 < 2 ? 0.6 : 0, 0.4, 0.25);
             }
         }
         mips.kept = mips.stripes;
+        mips.keptNumeric = mips.numeric;
         mips.drawn = RenderTarget(64, 64, 1);
         mips.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
                       Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
@@ -2793,6 +2832,22 @@ view Mipmaps(Art art, mut Mips mips)
     Draw.Transform(float2(168, 8))
     {
         Draw.Mesh(mips.small, art.faces, mips.drawn.color, MipSource);
+    }
+    Draw.Transform(float2(184, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, MipGradient);
+    }
+    Draw.Transform(float2(200, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, Filter.Bilinear, MipGradient);
+    }
+    Draw.Transform(float2(216, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, Filter.Point, MipGradientSaid);
+    }
+    Draw.Transform(float2(232, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, MipGradientRaw);
     }
 }
 

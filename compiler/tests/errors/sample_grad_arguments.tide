@@ -1,0 +1,6 @@
+// expect: SampleGrad takes float2 uv, float2 dx and float2 dy, then an optional Filter and Wrap
+scene Main { }
+frag Shade(Vertex vertex, out Color color, Texture source)
+{
+    color = source.SampleGrad(vertex.uv, float2(0.1), float3(0.1));
+}

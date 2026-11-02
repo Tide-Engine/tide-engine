@@ -1385,9 +1385,13 @@ static void vk_texture_write_part(const tide_gpu_id id, const void *pixels, cons
 
 static tide_gpu_id vk_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
 {
-    if (vk.lost || !vk.compression || !blocks.levels) return 0;
+    uint32_t levels, total;
+    const bool rgba = blocks.format == TIDE_BLOCKS_RGBA8;
+    if (vk.lost || (!rgba && !vk.compression) || !blocks.pixels
+        || !tide_texture_blocks_size(width, height, blocks.format, &levels, &total)
+        || blocks.levels != levels || blocks.bytes != total) return 0;
     const bool bc1 = blocks.format == TIDE_BLOCKS_BC1;
-    const tide_gpu_id id = make_texture(bc1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK, width, height,
+    const tide_gpu_id id = make_texture(rgba ? VK_FORMAT_R8G8B8A8_UNORM : bc1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK, width, height,
                                         blocks.levels, false, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false);
     vk_texture *t = &vk.textures[id - 1u];
@@ -1397,7 +1401,7 @@ static tide_gpu_id vk_texture_blocks(const int width, const int height, const ti
     uint32_t w = (uint32_t)width, h = (uint32_t)height;
     size_t offset = 0;
     for (uint32_t level = 0; level < blocks.levels; level++) {
-        const size_t bytes = (size_t)((w + 3u) / 4u) * ((h + 3u) / 4u) * (bc1 ? 8u : 16u);
+        const size_t bytes = tide_texture_level_bytes(w, h, blocks.format);
         VkBuffer from;
         uint8_t *at;
         const VkDeviceSize start = ring_take(bytes, 16u, bytes, &from, &at);

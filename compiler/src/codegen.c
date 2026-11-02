@@ -19955,8 +19955,23 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         uint8_t content[32];
         memcpy(content, item->hash, sizeof content);
         if (raw) content[0] ^= 0x52u, content[31] ^= 0x52u;
-        const tide_texture_blocks compressed = raw || !compress ? (tide_texture_blocks){0}
-            : texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
+        tide_texture_blocks compressed = {0};
+        if (item->image_mips.pixels) {
+            // Authored mip levels (DDS) retain their alpha coverage and raw
+            // channels. Premultiply each color level, not only the largest.
+            compressed = item->image_mips;
+            uint8_t *chain = malloc(compressed.bytes);
+            if (!chain) abort();
+            for (uint32_t i = 0; i < compressed.bytes; i += 4u) {
+                const uint8_t *c = compressed.pixels + i;
+                const float alpha = (float)c[3] / 255.0f, worked = raw ? 1.0f : alpha;
+                chain[i] = channel_byte((float)c[0] / 255.0f, worked);
+                chain[i + 1u] = channel_byte((float)c[1] / 255.0f, worked);
+                chain[i + 2u] = channel_byte((float)c[2] / 255.0f, worked);
+                chain[i + 3u] = c[3];
+            }
+            compressed.pixels = chain;
+        } else if (!raw && compress) compressed = texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
         // Blocks are the image then, with no RGBA beside them: a device without them decodes them
         if (compressed.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
         const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,

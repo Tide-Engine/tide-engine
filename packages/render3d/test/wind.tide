@@ -23,7 +23,10 @@ local singleton WindProbe
     MeshVertex vertex;
     float bend = 0.02;
     float flutter = 0.015;
+    bool authored;
+    WindResponse response;
     MeshVertex result;
+    MeshVertex legacy;
     float3 dx;
     float3 dy;
     float3 dz;
@@ -42,6 +45,14 @@ MeshVertex WindPoint(VertexInput input, MeshVertex vertex, Wind wind, float bend
     return result;
 }
 
+MeshVertex ResponsePoint(VertexInput input, MeshVertex vertex, Wind wind, WindResponse response, float3 offset)
+{
+    mut MeshVertex result = vertex;
+    result.position += offset;
+    ApplyWind(input, result, wind, response);
+    return result;
+}
+
 [Before(Render3D.Stages.Prepare)]
 view EvaluateWind(mut WindProbe probe, mut Renderer renderer)
 {
@@ -52,14 +63,16 @@ view EvaluateWind(mut WindProbe probe, mut Renderer renderer)
     renderer.shadowExtent = 10;
     renderer.shadowDistance = 40;
     renderer.shadowResolution = 64;
-    probe.result = WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0));
+    WindResponse response = probe.authored ? probe.response : WindResponse { bend = probe.bend, flutter = probe.flutter };
+    probe.legacy = WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0));
+    probe.result = ResponsePoint(probe.input, probe.vertex, probe.wind, response, float3(0));
     float epsilon = 0.0005;
-    probe.dx = (WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(epsilon, 0, 0)).position
-        - WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(-epsilon, 0, 0)).position) / (2 * epsilon);
-    probe.dy = (WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, epsilon, 0)).position
-        - WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, -epsilon, 0)).position) / (2 * epsilon);
-    probe.dz = (WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, 0, epsilon)).position
-        - WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, 0, -epsilon)).position) / (2 * epsilon);
+    probe.dx = (ResponsePoint(probe.input, probe.vertex, probe.wind, response, float3(epsilon, 0, 0)).position
+        - ResponsePoint(probe.input, probe.vertex, probe.wind, response, float3(-epsilon, 0, 0)).position) / (2 * epsilon);
+    probe.dy = (ResponsePoint(probe.input, probe.vertex, probe.wind, response, float3(0, epsilon, 0)).position
+        - ResponsePoint(probe.input, probe.vertex, probe.wind, response, float3(0, -epsilon, 0)).position) / (2 * epsilon);
+    probe.dz = (ResponsePoint(probe.input, probe.vertex, probe.wind, response, float3(0, 0, epsilon)).position
+        - ResponsePoint(probe.input, probe.vertex, probe.wind, response, float3(0, 0, -epsilon)).position) / (2 * epsilon);
     for (var i = 0; i < 9; i++)
     {
         probe.wave[i] = WindWave(float(i) * 0.125);

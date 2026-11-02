@@ -145,3 +145,45 @@ TIDE_TEST(texture_blocks_decode_to_the_first_level_as_the_formats_say)
     for (uint32_t i = 0; i < 8; i++) TIDE_CHECK(pixels[i * 4u + 3u] == alphas[i] && pixels[(i + 8u) * 4u + 3u] == alphas[i]);
     TIDE_CHECK(pixels[0] == 0 && pixels[2] == 255); // Color index 0 of four: the first endpoint, blue
 }
+
+TIDE_TEST(texture_blocks_decode_every_authored_level_and_clip_bc_tail_blocks)
+{
+    uint32_t levels, bytes;
+    TIDE_REQUIRE(tide_texture_blocks_size(8, 4, TIDE_BLOCKS_RGBA8, &levels, &bytes));
+    TIDE_CHECK(levels == 4 && bytes == 172);
+    uint8_t chain[172];
+    for (uint32_t i = 0; i < bytes; i++) chain[i] = (uint8_t)(i * 31u);
+    uint32_t offset = 0, w = 8, h = 4;
+    for (uint32_t level = 0; level < levels; level++) {
+        uint8_t *out = malloc((size_t)w * h * 4u);
+        TIDE_REQUIRE(out != NULL);
+        TIDE_REQUIRE(tide_texture_blocks_decode_level((tide_texture_blocks){chain, TIDE_BLOCKS_RGBA8, levels, bytes}, 8, 4, level, out));
+        TIDE_CHECK(!memcmp(out, chain + offset, (size_t)w * h * 4u));
+        offset += w * h * 4u;
+        w = w > 1 ? w / 2 : 1, h = h > 1 ? h / 2 : 1;
+        free(out);
+    }
+    for (uint32_t alpha = 0; alpha < 2; alpha++) {
+        const uint32_t format = alpha ? TIDE_BLOCKS_BC3 : TIDE_BLOCKS_BC1, stride = alpha ? 16u : 8u;
+        TIDE_REQUIRE(tide_texture_blocks_size(4, 4, format, &levels, &bytes));
+        uint8_t blocks[48] = {0};
+        for (uint32_t level = 0; level < levels; level++) {
+            const uint32_t at = level * stride, color = at + (alpha ? 8u : 0u);
+            if (alpha) blocks[at] = blocks[at + 1u] = 255u;
+            blocks[color + 1u] = (uint8_t)((31u >> level) << 3); // Different pure-red endpoints at each level.
+        }
+        for (uint32_t level = 0; level < levels; level++) {
+            const uint32_t side = 4u >> level;
+            uint8_t *out = malloc((size_t)side * side * 4u);
+            TIDE_REQUIRE(out != NULL);
+            TIDE_REQUIRE(tide_texture_blocks_decode_level((tide_texture_blocks){blocks, format, levels, bytes}, 4, 4, level, out));
+            uint8_t expected[64];
+            decode(blocks + level * stride, alpha != 0, expected);
+            for (uint32_t p = 0; p < side * side; p++) TIDE_CHECK(!memcmp(out + p * 4u, expected, 4u));
+            free(out);
+        }
+        uint8_t untouched[4] = {19, 23, 29, 31};
+        TIDE_CHECK(!tide_texture_blocks_decode_level((tide_texture_blocks){blocks, format, levels, bytes}, 4, 4, levels, untouched));
+        TIDE_CHECK(untouched[0] == 19 && untouched[3] == 31);
+    }
+}

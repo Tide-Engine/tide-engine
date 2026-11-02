@@ -1,5 +1,27 @@
 # The language server and the editors
 
+## Explicit texture gradients (2026-11-02)
+
+Texture member completion and the common method-form table expose
+`SampleGrad(float2 uv, float2 dx, float2 dy, Filter filter = the texture's,
+Wrap wrap = the texture's) -> Color`, with a three-argument insertion snippet.
+Help describes right/down UV change per destination pixel and the existing
+texture filter/wrap defaults. Frags and ordinary helper authoring offer it;
+direct verts and CPU views do not. Shared checker rules reject direct or
+transitive vertex/CPU calls; grids/depth/cubes retain their existing methods.
+`lsp_textures_in_functions` checks helper/frag completion, the snippet, full
+signature and active gradient argument, and vertex/view exclusions. Root owns
+the central native LSP build/test; no editor adapter or grammar changes.
+
+## Authored DDS asset paths (2026-11-02)
+
+The shared image suffix list includes `.dds` for Texture/Grid2<Color>/Cubemap
+path completion and list/map globs, with case-insensitive file matching.
+`lsp_asset_path_completion` now checks an uppercase DDS file and DDS glob offers.
+The narrow RGBA8 authored-chain importer supplies ordinary checker diagnostics;
+no protocol, adapter or syntax change is needed. Central native LSP validation
+is pending with the foliage pass; the format contract is in `notes/textures.md`.
+
 ## LOD attribute multiplier hover (2026-10-31)
 
 LOD hover now explains `[LOD(2)]`, positive finite constants and multiplication

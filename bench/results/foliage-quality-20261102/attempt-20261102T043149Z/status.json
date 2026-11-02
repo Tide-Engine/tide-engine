@@ -1,0 +1,51 @@
+{
+  "status": "quiet_timeout",
+  "started_utc": "2026-11-02T04:31:49.5705156Z",
+  "completed_utc": "2026-11-02T04:33:19.7048790Z",
+  "executable_sha256": "fecd6e9f0be67aea094d0ef94340a0b8218dfcfd3ff7c76be9906e45ae3d41d8",
+  "source_head": "622f6c8d86130db74f0bc40f6e306073590f8137",
+  "source_dirty": true,
+  "quiet_timeout_seconds": 90,
+  "processes": 0,
+  "gpu_samples": 0,
+  "contention": [
+    {
+      "ProcessId": 37044,
+      "Name": "ctest.exe",
+      "CommandLine": "\"C:\\Program Files\\CMake\\bin\\ctest.exe\" --preset web-debug -j 4"
+    },
+    {
+      "ProcessId": 35016,
+      "Name": "cmake.exe",
+      "CommandLine": "\"C:/Program Files/CMake/bin/cmake.exe\" -E env \"TIDE_BROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe\" TIDE_ENGINE_DIR=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96 \"C:/Program Files/nodejs/node.exe\" D:/Projects/tide-prototypes/inside-out/test/browser.mjs C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/bin/inside_out.html C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/external/tide-prototypes/inside-out/captures/webgpu webgpu"
+    },
+    {
+      "ProcessId": 11860,
+      "Name": "node.exe",
+      "CommandLine": "\"C:/Program Files/nodejs/node.exe\" D:/Projects/tide-prototypes/inside-out/test/browser.mjs C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/bin/inside_out.html C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/external/tide-prototypes/inside-out/captures/webgpu webgpu"
+    }
+  ],
+  "arguments": "--count 100000 --width 1920 --height 1080 --warmup 20 --frames 100; ground/canopy/wide; impostors 0/1; two alternating rounds",
+  "source_files": [
+    {
+      "path": "bench/forest/game.tide",
+      "sha256": "ddf5b61d315ed02615f9023c39dc52dbc69c1eea9a032d5a213db7f5a7e4c60b"
+    },
+    {
+      "path": "bench/forest/main.c",
+      "sha256": "96e384a506902132684e25a3faaf5d42ec15af11508c9b45753d165567654a08"
+    },
+    {
+      "path": "packages/render3d/impostor.tide",
+      "sha256": "fa35282fd4051559a55882a1d4e5bc9b3c7ffea938be863f8af7db2de4ad7099"
+    },
+    {
+      "path": "packages/render3d/pbr.tide",
+      "sha256": "cf1465a6b8c46464f7ec759881f6a87007b66baa6039a91ad9f3d00ab7ab177b"
+    },
+    {
+      "path": "packages/render3d/materials.tide",
+      "sha256": "d7ee468fe77865da912565add12515730acae2f0445b081cce401131b416c321"
+    }
+  ]
+}

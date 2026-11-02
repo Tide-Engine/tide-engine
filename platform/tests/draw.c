@@ -450,6 +450,8 @@ static void compressed_pack_textures(void)
         const uint32_t format = alpha ? TIDE_BLOCKS_BC3 : TIDE_BLOCKS_BC1;
         uint32_t levels, compressed_bytes;
         expect(tide_texture_blocks_size(128, 128, format, &levels, &compressed_bytes), "compressed fixture size is valid");
+        uint32_t rgba_levels, rgba_bytes;
+        expect(tide_texture_blocks_size(128, 128, TIDE_BLOCKS_RGBA8, &rgba_levels, &rgba_bytes), "RGBA mip fallback size is valid");
         uint8_t pixels[128 * 128 * 4], hash[32] = {41};
         hash[1] = (uint8_t)run;
         for (uint32_t i = 0; i < sizeof pixels; i += 4u) {
@@ -503,7 +505,7 @@ static void compressed_pack_textures(void)
             if (frame == 0) {
                 first_sent = sent;
                 first_memory = tide_platform_gpu_memory();
-                expect(sent == compressed_bytes || sent == sizeof pixels, "BC upload uses blocks, or RGBA: exact, or the blocks decoded");
+                expect(sent == compressed_bytes || sent == rgba_bytes, "BC upload uses blocks, or every decoded RGBA mip");
                 expect(first_memory - base_memory == sent, "GPU memory accounts the complete uploaded representation");
                 printf("BC%u fixture: %llu upload bytes, %llu GPU bytes; RGBA base %zu\n", format,
                        (unsigned long long)sent, (unsigned long long)(first_memory - base_memory), sizeof pixels);
@@ -521,6 +523,82 @@ static void compressed_pack_textures(void)
         tide_platform_read_pixels(&list, &point, 1, &got);
         expect(tide_platform_gpu_memory() == base_memory, "compressed pack allocations clear on epoch changes");
     }
+}
+
+static void authored_mip_textures(void)
+{
+    const tide_float2 point = {8.5f, 8.5f};
+    const int32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
+    const bool previous = tide_texture_force_rgba;
+    static const uint8_t colors[4][4] = {{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}, {255, 255, 255, 255}};
+    for (uint32_t run = 0; run < 6; run++) {
+        const uint32_t format = run % 3u == 0 ? TIDE_BLOCKS_RGBA8 : run % 3u == 1 ? TIDE_BLOCKS_BC1 : TIDE_BLOCKS_BC3;
+        tide_texture_force_rgba = run >= 3u;
+        uint32_t levels, bytes, rgba_levels, rgba_bytes;
+        expect(tide_texture_blocks_size(8, 8, format, &levels, &bytes), "authored mip fixture shape is valid");
+        expect(tide_texture_blocks_size(8, 8, TIDE_BLOCKS_RGBA8, &rgba_levels, &rgba_bytes), "authored RGBA mip shape is valid");
+        uint8_t *data = calloc(bytes, 1u);
+        if (!data) abort();
+        uint32_t offset = 0, w = 8, h = 8;
+        for (uint32_t level = 0; level < levels; level++) {
+            const uint32_t count = tide_texture_level_bytes(w, h, format);
+            if (format == TIDE_BLOCKS_RGBA8) {
+                for (uint32_t i = 0; i < count; i += 4u) memcpy(data + offset + i, colors[level], 4u);
+            } else {
+                const uint32_t stride = format == TIDE_BLOCKS_BC1 ? 8u : 16u;
+                const uint16_t rgb = level == 0 ? 0xf800u : level == 1 ? 0x07e0u : level == 2 ? 0x001fu : 0xffffu;
+                for (uint32_t i = 0; i < count; i += stride) {
+                    const uint32_t color = offset + i + (format == TIDE_BLOCKS_BC1 ? 0u : 8u);
+                    if (format == TIDE_BLOCKS_BC3) data[offset + i] = data[offset + i + 1u] = 255u;
+                    data[color] = (uint8_t)rgb, data[color + 1u] = (uint8_t)(rgb >> 8);
+                }
+            }
+            offset += count;
+            w = w > 1u ? w / 2u : 1u, h = h > 1u ? h / 2u : 1u;
+        }
+        tide_pack_builder pack = {0};
+        uint8_t hash[32] = {63};
+        hash[1] = (uint8_t)run;
+        const uint64_t at = tide_pack_texture_blocks(&pack, hash, 8, 8, NULL,
+            (tide_texture_blocks){data, format, levels, bytes});
+        free(data);
+        tide_pack_name(&pack, "authored-mips", TIDE_PACK_TEXTURE, at, 0, 0);
+        size_t size;
+        uint8_t *file = tide_pack_end(&pack, &size);
+        const bool loaded = tide_pack_load(file, size);
+        free(file);
+        expect(loaded, "authored mip fixture pack loads");
+        if (!loaded) continue;
+        const tide_texture_ref image = tide_pack_texture_of(tide_pack_find("authored-mips", TIDE_PACK_TEXTURE));
+        tide_draw_forget(&list);
+        for (uint32_t frame = 0; frame < 4; frame++) {
+            tide_draw_reset(&list);
+            tide_draw_set_screen(&list);
+            tide_draw_clear(&list, background);
+            if (frame != 2u) {
+                const float side = frame ? 2.0f : 16.0f;
+                const tide_vertex corners[] = {{{8, 8}, {0, 0}, {1, 1, 1, 1}}, {{8 + side, 8}, {1, 0}, {1, 1, 1, 1}},
+                    {{8 + side, 8 + side}, {1, 1}, {1, 1, 1, 1}}, {{8, 8 + side}, {0, 1}, {1, 1, 1, 1}}};
+                tide_draw_mesh_texture(&list, tide_list_from(corners, 4, sizeof *corners), triangles,
+                    tide_texture_filtered(image, frame ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_POINT));
+            }
+            const uint64_t before = tide_platform_gpu_written();
+            uint32_t pixel;
+            tide_platform_read_pixels(&list, &point, 1, &pixel);
+            const uint64_t sent = tide_platform_gpu_written() - before;
+            if (!frame) {
+                expect(sent == bytes || sent == rgba_bytes, "authored mip upload accounts every stored level");
+                if (tide_texture_force_rgba || format == TIDE_BLOCKS_RGBA8)
+                    expect(sent == rgba_bytes, "no BC support uploads every decoded authored mip as RGBA");
+            } else expect(sent == 0, "mip filter changes and hidden frames retain authored images without upload");
+            expect(near(pixel, rgba(frame == 2u ? background : frame ? blue : red), 3),
+                   "point reads red base; minification reads authored blue mip, including BC fallback and return after hiding");
+        }
+        tide_pack_unload();
+        tide_draw_forget(&list);
+    }
+    tide_texture_force_rgba = previous;
 }
 
 static void meshes(void)
@@ -4622,6 +4700,7 @@ static int frame(void *user, const float seconds)
         many_cached_textures();
         resident_pack_textures();
         compressed_pack_textures();
+        authored_mip_textures();
         changed_textures();
         meshes_3d();
         primitives();
@@ -4657,6 +4736,7 @@ static int frame(void *user, const float seconds)
         many_cached_textures();
         resident_pack_textures();
         compressed_pack_textures();
+        authored_mip_textures();
         changed_textures();
         meshes_3d();
         primitives();

@@ -1,5 +1,101 @@
 # Render3D package
 
+## Foliage quality reference and moving representations (2026-11-02)
+
+The owner approved adapting established foliage techniques after identifying
+the benchmark's tree-only fog. This pass keeps the ordinary ECS/material path:
+two entities per tree, machine-local representations, authored response/maps,
+and a source-mesh impostor prototype. It adds the conventional GPU-only
+`Texture.SampleGrad` operation without new syntax or generated runtime calls.
+It does not add a retained forest renderer, Gaussian splats or a runtime tree generator.
+
+`WindResponse` supplies explicit bend/flutter amplitudes and branch/leaf phase
+cycles. The scalar overload's arithmetic is unchanged; zero phase response
+uses it. Locally constant weights/phases preserve the analytic Jacobian.
+Connected bark uses one response to keep joints together; disconnected sprays
+carry explicit asset RGB response/phase data, consumed only by the example's
+callback and then restored to white material tint. The package imposes no
+vertex-channel convention. Authored leaf normal and raw ORM/transmittance maps
+add folds/veins, occlusion and optical-depth variation through existing hooks.
+`SurfaceInput.mask` exposes the already-sampled raw channels to the surface
+callback; its default is (1,1,0,1). No extra vertex/varying channel is added.
+
+`FogSettings` on Renderer applies exponential distance fog to completed Lit
+radiance, including specular/emission, before exposure/tonemapping. It starts
+disabled and nonpositive density returns the original radiance. The forest
+uses the linear HDR sky-clear color, so terrain and trees share the same fog.
+Custom shaders remain responsible for their own fog.
+
+Static MeshRenderer's attached local meshOverride/hidden/hideShadows select
+geometry and visibility without changing match state. Main, opaque-shadow and
+cutout-shadow paths all use VisualMesh; defaults retain authored behavior.
+Material's local colorOverride/fade/ditherFade are prepared once at Prepare+1
+into renderColor, replacing the old instance color read without adding an
+attribute. A component-value copy cannot retain attached fields; preparation
+keeps the original component capability and readonly DrawMesh binding reuse.
+Ordered coverage uses a 4x4 destination-pixel pattern, with outgoing 1-t and
+incoming -t complementary. Texture cutoff is independent of geometry fade.
+It is not temporal AA. Ordinary materials leave these controls disabled.
+
+The original procedural broadleaf reference has curved/tapered branching,
+tightly fitted spray polygons and smooth crown normals. It has 1670/668/90
+triangles at its three geometry levels; forest-meshes.h/json pin exact counts
+and wind-expanded bounds. Leaf 512-square PNG sources and authored full DDS mip chains
+are reproducible with make-assets.mjs; source artwork is not scanned/downloaded.
+Alpha mip coverage is explicit at .32, with finite-texel/tie limitations, and
+the texture importer preserves complete chains on native and web backends.
+The DDS/BC-fallback boundary and Unity limitation are in textures.md.
+
+The offline impostor baker rasterizes the actual near OBJ/leaf maps into 24
+hemisphere views (8 azimuths, 3 elevations; 8x4 padded 128-square tiles). It emits albedo,
+raw model-normal/depth and ORM/transmittance atlases, exact bounds/settings,
+card geometry and source hashes. Material.impostor selects neighboring views,
+depth approximation and existing map resources. Internal ImpostorDeform/Lit
+programs reserve existing corner channels for their projection payload; no
+larger varying budget or renderer backend is required. The pre-wind source-plane
+payload is preserved while the sprite sways. This rest-pose, nearest-layer approximation
+cannot recover disoccluded geometry or animate individual baked branches.
+Very coarse atlas mips eventually mix view tiles; the shader bounds sampling
+footprints while each view is still resolvable.
+Impostors explicitly skip both static/skinned shadow collection and direct
+masked-caster helpers; otherwise default opaque materials cast a full rest
+quad and cutout materials sample unrelated atlas views. A local-LOD fixture
+checks opaque/cutout exclusion and restoration. Only baked albedo, model
+normal/depth and mask maps apply. UV/height/emission maps are unsupported;
+constant emission and the configured surface hook remain available.
+
+The forest recomputes local representations from the moving camera every
+frame, crossfading 80..100 m and 250..310 m, with the prototype atlas 430..510 m.
+Extra draws exist only in a transition band, through the same package helpers
+and live material, then restore local state. A shadow-view-outer transition
+pass preserves batching opportunities. The transition queries exit before
+traversing rows when no tree is in a band. Current source/target/visible counts
+are reported separately; tree count and match state remain unchanged by views.
+Travel/orbit, forced-mesh/atlas, parallax, fog and finite sequence captures are
+explicit diagnostic controls. Image/CPU/GPU evidence is recorded separately
+from the older unchanged-quality optimization cohorts.
+
+Initial validation found/fixed a non-void test-helper return, a DDS diagnostic
+priority, and a stale WebGPU fallback upload marker (a full 128 chain is 87380
+bytes). New wind/leaf/LOD/fog numeric and GPU cases pass in the initial scoped
+runs. A forest-only shader gradient expansion caused pathological Vulkan
+pipeline memory/time and browser timeouts. Separating the optional atlas
+programs from ordinary Lit/Deform and supplying four affine SampleGrad
+footprints reduced the largest SPIR-V from 258308 to 97012 bytes. Initial
+depth estimates stay bilinear; final atlas maps retain trilinear filtering.
+Bounded Vulkan standard/forced-atlas/motion checks pass without activating
+the memory/time guard; 63 compiler, 36 native and 47 web scoped CTests pass.
+Close-up source/forced-atlas and 100000-tree ground/canopy/wide captures are
+under build/foliage-quality. These short capture runs are correctness evidence,
+not timing comparisons. The first 90-second quiet attempt launched no timing
+child because another browser test remained active. Final integration and
+measurement status is recorded in bench/results/foliage-quality-20261102.
+
+Technique references: [Crytek vegetation animation](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis),
+[SpeedTree leaf rendering](https://developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-4-next-generation-speedtree-rendering),
+[Castaño's alpha coverage](https://www.ludicon.com/castano/blog/articles/computing-alpha-mipmaps/),
+and [Epic's impostor baker](https://dev.epicgames.com/documentation/en-us/unreal-engine/impostor-baker-plugin-in-unreal-engine).
+
 ## Shared binding preparation without shader changes (2026-11-02)
 
 The owner approved preparing shared material/resource bindings once after the

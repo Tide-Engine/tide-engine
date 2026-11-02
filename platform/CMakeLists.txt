@@ -475,7 +475,7 @@ if(TIDE_WEB)
     tide_web_page(tide_platform_draw SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_draw TARGET tide_platform_draw WEBGPU EXPECT "renderer: WebGPU")
     tide_add_web_test(tide_platform_draw_rgba_fallback TARGET tide_platform_draw QUERY "texture-compression=off"
-        WEBGPU EXPECT "BC3 fixture: 65536 upload bytes")
+        WEBGPU EXPECT "BC3 fixture: 87380 upload bytes")
 elseif(NOT TIDE_ANDROID)
     # A hidden window, so it needs a desktop session with a GPU: drawn with
     # Vulkan where there's one, and with OpenGL again
