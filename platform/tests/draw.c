@@ -3397,6 +3397,65 @@ static void frustum_culling(void)
     // Later tests use the host's usual screen size; culling settings reset each frame.
 }
 
+// A 3D mesh a frame skips stays on the GPU for when it's drawn again, as
+// the list keeps it (tide/draw.h, the idle budget), and goes once it's been
+// unused for longer than the renderer keeps one (set lower here).
+static const tide_vertex3 idle_left[] = {
+    {{-8, 8, 0}, {0, 0}, {1, 0, 0, 1}}, {{8, 8, 0}, {0, 0}, {1, 0, 0, 1}},
+    {{8, -8, 0}, {0, 0}, {1, 0, 0, 1}}, {{-8, -8, 0}, {0, 0}, {1, 0, 0, 1}},
+};
+static const tide_vertex3 idle_right[] = {
+    {{-8, 8, 0}, {0, 0}, {0, 0, 1, 1}}, {{8, 8, 0}, {0, 0}, {0, 0, 1, 1}},
+    {{8, -8, 0}, {0, 0}, {0, 0, 1, 1}}, {{-8, -8, 0}, {0, 0}, {0, 0, 1, 1}},
+};
+static const uint32_t idle_indices[] = {0, 1, 2, 0, 2, 3};
+
+// A frame of the left mesh where `left` says, and the right one always: the
+// uploads it took, and its two pixels.
+static uint64_t idle_frame(const bool left, uint32_t got[2])
+{
+    const tide_mesh meshes[2] = {{idle_left, 4, idle_indices, 6, 0x1D1E1u}, {idle_right, 4, idle_indices, 6, 0x1D1E2u}};
+    const tide_float2 places[2] = {{16, 32}, {48, 32}};
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    tide_draw_set_cull(&list, TIDE_CULL_NONE);
+    for (int i = left ? 0 : 1; i < 2; i++) {
+        const tide_float2 p = at(places[i].x, places[i].y);
+        tide_float4x4 transform = tide_identity_f4x4();
+        transform.c3 = tide_f4(p.x, p.y, 5, 1);
+        tide_draw_mesh_3d(&list, &meshes[i], transform, NULL, TIDE_FILTER_POINT);
+    }
+    const uint64_t before = tide_mesh_uploads;
+    tide_platform_read_pixels(&list, places, 2, got);
+    return tide_mesh_uploads - before;
+}
+
+static void idle_meshes_kept(void)
+{
+    tide_draw_forget(&list); // No other fixture's meshes
+    uint32_t got[2];
+    expect(idle_frame(true, got) == 2u, "two new meshes are sent to the GPU");
+    expect(near(got[0], rgba(red), 0) && near(got[1], rgba(blue), 0), "and drawn");
+    expect(idle_frame(true, got) == 0u, "drawn again, neither is sent again");
+    const uint64_t both = tide_platform_gpu_memory();
+    expect(idle_frame(false, got) == 0u, "a frame that skips one sends nothing");
+    expect(near(got[0], rgba(background), 0) && near(got[1], rgba(blue), 0), "and draws the other alone");
+    expect(tide_platform_gpu_memory() == both, "the skipped mesh stays on the GPU, counted in its memory");
+    expect(idle_frame(true, got) == 0u, "drawn again after a frame without it, it isn't sent again");
+    expect(near(got[0], rgba(red), 0) && near(got[1], rgba(blue), 0), "and draws as it did");
+    const uint32_t frames = tide_mesh_idle_frames;
+    tide_mesh_idle_frames = 2;
+    idle_frame(false, got);
+    idle_frame(false, got);
+    expect(tide_platform_gpu_memory() == both, "unused for as long as the renderer keeps it, it's still there");
+    idle_frame(false, got);
+    expect(tide_platform_gpu_memory() < both, "unused for longer, its buffers go");
+    expect(idle_frame(true, got) == 1u, "then it's sent again from the list's copy when it's drawn");
+    expect(near(got[0], rgba(red), 0) && tide_platform_gpu_memory() == both, "and drawn, with its buffers back");
+    tide_mesh_idle_frames = frames;
+}
+
 // Levels of detail: a mesh whose levels are other triangles of its corners,
 // so a pixel says which was drawn. The full mesh is two squares side by side,
 // its first level the left one alone, and its second the top right half of
@@ -3759,13 +3818,15 @@ static const char *bench_names[] = {"nothing", "65536 rects", "65536 circles", "
                                    "a list of 65536 lights a shader reads 7 of 25 numbers of, 16 written a frame",
                                    "a list of 1024 lights made again each frame",
                                    "a 3D mesh of 16384 corners, every one moved each frame",
-                                   "65536 sprites"};
+                                   "65536 sprites",
+                                   "8 of 32 3D chunks of 16384 corners each, a chunk leaving the view and one coming back each frame"};
 enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 
 // 0: nothing (what reading back costs), 1: rects, 2: circles, 3: rects with text between, 4: quads of one mesh,
 // 5: instances of a 3D cube, 6: smooth shapes, 7: rects in one run with a few smooth shapes, which all go
 // through the smooth shapes' pipeline then, 8 to 12: what a game keeps and the GPU reads, of which a frame
-// changes a little or all (bench_kept), 13: the quads of 4 drawn as sprites (tide_draw_sprite), the same frame
+// changes a little or all (bench_kept), 13: the quads of 4 drawn as sprites (tide_draw_sprite), the same frame,
+// 14: chunks of a terrain the view pans over (bench_chunks_drawn)
 static int bench_kind;
 static bool bench_one; // --only: that workload alone
 static int bench_frame;
@@ -4007,7 +4068,9 @@ static void transient_data_textures(void)
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) points[y * width + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
     }
-    // Start without another fixture's mesh buffer capacities or textures.
+    // Start without another fixture's mesh buffer capacities, textures, or
+    // meshes kept unused (an earlier fixture's would go at phase 7's forget).
+    tide_draw_forget(&list);
     tide_draw_reset(&list);
     tide_draw_clear(&list, background);
     tide_platform_read_pixels(&list, points, 1, got);
@@ -4055,10 +4118,15 @@ static void transient_data_textures(void)
                  (unsigned long long)(tide_platform_gpu_written() - before), (unsigned long long)uploaded);
         expect(tide_platform_gpu_written() - before == uploaded, what);
         // Each quad has 32 vertex bytes and 12 narrowed index bytes. No
-        // transient spare allocation remains counted after a frame ends.
+        // transient spare allocation remains counted after a frame ends. The
+        // quads phases 0 to 2 drew are kept while phases 3 and 4 skip them
+        // (the idle budget, tide/draw.h); phase 7's are new after forgetting.
+        const uint32_t meshes = phase == 3u || phase == 4u ? cells : active;
         if (phase == 0u) base_memory = tide_platform_gpu_memory() - cells * 44u - bytes;
-        expect(tide_platform_gpu_memory() == base_memory + active * 44u + bytes,
-               "transient shader data keeps only current textures and meshes after each frame");
+        snprintf(what, sizeof what, "transient shader data phase %u keeps only current textures and its meshes after the frame "
+                 "(%llu bytes, expected %llu)", phase, (unsigned long long)tide_platform_gpu_memory(),
+                 (unsigned long long)(base_memory + meshes * 44u + bytes));
+        expect(tide_platform_gpu_memory() == base_memory + meshes * 44u + bytes, what);
     }
     // A separate list has its own mesh places and epoch. Draw changed data
     // at a different shape after the appended list, then retire everything.
@@ -4171,11 +4239,44 @@ static void bench_kept(void)
     tide_scratch_reset(mark);
 }
 
+// Chunks of terrain a game keeps, each a list of corners of its own over the sheet's triangles, of which it
+// draws those in view: 8 of 32 side by side, the view panning across them and back a chunk a frame, so one
+// leaves the view and another comes back into it each frame.
+enum { BENCH_CHUNKS = 32, BENCH_CHUNKS_SEEN = 8 };
+static tide_list bench_chunks[BENCH_CHUNKS];
+
+static void bench_chunks_drawn(void)
+{
+    bench_keep();
+    if (!bench_chunks[0].at) {
+        for (int32_t c = 0; c < BENCH_CHUNKS; c++) {
+            for (int32_t i = 0; i < BENCH_CORNERS; i++) {
+                tide_vertex3 *corner = tide_list_add(&bench_chunks[c], sizeof(tide_vertex3), TIDE_IN_LOCAL);
+                const float x = (float)(i % 128), z = (float)(i / 128);
+                *corner = (tide_vertex3){{x, (float)((i + c * 7) % 16) * 0.25f, z}, {0, 0},
+                                         {(float)c / BENCH_CHUNKS, x / 128.0f, z / 128.0f, 1.0f}};
+            }
+        }
+    }
+    const uint32_t turn = bench_turn++ % (2u * (BENCH_CHUNKS - BENCH_CHUNKS_SEEN));
+    const uint32_t first = turn <= BENCH_CHUNKS - BENCH_CHUNKS_SEEN ? turn : 2u * (BENCH_CHUNKS - BENCH_CHUNKS_SEEN) - turn;
+    tide_draw_set_frustum_culling(&list, false); // What's drawn is what the game chose to
+    tide_draw_set_camera_3d(&list, tide_f3((float)first * 127.0f + 508.0f, 500.0f, -300.0f),
+                            tide_axisangle_q(tide_f3(1, 0, 0), 0.8f), 70.0f);
+    for (uint32_t c = first; c < first + BENCH_CHUNKS_SEEN; c++) {
+        tide_draw_mesh3_lists(&list, bench_chunks[c], bench_triangles, tide_translate_f4x4(tide_f3((float)c * 127.0f, 0, 0)));
+    }
+}
+
 static void bench_scene(void)
 {
     tide_draw_reset(&list);
     if (bench_kind >= 8 && bench_kind <= 12) {
         bench_kept();
+        return;
+    }
+    if (bench_kind == 14) {
+        bench_chunks_drawn();
         return;
     }
     if (bench_kind == 5) {
@@ -4538,6 +4639,7 @@ static int frame(void *user, const float seconds)
         depth_settings();
         cull_settings();
         frustum_culling();
+        idle_meshes_kept();
         levels_of_detail();
         vertex_counts();
 #ifdef DRAW_VULKAN
@@ -4575,6 +4677,7 @@ static int frame(void *user, const float seconds)
         depth_settings();
         cull_settings();
         frustum_culling();
+        idle_meshes_kept();
         levels_of_detail();
         vertex_counts();
         code = run_checks();

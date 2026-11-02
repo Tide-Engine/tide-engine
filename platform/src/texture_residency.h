@@ -55,3 +55,10 @@ static inline void tide_texture_idle_trim(tide_texture_idle *images, const uint3
         if (image->keep) remaining -= image->bytes, kept++;
     }
 }
+
+// Unused 3D meshes are weighed the same way (spare_unused_meshes in platform.c), by the idle budget in
+// tide/draw.h. How many lists the renderer keeps one for: TIDE_MESH_IDLE_FRAMES, which a test sets lower to see
+// one expire.
+extern uint32_t tide_mesh_idle_frames;
+// How many times the renderer has sent a mesh to the GPU (mesh_for), which tests read.
+extern uint64_t tide_mesh_uploads;

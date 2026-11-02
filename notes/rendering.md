@@ -1,5 +1,112 @@
 # The platform layer and the renderer
 
+## Meshes a frame skips stay resident (2026-11-02)
+
+Internal optimization from the 2026-11-02 review. Until now a 3D mesh place
+the frame didn't draw was freed in `tide_draw_reset`, and its GPU buffers became
+spares. So a terrain/voxel chunk that left the view, or that a game skipped for a
+frame, was copied and uploaded again when it came back. Meshes now get an idle
+budget like the one inactive pack images have (`notes/textures.md`).
+
+- **The budget** (`tide/draw.h`, beside `tide_draw_mesh_data`):
+  `TIDE_MESH_IDLE_FRAMES` 36,000 lists (ten minutes at 60 Hz, the textures'
+  number), `TIDE_MESH_IDLE_COUNT` 4,096 meshes and `TIDE_MESH_IDLE_BYTES`
+  64 MiB of copies. The list and the renderer each apply it. Meshes drawn this
+  frame are outside it. When over budget, the longest-unused meshes go first;
+  equal ages go by place, so eviction depends only on the list and is the same
+  each run. Sorting happens only under pressure.
+- **The list** (`forget_idle_meshes` in `engine/src/draw.c`). An undrawn place
+  is kept unless one of these holds:
+  - Only one frame drew it (`tide_draw_mesh_data.made == frame`). So a mesh
+    rebuilt every frame still goes at the next reset, as before, and the
+    renderer's spare-buffer reuse for it is unchanged.
+  - The frame drew the same lists (space, id, other) at another version. The
+    old copy can never draw again. Scratch and pack lists all share one id
+    (`mesh3_slot`), so only the budget evicts those.
+  - It's past the budget.
+  A level of detail goes when its base mesh goes (`forget_unplaced_levels`).
+  The first pass frees one-frame and expired places without allocating; the
+  tables are built only when something is left to weigh. `tide_draw_forget`
+  still frees every place. Identities were already content-keyed (C meshes
+  carry `tide_mesh_version`, and Tide lists `list_version`), so a kept place is
+  never stale.
+- **The renderer** (`spare_unused_meshes` in `platform/src/platform.c`). An
+  unwanted GPU place stays while the list's place still has the identity it
+  uploaded (`gpu_mesh_current`, which `mesh_for` now shares) and the list drew
+  it in more than one frame. The same budget applies by `tide_texture_idle_trim`,
+  with GPU bytes and render-frame ages. Everything else becomes a spare, as
+  before. `forget_meshes_3d` is gone; a frame's end frees only spares no mesh
+  took. So a skipped mesh's buffers are owned, counted in `vram`, and no spare
+  outlives its frame. A place the list evicted is spared at the next draw, the
+  same timing as before. A new device epoch still clears every GPU place; the
+  list's copies upload again. Overlays never spare and are unchanged.
+  - The one-frame rule is needed here too. The list lets a mesh go only at the
+    reset after the first frame that skips it, so during that frame the list
+    still has it. A first version kept such a place on the GPU for that one
+    frame. `check_gpu_memory` (`platform/tests/targets.c`) caught it: a
+    blit's quad, drawn once, stayed counted after the frame without it. With
+    the rule, a mesh rebuilt each frame takes exactly the old path.
+- **The old failure** ("a version that kept spares across frames failed
+  `transient_data_textures`"): that version kept *unowned* spares, which
+  showed up in `vram` after the frame. This version never keeps a spare. The
+  fixture's expectation changed on purpose: its quads, drawn in phases 0 to 2,
+  stay counted while phases 3 and 4 skip them. It now starts from a forgotten
+  list, so meshes earlier fixtures leave idle don't move its baseline at its
+  phase-7 forget.
+- **Frustum culling** is unchanged. A culled instance still finds its mesh
+  place, so the list kept those meshes already. Now the GPU keeps their
+  buffers too (under the budget) instead of re-uploading when they come back
+  into view.
+- **Tests:**
+  - `draw_idle_meshes_are_kept_for_when_drawn_again` (`tests/test_draw.c`)
+    covers kept-and-found uncopied, one-frame meshes going, a newer version
+    superseding, scratch meshes not superseding each other, expiry at exactly
+    36,000/36,001 frames, and forget.
+  - `draw_idle_meshes_past_the_budget_go_longest_unused_first` covers the
+    count limit (a recently drawn mesh in the highest place survives; the
+    oldest highest place goes) and the byte limit (two 32+ MiB meshes).
+  - `draw_levels_kept_unused_go_with_their_mesh` (`tests/test_draw_levels.c`)
+    checks that a level stays with its kept base and goes when the base is
+    superseded.
+  - `idle_meshes_kept` (`platform/tests/draw.c`) runs on Vulkan before and
+    after device loss, OpenGL, WebGL and WebGPU. A skipped mesh keeps its
+    memory and isn't sent again (the private counter `tide_mesh_uploads`,
+    `texture_residency.h`). With `tide_mesh_idle_frames` lowered it expires,
+    then comes back from the list's copy with one upload.
+- **Measured** (release, no sanitizers, RTX 4080 SUPER, driver 617.42,
+  `tide_platform_draw --bench --only <n>`: medians of 100 frames, before/after
+  run alternately five times each, HEAD built in a separate worktree with the
+  same bench code). Workload 14 is new: 8 of 32 Tide-list terrain chunks of
+  16,384 corners, the view panning a chunk a frame, so one chunk leaves and one
+  comes back each frame.
+  - Workload 14, Vulkan: record 0.083–0.154 → 0.005–0.006 ms, render +
+    readback 0.173–0.189 → 0.085–0.100, total 0.266–0.385 → 0.089–0.105.
+  - Workload 14, OpenGL: record 0.091–0.164 → 0.005–0.008, total 0.413–0.531 →
+    0.301–0.499 (medians 0.504 → 0.404). OpenGL's render part is about even,
+    because its driver does the buffer work later on its own thread.
+  - Workload 12 (one mesh rebuilt every frame, the spare-reuse control):
+    Vulkan totals 0.316–0.349 → 0.313–0.428, medians 0.318 → 0.324. OpenGL
+    0.380–0.633 → 0.389–0.608, medians 0.484 → 0.516, with run-to-run spread
+    far larger than the difference. Its code path is the old one (above).
+- **Validation** (Clang 23.1.2, Node 24.22.1, `TIDE_HIDDEN`): the sanitize (ASan)
+  build is warning-free. 430 affected native tests pass: every `gpu` test (59,
+  Vulkan with its device-loss pass, and the OpenGL twins), `tide_tests`, and the
+  draw, mesh, LOD, skinned, Render3D, prewarm, Sumo, Towers and Earth targets.
+  276 web-debug tests pass, including draw/targets/shaders/skinned on WebGL and
+  WebGPU, plus `tide_tests` under WASI. The web build's only failure is the
+  external Foldline prototype's layout check: its debug wasm
+  (`tide_query_Render_10`, "local count too large") fails to compile in Node.
+  That's generated code this change doesn't touch, and engine tests don't
+  depend on it. Linux, macOS, MinGW and Android are left to CI. After merging
+  `origin/dev`'s levels of detail for meshes a game makes (whose
+  `tide_draw_lod_collect` runs after the retention pass and gives levels to kept
+  places too), the same sets pass again: 459 native and 307 web.
+- **Not done:** no game or prototype forest was measured, only this
+  workload. Another GPU/driver, Android, macOS and the web's own timings are
+  unmeasured. The budget's numbers are picks (Claude's, alongside the
+  textures'), with no language surface. A game that wants a mesh gone sooner
+  has no way to say so beyond `tide_draw_forget`.
+
 ## Shared desktop OpenGL vertex bindings (2026-10-31)
 
 The desktop OpenGL skinning gap was vertex input setup. Legacy
@@ -588,7 +695,7 @@ The owner asked for Vulkan ("lets get Vulkan implemented"), the agreed next back
   - Games, debug builds headless (`--frames 90 --capture --size 640 360`) on each backend, compared pixel by pixel: Duel, Asteroids, Marbles, Sumo and Two Forks are the same bytes on Vulkan as on OpenGL. Tag differs in 663 of 230,400 pixels by 9 levels of 255 at most, in its filtered shadows, where it differs from itself run to run already (`notes/shaders.md`).
   - What's left between the two is texture and list uploads (a staging copy and two layout turns each, behind a full barrier) and the per-pass command buffers. No order-of-magnitude gap remains. This benchmark reads back every frame, which a game doesn't. The optimization pass below measured real frames and later cut the per-pass cost.
 - **Optimization pass (2026-10-14).** The owner asked for one over every rendering layer ("ok do an optimization pass maybe on all rendering layers not just vulkan"); what follows is Claude's, behind the language. Real frames were measured, not the readback benchmark. The setup: release builds of Tag, Duel and Two Forks, hidden at 1920×1080 for 400 frames, with each renderer phase timed (temporary instrumentation, not committed) and averaged over frames 301–400. Four changes came out of it, three in the shared renderer and one in Vulkan:
-  - **Mesh buffers are reused within a frame** (`spare_unused_meshes`, `taken_buffer` in `platform/src/platform.c`). Games that fill a list in a view each frame had meshes made again every frame, and creating a buffer costs OpenGL about 0.15 ms. Before any upload, a non-overlay list gives up the buffers of mesh places it doesn't draw, and `mesh_for` gives up a buffer too small for its place. A mesh that needs a buffer takes the smallest spare of its kind with room that is no more than four times its size plus 4 KB. Spares left over are freed at the end of the list, as the data textures' are, so no spare is counted in `vram` after a frame. That contract is pinned by `transient_data_textures`; a version that kept spares across frames failed it. Result: OpenGL's `upload_shaded` fell from 0.34 to 0.016 ms a frame in Tag, 0.12 to 0.001 in Duel, and 0.21 to 0.002 in Two Forks. WebGL buffers cost the same kind of work. Vulkan was already cheap here.
+  - **Mesh buffers are reused within a frame** (`spare_unused_meshes`, `taken_buffer` in `platform/src/platform.c`). Games that fill a list in a view each frame had meshes made again every frame, and creating a buffer costs OpenGL about 0.15 ms. Before any upload, a non-overlay list gives up the buffers of mesh places it doesn't draw, and `mesh_for` gives up a buffer too small for its place. A mesh that needs a buffer takes the smallest spare of its kind with room that is no more than four times its size plus 4 KB. Spares left over are freed at the end of the list, as the data textures' are, so no spare is counted in `vram` after a frame. That contract is pinned by `transient_data_textures`; a version that kept spares across frames failed it. (Since 2026-11-02 a mesh the list still keeps is no spare. Its buffers stay owned under the idle budget: see Meshes a frame skips stay resident, above.) Result: OpenGL's `upload_shaded` fell from 0.34 to 0.016 ms a frame in Tag, 0.12 to 0.001 in Duel, and 0.21 to 0.002 in Two Forks. WebGL buffers cost the same kind of work. Vulkan was already cheap here.
   - **Passes begin at their first draw** (`step_draws`, `draw_list`). A pass used to begin at every change of target, even when the steps before the next change drew nothing. Duel's list began 16 passes, 5 of them empty; Tag's began 15, 3 of them empty. The frame's target is cleared by the first pass that draws in it, or by a pass of its own at the end if nothing does. Clips set with no pass open apply when one begins. OpenGL costs nothing here. Every Vulkan pass is a command buffer, and every WebGPU pass is a command encoder and a `queue.submit`.
   - **Vulkan records one command buffer a pass, not two** (above). Vulkan's pass phase fell from 0.078 to 0.047 ms in Duel, 0.076 to 0.056 in Tag, and 0.033 to 0.024 in Two Forks. About a third of that came from lazy passes and the rest from the command buffers. OpenGL's same phase is 0.008–0.018 ms because its driver does the work later, on its own thread.
   - **The font atlas sends only the rows new glyphs changed** (`tide_font_atlas_changed` in `platform/src/font.h`). A new glyph used to send the whole atlas, 2048 pixels wide and up to 2048 rows. Tag's OpenGL atlas upload fell from 0.010 ms a frame on average to 0.000.

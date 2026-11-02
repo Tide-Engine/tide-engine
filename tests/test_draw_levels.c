@@ -798,3 +798,30 @@ TIDE_TEST(draw_levels_read_write_and_read_replace_still_gather_finest_first)
         }
     }
 }
+
+// A level a frame didn't draw is kept with its mesh, and goes with it.
+TIDE_TEST(draw_levels_kept_unused_go_with_their_mesh)
+{
+    tide_draw_list d = {0};
+    uint32_t mesh = 0, level = 0;
+    for (int i = 0; i < 2; i++) {
+        frame(&d);
+        mesh = leveled_mesh(&d);
+        tide_draw_instance(&d, mesh, at(0.0f, 100.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    }
+    for (uint32_t i = 0; i < d.mesh_count; i++) {
+        if (d.meshes[i].base == mesh) level = i + 1u;
+    }
+    TIDE_REQUIRE(level && d.meshes[level - 1u].level == 2);
+    frame(&d); // Neither drawn
+    frame(&d);
+    TIDE_CHECK(d.meshes[mesh - 1u].space != TIDE_MESH_NONE && d.meshes[level - 1u].base == mesh);
+    // Another version of the mesh's lists is drawn: the old one goes, and its level with it
+    bool fill;
+    const uint32_t newer = tide_draw_mesh_slot(&d, TIDE_MESH_MEMORY, 41, 42, 2, &fill);
+    TIDE_REQUIRE(fill && newer != mesh && newer != level);
+    tide_draw_mesh_fill(&d, newer, corners, 4, whole, 12);
+    frame(&d);
+    TIDE_CHECK(d.meshes[mesh - 1u].space == TIDE_MESH_NONE && d.meshes[level - 1u].space == TIDE_MESH_NONE);
+    tide_draw_free(&d);
+}
