@@ -1,0 +1,6 @@
+100% tests passed, 0 tests failed out of 5
+
+Label Time Summary:
+gpu    =   3.74 sec*proc (4 tests)
+
+Total Test time (real) =  12.06 sec

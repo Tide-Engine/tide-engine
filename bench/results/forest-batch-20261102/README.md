@@ -80,6 +80,16 @@ three final captures and all shader blocks again match the original baseline.
 [shader-equivalence-finaldev.json](shader-equivalence-finaldev.json) pin this
 final integration. No new paired timing was performed.
 
+The push then encountered dev's mesh-residency dependency update at 800330aeb.
+Its clean merge passes all five affected native ASan and six web-release checks
+(runtime, platform draw and forest). The ordinary release was rebuilt again;
+all shader blocks/layouts and all pixels, draw work and world hashes in three
+new captures still match the original baseline. This separate dependency check
+is pinned in [validation-residency.json](validation-residency.json),
+[pixel-equivalence-residency.json](pixel-equivalence-residency.json) and
+[shader-equivalence-residency.json](shader-equivalence-residency.json).
+No further forest implementation changes or paired timings were needed.
+
 ## Initial elapsed-timing cohort
 
 Windows; operator-supplied Ryzen 9 7900X / RTX 4080 SUPER, driver 617.42; Clang

@@ -37,6 +37,11 @@ written-operand path. The final rebuilt release again matches all shader blocks,
 pixels, draw work and world hashes. validation-finaldev.json pins this integration;
 no further paired timings were run.
 
+The clean merge of dev's mesh residency update adds five native ASan and six
+web runtime/draw/forest dependency checks, all passing. Rebuilt release shader
+blocks and three capture pixels/work/world hashes still match the baseline;
+validation-residency.json records this separate check without new timing claims.
+
 Frozen baseline/candidate forest programs have byte-identical 28 GLSL, 14 WGSL,
 14 SPIR-V and 14 shader metadata/layout blocks. Three 1920x1080 same-timestep
 captures (10k canopy, 100k wide and ground) match every decoded RGBA pixel.
