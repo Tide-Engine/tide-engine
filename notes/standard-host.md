@@ -1,5 +1,18 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Profiler fixture Release build (2026-11-02)
+
+Run 41405770153 failed compiling tide_platform_profile on MinGW Release:
+VISUALIZERS supplied -fno-eliminate-unused-debug-types without debug information,
+which Clang 23.1.2 rejects as an unused argument under -Werror. The fixture now
+explicitly compiles with -g, following tidec_debugger_fixture. Its optimization,
+visualizer/source metadata checks and normal Release link policy are unchanged.
+Only this desktop test target changes; runtime, CLI and web builds are untouched.
+
+Validation: the target builds and its full profile capture test passes under
+Windows ASan and MinGW Release, with Clang 23.1.2 and Node 24.22.1. Both runs
+use TIDE_HIDDEN. Other platforms remain normal push-triggered workflow coverage.
+
 ## Agent-readable profile captures (2026-11-02)
 
 Owner-approved first profiling slice: `--profile <file.json>` captures the

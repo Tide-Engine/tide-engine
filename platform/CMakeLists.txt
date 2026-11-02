@@ -681,6 +681,9 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # a flag or a script's line that's wrong, needs none.
     tide_add_game(tide_platform_capture SOURCES tests/capture.tide)
     tide_add_game(tide_platform_profile SOURCES tests/profile.tide VISUALIZERS)
+    # Like the debugger fixture, keep debug types even in a Release build:
+    # VISUALIZERS needs debug info for its type-preservation compiler flags.
+    target_compile_options(tide_platform_profile PRIVATE -g)
     tide_add_game(tide_platform_data_directory SOURCES tests/data_directory.tide)
     if(TIDE_NODE)
         add_test(NAME tide_platform_profile

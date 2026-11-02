@@ -1,5 +1,15 @@
 # Releases, installing and CI
 
+## MinGW profiler fixture in run 41405770153 (2026-11-02)
+
+The only underlying failure at 4d0d14671 was MinGW's compilation of
+tide_platform_profile: its visualizer debug-type flag had no debug information
+enabled in Release. Aggregate Build failures/cancellation blocked publication;
+all other test/package jobs passed. The fixture now explicitly requests -g,
+as the debugger fixture already does. The target builds and its profile capture
+test passes on Windows ASan and MinGW Release. Details: standard-host.md,
+Profiler fixture Release build. The fix uses the ordinary dev push trigger.
+
 ## Migration alignment fix for run 41206262777 (2026-10-31)
 
 Following the Newton removal, the owner requested fixing the independent
