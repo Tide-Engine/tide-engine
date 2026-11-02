@@ -1,5 +1,48 @@
 # Netcode: sessions, prediction, commands
 
+## Background rendering delays the next session update (2026-11-02)
+
+The owner's Mount & Rifle focus report was reproduced with two independent
+matches on the same PC, excluding match traffic as the cause. Owner-approved
+visible tests used muted, auto-closing 60-second windows; all changes were
+diagnostic copies under build/focus-probe, with TIDE_HIDDEN otherwise retained.
+Current checkout-built game/engine, seed 42, scripted on-foot view, Vulkan FIFO,
+RTX 4080 SUPER driver 617.42, 1920x1080 desktop. No settings or production code
+changed. Real elapsed frame time and onscreen presentation replaced the hidden
+runner's fixed time/offscreen target; ordinary scripts still bounded the run.
+
+At 1280x720 with overlapping windows, the clean steady interval (12-59 seconds)
+measured foreground 143.9 FPS versus background 23.8 FPS. Game-frame CPU work
+was 4.19/6.78 ms; presentation wrapper 2.73/35.19 ms, including GPU fence waits
+of 2.50/34.96 ms. Background fence p95 was 56.51 ms. Acquisition and queue-present
+calls themselves were negligible. GPU timestamp intervals were 4.93/41.28 ms;
+these include elapsed scheduling gaps, not just exclusive execution by that app.
+
+A repeat with the test windows requesting focus in alternating ten-second
+phases moved the slowdown with focus: each copy ran about 144 FPS foreground
+and 30-32 FPS background. Side-by-side 940x700 windows also differed: 144 FPS
+foreground, 82-83 background. Different dimensions mean this is not a measured
+occlusion-only comparison, but coverage is not necessary for the slowdown.
+Disabling the foreground copy's drawing, while keeping its game updates capped
+at 60 Hz, raised the background game to 132 FPS. This implicates
+competing rendering/presentation workloads rather than a fixed Tide focus cap;
+the driver's exact scheduling decision is not established.
+
+The dominant wait is the next-frame fence in `tide_gpu_vk_present`, after the
+host's frame function on the same thread as its session updates. Thus a GPU-bound
+background host/client also updates its match less often. Short-stall clock
+recovery below does not remove persistent rendering waits. Separating update
+cadence from readiness to render is follow-up work, not implemented by this test.
+
+An external UI activation helper caused a separate access violation in GLFW's
+`_glfwPollEventsWin32` modifier-key check (`win32_window.c:2159`), captured with
+LLDB in build/focus-probe/debug-A.log. Clean runs avoided that helper and exited
+normally; no ordinary-human focus crash or underlying cause is claimed. Final
+measurements/logs/build scripts are in build/focus-probe (clean, timed, side and
+capped runs; analyze-final.py/final-summary.json). No browser, other GPU or
+other-OS coverage; no engine fix or new correctness-test claim accompanies this
+measurement-only investigation.
+
 ## Short server stalls recover their input lead promptly (2026-11-02)
 
 A half-second server pause left clients sending inputs hundreds of milliseconds
