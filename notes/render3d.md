@@ -91,6 +91,16 @@ not timing comparisons. The first 90-second quiet attempt launched no timing
 child because another browser test remained active. Final integration and
 measurement status is recorded in bench/results/foliage-quality-20261102.
 
+Final integration after merging dev 440909c72 passes 115 native ASan and 120
+web-release CTests, plus native/web/release and documentation builds. Two
+explicit Render3D consumers (bench_render3d and declarations_only.cmake) now
+include wind/fog/impostor dependencies. Final 100000-tree captures and the
+16-frame approach/retreat witness pass; results and scoped coverage are in
+[the foliage report](../bench/results/foliage-quality-20261102/README.md).
+Both bounded measurement attempts closed normally with zero children because
+recognized external correctness checks stayed active. New quality-path timings
+and speedup claims are withheld; no forest gate/build/GPU work remains queued.
+
 Technique references: [Crytek vegetation animation](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis),
 [SpeedTree leaf rendering](https://developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-4-next-generation-speedtree-rendering),
 [Castaño's alpha coverage](https://www.ludicon.com/castano/blog/articles/computing-alpha-mipmaps/),

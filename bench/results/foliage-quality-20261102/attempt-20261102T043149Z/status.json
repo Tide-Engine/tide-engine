@@ -11,18 +11,15 @@
   "contention": [
     {
       "ProcessId": 37044,
-      "Name": "ctest.exe",
-      "CommandLine": "\"C:\\Program Files\\CMake\\bin\\ctest.exe\" --preset web-debug -j 4"
+      "Name": "ctest.exe"
     },
     {
       "ProcessId": 35016,
-      "Name": "cmake.exe",
-      "CommandLine": "\"C:/Program Files/CMake/bin/cmake.exe\" -E env \"TIDE_BROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe\" TIDE_ENGINE_DIR=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96 \"C:/Program Files/nodejs/node.exe\" D:/Projects/tide-prototypes/inside-out/test/browser.mjs C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/bin/inside_out.html C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/external/tide-prototypes/inside-out/captures/webgpu webgpu"
+      "Name": "cmake.exe"
     },
     {
       "ProcessId": 11860,
-      "Name": "node.exe",
-      "CommandLine": "\"C:/Program Files/nodejs/node.exe\" D:/Projects/tide-prototypes/inside-out/test/browser.mjs C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/bin/inside_out.html C:/Users/blenm/.t3/worktrees/PurrEngine/t3-6f8f0f96/build/web-debug/external/tide-prototypes/inside-out/captures/webgpu webgpu"
+      "Name": "node.exe"
     }
   ],
   "arguments": "--count 100000 --width 1920 --height 1080 --warmup 20 --frames 100; ground/canopy/wide; impostors 0/1; two alternating rounds",
@@ -47,5 +44,6 @@
       "path": "packages/render3d/materials.tide",
       "sha256": "d7ee468fe77865da912565add12515730acae2f0445b081cce401131b416c321"
     }
-  ]
+  ],
+  "redaction": "External process arguments omitted; original status retained under ignored build/foliage-quality/quiet-attempt-original.json"
 }

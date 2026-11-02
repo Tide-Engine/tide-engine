@@ -28,7 +28,7 @@ function Contenders([int]$ChildPid = 0) {
             $_.Name -match '^(bench_|versus_|tide_platform_|tide_render3d_|tidec_)' -or
             ($_.Name -eq 'node.exe' -and $_.CommandLine -match '(test[\\/]|browser\.mjs|web-test|webgpu|webgl)')
         )
-    } | Select-Object ProcessId,Name,CommandLine)
+    } | Select-Object ProcessId,Name)
 }
 $mutex = [Threading.Mutex]::new($false, 'Local\TideClaudeContinuationBenchmark')
 $held = $false

@@ -21,9 +21,12 @@ geometry for depth/lighting/fog. Unity authored-mip preservation remains absent.
 Contracts are in render3d.md and textures.md. Historical forest measurements
 below remain tied to their frozen older assets/workloads.
 
-The current scoped validation passes 36 native and 47 web checks. Optimized
-quality-path performance measurements remain pending; this entry makes no
-timing, FPS or speedup claim. CPU/GPU intervals overlap, native readback
+Final scoped integration passes 115 native ASan and 120 web-release checks,
+including all moving-camera representations and transitions. Native/web/release
+and documentation builds pass. The 100000-tree captures, settings, hashes and
+bounded quiet-window attempts are retained in
+[the foliage report](../bench/results/foliage-quality-20261102/README.md).
+This entry makes no timing, FPS or speedup claim. CPU/GPU intervals overlap, native readback
 synchronizes, and software browser correctness is not hardware timing evidence.
 
 ## Shared shader binding preparation (2026-11-02)
