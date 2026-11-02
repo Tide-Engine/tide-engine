@@ -147,7 +147,7 @@ Clip Pick(List<Clip> clips, int index)
 view HitSound() { Audio.Play(Pick(hits, 0)); }
 ```
 
-Mesh collections (`List<Mesh<V>>`, `Mesh<V>[N]`, and map values) contain stable IDs and use the same parameter, return, mutation and task-storage rules as ordinary values. A read-only call can borrow the collection storage; copying it copies IDs or shares immutable ID storage until a write. Geometry is resolved from the current pack only when read.
+Mesh collections (`List<Mesh<V>>`, `Mesh<V>[N]`, and map values) use the same parameter, return, mutation and task-storage rules as ordinary values. An asset's mesh is a stable ID, whose geometry is resolved from the current pack only when read; a mesh the game made with `Mesh(vertices, indices)` carries its own lists, which a copy copies. A read-only call can borrow the collection storage.
 
 Large read-only values can use borrowed storage in generated CPU helpers when the compiler proves it safe, avoiding repeated stack copies. They retain value semantics: overlapping mutable arguments, later argument effects and C calls still preserve the captured value. This needs no annotation or reference syntax.
 

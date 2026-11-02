@@ -1,5 +1,22 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Drawing a mesh at a given version (2026-11-02)
+
+`tide_draw_mesh_key(d, lists, key)` (tide/mesh.h, owner-approved) tells the
+next draw of exactly those two list handles that `key` is their version.
+`take_mesh_key` runs first in `mesh3_slot`, `tide_draw_mesh_shaded_instances`
+and the 2D `mesh_lists`, before any early return, and always clears the hint;
+other handles get no key. Keyed meshes use the slot id `MESH_KEYED`
+(UINT64_MAX, no handle's) for both lists, so every copy of a made mesh is one
+GPU mesh, with no list read. Generated code sets the key right before a
+`Mesh<V>` draw and clears it after; `tide_draw_reset` clears it too. Keys
+without bit 63 are none, so assets' ids keep the list-version path (and their
+pack versions and LOD). `tide_mesh_key(vertices, size, indices)` hashes counts,
+vertex size and both lists' bytes (`tide_hash_more`, flattened chunks) and sets
+bit 63. The draw-list layout gained three words: hosts, libraries and games
+rebuild together. Tests: `mesh_runtime` (one run, one mesh across copies and
+frames; a mismatched hint is ignored and cleared).
+
 ## Levels for meshes a game makes (2026-11-02)
 
 What the draw list relies on (the feature, its tests and the simplifier's move: assets-and-files.md, Levels of
@@ -454,7 +471,6 @@ reads as 1. The metadata is local, needs no GPU allocation/readback and survives
 ordinary draw reset like other host metadata. All hosts/game libraries rebuild
 for the C layout change. Tests and validation are in `notes/language.md`.
 
-
 ## Explicit skinned instances (2026-10-20)
 
 Owner-approved: `Draw.Instanced(model, instances[, texture/filter/wrap][, vert][, frag][, values])`
@@ -514,7 +530,7 @@ The owner approved automatic culling for ordinary draws, conservative developer 
 
 The fitted destination camera's planes and rounding coefficients are cached by camera/destination/epoch/size and invalidated on reset. Conservative box support tests use double intermediates and a rounding allowance. Infinite projections omit the redundant far plane. Mirroring, nonuniform scale and shear work; nonfinite/projective instance transforms, unknown sizes and unusable bounds keep the draw. `LODCamera` never supplies the culling camera. Bulk APIs filter each item, appending surviving intervals through existing batching and preserving their order. No backend, occlusion, spatial-index or match-visibility feature is added.
 
-Culling happens during recording. The standard host already supplies logical window size; C hosts use `tide_draw_screen_size`. Fixed targets use captured dimensions even without a window size. Append copies already filtered draws without reculling. A source list intended for several destination aspects must disable recording-time culling; rejected geometry cannot be reconstructed from commands. CPU geometry caches can retain offscreen meshes, but wholly rejected runs submit no GPU draw or mesh upload. Place, mesh-cache, shader and draw-list C layouts changed; all hosts/libraries/games rebuild together.
+Culling happens during recording. The standard host already supplies logical window size; C hosts use `tide_draw_screen_size`. Fixed targets use captured dimensions even without a window size. Append copies already filtered draws without reculling. A source list intended for several destination aspects must disable recording-time culling; rejected geometry cannot be reconstructed from commands. CPU geometry caches can retain offscreen meshes, but wholly rejected runs submit no GPU draw or mesh upload. (Since 2026-11-02 their GPU buffers stay too, under the idle mesh budget: `notes/rendering.md`, Meshes a frame skips stay resident.) Place, mesh-cache, shader and draw-list C layouts changed; all hosts/libraries/games rebuild together.
 
 Tests: `tests/test_frustum.c` covers planes/intersections, near/infinite far, mirror/shear/nested transforms, survivor order/batching, shader bounds, invalid/extreme values, target/frame/default isolation, aspect changes, geometry versions, LOD base bounds and append. `draw_frustum` E2E checks nonzero vertex offsets, settings, target control, early exits and operand effects on rejected draws; `skinned_rest_test.c` pins absent automatic skinned bounds. Two diagnostics exercise setting forms. The platform draw fixture compares enabled/disabled pixels with visible content and confirms one fewer GPU draw, also after device loss. Older command-inspection fixtures disable culling for intentional offscreen/origin submissions; original assertions remain.
 

@@ -1,0 +1,17 @@
+{
+  "status": "not_started",
+  "reason": "Coordinator requested stopping only this task's queued benchmark gate before initial candidate builds; quiet guard had not launched the profiler.",
+  "profile_processes_started": 0,
+  "profile_logs_created": 0,
+  "timed_pair_processes_started": 0,
+  "baseline_binary_and_captures_unchanged": true,
+  "prepared_settings": {
+    "trees": 100000,
+    "cameras": ["ground", "wide"],
+    "width": 1920,
+    "height": 1080,
+    "warmup": 20,
+    "frames": 20,
+    "profile": true
+  }
+}

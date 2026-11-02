@@ -152,6 +152,7 @@ static void expr_reads(const expr *e, const reads_root *root, byte_writes *r)
     for (int i = 0; i < e->inits.count; i++) expr_reads(e->inits.items[i].value, root, r);
     expr_reads(e->lambda_body, root, r);
     expr_reads(e->values, root, r);
+    expr_reads(e->mesh_lod, root, r);
     expr_reads(e->skin_mesh, root, r);
     expr_reads(e->skin_pose, root, r);
     expr_reads(e->callable_receiver, root, r);
@@ -228,7 +229,7 @@ static bool expr_has_drawing(const expr *e)
     for (int i = 0; i < e->args.count; i++) if (expr_has_drawing(e->args.items[i])) return true;
     for (int i = 0; i < e->written.count; i++) if (expr_has_drawing(e->written.items[i])) return true;
     for (int i = 0; i < e->inits.count; i++) if (expr_has_drawing(e->inits.items[i].value)) return true;
-    return expr_has_drawing(e->lambda_body) || expr_has_drawing(e->values) || expr_has_drawing(e->skin_mesh)
+    return expr_has_drawing(e->lambda_body) || expr_has_drawing(e->values) || expr_has_drawing(e->mesh_lod) || expr_has_drawing(e->skin_mesh)
         || expr_has_drawing(e->skin_pose) || expr_has_drawing(e->callable_receiver)
         || expr_has_drawing(e->task_source) || expr_has_drawing(e->binding_value) || stmt_has_drawing(e->block)
         || stmt_has_drawing(e->step) || stmt_has_drawing(e->compare[0]) || stmt_has_drawing(e->compare[1])
@@ -329,6 +330,7 @@ static void expr_query_uses(const expr *e, query_uses *u)
     for (int i = 0; i < e->inits.count; i++) expr_query_uses(e->inits.items[i].value, u);
     expr_query_uses(e->lambda_body, u);
     expr_query_uses(e->values, u);
+    expr_query_uses(e->mesh_lod, u);
     expr_query_uses(e->skin_mesh, u);
     expr_query_uses(e->skin_pose, u);
     expr_query_uses(e->callable_receiver, u);

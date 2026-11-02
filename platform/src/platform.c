@@ -2261,6 +2261,10 @@ typedef struct gpu_mesh {
 
 static gpu_mesh *gpu_meshes;
 static uint32_t gpu_mesh_count; // Places, as the list's
+static tide_texture_idle *idle_meshes; // Those a list didn't draw, as the idle textures are weighed (texture_residency.h)
+static uint32_t idle_mesh_capacity;
+uint32_t tide_mesh_idle_frames = TIDE_MESH_IDLE_FRAMES;
+uint64_t tide_mesh_uploads;
 static void *mesh_3d_upload;    // A mesh's corners or indices, on their way to the GPU
 static size_t mesh_3d_upload_capacity;
 
@@ -3076,6 +3080,26 @@ static void find_pipelines(const tide_draw_list *list)
     }
 }
 
+// Whether the list's mesh `mesh` is a level of detail, which has its mesh's corners, which that mesh keeps: its own
+// are its triangles.
+static bool mesh_is_level(const tide_draw_list *list, const uint32_t mesh)
+{
+    const tide_draw_mesh_data *m = &list->meshes[mesh - 1u];
+    return m->base && m->base <= list->mesh_count && m->base != mesh && !list->meshes[m->base - 1u].base
+        && list->meshes[m->base - 1u].space != TIDE_MESH_NONE;
+}
+
+// Whether the GPU has the list's mesh `mesh` in its place, as the list has it there now.
+static bool gpu_mesh_current(const tide_draw_list *list, const uint32_t mesh)
+{
+    if (mesh == 0 || mesh > list->mesh_count || mesh > gpu_mesh_count) return false;
+    const tide_draw_mesh_data *m = &list->meshes[mesh - 1u];
+    const gpu_mesh *g = &gpu_meshes[mesh - 1u];
+    return m->space != TIDE_MESH_NONE && (g->vertices || g->base) && g->id == m->id && g->other == m->other
+        && g->version == m->version && g->space == m->space && g->epoch == m->epoch
+        && g->base == (mesh_is_level(list, mesh) ? m->base : 0u);
+}
+
 // The GPU's copy of the list's 3D mesh `mesh`, uploaded if it hasn't got it.
 static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
 {
@@ -3087,14 +3111,9 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     const tide_draw_mesh_data *m = &list->meshes[mesh - 1u];
     gpu_mesh *g = &gpu_meshes[mesh - 1u];
     g->frame = gpu_frame;
-    // A level of detail has its mesh's corners, which that mesh keeps: its own are its triangles
-    const bool level = m->base && m->base <= list->mesh_count && m->base != mesh && !list->meshes[m->base - 1u].base
-                    && list->meshes[m->base - 1u].space != TIDE_MESH_NONE;
+    const bool level = mesh_is_level(list, mesh);
     if (level) mesh_for(list, m->base);
-    if ((g->vertices || g->base) && g->id == m->id && g->other == m->other && g->version == m->version && g->space == m->space
-        && g->epoch == m->epoch && g->base == (level ? m->base : 0u)) {
-        return g;
-    }
+    if (gpu_mesh_current(list, mesh)) return g;
     if (level && g->vertices) { // The place was a whole mesh's
         spare_buffer_of(g->vertices, TIDE_GPU_VERTICES, g->vertex_capacity);
         g->vertices = 0;
@@ -3148,6 +3167,7 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     g->epoch = m->epoch;
     g->index_count = m->index_count;
     g->wide = wide;
+    tide_mesh_uploads++;
     return g;
 }
 
@@ -3194,8 +3214,18 @@ static void mark_mesh(const tide_draw_list *list, const uint32_t mesh)
     if (base && base <= gpu_mesh_count) gpu_meshes[base - 1u].wanted = gpu_frame + 1u;
 }
 
+static void spare_mesh(gpu_mesh *g)
+{
+    spare_buffer_of(g->vertices, TIDE_GPU_VERTICES, g->vertex_capacity);
+    spare_buffer_of(g->indices, TIDE_GPU_INDICES, g->index_capacity);
+    *g = (gpu_mesh){0};
+}
+
 // The buffers of the places of meshes the list doesn't draw are spares for
-// those it draws that need some, before any is uploaded.
+// those it draws that need some, before any is uploaded: but for those the
+// list still has as they are on the GPU and drew in more than one frame,
+// which stay for when they're drawn again, within the idle budget
+// (TIDE_MESH_IDLE_FRAMES, tide/draw.h).
 static void spare_unused_meshes(const tide_draw_list *list)
 {
     for (uint32_t i = 0; i < step_count; i++) {
@@ -3203,26 +3233,29 @@ static void spare_unused_meshes(const tide_draw_list *list)
         if (s->kind == STEP_MESH_3D) mark_mesh(list, s->mesh);
         else if (s->kind == STEP_SHADED || s->kind == STEP_BLIT) mark_mesh(list, list->runs[s->first].mesh);
     }
+    if (gpu_mesh_count > idle_mesh_capacity) {
+        idle_meshes = tide_realloc(idle_meshes, (size_t)idle_mesh_capacity * sizeof *idle_meshes,
+                                   (size_t)gpu_mesh_count * sizeof *idle_meshes);
+        idle_mesh_capacity = gpu_mesh_count;
+    }
+    uint32_t idle_count = 0;
     for (uint32_t i = 0; i < gpu_mesh_count; i++) {
         gpu_mesh *g = &gpu_meshes[i];
         if (g->wanted == gpu_frame + 1u || (!g->vertices && !g->indices)) continue;
-        spare_buffer_of(g->vertices, TIDE_GPU_VERTICES, g->vertex_capacity);
-        spare_buffer_of(g->indices, TIDE_GPU_INDICES, g->index_capacity);
-        *g = (gpu_mesh){0};
-    }
-}
-
-// Lets go of the 3D meshes the frame didn't draw, and the spares no mesh took.
-static void forget_meshes_3d(void)
-{
-    for (uint32_t i = 0; i < gpu_mesh_count; i++) {
-        if ((gpu_meshes[i].vertices || gpu_meshes[i].indices) && gpu_meshes[i].frame != gpu_frame) {
-            if (gpu_meshes[i].vertices) free_buffer(gpu_meshes[i].vertices);
-            if (gpu_meshes[i].indices) free_buffer(gpu_meshes[i].indices);
-            gpu_meshes[i] = (gpu_mesh){0};
+        // One drawn in one frame alone (a mesh made again each frame) the list lets go at its next reset: its
+        // buffers are spares now, as they always were
+        if (!gpu_mesh_current(list, i + 1u) || list->meshes[i].made == list->meshes[i].frame) {
+            spare_mesh(g);
+            continue;
         }
+        idle_meshes[idle_count++] = (tide_texture_idle){
+            .bytes = (uint64_t)g->vertex_capacity + g->index_capacity, .age = gpu_frame - g->frame, .place = i};
     }
-    free_spare_buffers();
+    if (!idle_count) return;
+    tide_texture_idle_trim(idle_meshes, idle_count, TIDE_MESH_IDLE_BYTES, TIDE_MESH_IDLE_COUNT, tide_mesh_idle_frames);
+    for (uint32_t i = 0; i < idle_count; i++) {
+        if (!idle_meshes[i].keep) spare_mesh(&gpu_meshes[idle_meshes[i].place]);
+    }
 }
 
 // Where the pipeline of the shader `id`, blending as `blend`, doing `depth` with depth and `state`
@@ -4727,7 +4760,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             forget_pipelines();
             shader_epoch = list->epoch;
         }
-        forget_meshes_3d();
+        free_spare_buffers(); // Those no mesh took
         forget_textures(list->epoch);
     } else {
         free_spare_buffers(); // Those its meshes had no use for
