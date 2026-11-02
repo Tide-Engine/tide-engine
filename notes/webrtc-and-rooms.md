@@ -1,5 +1,30 @@
 # Desktop WebRTC, rooms and their tests
 
+## Migration fixture waits for registration (2026-11-02)
+
+Run 41440963320's only underlying failure was macOS web shard 1's
+`tide_platform_web_rooms_handover`: joiner a timed out before connecting,
+while b connected and the original host had not yet been told to leave.
+The log contains no RTC progress, so it cannot establish the timeout's cause.
+Aggregate Build gates failed and the Windows package was cancelled.
+
+The migration fixture started both joiners from the early room code, before
+the relay confirmed registration. It now uses the same confirmed-invite
+readiness as the ordinary rooms fixture. Both shells hold registration until
+the C host explicitly releases it; migration still launches both joiners
+together, leaves only after both report three players, and checks identities
+and exactly one replacement host. Session timeouts and transport are unchanged.
+The shell observes ICE/connection transitions and the runner timestamps its
+result log, so future failures show handshake progress.
+
+With registration held, the old migration C fails after 5.6 seconds because
+the relay has no room; the corrected C passes in 1.9 seconds. This proves the
+readiness regression, not that it reproduces the hosted timeout (whose reason
+was different). All three final web-release rooms tests pass using CI's pinned
+Chrome Headless Shell 155.0.8059.39 on Windows and Node 24.22.1. Before edits,
+30 migration repeats with installed Chrome and 10 with the pinned shell passed.
+Native code is unchanged. macOS confirmation requires the normal dev build.
+
 ## Relay Node security update (2026-10-23)
 
 The relay image explicitly pins `node:24.22.1-alpine`, including the October
