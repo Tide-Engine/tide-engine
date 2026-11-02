@@ -1,0 +1,61 @@
+// Lists in a player's projection, read back: plain elements in runs (a list in
+// chunks, bytes, a small one), elements with padding or text one at a time,
+// nested lists, and a component's list, so the heap they're read into can be
+// checked against the heap reading them one by one made.
+
+settings { maxPlayers = 2; }
+
+struct Point { float3 at; int id; }      // Side by side, no padding: copied as runs
+struct Cell { int value; bool solid; }   // Padding after the bool: one at a time
+struct Named { string name; List<int> values; }
+
+singleton Bulk
+{
+    List<Point> big;        // Over a page: in chunks
+    List<byte> bytes;       // Over a page too
+    List<int> few;
+    List<Cell> cells;
+    List<string> names;
+    List<Named> named;
+    List<List<float2>> rows;
+    bool filled;
+}
+
+component Carried
+{
+    int kind;
+    List<Point> points;
+    List<string> tags;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Bulk bulk)
+{
+    for (var i = 0; i < 3000; i++) bulk.big.Add(Point { at = float3(i, i * 0.5, -i), id = i * 7 });
+    for (var i = 0; i < 20000; i++) bulk.bytes.Add(byte(i * 31));
+    for (var i = 0; i < 5; i++) bulk.few.Add(i - 2);
+    for (var i = 0; i < 37; i++) bulk.cells.Add(Cell { value = i * i, solid = i % 3 == 0 });
+    for (var i = 0; i < 41; i++) bulk.names.Add("name " + i);
+    for (var i = 0; i < 19; i++)
+    {
+        mut List<int> values = [];
+        for (var k = 0; k < i * 3; k++) values.Add(k * i);
+        bulk.named.Add(Named { name = "named-" + i, values = values });
+    }
+    for (var i = 0; i < 9; i++)
+    {
+        mut List<float2> row = [];
+        for (var k = 0; k < 600 * i; k++) row.Add(float2(k, i));
+        bulk.rows.Add(row);
+    }
+    bulk.filled = true;
+    for (var e = 0; e < 3; e++)
+    {
+        mut List<Point> points = [];
+        mut List<string> tags = [];
+        for (var i = 0; i < 400 * (e + 1); i++) points.Add(Point { at = float3(e, i, 0), id = i });
+        for (var i = 0; i < 7 + e; i++) tags.Add("tag " + e + "/" + i);
+        Spawn(Carried { kind = e, points = points, tags = tags }, Visibility);
+    }
+}

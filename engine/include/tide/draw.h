@@ -1104,6 +1104,9 @@ typedef struct tide_draw_bounds {
 typedef struct tide_draw_frustum {
     double plane[6][4], magnitude[6][4];
     uint32_t count;
+    uint32_t quick_ready;  // Whether `quick` holds float coefficients of these planes for the quick test
+    float quick[6][11][4]; // Each plane's, each in four lanes (engine/src/frustum_cull.h)
+    float lanes[11][8];    // The same, a plane to a lane, for one instance at a time
 } tide_draw_frustum;
 
 // The settings of one destination. Zero starts a frame: first cameras, no clip

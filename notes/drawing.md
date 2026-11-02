@@ -64,6 +64,86 @@ identity/version, partial updates, device epochs and pruning included.
 The new generated call is `tide_draw_mesh_shaded_list` (`tide/mesh.h`),
 within the drawing maintenance exception (notes/runtime-ownership.md).
 
+## Quick frustum test (2026-11-02)
+
+The owner's Mount & Rifle route spent about 2.1 ms a frame (23-25% of the main
+thread) in `bounds_visible`, on about 59,000 candidate instances. The test now
+lives in `engine/src/frustum_cull.h`. Its decisions are identical to the old
+test's, not just conservative.
+
+- **Exact test** (`cull_exact`): the old double-precision support test,
+  unchanged apart from taking the whole transform. `cull_frustum_build` is the old
+  plane construction. `tests/test_frustum_quick.c` keeps verbatim copies of both
+  and pins planes byte for byte.
+- **Quick test**: float, four instances at a time (`cull_four`, planes in a
+  loop over splatted rows `tide_draw_frustum.quick[6][11][4]`). One instance at
+  a time (`cull_instance`, the single-draw paths) uses the planes across eight
+  lanes instead (`lanes[11][8]`). The coefficients are built with the planes, once
+  per camera. The quick test answers only when an error bound proves the exact
+  test's answer. The derivation is beside `cull_quick_build`. Float rounding is
+  < 2^-20·S (S = |p3| + Σ|n|·magnitude), and the slack is 2^-16·S plus a
+  2^-12-relative margin on the 1e-5 allowance. The box's three magnitudes are
+  summed into one `size` (max|n|, max r per plane), so each test costs one
+  multiply-add. Its pass bound drops the allowance's magnitude term (it is ≥ 0).
+  Anything else, including boxes within the bound of a threshold, takes the
+  exact test (`cull_slow`, out of line): non-affine transforms, magnitudes over
+  1e28, planes or rounding coefficients over 1e8, and non-finite numbers. An
+  infinity or NaN makes `size` non-finite, so there is no separate finiteness
+  check.
+- **`Draw.Transform`** (`through`): computed per instance with
+  `tide_mul_f4x4`'s exact lane arithmetic, so the product's bits and its
+  finite/affine checks match the old test. Transforming the planes by `through`
+  once instead would need a per-instance |T|·|O| bound and wasn't worth it: the
+  route doesn't use it.
+- **Callers**: `shaded_placed` and `instances_placed` go four at a time; a short
+  final group repeats its last instance and resolves only the real ones.
+  `frustum_camera` is called once per call, not per instance. Profile counters
+  are summed locally and added once (`cull_counted`, `cull_add`). Totals are
+  unchanged.
+- **Layout**: `tide_draw_frustum` gained `quick_ready`, `quick` and `lanes`
+  (inside `tide_draw_list`). Hosts, libraries and games rebuild together.
+
+Tests: `frustum_quick_*` compare the new path with the old one. The cases cover
+random perspective, infinite-far, orthographic and arbitrary/extreme cameras;
+boxes, including zero and huge extents and huge centers; rotated, scaled,
+mirrored, sheared, flat, projective, huge, NaN, infinite and subnormal
+transforms; with and without `through`; one at a time and in groups of one to
+four. They also bisect to the exact reject threshold along random lines and test
+±3 floats around it on each axis. The suite runs 1M random single
+comparisons, 160k batched groups and the boundary set, with zero differences. It also requires the quick test to
+answer more than 80% of the ordinary cases; 87% are answered, and the rest are
+the deliberately odd values. One local run at 100× (100M single and 16M batched,
+plus the boundary set) also had zero differences. Native ASan: `tide_tests` and
+179 draw/frustum/LOD/profile CTests, including `tide_platform_profile`'s pinned
+culling counts and culling-on/off PNGs, all pass. Web: `tide_tests` and the
+draw/frustum/LOD/profile tests (see the merge commit).
+
+Measured, Windows, Clang 23, release `-O2`, SSE2 baseline. Microbenchmark of
+59,000 grass-like instances (perspective camera, about 77% rejected), ns per
+instance:
+
+| Path | Old | New |
+|---|---|---|
+| Bulk, random order | 26.5 | 8.3 |
+| Bulk, spatial order | 18.0 | 6.3 |
+| Bulk with `Draw.Transform` | 29.7 | 10.6 |
+| One instance a call | 18-30 | 15-17 |
+
+`-mavx2` gained under 10%, so there is no CPU dispatch. Mount & Rifle route,
+pinned nightly.12 (same draw.c as this base) against nightly.12 with this change,
+one run each (hidden, release, 1280×720, seed 42, `--profile-warmup 200`):
+
+| | Before | After |
+|---|---|---|
+| DrawFlora `mesh_recording`, ms/frame | 2.13 | 0.73 |
+| Present rows | 0.105 | 0.029 |
+
+Rejected/tested counts are identical on the deterministic rows. DrawFlora's
+counts differ between any two runs, before or after, by a few hundred of 180M.
+The stack sampler puts culling (inlined in `shaded_placed`, plus `cull_slow`)
+at ≤ 8.5% of main-thread samples, against 23-25%. Whole-frame CPU means vary
+±25% between runs on this machine, so they are not a measure of this change.
+
 ## Agent profiling of mesh recording (2026-11-02)
 
 The owner approved structured profiling and evidence for unnecessary culling.

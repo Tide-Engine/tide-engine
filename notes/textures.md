@@ -1,5 +1,71 @@
 # Textures and how they are sampled
 
+## Idle images by the device's memory (2026-11-02)
+
+Internal, from an investigation of frame hitches in the owner's Mount & Rifle (pinned 0.6.0-nightly.12, the
+same engine as dev then). Its profiled route (release, hidden, 1280x720, seed 42, `--profile-warmup 200`) had a
+mean CPU frame of 7.8 ms and a max of 88 ms, the render phase's max 77 ms.
+
+- **The cause** (temporary per-frame instrumentation of every backend call, of `vkAllocateMemory`, and of
+  `texture_for`'s uploads and `forget_textures`' evictions; not committed). The game's `[Raw]` conifer maps
+  are three 4096 by 4096 RGBA images, 89 MB each with the mips the renderer makes for Trilinear. The game draws
+  every vegetation material once behind the camera at its menu (`vegetation_warmup.tide`), about 430 MB of
+  images. At the next frame the idle byte budget, 128 MiB whatever the device, let most of it go: two of the
+  conifer maps and 20 of the 1024 by 1024 maps at frame 3, the third conifer map at 122. So the forest's first
+  appearance uploaded them again (frames 518 and 519: 64 MB each copied into the ring, 4 allocations of 298 MB,
+  mips), they went again at 525 after one frame out of view, and came back at 817 and 818 (render 22 to 40 ms,
+  mip generation 13 to 31 ms of CPU, nearly all `vkAllocateMemory`: 5 allocations, 554 MB, 18.7 ms, the
+  textures, their copies with room for mips, and the upload ring doubling to 256 MB), then a wait in the next
+  present while the GPU copied. The 1024 maps came back at 850. On a busy machine the same allocations took
+  127 ms once.
+- **The budget is now the larger of 128 MiB and a sixteenth of the device's own memory**
+  (`tide_texture_idle_budget`, `TIDE_TEXTURE_IDLE_SHARE` in `platform/src/texture_residency.h`; the share is
+  Claude's pick). `tide_gpu.device_memory` (`gpu.h`, optional) says how much: Vulkan's is the biggest
+  device-local heap of a discrete GPU (`vk_device_memory`), 0 for an integrated GPU or a phone, whose memory is
+  the system's. OpenGL, WebGL, WebGPU and the Unity recorder don't say, so they keep 128 MiB. On this RTX 4080
+  SUPER that's 1,002 MiB of 16,045 MiB. `forget_textures` reads it every frame (`tide_texture_idle_bytes`), so a
+  new device is weighed by its own. The count, the ten-minute age and the pressure order are unchanged, and
+  active images are still outside the budget: it isn't a VRAM cap. The memory kept is the only cost: Mount &
+  Rifle now keeps its warmed set (the profile's `gpu_memory` is that much higher while the forest is out of view).
+- **Measured after** (the same route from a build of this checkout with the game as an external dir, release,
+  without and with the change built side by side and run alternately twice each, warm pipeline and driver
+  caches): CPU work max 28.2/25.1 ms before and 18.3/15.3 after, the render phase's max 20.0/16.4 and 3.2/2.5,
+  means unchanged (6.7 ms CPU, 0.8 ms render). With the instrumentation on, nothing is evicted or uploaded again
+  after the menu's warmup. The frames over 20 ms left are the script's five captures (readback and PNG),
+  which the profile leaves out.
+- **What else the hitches were, not changed here:**
+  - Pipelines. The owner's baseline was a new build, so its pipelines weren't in `pipelines.vulkan` yet: a cold
+    run here compiled 38, 12 to 709 ms each, five of them at frame 971 (360 ms together) and six between 832
+    and 846. A run with no window never prewarms (`notes/rendering.md`, Pipelines made before they're drawn),
+    so a profile of a new build hitches where a window's second run, with its keys file, wouldn't. Prewarming
+    in a `--profile` run would make its first frames like a player's; not built (a behaviour of headless runs
+    that note decided).
+  - Vulkan makes a texture that's read Trilinear twice: `vk_texture_make` with one level, then `vk_mipmaps`
+    makes another with room for its levels and copies the first into it, as WebGPU's backend does. For a 4096
+    image that's 64 MB and then 85 MB more of `vkAllocateMemory` and a GPU copy. Making it with its levels when
+    the renderer knows a Trilinear draw reads it would save that; `gpu.h`'s `texture` has no levels to say it
+    with. Not built.
+  - The first upload of a big uncompressed image is synchronous: 64 MB is about 4 to 9 ms of copying into the
+    ring. A game that draws its images during loading (as Mount & Rifle does) pays it there. Asynchronous
+    uploads remain a gap (Automatic compression, below).
+  - The upload ring grows to the most a frame has uploaded and never shrinks, so its doublings cost once.
+- **Tests:** `resident_pack_textures` (`platform/tests/draw.c`) checks the budget's values (0 and 1 GiB keep
+  128 MiB, 16 GiB keeps 1 GiB, no overflow) and that the renderer weighs by its device's.
+  `resident_large_pack_textures` draws two 4096 by 4096 Trilinear pack images (128 MiB, 170 MiB with mips),
+  skips them for two frames, and draws them again: nothing is sent again, their memory stays counted, and
+  they go with the pack. It runs where the device's budget has room (here, Vulkan), and says it's skipped
+  elsewhere. With the old fixed budget it fails at frame 3 (64 MB sent again).
+- **Validation** (Clang 23.1.2, Node 24.22.1, `TIDE_HIDDEN`): Windows ASan, all four `tide_platform_draw` tests
+  (Vulkan with its device-loss pass, OpenGL, OpenGL's legacy vertex path, Vulkan descriptor sets) and the
+  targets, shaders, prewarm and skinned tests on Vulkan and OpenGL; web debug, all four draw pages (WebGL,
+  WebGPU and both RGBA fallbacks). Android (whose Vulkan builds `vk_device_memory`), Linux and macOS are CI's.
+  The game wasn't changed; its gap is recorded in its own notes.
+- **How it was measured, for next time:** a scratch folder whose `CMakeLists.txt` globs the game's `.tide` and
+  `.c` files (hidden folders left out) into `tide_add_game(... PACKAGES Rooms <packages/rooms/rooms.tide>
+  DEFINES PERFORMANCE_TRACE)`, given to the `release` preset as `-DTIDE_EXTERNAL_DIRS`, builds an owner's game
+  against the checkout, so the renderer can be instrumented; the game's own route script copied beside it keeps
+  its captures out of the game's folder.
+
 ## Authored foliage mip coverage and portable full chains (2026-11-02)
 
 The owner asked to apply established foliage techniques without losing distant
@@ -260,7 +326,7 @@ There is no sampler, runtime or GPU contract change; see `notes/language.md`.
 - `compiler/src/texture_compress.c` uses pinned stb_dxt 1.12 in high-quality mode at build time only. Existing RGBA byte conversion and display-space premultiplication happen first. All-255 alpha selects BC1; any other alpha selects BC3. Integer box filtering builds every mip down to 1x1, with clamped 4x4 tail blocks. Compression is lossy and visual only; numeric data must keep `[Raw]`. The smooth-gradient fixtures measured maximum channel error 7/255 and mean absolute error 1.15517 (BC1) / 0.959274 (BC3); those are fixture measurements, not arbitrary-art quality bounds.
 - Exact premultiplied RGBA remains in the pack for unsupported devices and existing C readers. An optional trailer carries magic, format, mip count, byte count and blocks; the texture block's `next` bounds its payload. `tide_pack_texture_blocks_find` validates dimensions, complete mip sizes, counts and file-region bounds before exposing a borrowed pointer. Missing/malformed metadata gives RGBA fallback. Compressed/uncompressed representations have distinct content versions. Pack bytes and CPU asset memory increase; download/CPU-memory compression is not claimed.
 - The draw list borrows both representations until the pack is replaced/unloaded; append propagates the block reference. The private backend factory uploads complete immutable BC mips when supported, otherwise creates the ordinary RGBA image. OpenGL/WebGL query S3TC formats; WebGPU requests optional `texture-compression-bc`. GPU accounting counts the actual full block chain. Point/Bilinear still sample the base level; Trilinear uses the prepared chain without runtime generation. Epoch changes recreate compressed GPU objects rather than writing RGBA into them.
-- Only immutable pack image/cube GPU identities survive inactive frames. The idle budget is 128 MiB, 4096 images, and at most `TIDE_TEXTURE_IDLE_FRAMES` rendered lists since last use: 36,000 (ten minutes at 60 Hz) since 2026-10-20, previously 60, which re-uploaded GRAVEWAKE's boss animation every time one rose and hitched on the web. The byte/count budget is what bounds memory. `tide_texture_idle_frames` (platform.c) holds the value; the residency test in `platform/tests/draw.c` sets it to 60 to see expiry and restores it. Active images are outside this budget; it is not a total VRAM cap. Pressure prefers the most recent images that fit, with stable ties and overflow-safe subtraction. C pointers, grids, shader data and targets retain their existing lifetimes. The GPU cache retains ids/metadata only, never borrowed CPU pack pointers. Device epochs clear it; draw epochs retire stale inactive images.
+- Only immutable pack image/cube GPU identities survive inactive frames. The idle budget is 128 MiB (since 2026-11-02 a sixteenth of a discrete GPU's memory where that's more: Idle images by the device's memory, above), 4096 images, and at most `TIDE_TEXTURE_IDLE_FRAMES` rendered lists since last use: 36,000 (ten minutes at 60 Hz) since 2026-10-20, previously 60, which re-uploaded GRAVEWAKE's boss animation every time one rose and hitched on the web. The byte/count budget is what bounds memory. `tide_texture_idle_frames` (platform.c) holds the value; the residency test in `platform/tests/draw.c` sets it to 60 to see expiry and restores it. Active images are outside this budget; it is not a total VRAM cap. Pressure prefers the most recent images that fit, with stable ties and overflow-safe subtraction. C pointers, grids, shader data and targets retain their existing lifetimes. The GPU cache retains ids/metadata only, never borrowed CPU pack pointers. Device epochs clear it; draw epochs retire stale inactive images.
 - Renderer fixture measurements on this Windows RTX 4080 SUPER: 128x128 BC1 uploaded/accounted 10,936 bytes, BC3 21,872, both including all eight mips, versus 65,536 RGBA base bytes. Relative to a full RGBA mip chain (87,380 bytes), those are approximately 8x/4x smaller. Returning after a hidden frame uploads zero bytes; expiry after 61 unused lists releases the entire allocation. These are upload and engine GPU-accounting measurements, excluding driver allocation overhead, not FPS claims.
 - Coverage: compiler compression tests use an independent decoder and repeat-build comparison; `texture_compression` E2E checks automatic opaque/alpha imports, exact Raw/small channels and append. Pack tests reject corrupt metadata without changing RGBA. Renderer tests cover pixels, premultiplied alpha, point/trilinear reads, upload/memory accounting, residency expiry, byte/count pressure, unload/draw epochs, forced RGBA fallback and WebGPU device loss. Adapter mocks check BC with/without timestamps, timestamp fallback preserving BC and explicit disablement.
 - Validation: full native/web debug builds and suites exercised 2081/2053 tests. Initial failures came from new PNGs entering an existing recursive-glob fixture, an empty optional-feature request descriptor, and forwarding the page's fallback query as a C test argument. Those were corrected, fixtures/pages rebuilt, and all seven affected native checks and sixteen web asset/runtime/renderer/timing/shader/skinning/thread checks passed; every other full-suite case passed. The production docs build passed with existing allowed missing-example placeholders. All native runs used `TIDE_HIDDEN=1`; browsers were muted. No CI or deployment was requested.

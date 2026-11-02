@@ -4001,6 +4001,16 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     return g;
 }
 
+uint64_t tide_texture_device_memory(void)
+{
+    return gpu && gpu->device_memory ? gpu->device_memory() : 0;
+}
+
+uint64_t tide_texture_idle_bytes(void)
+{
+    return tide_texture_idle_budget(tide_texture_device_memory());
+}
+
 // Retain only immutable content identities, never C addresses, grid handles,
 // targets or scratch data. The cache owns GPU ids, not borrowed pack pointers.
 static void forget_textures(const uint32_t epoch)
@@ -4025,7 +4035,8 @@ static void forget_textures(const uint32_t epoch)
             .age = gpu_frame - g->frame, .place = i,
         };
     }
-    tide_texture_idle_trim(idle_textures, idle_count, TIDE_TEXTURE_IDLE_BYTES, TIDE_TEXTURE_IDLE_COUNT, tide_texture_idle_frames);
+    tide_texture_idle_trim(idle_textures, idle_count, tide_texture_idle_bytes(), TIDE_TEXTURE_IDLE_COUNT,
+                           tide_texture_idle_frames);
     for (uint32_t i = 0; i < idle_count; i++) {
         if (idle_textures[i].keep) continue;
         gpu_texture *g = &gpu_textures[idle_textures[i].place];
