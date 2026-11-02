@@ -1,0 +1,7 @@
+// expect: would instantiate generics without end
+scene Main { }
+struct Box { int a; }
+int Grow<T>(T value, int n) { if (n <= 0) return 0; return Grow(Pack(value), n - 1); }
+List<T> Pack<T>(T value) { return [value]; }
+singleton S { int x; }
+system Run(mut S s) { s.x = Grow(1, 3); }

@@ -76,6 +76,7 @@ typedef struct checker {
     bool constants_only;     // A constant expression is being checked (check_constant_expr)
     bool grid_param;         // Resolving a function's parameter, which can be a grid: one code the GPU runs passes it
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
+    decl *generic;           // The instantiation of a generic function being checked: its type parameters' names are types
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -124,6 +125,7 @@ static const type T_ENTITY_ = {TY_ENTITY, NULL};
 static void check_signature(checker *c, decl *m);
 static void check_method_body(checker *c, decl *m);
 static void check_function_decl(checker *c, decl *fn);
+static type check_has(checker *c, expr *e);
 static type resolve_alias_type(const checker *c, decl *d);
 static void check_enum_storage(const checker *c, decl *d);
 
@@ -320,12 +322,13 @@ typedef enum name_kind {
 static bool is_kind(const decl *d, const name_kind kind)
 {
     if (kind == NAME_SYSTEM) return d->kind == DECL_SYSTEM;
-    if (kind == NAME_FUNCTION) return d->kind == DECL_FUNCTION;
+    if (kind == NAME_FUNCTION) return d->kind == DECL_FUNCTION || d->kind == DECL_GENERIC;
     if (kind == NAME_CONST) return d->kind == DECL_CONST;
     if (kind == NAME_SHADER) return d->kind == DECL_SHADER;
     if (kind == NAME_ASSET) return d->kind == DECL_ASSET;
     if (kind == NAME_PREFAB) return d->kind == DECL_PREFAB;
-    return d->kind != DECL_PREFAB && d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER && d->kind != DECL_ASSET;
+    return d->kind != DECL_PREFAB && d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER
+        && d->kind != DECL_ASSET && d->kind != DECL_GENERIC;
 }
 
 static void c_name_of(const decl *d, sb *out);
@@ -359,6 +362,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
         const decl *d = prog->decls.items[i];
         index->next[i] = -1;
         if (unplaced_override(d)) continue;
+        if (d->generic_of && !c_names) continue; // Found through its generic, by its type arguments
         const str ns = decl_ns(d);
         uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), d->name.ptr, (size_t)d->name.len);
         if (c_names) {
@@ -448,7 +452,8 @@ static bool same_role(const decl *d, const name_kind kind)
     if (kind == NAME_SYSTEM) return d->kind == DECL_SYSTEM;
     if (kind == NAME_TYPE || kind == NAME_PREFAB) return is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB;
     if (kind == NAME_FUNCTION && d->kind == DECL_ENUM) return true;
-    return d->kind == DECL_FUNCTION || d->kind == DECL_CONST || d->kind == DECL_ASSET || d->kind == DECL_SHADER;
+    return d->kind == DECL_FUNCTION || d->kind == DECL_GENERIC || d->kind == DECL_CONST || d->kind == DECL_ASSET
+        || d->kind == DECL_SHADER;
 }
 
 // Whether namespace `ns` has a declaration named `name` that's used as a
@@ -527,6 +532,12 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
 
 static decl *find_named(const checker *c, const str name, const loc at, const name_kind kind)
 {
+    if (c->generic && (kind == NAME_TYPE || kind == NAME_PREFAB)) { // An instantiation's T: the type it's bound to
+        for (int i = 0; i < c->generic->type_arg_decls.count; i++) {
+            decl *t = c->generic->type_arg_decls.items[i];
+            if (str_eq(t->name, name)) return t;
+        }
+    }
     decl *other;
     decl *d = lookup(c->prog, c->unit, name, kind, &other);
     if (other) {
@@ -799,7 +810,10 @@ static bool same_package(const decl *a, const decl *b);
 // handlers are systems), and frags and verts.
 static bool same_name_kind(const decl *a, const decl *b)
 {
-    return a->kind == b->kind && (a->kind == DECL_FUNCTION || a->kind == DECL_SYSTEM || a->kind == DECL_SHADER);
+    // A generic function and a plain one can share a name: the plain one wins where both take the arguments
+    const bool fa = a->kind == DECL_FUNCTION || a->kind == DECL_GENERIC, fb = b->kind == DECL_FUNCTION || b->kind == DECL_GENERIC;
+    if (fa && fb) return true;
+    return a->kind == b->kind && (a->kind == DECL_SYSTEM || a->kind == DECL_SHADER);
 }
 
 // Every declaration with `d`'s name where it's declared, `d` among them, in
@@ -2194,6 +2208,7 @@ static type resolve_type(const checker *c, const type_ref *r, const type_place p
 
 static type resolve_alias_at(const checker *c, decl *d, const type_place place, const loc at)
 {
+    if (d->type_param) return d->alias_type;
     if (d->alias_state == 1) {
         diag_error(at, "type alias '" STR_FMT "' refers to itself", STR_ARG(d->qualified));
         diag_note_at(d->at, "an alias can name another alias, but its chain must end at a type without returning here");
@@ -5205,6 +5220,237 @@ static void put_arg_types(sb *out, const expr *e)
 // A call of a name several functions, or several of a type's methods, share:
 // the one C#'s rules pick for its arguments, with them checked against it, or
 // NULL after saying that none takes them, or that more than one could.
+// ---------------------------------------------------------------------------
+// Generic functions
+
+static void mark_io_callers(const checker *c);
+static void mark_roll_callers(const checker *c);
+static void mark_act_callers(const checker *c);
+
+#define GENERIC_DEPTH 8 // Instantiations made by instantiations, one inside another: more is an endless chain
+
+// What a type argument can be: what a list's element can (the proposal's rule), as a value.
+static bool type_arg_ok(const type t, const loc at, const str param)
+{
+    switch (t.kind) {
+    case TY_ERROR: return false;
+    case TY_VOID: case TY_OPTIONAL: case TY_FAILABLE: case TY_GRID: case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT:
+    case TY_RECORD: case TY_EVENT: case TY_WORLD: case TY_QUERY: case TY_ACTION: case TY_DRAW_LIST: case TY_RESIDENT:
+        diag_error(at, "'" STR_FMT "' can't be %s: a type argument is a value, what a list can hold", STR_ARG(param), type_name(t));
+        if (t.kind == TY_COMPONENT) diag_note("a struct with the same fields can be one");
+        return false;
+    default: return true;
+    }
+}
+
+// Binds the type parameters `pattern` names to what `actual` has in their
+// places: `List<T>` against a List<Corner> makes T Corner. False where a
+// parameter is already something else, which `clash` says.
+static bool infer_type(const decl *g, const type_ref *pattern, const type actual, type *bound, bool *set, int *clash)
+{
+    if (actual.kind == TY_ERROR || !pattern) return true;
+    if (pattern->optional) {
+        type_ref inner = *pattern;
+        inner.optional = false;
+        return infer_type(g, &inner, actual.kind == TY_OPTIONAL ? actual.decl->fields.items[0].type : actual, bound, set, clash);
+    }
+    if (pattern->sizes.count > 0) { // T[4][8]: the outer array's elements are T[8]
+        if (actual.kind != TY_ARRAY) return true;
+        type_ref inner = *pattern;
+        inner.sizes.items = pattern->sizes.items + 1;
+        inner.sizes.count = pattern->sizes.count - 1;
+        return infer_type(g, &inner, actual.decl->fields.items[0].type, bound, set, clash);
+    }
+    if (pattern->args.count == 0) {
+        for (int k = 0; k < g->type_params.count; k++) {
+            if (!str_eq(g->type_params.items[k], pattern->name)) continue;
+            if (set[k] && !same_type(bound[k], actual)) {
+                *clash = k;
+                return false;
+            }
+            bound[k] = actual;
+            set[k] = true;
+        }
+        return true;
+    }
+    const str name = pattern->name;
+    if ((str_eq_c(name, "List") && actual.kind == TY_LIST) || (str_eq_c(name, "Set") && actual.kind == TY_SET)
+        || ((str_eq_c(name, "Grid2") || str_eq_c(name, "Grid3")) && actual.kind == TY_GRID)) {
+        return pattern->args.count != 1 || infer_type(g, pattern->args.items[0], actual.decl->fields.items[0].type, bound, set, clash);
+    }
+    if (str_eq_c(name, "Map") && actual.kind == TY_MAP && pattern->args.count == 2) {
+        return infer_type(g, pattern->args.items[0], actual.decl->fields.items[0].type, bound, set, clash)
+            && infer_type(g, pattern->args.items[1], actual.decl->fields.items[1].type, bound, set, clash);
+    }
+    return true; // Its shape isn't the argument's: whether the instantiation takes it is the call's to say
+}
+
+static void put_generic_name(sb *out, const decl *g, const type *args)
+{
+    sb_printf(out, STR_FMT "<", STR_ARG(g->name));
+    for (int k = 0; k < g->type_params.count; k++) sb_printf(out, "%s%s", k ? ", " : "", type_name(args[k]));
+    sb_put(out, ">");
+}
+
+// Generic `g` with type arguments `args`: the instantiation that has them, made
+// the first time (its signature checked, its body when a call picks it).
+static decl *generic_instance(checker *c, decl *g, const type *args, const loc at)
+{
+    for (int i = 0; i < g->generic_instances.count; i++) {
+        decl *d = g->generic_instances.items[i];
+        bool same = true;
+        for (int k = 0; k < g->type_params.count && same; k++) same = same_type(d->type_args.items[k], args[k]);
+        if (same) return d;
+    }
+    sb name = {0};
+    put_generic_name(&name, g, args);
+    const int depth = c->generic ? c->generic->generic_depth + 1 : 1;
+    if (depth > GENERIC_DEPTH) {
+        diag_error(at, "'%s' would instantiate generics without end", name.data);
+        diag_note_at(c->generic->generic_at, "'%s' is instantiated here", c->generic->generic_name);
+        diag_note("a generic that instantiates itself with a bigger type each time never stops: at most %d go one inside another", GENERIC_DEPTH);
+        return NULL;
+    }
+    decl *d = parse_generic_instance(g);
+    if (!d) return NULL;
+    d->generic_of = g;
+    d->generic_depth = depth;
+    d->generic_at = at;
+    d->generic_name = name.data;
+    d->qualified = g->qualified;
+    d->is_local = g->is_local;
+    d->local_at = g->local_at;
+    for (int k = 0; k < g->type_params.count; k++) {
+        vec_push(d->type_args, args[k]);
+        decl *t = NEW(decl);
+        t->kind = DECL_ALIAS;
+        t->type_param = true;
+        t->name = t->qualified = g->type_params.items[k];
+        t->at = g->type_param_at.items[k];
+        t->unit = g->unit;
+        t->alias_state = 2;
+        t->alias_type = args[k];
+        type_ref *ref = NEW(type_ref);
+        ref->name = ref->text = str_from(type_name(args[k]));
+        ref->at = ref->name_at = t->at;
+        t->alias_ref = ref;
+        vec_push(d->type_arg_decls, t);
+    }
+    vec_push(g->generic_instances, d);
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = g->unit, .generic = d};
+    check_function_decl(&nested, d);
+    // Its name in generated C: the generic's, then its type arguments', Max_float (and its parameters', where
+    // generics share the name)
+    sb suffix = {0};
+    for (int k = 0; k < d->type_args.count; k++) {
+        sb_put(&suffix, "_");
+        for (const char *text = type_name(d->type_args.items[k]); *text; text++) {
+            if (isalnum((unsigned char)*text)) sb_putn(&suffix, text, 1);
+            else if (*text == '?') sb_put(&suffix, "_opt");
+            else if (*text == '[') sb_put(&suffix, "_of");
+            else if (*text != ' ' && *text != '>' && *text != ']') sb_put(&suffix, "_");
+        }
+    }
+    if (g->shares_name) put_c_suffix(&suffix, d->params.items, d->params.count);
+    d->c_suffix = suffix.data;
+    d->signature = d->generic_name;
+    return d;
+}
+
+// The instantiation a call picked: in the program from here on, its body
+// checked as the generic's own code with the type arguments bound.
+static void place_generic_instance(checker *c, decl *d)
+{
+    if (d->generic_placed) return;
+    d->generic_placed = true;
+    vec_push(c->prog->decls, d);
+    // Another declaration generated C would spell the same: Max_float of the game's own
+    sb mine = {0};
+    c_name_of(d, &mine);
+    sb_put(&mine, d->c_suffix);
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *other = c->prog->decls.items[i];
+        if (other == d || other->builtin || other->kind == DECL_ALIAS || other->kind == DECL_GENERIC) continue;
+        if (other->kind != DECL_FUNCTION && !is_kind(other, NAME_TYPE) && other->kind != DECL_SYSTEM && other->kind != DECL_CONST) continue;
+        sb theirs = {0};
+        c_name_of(other, &theirs);
+        if (other->c_suffix) sb_put(&theirs, other->c_suffix);
+        if (strcmp(mine.data, theirs.data) != 0) continue;
+        diag_error(d->generic_at, "'%s' and '" STR_FMT "' would have the same name in generated C, %s", d->generic_name,
+                   STR_ARG(other->qualified), mine.data);
+        diag_note("rename one of them");
+        break;
+    }
+    checker nested = {.prog = c->prog, .fields_ordered = c->fields_ordered, .unit = d->unit, .generic = d};
+    const int errors = diag_error_count();
+    check_method_body(&nested, d);
+    if (diag_error_count() > errors) diag_note_at(d->generic_at, "in '%s', which this call instantiates", d->generic_name);
+#define MERGE_CHECKS(member) for (int i = 0; i < nested.member.count; i++) vec_push(c->member, nested.member.items[i])
+    MERGE_CHECKS(raw_uses); MERGE_CHECKS(unused); MERGE_CHECKS(dropped); MERGE_CHECKS(spawns);
+    MERGE_CHECKS(sends); MERGE_CHECKS(calls); MERGE_CHECKS(heap_passes); MERGE_CHECKS(bare); MERGE_CHECKS(task_calls);
+    MERGE_CHECKS(access_warnings);
+#undef MERGE_CHECKS
+    c->outs += nested.outs;
+    // What its code does, through the functions it calls, is known before the code that called it goes on
+    mark_io_callers(c);
+    mark_roll_callers(c);
+    mark_act_callers(c);
+}
+
+// The instantiation of generic `g` that call `e` means: its type arguments as
+// written in <>, or from its arguments' types, which are checked. NULL where
+// there's none, which `loud` says.
+static decl *instantiate_for_call(checker *c, const expr *e, decl *g, const bool loud)
+{
+    const int n = g->type_params.count;
+    type *bound = arena_alloc(sizeof(type) * (size_t)n);
+    bool *set = arena_alloc(sizeof(bool) * (size_t)n);
+    for (int k = 0; k < n; k++) set[k] = false;
+    if (e->type_args.count > 0) {
+        if (e->type_args.count != n) {
+            if (loud) diag_error(e->type_args.items[0]->at, "'" STR_FMT "' takes %d type%s in '<>', not %d", STR_ARG(g->name), n,
+                                 n == 1 ? "" : "s", e->type_args.count);
+            return NULL;
+        }
+        for (int k = 0; k < n; k++) {
+            const type_ref *r = e->type_args.items[k];
+            bound[k] = resolve_type(c, r, PLACE_LOCAL, r->at);
+            if (bound[k].kind == TY_ERROR || !type_arg_ok(bound[k], r->at, g->type_params.items[k])) return NULL;
+        }
+        return generic_instance(c, g, bound, e->at);
+    }
+    int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
+    if (!bind_args(e, g, param_of, !loud)) return NULL;
+    for (int i = 0; i < e->args.count; i++) {
+        const expr *arg = e->args.items[i];
+        if (param_of[i] < 0 || arg->is_out || untyped_arg(arg)) continue;
+        if (arg->type.kind == TY_ERROR) return NULL;
+        int clash = -1;
+        if (infer_type(g, g->params.items[param_of[i]].type_ref, arg->type, bound, set, &clash)) continue;
+        if (loud) {
+            diag_error(arg->at, "'" STR_FMT "' is %s from an argument before, and this one makes it something else",
+                       STR_ARG(g->type_params.items[clash]), type_name(bound[clash]));
+            diag_note("each argument that says what '" STR_FMT "' is says the same type: write it in '<>', like '" STR_FMT "<%s>(...)', "
+                      "and the arguments are converted to it", STR_ARG(g->type_params.items[clash]), STR_ARG(g->name),
+                      type_name(bound[clash]));
+        }
+        return NULL;
+    }
+    for (int k = 0; k < n; k++) {
+        if (set[k]) {
+            if (!type_arg_ok(bound[k], e->at, g->type_params.items[k])) return NULL;
+            continue;
+        }
+        if (loud) {
+            diag_error(e->at, "nothing in the arguments says what '" STR_FMT "' of '" STR_FMT "' is", STR_ARG(g->type_params.items[k]),
+                       STR_ARG(g->name));
+            diag_note("write the types in '<>', like '" STR_FMT "<int>(...)'", STR_ARG(g->name));
+        }
+        return NULL;
+    }
+    return generic_instance(c, g, bound, e->at);
+}
+
 static decl *check_overloaded_args(checker *c, expr *e, decl *first)
 {
     decl_list same = {0};
@@ -5241,12 +5487,28 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         c->input_value = previous_input;
         c->asset_value = previous_asset;
     }
+    // A generic takes part as the instantiation its type arguments make: written in <>, or from the arguments
+    bool *failed = arena_alloc(sizeof(bool) * (size_t)same.count);
+    bool said = false; // ...what's wrong with the one there is, said already
+    for (int k = 0; k < same.count; k++) {
+        failed[k] = false;
+        if (same.items[k]->kind != DECL_GENERIC) {
+            failed[k] = e->type_args.count > 0;
+            continue;
+        }
+        const bool loud = same.count == 1;
+        const int errors = diag_error_count();
+        decl *made = instantiate_for_call(c, e, same.items[k], loud);
+        if (made) same.items[k] = made;
+        failed[k] = !made;
+        said |= loud && !made && diag_error_count() > errors;
+    }
     int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
     bool *fits = arena_alloc(sizeof(bool) * (size_t)same.count);
     for (int k = 0; k < same.count; k++) {
         const decl *m = same.items[k];
         param_of[k] = arena_alloc(sizeof(int) * (size_t)(written ? written : 1));
-        fits[k] = m->takes_action == (e->block != NULL) && bind_args(e, m, param_of[k], true);
+        fits[k] = !failed[k] && m->takes_action == (e->block != NULL) && bind_args(e, m, param_of[k], true);
     }
     // A T? or a failable call's value only goes where its own type does (as check_expr_want)
     for (int i = 0; i < written; i++) {
@@ -5273,7 +5535,10 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         if (!fits[k]) continue;
         bool wins = true;
         for (int j = 0; j < same.count && wins; j++) {
-            if (j != k && fits[j]) wins = better_candidate(e, same.items[k], param_of[k], same.items[j], param_of[j]) > 0;
+            if (j == k || !fits[j]) continue;
+            const bool k_generic = same.items[k]->generic_of != NULL, j_generic = same.items[j]->generic_of != NULL;
+            wins = k_generic != j_generic ? !k_generic // A plain function wins over a generic, as in C#
+                                          : better_candidate(e, same.items[k], param_of[k], same.items[j], param_of[j]) > 0;
         }
         if (wins) best = k;
     }
@@ -5282,6 +5547,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             if (e->args.items[i]->is_out) finish_out_arg(c, e->args.items[i], T_ERR);
             else if (untyped_arg(e->args.items[i])) check_expr_want_checked(c, e->args.items[i], T_ERR, true);
         }
+        if (said) return NULL;
         sb args = {0};
         put_arg_types(&args, e);
         if (applicable == 0) {
@@ -5300,6 +5566,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         return NULL;
     }
     decl *m = same.items[best];
+    if (m->generic_of) place_generic_instance(c, m);
     e->call = m->kind == DECL_FUNCTION ? CALL_FUNCTION : CALL_METHOD;
     e->method = m;
     decl *from = reading_code(c);
@@ -5347,7 +5614,11 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
 // which is said).
 static decl *check_routine_args(checker *c, expr *e, decl *m)
 {
-    if (m->shares_name) return check_overloaded_args(c, e, m);
+    if (m->shares_name || m->kind == DECL_GENERIC) return check_overloaded_args(c, e, m);
+    if (e->type_args.count > 0) {
+        diag_error(e->type_args.items[0]->at, "'" STR_FMT "' takes no types in '<>': it isn't generic", STR_ARG(m->name));
+        diag_note("leave out the '<...>'");
+    }
     check_method_args(c, e, m);
     return m;
 }
@@ -9850,6 +10121,12 @@ static type check_name(checker *c, expr *e)
     k = find_named(c, e->name, e->at, NAME_ASSET);
     if (k) return use_asset(c, e, k);
     decl *function = find_named(c, e->name, e->at, NAME_FUNCTION);
+    if (function && function->kind == DECL_GENERIC) {
+        diag_error(e->at, "'" STR_FMT "' is generic: as a value, it's one of its instantiations, which a name alone doesn't say",
+                   STR_ARG(e->name));
+        diag_note("call it in a lambda, like '(int a, int b) => " STR_FMT "(a, b)'", STR_ARG(e->name));
+        return T_ERR;
+    }
     if (function) {
         if (function->shares_name || function->params.count > 16) {
             diag_error(e->at, "a function reference needs an explicit Func signature to select its overload");
@@ -11326,6 +11603,7 @@ static type check_expr_any_raw(checker *c, expr *e)
         break;
     case E_COALESCE: t = check_coalesce(c, e); break;
     case E_IS: t = check_is(c, e); break;
+    case E_HAS: t = check_has(c, e); break;
     case E_TRY: t = check_try(c, e); break;
     case E_DEFAULTED: t = check_defaulted(c, e); break;
     case E_AWAIT: t = check_await(c, e); break;
@@ -13256,6 +13534,53 @@ static bool stands_alone(const expr *e)
         || called->kind == E_AWAIT;
 }
 
+// `T has float3 normal`: whether the type has a field of that name and type, a
+// constant once checked (an E_BOOL from then on), so that generic code writes
+// the fields a type has: `if (V has float3 normal) v.normal = n;`.
+static type check_has(checker *c, expr *e)
+{
+    type_ref of = {0};
+    of.name = of.text = e->lhs->name;
+    of.at = of.name_at = e->lhs->at;
+    const type t = resolve_type(c, &of, PLACE_LOCAL, e->lhs->at);
+    const type want = resolve_type(c, e->pattern_ref, PLACE_LOCAL, e->pattern_ref->at);
+    if (t.kind == TY_ERROR || want.kind == TY_ERROR) return T_ERR;
+    bool has = false;
+    if (t.decl && (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT)) {
+        for (int i = 0; i < t.decl->fields.count && !has; i++) {
+            const field *f = &t.decl->fields.items[i];
+            has = !f->hidden && str_eq(f->name, e->pattern_field) && same_type(f->type, want);
+        }
+    }
+    e->kind = E_BOOL;
+    e->bool_value = has;
+    e->type = T_BOOL_;
+    return T_BOOL_;
+}
+
+// Whether an if's condition is `has` tests alone, with !, && and ||: what it
+// is, then, as its code is checked.
+static bool has_condition(checker *c, expr *e, bool *value)
+{
+    if (e->kind == E_HAS) {
+        const type t = check_has(c, e);
+        *value = t.kind != TY_ERROR && e->bool_value;
+        return true;
+    }
+    if (e->kind == E_UNARY && e->op == T_NOT && e->lhs->kind == E_HAS) {
+        if (!has_condition(c, e->lhs, value)) return false;
+        *value = !*value;
+        return true;
+    }
+    if (e->kind == E_BINARY && (e->op == T_AND || e->op == T_OR)) {
+        bool l, r;
+        if (!has_condition(c, e->lhs, &l) || !has_condition(c, e->rhs, &r)) return false;
+        *value = e->op == T_AND ? l && r : l || r;
+        return true;
+    }
+    return false;
+}
+
 static void check_stmt(checker *c, stmt *s)
 {
     switch (s->kind) {
@@ -13265,6 +13590,20 @@ static void check_stmt(checker *c, stmt *s)
         pop_scope(c);
         break;
     case S_IF: {
+        bool known;
+        if (has_condition(c, s->cond, &known)) {
+            // `if (V has float3 normal)`: only the side that runs is checked, and it's all that's left of the if
+            stmt *taken = known ? s->then_stmt : s->else_stmt;
+            if (taken) {
+                *s = *taken;
+            } else {
+                s->kind = S_BLOCK;
+                s->stmts.items = NULL;
+                s->stmts.count = s->stmts.cap = 0;
+            }
+            check_stmt(c, s);
+            break;
+        }
         allow_bindings(s->cond);
         push_scope(c);
         const type cond = check_expr(c, s->cond);
@@ -15345,6 +15684,8 @@ static void check_local_part(const checker *c, const decl *part)
 static type method_type(const checker *c, const type_ref *r, const loc at, const bool is_return)
 {
     bind_alias_ref(c, r);
+    // A type parameter is its type argument, which is a value (type_arg_ok)
+    if (r->alias && r->alias->type_param && r->args.count == 0 && r->sizes.count == 0 && !r->optional) return r->alias->alias_type;
     if (r->alias && r->args.count == 0 && r->sizes.count == 0 && !r->optional) {
         if (resolve_alias_type(c, r->alias).kind == TY_ERROR) return T_ERR;
         checker scoped = *c;
@@ -18830,7 +19171,8 @@ static void collect_decls(program *prog)
                 const bool both_types = (is_kind(d, NAME_TYPE) || d->kind == DECL_PREFAB)
                                      && (is_kind(other, NAME_TYPE) || other->kind == DECL_PREFAB);
                 const bool both_systems = d->kind == DECL_SYSTEM && other->kind == DECL_SYSTEM;
-                const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION || d->kind == DECL_SHADER
+                const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION || d->kind == DECL_GENERIC
+                                   || other->kind == DECL_GENERIC || d->kind == DECL_SHADER
                                    || other->kind == DECL_SHADER;
                 const bool constant = d->kind == DECL_CONST || other->kind == DECL_CONST;
                 const bool alias = d->kind == DECL_ALIAS || other->kind == DECL_ALIAS;
@@ -18943,6 +19285,7 @@ static void collect_decls(program *prog)
         case DECL_ARRAY:
         case DECL_MESH:
         case DECL_RESULT:
+        case DECL_GENERIC:
         case DECL_FUNCTION:
         case DECL_CONST:
         case DECL_ASSET:
@@ -21898,6 +22241,27 @@ static void check_replaced(checker *c, decl *v)
 
 #include "worker_check.inc"
 
+// A generic function as declared: what its type parameters are named, and
+// what it can be. Its code is checked in each instantiation.
+static void check_generic_decl(const checker *c, decl *g)
+{
+    for (int k = 0; k < g->type_params.count; k++) {
+        const str name = g->type_params.items[k];
+        type builtin;
+        decl *other;
+        decl *named = lookup(c->prog, g->unit, name, NAME_TYPE, &other);
+        if (named || resolve_builtin_type(c, name, &builtin) || str_eq_c(name, "string")) {
+            diag_error(g->type_param_at.items[k], "'" STR_FMT "' is a type already, so it can't name a type parameter", STR_ARG(name));
+            diag_note("a type parameter's name is its own: 'T', 'V' or 'Vertex' where no type has it");
+        }
+        for (int j = 0; j < k; j++) {
+            if (str_eq(g->type_params.items[j], name)) diag_error(g->type_param_at.items[k], "'" STR_FMT "' is already a type parameter of '" STR_FMT "'", STR_ARG(name), STR_ARG(g->name));
+        }
+    }
+    if (g->is_async) diag_error(g->async_at, "a generic function can't be async yet: write the task's function for its types");
+    if (g->is_worker) diag_error(g->worker_at, "a worker can't be generic yet");
+}
+
 bool check(program *prog)
 {
     checker c = {0};
@@ -21912,6 +22276,9 @@ bool check(program *prog)
     collect_decls(prog);
     check_units(prog);
     check_packages(prog);
+    for (int i = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->kind == DECL_GENERIC) check_generic_decl(&c, prog->decls.items[i]);
+    }
     // Resolve unused aliases too. Each use still checks its ordinary placement.
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];

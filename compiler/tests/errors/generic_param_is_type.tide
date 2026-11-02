@@ -1,0 +1,4 @@
+// expect: 'Health' is a type already, so it can't name a type parameter
+scene Main { }
+struct Health { int value; }
+Health Keep<Health>(Health h) { return h; }

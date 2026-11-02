@@ -77,6 +77,7 @@ export const sidebar: Group[] = [
             { text: 'Using and writing packages', link: '/packages/using-and-writing' },
             { text: 'Render3D', link: '/packages/render3d' },
             { text: 'Corner Culling', link: '/packages/cornerculling' },
+            { text: 'Geometry', link: '/packages/geometry' },
             { text: 'Box2D', link: '/packages/box2d' },
             { text: 'Box3D', link: '/packages/box3d' },
             { text: 'Rooms', link: '/packages/rooms' },
@@ -101,6 +102,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Basics', link: '/language/basics' },
             { text: 'Structs and functions', link: '/language/functions' },
+            { text: 'Generic functions', link: '/language/generics' },
             { text: 'Errors', link: '/language/errors' },
             { text: 'Math', link: '/language/math' },
             { text: 'Text and lists', link: '/language/text-and-lists' },

@@ -733,6 +733,7 @@ static void walk_value(const expr *e)
     case E_INT:
     case E_FLOAT:
     case E_BOOL:
+    case E_HAS: // An uninstantiated generic's: the checker makes the others bools
     case E_STRING:
         break;
 
@@ -1804,6 +1805,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_STRUCT: return "struct";
     case DECL_METHOD: return "method";
     case DECL_FUNCTION: return "function";
+    case DECL_GENERIC: return "function";
     case DECL_EVENT: return d->is_command ? "command" : "event";
     case DECL_ENUM: return "enum";
     case DECL_LIST: return "list";
