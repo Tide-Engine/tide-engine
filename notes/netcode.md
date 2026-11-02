@@ -1,5 +1,63 @@
 # Netcode: sessions, prediction, commands
 
+## Short server stalls recover their input lead promptly (2026-11-02)
+
+A half-second server pause left clients sending inputs hundreds of milliseconds
+too early. It fit inside the prediction window, so `clock_back` did nothing;
+ordinary `keep_early` waited 2 or 10 seconds before shedding the excess at 10%.
+Other machines consequently saw fresh actions late well after the pause ended.
+
+`clock_back` now also detects a smaller excess from two timed server replies:
+the input clock is more than 100 ms (and more than two ticks) beyond the server
+tick plus the configured lead and that reply's full round trip. Slow/reordered
+traffic alone does not establish this excess. It removes the proven difference
+at 50% of elapsed time, retaining one extra tick for the fractional server/RTT
+parts rounded down. The existing two-reply hard reset beyond the input window
+keeps its separate evidence counter and behavior.
+
+This path never rewinds sampled inputs, replaces sent bytes or resets prediction.
+Prediction temporarily advances at half speed, continuing to sample fresh input;
+resetting the clock backward instead would stop sampling until previously sent
+ticks came round again. No language, wire, game callback or simulation-state
+layout change. Normal lead tuning remains unchanged. Fast correction may replace
+ordinary slow correction, but cannot re-add unfinished fast debt. Wait feedback
+is ignored until inputs sampled under the adjusted clock have run. Timed replies
+can establish excess while visibility repairs lag; they do not depend on having
+confirmed every advertised tick, since smooth recovery rewrites no history.
+
+`seen_a_short_server_stall_recovers_without_freezing_own_input` tests two 500 ms
+server pauses on the same connection, 30/60 Hz matches, 60 Hz updates, clean
+30 ms/way and 80 ms/way with 10 ms jitter/3% loss. It checks monotonic sampling
+and prediction, actual local presentation response, sample gaps, server response
+to a new press two seconds after each pause, input wait and no resyncs. Linking
+the same fixture with the original session fails 16 latency assertions. At
+60 Hz on the lossy profile the server response falls from 31 frames to 7 after
+both pauses; across all eight cases, later input wait stays at most 70 ms,
+local presentation responds within one frame at 60 Hz/three at 30 Hz, sampling
+gaps stay within two/four frames, and no input is late. The initial experiment
+without the extra tick caused late inputs after recovery; the cushion fixes it.
+
+Mount & Rifle paired diagnostic: identical compiled game/host, seed 42, 60 Hz
+frames, 80 ms/way, 10 ms jitter, 3% loss, server updates paused from 7 to 7.5 s.
+A press 0.83 s after resuming appeared in the host-side world in 517 ms before,
+283 ms after; a press 2.5 s after resuming took 517 ms before, 150 ms after
+(the previous no-stall baseline). During recovery the fixed local simulation
+responded in 17 ms and its camera in 33 ms; afterward, immediately/17 ms.
+Adaptive input delay stayed zero, with its real CPU clock enabled. These are
+simulated elapsed-time/world-state measurements, not display or Internet/WebRTC
+latency; the pause stops server updates only. Scratch artifacts and reproduction
+are in build/input-probe/fast-comparison.json and build-fast.py. The game's
+nightly pin is unchanged. The older reported inverted local/remote delay remains
+unreproduced; this is not a general fix for arbitrary repair or CPU backlog.
+
+Validation: Windows ASan and WASI pass the 15 session and eight visibility
+cases, plus the complete seen, net, net_join_big, predict, guess, view_time and
+visibility_lifecycle fixtures. Native/web repeated-stall measurements agree.
+Existing long-stall recovery, delayed/reordered replies, joins, adaptive input
+delay, prediction and repair checks pass. Independent source review identified
+the need for separate hard/soft evidence counters, included above. Other native
+platforms remain CI coverage; no browser or Internet transport test was run.
+
 ## Received projections reuse decoded state (2026-11-02)
 
 Mount & Rifle now exercises the existing `reload_client_state` path for remote

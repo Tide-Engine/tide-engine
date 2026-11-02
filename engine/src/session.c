@@ -178,6 +178,8 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define EARLY_KEEP 10.0 // ...and after one was nearly late: what made it so may come again
 #define EARLY_START 1.0 // ...but in its first second in a match: a machine starting up stutters, and that doesn't come again
 #define CLOCK_SLOW 0.1  // The share of the time that passes a clock loses, while it has some to lose
+#define CLOCK_RECOVER 0.5 // A proven server stall: lose the excess without stopping input sampling
+#define CLOCK_EXCESS 0.1  // Seconds beyond even a fresh join's conservative lead before recovering faster
 #define MAX_TICKS 8u    // Ticks a server runs in one update at most: after a stall it drops the time instead
 #define CATCH_UP_TICKS 8u // Normal frame allowance for server ticks while a client is behind (catch_up_room)
 #define PRESENT_SECONDS 20.0  // How long players of a world a server went on from have to come back
@@ -3618,6 +3620,7 @@ struct tide_client {
     uint32_t ran_now;
     uint64_t began_now;
     uint32_t far;       // Updates in a row the server's word had its clock past what it can sample (clock_back)
+    uint32_t excess_updates; // Timed replies in a row proving a smaller excess (clock_back)
     uint32_t delay;         // Ticks short of `sampled` it runs
     uint32_t delay_cap;     // The most delay it takes, so its inputs fit their ring
     bool predicts;          // It runs ticks the server hasn't confirmed (TIDE_PREDICTION_ROLLBACK)
@@ -3703,6 +3706,7 @@ struct tide_client {
     bool early_raised; // Its clock went ahead for an input that was nearly late, and none has been since for long
     double early_from; // When it joined the match
     double clock_slow; // Seconds its clock still has to lose, a little of each update (update_client)
+    bool clock_recover; // Lose a proven large excess at CLOCK_RECOVER, ordinary lead tuning at CLOCK_SLOW
     uint32_t late; // Ticks the server ran without an input this machine sampled for them, which came too late
     double hold_until; // No clock changes until then: it's still losing what the last one found
 
@@ -4963,6 +4967,8 @@ static void set_clock(tide_client *c, const uint32_t server, const uint32_t trip
     c->clock_start = c->now;
     c->clock_base = (int64_t)server + c->desc.lead + (c->desc.lead ? trip : 0u);
     c->clock_slow = 0.0;
+    c->clock_recover = false;
+    c->excess_updates = 0;
     c->early_watching = false;
     c->early_raised = false;
     c->early_settling = true;
@@ -5453,6 +5459,7 @@ static void keep_early(tide_client *c)
     if (c->early_least < early_wanted(c)) {
         c->clock_start -= (double)(early_wanted(c) - c->early_least) / WAITS;
         c->clock_slow = 0.0;
+        c->clock_recover = false;
         c->early_raised = c->now - c->early_from >= EARLY_START;
         c->early_settling = true;
         c->early_watching = false;
@@ -5464,6 +5471,7 @@ static void keep_early(tide_client *c)
         if (c->early_least >= wanted + room) {
             const double lose = (double)(c->early_least - wanted) / WAITS;
             c->clock_slow = lose;
+            c->clock_recover = false;
             c->hold_until = c->now + lose / CLOCK_SLOW; // Until it has lost it
             c->early_settling = true;
         }
@@ -5502,9 +5510,35 @@ static void clock_back(tide_client *c)
     const int64_t joined = (int64_t)c->heard_tick + c->desc.lead + (c->desc.lead ? trip : 0u);
     const int64_t most = (int64_t)c->verified + c->w.prediction;
     const bool far = c->verified >= c->heard_tick && due_input(c) > most && joined <= most;
+    // A smaller stall fits inside the input window, but can leave each input
+    // waiting hundreds of milliseconds for seconds. The same timed reply is
+    // evidence even while visibility repairs lag behind the server's tick.
+    // Keep a full round trip of lead; slow packets alone don't prove excess.
+    const int64_t excess = due_input(c) - joined;
+    const uint32_t margin = (uint32_t)ticks_in(CLOCK_EXCESS, c->tick_rate);
+    const bool recover = c->game->set_input && c->desc.sample
+        && excess > (int64_t)(margin > 2u ? margin : 2u)
+        && !(c->clock_recover && c->clock_slow > 0.0);
     c->far = far ? c->far + 1u : 0u;
-    if (c->far < 2u) return;
+    c->excess_updates = recover ? c->excess_updates + 1u : 0u;
+    const bool reset = c->far >= 2u;
+    if (!reset && c->excess_updates < 2u) return;
     c->far = 0;
+    c->excess_updates = 0;
+    if (!reset) {
+        // Never rewind sampled ticks or replace inputs the server already has.
+        // A hard reset here would stop fresh controls until those ticks came
+        // round again. At half speed there is still a fresh sample every other
+        // tick, and the excess drains without replaying old controls locally.
+        // The server tick and round trip are rounded down. Keep one more tick
+        // so that losing their fractional parts cannot make inputs late.
+        c->clock_slow = (double)(excess - 1) / (double)c->tick_rate;
+        c->clock_recover = true;
+        c->hold_until = c->now + c->clock_slow / CLOCK_RECOVER;
+        c->early_settling = true;
+        c->early_watching = false;
+        return;
+    }
     set_clock(c, c->heard_tick, trip);
     const int64_t run_to = due_tick(c);
     if ((int64_t)c->ahead > run_to) {
@@ -6120,7 +6154,7 @@ static void update_client(tide_client *c, const double now)
     }
     // A clock with time to lose (keep_early) loses a share of what passed
     if (c->clock_slow > 0.0 && now > c->now) {
-        const double most = (now - c->now) * CLOCK_SLOW;
+        const double most = (now - c->now) * (c->clock_recover ? CLOCK_RECOVER : CLOCK_SLOW);
         const double lose = c->clock_slow < most ? c->clock_slow : most;
         c->clock_start += lose;
         c->clock_slow -= lose;
