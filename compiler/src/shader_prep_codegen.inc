@@ -102,6 +102,7 @@ static void shader_prep_expr(shader_prep_walk *w, const expr *e)
     // the GPU. A CPU callable invocation is rejected by its generated dispatcher.
     if (!e->lambda) shader_prep_expr(w, e->lambda_body);
     shader_prep_expr(w, e->values);
+    shader_prep_expr(w, e->mesh_lod);
     shader_prep_expr(w, e->skin_mesh);
     shader_prep_expr(w, e->skin_pose);
     shader_prep_expr(w, e->callable_receiver);

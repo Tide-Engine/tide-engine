@@ -4,7 +4,7 @@
 
 The compiler reuses compatible completed numeric-list/texture bindings within a
 proven read-only view invocation, preserving per-instance capture and fallback
-for effects/host callbacks. Contracts and sixteen fallback scenarios are in
+for effects/host callbacks. Contracts and eighteen fallback scenarios are in
 language.md.
 
 Frozen release/Vulkan runs on the Ryzen 9 7900X / RTX 4080 SUPER retain all 18
@@ -28,6 +28,12 @@ Full Windows ASan/web-release suites pass 2,911/2,797 tests, plus three final
 focused checks each. The optional whole-process CPU control never started;
 only its owned queued gate was stopped after approximately 21 minutes. Its
 unexecuted plan supplies no CPU-consumption result.
+
+Incoming generated-mesh LOD integration passes four focused probes per platform
+and 61 affected native ASan / 65 web-release tests. The rebuilt release's three
+verification captures and all shader blocks still match the frozen baseline.
+No post-merge paired timings were run; validation-merge.json pins the separate
+executable and evidence without changing the original timing cohort.
 
 [All pairs, identities, fidelity/validation evidence and control status](../bench/results/forest-batch-20261102/README.md)
 remain recorded without exclusions or replacement runs.

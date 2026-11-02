@@ -23,6 +23,14 @@ pass three focused CTests on each platform. The private positive fixture counts
 two list and two texture conversions for six A/B/A/B/A/B draws, checks every
 instance tint, edits source data between frames and verifies scope restoration.
 
+The merge with generated mesh LOD work additionally traverses its retained
+`lod:` expression in compiler effect/read/write/order analysis. Two regressions
+bring the fallback fixture to eighteen scenarios. Four focused native/web probes
+and 61/65 affected native/web tests pass, including draw/mesh/Render3D and forest
+dependencies. A rebuilt release executable again produces byte-identical shader
+blocks and zero changed pixels in all three captures. These post-merge captures
+are correctness checks; the original timed binaries and results stay pinned.
+
 Frozen baseline/candidate forest programs have byte-identical 28 GLSL, 14 WGSL,
 14 SPIR-V and 14 shader metadata/layout blocks. Three 1920x1080 same-timestep
 captures (10k canopy, 100k wide and ground) match every decoded RGBA pixel.

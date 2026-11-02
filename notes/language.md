@@ -61,6 +61,30 @@ fixtures pass again on native and web. Forest shader/image equivalence and
 measurement scopes are recorded with the final optimization run in render3d.md
 and bench/results/forest-batch-20261102/README.md.
 
+## `lod:` on mesh draws (2026-11-02)
+
+`check_mesh_draw` takes a last argument named `lod` off `args` (with its name and place) before peeling verts,
+frags and values, and checks it once the vertex's dimensions are known: a float or int (`check_expr_want` with
+float), refused on a 2D vertex and on `Draw.SkinnedMesh`, kept as `expr.mesh_lod` with `mesh_lod_vertex`. Any
+other name written on a mesh draw's argument is an error naming `lod:` (it formerly fell through to the overload
+mismatch). `gen_expr` writes a call with `mesh_lod` as `(tide_draw_want_levels(tide_draw, (float)(m), layout),
+<the call>, tide_draw_want_levels(tide_draw, 0.0f, NULL))`, the call generated from a copy without `mesh_lod`.
+The multiplier is evaluated after hoisted operands, which keeps written order, as it's written last. Works for
+lists, `Mesh<V>` values (whose arguments are rewritten after the peel), instances, shaders and targets (the list
+is `tide_draw` for every destination). Feature notes: assets-and-files.md, Levels of detail for meshes a game makes.
+
+Integration with shared shader preparation: the retained `mesh_lod` child must
+participate in purity, lane read/write, borrow, worker, asset/dependency and
+writer/operand-order analysis. It is taken last in `call_operands`, preserving
+earlier captured values when the LOD expression has a declared mutable effect.
+Conditional asset traversal leaves the identity of programs without LOD unchanged.
+Fallback scenarios 17/18 check a transitive extern grid edit from `lod:` and a
+declared mutable helper after an earlier transform argument, using actual texture
+bytes, transforms and unchanged match hashes. Four focused probes per platform,
+then 61 affected native ASan and 65 web-release tests pass. Rebuilt release forest
+shader blocks and all pixels in three captures still match the baseline; no new
+post-merge performance claim is made. Evidence: bench/results/forest-batch-20261102/validation-merge.json.
+
 ## Non-drawing views of shader components (2026-11-01)
 
 The forest stress scene exposed an overly broad partial-lane fallback: a

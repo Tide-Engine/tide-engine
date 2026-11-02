@@ -1,0 +1,9 @@
+// expect: Draw.Mesh takes its arguments in order, and 'lod:' alone by name, last
+// expect: leave out 'detail:'
+scene Main { }
+
+view Show()
+{
+    List<Vertex3> corners = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }];
+    Draw.Mesh(corners, [0, 1, 2], float4x4.identity, detail: 1);
+}

@@ -12,6 +12,7 @@
 #include "tide/page.h"
 #include "skinned_cache.h"
 #include "list_data_cache.h"
+#include "mesh_levels.h"
 
 static void reindex_meshes(tide_draw_list *d);
 static void reindex_textures(tide_draw_list *d);
@@ -414,6 +415,8 @@ void tide_draw_reset(tide_draw_list *d)
     }
     if (freed) reindex_meshes(d);
     d->leveled = 0;
+    d->lod_want = 0.0f;
+    tide_draw_lod_collect(d); // Levels made in the background since, for the meshes that are still here
     d->frame++;
 }
 
@@ -434,6 +437,7 @@ static void free_meshes(tide_draw_list *d)
 
 void tide_draw_free(tide_draw_list *d)
 {
+    tide_draw_lod_free(d); // First: what its jobs make is stopped and waited for
     tide_skinned_draw_cache_free(d);
     free(d->list_data);
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);

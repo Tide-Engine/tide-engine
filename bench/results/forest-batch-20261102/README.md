@@ -25,7 +25,7 @@ The complete contract and exclusions are in [language.md](../../../notes/languag
 
 The private fixture counts two list conversions and two texture conversions
 across six A/B/A/B/A/B draws, while checking each distinct tint, current source
-data, counts and outer-scope restoration. The fallback fixture exercises sixteen
+data, counts and outer-scope restoration. The original fallback fixture exercises sixteen
 scenarios, including stable-grid mutation through externs, operators, constants,
 defaults, raw/color aliasing and host metadata/text callbacks.
 
@@ -42,6 +42,30 @@ hardware-web performance were not run locally. No manual CI run was dispatched.
 10k canopy, 100k wide and 100k ground. Each finite capture uses two warmup and four
 measured frames; only its final frame is compared. PNGs remain under ignored
 build/forest-batch/captures-before and captures-after.
+
+## Integration with incoming generated mesh LOD work
+
+Merging dev at 4bb944606 adds a `lod:` draw operand retained outside the ordinary
+argument array. The compiler's purity, lane read/write, borrowed-query, worker,
+asset/dependency and argument-order walks now visit that operand. Two further
+fallback scenarios check a transitive extern that edits the shared grid from
+`lod:` and a declared mutable helper evaluated after the transform argument.
+The fixture now covers eighteen scenarios.
+
+The merge passes four focused probes on each platform, followed by 61 affected
+native ASan and 65 web-release tests. These cover compiler ordering/reads/borrows,
+the moved mesh decoder/simplifier, drawing, Render3D and forest smoke scenes.
+The ordinary release forest was rebuilt. [validation-merge.json](validation-merge.json)
+pins its executable/generated source and all check/build logs.
+
+Three additional finite Vulkan captures of the merged result again match every
+baseline pixel and retain identical work/world hashes. The merged shader programs
+and metadata also remain byte-identical. See
+[pixel-equivalence-postmerge.json](pixel-equivalence-postmerge.json) and
+[shader-equivalence-postmerge.json](shader-equivalence-postmerge.json).
+These correctness captures used the shared mutex without an idle-CPU requirement;
+their timing values are not performance evidence. The timing cohort below remains
+pinned to its original pre-merge frozen candidate; it was not rerun after merging.
 
 ## Initial elapsed-timing cohort
 

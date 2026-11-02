@@ -10,6 +10,7 @@ static tide_draw_list draw;
 static tide_gui gui;
 static int target_size_calls;
 static int text_measure_calls;
+static int observed_lod_value;
 
 void ChangePrepSource(int32_t value)
 {
@@ -17,6 +18,13 @@ void ChangePrepSource(int32_t value)
     const tide_grid_shape colors = {.cell = sizeof(tide_color), .dims = 2, .shift = {5, 5, 0}};
     *(tide_color *)tide_grid_poke(&local.PrepSources.grid, 0, 0, 0, &colors, true, TIDE_IN_LOCAL)
         = (tide_color){(float)(value % 3 + 1) * 0.25f, 0.5f, 0.75f, 1};
+}
+
+float ChangePrepLodSource(int32_t value)
+{
+    observed_lod_value = value;
+    ChangePrepSource(2);
+    return 1.0f;
 }
 
 static tide_int2 changing_target_size(tide_target_size size)
@@ -172,6 +180,31 @@ TIDE_TEST(shared_bindings_fallback_preserves_mutations_scratch_and_texture_roles
         gui.width = previous_width;
         gui.height = previous_height;
         TIDE_CHECK(text_measure_calls == 3);
+        grid_bytes(external);
+        TIDE_CHECK(tide_world_hash(&world) == hash);
+        tide_text_use(&world.heap, &local.heap);
+        ChangePrepSource(0);
+        observed_lod_value = 0;
+        render(17, round);
+        TIDE_CHECK(observed_lod_value == 3); // The last row's index, read only by lod:.
+        grid_bytes(external);
+        TIDE_CHECK(tide_world_hash(&world) == hash);
+        tide_text_use(&world.heap, &local.heap);
+        ChangePrepSource(0);
+        render(18, round);
+        unsigned ordered_instances = 0;
+        for (uint32_t run_index = 0; run_index < draw.run_count; run_index++) {
+            const tide_draw_run *run = &draw.runs[run_index];
+            const uint32_t stride = tide_shader_instance_size(run->shader);
+            TIDE_REQUIRE(stride >= sizeof(tide_float4x4));
+            for (uint32_t instance = 0; instance < run->count; instance++) {
+                tide_float4x4 transform;
+                memcpy(&transform, draw.instances + run->first + instance * stride, sizeof transform);
+                TIDE_CHECK(transform.c3.x == (ordered_instances == 0 ? -1.0f : 2.0f));
+                ordered_instances++;
+            }
+        }
+        TIDE_CHECK(ordered_instances == 3);
         grid_bytes(external);
         TIDE_CHECK(tide_world_hash(&world) == hash);
     }

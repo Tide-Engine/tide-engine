@@ -1,5 +1,5 @@
 scene Main;
-component PrepRow { int index; }
+component PrepRow { int index; int unread = 99; }
 event(Spawned) BuildPrepRows(with Main)
 {
     for (var i = 0; i < 3; i++) Spawn(PrepRow { index = i });
@@ -236,4 +236,36 @@ view PrepTextMeasureEffect(PrepRow row, PrepGeometry geometry, PrepSources sourc
     Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
     _ = Draw.MeasureText("prep", 10);
     Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+extern float ChangePrepLodSource(int value);
+float ForwardPrepLodSource(int value) { return ChangePrepLodSource(value); }
+
+// The checker peels lod: away from args into mesh_lod. Its retained AST must
+// still disqualify this region when evaluating the multiplier changes a source.
+view PrepLodArgumentEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 17) return;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor,
+              lod: ForwardPrepLodSource(row.index + 1));
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+float MutatePrepLod(mut PrepSources source)
+{
+    source.value = 2;
+    source.grid[0, 0] = Color(0.75, 0.5, 0.75, 1);
+    return 1;
+}
+
+// The transform is written before lod:. The helper's declared Tide mutation
+// must not change the transform already read for this draw.
+view PrepLodArgumentOrder(with PrepRow, PrepGeometry geometry, mut PrepSources source)
+{
+    if (source.scenario != 18) return;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.Translate(float3(source.value, 0, 0)),
+              PrepColor, lod: MutatePrepLod(source));
 }

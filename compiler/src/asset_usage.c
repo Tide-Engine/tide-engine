@@ -480,6 +480,7 @@ static void expression(asset_usage *w, const expr *e)
     queue(w, USAGE_EXPR, e->skin_mesh);
     queue(w, USAGE_EXPR, e->skin_pose);
     queue(w, USAGE_EXPR, e->values);
+    if (e->mesh_lod) queue(w, USAGE_EXPR, e->mesh_lod); // Preserve identities of programs without lod:.
     number(w, e->args.count);
     for (int i = 0; i < e->args.count; i++) queue(w, USAGE_EXPR, e->args.items[i]);
     number(w, e->written.count);

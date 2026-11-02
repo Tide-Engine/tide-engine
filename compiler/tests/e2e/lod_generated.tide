@@ -1,0 +1,136 @@
+// Levels of detail for meshes a game makes (Draw.Mesh and Draw.Instanced with
+// `lod:`): made in the background while the game runs, kept by what's in the
+// mesh, and picked as an asset's are. What each frame has to record is in
+// lod_generated_test.c.
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+local singleton Art
+{
+    List<Vertex3> hills;      // A bumpy square of 40 by 40 cells: 3,200 triangles
+    List<Corner> lit;         // ...the same, with normals, for a frag
+    List<int> indices;
+    List<Vertex3> small;      // 20 by 20 cells: 800 triangles, too few for levels to pay
+    List<int> smallIndices;
+    List<Vertex3> wild;       // Numbers that are none, and indices past the vertices and under 0
+    List<int> wildIndices;
+    List<float4x4> places;
+    int mode;
+    int frame;
+    float multiplier;
+    float zero;
+}
+
+frag Shade(Corner corner, out Color color)
+{
+    color = Color(corner.normal.x, corner.normal.y, corner.normal.z);
+}
+
+float4x4 At(float z)
+{
+    return float4x4.Translate(float3(0, 0, z));
+}
+
+float Height(float x, float y, float lift)
+{
+    return Math.Sin(x * 9 + lift) * Math.Cos(y * 7) * 0.08 + Math.Sin(x * 23) * 0.01;
+}
+
+void Hills(mut List<Vertex3> vertices, mut List<Corner> corners, mut List<int> indices, int n, float lift)
+{
+    vertices.Clear();
+    corners.Clear();
+    indices.Clear();
+    for (int y = 0; y <= n; y++)
+    {
+        for (int x = 0; x <= n; x++)
+        {
+            float u = float(x) / float(n);
+            float v = float(y) / float(n);
+            float3 p = float3(u - 0.5, Height(u, v, lift), v - 0.5);
+            vertices.Add(Vertex3 { position = p, uv = float2(u, v), color = Color.white });
+            corners.Add(Corner { position = p, normal = float3(0, 1, 0), uv = float2(u, v) });
+        }
+    }
+    for (int y = 0; y < n; y++)
+    {
+        for (int x = 0; x < n; x++)
+        {
+            int a = y * (n + 1) + x;
+            indices.Add(a);
+            indices.Add(a + n + 1);
+            indices.Add(a + 1);
+            indices.Add(a + 1);
+            indices.Add(a + n + 1);
+            indices.Add(a + n + 2);
+        }
+    }
+}
+
+view Show(mut Art art)
+{
+    Draw.SetCamera(float3(0, 0, 0), quaternion.identity, 60);
+    if (art.hills.count == 0)
+    {
+        Hills(art.hills, art.lit, art.indices, 40, 0);
+        mut List<Corner> unused = [];
+        Hills(art.small, unused, art.smallIndices, 20, 0);
+        art.places.Add(At(900));
+        art.places.Add(At(0.5)); // Around the camera: whole
+        art.places.Add(At(950));
+        float none = art.zero / art.zero;
+        for (int i = 0; i < art.hills.count; i++)
+        {
+            mut Vertex3 corner = art.hills[i];
+            if (i % 7 == 0) corner.position = float3(none, 1, 0);
+            art.wild.Add(corner);
+        }
+        for (int i = 0; i < art.indices.count; i++)
+        {
+            mut int index = art.indices[i];
+            if (i % 13 == 0) index = -5;
+            if (i % 17 == 0) index = 1000000;
+            art.wildIndices.Add(index);
+        }
+    }
+    switch (art.mode)
+    {
+        case 0: // Asked for near and far; the same lists without asking are another mesh, drawn whole
+            Draw.Mesh(art.hills, art.indices, At(900), lod: 1);
+            Draw.Mesh(art.hills, art.indices, At(0.5), lod: 1); // Around the camera: whole
+            Draw.Mesh(art.hills, art.indices, At(900));
+            break;
+        case 1: // Instances through a frag, each picking, with twice the pixels allowed
+            Draw.Instanced(art.lit, art.indices, art.places, Shade, lod: 2);
+            break;
+        case 2: // Too few triangles: never made
+            Draw.Mesh(art.small, art.smallIndices, At(900), lod: 1);
+            break;
+        case 3: // Numbers that are none and indices past the vertices: whatever's made is the mesh's own corners
+            Draw.Mesh(art.wild, art.wildIndices, At(900), lod: 1);
+            break;
+        case 4: // Lists made again with other numbers each frame: what was being made of them before stops
+            art.frame++;
+            Hills(art.hills, art.lit, art.indices, 40, float(art.frame));
+            Draw.Mesh(art.hills, art.indices, At(900), lod: art.multiplier);
+            break;
+        case 5: // Lists made along the way, in the scratch area, and a multiplier that's none (1)
+            mut List<Vertex3> made = [];
+            mut List<Corner> madeLit = [];
+            mut List<int> madeIndices = [];
+            Hills(made, madeLit, madeIndices, 40, 0.5);
+            Draw.Mesh(made, madeIndices, At(900), lod: art.zero / art.zero);
+            break;
+        case 6: // Nothing drawn
+            break;
+    }
+}
+
+scene Main
+{
+}

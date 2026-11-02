@@ -7,6 +7,7 @@
 #include "tide/net.h"
 #include "tide/pack.h"
 #include "list_data_cache.h"
+#include "mesh_levels.h"
 
 static float unit(const float v)
 {
@@ -862,7 +863,7 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
     // instances are still one mesh's
     uint64_t version = list_version(vertices, sizeof(tide_vertex3));
     const uint64_t index_version = list_version(indices, sizeof(uint32_t));
-    version = tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version));
+    version = tide_draw_lod_version(d, tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version)));
     const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0); // No world's list's place
     const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
     const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
@@ -876,6 +877,7 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
         tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
         tide_list_unflatten(vertices, v, sizeof(tide_vertex3), false, vertices_copied);
         mesh_levels(d, mesh, indices);
+        tide_draw_lod_request(d, mesh);
     }
     return mesh;
 }
@@ -900,7 +902,7 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
     uint64_t version = list_version(vertices, size);
     const uint64_t index_version = list_version(indices, sizeof(uint32_t));
     version = tide_hash_more(version, &index_version, sizeof index_version);
-    version = tide_hash_end(tide_hash_more(version, &size, sizeof size));
+    version = tide_draw_lod_version(d, tide_hash_end(tide_hash_more(version, &size, sizeof size)));
     const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
     const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
     const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
@@ -914,6 +916,7 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
         tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
         tide_list_unflatten(vertices, v, size, false, vertices_copied);
         mesh_levels(d, mesh, indices);
+        tide_draw_lod_request(d, mesh);
     }
     tide_draw_shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling);
 }
