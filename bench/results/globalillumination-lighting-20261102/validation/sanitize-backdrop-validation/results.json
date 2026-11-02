@@ -1,0 +1,38 @@
+[
+  {
+    "preset": "sanitize",
+    "test": "tide_globalillumination",
+    "started_utc": "2026-11-02T05:33:23.1222167Z",
+    "gate_name": "Local\\TideClaudeContinuationBenchmark",
+    "timing_status": "correctness-only; excluded from performance claims",
+    "gate_acquired_utc": "2026-11-02T05:33:23.1259260Z",
+    "ctest_exit": 0,
+    "passed": true,
+    "gate_released_utc": "2026-11-02T05:33:24.5071797Z",
+    "finished_utc": "2026-11-02T05:33:24.5074778Z"
+  },
+  {
+    "preset": "sanitize",
+    "test": "tide_globalillumination_pixels",
+    "started_utc": "2026-11-02T05:33:24.5154802Z",
+    "gate_name": "Local\\TideClaudeContinuationBenchmark",
+    "timing_status": "correctness-only; excluded from performance claims",
+    "gate_acquired_utc": "2026-11-02T05:33:25.2969832Z",
+    "ctest_exit": 0,
+    "passed": true,
+    "gate_released_utc": "2026-11-02T05:33:46.8959160Z",
+    "finished_utc": "2026-11-02T05:33:46.8959320Z"
+  },
+  {
+    "preset": "sanitize",
+    "test": "tide_globalillumination_pixels_opengl",
+    "started_utc": "2026-11-02T05:33:46.8983784Z",
+    "gate_name": "Local\\TideClaudeContinuationBenchmark",
+    "timing_status": "correctness-only; excluded from performance claims",
+    "gate_acquired_utc": "2026-11-02T05:35:08.0425624Z",
+    "ctest_exit": 0,
+    "passed": true,
+    "gate_released_utc": "2026-11-02T05:35:14.2737325Z",
+    "finished_utc": "2026-11-02T05:35:14.2737454Z"
+  }
+]

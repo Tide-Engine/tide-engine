@@ -1,0 +1,95 @@
+{
+  "utc": "2026-11-02T03:30:40.3175674Z",
+  "processes": [
+    {
+      "ProcessId": 52492,
+      "ParentProcessId": 43736,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:27.919806+01:00",
+      "CommandLine": "\"C:/Program Files/Google/Chrome/Application/chrome.exe\" --headless --no-first-run --no-default-browser-check --disable-extensions --mute-audio --user-data-dir=C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one --use-angle=d3d11-warp --virtual-time-budget=60000 --dump-dom file:///C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug\\bin\\tide_globalillumination_pixels.html?group=room&backend=webgl&expect-angle=Direct3D11",
+      "UserModeTime": 32343750,
+      "KernelModeTime": 23750000
+    },
+    {
+      "ProcessId": 41244,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:27.930411+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=crashpad-handler --user-data-dir=C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one /prefetch:4 --monitor-self-annotation=ptype=crashpad-handler --user-stream-region=232,65568 --database=C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\\Crashpad --metrics-dir=C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one --url=https://clients2.google.com/cr/report --annotation=channel= --annotation=plat=Win64 --annotation=prod=Chrome --annotation=ver=156.0.8078.79 --initial-client-data=0x12c,0x130,0x134,0x108,0x138,0x7ffe58288f40,0x7ffe58288f50,0x7ffe58288f60",
+      "UserModeTime": 156250,
+      "KernelModeTime": 0
+    },
+    {
+      "ProcessId": 51516,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:28.009885+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=gpu-process --gpu-recent-crash-count=0 --headless --use-angle=d3d11-warp --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=1896 /prefetch:2",
+      "UserModeTime": 797656250,
+      "KernelModeTime": 253125000
+    },
+    {
+      "ProcessId": 45680,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:28.013956+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=d3d11-warp --mute-audio --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2192 /prefetch:11",
+      "UserModeTime": 3593750,
+      "KernelModeTime": 2968750
+    },
+    {
+      "ProcessId": 6616,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:28.030342+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --use-angle=d3d11-warp --mute-audio --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2648 /prefetch:13",
+      "UserModeTime": 156250,
+      "KernelModeTime": 0
+    },
+    {
+      "ProcessId": 39072,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:28.073242+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=renderer --top-chrome-webui --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --video-capture-use-gpu-memory-buffer --lang=en-US --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --launch-time-ticks=63126931075 --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3496 /prefetch:1",
+      "UserModeTime": 1562500,
+      "KernelModeTime": 937500
+    },
+    {
+      "ProcessId": 2140,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:28.096454+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --video-capture-use-gpu-memory-buffer --lang=en-US --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=6 --launch-time-ticks=63126957444 --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190708991934122588 --mojo-platform-channel-handle=4024 /prefetch:1",
+      "UserModeTime": 312500,
+      "KernelModeTime": 156250
+    },
+    {
+      "ProcessId": 11532,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:28.113294+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --video-capture-use-gpu-memory-buffer --lang=en-US --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=8 --launch-time-ticks=63126974441 --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190708993808206286 --mojo-platform-channel-handle=4488 /prefetch:1",
+      "UserModeTime": 189687500,
+      "KernelModeTime": 234687500
+    },
+    {
+      "ProcessId": 43744,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:28.338247+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=utility --utility-sub-type=audio.mojom.AudioService --lang=en-US --service-sandbox-type=audio --use-angle=d3d11-warp --mute-audio --video-capture-use-gpu-memory-buffer --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190708997556373682 --mojo-platform-channel-handle=5460 /prefetch:12",
+      "UserModeTime": 156250,
+      "KernelModeTime": 156250
+    },
+    {
+      "ProcessId": 32540,
+      "ParentProcessId": 52492,
+      "Name": "chrome.exe",
+      "CreationDate": "2026-11-02T04:28:30.585452+01:00",
+      "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one\" --no-pre-read-main-dll --video-capture-use-gpu-memory-buffer --lang=en-US --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=23 --launch-time-ticks=63129446508 --field-trial-handle=1904,i,9489518714945693318,5479716579988960955,262144 --disable-features=PaintHolding --variations-seed-version --pseudonymization-salt-handle=1916,i,15854114424075372516,11368801803665811073,4 --trace-process-track-uuid=3190709007863834021 --mojo-platform-channel-handle=6836 /prefetch:1",
+      "UserModeTime": 0,
+      "KernelModeTime": 312500
+    }
+  ]
+}

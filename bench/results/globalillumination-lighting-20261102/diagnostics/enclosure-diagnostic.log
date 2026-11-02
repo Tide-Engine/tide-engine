@@ -1,0 +1,33 @@
+renderer: Vulkan
+FAIL: world GI channel 0 got 40 wanted 51, rgba 28140aff
+enclosure wall: capacity 512 sample 12 (-18,10,32)
+FAIL: world GI channel 0 got 40 wanted 51, rgba 28140aff
+enclosure wall: capacity 512 sample 13 (-6,10,32)
+FAIL: world GI channel 0 got 41 wanted 51, rgba 29140aff
+enclosure wall: capacity 512 sample 14 (6,10,32)
+FAIL: world GI channel 0 got 37 wanted 51, rgba 251309ff
+enclosure wall: capacity 512 sample 15 (18,10,32)
+enclosure diagnostics capacity512 mode1 (fine irradiance): 30180cff 31190cff 31190cff 31180cff 31190cff 32190cff 32190cff 30180cff 31190cff 32190cff 32190dff 30180cff 28140aff 28140aff 29140aff 251309ff
+enclosure diagnostics capacity512 mode2 (brick irradiance): 30180cff 31190cff 31190cff 31180cff 31190cff 32190cff 32190cff 30180cff 31190cff 32190cff 32190dff 30180cff 28140aff 28140aff 29140aff 251309ff
+enclosure diagnostics capacity512 mode3 (available/confidence/base): fff83cff fff73cff fff73cff ff9c3cff fffd31ff fffa31ff fffa31ff ff9931ff ffdd36ff ffd936ff ffd936ff ff8736ff ff1e35ff ff1d35ff ff1d35ff ff1b35ff
+enclosure diagnostics receiver(-18,10,32) block41 minimum(-23.25,0.75,24.75) spacing12
+  fine0 logical0 physical100 eye(-23.25,0.75,24.75) captured1
+  fine1 logical1 physical111 eye(-11.25,0.75,24.75) captured1
+  fine2 logical3 physical378 eye(-23.25,12.75,24.75) captured1
+  fine3 logical4 physical381 eye(-11.25,12.75,24.75) captured1
+  fine4 logical9 physical106 eye(-23.25,0.75,36.75) captured1
+  fine5 logical10 physical117 eye(-11.25,0.75,36.75) captured1
+  fine6 logical12 physical380 eye(-23.25,12.75,36.75) captured1
+  fine7 logical13 physical383 eye(-11.25,12.75,36.75) captured1
+  coarse0 logical0 physical100 eye(-23.25,0.75,24.75) captured1
+  coarse1 logical2 physical112 eye(0.75,0.75,24.75) captured1
+  coarse2 logical6 omitted
+  coarse3 logical8 omitted
+  coarse4 logical18 omitted
+  coarse5 logical20 omitted
+  coarse6 logical24 omitted
+  coarse7 logical26 omitted
+enclosure diagnostics capacity512 mode4 (probe irradiance): 33190dff 32190cff 000000ff 000000ff 000000ff 000000ff 000000ff 000000ff 33190dff 33190dff ff00ffff ff00ffff ff00ffff ff00ffff ff00ffff ff00ffff
+enclosure diagnostics capacity512 mode5 (visibility/backface/inverse*8): f60092ff 43008bff 005effff 0179ffff ff3586ff ff5187ff ff1cf0ff ff2fd6ff f60092ff f90065ff ff00ffff ff00ffff ff00ffff ff00ffff ff00ffff ff00ffff
+enclosure diagnostics capacity512 mode6 (captured/offsetX/offsetY): ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff00ffff ff00ffff ff00ffff ff00ffff ff00ffff ff00ffff
+FAIL: world GI pixels line 354: uniform (scenario 2 synthetic 0 initialized 500/500)

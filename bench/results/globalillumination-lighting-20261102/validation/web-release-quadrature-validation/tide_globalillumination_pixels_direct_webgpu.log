@@ -1,0 +1,28 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2746
+    Start 2746: tide_globalillumination_pixels_direct_webgpu
+
+2746: Test command: "C:\Program Files\nodejs\node.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs" "C:/Program Files/Google/Chrome/Application/chrome.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_direct_webgpu-browser" "group=direct&backend=webgpu" "--expect" "ok: world GI automatic" "--seconds" "100"
+2746: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2746: Test timeout computed to be: 150
+2746: renderer: WebGPU
+2746: ok: world GI automatic coverage, adaptive lookup, coarse/fine continuity and sparse readiness, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes
+1/1 Test #2746: tide_globalillumination_pixels_direct_webgpu ...   Passed   34.53 sec
+
+The following tests passed:
+	tide_globalillumination_pixels_direct_webgpu
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+webgpu    = 828.77 sec*proc (1 test)
+
+Total Test time (real) =  34.60 sec

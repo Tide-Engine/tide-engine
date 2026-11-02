@@ -1,0 +1,26 @@
+[0/2] Re-checking globbed directories...
+[1/24] Performing build step for 'tidec_host'
+[0/2] Re-checking globbed directories...
+ninja: no work to do.
+[2/24] No install step for 'tidec_host'
+[3/24] Completed 'tidec_host'
+[4/24] tidec bench_globalillumination
+[5/24] tidec tide_globalillumination_test
+[6/24] tidec tide_globalillumination_skinning
+[7/24] tidec tide_globalillumination_pixels
+[8/24] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj
+[9/24] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj
+[10/24] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game_pack.c.obj
+[11/24] Building C object bench/CMakeFiles/bench_globalillumination.dir/globalillumination/main.c.obj
+[12/24] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/render3d/test/skinning_pixels.c.obj
+[13/24] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game_pack.c.obj
+[14/24] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/globalillumination/test/gi_test.c.obj
+[15/24] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/globalillumination/test/gi_pixels.c.obj
+[16/24] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game.c.obj
+[17/24] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj
+[18/24] Linking C executable bin\tide_globalillumination_skinning.wasm
+[19/24] Linking C executable bin\bench_globalillumination.wasm
+[20/24] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game.c.obj
+[21/24] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj
+[22/24] Linking C executable bin\tide_globalillumination_test.wasm
+[23/24] Linking C executable bin\tide_globalillumination_pixels.wasm

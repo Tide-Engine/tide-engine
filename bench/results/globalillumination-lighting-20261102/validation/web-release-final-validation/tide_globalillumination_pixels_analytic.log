@@ -1,0 +1,26 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2738
+    Start 2738: tide_globalillumination_pixels_analytic
+
+2738: Test command: "C:\Program Files\CMake\bin\cmake.exe" "-DNODE=C:/Program Files/nodejs/node.exe" "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe" "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html" "-DQUERY=group=analytic&backend=webgl" "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_analytic-browser" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+2738: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2738: Test timeout computed to be: 10000000
+2738: renderer: WebGL 2
+2738: ok: world GI automatic coverage, adaptive lookup, coarse/fine continuity and sparse readiness, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes
+2738: 
+1/1 Test #2738: tide_globalillumination_pixels_analytic ...   Passed    7.31 sec
+
+The following tests passed:
+	tide_globalillumination_pixels_analytic
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   7.39 sec

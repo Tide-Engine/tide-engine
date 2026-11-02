@@ -1,0 +1,44 @@
+{
+  "sequence": 17,
+  "trial": 3,
+  "scene": "courtyard",
+  "case": "update4-512",
+  "probes": 512,
+  "frames": 100,
+  "warmup": 20,
+  "arguments": [
+    "--scene",
+    "courtyard",
+    "--mode",
+    "update4",
+    "--probes",
+    "512",
+    "--frames",
+    "100",
+    "--warmup",
+    "20",
+    "--output",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\bench\\results\\globalillumination-lighting-20261102\\raw\\17-r3-courtyard-update4-512.jsonl"
+  ],
+  "started_utc": "2026-11-02T06:44:13.9248329+00:00",
+  "status": "passed",
+  "binary_sha256": "9df54ef8456c7e5f88b09214d658eebbfeb006eb400fc1ceecc3db6eeeda1b6f",
+  "jsonl": "raw/17-r3-courtyard-update4-512.jsonl",
+  "stdout": "raw/17-r3-courtyard-update4-512.stdout.log",
+  "stderr": "raw/17-r3-courtyard-update4-512.stderr.log",
+  "run_metadata": "raw/17-r3-courtyard-update4-512.run.json",
+  "gpu_before": {
+    "utc": "2026-11-02T06:44:13.9248624+00:00",
+    "scope": "instantaneous boundary sample, not continuous monitoring",
+    "query": "name,driver_version,pstate,clocks.gr,clocks.mem,temperature.gpu,power.draw,utilization.gpu",
+    "csv_no_units": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2820, 11501, 47, 85.67, 21"
+  },
+  "exit_code": 0,
+  "ended_utc": "2026-11-02T06:44:17.2362504+00:00",
+  "gpu_after": {
+    "utc": "2026-11-02T06:44:17.2362765+00:00",
+    "scope": "instantaneous boundary sample, not continuous monitoring",
+    "query": "name,driver_version,pstate,clocks.gr,clocks.mem,temperature.gpu,power.draw,utilization.gpu",
+    "csv_no_units": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2805, 11501, 56, 93.64, 72"
+  }
+}

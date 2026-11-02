@@ -1,0 +1,28 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2764
+    Start 2764: tide_render3d_material_pixels_webgpu
+
+2764: Test command: "C:\Program Files\nodejs\node.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs" "C:/Program Files/Google/Chrome/Application/chrome.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_material_pixels.html" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_material_pixels_webgpu-browser" "backend=webgpu" "--expect" "ok: Render3D material maps" "--seconds" "100"
+2764: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2764: Test timeout computed to be: 150
+2764: renderer: WebGPU
+2764: ok: Render3D material maps, raw alpha-zero numbers, TBN, AO, emission/HDR, cutout/shadows, parallax, sorted transparency/depth/LOD, 1x/2x and unchanged match hashes
+1/1 Test #2764: tide_render3d_material_pixels_webgpu ...   Passed    5.27 sec
+
+The following tests passed:
+	tide_render3d_material_pixels_webgpu
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+webgpu    = 126.38 sec*proc (1 test)
+
+Total Test time (real) =   5.35 sec

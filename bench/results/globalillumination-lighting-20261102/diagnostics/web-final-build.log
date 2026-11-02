@@ -1,0 +1,31 @@
+[0/2] Re-checking globbed directories...
+[1/2] Re-running CMake...
+-- Configuring done (21.7s)
+-- Generating done (4.8s)
+-- Build files have been written to: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-debug
+[0/4] Re-checking globbed directories...
+[1/26] Performing build step for 'tidec_host'
+[0/2] Re-checking globbed directories...
+ninja: no work to do.
+[2/26] No install step for 'tidec_host'
+[3/26] Completed 'tidec_host'
+[4/26] tidec tide_globalillumination_test
+[5/26] tidec bench_globalillumination
+[6/26] tidec tide_globalillumination_skinning
+[7/26] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj
+[8/26] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj
+[9/26] tidec tide_globalillumination_pixels
+[10/26] Building C object bench/CMakeFiles/bench_globalillumination.dir/globalillumination/main.c.obj
+[11/26] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/globalillumination/test/gi_test.c.obj
+[12/26] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/render3d/test/skinning_pixels.c.obj
+[13/26] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game_pack.c.obj
+[14/26] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game_pack.c.obj
+[15/26] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/globalillumination/test/gi_pixels.c.obj
+[16/26] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj
+[17/26] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game.c.obj
+[18/26] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj
+[19/26] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game.c.obj
+[20/26] Linking C executable bin\tide_globalillumination_test.wasm
+[21/26] Linking C executable bin\bench_globalillumination.wasm
+[22/26] Linking C executable bin\tide_globalillumination_skinning.wasm
+[23/26] Linking C executable bin\tide_globalillumination_pixels.wasm

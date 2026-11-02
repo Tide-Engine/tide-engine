@@ -1,0 +1,13 @@
+{
+  "checked_utc": "2026-11-02T04:19:27.9855317Z",
+  "exact_profile": "web-hardware-regional-diagnostic-profile-one",
+  "root_process_names": [
+    "chrome.exe",
+    "msedge.exe",
+    "node.exe",
+    "cmake.exe"
+  ],
+  "root_count": 0,
+  "owned_tree_count": 0,
+  "owned_processes": []
+}

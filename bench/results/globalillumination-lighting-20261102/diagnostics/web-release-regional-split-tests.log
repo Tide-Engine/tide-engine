@@ -1,0 +1,7 @@
+web-release tide_globalillumination_pixels_regional512 passed=True
+web-release tide_globalillumination_pixels_regional512_d3d11 passed=True
+web-release tide_globalillumination_pixels_regional512_webgpu passed=True
+web-release tide_globalillumination_pixels_regional2048 passed=False
+web-release tide_globalillumination_pixels_regional2048_d3d11 passed=False
+web-release tide_globalillumination_pixels_regional2048_webgpu passed=True
+All validation gates released/disposed 2026-11-02T05:28:11.5443983Z

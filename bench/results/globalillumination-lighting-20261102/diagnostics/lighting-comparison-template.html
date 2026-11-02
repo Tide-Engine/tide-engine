@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GI lighting repair</title>
+<style>
+#gi-quality .controls{display:flex;gap:16px;flex-wrap:wrap}
+#gi-quality .controls label{display:flex;flex-direction:column;gap:6px;flex:1;min-width:130px}
+#gi-quality .range{display:grid;gap:6px;margin-top:14px}
+#gi-quality .range-label,#gi-quality .sides{display:flex;justify-content:space-between;gap:12px}
+#gi-quality .sides{color:var(--muted-foreground);margin:6px 0}
+#gi-quality figure{margin:18px 0 0}
+#gi-quality h3{font-weight:500;margin:0}
+#gi-quality .comparison{position:relative;aspect-ratio:4/3;width:100%;overflow:hidden}
+#gi-quality .comparison img{display:block;position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+#gi-quality .divider{position:absolute;top:0;bottom:0;left:50%;width:2px;background:var(--foreground);pointer-events:none}
+#gi-quality .context{color:var(--muted-foreground);margin:8px 0 0}
+#gi-quality details{margin-top:18px}
+#gi-quality .placements{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px}
+#gi-quality .placements img{display:block;width:100%;height:auto}
+</style></head><body><main id="gi-quality">
+<div class="controls">
+<label for="quality-base">Compare with<select class="form-select" id="quality-base"><option value="previous" selected>Previous GI</option><option value="off">GI disabled</option></select></label>
+<label for="quality-view">Camera<select class="form-select" id="quality-view"><option value="hero" selected>Inside the scene</option><option value="overview">Whole scene</option></select></label>
+<label for="quality-cap">Probe cap<select class="form-select" id="quality-cap"><option value="512">512 (default)</option><option value="2048" selected>2,048</option></select></label>
+</div>
+<div class="range"><label for="quality-split" class="range-label"><span>Comparison divider</span><output id="split-value" for="quality-split">50%</output></label><input class="form-range" id="quality-split" type="range" min="0" max="100" value="50" aria-label="Before and after image divider"></div>
+<p class="context">Matched Render3D captures. Geometry, materials, direct lights, camera and exposure are unchanged.</p>
+<figure><h3>Atrium</h3><div class="sides"><span class="before-label">Before</span><span class="after-label">After</span></div><div class="comparison" role="img" aria-label="Atrium lighting before and after the GI repair"><img id="atrium-after" src="__AFTER__/atrium-hero-2048.png" alt="After GI repair"><img id="atrium-before" src="__BEFORE__/atrium-hero-2048.png" alt="Before GI repair" style="clip-path:inset(0 50% 0 0)"><div class="divider"></div></div></figure>
+<figure><h3>Courtyard</h3><div class="sides"><span class="before-label">Before</span><span class="after-label">After</span></div><div class="comparison" role="img" aria-label="Courtyard lighting before and after the GI repair"><img id="courtyard-after" src="__AFTER__/courtyard-hero-2048.png" alt="After GI repair"><img id="courtyard-before" src="__BEFORE__/courtyard-hero-2048.png" alt="Before GI repair" style="clip-path:inset(0 50% 0 0)"><div class="divider"></div></div></figure>
+<details><summary>Actual probe placement · 2,048-cap overviews</summary><div class="placements"><figure><figcaption>Atrium</figcaption><img src="__AFTER__/atrium-overview-probes.png" alt="Actual resident probes covering the atrium"></figure><figure><figcaption>Courtyard</figcaption><img src="__AFTER__/courtyard-overview-probes.png" alt="Actual resident probes covering the courtyard"></figure></div></details>
+<div hidden>__ASSETS__</div>
+</main><script>
+(()=>{
+const root=document.getElementById('gi-quality'),view=root.querySelector('#quality-view'),cap=root.querySelector('#quality-cap'),base=root.querySelector('#quality-base'),split=root.querySelector('#quality-split');
+function show(){const amount=Number(split.value);root.querySelector('#split-value').textContent=amount+'%';split.setAttribute('aria-valuetext',amount+' percent before, '+(100-amount)+' percent after');
+ for(const scene of ['atrium','courtyard']){const key=scene+'-'+view.value+'-'+cap.value;
+  root.querySelector('#'+scene+'-after').src=root.querySelector('#asset-after-'+key).src;
+  root.querySelector('#'+scene+'-before').src=root.querySelector('#asset-before-'+scene+'-'+view.value+'-'+(base.value==='off'?'off':cap.value)).src;
+  root.querySelector('#'+scene+'-before').style.clipPath='inset(0 '+(100-amount)+'% 0 0)';
+ }
+ for(const divider of root.querySelectorAll('.divider'))divider.style.left=amount+'%';
+ for(const label of root.querySelectorAll('.before-label')){label.style.visibility=amount<2?'hidden':'visible';label.textContent=base.value==='off'?'GI disabled':'Previous GI';}
+ for(const label of root.querySelectorAll('.after-label')){label.style.visibility=amount>98?'hidden':'visible';label.textContent='Current GI';}
+}
+function changed(){show();window.openai?.setWidgetState?.({modelContent:{camera:view.value,probe_cap:Number(cap.value),baseline:base.value},privateContent:{split:Number(split.value)}}).catch(()=>{});}
+function restore(state){const model=state?.modelContent,ui=state?.privateContent;if(['hero','overview'].includes(model?.camera))view.value=model.camera;if(['previous','off'].includes(model?.baseline))base.value=model.baseline;if([512,2048].includes(model?.probe_cap))cap.value=String(model.probe_cap);if(Number.isFinite(ui?.split))split.value=String(Math.min(100,Math.max(0,ui.split)));show();}
+view.addEventListener('change',changed);cap.addEventListener('change',changed);base.addEventListener('change',changed);split.addEventListener('input',changed);
+window.addEventListener('openai:set_globals',event=>restore(event.detail?.globals?.widgetState));restore(window.openai?.widgetState);
+})();
+</script></body></html>

@@ -1,0 +1,28 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2761
+    Start 2761: tide_render3d_skinning_pixels_webgpu
+
+2761: Test command: "C:\Program Files\nodejs\node.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs" "C:/Program Files/Google/Chrome/Application/chrome.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_skinning_pixels.html" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_skinning_pixels_webgpu-browser" "backend=webgpu" "--expect" "ok: Render3D posed UV silhouettes" "--seconds" "100"
+2761: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2761: Test timeout computed to be: 150
+2761: renderer: WebGPU
+2761: ok: Render3D posed UV silhouettes, shared captured deformation, tangent normal maps, independent cutout shadow pixels, mixed transparency, 1x/2x and unchanged match hashes
+1/1 Test #2761: tide_render3d_skinning_pixels_webgpu ...   Passed    8.52 sec
+
+The following tests passed:
+	tide_render3d_skinning_pixels_webgpu
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+webgpu    = 204.39 sec*proc (1 test)
+
+Total Test time (real) =   8.69 sec

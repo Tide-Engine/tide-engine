@@ -1,0 +1,27 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2753
+    Start 2753: tide_globalillumination_pixels_regional2048
+
+2753: Test command: "C:\Program Files\CMake\bin\cmake.exe" "-DNODE=C:/Program Files/nodejs/node.exe" "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe" "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html" "-DQUERY=group=regional2048&backend=webgl" "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_regional2048-browser" "-DTIDE_WEB_TEST_TIMEOUT_SECONDS=300" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+2753: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2753: Test timeout computed to be: 330
+2753: renderer: WebGL 2
+2753: ok: GI enclosure capacity 2048, 32 wall/floor witnesses
+2753: ok: world GI automatic coverage, adaptive lookup, coarse/fine continuity and sparse readiness, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes
+2753: 
+1/1 Test #2753: tide_globalillumination_pixels_regional2048 ...   Passed  184.05 sec
+
+The following tests passed:
+	tide_globalillumination_pixels_regional2048
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) = 184.12 sec

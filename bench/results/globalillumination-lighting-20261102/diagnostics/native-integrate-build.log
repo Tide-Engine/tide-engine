@@ -1,0 +1,33 @@
+[0/2] Re-checking globbed directories...
+[1/16] tidec tide_globalillumination_test
+FAILED: [code=1] packages/tide/tide_globalillumination_test/game.c packages/tide/tide_globalillumination_test/game.h packages/tide/tide_globalillumination_test/game_pack.c C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test/game.c C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test/game.h C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test/game_pack.c 
+C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\blenm\.t3\worktrees\PurrEngine\t3-0f6a1f0b\build\sanitize && "C:\Program Files\CMake\bin\cmake.exe" -E make_directory C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test && "C:\Program Files\CMake\bin\cmake.exe" -DTIDEC=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/bin/tidec.exe -DEXPECTED=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test.warnings -DSTRIP_UNUSED_ASSETS=OFF -DSTRIP_NAMES=OFF -P C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_tidec.cmake -- @C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test.sources -o packages/tide/tide_globalillumination_test --name game --depfile C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test/game.d --pack-c"
+C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/packages/globalillumination/test/gi.tide:316:9: error: 'radiance' is read-only
+  316 |         radiance = float3((anchor.y + anchor.z) / 8);
+      |         ^
+      = note: declare it as 'mut float3 radiance = ...' to change it
+C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/packages/globalillumination/test/gi.tide:494:9: error: 'grid' is read-only
+  494 |         grid.x = coarse ? 2 : 0;
+      |         ^
+      = note: declare it as 'mut float3 grid = ...' to change it
+CMake Error at C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_tidec.cmake:35 (message):
+  tidec failed
+
+
+[2/16] tidec tide_globalillumination_pixels
+FAILED: [code=1] packages/tide/tide_globalillumination_pixels/game.c packages/tide/tide_globalillumination_pixels/game.h packages/tide/tide_globalillumination_pixels/game_pack.c C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_pixels/game.c C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_pixels/game.h C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_pixels/game_pack.c 
+C:\WINDOWS\system32\cmd.exe /C "cd /D C:\Users\blenm\.t3\worktrees\PurrEngine\t3-0f6a1f0b\build\sanitize && "C:\Program Files\CMake\bin\cmake.exe" -E make_directory C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_pixels && "C:\Program Files\CMake\bin\cmake.exe" -DTIDEC=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/bin/tidec.exe -DEXPECTED=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_pixels.warnings -DSTRIP_UNUSED_ASSETS=OFF -DSTRIP_NAMES=OFF -P C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_tidec.cmake -- @C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_pixels.sources -o packages/tide/tide_globalillumination_pixels --name game --depfile C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_pixels/game.d --pack-c"
+C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/packages/globalillumination/test/gi.tide:316:9: error: 'radiance' is read-only
+  316 |         radiance = float3((anchor.y + anchor.z) / 8);
+      |         ^
+      = note: declare it as 'mut float3 radiance = ...' to change it
+C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/packages/globalillumination/test/gi.tide:494:9: error: 'grid' is read-only
+  494 |         grid.x = coarse ? 2 : 0;
+      |         ^
+      = note: declare it as 'mut float3 grid = ...' to change it
+CMake Error at C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_tidec.cmake:35 (message):
+  tidec failed
+
+
+[3/16] tidec bench_globalillumination
+ninja: build stopped: subcommand failed.

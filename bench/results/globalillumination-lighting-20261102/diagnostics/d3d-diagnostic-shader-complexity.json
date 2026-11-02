@@ -1,0 +1,210 @@
+[
+  {
+    "id": 0,
+    "name": "ExtractBloom on Vertex",
+    "bytes": 3525,
+    "lines": 94,
+    "loops": 0,
+    "texture_calls": 4
+  },
+  {
+    "id": 1,
+    "name": "BlurBloom on Vertex",
+    "bytes": 2947,
+    "lines": 76,
+    "loops": 0,
+    "texture_calls": 5
+  },
+  {
+    "id": 2,
+    "name": "CompositeBloom on Vertex",
+    "bytes": 2257,
+    "lines": 70,
+    "loops": 0,
+    "texture_calls": 2
+  },
+  {
+    "id": 3,
+    "name": "DeformShadow and ShadowCutout on MeshVertex",
+    "bytes": 8629,
+    "lines": 217,
+    "loops": 0,
+    "texture_calls": 2
+  },
+  {
+    "id": 4,
+    "name": "AtlasVertex and ShadowCutout on MeshVertex",
+    "bytes": 8610,
+    "lines": 216,
+    "loops": 0,
+    "texture_calls": 2
+  },
+  {
+    "id": 5,
+    "name": "DeformShadow and ShadowCutout on MeshVertex",
+    "bytes": 8697,
+    "lines": 219,
+    "loops": 0,
+    "texture_calls": 2
+  },
+  {
+    "id": 6,
+    "name": "DeformShadow on MeshVertex",
+    "bytes": 559,
+    "lines": 21,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 7,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 62392,
+    "lines": 1142,
+    "loops": 7,
+    "texture_calls": 14
+  },
+  {
+    "id": 8,
+    "name": "Lit on MeshVertex",
+    "bytes": 62314,
+    "lines": 1142,
+    "loops": 7,
+    "texture_calls": 14
+  },
+  {
+    "id": 9,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 62482,
+    "lines": 1145,
+    "loops": 7,
+    "texture_calls": 14
+  },
+  {
+    "id": 10,
+    "name": "PackRays on Vertex",
+    "bytes": 6266,
+    "lines": 172,
+    "loops": 0,
+    "texture_calls": 12
+  },
+  {
+    "id": 11,
+    "name": "Convolve on Vertex",
+    "bytes": 9211,
+    "lines": 215,
+    "loops": 1,
+    "texture_calls": 8
+  },
+  {
+    "id": 12,
+    "name": "WriteLookup on Vertex",
+    "bytes": 2113,
+    "lines": 57,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 13,
+    "name": "ClearRecords on Vertex",
+    "bytes": 1093,
+    "lines": 31,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 14,
+    "name": "DeformShadow on MeshVertex",
+    "bytes": 491,
+    "lines": 19,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 15,
+    "name": "AtlasVertex on MeshVertex",
+    "bytes": 454,
+    "lines": 17,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 16,
+    "name": "AtlasVertex on MeshVertex",
+    "bytes": 454,
+    "lines": 17,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 17,
+    "name": "TonemapScene on Vertex",
+    "bytes": 2820,
+    "lines": 86,
+    "loops": 0,
+    "texture_calls": 1
+  },
+  {
+    "id": 18,
+    "name": "DebugProbe on Vertex3",
+    "bytes": 4358,
+    "lines": 132,
+    "loops": 0,
+    "texture_calls": 2
+  },
+  {
+    "id": 19,
+    "name": "SparseControlledField on Vertex",
+    "bytes": 3026,
+    "lines": 75,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 20,
+    "name": "PartialVisibility on Vertex",
+    "bytes": 2546,
+    "lines": 64,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 21,
+    "name": "GIIncoming on Vertex",
+    "bytes": 1577,
+    "lines": 37,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 22,
+    "name": "ReadGISharedFacing on Vertex",
+    "bytes": 15743,
+    "lines": 309,
+    "loops": 2,
+    "texture_calls": 4
+  },
+  {
+    "id": 23,
+    "name": "ReadGIPhysicalVisibility on Vertex",
+    "bytes": 4545,
+    "lines": 99,
+    "loops": 0,
+    "texture_calls": 0
+  },
+  {
+    "id": 24,
+    "name": "ReadGIWitness on Vertex",
+    "bytes": 28869,
+    "lines": 525,
+    "loops": 4,
+    "texture_calls": 5
+  },
+  {
+    "id": 25,
+    "name": "ReadGILegacyWitness on Vertex",
+    "bytes": 17120,
+    "lines": 344,
+    "loops": 2,
+    "texture_calls": 4
+  }
+]

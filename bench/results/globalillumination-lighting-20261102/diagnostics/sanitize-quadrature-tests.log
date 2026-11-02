@@ -1,0 +1,12 @@
+sanitize bench_globalillumination passed=True
+sanitize bench_globalillumination_atrium passed=True
+sanitize bench_globalillumination_atrium_opengl passed=True
+sanitize bench_globalillumination_courtyard passed=True
+sanitize bench_globalillumination_courtyard_opengl passed=True
+sanitize bench_globalillumination_opengl passed=True
+sanitize tide_globalillumination passed=True
+sanitize tide_globalillumination_pixels passed=True
+sanitize tide_globalillumination_pixels_opengl passed=True
+sanitize tide_globalillumination_skinning passed=True
+sanitize tide_globalillumination_skinning_opengl passed=True
+All validation gates released/disposed 2026-11-02T06:12:27.8515021Z

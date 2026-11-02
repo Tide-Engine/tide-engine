@@ -1,0 +1,6 @@
+[0/2] Re-checking globbed directories...
+[1/6] tidec bench_globalillumination
+[2/6] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj
+[3/6] Building C object bench/CMakeFiles/bench_globalillumination.dir/globalillumination/main.c.obj
+[4/6] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj
+[5/6] Linking C executable bin\bench_globalillumination.exe

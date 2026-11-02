@@ -1,0 +1,49 @@
+[0/2] Re-checking globbed directories...
+[1/47] Building C object packages/CMakeFiles/tide_globalillumination.dir/globalillumination/cache.c.obj
+[2/47] Building C object packages/CMakeFiles/tide_render3d.dir/render3d/transparent.c.obj
+[3/47] Performing build step for 'tidec_host'
+[0/2] Re-checking globbed directories...
+ninja: no work to do.
+[4/47] No install step for 'tidec_host'
+[5/47] The bold font as C
+[6/47] Linking C static library packages\libtide_render3d.a
+[7/47] Completed 'tidec_host'
+[8/47] Linking C static library packages\libtide_globalillumination.a
+[9/47] Building C object CMakeFiles/tide_font_bold.dir/tide_font_bold/tide_font_bold.c.obj
+[10/47] Linking C static library libtide_font_bold.a
+[11/47] tidec tide_globalillumination_pixels
+[12/47] tidec tide_render3d_material_pixels
+[13/47] tidec tide_render3d_pixels
+[14/47] tidec bench_globalillumination
+[15/47] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game_pack.c.obj
+[16/47] Building C object packages/CMakeFiles/tide_render3d_pixels.dir/tide/tide_render3d_pixels/game_pack.c.obj
+[17/47] tidec tide_render3d_skinning_pixels
+[18/47] tidec tide_globalillumination_skinning
+[19/47] Building C object packages/CMakeFiles/tide_render3d_pixels.dir/render3d/test/pixels.c.obj
+[20/47] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/globalillumination/test/gi_pixels.c.obj
+[21/47] Building C object packages/CMakeFiles/tide_render3d_material_pixels.dir/tide/tide_render3d_material_pixels/game_pack.c.obj
+[22/47] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj
+[23/47] Building C object packages/CMakeFiles/tide_render3d_skinning_pixels.dir/render3d/test/skinning_pixels.c.obj
+[24/47] tidec tide_globalillumination_test
+[25/47] Building C object packages/CMakeFiles/tide_render3d_skinning_pixels.dir/tide/tide_render3d_skinning_pixels/game_pack.c.obj
+[26/47] Building C object packages/CMakeFiles/tide_render3d_material_pixels.dir/render3d/test/material_pixels.c.obj
+[27/47] Building C object bench/CMakeFiles/bench_globalillumination.dir/globalillumination/main.c.obj
+[28/47] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/render3d/test/skinning_pixels.c.obj
+[29/47] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj
+[30/47] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/__/tests/test_main.c.obj
+[31/47] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/globalillumination/test/gi_test.c.obj
+[32/47] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game_pack.c.obj
+[33/47] Building C object packages/CMakeFiles/tide_render3d_material_pixels.dir/tide/tide_render3d_material_pixels/game.c.obj
+[34/47] Linking C executable bin\tide_render3d_material_pixels.wasm
+[35/47] Building C object packages/CMakeFiles/tide_render3d_skinning_pixels.dir/tide/tide_render3d_skinning_pixels/game.c.obj
+[36/47] Linking C executable bin\tide_render3d_skinning_pixels.wasm
+[37/47] Building C object packages/CMakeFiles/tide_render3d_pixels.dir/tide/tide_render3d_pixels/game.c.obj
+[38/47] Linking C executable bin\tide_render3d_pixels.wasm
+[39/47] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj
+[40/47] Linking C executable bin\bench_globalillumination.wasm
+[41/47] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game.c.obj
+[42/47] Linking C executable bin\tide_globalillumination_skinning.wasm
+[43/47] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj
+[44/47] Linking C executable bin\tide_globalillumination_test.wasm
+[45/47] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game.c.obj
+[46/47] Linking C executable bin\tide_globalillumination_pixels.wasm

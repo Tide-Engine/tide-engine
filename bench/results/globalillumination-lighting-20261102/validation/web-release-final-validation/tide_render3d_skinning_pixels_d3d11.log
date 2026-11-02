@@ -1,0 +1,30 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2760
+    Start 2760: tide_render3d_skinning_pixels_d3d11
+
+2760: Test command: "C:\Program Files\CMake\bin\cmake.exe" "-DNODE=C:/Program Files/nodejs/node.exe" "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe" "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_skinning_pixels.html" "-DQUERY=backend=webgl&expect-angle=Direct3D11" "-DANGLE_BACKEND=d3d11-warp" "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_skinning_pixels_d3d11-browser" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+2760: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2760: Test timeout computed to be: 150
+2760: renderer: WebGL 2
+2760: ok: Render3D posed UV silhouettes, shared captured deformation, tangent normal maps, independent cutout shadow pixels, mixed transparency, 1x/2x and unchanged match hashes
+2760: ANGLE renderer: ANGLE (Microsoft, Microsoft Basic Render Driver (0x0000008C) Direct3D11 vs_5_0 ps_5_0, D3D11)
+2760: 
+1/1 Test #2760: tide_render3d_skinning_pixels_d3d11 ...   Passed   12.41 sec
+
+The following tests passed:
+	tide_render3d_skinning_pixels_d3d11
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+webgl_d3d11    = 297.85 sec*proc (1 test)
+
+Total Test time (real) =  12.62 sec

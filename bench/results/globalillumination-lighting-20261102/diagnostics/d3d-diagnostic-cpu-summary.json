@@ -1,0 +1,42 @@
+[
+  {
+    "sample": 1,
+    "utc": "2026-11-02T03:28:47.3700751Z",
+    "elapsed_since_browser_creation_seconds": 19.451,
+    "gpu_process_cpu_seconds": 19.34375,
+    "renderer_cpu_seconds": 0.484375,
+    "parent_cpu_seconds": 2.21875
+  },
+  {
+    "sample": 2,
+    "utc": "2026-11-02T03:29:07.3594094Z",
+    "elapsed_since_browser_creation_seconds": 39.44,
+    "gpu_process_cpu_seconds": 39.375,
+    "renderer_cpu_seconds": 0.5625,
+    "parent_cpu_seconds": 2.4375
+  },
+  {
+    "sample": 3,
+    "utc": "2026-11-02T03:29:33.7228767Z",
+    "elapsed_since_browser_creation_seconds": 65.803,
+    "gpu_process_cpu_seconds": 61.671875,
+    "renderer_cpu_seconds": 7.0625,
+    "parent_cpu_seconds": 2.734375
+  },
+  {
+    "sample": 4,
+    "utc": "2026-11-02T03:29:54.6313973Z",
+    "elapsed_since_browser_creation_seconds": 86.712,
+    "gpu_process_cpu_seconds": 75.28125,
+    "renderer_cpu_seconds": 18.5625,
+    "parent_cpu_seconds": 3.53125
+  },
+  {
+    "sample": 5,
+    "utc": "2026-11-02T03:30:40.3175674Z",
+    "elapsed_since_browser_creation_seconds": 132.398,
+    "gpu_process_cpu_seconds": 105.078125,
+    "renderer_cpu_seconds": 42.765625,
+    "parent_cpu_seconds": 5.609375
+  }
+]

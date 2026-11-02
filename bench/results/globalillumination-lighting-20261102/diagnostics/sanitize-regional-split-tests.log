@@ -1,0 +1,3 @@
+sanitize tide_globalillumination_pixels passed=True
+sanitize tide_globalillumination_pixels_opengl passed=True
+All validation gates released/disposed 2026-11-02T05:20:57.3260899Z

@@ -1,0 +1,11 @@
+[0/2] Re-checking globbed directories...
+[1/11] tidec tide_globalillumination_pixels
+[2/11] tidec tide_globalillumination_test
+[3/11] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game_pack.c.obj
+[4/11] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj
+[5/11] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/globalillumination/test/gi_pixels.c.obj
+[6/11] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/globalillumination/test/gi_test.c.obj
+[7/11] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj
+[8/11] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game.c.obj
+[9/11] Linking C executable bin\tide_globalillumination_test.exe
+[10/11] Linking C executable bin\tide_globalillumination_pixels.exe

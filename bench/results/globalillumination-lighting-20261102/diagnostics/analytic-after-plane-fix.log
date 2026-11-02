@@ -1,0 +1,2 @@
+renderer: Vulkan
+ok: world GI automatic coverage, adaptive lookup, coarse/fine continuity and sparse readiness, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes

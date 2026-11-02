@@ -1,0 +1,2 @@
+record-only frame starting: scenario=2 extents=24,12,32 capacity=2048 updates=0; no GPU
+{"diagnostic":"GI CPU record only","scenario":2,"room_extents":[24,12,32],"viewport":[128,64],"capacity":2048,"scene_instances":7,"recorded_frames":1,"updates":0,"nodes":465,"probes":1184,"blocks":126,"base_spacing":1.5,"finest_spacing":1.5,"capture_distance":128,"view_distance":48,"frame_record_wall_ms":502.073800,"draw_commands":50,"world_hash":"567bb625a2ec4c2a","gpu_submissions":0,"correctness":true}

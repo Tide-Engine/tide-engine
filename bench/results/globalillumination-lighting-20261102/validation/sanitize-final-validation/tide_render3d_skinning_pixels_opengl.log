@@ -1,0 +1,33 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2866
+    Start 2866: tide_render3d_skinning_pixels_opengl
+
+2866: Test command: C:\Users\blenm\.t3\worktrees\PurrEngine\t3-0f6a1f0b\build\sanitize\bin\tide_render3d_skinning_pixels.exe
+2866: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages
+2866: Environment variables: 
+2866:  VK_LOADER_LAYERS_DISABLE=~implicit~
+2866:  TIDE_VULKAN_VALIDATION=1
+2866:  VK_ADD_LAYER_PATH=C:/VulkanSDK/1.4.363.0/Bin
+2866:  TIDE_BACKEND=opengl
+2866: Test timeout computed to be: 10000000
+2866: renderer: OpenGL 3.3
+2866: ok: Render3D posed UV silhouettes, shared captured deformation, tangent normal maps, independent cutout shadow pixels, mixed transparency, 1x/2x and unchanged match hashes
+1/1 Test #2866: tide_render3d_skinning_pixels_opengl ...   Passed    2.51 sec
+
+The following tests passed:
+	tide_render3d_skinning_pixels_opengl
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+gpu    =   2.51 sec*proc (1 test)
+
+Total Test time (real) =   2.58 sec

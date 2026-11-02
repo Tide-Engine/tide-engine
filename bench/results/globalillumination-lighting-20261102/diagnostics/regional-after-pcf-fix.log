@@ -1,0 +1,10 @@
+renderer: Vulkan
+FAIL: world GI channel 0 got 40 wanted 51, rgba 28140aff
+enclosure wall: capacity 512 sample 12 (-18,10,32)
+FAIL: world GI channel 0 got 40 wanted 51, rgba 28140aff
+enclosure wall: capacity 512 sample 13 (-6,10,32)
+FAIL: world GI channel 0 got 41 wanted 51, rgba 29140aff
+enclosure wall: capacity 512 sample 14 (6,10,32)
+FAIL: world GI channel 0 got 37 wanted 51, rgba 251309ff
+enclosure wall: capacity 512 sample 15 (18,10,32)
+FAIL: world GI pixels line 266: uniform (scenario 2 synthetic 0 initialized 500/500)

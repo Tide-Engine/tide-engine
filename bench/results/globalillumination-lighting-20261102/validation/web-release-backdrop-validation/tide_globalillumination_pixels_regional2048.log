@@ -1,0 +1,811 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2753
+    Start 2753: tide_globalillumination_pixels_regional2048
+
+2753: Test command: "C:\Program Files\CMake\bin\cmake.exe" "-DNODE=C:/Program Files/nodejs/node.exe" "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe" "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html" "-DQUERY=group=regional2048&backend=webgl" "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_regional2048-browser" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+2753: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2753: Test timeout computed to be: 10000000
+2753: The browser didn't exit within 120 seconds, and was stopped.
+2753: 
+2753: CMake Error at C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake:58 (message):
+2753:   The page didn't exit with 0 (got '').
+2753: 
+2753:   Created TensorFlow Lite XNNPACK delegate for CPU.
+2753: 
+2753: 
+2753:   [29720:34664:1102/063743.020:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063743.226:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063743.636:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:49464:1102/063744.239:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063745.041:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063746.048:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063747.055:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063748.058:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063749.072:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063750.077:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063751.082:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063752.087:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063753.094:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063754.099:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063755.103:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063756.114:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063757.116:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063758.027:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063758.121:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063758.231:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063758.639:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063759.123:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:49464:1102/063759.247:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063800.062:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063800.125:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063801.072:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063801.136:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063802.077:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063802.140:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063803.085:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063803.148:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063804.100:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063804.164:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063805.106:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063805.167:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063806.111:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063806.172:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063807.120:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063807.183:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063808.130:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063808.194:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063809.137:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063809.198:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063810.153:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063810.214:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063811.159:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063811.222:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063812.164:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063812.227:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063813.028:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063813.169:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:49464:1102/063813.230:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063813.635:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063814.170:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063814.249:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063815.064:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063815.174:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063816.065:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063816.189:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063817.074:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063817.199:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063818.080:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063818.205:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063819.085:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063819.209:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063820.092:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063820.218:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063821.101:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063821.225:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063822.112:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063822.234:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063823.120:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063823.243:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063824.132:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063824.256:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063825.134:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063825.258:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063826.135:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063826.260:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063827.141:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063827.266:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063828.145:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063829.149:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063830.152:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063831.162:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063832.168:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063833.172:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063834.177:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063835.181:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063836.188:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063837.193:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063838.208:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063839.213:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063840.218:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063841.222:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753:   [29720:34664:1102/063842.227:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+2753:   Failed to open named pipe server process 14744: Access is denied.  (0x5)
+2753: 
+2753: 
+2753: 
+1/1 Test #2753: tide_globalillumination_pixels_regional2048 ...***Failed  120.13 sec
+The browser didn't exit within 120 seconds, and was stopped.
+
+CMake Error at C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake:58 (message):
+  The page didn't exit with 0 (got '').
+
+  Created TensorFlow Lite XNNPACK delegate for CPU.
+
+
+  [29720:34664:1102/063743.020:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063743.226:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063743.636:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:49464:1102/063744.239:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063745.041:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063746.048:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063747.055:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063748.058:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063749.072:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063750.077:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063751.082:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063752.087:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063753.094:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063754.099:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063755.103:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063756.114:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063757.116:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063758.027:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063758.121:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063758.231:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063758.639:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063759.123:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:49464:1102/063759.247:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063800.062:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063800.125:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063801.072:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063801.136:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063802.077:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063802.140:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063803.085:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063803.148:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063804.100:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063804.164:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063805.106:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063805.167:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063806.111:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063806.172:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063807.120:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063807.183:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063808.130:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063808.194:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063809.137:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063809.198:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063810.153:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063810.214:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063811.159:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063811.222:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063812.164:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063812.227:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063813.028:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063813.169:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:49464:1102/063813.230:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063813.635:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063814.170:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063814.249:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063815.064:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063815.174:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063816.065:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063816.189:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063817.074:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063817.199:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063818.080:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063818.205:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063819.085:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063819.209:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063820.092:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063820.218:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063821.101:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063821.225:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063822.112:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063822.234:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063823.120:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063823.243:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063824.132:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063824.256:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063825.134:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063825.258:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063826.135:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063826.260:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063827.141:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063827.266:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063828.145:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063829.149:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063830.152:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063831.162:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063832.168:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063833.172:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063834.177:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063835.181:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063836.188:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063837.193:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063838.208:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063839.213:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063840.218:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063841.222:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+  [29720:34664:1102/063842.227:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 14744: Access is denied.  (0x5)
+
+
+
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) = 120.20 sec
+
+The following tests FAILED:
+	2753 - tide_globalillumination_pixels_regional2048 (Failed)
+Errors while running CTest

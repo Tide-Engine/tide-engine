@@ -1,0 +1,21 @@
+[0/2] Re-checking globbed directories...
+[1/21] tidec bench_globalillumination
+[2/21] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj
+[3/21] tidec tide_globalillumination_skinning
+[4/21] Building C object bench/CMakeFiles/bench_globalillumination.dir/globalillumination/main.c.obj
+[5/21] tidec tide_globalillumination_test
+[6/21] tidec tide_globalillumination_pixels
+[7/21] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj
+[8/21] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/render3d/test/skinning_pixels.c.obj
+[9/21] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game_pack.c.obj
+[10/21] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game_pack.c.obj
+[11/21] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/globalillumination/test/gi_pixels.c.obj
+[12/21] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/globalillumination/test/gi_test.c.obj
+[13/21] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj
+[14/21] Linking C executable bin\bench_globalillumination.exe
+[15/21] Building C object packages/CMakeFiles/tide_globalillumination_skinning.dir/tide/tide_globalillumination_skinning/game.c.obj
+[16/21] Linking C executable bin\tide_globalillumination_skinning.exe
+[17/21] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game.c.obj
+[18/21] Linking C executable bin\tide_globalillumination_pixels.exe
+[19/21] Building C object packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj
+[20/21] Linking C executable bin\tide_globalillumination_test.exe

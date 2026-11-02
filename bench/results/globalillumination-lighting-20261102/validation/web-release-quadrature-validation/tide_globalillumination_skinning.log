@@ -1,0 +1,26 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2735
+    Start 2735: tide_globalillumination_skinning
+
+2735: Test command: "C:\Program Files\CMake\bin\cmake.exe" "-DNODE=C:/Program Files/nodejs/node.exe" "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe" "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_skinning.html" "-DQUERY=backend=webgl" "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_skinning-browser" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+2735: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2735: Test timeout computed to be: 10000000
+2735: renderer: WebGL 2
+2735: ok: Render3D posed UV silhouettes, shared captured deformation, tangent normal maps, independent cutout shadow pixels, mixed transparency, 1x/2x and unchanged match hashes
+2735: 
+1/1 Test #2735: tide_globalillumination_skinning ...   Passed    8.88 sec
+
+The following tests passed:
+	tide_globalillumination_skinning
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   8.95 sec

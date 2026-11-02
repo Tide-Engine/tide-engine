@@ -1,0 +1,428 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-debug
+    Start 2750: tide_globalillumination_pixels_regional
+1/1 Test #2750: tide_globalillumination_pixels_regional ...***Failed  103.51 sec
+renderer: WebGL 2
+FAIL: world GI channel 0 got 0 wanted 51, rgba 000000ff
+enclosure floor: capacity 512 sample 5 (-6,-12,-8)
+floor records capacity512 receiver(-6,-12,-8) block6 minimum(-11.25,-23.25,-11.25) spacing6
+  corner0 logical3 physical48 anchor(-11.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner1 logical4 physical58 anchor(-5.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner2 logical6 physical50 anchor(-11.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner3 logical7 physical60 anchor(-5.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner4 logical12 physical64 anchor(-11.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner5 logical13 physical73 anchor(-5.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner6 logical15 physical67 anchor(-11.25,-11.25,-5.25) offset(0,0,0) captured1
+  corner7 logical16 physical75 anchor(-5.25,-11.25,-5.25) offset(0,0,0) captured1
+raw capture physical60 eye(-5.25,-11.25,-11.25) metric1.5 far128 near0.0149999997 face4 packed1b formats2/2/2 samples1
+raw capture projection diag 1 1 depth -1.00023437 -1 -0.0300035141
+raw capture refresh updates1 frame35 last35 captureSpacing1.5 captureFar128
+raw capture physical60 face4 pixel(10,20) depth=0.0197143555 bits3ca18000 backface0 hit1
+raw capture physical60 face4 pixel(11,20) depth=0.0197143555 bits3ca18000 backface0 hit1
+raw capture physical60 face4 pixel(10,21) depth=0.0161437988 bits3c844000 backface0 hit1
+raw capture physical60 face4 pixel(11,21) depth=0.0161437988 bits3c844000 backface0 hit1
+raw world physical60 pixel(10,20) eyeDeltaApprox(-0.862745098,-0.749019608,2.50980392) rgba644050ff
+raw world physical60 pixel(11,20) eyeDeltaApprox(-0.705882353,-0.749019608,2.50980392) rgba694050ff
+raw world physical60 pixel(10,21) eyeDeltaApprox(-0.705882353,-0.749019608,2.07058824) rgba694042ff
+raw world physical60 pixel(11,21) eyeDeltaApprox(-0.580392157,-0.749019608,2.07058824) rgba6d4042ff
+FAIL: world GI pixels line 397: uniform (scenario 2 synthetic 0 initialized 500/500)
+
+CMake Error at C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake:58 (message):
+  The page didn't exit with 0 (got '1').
+
+  Created TensorFlow Lite XNNPACK delegate for CPU.
+
+
+  [46128:39968:1102/052105.742:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052105.949:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052106.354:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:48372:1102/052106.967:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052107.771:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052108.787:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052109.796:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052110.805:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052111.814:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052112.822:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052113.831:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052114.833:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052115.837:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052116.852:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052117.858:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052118.869:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052119.885:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052120.747:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052120.887:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052120.950:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052121.357:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052121.891:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052121.968:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052122.783:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052122.892:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052123.797:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052123.907:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052124.807:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052124.918:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052125.811:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052125.923:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052126.817:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052126.928:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052127.823:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052127.934:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052128.828:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052128.937:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052129.830:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052129.939:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052130.835:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052130.945:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052131.836:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052131.960:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052132.851:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052132.961:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052133.862:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052133.972:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052134.875:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052134.984:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052135.755:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052135.880:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052135.959:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052136.366:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052136.888:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052136.985:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052137.794:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052137.903:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052138.805:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052138.917:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052139.809:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052139.918:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052140.811:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052140.920:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052141.820:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052141.931:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052142.834:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052142.945:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052143.842:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052143.953:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052144.851:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052144.961:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052145.854:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052145.964:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:48372:1102/052146.862:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052146.973:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052147.863:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052147.987:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052148.865:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052148.992:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052149.874:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052150.000:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052150.876:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052151.887:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052152.895:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052153.900:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052154.901:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052155.907:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052156.920:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052157.927:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052158.941:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052159.942:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052200.949:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052201.954:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052202.970:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052203.974:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+  [46128:39968:1102/052204.976:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 40720: Access is denied.  (0x5)
+
+
+
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) = 103.58 sec
+
+The following tests FAILED:
+	2750 - tide_globalillumination_pixels_regional (Failed)
+Errors while running CTest

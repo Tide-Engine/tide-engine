@@ -1,0 +1,28 @@
+[
+  {
+    "kind": "native",
+    "capacity": 2048,
+    "started_utc": "2026-11-02T03:34:38.1806602+00:00",
+    "ended_utc": "2026-11-02T03:34:38.8272435+00:00",
+    "process_wall_ms": 637.9632,
+    "exit_code": 0,
+    "timeout": false,
+    "executable_sha256": "09e88e6515b3ec441841f68dc926fed84e422c6294cd70107119b3c7febc4d63",
+    "stdout": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-room-record\\native-2048.stdout.log",
+    "stderr": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-room-record\\native-2048.stderr.log",
+    "method": "Diagnostic only; one record-only frame, no GPU/platform/window/audio or browser; not an external performance claim."
+  },
+  {
+    "kind": "wasi",
+    "capacity": 2048,
+    "started_utc": "2026-11-02T03:34:38.8872493+00:00",
+    "ended_utc": "2026-11-02T03:34:40.2785522+00:00",
+    "process_wall_ms": 1389.9494,
+    "exit_code": 0,
+    "timeout": false,
+    "executable_sha256": "afdbeb60146aa1d6a9c04f145f6197571b25139c09cf3d3bd8d68578566b6c99",
+    "stdout": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-room-record\\wasi-2048.stdout.log",
+    "stderr": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-room-record\\wasi-2048.stderr.log",
+    "method": "Diagnostic only; one record-only frame, no GPU/platform/window/audio or browser; not an external performance claim."
+  }
+]

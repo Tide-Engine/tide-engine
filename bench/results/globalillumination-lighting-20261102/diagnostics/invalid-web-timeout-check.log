@@ -1,0 +1,4 @@
+CMake Error at cmake/run_web_test.cmake:15 (message):
+  TIDE_WEB_TEST_TIMEOUT_SECONDS must be an integer from 1 to 600 (got '0').
+
+

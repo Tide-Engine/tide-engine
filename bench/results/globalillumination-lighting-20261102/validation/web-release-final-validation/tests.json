@@ -1,0 +1,1795 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test",
+      "tide_add_web_test"
+    ],
+    "files" : 
+    [
+      "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/WebTest.cmake",
+      "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/bench/CMakeLists.txt",
+      "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/packages/CMakeLists.txt"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 1
+      },
+      {
+        "command" : 1,
+        "file" : 1,
+        "line" : 149,
+        "parent" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 1
+      },
+      {
+        "file" : 1
+      },
+      {
+        "command" : 1,
+        "file" : 1,
+        "line" : 149,
+        "parent" : 3
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 4
+      },
+      {
+        "file" : 1
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 154,
+        "parent" : 6
+      },
+      {
+        "file" : 1
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 154,
+        "parent" : 8
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 0,
+        "file" : 2,
+        "line" : 40,
+        "parent" : 10
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 95,
+        "parent" : 12
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 13
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 95,
+        "parent" : 15
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 16
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 95,
+        "parent" : 18
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 19
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 21
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 22
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 24
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 25
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 27
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 28
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 30
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 31
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 33
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 34
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 36
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 37
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 39
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 40
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 42
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 43
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 45
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 46
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 48
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 49
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 51
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 52
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 54
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 55
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 57
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 58
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 60
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 61
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 112,
+        "parent" : 63
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 64
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 152,
+        "parent" : 66
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 67
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 152,
+        "parent" : 69
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 70
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 152,
+        "parent" : 72
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 73
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 165,
+        "parent" : 75
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 76
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 165,
+        "parent" : 78
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 79
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 165,
+        "parent" : 81
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 82
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 192,
+        "parent" : 84
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 54,
+        "parent" : 85
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 192,
+        "parent" : 87
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 65,
+        "parent" : 88
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 192,
+        "parent" : 90
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 86,
+        "parent" : 91
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 2,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/bench_globalillumination.html",
+        "-DQUERY=quick&backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench/bench_globalillumination-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "bench_globalillumination",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench"
+        }
+      ]
+    },
+    {
+      "backtrace" : 5,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/bench_globalillumination.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench/bench_globalillumination_webgpu-browser",
+        "quick&backend=webgpu",
+        "--expect",
+        "GlobalIllumination benchmark correctness passed",
+        "--seconds",
+        "240"
+      ],
+      "name" : "bench_globalillumination_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 290.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench"
+        }
+      ]
+    },
+    {
+      "backtrace" : 7,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/bench_globalillumination.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench/bench_globalillumination_atrium_webgpu-browser",
+        "quick&scene=atrium&mode=update4&probes=512&backend=webgpu",
+        "--expect",
+        "GlobalIllumination benchmark correctness passed",
+        "--seconds",
+        "240"
+      ],
+      "name" : "bench_globalillumination_atrium_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 290.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench"
+        }
+      ]
+    },
+    {
+      "backtrace" : 9,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/bench_globalillumination.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench/bench_globalillumination_courtyard_webgpu-browser",
+        "quick&scene=courtyard&mode=update4&probes=512&backend=webgpu",
+        "--expect",
+        "GlobalIllumination benchmark correctness passed",
+        "--seconds",
+        "240"
+      ],
+      "name" : "bench_globalillumination_courtyard_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 290.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench"
+        }
+      ]
+    },
+    {
+      "backtrace" : 11,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "--no-warnings",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_wasi.mjs",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_test.wasm"
+      ],
+      "name" : "tide_globalillumination",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 14,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_skinning.html",
+        "-DQUERY=backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_skinning-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_skinning",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 17,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_skinning.html",
+        "-DQUERY=backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_skinning_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_skinning_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 20,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_skinning.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_skinning_webgpu-browser",
+        "backend=webgpu",
+        "--expect",
+        "ok: Render3D posed UV silhouettes",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_globalillumination_skinning_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 23,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=analytic&backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_analytic-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_analytic",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 26,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=analytic&backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_analytic_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_analytic_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 29,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_analytic_webgpu-browser",
+        "group=analytic&backend=webgpu",
+        "--expect",
+        "ok: world GI automatic",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_globalillumination_pixels_analytic_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 32,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=room&backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_room-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_room",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 35,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=room&backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_room_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_room_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 38,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_room_webgpu-browser",
+        "group=room&backend=webgpu",
+        "--expect",
+        "ok: world GI automatic",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_globalillumination_pixels_room_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 41,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=direct&backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_direct-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_direct",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 44,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=direct&backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_direct_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_direct_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 47,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_direct_webgpu-browser",
+        "group=direct&backend=webgpu",
+        "--expect",
+        "ok: world GI automatic",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_globalillumination_pixels_direct_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 50,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=geometry&backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_geometry-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_geometry",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 53,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=geometry&backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_geometry_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_geometry_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 56,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_geometry_webgpu-browser",
+        "group=geometry&backend=webgpu",
+        "--expect",
+        "ok: world GI automatic",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_globalillumination_pixels_geometry_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 59,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=regional&backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_regional-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_regional",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 62,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "-DQUERY=group=regional&backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_regional_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_globalillumination_pixels_regional_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 65,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_globalillumination_pixels_regional_webgpu-browser",
+        "group=regional&backend=webgpu",
+        "--expect",
+        "ok: world GI automatic",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_globalillumination_pixels_regional_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 68,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_skinning_pixels.html",
+        "-DQUERY=backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_skinning_pixels-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_render3d_skinning_pixels",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 71,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_skinning_pixels.html",
+        "-DQUERY=backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_skinning_pixels_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_render3d_skinning_pixels_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 74,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_skinning_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_skinning_pixels_webgpu-browser",
+        "backend=webgpu",
+        "--expect",
+        "ok: Render3D posed UV silhouettes",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_render3d_skinning_pixels_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 77,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_material_pixels.html",
+        "-DQUERY=backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_material_pixels-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_render3d_material_pixels",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 80,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_material_pixels.html",
+        "-DQUERY=backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_material_pixels_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_render3d_material_pixels_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 83,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_material_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_material_pixels_webgpu-browser",
+        "backend=webgpu",
+        "--expect",
+        "ok: Render3D material maps",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_render3d_material_pixels_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 86,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_pixels.html",
+        "-DQUERY=backend=webgl",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_pixels-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_render3d_pixels",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 89,
+      "command" : 
+      [
+        "C:/Program Files/CMake/bin/cmake.exe",
+        "-DNODE=C:/Program Files/nodejs/node.exe",
+        "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "-DPAGE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_pixels.html",
+        "-DQUERY=backend=webgl&expect-angle=Direct3D11",
+        "-DANGLE_BACKEND=d3d11-warp",
+        "-DPROFILE=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_pixels_d3d11-browser",
+        "-P",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_test.cmake"
+      ],
+      "name" : "tide_render3d_pixels_d3d11",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgl_d3d11"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 92,
+      "command" : 
+      [
+        "C:/Program Files/nodejs/node.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs",
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_render3d_pixels.html",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages/tide_render3d_pixels_webgpu-browser",
+        "backend=webgpu",
+        "--expect",
+        "renderer: WebGPU",
+        "--seconds",
+        "100"
+      ],
+      "name" : "tide_render3d_pixels_webgpu",
+      "properties" : 
+      [
+        {
+          "name" : "SKIP_REGULAR_EXPRESSION",
+          "value" : 
+          [
+            "SKIPPED:"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "webgpu"
+          ]
+        },
+        {
+          "name" : "PROCESSORS",
+          "value" : 24
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 150.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}

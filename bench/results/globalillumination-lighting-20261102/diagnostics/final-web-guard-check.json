@@ -1,0 +1,181 @@
+[
+  {
+    "test": "bench_globalillumination",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "bench_globalillumination_webgpu",
+    "override": [],
+    "outer_seconds": 290.0
+  },
+  {
+    "test": "bench_globalillumination_atrium_webgpu",
+    "override": [],
+    "outer_seconds": 290.0
+  },
+  {
+    "test": "bench_globalillumination_courtyard_webgpu",
+    "override": [],
+    "outer_seconds": 290.0
+  },
+  {
+    "test": "tide_globalillumination",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_globalillumination_skinning",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_globalillumination_skinning_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_skinning_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_analytic",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_globalillumination_pixels_analytic_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_analytic_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_room",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_globalillumination_pixels_room_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_room_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_direct",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_globalillumination_pixels_direct_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_direct_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_geometry",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_globalillumination_pixels_geometry_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_geometry_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_regional512",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_globalillumination_pixels_regional512_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_regional512_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_regional2048",
+    "override": [
+      "-DTIDE_WEB_TEST_TIMEOUT_SECONDS=300"
+    ],
+    "outer_seconds": 330.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_regional2048_d3d11",
+    "override": [
+      "-DTIDE_WEB_TEST_TIMEOUT_SECONDS=300"
+    ],
+    "outer_seconds": 330.0
+  },
+  {
+    "test": "tide_globalillumination_pixels_regional2048_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_render3d_skinning_pixels",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_render3d_skinning_pixels_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_render3d_skinning_pixels_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_render3d_material_pixels",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_render3d_material_pixels_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_render3d_material_pixels_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_render3d_pixels",
+    "override": [],
+    "outer_seconds": null
+  },
+  {
+    "test": "tide_render3d_pixels_d3d11",
+    "override": [],
+    "outer_seconds": 150.0
+  },
+  {
+    "test": "tide_render3d_pixels_webgpu",
+    "override": [],
+    "outer_seconds": 150.0
+  }
+]

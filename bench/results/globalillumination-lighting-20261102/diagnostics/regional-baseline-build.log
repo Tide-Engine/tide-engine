@@ -1,0 +1,13 @@
+[0/2] Re-checking globbed directories...
+[1/2] Re-running CMake...
+-- Windows AddressSanitizer: C:/Program Files/LLVM/lib/clang/23/lib/windows/clang_rt.asan_dynamic-x86_64.dll
+-- Including Win32 support
+-- Configuring done (10.5s)
+-- Generating done (3.1s)
+-- Build files have been written to: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize
+[0/4] Re-checking globbed directories...
+[1/8] tidec tide_globalillumination_pixels
+[2/8] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game_pack.c.obj
+[3/8] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/globalillumination/test/gi_pixels.c.obj
+[4/8] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game.c.obj
+[5/8] Linking C executable bin\tide_globalillumination_pixels.exe

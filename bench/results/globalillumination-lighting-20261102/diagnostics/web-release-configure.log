@@ -1,0 +1,15 @@
+Preset CMake variables:
+
+  CMAKE_BUILD_TYPE="Release"
+  CMAKE_TOOLCHAIN_FILE:FILEPATH="C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/wasi-toolchain.cmake"
+
+-- The C compiler identification is Clang 23.1.2
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Program Files/LLVM/bin/clang.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Found Python3: C:/Python314/python.exe (found suitable version "3.14.4", minimum required is "3.10") found components: Interpreter
+-- Configuring done (7.2s)
+-- Generating done (3.3s)
+-- Build files have been written to: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release

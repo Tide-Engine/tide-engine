@@ -1,0 +1,26 @@
+[
+  {
+    "preset": "sanitize",
+    "test": "tide_globalillumination_pixels",
+    "started_utc": "2026-11-02T05:19:11.8313617Z",
+    "gate_name": "Local\\TideClaudeContinuationBenchmark",
+    "timing_status": "correctness-only; excluded from performance claims",
+    "gate_acquired_utc": "2026-11-02T05:19:11.8349464Z",
+    "ctest_exit": 0,
+    "passed": true,
+    "gate_released_utc": "2026-11-02T05:19:30.3942368Z",
+    "finished_utc": "2026-11-02T05:19:30.3945886Z"
+  },
+  {
+    "preset": "sanitize",
+    "test": "tide_globalillumination_pixels_opengl",
+    "started_utc": "2026-11-02T05:19:30.4037547Z",
+    "gate_name": "Local\\TideClaudeContinuationBenchmark",
+    "timing_status": "correctness-only; excluded from performance claims",
+    "gate_acquired_utc": "2026-11-02T05:20:55.0473385Z",
+    "ctest_exit": 0,
+    "passed": true,
+    "gate_released_utc": "2026-11-02T05:20:57.3223992Z",
+    "finished_utc": "2026-11-02T05:20:57.3224214Z"
+  }
+]

@@ -1,0 +1,30 @@
+{
+  "rows_native": 20,
+  "rows_wasi": 20,
+  "equal": true,
+  "different_rows": [],
+  "face4_runs": 6,
+  "instance_words": 264,
+  "vertex_words": 384,
+  "scene_models": 7,
+  "m33_values": [
+    [
+      1
+    ],
+    [
+      1
+    ],
+    [
+      1
+    ],
+    [
+      1
+    ],
+    [
+      1
+    ],
+    [
+      1
+    ]
+  ]
+}

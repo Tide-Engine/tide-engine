@@ -125,6 +125,22 @@ are retained in the [lighting repair report](../bench/results/globalillumination
 No other native OS/mobile or hardware-web validation was performed, and no CI
 was dispatched. This work remains on `feat/render3d-gi`, off dev.
 
+
+Final matched Vulkan captures on source `2d4d057e43573f4e3d0d706c299818c1b8f0923b` retain all four direct-only
+RGBA baselines and all sixteen world hashes. Both previously black 2,048-cap
+hero rear-wall regions now pass all fifteen support/energy witnesses. Actual
+images still show coarse spatial variation; these checks do not establish
+production aesthetic quality. The quiet controlled cohort passed all eighteen
+processes / 1,800 GPU samples. Settled whole-frame GPU medians on RTX 4080 SUPER
+at 960x720 are 4.601/4.910 ms for atrium 512/2,048 and 2.685/2.631 ms for
+courtyard (off .869/.595 ms). CPU recording is .199/.205 and .281/.294 ms.
+No captures/uploads occur in those timed frames. First-frame setup CPU medians
+span 103.50–566.16 ms; cold topology/reveal spikes remain unresolved. This is
+no active-update speedup or FPS claim. The final shared gate was released and
+disposed at 06:44:25.368 UTC, before offline evidence/plots; no GI processes or
+gates remain queued. Full ranges, identities, raw failures and limits are in
+the linked lighting repair report. No dev merge or CI dispatch occurred.
+
 ## Larger continuous examples (2026-11-02)
 
 The owner requested larger examples after the adaptive district work. The

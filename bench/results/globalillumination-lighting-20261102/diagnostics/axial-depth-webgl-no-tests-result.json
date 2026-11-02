@@ -1,0 +1,15 @@
+{
+  "validation": "original WebGL regional CTest, original120 guard",
+  "gate_name": "Local\\TideClaudeContinuationBenchmark",
+  "started_utc": "2026-11-02T04:20:29.2003337Z",
+  "wasm_sha256": "1EED0681E4EBF01EDF64515DBEF027D81174E934578E2A242137229F715A3F97",
+  "gate_acquired_utc": "2026-11-02T04:20:29.231543Z",
+  "ctest_exit": 0,
+  "validation_pass": false,
+  "gate_released_utc": "2026-11-02T04:20:29.3369712Z",
+  "gate_disposed": true,
+  "finished_utc": "2026-11-02T04:20:29.3385819Z",
+  "command_error": "Selected a nonexistent _webgl suffix; zero tests ran. Corrected to the configured unsuffixed WebGL test.",
+  "rejected_no_tests": true,
+  "actual_matching_count": 0
+}

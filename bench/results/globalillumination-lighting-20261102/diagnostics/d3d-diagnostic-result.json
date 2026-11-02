@@ -1,0 +1,32 @@
+{
+  "diagnostic_only": true,
+  "validation_pass": false,
+  "query": "group=room&backend=webgl&expect-angle=Direct3D11",
+  "angle_backend": "d3d11-warp",
+  "outer_guard_seconds": 240,
+  "browser": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "node": "C:/Program Files/nodejs/node.exe",
+  "page": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug\\bin\\tide_globalillumination_pixels.html",
+  "page_sha256_before": "9DE578C57B6D56CA9D5F692620998F9B5614CADAFDDF61EEB4278A5161FE20E2",
+  "runner_original_sha256": "C6B5381A510DC2F96C6BCFD66DD560EAAE14B0B071B47F2271970D30BA63B0BF",
+  "private_runner_sha256": "41DE641EB38300C566C4AB91C2D4F4CF1C64DAD8E621D6EA8575EFAE4DB1B5F9",
+  "gate_name": "Local\\TideClaudeContinuationBenchmark",
+  "started_utc": "2026-11-02T03:28:27.8548378Z",
+  "gate_acquired_utc": "2026-11-02T03:28:27.8624942Z",
+  "cmake_arguments": [
+    "-DNODE=C:/Program Files/nodejs/node.exe",
+    "-DBROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "-DPAGE=C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug\\bin\\tide_globalillumination_pixels.html",
+    "-DQUERY=group=room&backend=webgl&expect-angle=Direct3D11",
+    "-DANGLE_BACKEND=d3d11-warp",
+    "-DPROFILE=C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-profile-one",
+    "-P",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\d3d-diagnostic-runner\\run_web_test.cmake"
+  ],
+  "cmake_exit": 0,
+  "elapsed_seconds": 138.0075276,
+  "page_sha256_after": "9DE578C57B6D56CA9D5F692620998F9B5614CADAFDDF61EEB4278A5161FE20E2",
+  "gate_released_utc": "2026-11-02T03:30:45.8815083Z",
+  "gate_disposed": true,
+  "finished_utc": "2026-11-02T03:30:45.8842342Z"
+}

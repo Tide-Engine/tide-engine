@@ -1,0 +1,223 @@
+{
+  "method": "Two record-only tide_frame calls: first plans scenario 2 at cap512; second captures pinned physical probe60 after making it the only uninitialized active probe. Dumps actual recorded face4 camera, complete instance/mesh/index/attribute bytes, seven scene model matrices, and CPU rays. No platform/window/audio/device or GPU submission.",
+  "source_sha": "8052a272fd9d51e70e09a374ba031f55742eb86d",
+  "source_status": [
+    " M bench/globalillumination/README.md",
+    " M bench/globalillumination/main.c",
+    " M docs/packages/globalillumination.md",
+    " M docs/packages/render3d.md",
+    " M notes/global-illumination.md",
+    " M notes/render3d.md",
+    " M packages/CMakeLists.txt",
+    " M packages/globalillumination/globalillumination.tide",
+    " M packages/globalillumination/sampling.tide",
+    " M packages/globalillumination/test/gi.tide",
+    " M packages/globalillumination/test/gi_pixels.c",
+    " M packages/globalillumination/test/gi_test.c",
+    " M packages/globalillumination/world.tide",
+    " M packages/render3d/README.md",
+    " M packages/render3d/materials.tide",
+    " M packages/render3d/render3d.tide"
+  ],
+  "host_sha256": "3efd1ac8d8d16b3bfff40ebced520b1e158f64383f4b2d5b62be5f8dad487c1d",
+  "compiled_utc": "2026-11-02T04:26:21.3737510+00:00",
+  "programs": [
+    {
+      "kind": "native",
+      "preset": "sanitize",
+      "compiler": "C:/Program Files/LLVM/bin/clang.exe",
+      "compile_arguments": [
+        "-D_CRT_SECURE_NO_WARNINGS",
+        "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages/tide/tide_globalillumination_test",
+        "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/tests",
+        "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/engine/include",
+        "-O2",
+        "-DNDEBUG",
+        "-std=c17",
+        "-D_DLL",
+        "-D_MT",
+        "-Xclang",
+        "--dependent-lib=msvcrt",
+        "-g",
+        "-Xclang",
+        "-gcodeview",
+        "-fsanitize=address",
+        "-fno-omit-frame-pointer",
+        "-fno-sanitize-recover=all",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-c",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\record_room.c",
+        "-o",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\record-room-native.c.obj"
+      ],
+      "link_arguments": [
+        "-nostartfiles",
+        "-nostdlib",
+        "-O2",
+        "-DNDEBUG",
+        "-D_DLL",
+        "-D_MT",
+        "-Xclang",
+        "--dependent-lib=msvcrt",
+        "-g",
+        "-Xclang",
+        "-gcodeview",
+        "-Xlinker",
+        "/subsystem:console",
+        "-Xlinker",
+        "/OPT:NOICF",
+        "-Xlinker",
+        "/STACK:8388608",
+        "-fsanitize=address",
+        "-fuse-ld=lld-link",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\record-room-native.c.obj",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/engine/tide.lib",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/tide_font_bold.lib",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/tide_globalillumination.lib",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/tide_render3d.lib",
+        "-o",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\cpu-room-record-native.exe",
+        "-Xlinker",
+        "/MANIFEST:EMBED",
+        "-lkernel32",
+        "-luser32",
+        "-lgdi32",
+        "-lwinspool",
+        "-lshell32",
+        "-lole32",
+        "-loleaut32",
+        "-luuid",
+        "-lcomdlg32",
+        "-ladvapi32",
+        "-loldnames"
+      ],
+      "executable": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\cpu-room-record-native.exe",
+      "executable_sha256": "1d7228c9cbe28d0a8a90e62c16c98060db4ae5d08c6196d059f6c1d63f9a5d52",
+      "header_sha256": "94bb9e07fdabc06bbc64cd264c9dc5edceb19bf390c00b904a4339c4c1d668e4",
+      "generated_c_sha256": "801b838db31224b052fd89d279420d3e15b3132ec1b7d6f91d24ed16f148278e",
+      "inputs": [
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj",
+          "sha256": "bb1095ac15b8cb9d86f423ac8fb5a7cdf796b5ae30bd9db1b50895ba490cb30e"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj",
+          "sha256": "e5757ce93413b847b39e10cbe26680aced288a8280ea84650441d6c3db864214"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/engine/tide.lib",
+          "sha256": "890f05de8415c517eaa5c79ada6335ef0ff72bd4f5d466dc893b10def426bbfc"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/tide_font_bold.lib",
+          "sha256": "4aa31750d8249617d2ebcfe425a857b640d2b449bcfe42cb8538604370d8a437"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/tide_globalillumination.lib",
+          "sha256": "fd2836878d33b83d24a5fc8de68d38012d3f3346d0c5f104e6535c8e57be10fb"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\sanitize/packages/tide_render3d.lib",
+          "sha256": "e2e607c2368386224aea23397edf4f66d7041c531765978380abc36a4d088185"
+        }
+      ]
+    },
+    {
+      "kind": "wasi",
+      "preset": "web-debug",
+      "compiler": "C:/Program Files/LLVM/bin/clang.exe",
+      "compile_arguments": [
+        "--target=wasm32-wasip1-threads",
+        "--sysroot=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/wasi-sdk-24/wasi-sysroot-24.0",
+        "-DSHADOW_BATCHES_GPU",
+        "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-debug/packages/tide/tide_globalillumination_test",
+        "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/tests",
+        "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/engine/include",
+        "-g",
+        "-std=c17",
+        "-pthread",
+        "-msimd128",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-c",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\record_room.c",
+        "-o",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\record-room-wasi.c.obj"
+      ],
+      "link_arguments": [
+        "--target=wasm32-wasip1-threads",
+        "--sysroot=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/wasi-sdk-24/wasi-sysroot-24.0",
+        "-g",
+        "-nodefaultlibs",
+        "-Wl,-z,stack-size=1048576",
+        "-Wl,--import-memory",
+        "-Wl,--export-memory",
+        "-Wl,--shared-memory",
+        "-Wl,--max-memory=4294967296",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\record-room-wasi.c.obj",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/engine/libtide.a",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/libtide_font_bold.a",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/libtide_globalillumination.a",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/libtide_render3d.a",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/engine/libtide.a",
+        "-lc",
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/wasi-sdk-24/libclang_rt.builtins-wasm32-wasi-24.0/libclang_rt.builtins-wasm32.a",
+        "-o",
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\cpu-room-record-wasi.wasm"
+      ],
+      "executable": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-quality-20261102\\cpu-instance-parity\\cpu-room-record-wasi.wasm",
+      "executable_sha256": "472eb817233756025c1e743b813d36e54421b6956b74019f9a7a6b2b01e2c28f",
+      "header_sha256": "94bb9e07fdabc06bbc64cd264c9dc5edceb19bf390c00b904a4339c4c1d668e4",
+      "generated_c_sha256": "801b838db31224b052fd89d279420d3e15b3132ec1b7d6f91d24ed16f148278e",
+      "inputs": [
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game.c.obj",
+          "sha256": "026972e3f4b285c0e5655bf8fd6d1fef3649eb30fc9feacbd401584d2d094191"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/CMakeFiles/tide_globalillumination_test.dir/tide/tide_globalillumination_test/game_pack.c.obj",
+          "sha256": "a2f236f4be7f0bfbfe58b7290f795e31f478eb4dfaaf53bc694797c5665dc3fe"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/engine/libtide.a",
+          "sha256": "2486a99d84b649454c11b4f9c0b7e224bc03dd5b5e987e2ca62d62c27e78606d"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/libtide_font_bold.a",
+          "sha256": "9a9e3740ac64b8645582946e5e2a4f27ba070e643bfa1a3e3e3ecce426e1dbbc"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/libtide_globalillumination.a",
+          "sha256": "9411e781135761200d681e909ee80ad5c01c2f67a91694c08028a88489a2d719"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/packages/libtide_render3d.a",
+          "sha256": "849dc5b5a82df55948cfa972922c2fa689f4503781b736d1d9bbe9d39d7bb610"
+        },
+        {
+          "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\web-debug/engine/libtide.a",
+          "sha256": "2486a99d84b649454c11b4f9c0b7e224bc03dd5b5e987e2ca62d62c27e78606d"
+        },
+        {
+          "path": "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/wasi-sdk-24/libclang_rt.builtins-wasm32-wasi-24.0/libclang_rt.builtins-wasm32.a",
+          "sha256": "e2490185af44680dc371c9b60873e60229ccdfb81df4325edf7ed7657c635489"
+        }
+      ]
+    }
+  ]
+}

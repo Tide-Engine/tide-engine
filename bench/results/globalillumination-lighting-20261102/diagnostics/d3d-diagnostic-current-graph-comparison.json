@@ -1,0 +1,92 @@
+[
+  {
+    "id": 7,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 55681,
+    "lines": 1048,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_calls": 1,
+    "callback_kind_cases": 6,
+    "before": {
+      "id": 7,
+      "name": "Deform and Lit on MeshVertex",
+      "bytes": 62392,
+      "lines": 1142,
+      "loops": 7,
+      "texture_calls": 14
+    }
+  },
+  {
+    "id": 8,
+    "name": "Lit on MeshVertex",
+    "bytes": 55602,
+    "lines": 1048,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_calls": 1,
+    "callback_kind_cases": 6,
+    "before": {
+      "id": 8,
+      "name": "Lit on MeshVertex",
+      "bytes": 62314,
+      "lines": 1142,
+      "loops": 7,
+      "texture_calls": 14
+    }
+  },
+  {
+    "id": 9,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 55770,
+    "lines": 1051,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_calls": 1,
+    "callback_kind_cases": 6,
+    "before": {
+      "id": 9,
+      "name": "Deform and Lit on MeshVertex",
+      "bytes": 62482,
+      "lines": 1145,
+      "loops": 7,
+      "texture_calls": 14
+    }
+  },
+  {
+    "id": 11,
+    "name": "Convolve on Vertex",
+    "bytes": 9211,
+    "lines": 215,
+    "loops": 1,
+    "has_legacy": false,
+    "world_provider_calls": 0,
+    "callback_kind_cases": 0,
+    "before": {
+      "id": 11,
+      "name": "Convolve on Vertex",
+      "bytes": 9211,
+      "lines": 215,
+      "loops": 1,
+      "texture_calls": 8
+    }
+  },
+  {
+    "id": 25,
+    "name": "ReadGIWitness on Vertex",
+    "bytes": 28869,
+    "lines": 525,
+    "loops": 4,
+    "has_legacy": false,
+    "world_provider_calls": 0,
+    "callback_kind_cases": 0,
+    "before": {
+      "id": 24,
+      "name": "ReadGIWitness on Vertex",
+      "bytes": 28869,
+      "lines": 525,
+      "loops": 4,
+      "texture_calls": 5
+    }
+  }
+]

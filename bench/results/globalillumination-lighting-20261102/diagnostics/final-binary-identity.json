@@ -1,0 +1,8 @@
+{
+  "source_sha": "2d4d057e43573f4e3d0d706c299818c1b8f0923b",
+  "binary_sha256": "9df54ef8456c7e5f88b09214d658eebbfeb006eb400fc1ceecc3db6eeeda1b6f",
+  "built_utc": "2026-11-02T06:40:34.0746718Z",
+  "build_log": "release-capture-build.log",
+  "sanitizers": false,
+  "backend": "vulkan"
+}

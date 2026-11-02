@@ -1,0 +1,164 @@
+[
+  {
+    "sequence": 1,
+    "trial": 1,
+    "scene": "atrium",
+    "case": "off512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 2,
+    "trial": 1,
+    "scene": "atrium",
+    "case": "update4-512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 3,
+    "trial": 1,
+    "scene": "atrium",
+    "case": "update4-2048",
+    "probes": 2048,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 4,
+    "trial": 1,
+    "scene": "courtyard",
+    "case": "off512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 5,
+    "trial": 1,
+    "scene": "courtyard",
+    "case": "update4-512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 6,
+    "trial": 1,
+    "scene": "courtyard",
+    "case": "update4-2048",
+    "probes": 2048,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 7,
+    "trial": 2,
+    "scene": "courtyard",
+    "case": "update4-2048",
+    "probes": 2048,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 8,
+    "trial": 2,
+    "scene": "courtyard",
+    "case": "update4-512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 9,
+    "trial": 2,
+    "scene": "courtyard",
+    "case": "off512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 10,
+    "trial": 2,
+    "scene": "atrium",
+    "case": "update4-2048",
+    "probes": 2048,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 11,
+    "trial": 2,
+    "scene": "atrium",
+    "case": "update4-512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 12,
+    "trial": 2,
+    "scene": "atrium",
+    "case": "off512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 13,
+    "trial": 3,
+    "scene": "atrium",
+    "case": "off512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 14,
+    "trial": 3,
+    "scene": "atrium",
+    "case": "update4-512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 15,
+    "trial": 3,
+    "scene": "atrium",
+    "case": "update4-2048",
+    "probes": 2048,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 16,
+    "trial": 3,
+    "scene": "courtyard",
+    "case": "off512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 17,
+    "trial": 3,
+    "scene": "courtyard",
+    "case": "update4-512",
+    "probes": 512,
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 18,
+    "trial": 3,
+    "scene": "courtyard",
+    "case": "update4-2048",
+    "probes": 2048,
+    "frames": 100,
+    "warmup": 20
+  }
+]

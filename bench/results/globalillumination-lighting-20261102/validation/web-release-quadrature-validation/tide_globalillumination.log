@@ -1,0 +1,50 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2727
+    Start 2727: tide_globalillumination
+
+2727: Test command: "C:\Program Files\nodejs\node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/tide_globalillumination_test.wasm"
+2727: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/packages
+2727: Test timeout computed to be: 10000000
+2727: ok   globalillumination_automatic_bounds_include_receivers_and_cache_shared_assets (20.888 ms)
+2727: ok   globalillumination_camera_projection_and_hysteresis_preserve_visible_support (31.598 ms)
+2727: ok   globalillumination_continuously_dirty_field_refreshes_every_probe_fairly (4.417 ms)
+2727: ok   globalillumination_cutout_shadow_changes_propagate_but_emission_stays_local (4.742 ms)
+2727: ok   globalillumination_empty_or_disabled_world_has_no_capture_resources (0.328 ms)
+2727: ok   globalillumination_external_caster_edits_propagate_without_recursive_invalidation (2.270 ms)
+2727: ok   globalillumination_large_coordinate_camera_streaming_keeps_spacing_stable (0.763 ms)
+2727: ok   globalillumination_neighboring_bricks_share_unique_world_anchor_records (1.342 ms)
+2727: ok   globalillumination_numeric_light_changes_invalidate_despite_hash_collisions (2.476 ms)
+2727: ok   globalillumination_offscreen_geometry_does_not_consume_visible_field_budget (10.257 ms)
+2727: ok   globalillumination_placement_geometry_uses_closed_surfaces_and_world_distances (1.149 ms)
+2727: ok   globalillumination_regional_invalidation_prioritizes_local_work_and_static_fields_idle (3.290 ms)
+2727: ok   globalillumination_remote_geometry_preserves_local_detail_and_captured_history (2.622 ms)
+2727: ok   globalillumination_replay_ignores_non_capture_packets_and_future_run_indices (0.065 ms)
+2727: ok   globalillumination_replay_preserves_face_camera_and_independent_instance_runs (0.093 ms)
+2727: ok   globalillumination_replay_rejects_invalid_ranges_and_payload_spans_without_mutation (0.063 ms)
+2727: ok   globalillumination_replay_target_wrapper_restores_face_after_draw_list_selects_window (0.050 ms)
+2727: ok   globalillumination_settings_and_probe_count_remain_bounded (516.213 ms)
+2727: ok   globalillumination_shadow_casting_motion_and_flags_invalidate_distant_receivers (4.218 ms)
+2727: ok   globalillumination_shadow_enable_and_atlas_budget_changes_invalidate_lighting (4.424 ms)
+2727: ok   globalillumination_thin_wall_keeps_receiver_support_at_requested_spacing (0.800 ms)
+2727: ok   globalillumination_translated_open_receiver_covers_biased_filter_support (0.398 ms)
+2727: ok   globalillumination_update_budget_freeze_invalidation_and_disposal (2.211 ms)
+2727: ok   globalillumination_visible_receiver_regions_keep_support_across_probe_budgets (11.089 ms)
+2727: ok   globalillumination_world_updates_relocate_and_hold_bounded_capture_positions (16.097 ms)
+2727: 
+2727: 25/25 passed
+1/1 Test #2727: tide_globalillumination ..........   Passed    0.69 sec
+
+The following tests passed:
+	tide_globalillumination
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.76 sec

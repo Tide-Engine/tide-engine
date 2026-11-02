@@ -1,0 +1,412 @@
+renderer: WebGL 2
+FAIL: world GI channel 0 got 0 wanted 51, rgba 000000ff
+enclosure floor: capacity 512 sample 5 (-6,-12,-8)
+floor records capacity512 receiver(-6,-12,-8) block6 minimum(-11.25,-23.25,-11.25) spacing6
+  corner0 logical3 physical48 anchor(-11.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner1 logical4 physical58 anchor(-5.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner2 logical6 physical50 anchor(-11.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner3 logical7 physical60 anchor(-5.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner4 logical12 physical64 anchor(-11.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner5 logical13 physical73 anchor(-5.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner6 logical15 physical67 anchor(-11.25,-11.25,-5.25) offset(0,0,0) captured1
+  corner7 logical16 physical75 anchor(-5.25,-11.25,-5.25) offset(0,0,0) captured1
+raw capture physical60 eye(-5.25,-11.25,-11.25) metric1.5 far128 near0.0149999997 face4 packed1b formats2/2/2 samples1
+raw capture projection diag 1 1 depth -1.00023437 -1 -0.0300035141
+raw capture refresh updates1 frame35 last35 captureSpacing1.5 captureFar128
+raw capture physical60 face4 pixel(10,20) depth=0.0216827393 bits3cb1a000 backface0 hit1
+raw capture physical60 face4 pixel(11,20) depth=0.0213317871 bits3caec000 backface0 hit1
+raw capture physical60 face4 pixel(10,21) depth=0.0180664062 bits3c940000 backface0 hit1
+raw capture physical60 face4 pixel(11,21) depth=0.017791748 bits3c91c000 backface0 hit1
+FAIL: world GI pixels line 389: uniform (scenario 2 synthetic 0 initialized 500/500)
+
+CMake Error at build/gi-quality-20261102/raw-capture-diagnostic-runner/run_web_test.cmake:58 (message):
+  The page didn't exit with 0 (got '1').
+
+  Created TensorFlow Lite XNNPACK delegate for CPU.
+
+
+  [18112:27700:1102/045611.055:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045611.261:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045611.665:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045612.273:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045613.078:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045614.090:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045615.104:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045616.119:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045617.124:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045618.136:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045619.140:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045620.143:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045621.145:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045622.157:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045623.169:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045624.170:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045625.176:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045625.940:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045626.148:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045626.179:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045626.555:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045627.165:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045627.181:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045627.966:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045628.183:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045628.980:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045629.198:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045629.995:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045630.214:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045631.007:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045631.225:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045632.008:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045632.241:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045633.008:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045633.256:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045634.023:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045634.258:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045635.037:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045635.272:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045636.039:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045636.288:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045637.042:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045637.291:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045638.058:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045638.293:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045639.063:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045639.298:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045640.069:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045640.302:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045640.939:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045641.071:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045641.149:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045641.551:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045642.085:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045642.163:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045642.966:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045643.093:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045643.972:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045644.097:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045644.974:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045645.101:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045645.987:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045646.113:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045646.993:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045647.119:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045647.996:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045648.121:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045649.000:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045649.124:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045650.014:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045650.139:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045651.029:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045651.140:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045652.037:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045652.147:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045653.040:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045653.163:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045654.042:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045654.168:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045655.048:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045655.172:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045656.061:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045657.063:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045658.066:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045659.080:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045700.096:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045701.111:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045702.122:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045703.136:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045704.137:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045705.151:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045706.166:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045707.182:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045708.183:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045709.198:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+  [18112:27700:1102/045710.213:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 47840: Access is denied.  (0x5)
+
+
+

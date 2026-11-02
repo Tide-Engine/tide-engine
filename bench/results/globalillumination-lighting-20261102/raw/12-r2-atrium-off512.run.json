@@ -1,0 +1,44 @@
+{
+  "sequence": 12,
+  "trial": 2,
+  "scene": "atrium",
+  "case": "off512",
+  "probes": 512,
+  "frames": 100,
+  "warmup": 20,
+  "arguments": [
+    "--scene",
+    "atrium",
+    "--mode",
+    "off",
+    "--probes",
+    "512",
+    "--frames",
+    "100",
+    "--warmup",
+    "20",
+    "--output",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\bench\\results\\globalillumination-lighting-20261102\\raw\\12-r2-atrium-off512.jsonl"
+  ],
+  "started_utc": "2026-11-02T06:43:51.7572680+00:00",
+  "status": "passed",
+  "binary_sha256": "9df54ef8456c7e5f88b09214d658eebbfeb006eb400fc1ceecc3db6eeeda1b6f",
+  "jsonl": "raw/12-r2-atrium-off512.jsonl",
+  "stdout": "raw/12-r2-atrium-off512.stdout.log",
+  "stderr": "raw/12-r2-atrium-off512.stderr.log",
+  "run_metadata": "raw/12-r2-atrium-off512.run.json",
+  "gpu_before": {
+    "utc": "2026-11-02T06:43:51.7572952+00:00",
+    "scope": "instantaneous boundary sample, not continuous monitoring",
+    "query": "name,driver_version,pstate,clocks.gr,clocks.mem,temperature.gpu,power.draw,utilization.gpu",
+    "csv_no_units": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2805, 11501, 56, 112.86, 82"
+  },
+  "exit_code": 0,
+  "ended_utc": "2026-11-02T06:43:52.5870392+00:00",
+  "gpu_after": {
+    "utc": "2026-11-02T06:43:52.5870695+00:00",
+    "scope": "instantaneous boundary sample, not continuous monitoring",
+    "query": "name,driver_version,pstate,clocks.gr,clocks.mem,temperature.gpu,power.draw,utilization.gpu",
+    "csv_no_units": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2805, 11501, 50, 72.43, 1"
+  }
+}

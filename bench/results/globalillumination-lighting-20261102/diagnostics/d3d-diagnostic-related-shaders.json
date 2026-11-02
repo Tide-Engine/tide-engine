@@ -1,0 +1,62 @@
+[
+  {
+    "path": "build/web-debug/packages/tide/tide_globalillumination_skinning/game.c",
+    "id": 7,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 55651,
+    "lines": 1054,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_variants": 1
+  },
+  {
+    "path": "build/web-debug/packages/tide/tide_globalillumination_skinning/game.c",
+    "id": 8,
+    "name": "Lit on MeshVertex",
+    "bytes": 55632,
+    "lines": 1053,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_variants": 1
+  },
+  {
+    "path": "build/web-debug/packages/tide/tide_globalillumination_skinning/game.c",
+    "id": 9,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 55740,
+    "lines": 1057,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_variants": 1
+  },
+  {
+    "path": "build/web-debug/bench/tide/bench_globalillumination/game.c",
+    "id": 7,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 55118,
+    "lines": 1034,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_variants": 1
+  },
+  {
+    "path": "build/web-debug/bench/tide/bench_globalillumination/game.c",
+    "id": 8,
+    "name": "Lit on MeshVertex",
+    "bytes": 55039,
+    "lines": 1034,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_variants": 1
+  },
+  {
+    "path": "build/web-debug/bench/tide/bench_globalillumination/game.c",
+    "id": 9,
+    "name": "Deform and Lit on MeshVertex",
+    "bytes": 55207,
+    "lines": 1037,
+    "loops": 6,
+    "has_legacy": false,
+    "world_provider_variants": 1
+  }
+]

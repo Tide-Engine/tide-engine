@@ -1,0 +1,130 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test"
+    ],
+    "files" : 
+    [
+      "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/packages/CMakeLists.txt"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 40,
+        "parent" : 0
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 116,
+        "parent" : 2
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 117,
+        "parent" : 4
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 1,
+      "command" : 
+      [
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/bin/tide_globalillumination_test.exe"
+      ],
+      "name" : "tide_globalillumination",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 3,
+      "command" : 
+      [
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/bin/tide_globalillumination_pixels.exe"
+      ],
+      "name" : "tide_globalillumination_pixels",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "VK_LOADER_LAYERS_DISABLE=~implicit~",
+            "TIDE_VULKAN_VALIDATION=1",
+            "VK_ADD_LAYER_PATH=C:/VulkanSDK/1.4.363.0/Bin"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "gpu"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages"
+        }
+      ]
+    },
+    {
+      "backtrace" : 5,
+      "command" : 
+      [
+        "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/bin/tide_globalillumination_pixels.exe"
+      ],
+      "name" : "tide_globalillumination_pixels_opengl",
+      "properties" : 
+      [
+        {
+          "name" : "ENVIRONMENT",
+          "value" : 
+          [
+            "VK_LOADER_LAYERS_DISABLE=~implicit~",
+            "TIDE_VULKAN_VALIDATION=1",
+            "VK_ADD_LAYER_PATH=C:/VulkanSDK/1.4.363.0/Bin",
+            "TIDE_BACKEND=opengl"
+          ]
+        },
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "gpu"
+          ]
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}

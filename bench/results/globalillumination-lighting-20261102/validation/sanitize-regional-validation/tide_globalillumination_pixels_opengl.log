@@ -1,0 +1,33 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2860
+    Start 2860: tide_globalillumination_pixels_opengl
+
+2860: Test command: C:\Users\blenm\.t3\worktrees\PurrEngine\t3-0f6a1f0b\build\sanitize\bin\tide_globalillumination_pixels.exe
+2860: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages
+2860: Environment variables: 
+2860:  VK_LOADER_LAYERS_DISABLE=~implicit~
+2860:  TIDE_VULKAN_VALIDATION=1
+2860:  VK_ADD_LAYER_PATH=C:/VulkanSDK/1.4.363.0/Bin
+2860:  TIDE_BACKEND=opengl
+2860: Test timeout computed to be: 10000000
+2860: renderer: OpenGL 3.3
+2860: ok: world GI automatic coverage, adaptive lookup, coarse/fine continuity and sparse readiness, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes
+1/1 Test #2860: tide_globalillumination_pixels_opengl ...   Passed    2.18 sec
+
+The following tests passed:
+	tide_globalillumination_pixels_opengl
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+gpu    =   2.18 sec*proc (1 test)
+
+Total Test time (real) =   2.25 sec

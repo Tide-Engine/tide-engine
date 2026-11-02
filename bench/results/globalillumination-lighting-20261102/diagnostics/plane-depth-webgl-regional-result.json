@@ -1,0 +1,14 @@
+{
+  "validation": "original WebGL regional CTest, original120 guard",
+  "gate_name": "Local\\TideClaudeContinuationBenchmark",
+  "started_utc": "2026-11-02T04:44:13.5416678Z",
+  "wasm_sha256": "C6C7E47CF260A73ED8699F4EAFAAB84F31FE550A17C67A06BB4DE86E0A59DAD0",
+  "gate_acquired_utc": "2026-11-02T04:44:13.5829747Z",
+  "ctest_exit": 8,
+  "validation_pass": false,
+  "gate_released_utc": "2026-11-02T04:46:13.9761803Z",
+  "gate_disposed": true,
+  "finished_utc": "2026-11-02T04:46:13.9786619Z",
+  "actual_matching_count": 1,
+  "actual_test_name": "tide_globalillumination_pixels_regional"
+}

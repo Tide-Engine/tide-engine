@@ -1,0 +1,29 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2692
+    Start 2692: bench_globalillumination_courtyard_webgpu
+
+2692: Test command: "C:\Program Files\nodejs\node.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/cmake/run_web_served_test.mjs" "C:/Program Files/Google/Chrome/Application/chrome.exe" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bin/bench_globalillumination.html" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench/bench_globalillumination_courtyard_webgpu-browser" "quick&scene=courtyard&mode=update4&probes=512&backend=webgpu" "--expect" "GlobalIllumination benchmark correctness passed" "--seconds" "240"
+2692: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-release/bench
+2692: Test timeout computed to be: 290
+2692: renderer: WebGPU; 128x96; scene=courtyard; buildings=1; correctness only
+2692: {"benchmark":"globalillumination","scene":"courtyard","buildings":1,"debug":false,"overview":false,"travel":false,"moving_light":false,"mode":"update4","width":128,"height":96,"frames":2,"warmup":1,"validation_frames":31,"convergence_frames":1,"gi_scene_instances":476,"probes":492,"probe_capacity":512,"active_blocks":55,"dirty_probes":0,"finest_spacing":3,"primary_spacing":12,"updates_per_frame":4,"capture_updates_mean":0.000,"capture_faces_per_frame":0.000,"capture_candidates_mean":0.000,"capture_draws_mean":0.000,"idle_capture_frames":3,"max_shader_textures":12,"gpu_samples":0,"world_hash":"40f45c0902ddfdeb","quick":true,"receiver_off":255,"receiver_on":1330067455,"regional_camera":"hero_validation","regional_count":15,"regional_on_valid":true,"regional_covered":15,"regional_nonzero":15,"regional_gain_min":175,"regional_gain_mean":213.266667,"regional_gain_max":241,"regional_samples":[{"world":[-46,16,-51.99],"pixel":[81,32],"off":255,"on":1683306751,"spacing":48},{"world":[-41,16,-51.99],"pixel":[77,32],"off":255,"on":1649620991,"spacing":48},{"world":[-36,16,-51.99],"pixel":[74,32],"off":255,"on":1599092223,"spacing":48},{"world":[-31,16,-51.99],"pixel":[70,32],"off":255,"on":1481257215,"spacing":48},{"world":[-26,16,-51.99],"pixel":[67,32],"off":255,"on":1363422463,"spacing":48},{"world":[-46,18,-51.99],"pixel":[81,31],"off":255,"on":1649620991,"spacing":48},{"world":[-41,18,-51.99],"pixel":[77,31],"off":255,"on":1616000767,"spacing":48},{"world":[-36,18,-51.99],"pixel":[74,30],"off":255,"on":1531785983,"spacing":48},{"world":[-31,18,-51.99],"pixel":[70,30],"off":255,"on":1413951231,"spacing":48},{"world":[-26,18,-51.99],"pixel":[67,30],"off":255,"on":1312893695,"spacing":48},{"world":[-46,20,-51.99],"pixel":[81,29],"off":255,"on":1565471999,"spacing":48},{"world":[-41,20,-51.99],"pixel":[77,29],"off":255,"on":1531785983,"spacing":48},{"world":[-36,20,-51.99],"pixel":[74,29],"off":255,"on":1498099967,"spacing":48},{"world":[-31,20,-51.99],"pixel":[70,28],"off":255,"on":1346579455,"spacing":48},{"world":[-26,20,-51.99],"pixel":[67,28],"off":255,"on":1245587455,"spacing":48}]}
+2692: GlobalIllumination benchmark correctness passed
+1/1 Test #2692: bench_globalillumination_courtyard_webgpu ...   Passed   51.23 sec
+
+The following tests passed:
+	bench_globalillumination_courtyard_webgpu
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+webgpu    = 1229.44 sec*proc (1 test)
+
+Total Test time (real) =  51.29 sec

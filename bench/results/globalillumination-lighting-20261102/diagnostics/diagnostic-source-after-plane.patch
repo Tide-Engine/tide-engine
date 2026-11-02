@@ -1,0 +1,1391 @@
+diff --git a/bench/globalillumination/README.md b/bench/globalillumination/README.md
+index 7c46441ec..913db4910 100644
+--- a/bench/globalillumination/README.md
++++ b/bench/globalillumination/README.md
+@@ -31,7 +31,7 @@ Two continuous architectural scenes extend beyond the separated-room workload:
+ Both use a real directional sun and six shadowed spotlights, with zero ambient
+ irradiance. A fixed directional shadow volume covers the architecture; the sun
+ uses one map and each spotlight one, for seven maps total. Hero cameras keep
+-their shaded display-wall receiver within the ordinary 48-unit resident range.
++their shaded display-wall receiver within the ordinary 48-unit nearby range.
+ Neither scene authors probes or baked light. These are static examples;
+ `--travel` and `--moving-light` are rejected for them.
+ 
+@@ -55,10 +55,12 @@ Additional options:
+ - `--overview` frames the whole district from above and requests a larger GI
+   view distance of `2 * extent + 16`, where `extent` is the larger grid dimension
+   times 24 world units. The elevated camera otherwise has no nearby geometry
+-  within the ordinary 48-unit working set. This is a different coverage workload;
++  within the ordinary 48-unit nearby-detail radius. This is a different detail workload;
+   the nearby and travel cameras retain the production default. Atrium and
+   courtyard overviews request view distances 200 and 350 respectively, covering
+-  their full scene from the elevated cameras. Their hero views retain 48.
++  their full scene from the elevated cameras. Their hero views retain 48 for
++  nearby coverage/detail priority; distant visible receivers keep conservative
++  coarse coverage through the rendered camera frustum in both views.
+ - `--debug` draws the actual resident relocated probe positions. Large-scene
+   markers grow with camera distance to stay visible in the overview, using the
+   same package shader and depth test; this changes only visualization size.
+@@ -102,6 +104,32 @@ five budgets, unchanged match hashes and a rendered white-box witness that must
+ brighten by more than fifteen summed RGB levels with GI. Room/district witnesses
+ use the original camera. Each large scene instead projects its own shaded +Z
+ display-wall face through its own hero camera, with that scene's sun/spots.
++The original fifteen-level display-wall witness remains. Each large scene also
++checks fifteen world-anchored samples on a separate, directly shaded rear-wall
++patch: the atrium's central wall at x=-4..4/y=6..10, and the courtyard wall at
++x=-46..-26/y=16..20. The authored camera rays pass above foreground objects and
++through open arch interiors; sun direction and spot cones exclude direct light.
++The GI-off samples must remain dark (at most three summed RGB levels), guarding
++against an accidentally projected direct-lit object. Conservative sunlit floor
++patches in front of the walls establish positive one-bounce transport.
++
++Every sample requires all eight interpolation nodes mapped, active and captured,
++more than one summed RGB level of GI gain (the quantization/readback margin),
++and the region must average more than three added summed RGB levels. This is a
++coverage/nonzero-energy regression rather than a reference-quality lighting
++solution; independent uniform-irradiance fixtures check reconstruction.
++These fixed thresholds are chosen from the lighting/visibility setup, before
++inspecting candidate output. Increasing probe capacity must not make these
++visible receiver patches fall out of coverage.
++
++Rows retain `regional_samples` with each world point, projected pixel, paired
++off/on RGBA and mapped block spacing, plus minimum/mean/maximum gain and covered/
++nonzero counts. `regional_camera` is `hero_validation` even when the final
++requested capture is an overview. `regional_on_valid` is false for GI-off rows;
++their `on` entries repeat the reference and are not a second rendered state.
++Failures print the same sample diagnostics and retain the diagnostic-capture
++behavior. Regional readbacks/accounting stay outside all measured intervals.
++
+ Validation uses still lighting outside measurement, including when
+ overview/debug/travel is requested. Field
+ accounting and capture budgets are checked; frozen captures must remain zero,
+diff --git a/bench/globalillumination/main.c b/bench/globalillumination/main.c
+index 45cb71049..5f3062a45 100644
+--- a/bench/globalillumination/main.c
++++ b/bench/globalillumination/main.c
+@@ -41,6 +41,13 @@ static int frozen_initialized;
+ static uint32_t max_textures;
+ static double setup_record_ms, convergence_record_ms, untimed_record_ms;
+ static float primary_spacing;
++enum { REGION_COLUMNS = 5, REGION_ROWS = 3, REGION_SAMPLES = REGION_COLUMNS * REGION_ROWS };
++static tide_float3 region_world[REGION_SAMPLES];
++static tide_float2 region_pixels[REGION_SAMPLES];
++static uint32_t region_off[REGION_SAMPLES], region_on[REGION_SAMPLES];
++static float region_spacing[REGION_SAMPLES];
++static bool region_on_valid;
++static int region_count, region_nonzero, region_covered, region_gain_min, region_gain_max, region_gain_sum;
+ 
+ static int expected_meshes(void)
+ {
+@@ -177,37 +184,38 @@ static void primary_probe_spacing(void)
+     }
+ }
+ 
++static bool project_receiver(const tide_float3 p, tide_float2 *point)
++{
++    // Independent double pinhole projection through the actual rendered camera.
++    const Render3D_Camera camera = local.Render3D_Renderer.camera;
++    const tide_float3 eye = camera.position;
++    const tide_float3 forward = tide_forward_q(camera.rotation);
++    const tide_float3 right = tide_right_q(camera.rotation);
++    const tide_float3 up = tide_up_q(camera.rotation);
++    const double x = p.x - eye.x, y = p.y - eye.y, z = p.z - eye.z;
++    const double depth = x * forward.x + y * forward.y + z * forward.z;
++    const double tangent = tan((double)camera.verticalFov * 0.5);
++    if (!isfinite(depth) || depth <= 0 || !isfinite(tangent) || tangent <= 0) {
++        fprintf(stderr, "GI %s receiver has invalid camera depth/FOV\n", scene_names[scene]);
++        return false;
++    }
++    const double scale = height / (2 * depth * tangent);
++    const double screen_x = floor(width * 0.5 + (x * right.x + y * right.y + z * right.z) * scale);
++    const double screen_y = floor(height * 0.5 - (x * up.x + y * up.y + z * up.z) * scale);
++    if (!isfinite(screen_x) || !isfinite(screen_y)
++        || screen_x < 0 || screen_x >= width || screen_y < 0 || screen_y >= height) {
++        fprintf(stderr, "GI %s receiver projects outside the frame: %.6g, %.6g\n",
++            scene_names[scene], screen_x, screen_y);
++        return false;
++    }
++    *point = (tide_float2){(float)screen_x, (float)screen_y};
++    return true;
++}
++
+ static bool receiver_pixel(uint32_t *pixel)
+ {
+     tide_float2 point = {(float)width * 0.4f, (float)height * 0.62f};
+-    if (scene >= ATRIUM) {
+-        // Independent pinhole projection of the authored +Z display-wall face
+-        // through this frame's actual validation camera, using double math.
+-        // In particular, overview never validates an unrelated Cornell room.
+-        const Render3D_Camera camera = local.Render3D_Renderer.camera;
+-        const tide_float3 eye = camera.position;
+-        const tide_float3 forward = tide_forward_q(camera.rotation);
+-        const tide_float3 right = tide_right_q(camera.rotation);
+-        const tide_float3 up = tide_up_q(camera.rotation);
+-        const tide_float3 p = receiver_position();
+-        const double x = p.x - eye.x, y = p.y - eye.y, z = p.z - eye.z;
+-        const double depth = x * forward.x + y * forward.y + z * forward.z;
+-        const double tangent = tan((double)camera.verticalFov * 0.5);
+-        if (!isfinite(depth) || depth <= 0 || !isfinite(tangent) || tangent <= 0) {
+-            fprintf(stderr, "GI %s receiver has invalid camera depth/FOV\n", scene_names[scene]);
+-            return false;
+-        }
+-        const double scale = height / (2 * depth * tangent);
+-        const double screen_x = floor(width * 0.5 + (x * right.x + y * right.y + z * right.z) * scale);
+-        const double screen_y = floor(height * 0.5 - (x * up.x + y * up.y + z * up.z) * scale);
+-        if (!isfinite(screen_x) || !isfinite(screen_y)
+-            || screen_x < 0 || screen_x >= width || screen_y < 0 || screen_y >= height) {
+-            fprintf(stderr, "GI %s receiver projects outside the frame: %.6g, %.6g\n",
+-                scene_names[scene], screen_x, screen_y);
+-            return false;
+-        }
+-        point = (tide_float2){(float)screen_x, (float)screen_y};
+-    }
++    if (scene >= ATRIUM && !project_receiver(receiver_position(), &point)) return false;
+     *pixel = 0;
+     tide_platform_read_pixels(&draw, &point, 1, pixel);
+     return true;
+@@ -218,6 +226,120 @@ static unsigned brightness(const uint32_t color)
+     return (color >> 24) + (color >> 16 & 255u) + (color >> 8 & 255u);
+ }
+ 
++static bool regional_reference(void)
++{
++    region_count = scene >= ATRIUM ? REGION_SAMPLES : 0;
++    for (int index = 0; index < region_count; index++) {
++        const int column = index % REGION_COLUMNS, row = index / REGION_COLUMNS;
++        // These are authored planar receiver patches, not selected screenshot
++        // pixels. The atrium's central rear wall is above the display/sculptures,
++        // inside the side galleries and visible through the open arch interiors.
++        // Its spots aim outward, away from this central patch. The courtyard
++        // patch is above the bridge/arcades and all spot positions. Both +Z faces
++        // oppose the sun, so only indirect light should brighten these grids.
++        region_world[index] = scene == ATRIUM
++            ? (tide_float3){-4 + (float)column * 2, 6 + (float)row * 2, -35.69f}
++            : (tide_float3){-46 + (float)column * 5, 16 + (float)row * 2, -51.99f};
++        if (!project_receiver(region_world[index], &region_pixels[index])) return false;
++    }
++    if (region_count) tide_platform_read_pixels(&draw, region_pixels, region_count, region_off);
++    for (int index = 0; index < region_count; index++) {
++        region_on[index] = region_off[index];
++        region_spacing[index] = 0;
++        // Catch a misplaced/occluded receiver rather than interpreting a bright
++        // direct-lit column or arch as successful indirect illumination.
++        if (brightness(region_off[index]) > 3) {
++            fprintf(stderr, "GI %s regional receiver %d is not directly shaded: %08x\n",
++                scene_names[scene], index, region_off[index]);
++            return false;
++        }
++    }
++    return true;
++}
++
++static float regional_support(const tide_float3 world_point)
++{
++    const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
++    const tide_float3 point = {world_point.x, world_point.y, world_point.z + environment->layout.spacing * 0.04f};
++    const int32_t count = tide_list_read_count(&local.heap, environment->blocks);
++    for (int32_t index = 0; index < count; index++) {
++        const GlobalIllumination_ProbeBlock *block = tide_list_read(&local.heap,
++            environment->blocks, index, sizeof *block);
++        if (!block || !block->active || !(block->spacing > 0)) continue;
++        const float size = block->spacing * 2;
++        if (point.x < block->minimum.x || point.y < block->minimum.y || point.z < block->minimum.z
++            || point.x > block->minimum.x + size || point.y > block->minimum.y + size
++            || point.z > block->minimum.z + size) continue;
++        const int x = (int)fmax(0, fmin(1, floor((point.x - block->minimum.x) / block->spacing)));
++        const int y = (int)fmax(0, fmin(1, floor((point.y - block->minimum.y) / block->spacing)));
++        const int z = (int)fmax(0, fmin(1, floor((point.z - block->minimum.z) / block->spacing)));
++        bool complete = true;
++        for (int corner = 0; corner < 8; corner++) {
++            const int logical = x + (corner & 1) + 3 * (y + ((corner >> 1) & 1)) + 9 * (z + (corner >> 2));
++            const int32_t *probe = tide_list_read(&local.heap, block->probes, logical, sizeof *probe);
++            if (!probe || *probe < 0 || *probe >= environment->layout.total) { complete = false; break; }
++            const bool *active = tide_list_read(&local.heap, environment->active, *probe, sizeof *active);
++            const bool *captured = tide_list_read(&local.heap, environment->captured, *probe, sizeof *captured);
++            if (!active || !*active || !captured || !*captured) { complete = false; break; }
++        }
++        if (complete) return block->spacing;
++    }
++    return 0;
++}
++
++static void regional_report(FILE *file)
++{
++    fprintf(file, ",\"regional_camera\":\"hero_validation\",\"regional_count\":%d,\"regional_on_valid\":%s,\"regional_covered\":%d,"
++        "\"regional_nonzero\":%d,\"regional_gain_min\":%d,\"regional_gain_mean\":%.6f,"
++        "\"regional_gain_max\":%d,\"regional_samples\":[",
++        region_count, region_on_valid ? "true" : "false", region_covered, region_nonzero,
++        region_gain_min, region_count ? (double)region_gain_sum / region_count : 0, region_gain_max);
++    for (int index = 0; index < region_count; index++) {
++        const tide_float3 p = region_world[index];
++        const tide_float2 pixel = region_pixels[index];
++        fprintf(file, "%s{\"world\":[%.6g,%.6g,%.6g],\"pixel\":[%.0f,%.0f],"
++            "\"off\":%u,\"on\":%u,\"spacing\":%.6g}", index ? "," : "",
++            (double)p.x, (double)p.y, (double)p.z, (double)pixel.x, (double)pixel.y,
++            region_off[index], region_on[index], (double)region_spacing[index]);
++    }
++    fputc(']', file);
++}
++
++static bool regional_check(void)
++{
++    if (!region_count) return true;
++    tide_platform_read_pixels(&draw, region_pixels, region_count, region_on);
++    region_on_valid = true;
++    region_gain_min = 765;
++    region_gain_max = -765;
++    for (int index = 0; index < region_count; index++) {
++        region_spacing[index] = regional_support(region_world[index]);
++        region_covered += region_spacing[index] > 0;
++        const int gain = (int)brightness(region_on[index]) - (int)brightness(region_off[index]);
++        region_gain_sum += gain;
++        if (gain < region_gain_min) region_gain_min = gain;
++        if (gain > region_gain_max) region_gain_max = gain;
++        // One summed level is the readback/quantization margin, not useful fill.
++        region_nonzero += gain > 1;
++    }
++    // A conservative sunlit floor patch lies in front of each receiver grid:
++    // courtyard x[-40,-24], z[-30,-20] is past the rear facade's ~14.4m shadow;
++    // atrium x[-7,-2] U [0,7], z[-20.5,-18.5] avoids roof/arch shadow strips.
++    // Lambert transfer is positive throughout these patches. Only a very small
++    // aggregate increase (>3 summed RGB levels per point) is required here;
++    // this is a coverage/nonzero-energy oracle, not an exact bounce solution.
++    if (region_covered == region_count && region_nonzero == region_count && region_gain_sum > region_count * 3)
++        return true;
++    fprintf(stderr, "GI %s regional fill failed: %d/%d mapped, %d/%d nonzero, mean gain %.6f\n",
++        scene_names[scene], region_covered, region_count, region_nonzero, region_count,
++        (double)region_gain_sum / region_count);
++    fprintf(stderr, "{\"diagnostic\":\"gi_regional_fill\",\"scene\":\"%s\",\"probe_capacity\":%d",
++        scene_names[scene], probe_capacity);
++    regional_report(stderr);
++    fputs("}\n", stderr);
++    return false;
++}
++
+ static void collect_gpu(void)
+ {
+     for (int i = 0; i < 8; i++) {
+@@ -262,6 +384,7 @@ static void report_to(FILE *file)
+         (double)updates_sum / frames, (double)updates_sum * 6 / frames,
+         (double)candidates_sum / frames, (double)capture_draws_sum / frames, idle_capture_frames,
+         max_textures, gpu_count, (unsigned long long)world_hash, quick ? "true" : "false", dark_reference, lit_reference);
++    if (scene >= ATRIUM) regional_report(file);
+     if (!quick) {
+         fprintf(file, ",\"setup_record_ms\":%.6f,\"convergence_record_ms\":%.6f,"
+             "\"cpu_record_ms\":%.6f,\"cpu_record_p95_ms\":%.6f,\"cpu_submit_ms\":%.6f,"
+@@ -321,6 +444,9 @@ static int frame(void *context, const float seconds)
+         setup_record_ms = convergence_record_ms = 0;
+         max_textures = 0;
+         lit_reference = 0;
++        region_on_valid = false;
++        region_nonzero = region_covered = region_gain_min = region_gain_max = region_gain_sum = 0;
++        memset(region_spacing, 0, sizeof region_spacing);
+         // Quick static smoke modes share one fully validated field. Repeating
+         // the same 512-probe convolution four times dominates software WebGL
+         // without adding a new lighting oracle. Timed and moving/view-changing
+@@ -336,6 +462,7 @@ static int frame(void *context, const float seconds)
+         // before taking the GI-off reference, including the first mode.
+         if (!untimed() || !untimed()) return 1;
+         if (!receiver_pixel(&dark_reference)) return 1;
++        if (!regional_reference()) return 1;
+         phase = VALIDATE_GI;
+         return TIDE_KEEP_RUNNING;
+     }
+@@ -357,6 +484,13 @@ static int frame(void *context, const float seconds)
+ #ifndef __wasm__
+                 if (capture_path && !tide_platform_capture(capture_path))
+                     fputs("Could not save diagnostic GI capture\n", stderr);
++#endif
++                return 1;
++            }
++            if (!regional_check()) {
++#ifndef __wasm__
++                if (capture_path && !tide_platform_capture(capture_path))
++                    fputs("Could not save diagnostic GI capture\n", stderr);
+ #endif
+                 return 1;
+             }
+diff --git a/docs/packages/globalillumination.md b/docs/packages/globalillumination.md
+index 6214e71c6..dee05f9ed 100644
+--- a/docs/packages/globalillumination.md
++++ b/docs/packages/globalillumination.md
+@@ -50,7 +50,7 @@ view ConfigureGI(mut GlobalIllumination.Environment environment)
+ | `probeSpacing` | `1.5` | Requested finest spacing in world units, clamped to 0.1–1000 |
+ | `maxProbes` | `512` | Physical probe capacity, clamped to 125–2048; coincident block anchors share captures |
+ | `updatesPerFrame` | `4` | Maximum complete captures per rendered frame, clamped to 0–16; zero freezes captures |
+-| `viewDistance` | `48` | Distance from the main camera considered for resident receiver coverage, clamped to 1–1,000,000 |
++| `viewDistance` | `48` | Nearby receiver/detail radius; visible receivers also retain coarse coverage through the main camera frustum, clamped to 1–1,000,000 |
+ | `captureDistance` | `48` | Maximum capture distance around each probe, clamped to 1–1,000,000 |
+ | `refreshInterval` | `600` | Age in rendered frames after which unchanged probes become eligible for background refresh, clamped to 1–36000 |
+ | `intensity` | `1` | Multiplier on received linear irradiance, clamped to 0–16 |
+@@ -80,18 +80,28 @@ planes. At very large coordinates, the base spacing increases in power-of-two st
+ anchor positions remain representable without changing phase on every camera
+ movement.
+ 
+-`viewDistance` bounds the working set around the camera. Moving across coverage
+-cells changes the required blocks; matching blocks and anchors retain their
++The working set includes the nearby `viewDistance` sphere and conservative
++receiver support inside the main camera frustum. Distant visible surfaces retain
++coarse blocks instead of losing indirect lighting when nearby regions refine.
++The camera's far distance bounds visible coverage, capped at 1,000,000 units.
++Wholly offscreen geometry outside the nearby sphere does not consume residency.
++Moving across coverage cells or changing the camera projection changes the
++required blocks; matching blocks and anchors retain their
+ atlas slots, captured lighting and relocation offsets. Newly required anchors
+ start uncaptured, while retired slots can be reused. Adding distant buildings
+ does not force one world-sized grid to become coarser. More geometry competing
+-within the resident working set can still reduce detail.
++within the resident working set can still reduce detail. Conservative padding
++covers small camera movement/rotation between topology rebuilds, including roll.
+ 
+ `probeSpacing` is a requested finest level, not a guarantee for every receiver.
+ Coarser blocks use fewer probes in less important regions. Increasing the probe
+-capacity can retain more detail; increasing view distance spreads that capacity
+-over more of the world. Receivers outside resident coverage can have no GI.
++capacity can retain more detail; increasing view distance includes more nearby
++offscreen receivers as well as the visible scene. Receivers outside both the
++nearby sphere and the conservative camera frustum can have no GI.
+ Coverage is automatic, but it does not provide unlimited detail or residency.
++Planning also uses progressively coarser targets beyond the nearby radius,
++avoiding a full finest-detail plan for distant blocks that the budget would
++immediately coarsen again.
+ 
+ Before capture, nearby eligible triangles can move a probe out of a recognized
+ solid or improve surface clearance. Movement is limited to 45% of the common base
+@@ -106,7 +116,9 @@ surfaces remain in captures but do not guide relocation. Tight gaps and deep
+ solid interiors can still leave probes rejected within the movement bound.
+ 
+ Each block interpolates visible neighboring probes. Equal-resolution neighbors
+-share their face records, so they use one gather up to that face. A small
++share their face records, so they use one gather up to that face. Physical probe
++facing and visibility filtering use the common base-spacing metric, so a shared
++capture has the same physical weights across coarse/fine grids. A small
+ world-space box filter blends only where resolution changes or coverage is
+ missing, with separate handling for affected faces, edges and corners.
+ Uncovered portions fade toward no indirect lighting. The field's
+diff --git a/packages/CMakeLists.txt b/packages/CMakeLists.txt
+index 5a25471b5..10708a9e4 100644
+--- a/packages/CMakeLists.txt
++++ b/packages/CMakeLists.txt
+@@ -108,7 +108,7 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
+         tide_web_page(tide_globalillumination_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+         # Independent pixel fixtures retain their full capture work and assertions.
+         # Separate browser runs keep each within the existing software-GPU guard.
+-        foreach(group analytic room direct geometry)
++        foreach(group analytic room direct geometry regional)
+             tide_add_web_test(tide_globalillumination_pixels_${group} TARGET tide_globalillumination_pixels
+                 QUERY "group=${group}" WEBGPU EXPECT "ok: world GI automatic" D3D11)
+         endforeach()
+diff --git a/packages/globalillumination/sampling.tide b/packages/globalillumination/sampling.tide
+index fea8bfc03..ff800ced8 100644
+--- a/packages/globalillumination/sampling.tide
++++ b/packages/globalillumination/sampling.tide
+@@ -328,17 +328,19 @@ float2 ReceiverTapVisibility(Color moments, float3 ray, float3 normal,
+                               float metricSpacing = 0)
+ {
+     float metric = metricSpacing > 0 ? metricSpacing : spacing;
+-    float planeWeight = Math.SmoothStep(spacing * 0.0001, spacing * 0.01, Math.Abs(planeDistance));
+-    float denominator = Math.Abs(planeDistance) >= spacing * 0.0000001 ? planeDistance
+-        : planeDistance < 0 ? -spacing * 0.0000001 : spacing * 0.0000001;
++    // Visibility belongs to the physical capture, independently of which
++    // coarse/fine interpolation brick references that record.
++    float planeWeight = Math.SmoothStep(metric * 0.0001, metric * 0.01, Math.Abs(planeDistance));
++    float denominator = Math.Abs(planeDistance) >= metric * 0.0000001 ? planeDistance
++        : planeDistance < 0 ? -metric * 0.0000001 : metric * 0.0000001;
+     float expected = metric * Math.Dot(normal, ray) / denominator;
+     mut float support = Math.Lerp(1, expected > 0 ? 1 : 0, planeWeight);
+     // Grazing rays can meet the receiver plane far outside the actual surface
+     // neighborhood. Prefer taps whose projected footprint stays near the pixel.
+     float rayNormal = Math.Dot(normal, ray);
+     float rayDenominator = Math.Abs(rayNormal) >= 0.000001 ? rayNormal : rayNormal < 0 ? -0.000001 : 0.000001;
+-    float3 projected = ray * ((planeDistance / spacing) / rayDenominator);
+-    float footprint = Math.Min(Math.LengthSq(projected - delta / spacing) * 4, 1000000);
++    float3 projected = ray * ((planeDistance / metric) / rayDenominator);
++    float footprint = Math.Min(Math.LengthSq(projected - delta / metric) * 4, 1000000);
+     support *= Math.Lerp(1, 1 / (1 + footprint * footprint), planeWeight);
+     float inverse = Math.Lerp(pointInverse, Math.Clamp(expected, 0, 1000), planeWeight);
+     return float2(ProbeVisibility(moments.r, moments.g, inverse, tolerance) * support, support);
+@@ -431,7 +433,10 @@ IrradianceBlend GatherSparseIrradiance(Texture irradiance, Texture distance, Fie
+         float3 delta = world - eye;
+         float receiverDistance = Math.Length(delta);
+         float alignment = Math.Clamp(Math.Dot(n, -delta) / Math.Max(receiverDistance, 0.000001), -1, 1);
+-        float radius = Math.Saturate(receiverDistance / (layout.spacing * 0.04));
++        // This is a property of the physical capture, which may be shared by
++        // coarse and fine bricks. Its near-eye regularization must not change
++        // with the interpolation grid that happens to reference it.
++        float radius = Math.Saturate(receiverDistance / (metric * 0.04));
+         // Tangent probes have ill-conditioned plane projections. Their
+         // small base weight retains dark support without visible arcs.
+         float forward = Math.Max(alignment, 0);
+@@ -440,10 +445,17 @@ IrradianceBlend GatherSparseIrradiance(Texture irradiance, Texture distance, Fie
+         // Invalid neighbors still count as missing coverage, so the
+         // remaining light fades continuously as valid support vanishes.
+         result.base += baseWeight;
++        // A capture behind the unperturbed receiver plane cannot supply its
++        // incoming hemisphere. Otherwise a black exterior probe can pass a
++        // coplanar depth comparison and darken a valid interior receiver.
++        // Retain tangent support and fade the tiny quantization margin smoothly.
++        float side = Math.Dot(visibilityNormal, -delta);
++        float frontSupport = Math.SmoothStep(-metric * 0.001, 0, side);
++        if (frontSupport <= 0) continue;
+         float2 visibility = ReceiverVisibility(distance, probe, layout.atlasRows, delta, visibilityNormal,
+             layout.spacing, tolerance, metric);
+         if (visibility.y >= 0.25) continue;
+-        float weight = baseWeight * visibility.x;
++        float weight = baseWeight * frontSupport * visibility.x;
+         Color sampled = irradiance.Sample(AtlasUV(probe, layout.atlasRows, n), Filter.Bilinear, Wrap.Clamp);
+         result.light += ClampHdr(float3(sampled.r, sampled.g, sampled.b)) * weight;
+         result.weight += weight;
+diff --git a/packages/globalillumination/test/gi.tide b/packages/globalillumination/test/gi.tide
+index 64b6ed6c9..d9536e07e 100644
+--- a/packages/globalillumination/test/gi.tide
++++ b/packages/globalillumination/test/gi.tide
+@@ -12,6 +12,7 @@ singleton GIFixture
+     bool built;
+     bool spawnFar;
+     bool farBuilt;
++    float3 roomExtents = float3(3);
+     float3 offset;
+     float3 farPosition = float3(30, 2, -11);
+     bool casterShadows = true;
+@@ -41,7 +42,16 @@ local singleton GIProbe
+     bool showOffset;
+     bool showMoments;
+     int offsetIndex;
++    int diagnosticMode;
++    float3 diagnosticWorld;
++    float3 diagnosticNormal;
++    int[16] diagnosticIds;
++    float3[16] diagnosticEyes;
+     float3 cameraPosition = float3(0, 0, -2);
++    quaternion cameraRotation = quaternion.identity;
++    float cameraFov = 60deg;
++    float cameraNear = 0.1;
++    float cameraFar = 100;
+     bool shadowsEnabled = true;
+     int shadowMaps = 6;
+     bool invalidate;
+@@ -49,6 +59,7 @@ local singleton GIProbe
+     int coverageCount;
+     float3[16] coveragePositions;
+     int[16] coverageSlots;
++    bool[16] coverageEligible;
+     float[16] coverageSpacing;
+     float3[16] coverageMinimum;
+     float3[16] positions;
+@@ -80,9 +91,12 @@ system BuildGIWorld(mut GIFixture fixture)
+         {
+             float3 forward = GIWallForward(face);
+             float3 up = face == 2 ? float3(0, 0, -1) : face == 3 ? float3(0, 0, 1) : float3(0, 1, 0);
++            float3 extent = fixture.roomExtents;
++            float2 span = face < 2 ? float2(extent.z, extent.y)
++                : face < 4 ? float2(extent.x, extent.z) : float2(extent.x, extent.y);
+             Spawn(GIRoomWall, MeshRenderer { mesh = giQuad }, Material,
+-                Transform { localPosition = forward * 3, localRotation = quaternion.LookRotation(forward, up),
+-                            localScale = float3(6, 6, 1) });
++                Transform { localPosition = forward * extent, localRotation = quaternion.LookRotation(forward, up),
++                            localScale = float3(span * 2, 1) });
+         }
+         Spawn(MeshRenderer { mesh = giQuad }, Material { baseColor = Color.white },
+             Transform { localScale = float3(0.25, 0.25, 1) });
+@@ -153,6 +167,28 @@ system BuildGIWorld(mut GIFixture fixture)
+         Spawn(PointLight { intensity = float3(1), range = 100, castShadows = true },
+             Transform { localPosition = float3(0, 8, 0) });
+     }
++    if (fixture.scenario == 13 || fixture.scenario == 14)
++    {
++        // Fine nearby support, a broad far-visible wall, a camera-edge wall,
++        // and a nearby receiver behind the camera exercise the coverage union.
++        Spawn(MeshRenderer { mesh = giQuad }, Material,
++            Transform { localPosition = float3(0, 0, 6), localScale = float3(8, 6, 1) });
++        Spawn(MeshRenderer { mesh = giQuad }, Material,
++            Transform { localPosition = float3(0, 0, 88), localScale = float3(24, 16, 1) });
++        Spawn(MeshRenderer { mesh = giQuad }, Material,
++            Transform { localPosition = float3(108, 0, 88), localScale = float3(4, 4, 1) });
++        Spawn(MeshRenderer { mesh = giQuad }, Material,
++            Transform { localPosition = float3(0, 0, -12), localScale = float3(4, 4, 1) });
++        if (fixture.scenario == 14)
++        {
++            Spawn(MeshRenderer { mesh = giBox }, Material,
++                Transform { localPosition = float3(220, 0, 88), localScale = float3(8) });
++            Spawn(MeshRenderer { mesh = giBox }, Material,
++                Transform { localPosition = float3(0, 0, -90), localScale = float3(8) });
++            Spawn(MeshRenderer { mesh = giBox }, Material,
++                Transform { localPosition = float3(0, 0, 260), localScale = float3(8) });
++        }
++    }
+ }
+ 
+ system MoveGIWorld(with GIMoving, mut Transform transform, GIFixture fixture)
+@@ -190,8 +226,8 @@ view ConfigureGIProbe(mut Renderer renderer, mut GlobalIllumination.Environment
+         GlobalIllumination.Invalidate(environment, probe.invalidateRegion);
+         probe.invalidate = false;
+     }
+-    renderer.camera = Camera { position = probe.cameraPosition, rotation = quaternion.identity,
+-                               verticalFov = 60deg, near = 0.1, far = 100 };
++    renderer.camera = Camera { position = probe.cameraPosition, rotation = probe.cameraRotation,
++                               verticalFov = probe.cameraFov, near = probe.cameraNear, far = probe.cameraFar };
+     renderer.shadows = fixture.scenario == 6 || (fixture.scenario == 12 && probe.shadowsEnabled);
+     renderer.shadowResolution = fixture.scenario == 6 ? 512 : 16;
+     renderer.maxShadowMaps = probe.shadowMaps;
+@@ -274,8 +310,18 @@ frag SparseControlledField(Vertex vertex, out Color light, out Color moments,
+         moments = captured ? Color(float3(128.0 / 255.0), 1) : Color(0, 0, 0, 0);
+         return;
+     }
+-    float3 radiance = probe.synthetic == 9 ? float3(slot == 0 ? 0.2 : slot == 1 ? 0.8 : 0.4)
++    mut float3 radiance = probe.synthetic == 9 ? float3(slot == 0 ? 0.2 : slot == 1 ? 0.8 : 0.4)
+         : float3(0.2, 0.1, 0.05);
++    if (probe.synthetic == 15)
++    {
++        // An affine physical field, independent of the brick referencing it.
++        // Fine face anchors common to the coarse face use its physical IDs.
++        float3 coordinate = float3(local % 3, (local / 3) % 3, local / 9);
++        float3 anchor = slot == 0 ? float3(-8, 0, 0) + coordinate * 4 : coordinate * 2;
++        radiance = float3((anchor.y + anchor.z) / 8);
++    }
++    if (probe.synthetic == 17)
++        radiance = local / 9 == 2 ? float3(0.2, 0.1, 0.05) : float3(0);
+     light = Color(radiance * Math.PI, 1);
+     moments = Color(0, 0, 0, 1);
+ }
+@@ -317,8 +363,9 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
+         GlobalIllumination.PrepareResources(environment, GlobalIllumination.FieldLayout {
+             minimum = float3(0), spacing = 1, counts = int3(3),
+             total = probe.synthetic == 14 ? 189 : 108, atlasRows = probe.synthetic == 14 ? 6 : 4,
+-            far = 48, sparse = true, size = probe.synthetic >= 13 ? 4 : 8,
+-            nodeCount = probe.synthetic >= 13 ? 9 : 17, depthLimit = probe.synthetic >= 13 ? 1 : 2
++            far = 48, sparse = true, size = probe.synthetic == 17 ? 2 : probe.synthetic == 15 ? 16 : probe.synthetic >= 13 ? 4 : 8,
++            nodeCount = probe.synthetic == 17 ? 1 : probe.synthetic == 15 ? 17 : probe.synthetic >= 13 ? 9 : 17,
++            depthLimit = probe.synthetic == 17 ? 0 : probe.synthetic == 15 ? 2 : probe.synthetic >= 13 ? 1 : 2
+         });
+         // Root child zero is a coarse brick, child one splits into two fine
+         // bricks along Y. Other children are empty. Nonzero high index bytes
+@@ -333,12 +380,23 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
+         if (probe.synthetic == 14)
+             codes = [257, 1 | (21 << 16), 2 | (63 << 16), 3 | (63 << 16), 4 | (63 << 16),
+                 5 | (63 << 16), 6 | (63 << 16), 7 | (63 << 16), 0];
++        if (probe.synthetic == 15)
++            codes = [257, 1 | (63 << 16), 265, 0, 0, 0, 0, 0, 0,
++                2 | (63 << 16), 0, 0, 0, 0, 0, 0, 0];
++        if (probe.synthetic == 17) codes = [1 | (63 << 16)];
+         // Deliberately give these constant/contrast bricks separate physical
+         // records; runtime bricks share identical anchors through this table.
+-        int blocks = probe.synthetic == 14 ? 7 : probe.synthetic == 13 ? 4 : 3;
++        int blocks = probe.synthetic == 17 ? 1 : probe.synthetic == 15 ? 2 : probe.synthetic == 14 ? 7 : probe.synthetic == 13 ? 4 : 3;
+         for (var slot = 0; slot < blocks; slot++)
+         {
+-            for (var index = 0; index < 27; index++) codes.Add(slot * 27 + index + 1);
++            for (var index = 0; index < 27; index++)
++            {
++                // At x=0 the fine face shares the coarse physical corners.
++                bool shared = probe.synthetic == 15 && slot == 1 && index % 3 == 0
++                    && (index / 3) % 3 != 1 && index / 9 != 1;
++                int coarse = 2 + 3 * (((index / 3) % 3) / 2) + 9 * ((index / 9) / 2);
++                codes.Add(shared ? coarse + 1 : slot * 27 + index + 1);
++            }
+             // One extra RGB record keeps the twenty local edge/corner bits.
+             codes.Add(probe.synthetic == 14 && slot == 0 ? 1 << 19 : (1 << 20) - 1);
+         }
+@@ -413,6 +471,93 @@ struct GIWitness { float3 position; float3 normal; }
+ 
+ frag ReadGIWitness(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness, GIProbe probe)
+ {
++    if (probe.diagnosticMode > 0)
++    {
++        if (probe.diagnosticMode <= 3)
++        {
++            GlobalIllumination.SamplingFrame frame = GlobalIllumination.PrepareSamplingFrame(environment.layout,
++                environment.settings.intensity, environment.initialized, witness.position, witness.normal, witness.normal);
++            GlobalIllumination.SampleBrick brick = GlobalIllumination.LookupBrick(environment.distance,
++                environment.layout, frame.position);
++            if (!frame.valid || brick.slot < 0) { color = Color(1, 0, 1); return; }
++            GlobalIllumination.FieldLayout field = GlobalIllumination.FieldLayout {
++                minimum = brick.minimum, spacing = brick.size * 0.5, counts = int3(3),
++                total = environment.layout.total, atlasRows = environment.layout.atlasRows,
++                sparse = true, nodeCount = environment.layout.nodeCount
++            };
++            float3 grid = Math.Clamp((frame.position - brick.minimum) / field.spacing, float3(0), float3(2));
++            var blend = GlobalIllumination.GatherSparseIrradiance(environment.irradiance, environment.distance,
++                field, environment.initialized, witness.position, frame.normal, frame.visibilityNormal,
++                grid, 0.01, brick.slot * 28, environment.layout.spacing);
++            if (probe.diagnosticMode == 1)
++                color = Color(GlobalIllumination.ResolveIrradiance(blend) / Math.PI, 1);
++            else if (probe.diagnosticMode == 2)
++                color = Color(GlobalIllumination.SampleBrickIrradiance(environment.irradiance, environment.distance,
++                    environment.layout, environment.initialized, brick, witness.position, frame.normal,
++                    frame.visibilityNormal, frame.position, 0.01) / Math.PI, 1);
++            else color = Color(blend.available, blend.weight / Math.Max(blend.base, 0.0000001), blend.base, 1);
++            return;
++        }
++        int at = Math.Clamp(int(witness.position.x), 0, 15);
++        int index = probe.diagnosticIds[at];
++        if (index < 0 || index >= environment.layout.total) { color = Color(1, 0, 1); return; }
++        float3 delta = probe.diagnosticWorld - probe.diagnosticEyes[at];
++        if (probe.diagnosticMode == 4)
++        {
++            Color value = environment.irradiance.Sample(GlobalIllumination.AtlasUV(index,
++                environment.layout.atlasRows, probe.diagnosticNormal), Filter.Bilinear, Wrap.Clamp);
++            color = Color(float3(value.r, value.g, value.b) / Math.PI, 1);
++        }
++        else if (probe.diagnosticMode == 5)
++        {
++            float2 visibility = GlobalIllumination.ReceiverVisibility(environment.distance, index,
++                environment.layout.atlasRows, delta, probe.diagnosticNormal, environment.layout.spacing, 0.01);
++            Color value = environment.distance.Sample(GlobalIllumination.AtlasUV(index,
++                environment.layout.atlasRows, delta), Filter.Bilinear, Wrap.Clamp);
++            color = Color(visibility.x, visibility.y, value.r * 8, 1);
++        }
++        else
++        {
++            Color value = GlobalIllumination.ProbeMetadata(environment.distance, index, environment.layout.atlasRows);
++            color = Color(value.a, value.r, value.g, 1);
++        }
++        return;
++    }
++    if (probe.synthetic == 16)
++    {
++        // The same physical receiver and two angular depth taps must not
++        // change visibility when only the referencing brick spacing changes.
++        float spacing = witness.position.x;
++        float3 delta = float3(0, 0, 1);
++        float2 a = GlobalIllumination.ReceiverTapVisibility(Color(0, 0, 0, 1),
++            float3(1.0 / 3.0, 0, 1), float3(0, 0, -1), -1, 1, spacing, 0.01, delta, 1);
++        float2 b = GlobalIllumination.ReceiverTapVisibility(Color(2, 0, 0, 1),
++            float3(0.5, 0, 1), float3(0, 0, -1), -1, 1, spacing, 0.01, delta, 1);
++        float probability = (a.x + b.x) / (a.y + b.y);
++        color = Color(float3(probability * probability * probability), 1);
++        return;
++    }
++    if (probe.synthetic == 15)
++    {
++        // Compare the same physical face from coarse and fine interpolation
++        // grids. The witness normal's sign selects the grid only; the actual
++        // shading/visibility normal is +X for both. No cross-brick filter or
++        // geometry allocator participates in this physical-weight oracle.
++        bool coarse = witness.normal.x > 0;
++        GlobalIllumination.FieldLayout field = GlobalIllumination.FieldLayout {
++            minimum = coarse ? float3(-8, 0, 0) : float3(0), spacing = coarse ? 4 : 2,
++            counts = int3(3), total = environment.layout.total,
++            atlasRows = environment.layout.atlasRows, sparse = true, nodeCount = environment.layout.nodeCount
++        };
++        mut float3 grid = Math.Clamp((witness.position - field.minimum) / field.spacing, float3(0), float3(2));
++        // Both gathers are restricted to their common x=0 face.
++        grid.x = coarse ? 2 : 0;
++        var blend = GlobalIllumination.GatherSparseIrradiance(environment.irradiance, environment.distance,
++            field, environment.initialized, witness.position, float3(1, 0, 0), float3(1, 0, 0),
++            grid, 0.01, coarse ? 0 : 28, environment.layout.spacing);
++        color = Color(GlobalIllumination.ResolveIrradiance(blend) * (8 / Math.PI), 1);
++        return;
++    }
+     if (probe.showMoments)
+     {
+         color = environment.distance.Sample(GlobalIllumination.AtlasUV(probe.offsetIndex,
+@@ -496,6 +641,10 @@ view AuditGICoverage(GlobalIllumination.Environment environment, GlobalIlluminat
+     {
+         int slot = GlobalIllumination.FindBlock(bounds, probe.coveragePositions[i]);
+         probe.coverageSlots[i] = slot;
++        probe.coverageEligible[i] = GlobalIllumination.CoverageEligible(bounds,
++            GlobalIllumination.LocalBounds { valid = true,
++                minimum = probe.coveragePositions[i], maximum = probe.coveragePositions[i] },
++            bounds.coverageView.eye, environment.settings.viewDistance);
+         probe.coverageSpacing[i] = slot >= 0 && slot < environment.blocks.count ? environment.blocks[slot].spacing : 0;
+         probe.coverageMinimum[i] = slot >= 0 && slot < environment.blocks.count ? environment.blocks[slot].minimum : float3(0);
+     }
+diff --git a/packages/globalillumination/test/gi_pixels.c b/packages/globalillumination/test/gi_pixels.c
+index 4f8f669ec..a3f6e1516 100644
+--- a/packages/globalillumination/test/gi_pixels.c
++++ b/packages/globalillumination/test/gi_pixels.c
+@@ -14,7 +14,7 @@ static tide_world world;
+ static tide_local local;
+ static tide_draw_list draw;
+ static tide_gui gui;
+-static enum { GROUP_ALL, GROUP_ANALYTIC, GROUP_ROOM, GROUP_DIRECT, GROUP_GEOMETRY } group;
++static enum { GROUP_ALL, GROUP_ANALYTIC, GROUP_ROOM, GROUP_DIRECT, GROUP_GEOMETRY, GROUP_REGIONAL } group;
+ 
+ #define CHECK(condition) do { if (!(condition)) { \
+     printf("FAIL: world GI pixels line %d: %s (scenario %d synthetic %d initialized %d/%d)\n", \
+@@ -23,10 +23,11 @@ static enum { GROUP_ALL, GROUP_ANALYTIC, GROUP_ROOM, GROUP_DIRECT, GROUP_GEOMETR
+     return false; \
+ } } while (0)
+ 
+-static void start(const int scenario)
++static void start_sized(const int scenario, const tide_float3 extents)
+ {
+     tide_world_init(&world, 1.0f / 60.0f);
+     world.GIFixture.scenario = scenario;
++    world.GIFixture.roomExtents = extents;
+     tide_world_tick(&world);
+     tide_local_init(&local);
+     draw.target_pixels = tide_platform_target_pixels;
+@@ -36,6 +37,11 @@ static void start(const int scenario)
+     gui.height = HEIGHT;
+ }
+ 
++static void start(const int scenario)
++{
++    start_sized(scenario, tide_f3(3, 3, 3));
++}
++
+ static bool render(uint32_t results[MAX_POINTS], const float scale)
+ {
+     const uint64_t hash = tide_world_hash(&world);
+@@ -231,6 +237,132 @@ static bool room_cases(void)
+     return true;
+ }
+ 
++static bool dump_enclosure_diagnostics(const int capacity, const int failed_sample)
++{
++    GIProbe *probe = &local.GIProbe;
++    const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
++    const tide_float3 receiver = probe->positions.at[failed_sample];
++    const tide_float3 normal = probe->normals.at[failed_sample];
++    uint32_t pixels[MAX_POINTS];
++    for (int mode = 1; mode <= 3; mode++) {
++        probe->diagnosticMode = mode;
++        CHECK(render(pixels, 1));
++        printf("enclosure diagnostics capacity%d mode%d (%s):", capacity, mode,
++            mode == 1 ? "fine irradiance" : mode == 2 ? "brick irradiance" : "available/confidence/base");
++        for (int at = 0; at < 16; at++) printf(" %08x", pixels[at]);
++        putchar('\n');
++    }
++    probe->diagnosticMode = 0;
++    const float bias = environment->layout.spacing * 0.04f;
++    const tide_float3 position = {receiver.x + normal.x * bias, receiver.y + normal.y * bias,
++        receiver.z + normal.z * bias};
++    const GlobalIllumination_ProbeBlock *chosen = NULL;
++    int chosen_slot = -1;
++    const int block_count = tide_list_read_count(&local.heap, environment->blocks);
++    for (int slot = 0; slot < block_count; slot++) {
++        const GlobalIllumination_ProbeBlock *block = tide_list_read(&local.heap, environment->blocks, slot, sizeof *block);
++        if (!block || !block->active) continue;
++        const float size = block->spacing * 2;
++        if (position.x < block->minimum.x || position.y < block->minimum.y || position.z < block->minimum.z
++            || position.x >= block->minimum.x + size || position.y >= block->minimum.y + size
++            || position.z >= block->minimum.z + size) continue;
++        if (!chosen || block->spacing < chosen->spacing) { chosen = block; chosen_slot = slot; }
++    }
++    if (!chosen) {
++        puts("enclosure diagnostics: CPU receiver has no containing block");
++        return true;
++    }
++    const tide_float3 minimum = chosen->minimum;
++    const float spacing = chosen->spacing;
++    const tide_list block_probes = chosen->probes;
++    printf("enclosure diagnostics receiver(%g,%g,%g) block%d minimum(%g,%g,%g) spacing%g\n",
++        (double)receiver.x, (double)receiver.y, (double)receiver.z, chosen_slot,
++        (double)minimum.x, (double)minimum.y, (double)minimum.z, (double)spacing);
++    const int lower[3] = {
++        (int)fmax(0, fmin(1, floor((position.x - minimum.x) / spacing))),
++        (int)fmax(0, fmin(1, floor((position.y - minimum.y) / spacing))),
++        (int)fmax(0, fmin(1, floor((position.z - minimum.z) / spacing)))
++    };
++    probe->diagnosticWorld = receiver;
++    probe->diagnosticNormal = normal;
++    for (int at = 0; at < 16; at++) {
++        const int corner = at % 8;
++        const int x = at < 8 ? lower[0] + corner % 2 : (corner % 2) * 2;
++        const int y = at < 8 ? lower[1] + (corner / 2) % 2 : ((corner / 2) % 2) * 2;
++        const int z = at < 8 ? lower[2] + corner / 4 : (corner / 4) * 2;
++        const int logical = x + y * 3 + z * 9;
++        const int32_t *id = tide_list_read(&local.heap, block_probes, logical, sizeof *id);
++        const int index = id ? *id : -1;
++        probe->diagnosticIds.at[at] = index;
++        probe->positions.at[at] = tide_f3((float)at, 0, 0);
++        probe->normals.at[at] = normal;
++        if (index < 0 || index >= environment->layout.total) {
++            probe->diagnosticEyes.at[at] = tide_f3(0, 0, 0);
++            printf("  %s%d logical%d omitted\n", at < 8 ? "fine" : "coarse", corner, logical);
++            continue;
++        }
++        const tide_float3 *anchor = tide_list_read(&local.heap, environment->anchors, index, sizeof *anchor);
++        const tide_float3 *offset = tide_list_read(&local.heap, environment->offsets, index, sizeof *offset);
++        const bool *captured = tide_list_read(&local.heap, environment->captured, index, sizeof *captured);
++        CHECK(anchor && offset);
++        const tide_float3 eye = {anchor->x + offset->x, anchor->y + offset->y, anchor->z + offset->z};
++        probe->diagnosticEyes.at[at] = eye;
++        printf("  %s%d logical%d physical%d eye(%g,%g,%g) captured%d\n", at < 8 ? "fine" : "coarse",
++            corner, logical, index, (double)eye.x, (double)eye.y, (double)eye.z, captured && *captured);
++    }
++    for (int mode = 4; mode <= 6; mode++) {
++        probe->diagnosticMode = mode;
++        CHECK(render(pixels, 1));
++        printf("enclosure diagnostics capacity%d mode%d (%s):", capacity, mode,
++            mode == 4 ? "probe irradiance" : mode == 5 ? "visibility/backface/inverse*8" : "captured/offsetX/offsetY");
++        for (int at = 0; at < 16; at++) printf(" %08x", pixels[at]);
++        putchar('\n');
++    }
++    probe->diagnosticMode = 0;
++    return true;
++}
++
++static bool large_enclosure_case(void)
++{
++    // A closed uniform emitter has exact incident radiance L in every inward
++    // hemisphere, independent of position, spacing and probe interpolation.
++    // Scan whole wall/floor patches rather than a single convenient witness.
++    static const int capacities[] = {512, 2048};
++    for (size_t cap = 0; cap < sizeof capacities / sizeof capacities[0]; cap++) {
++        start_sized(2, tide_f3(24, 12, 32));
++        GIProbe *probe = &local.GIProbe;
++        probe->settings.maxProbes = capacities[cap];
++        probe->settings.captureDistance = 128;
++        probe->sampleCount = 16;
++        uint32_t pixels[MAX_POINTS];
++        for (int at = 0; at < 16; at++) {
++            probe->positions.at[at] = tide_f3(-18 + 12 * (float)(at % 4), -10 + (20.0f / 3) * (float)(at / 4), 32);
++            probe->normals.at[at] = tide_f3(0, 0, -1);
++        }
++        CHECK(refresh(pixels, 1));
++        bool uniform = true;
++        int failed_sample = -1;
++        for (int at = 0; at < 16; at++) {
++            if (!rgb(pixels[at], 0.2, 0.1, 0.05, true, 5)) {
++                printf("enclosure wall: capacity %d sample %d (%g,%g,%g)\n", capacities[cap], at,
++                    (double)probe->positions.at[at].x, (double)probe->positions.at[at].y, (double)probe->positions.at[at].z);
++                uniform = false;
++                if (failed_sample < 0) failed_sample = at;
++            }
++        }
++        if (!uniform) CHECK(dump_enclosure_diagnostics(capacities[cap], failed_sample));
++        CHECK(uniform);
++        for (int at = 0; at < 16; at++) {
++            probe->positions.at[at] = tide_f3(-18 + 12 * (float)(at % 4), -12, -24 + 16 * (float)(at / 4));
++            probe->normals.at[at] = tide_f3(0, 1, 0);
++        }
++        CHECK(render(pixels, 1));
++        for (int at = 0; at < 16; at++) CHECK(rgb(pixels[at], 0.2, 0.1, 0.05, true, 5));
++        cleanup();
++    }
++    return true;
++}
++
+ static bool adaptive_boundary_cases(void)
+ {
+     start(5);
+@@ -331,6 +463,65 @@ static bool adaptive_boundary_cases(void)
+     // Its bit19 lies in B of the extra record, beyond the ordinary RG index.
+     CHECK(rgb(pixels[0], 0.2 * 0.889408, 0.1 * 0.889408, 0.05 * 0.889408, true, 2));
+     for (int at = 1; at < 4; at++) CHECK(rgb(pixels[at], 0.2, 0.1, 0.05, true, 2));
++    probe->synthetic = 15;
++    probe->sampleCount = 8;
++    static const tide_float3 shared_points[] = {
++        {0, 0.08f, 0.08f}, {0, 0.12f, 0.02f},
++        {0, 0.02f, 0.12f}, {0, 0.1f, 0.06f}
++    };
++    for (int at = 0; at < 4; at++) {
++        probe->positions.at[at * 2] = probe->positions.at[at * 2 + 1] = shared_points[at];
++        probe->normals.at[at * 2] = tide_f3(1, 0, 0);  // Coarse grid selector.
++        probe->normals.at[at * 2 + 1] = tide_f3(-1, 0, 0); // Fine grid selector.
++    }
++    CHECK(render(pixels, 1));
++    // Both grids share their x=0 physical anchors. All face captures lie
++    // tangent to the +X receiver normal and beyond the physical near-eye radius,
++    // so their facing weights are the same .01. Bilinear interpolation must
++    // reproduce the authored affine L=(y+z)/8, amplified eight in the readout.
++    // Brick-scaled regularization instead overweights the dark origin anchor
++    // on the coarse side and creates a resolution-dependent lighting pit.
++    for (int at = 0; at < 4; at++) {
++        const double expected = shared_points[at].y + shared_points[at].z;
++        CHECK(rgb(pixels[at * 2], expected, expected, expected, true, 2));
++        CHECK(rgb(pixels[at * 2 + 1], expected, expected, expected, true, 2));
++        CHECK(abs((int)(pixels[at * 2] >> 24) - (int)(pixels[at * 2 + 1] >> 24)) <= 1);
++    }
++    probe->synthetic = 16;
++    probe->sampleCount = 3;
++    for (int at = 0; at < 3; at++) probe->positions.at[at] = tide_f3((float)(1 << at), 0, 0);
++    CHECK(render(pixels, 1));
++    // For physical metric one, projected offsets 1/3 and 1/2 give support
++    // 81/97 and 1/2. The first tap is clear; the second has inverse depth2,
++    // expected inverse1, .02 margin and .002 sigma. This fixed scene has one
++    // answer regardless of a coarse/fine brick referencing the same probe.
++    const double clear_support = 81.0 / 97.0, blocked_support = 0.5;
++    const double blocked_probability = 0.000004 / (0.000004 + 0.98 * 0.98);
++    const double probability = (clear_support + blocked_support * blocked_probability) / (clear_support + blocked_support);
++    for (int at = 0; at < 3; at++) CHECK(rgb(pixels[at], probability * probability * probability,
++        probability * probability * probability, probability * probability * probability, true, 2));
++    probe->synthetic = 17;
++    probe->sampleCount = 5;
++    static const tide_float3 front_points[] = {
++        {0.35f, 0.4f, 1.01f}, {0.8f, 1.3f, 1.1f},
++        {1.2f, 0.6f, 1.25f}, {1.6f, 1.4f, 1.4f}
++    };
++    for (int at = 0; at < 4; at++) {
++        probe->positions.at[at] = front_points[at];
++        probe->normals.at[at] = tide_f3(0, 0, 1);
++    }
++    probe->positions.at[4] = tide_f3(0.5f, 0.5f, 1.7f);
++    probe->normals.at[4] = tide_f3(0, 0, -1);
++    for (int scale = 1; scale <= 2; scale++) {
++        CHECK(render(pixels, (float)scale));
++        // An unobstructed front layer has known constant irradiance; the
++        // black layer behind each receiver cannot dilute it even where its
++        // trilinear weight dominates. All points stay inside filter borders.
++        for (int at = 0; at < 4; at++) CHECK(rgb(pixels[at], 0.2, 0.1, 0.05, true, 2));
++        // Reverse the geometric normal: that same bright layer is behind the
++        // surface and must not leak into its black incoming hemisphere.
++        CHECK(rgb(pixels[4], 0, 0, 0, true, 1));
++    }
+     cleanup();
+     return true;
+ }
+@@ -423,6 +614,7 @@ static int frame(void *context, const float seconds)
+     if (passed && (group == GROUP_ALL || group == GROUP_ROOM)) passed = room_cases();
+     if (passed && (group == GROUP_ALL || group == GROUP_DIRECT)) passed = direct_bounce_case();
+     if (passed && (group == GROUP_ALL || group == GROUP_GEOMETRY)) passed = sphere_contact_case() && thin_wall_case();
++    if (passed && (group == GROUP_ALL || group == GROUP_REGIONAL)) passed = large_enclosure_case();
+     tide_draw_free(&draw);
+     if (!passed) return 1;
+     puts("ok: world GI automatic coverage, adaptive lookup, coarse/fine continuity and sparse readiness, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes");
+@@ -442,6 +634,7 @@ int main(const int argc, char **argv)
+         else if (!strcmp(name, "room")) group = GROUP_ROOM;
+         else if (!strcmp(name, "direct")) group = GROUP_DIRECT;
+         else if (!strcmp(name, "geometry")) group = GROUP_GEOMETRY;
++        else if (!strcmp(name, "regional")) group = GROUP_REGIONAL;
+         else {
+             fprintf(stderr, "Unknown GI pixel group: %s\n", name);
+             return 2;
+diff --git a/packages/globalillumination/test/gi_test.c b/packages/globalillumination/test/gi_test.c
+index 193cd9017..aa0c8b18e 100644
+--- a/packages/globalillumination/test/gi_test.c
++++ b/packages/globalillumination/test/gi_test.c
+@@ -495,6 +495,153 @@ TIDE_TEST(globalillumination_large_coordinate_camera_streaming_keeps_spacing_sta
+     finish();
+ }
+ 
++static void receiver_records(const int at)
++{
++    const GIProbe *probe = &local.GIProbe;
++    const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
++    const int slot = probe->coverageSlots.at[at];
++    TIDE_CHECK(slot >= 0 && probe->coverageEligible.at[at]);
++    if (slot < 0) return;
++    const GlobalIllumination_ProbeBlock *block = block_at(slot);
++    TIDE_CHECK(block && block->active && block->spacing > 0);
++    if (!block || block->spacing <= 0) return;
++    const tide_float3 point = probe->coveragePositions.at[at];
++    const int x = (int)fminf(fmaxf(floorf((point.x - block->minimum.x) / block->spacing), 0), 1);
++    const int y = (int)fminf(fmaxf(floorf((point.y - block->minimum.y) / block->spacing), 0), 1);
++    const int z = (int)fminf(fmaxf(floorf((point.z - block->minimum.z) / block->spacing), 0), 1);
++    for (int sample = 0; sample < 8; sample++) {
++        const int logical = x + (sample & 1) + 3 * (y + (sample >> 1 & 1)) + 9 * (z + (sample >> 2));
++        const int32_t *record = tide_list_at(block->probes, logical, sizeof(int32_t));
++        TIDE_CHECK((block->probeMask & (1 << logical)) != 0);
++        TIDE_CHECK(record && *record >= 0 && *record < environment->layout.total);
++        if (record && *record >= 0 && *record < environment->layout.total)
++            TIDE_CHECK(flag_at(environment->active, *record));
++    }
++}
++
++TIDE_TEST(globalillumination_visible_receiver_regions_keep_support_across_probe_budgets)
++{
++    start(13);
++    GIProbe *probe = &local.GIProbe;
++    probe->settings.viewDistance = 48;
++    probe->settings.updatesPerFrame = 0;
++    const uint64_t hash = tide_world_hash(&world);
++    const int budgets[] = {125, 512, 2048};
++    float previous_near_spacing = INFINITY;
++    for (int budget = 0; budget < 3; budget++) {
++        probe->settings.maxProbes = budgets[budget];
++        probe->coverageCount = 16;
++        // This independent grid spans the whole interior of an actual wall
++        // ninety units from the camera, well beyond the near-detail radius.
++        for (int at = 0; at < 16; at++)
++            probe->coveragePositions.at[at] = tide_f3((float)(at % 4) * 6 - 9,
++                (float)(at / 4) * 4 - 6, 87.94f);
++        frame();
++        const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
++        TIDE_CHECK(environment->ready && environment->layout.total == budgets[budget]);
++        TIDE_CHECK(environment->activeProbes > 0 && environment->activeProbes <= budgets[budget]);
++        TIDE_CHECK(environment->activeBlocks > 0 && environment->activeBlocks <= 128);
++        for (int at = 0; at < 16; at++) receiver_records(at);
++        probe->coverageCount = 2;
++        probe->coveragePositions.at[0] = tide_f3(0, 0, 5.94f);
++        probe->coveragePositions.at[1] = tide_f3(0, 0, -11.94f);
++        frame();
++        receiver_records(0);
++        receiver_records(1); // Near receivers remain resident behind the eye.
++        TIDE_CHECK(probe->coverageSpacing.at[0] <= previous_near_spacing);
++        previous_near_spacing = probe->coverageSpacing.at[0];
++        TIDE_CHECK(environment->updates == 0 && tide_world_hash(&world) == hash);
++    }
++    finish();
++}
++
++TIDE_TEST(globalillumination_offscreen_geometry_does_not_consume_visible_field_budget)
++{
++    GlobalIllumination_FieldLayout baseline = {0};
++    int baseline_probes = 0, baseline_blocks = 0;
++    float baseline_spacing = 0;
++    for (int scenario = 13; scenario <= 14; scenario++) {
++        start(scenario);
++        GIProbe *probe = &local.GIProbe;
++        probe->settings.maxProbes = 512;
++        probe->settings.updatesPerFrame = 0;
++        probe->coverageCount = 1;
++        probe->coveragePositions.at[0] = tide_f3(0, 0, 87.94f);
++        frame();
++        receiver_records(0);
++        const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
++        if (scenario == 13) {
++            baseline = environment->layout;
++            baseline_probes = environment->activeProbes;
++            baseline_blocks = environment->activeBlocks;
++            baseline_spacing = probe->coverageSpacing.at[0];
++        } else {
++            TIDE_CHECK(environment->activeProbes == baseline_probes && environment->activeBlocks == baseline_blocks);
++            TIDE_CHECK(environment->layout.size == baseline.size && environment->layout.nodeCount == baseline.nodeCount);
++            TIDE_CHECK(environment->layout.minimum.x == baseline.minimum.x
++                && environment->layout.minimum.y == baseline.minimum.y && environment->layout.minimum.z == baseline.minimum.z);
++            TIDE_CHECK(probe->coverageSpacing.at[0] == baseline_spacing);
++        }
++        finish();
++    }
++}
++
++TIDE_TEST(globalillumination_camera_projection_and_hysteresis_preserve_visible_support)
++{
++    start(13);
++    GIProbe *probe = &local.GIProbe;
++    probe->settings.updatesPerFrame = 0;
++    probe->coverageCount = 2;
++    probe->coveragePositions.at[0] = tide_f3(0, 0, 87.94f);
++    probe->coveragePositions.at[1] = tide_f3(108, 0, 87.94f);
++    frame();
++    receiver_records(0);
++    receiver_records(1); // Retained angular guard includes the incoming edge.
++    GlobalIllumination_WorldBounds *bounds = &local.GlobalIllumination_WorldBounds;
++    int revision = bounds->topologyRevision;
++    probe->cameraRotation = tide_axisangle_q(tide_f3(0, 1, 0), TIDE_PI_F * (8.0f / 180.0f));
++    probe->cameraPosition.x = 0.5f;
++    frame();
++    TIDE_CHECK(bounds->topologyRevision == revision);
++    receiver_records(0);
++    receiver_records(1);
++    probe->cameraRotation = tide_axisangle_q(tide_f3(0, 1, 0), TIDE_PI_F * (12.0f / 180.0f));
++    frame();
++    TIDE_CHECK(bounds->topologyRevision > revision);
++    receiver_records(1);
++    revision = bounds->topologyRevision;
++    probe->cameraRotation = tide_identity_q();
++    probe->cameraFar = 30;
++    frame();
++    TIDE_CHECK(bounds->topologyRevision > revision && !probe->coverageEligible.at[0]);
++    revision = bounds->topologyRevision;
++    probe->cameraFar = 100;
++    frame();
++    TIDE_CHECK(bounds->topologyRevision > revision);
++    receiver_records(0);
++    revision = bounds->topologyRevision;
++    probe->cameraFov = TIDE_PI_F / 6;
++    frame();
++    TIDE_CHECK(bounds->topologyRevision > revision && !probe->coverageEligible.at[1]);
++    revision = bounds->topologyRevision;
++    probe->cameraFov = TIDE_PI_F / 3;
++    gui.width = 64;
++    gui.height = 128;
++    frame();
++    TIDE_CHECK(bounds->topologyRevision > revision && !probe->coverageEligible.at[1]);
++    receiver_records(0);
++    revision = bounds->topologyRevision;
++    probe->cameraNear = 1;
++    frame();
++    TIDE_CHECK(bounds->topologyRevision > revision && bounds->requestedNear == 1);
++    revision = bounds->topologyRevision;
++    probe->cameraRotation = tide_axisangle_q(tide_f3(0, 0, 1), TIDE_PI_F / 4);
++    frame();
++    TIDE_CHECK(bounds->topologyRevision > revision); // Roll changes the frustum.
++    receiver_records(0);
++    finish();
++}
++
+ TIDE_TEST(globalillumination_translated_open_receiver_covers_biased_filter_support)
+ {
+     start(11);
+diff --git a/packages/globalillumination/world.tide b/packages/globalillumination/world.tide
+index 956fc7dfd..c41881b1e 100644
+--- a/packages/globalillumination/world.tide
++++ b/packages/globalillumination/world.tide
+@@ -112,6 +112,17 @@ struct CoverageNode
+     int probeMask = 134217727;
+ }
+ 
++// Numeric receiver visibility, independent of GPU resources or draw-list state.
++// The finite prototype range matches the existing coverage/capture controls.
++struct CoverageView
++{
++    float3 eye;
++    float3[6] normals;
++    float[6] distances;
++    float padding;
++    LocalBounds bounds;
++}
++
+ // Local geometry facts are read once per pack generation. Entity-to-slot
+ // maps avoid searching the distinct asset list for every instance each frame.
+ local singleton WorldBounds
+@@ -134,6 +145,12 @@ local singleton WorldBounds
+     float requestedCaptureDistance;
+     float3 viewCell;
+     float3 viewDirection;
++    quaternion viewRotation;
++    float requestedFov;
++    float requestedNear;
++    float requestedFar;
++    float requestedAspect;
++    CoverageView coverageView;
+     List<SceneInstance> instances;
+     Map<Entity, int> instanceSlots;
+     Map<Entity, int> skinInstanceSlots;
+@@ -452,10 +469,94 @@ double BoundsDistanceSq(LocalBounds bounds, float3 point)
+     return Math.LengthSq(delta);
+ }
+ 
++CoverageView MakeCoverageView(Render3D.Camera camera, float aspect, float padding)
++{
++    mut CoverageView frustum = default;
++    frustum.eye = camera.position;
++    frustum.padding = padding;
++    quaternion rotation = Math.Normalize(camera.rotation);
++    float3 right = Math.Rotate(rotation, float3(1, 0, 0));
++    float3 up = Math.Rotate(rotation, float3(0, 1, 0));
++    float3 forward = Math.Rotate(rotation, float3(0, 0, 1));
++    float vertical = Math.Tan(Math.Clamp(camera.verticalFov, 1deg, 179deg) * 0.5);
++    float horizontal = vertical * Math.Max(aspect, 0.000001);
++    float near = Math.Clamp(camera.near, 0.001, 999999);
++    float far = Math.Clamp(camera.far, near + 0.001, 1000000);
++    frustum.normals[0] = Math.Normalize(forward * horizontal + right);
++    frustum.normals[1] = Math.Normalize(forward * horizontal - right);
++    frustum.normals[2] = Math.Normalize(forward * vertical + up);
++    frustum.normals[3] = Math.Normalize(forward * vertical - up);
++    frustum.normals[4] = forward;
++    frustum.normals[5] = -forward;
++    frustum.distances[4] = near;
++    frustum.distances[5] = -far;
++    // Until the next rebuild, full camera rotation changes by at most ten
++    // degrees. A unit plane normal then changes by at most 2*sin(5deg)<.175.
++    // Cover that displacement and translation within the retained view cell.
++    double reach = double(far) * Math.Sqrt(1d + double(horizontal) * double(horizontal)
++        + double(vertical) * double(vertical));
++    float margin = float(reach * 0.175d + double(padding));
++    for (var corner = 0; corner < 8; corner++)
++    {
++        float depth = (corner & 4) == 0 ? near : far;
++        float3 point = camera.position + forward * depth
++            + right * (depth * horizontal * ((corner & 1) == 0 ? -1 : 1))
++            + up * (depth * vertical * ((corner & 2) == 0 ? -1 : 1));
++        if (!FiniteBoundsValue(point) || !FiniteBoundsValue(margin)) return default;
++        frustum.bounds = JoinBounds(frustum.bounds,
++            LocalBounds { valid = true, minimum = point - float3(margin), maximum = point + float3(margin) });
++    }
++    return frustum;
++}
++
++bool CoverageVisible(CoverageView frustum, LocalBounds receiver)
++{
++    if (!frustum.bounds.valid || !receiver.valid
++        || !BoxesOverlap(receiver.minimum, receiver.maximum, frustum.bounds.minimum, frustum.bounds.maximum)) return false;
++    double3 center = (double3(receiver.minimum) + double3(receiver.maximum)) * 0.5d - double3(frustum.eye);
++    double3 extent = (double3(receiver.maximum) - double3(receiver.minimum)) * 0.5d;
++    double movement = double(frustum.padding) + (Math.Length(center) + Math.Length(extent)) * 0.175d;
++    for (var plane = 0; plane < 6; plane++)
++    {
++        double3 normal = double3(frustum.normals[plane]);
++        double support = Math.Dot(normal, center) + Math.Dot(Math.Abs(normal), extent) + movement;
++        if (support < double(frustum.distances[plane])) return false;
++    }
++    return true;
++}
++
++bool CoverageEligible(WorldBounds bounds, LocalBounds receiver, float3 eye, float viewDistance)
++{
++    float near = viewDistance + bounds.coverageView.padding;
++    return receiver.valid && (BoundsDistanceSq(receiver, eye) <= double(near) * double(near)
++        || CoverageVisible(bounds.coverageView, receiver));
++}
++
++LocalBounds CoverageReceiverBounds(WorldBounds bounds, float3 eye, float viewDistance)
++{
++    mut LocalBounds result = default;
++    float near = viewDistance + bounds.coverageView.padding;
++    float3 nearMin = eye - float3(near);
++    float3 nearMax = eye + float3(near);
++    foreach (var instance in bounds.instances)
++    {
++        LocalBounds receiver = instance.bounds;
++        if (!receiver.valid) continue;
++        if (BoundsDistanceSq(receiver, eye) <= double(near) * double(near))
++            result = JoinBounds(result, LocalBounds { valid = true,
++                minimum = Math.Max(receiver.minimum, nearMin), maximum = Math.Min(receiver.maximum, nearMax) });
++        if (CoverageVisible(bounds.coverageView, receiver))
++            result = JoinBounds(result, LocalBounds { valid = true,
++                minimum = Math.Max(receiver.minimum, bounds.coverageView.bounds.minimum),
++                maximum = Math.Min(receiver.maximum, bounds.coverageView.bounds.maximum) });
++    }
++    return result;
++}
++
+ bool UsefulCoverage(WorldBounds bounds, float3 minimum, float size, float3 eye, float viewDistance, float padding)
+ {
+     LocalBounds cell = LocalBounds { valid = true, minimum = minimum, maximum = minimum + float3(size) };
+-    if (BoundsDistanceSq(cell, eye) > double(viewDistance) * double(viewDistance)) return false;
++    if (!CoverageEligible(bounds, cell, eye, viewDistance)) return false;
+     float3 center = minimum + float3(size * 0.5);
+     float radius = size * 0.9 + padding;
+     var candidates = CaptureCandidates(bounds.scene, center, radius);
+@@ -463,9 +564,12 @@ bool UsefulCoverage(WorldBounds bounds, float3 minimum, float size, float3 eye,
+     {
+         if (index < 0 || index >= bounds.instances.count) continue;
+         SceneInstance instance = bounds.instances[index];
+-        if (!instance.bounds.valid || BoundsDistanceSq(instance.bounds, eye) > double(viewDistance) * double(viewDistance)) continue;
++        LocalBounds receiver = LocalBounds { valid = instance.bounds.valid,
++            minimum = Math.Max(minimum - float3(padding), instance.bounds.minimum),
++            maximum = Math.Min(minimum + float3(size + padding), instance.bounds.maximum) };
+         if (!BoxesOverlap(minimum - float3(padding), minimum + float3(size + padding),
+                           instance.bounds.minimum, instance.bounds.maximum)) continue;
++        if (!CoverageEligible(bounds, receiver, eye, viewDistance)) continue;
+         if (instance.placementEligible && instance.slot >= 0 && instance.slot < bounds.staticBounds.count
+             && bounds.staticBounds[instance.slot].placement.valid)
+         {
+@@ -498,8 +602,10 @@ int CoverageProbeMask(WorldBounds bounds, float3 minimum, float size, float base
+     {
+         if (index < 0 || index >= bounds.instances.count) continue;
+         LocalBounds receiver = bounds.instances[index].bounds;
+-        if (!receiver.valid || BoundsDistanceSq(receiver, eye) > double(viewDistance) * double(viewDistance)
+-            || !BoxesOverlap(lower, upper, receiver.minimum, receiver.maximum)) continue;
++        if (!receiver.valid || !BoxesOverlap(lower, upper, receiver.minimum, receiver.maximum)) continue;
++        LocalBounds support = LocalBounds { valid = true,
++            minimum = Math.Max(lower, receiver.minimum), maximum = Math.Min(upper, receiver.maximum) };
++        if (!CoverageEligible(bounds, support, eye, viewDistance)) continue;
+         float3 lo = Math.Clamp((receiver.minimum - float3(padding) - minimum) / spacing, float3(0), float3(2));
+         float3 hi = Math.Clamp((receiver.maximum + float3(padding) - minimum) / spacing, float3(0), float3(2));
+         int3 first = int3(Math.Floor(lo));
+@@ -528,10 +634,11 @@ float CoveragePriority(WorldBounds bounds, float3 minimum, float size, float3 ey
+     {
+         if (index < 0 || index >= bounds.instances.count) continue;
+         LocalBounds receiver = bounds.instances[index].bounds;
+-        if (!receiver.valid || BoundsDistanceSq(receiver, eye) > double(viewDistance) * double(viewDistance)) continue;
++        if (!receiver.valid) continue;
+         float3 receiverMin = Math.Max(lower, receiver.minimum);
+         float3 receiverMax = Math.Min(upper, receiver.maximum);
+         if (receiverMin.x > receiverMax.x || receiverMin.y > receiverMax.y || receiverMin.z > receiverMax.z) continue;
++        if (!CoverageEligible(bounds, LocalBounds { valid = true, minimum = receiverMin, maximum = receiverMax }, eye, viewDistance)) continue;
+         float3 closest = Math.Clamp(eye, receiverMin, receiverMax);
+         double distanceSq = Math.LengthSq(double3(closest) - double3(eye));
+         float3 support = Math.Clamp(eye + forward * minimumSize, receiverMin, receiverMax);
+@@ -686,8 +793,10 @@ void CopyCoverageNode(List<CoverageNode> source, mut List<CoverageNode> destinat
+         CopyCoverageNode(source, destination, first + child, node.children + child, depth + 1);
+ }
+ 
+-void BuildCoverage(mut WorldBounds bounds, Settings settings, float3 eye, float3 forward)
++void BuildCoverage(mut WorldBounds bounds, Settings settings, Render3D.Camera camera, float aspect)
+ {
++    float3 eye = camera.position;
++    float3 forward = Math.Rotate(Math.Normalize(camera.rotation), float3(0, 0, 1));
+     bounds.nodes.Clear();
+     bounds.lookup.Clear();
+     bounds.ready = false;
+@@ -699,33 +808,45 @@ void BuildCoverage(mut WorldBounds bounds, Settings settings, float3 eye, float3
+     }
+     float spacing = StableProbeSpacing(eye, settings.probeSpacing);
+     float minimumSize = spacing * 2;
++    bounds.coverageView = MakeCoverageView(camera, aspect, minimumSize * 2);
++    LocalBounds receivers = CoverageReceiverBounds(bounds, eye, settings.viewDistance);
++    if (!receivers.valid)
++    {
++        bounds.layout = default;
++        bounds.topologyRevision++;
++        return;
++    }
+     mut float size = minimumSize * 128;
+     mut int depth = 7;
+-    while (double(settings.viewDistance) > double(size) * 0.25d && depth < 24)
++    mut float3 root = float3(0);
++    for (var attempt = 0; attempt < 18; attempt++)
+     {
++        root = Math.Floor(eye / (size * 0.25)) * (size * 0.25)
++            - float3(size * 0.5) + float3(spacing * 0.5);
++        if (receivers.minimum.x >= root.x + spacing && receivers.minimum.y >= root.y + spacing
++            && receivers.minimum.z >= root.z + spacing && receivers.maximum.x <= root.x + size - spacing
++            && receivers.maximum.y <= root.y + size - spacing && receivers.maximum.z <= root.z + size - spacing) break;
++        if (depth >= 24) break;
+         size *= 2;
+         depth++;
+     }
+     // Every subdivision keeps the same half-base-cell phase. This avoids
+     // probes coinciding with common integer wall/floor planes, including
+     // thin-wall edges whose tangential captures can see around the occluder.
+-    float3 root = Math.Floor(eye / (size * 0.25)) * (size * 0.25)
+-        - float3(size * 0.5) + float3(spacing * 0.5);
+-    float viewDistance = Math.Min(settings.viewDistance, size * 0.25);
++    float viewDistance = settings.viewDistance;
+     if (!FiniteBoundsValue(root) || !FiniteBoundsValue(root + float3(size)) || size <= 0)
+     {
+         bounds.layout = default;
+         bounds.topologyRevision++;
+         return;
+     }
+-    // Build triangle caches only for instances that can influence resident
+-    // receiver coverage. Distant assets do not force eager geometry decoding.
+-    var nearby = CaptureCandidates(bounds.scene, eye, viewDistance);
+-    foreach (var i in nearby)
++    // Only eligible receiver assets need triangle caches. An off-camera scene
++    // cannot enlarge the field or consume its probe budget merely by existing.
++    for (var i = 0; i < bounds.instances.count; i++)
+     {
+         if (i < 0 || i >= bounds.instances.count) continue;
+         SceneInstance instance = bounds.instances[i];
+-        if (!instance.placementEligible || BoundsDistanceSq(instance.bounds, eye) > double(viewDistance) * double(viewDistance)) continue;
++        if (!instance.placementEligible || !CoverageEligible(bounds, instance.bounds, eye, viewDistance)) continue;
+         int slot = instance.slot;
+         if (slot < 0 || slot >= bounds.staticBounds.count || bounds.staticBounds[slot].placementReady) continue;
+         mut StaticBounds cached = bounds.staticBounds[slot];
+@@ -759,7 +880,15 @@ void BuildCoverage(mut WorldBounds bounds, Settings settings, float3 eye, float3
+         int best = PopCoverage(pending, bounds.nodes);
+         if (best < 0) break;
+         CoverageNode node = bounds.nodes[best];
+-        if (!node.relevant || node.size <= minimumSize * 1.001 || node.depth >= depth) continue;
++        // Visible distant receivers need coarse support, not a full base-detail
++        // plan which would immediately be discarded by the budget merge pass.
++        // A cell touching the nearby radius keeps the original finest target.
++        LocalBounds cell = LocalBounds { valid = true,
++            minimum = node.minimum, maximum = node.minimum + float3(node.size) };
++        double distance = Math.Sqrt(BoundsDistanceSq(cell, eye));
++        double detailRadius = Math.Max(double(viewDistance), double(minimumSize));
++        double targetSize = double(minimumSize) * Math.Max(1d, distance / detailRadius);
++        if (!node.relevant || double(node.size) <= targetSize * 1.001d || node.depth >= depth) continue;
+         float half = node.size * 0.5;
+         mut List<CoverageNode> children = [];
+         mut int count = 0;
+@@ -988,12 +1117,17 @@ view CollectWorldBounds(mut WorldBounds bounds, Environment environment, Render3
+     float3 eye = renderer.camera.position;
+     float precisionSpacing = StableProbeSpacing(eye, settings.probeSpacing);
+     float3 viewCell = Math.Floor(eye / (precisionSpacing * 2));
+-    float3 forward = Math.Mul(float4x4.TRS(float3(0), renderer.camera.rotation, float3(1)), float4(0, 0, 1, 0)).xyz;
++    quaternion rotation = Math.Normalize(renderer.camera.rotation);
++    float3 forward = Math.Rotate(rotation, float3(0, 0, 1));
++    float aspect = Math.Max(Screen.width, 1) / Math.Max(Screen.height, 1);
+     bool changed = !bounds.ready || !FiniteBoundsValue(eye) || bounds.geometryChanged
+         || bounds.layout.spacing != precisionSpacing || bounds.requestedSpacing != settings.probeSpacing
+         || bounds.requestedMaxProbes != settings.maxProbes || bounds.requestedViewDistance != settings.viewDistance
+         || bounds.requestedCaptureDistance != settings.captureDistance
+-        || Math.LengthSq(viewCell - bounds.viewCell) > 0 || Math.Dot(forward, bounds.viewDirection) < 0.95;
++        || bounds.requestedFov != renderer.camera.verticalFov || bounds.requestedNear != renderer.camera.near
++        || bounds.requestedFar != renderer.camera.far || bounds.requestedAspect != aspect
++        || Math.LengthSq(viewCell - bounds.viewCell) > 0
++        || Math.Abs(Math.Dot(rotation.value, bounds.viewRotation.value)) < 0.9961947;
+     if (!changed) return;
+     bounds.requestedSpacing = settings.probeSpacing;
+     bounds.requestedMaxProbes = settings.maxProbes;
+@@ -1001,5 +1135,10 @@ view CollectWorldBounds(mut WorldBounds bounds, Environment environment, Render3
+     bounds.requestedCaptureDistance = settings.captureDistance;
+     bounds.viewCell = viewCell;
+     bounds.viewDirection = forward;
+-    BuildCoverage(bounds, settings, eye, forward);
++    bounds.viewRotation = rotation;
++    bounds.requestedFov = renderer.camera.verticalFov;
++    bounds.requestedNear = renderer.camera.near;
++    bounds.requestedFar = renderer.camera.far;
++    bounds.requestedAspect = aspect;
++    BuildCoverage(bounds, settings, renderer.camera, aspect);
+ }

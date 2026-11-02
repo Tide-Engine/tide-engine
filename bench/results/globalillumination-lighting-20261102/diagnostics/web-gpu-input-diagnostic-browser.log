@@ -1,0 +1,409 @@
+renderer: WebGL 2
+FAIL: world GI channel 0 got 0 wanted 51, rgba 000000ff
+enclosure floor: capacity 512 sample 5 (-6,-12,-8)
+floor records capacity512 receiver(-6,-12,-8) block6 minimum(-11.25,-23.25,-11.25) spacing6
+  corner0 logical3 physical48 anchor(-11.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner1 logical4 physical58 anchor(-5.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner2 logical6 physical50 anchor(-11.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner3 logical7 physical60 anchor(-5.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner4 logical12 physical64 anchor(-11.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner5 logical13 physical73 anchor(-5.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner6 logical15 physical67 anchor(-11.25,-11.25,-5.25) offset(0,0,0) captured1
+  corner7 logical16 physical75 anchor(-5.25,-11.25,-5.25) offset(0,0,0) captured1
+raw capture physical60 eye(-5.25,-11.25,-11.25) metric1.5 far128 near0.0149999997 face4 packed1b formats2/2/2 samples1
+raw capture projection diag 1 1 depth -1.00023437 -1 -0.0300035141
+raw capture refresh updates1 frame35 last35 captureSpacing1.5 captureFar128
+raw capture physical60 face4 pixel(10,20) depth=0.0216827393 bits3cb1a000 backface0 hit1
+raw capture physical60 face4 pixel(11,20) depth=0.0213317871 bits3caec000 backface0 hit1
+raw capture physical60 face4 pixel(10,21) depth=0.0180664062 bits3c940000 backface0 hit1
+raw capture physical60 face4 pixel(11,21) depth=0.017791748 bits3c91c000 backface0 hit1
+raw world physical60 pixel(10,20) eyeDeltaApprox(-0.862745098,-0.749019608,2.50980392) rgba644050ff
+raw world physical60 pixel(11,20) eyeDeltaApprox(-0.705882353,-0.749019608,2.50980392) rgba694050ff
+raw world physical60 pixel(10,21) eyeDeltaApprox(-0.705882353,-0.749019608,2.07058824) rgba694042ff
+raw world physical60 pixel(11,21) eyeDeltaApprox(-0.580392157,-0.749019608,2.07058824) rgba6d4042ff
+FAIL: world GI pixels line 397: uniform (scenario 2 synthetic 0 initialized 500/500)
+raw GPU inputs {"start":true,"allocations":{"32856/128/64/5121":1,"35056/128/64/34042":2,"32856/1/1/5121":2,"36226/1/1/5124":1,"35056/1/1/34042":1,"35056/16/16/34042":1,"34842/1/1/5131":1,"34842/576/368/5131":2,"35056/576/368/34042":1,"36226/961/1/5124":2,"34842/32/32/5131":12,"35056/32/32/34042":6,"34842/64/6/5131":2,"35056/64/6/34042":1,"34842/128/64/5131":1,"36226/5/1/5124":3},"matrices":[{"viewport":[0,0,32,32],"bytes":288,"floats":[-1.1920926112907182e-7,0,1.0002342462539673,0.9999998807907104,0,1,0,0,-0.9999998807907104,0,-1.192371996694419e-7,-1.1920926112907182e-7,-11.249999046325684,11.249999046325684,5.221224308013916,5.249997615814209,1,1,32,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,-5.25,-11.25,-11.25,128,0.0005000000237487257,0.0020000000949949026,0,0,-2,0,0,1,0.0625,1,0.20000000298023224,0.10000000149011612,0.05000000074505806,0,284262368,0,0,0,0,0,0,0,0,0,1.401298464324817e-45,0]},{"viewport":[0,0,32,32],"bytes":288,"floats":[-1.1920926112907182e-7,0,-1.0002342462539673,-0.9999998807907104,0,1,0,0,0.9999998807907104,0,-1.192371996694419e-7,-1.1920926112907182e-7,11.24999713897705,11.249999046325684,-5.281234264373779,-5.250000476837158,1,1,32,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,-5.25,-11.25,-11.25,128,0.0005000000237487257,0.0020000000949949026,0,0,-2,0,0,1,0.0625,1,0.20000000298023224,0.10000000149011612,0.05000000074505806,0,284262368,0,0,0,0,0,0,0,0,0,1.401298464324817e-45,0]},{"viewport":[0,0,32,32],"bytes":288,"floats":[1,0,0,0,0,-1.1920926112907182e-7,1.0002342462539673,0.9999998807907104,0,-0.9999998807907104,-1.192371996694419e-7,-1.1920926112907182e-7,5.249999523162842,-11.249999046325684,11.222630500793457,11.24999713897705,1,1,32,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,-5.25,-11.25,-11.25,128,0.0005000000237487257,0.0020000000949949026,0,0,-2,0,0,1,0.0625,1,0.20000000298023224,0.10000000149011612,0.05000000074505806,0,284262368,0,0,0,0,0,0,0,0,0,1.401298464324817e-45,0]},{"viewport":[0,0,32,32],"bytes":288,"floats":[1,0,0,0,0,-1.1920926112907182e-7,-1.0002342462539673,-0.9999998807907104,0,0.9999998807907104,-1.192371996694419e-7,-1.1920926112907182e-7,5.249999523162842,11.24999713897705,-11.282639503479004,-11.249999046325684,1,1,32,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,-5.25,-11.25,-11.25,128,0.0005000000237487257,0.0020000000949949026,0,0,-2,0,0,1,0.0625,1,0.20000000298023224,0.10000000149011612,0.05000000074505806,0,284262368,0,0,0,0,0,0,0,0,0,1.401298464324817e-45,0]},{"viewport":[0,0,32,32],"bytes":288,"floats":[1,0,0,0,0,1,0,0,0,0,1.0002343654632568,1,5.25,11.25,11.222633361816406,11.25,1,1,32,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,-5.25,-11.25,-11.25,128,0.0005000000237487257,0.0020000000949949026,0,0,-2,0,0,1,0.0625,1,0.20000000298023224,0.10000000149011612,0.05000000074505806,0,284262368,0,0,0,0,0,0,0,0,0,1.401298464324817e-45,0]},{"viewport":[0,0,32,32],"bytes":288,"floats":[-1,0,0,0,0,1,0,0,0,0,-1.0002343654632568,-1,-5.25,11.25,-11.28264045715332,-11.25,1,1,32,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,-5.25,-11.25,-11.25,128,0.0005000000237487257,0.0020000000949949026,0,0,-2,0,0,1,0.0625,1,0.20000000298023224,0.10000000149011612,0.05000000074505806,0,284262368,0,0,0,0,0,0,0,0,0,1.401298464324817e-45,0]}],"viewports":[[0,0,16,16],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32],[0,0,32,32]],"keys":{},"viewport":[0,0,128,64]}
+
+CMake Error at build/gi-quality-20261102/raw-capture-diagnostic-runner/run_web_test.cmake:58 (message):
+  The page didn't exit with 0 (got '1').
+
+  Created TensorFlow Lite XNNPACK delegate for CPU.
+
+
+  [16860:35180:1102/051126.318:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051126.530:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051126.941:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051127.549:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051128.354:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051129.362:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051130.363:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051131.376:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051132.391:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051133.398:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051134.403:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051135.409:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051136.411:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051137.423:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051138.426:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051139.441:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051140.457:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051141.267:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051141.469:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051141.875:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051142.484:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051143.299:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051143.490:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051144.314:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051144.505:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051145.317:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051145.521:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051146.319:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051146.524:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051147.330:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051147.534:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051148.336:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051148.542:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051149.340:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051149.544:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051150.342:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051150.547:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051151.344:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051151.551:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051152.352:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051152.555:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051153.357:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051153.561:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051154.360:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051154.565:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051155.363:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051155.580:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051156.269:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051156.378:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051156.473:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051156.882:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051157.387:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051157.495:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051158.299:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051158.394:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051159.310:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051159.406:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051200.321:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051200.416:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051201.325:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051201.419:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051202.329:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051202.424:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051203.336:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051203.429:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051204.342:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051204.438:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051205.351:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051205.445:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051206.356:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051206.450:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:7992:1102/051207.359:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051207.452:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051208.374:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051208.453:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051209.377:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051209.455:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051210.383:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051210.460:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051211.387:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051212.389:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051213.391:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051214.401:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051215.410:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051216.416:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051217.426:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051218.429:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051219.430:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051220.446:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051221.452:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051222.459:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051223.475:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051224.491:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+  [16860:35180:1102/051225.493:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 48236: Access is denied.  (0x5)
+
+
+

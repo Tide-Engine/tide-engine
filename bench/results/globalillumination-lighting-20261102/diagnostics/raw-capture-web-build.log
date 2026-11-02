@@ -1,0 +1,11 @@
+[0/2] Re-checking globbed directories...
+[1/9] Performing build step for 'tidec_host'
+[0/2] Re-checking globbed directories...
+ninja: no work to do.
+[2/9] No install step for 'tidec_host'
+[3/9] Completed 'tidec_host'
+[4/9] tidec tide_globalillumination_pixels
+[5/9] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game_pack.c.obj
+[6/9] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/globalillumination/test/gi_pixels.c.obj
+[7/9] Building C object packages/CMakeFiles/tide_globalillumination_pixels.dir/tide/tide_globalillumination_pixels/game.c.obj
+[8/9] Linking C executable bin\tide_globalillumination_pixels.wasm

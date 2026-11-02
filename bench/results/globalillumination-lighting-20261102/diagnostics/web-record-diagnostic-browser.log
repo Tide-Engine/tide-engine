@@ -1,0 +1,472 @@
+renderer: WebGL 2
+FAIL: world GI channel 0 got 0 wanted 51, rgba 000000ff
+enclosure floor: capacity 512 sample 5 (-6,-12,-8)
+floor records capacity512 receiver(-6,-12,-8) block6 minimum(-11.25,-23.25,-11.25) spacing6
+  corner0 logical3 physical48 anchor(-11.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner1 logical4 physical58 anchor(-5.25,-17.25,-11.25) offset(0,0,0) captured1
+  corner2 logical6 physical50 anchor(-11.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner3 logical7 physical60 anchor(-5.25,-11.25,-11.25) offset(0,0,0) captured1
+  corner4 logical12 physical64 anchor(-11.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner5 logical13 physical73 anchor(-5.25,-17.25,-5.25) offset(0,0,0) captured1
+  corner6 logical15 physical67 anchor(-11.25,-11.25,-5.25) offset(0,0,0) captured1
+  corner7 logical16 physical75 anchor(-5.25,-11.25,-5.25) offset(0,0,0) captured1
+floor records mode1 (irradiance): 000000ff 000000ff 33190dff 33190dff 000000ff 000000ff 33190dff 33190dff
+floor records mode2 (visibility/backface/inverse*8): ff5ddfff ff64ffff 0000ffff 0000ffff ff5de7ff ff64ffff 0000ffff 0000ffff
+floor records mode3 (captured/offsetX/offsetY): ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff ff8080ff
+floor record corner0 mean0=0.0894165039 bits3db72000 tapProbability1 support0.00392157
+floor record corner1 mean0=0.160644531 bits3e248000 tapProbability1 support0.0862745
+floor record corner2 mean0=0.383300781 bits3ec44000 tapProbability0.00784314 support0
+floor record corner3 mean0=0.393798828 bits3ec9a000 tapProbability0 support0.498039
+floor record corner4 mean0=0.124938965 bits3dffe000 tapProbability1 support0.113725
+floor record corner5 mean0=0.160644531 bits3e248000 tapProbability1 support0.188235
+floor record corner6 mean0=0.384033203 bits3ec4a000 tapProbability0.00392157 support0.00392157
+floor record corner7 mean0=0.128295898 bits3e036000 tapProbability0.00392157 support0
+floor record corner0 mean1=0.0894165039 bits3db72000 tapProbability1 support0.0117647
+floor record corner1 mean1=0.160644531 bits3e248000 tapProbability1 support0.976471
+floor record corner2 mean1=0.384765625 bits3ec50000 tapProbability0.00392157 support0
+floor record corner3 mean1=0.394775391 bits3eca2000 tapProbability0 support0.764706
+floor record corner4 mean1=0.0894165039 bits3db72000 tapProbability1 support0.00784314
+floor record corner5 mean1=0.196411133 bits3e492000 tapProbability1 support0.0235294
+floor record corner6 mean1=0.129394531 bits3e048000 tapProbability0 support0.0117647
+floor record corner7 mean1=0.384521484 bits3ec4e000 tapProbability0.00392157 support0.764706
+floor record corner0 mean2=0.124938965 bits3dffe000 tapProbability1 support0.054902
+floor record corner1 mean2=0.196411133 bits3e492000 tapProbability1 support0.00784314
+floor record corner2 mean2=0.129272938 bits3e046020 tapProbability0 support0.0196078
+floor record corner3 mean2=0.132813007 bits3e080022 tapProbability0 support0
+floor record corner4 mean2=0.124938965 bits3dffe000 tapProbability1 support0.054902
+floor record corner5 mean2=0.160644531 bits3e248000 tapProbability1 support0.47451
+floor record corner6 mean2=0.385009766 bits3ec52000 tapProbability0.00392157 support0.00392157
+floor record corner7 mean2=0.128295898 bits3e036000 tapProbability0.00392157 support0
+floor record corner0 mean3=0.12512207 bits3e002000 tapProbability1 support0.0313725
+floor record corner1 mean3=0.196411133 bits3e492000 tapProbability1 support0.0823529
+floor record corner2 mean3=0.129639149 bits3e04c020 tapProbability0 support0.00392157
+floor record corner3 mean3=0.133179218 bits3e086022 tapProbability0 support0
+floor record corner4 mean3=0.0893554688 bits3db70000 tapProbability1 support0.00392157
+floor record corner5 mean3=0.196411133 bits3e492000 tapProbability1 support0.341176
+floor record corner6 mean3=0.129760742 bits3e04e000 tapProbability0 support0.00392157
+floor record corner7 mean3=0.384033203 bits3ec4a000 tapProbability0.00392157 support0.988235
+floor record corner0 expected0=0.0892855227 bits3db6db54 tapProbability1 support0.00392157
+floor record corner1 expected0=0.160713941 bits3e249232 tapProbability1 support0.0862745
+floor record corner2 expected0=0.375005722 bits3ec000c0 tapProbability0.00784314 support0
+floor record corner3 expected0=0.375005722 bits3ec000c0 tapProbability0 support0.498039
+floor record corner4 expected0=0.124999724 bits3dffffdb tapProbability1 support0.113725
+floor record corner5 expected0=0.160713941 bits3e249232 tapProbability1 support0.188235
+floor record corner6 expected0=0.375005722 bits3ec000c0 tapProbability0.00392157 support0.00392157
+floor record corner7 expected0=0.125001907 bits3e000080 tapProbability0.00392157 support0
+floor record corner0 expected1=0.0892855227 bits3db6db54 tapProbability1 support0.0117647
+floor record corner1 expected1=0.160713941 bits3e249232 tapProbability1 support0.976471
+floor record corner2 expected1=0.375005722 bits3ec000c0 tapProbability0.00392157 support0
+floor record corner3 expected1=0.375005722 bits3ec000c0 tapProbability0 support0.764706
+floor record corner4 expected1=0.0892855227 bits3db6db54 tapProbability1 support0.00784314
+floor record corner5 expected1=0.19642815 bits3e492476 tapProbability1 support0.0235294
+floor record corner6 expected1=0.125001907 bits3e000080 tapProbability0 support0.0117647
+floor record corner7 expected1=0.375005722 bits3ec000c0 tapProbability0.00392157 support0.764706
+floor record corner0 expected2=0.124999724 bits3dffffdb tapProbability1 support0.054902
+floor record corner1 expected2=0.19642815 bits3e492476 tapProbability1 support0.00784314
+floor record corner2 expected2=0.125001907 bits3e000080 tapProbability0 support0.0196078
+floor record corner3 expected2=0.125001907 bits3e000080 tapProbability0 support0
+floor record corner4 expected2=0.124999724 bits3dffffdb tapProbability1 support0.054902
+floor record corner5 expected2=0.160713941 bits3e249232 tapProbability1 support0.47451
+floor record corner6 expected2=0.375005722 bits3ec000c0 tapProbability0.00392157 support0.00392157
+floor record corner7 expected2=0.125001907 bits3e000080 tapProbability0.00392157 support0
+floor record corner0 expected3=0.124999724 bits3dffffdb tapProbability1 support0.0313725
+floor record corner1 expected3=0.19642815 bits3e492476 tapProbability1 support0.0823529
+floor record corner2 expected3=0.125001907 bits3e000080 tapProbability0 support0.00392157
+floor record corner3 expected3=0.125001907 bits3e000080 tapProbability0 support0
+floor record corner4 expected3=0.0892855227 bits3db6db54 tapProbability1 support0.00392157
+floor record corner5 expected3=0.19642815 bits3e492476 tapProbability1 support0.341176
+floor record corner6 expected3=0.125001907 bits3e000080 tapProbability0 support0.00392157
+floor record corner7 expected3=0.375005722 bits3ec000c0 tapProbability0.00392157 support0.988235
+FAIL: world GI pixels line 371: uniform (scenario 2 synthetic 0 initialized 500/500)
+
+CMake Error at build/gi-quality-20261102/d3d-diagnostic-runner/run_web_test.cmake:58 (message):
+  The page didn't exit with 0 (got '1').
+
+  Created TensorFlow Lite XNNPACK delegate for CPU.
+
+
+  [40588:3024:1102/044144.917:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044145.133:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044145.539:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:47536:1102/044146.152:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044146.963:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044147.977:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044148.981:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044149.994:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044150.996:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044152.013:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044153.022:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044154.024:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044155.027:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:47536:1102/044156.030:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044157.045:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044158.060:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044159.072:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044159.931:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044200.087:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044200.134:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044200.539:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044201.100:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044201.147:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044201.949:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044202.104:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044202.965:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044203.105:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044203.968:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044204.110:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044204.977:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044205.118:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044205.980:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044206.122:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044206.987:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044207.127:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044208.002:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044208.141:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044209.005:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044209.148:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044210.014:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044210.156:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044211.021:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044211.164:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044212.025:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044212.167:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044213.035:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044213.177:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044214.042:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044214.183:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044214.938:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044215.052:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044215.146:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044215.554:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044216.054:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044216.165:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044216.978:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044217.057:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044217.982:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044218.060:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044218.991:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044219.072:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044220.005:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044220.084:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044221.008:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044221.088:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044222.016:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044222.095:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044223.025:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044223.103:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044224.031:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044224.109:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044225.033:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044225.111:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:47536:1102/044226.038:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044226.115:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044227.054:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044227.116:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044228.067:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044228.130:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044229.082:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044229.144:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044230.086:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044231.102:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044232.116:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044233.117:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044234.119:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044235.121:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044236.126:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044237.133:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044238.149:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044239.160:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044240.162:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044241.165:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044242.166:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044243.182:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+  [40588:3024:1102/044244.187:ERROR:chrome\updater\ipc\update_service_dialer_win.cc:77]
+  Failed to open named pipe server process 15276: Access is denied.  (0x5)
+
+
+

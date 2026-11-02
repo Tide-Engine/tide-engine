@@ -1,0 +1,18 @@
+sanitize bench_globalillumination passed=True
+sanitize bench_globalillumination_opengl passed=True
+sanitize bench_globalillumination_atrium passed=True
+sanitize bench_globalillumination_atrium_opengl passed=True
+sanitize bench_globalillumination_courtyard passed=True
+sanitize bench_globalillumination_courtyard_opengl passed=True
+sanitize tide_globalillumination passed=True
+sanitize tide_globalillumination_skinning passed=True
+sanitize tide_globalillumination_skinning_opengl passed=True
+sanitize tide_globalillumination_pixels passed=True
+sanitize tide_globalillumination_pixels_opengl passed=True
+sanitize tide_render3d_skinning_pixels passed=True
+sanitize tide_render3d_skinning_pixels_opengl passed=True
+sanitize tide_render3d_material_pixels passed=True
+sanitize tide_render3d_material_pixels_opengl passed=True
+sanitize tide_render3d_pixels passed=True
+sanitize tide_render3d_pixels_opengl passed=True
+All validation gates released/disposed 2026-11-02T05:07:27.4876274Z

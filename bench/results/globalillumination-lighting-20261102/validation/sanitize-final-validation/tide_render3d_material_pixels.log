@@ -1,0 +1,32 @@
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2867
+    Start 2867: tide_render3d_material_pixels
+
+2867: Test command: C:\Users\blenm\.t3\worktrees\PurrEngine\t3-0f6a1f0b\build\sanitize\bin\tide_render3d_material_pixels.exe
+2867: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize/packages
+2867: Environment variables: 
+2867:  VK_LOADER_LAYERS_DISABLE=~implicit~
+2867:  TIDE_VULKAN_VALIDATION=1
+2867:  VK_ADD_LAYER_PATH=C:/VulkanSDK/1.4.363.0/Bin
+2867: Test timeout computed to be: 10000000
+2867: renderer: Vulkan
+2867: ok: Render3D material maps, raw alpha-zero numbers, TBN, AO, emission/HDR, cutout/shadows, parallax, sorted transparency/depth/LOD, 1x/2x and unchanged match hashes
+1/1 Test #2867: tide_render3d_material_pixels ....   Passed    0.93 sec
+
+The following tests passed:
+	tide_render3d_material_pixels
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+gpu    =   0.93 sec*proc (1 test)
+
+Total Test time (real) =   1.00 sec
