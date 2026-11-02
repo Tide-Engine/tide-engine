@@ -229,6 +229,105 @@ static inline __attribute__((always_inline)) const void *tide_list_view_at(tide_
     return (const char *)tide_page_data(c) + place;
 }
 
+// A list a loop indexes, found once before the loop, for a loop the compiler
+// has shown keeps the list's shape: nothing in it adds, removes or reassigns
+// the list or what holds it, nor hands either to other code. So its count and
+// where its elements are hold for the whole loop, and an element is a bounds
+// check and a load away, where tide_list_cache checks that the run it found
+// still holds at every element. A list in chunks finds a chunk the first time
+// one of its elements is read, and makes the chunk's page the world's own the
+// first time one is written, in a table of TIDE_LIST_LOOP_WAYS chunks by their
+// numbers, so indexes that go back and forth between a few chunks, as a mesh's
+// triangle corners do, find each one once. A chunk read before it's written is
+// found again as the world's own, which every later read of it then reads.
+// A page made the world's own moves the heap (tide_heap.moves), which only
+// ever leaves the old page to a snapshot, where it's still read rightly.
+#define TIDE_LIST_LOOP_WAYS 16u
+
+typedef struct tide_list_loop {
+    uint8_t *flat;              // Side by side: its elements; NULL in chunks or with none
+    const uint64_t *directory;  // In chunks: each chunk's heap offset
+    uint64_t block;             // Side by side, in a world: the list's block, made the world's own to write
+    uint32_t count;             // Its elements, 0 for none
+    uint32_t where;             // Its heap (TIDE_IN_MATCH, ...), or TIDE_IN_SCRATCH
+    bool flat_own;              // `flat` is written where it is
+    uint32_t tag[TIDE_LIST_LOOP_WAYS];    // Each way's chunk number + 1, 0 for none
+    bool own[TIDE_LIST_LOOP_WAYS];        // ...and whether it's the world's own, to write
+    uint8_t *chunk[TIDE_LIST_LOOP_WAYS];  // ...and its first element
+} tide_list_loop;
+
+// The chunk for element `i` found, read or to write: its first element, or NULL
+// where it can't be written (the confirmed world's).
+uint8_t *tide_list_loop_chunk(tide_list_loop *v, uint32_t n, uint32_t way, bool write);
+// A list side by side made the world's own, to write.
+uint8_t *tide_list_loop_own(tide_list_loop *v);
+
+// The loop's view of `l`. A loop that writes elements has prepared the list
+// first (tide_list_prepare), so an asset's or the pack's elements are its own.
+static inline void tide_list_loop_find(tide_list_loop *v, const tide_list l, const uint32_t size)
+{
+    v->flat = NULL;
+    v->directory = NULL;
+    v->block = 0;
+    v->count = 0u;
+    v->where = 0u;
+    v->flat_own = false;
+    for (uint32_t w = 0; w < TIDE_LIST_LOOP_WAYS; w++) v->tag[w] = 0u;
+    if (!l.at) return;
+    const uint64_t offset = tide_handle_offset(l.at);
+    v->where = tide_handle_where(l.at);
+    if (v->where == TIDE_IN_SCRATCH) {
+        tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(offset);
+        v->flat = (uint8_t *)(b + 1);
+        v->count = b->a;
+        v->flat_own = !tide_pack_holds(l.at);
+        return;
+    }
+    const tide_heap *heap = tide_heap_read(v->where);
+    if (!heap) return;
+    tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
+    const tide_page *p = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
+    const tide_block *b = (const tide_block *)(uintptr_t)((const uint8_t *)tide_page_data(p) + (size_t)(offset - ((uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT)));
+    if (b->b == TIDE_LIST_ASSET) { // Read where the asset has them; never written
+        v->flat = (uint8_t *)(uintptr_t)tide_list_asset_at(l, 0, size);
+        v->count = v->flat ? b->a : 0u;
+        return;
+    }
+    v->count = b->a;
+    if (b->b & TIDE_LIST_CHUNKED) v->directory = (const uint64_t *)(const void *)(b + 1);
+    else {
+        v->flat = (uint8_t *)(uintptr_t)(b + 1);
+        v->block = offset;
+    }
+}
+
+// Element `i`, to read: NULL past the end.
+static inline const void *tide_list_loop_at(tide_list_loop *v, const int32_t i, const uint32_t size)
+{
+    if ((uint32_t)i >= v->count) return NULL;
+    if (!v->directory) return v->flat + (size_t)(uint32_t)i * size;
+    const uint32_t per = TIDE_LIST_CHUNK / size;
+    const uint32_t n = (uint32_t)i / per;
+    const uint32_t way = n % TIDE_LIST_LOOP_WAYS;
+    const uint8_t *first = v->tag[way] == n + 1u ? v->chunk[way] : tide_list_loop_chunk(v, n, way, false);
+    return first + (size_t)((uint32_t)i - n * per) * size;
+}
+
+// Element `i`, to write: NULL past the end, or where nothing can be written.
+static inline void *tide_list_loop_at_mut(tide_list_loop *v, const int32_t i, const uint32_t size)
+{
+    if ((uint32_t)i >= v->count) return NULL;
+    if (!v->directory) {
+        uint8_t *flat = v->flat_own ? v->flat : tide_list_loop_own(v);
+        return flat ? flat + (size_t)(uint32_t)i * size : NULL;
+    }
+    const uint32_t per = TIDE_LIST_CHUNK / size;
+    const uint32_t n = (uint32_t)i / per;
+    const uint32_t way = n % TIDE_LIST_LOOP_WAYS;
+    uint8_t *first = v->tag[way] == n + 1u && v->own[way] ? v->chunk[way] : tide_list_loop_chunk(v, n, way, true);
+    return first ? first + (size_t)((uint32_t)i - n * per) * size : NULL;
+}
+
 // Only the code changing a heap writes it, so it reads the page table as it
 // left it (see tide_heap_write).
 static inline void *tide_list_at_mut(const tide_list l, const int32_t i, const uint32_t size)
