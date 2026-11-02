@@ -1,0 +1,41 @@
+{
+  "merged_source": "72d48fe9df1c85de63fa65c5dc62c72c84bac4e7",
+  "frozen_timing_source": "ac89eaf9a98043301c85256396a4cc828e6565be",
+  "shader_and_layout_blocks_identical": true,
+  "captures": [
+    {
+      "camera": "ground",
+      "changed_rgba_pixels": 0
+    },
+    {
+      "camera": "canopy",
+      "changed_rgba_pixels": 0
+    },
+    {
+      "camera": "wide",
+      "changed_rgba_pixels": 0
+    }
+  ],
+  "checks": {
+    "native": 6,
+    "web": 8
+  },
+  "logs": [
+    {
+      "path": "build/foliage-quality/test-native-leaf-first.log",
+      "sha256": "6ab67426ee9adfcfaf91b0fe5360a18458f92a774acbb88d6fef0bf0c15eae7e"
+    },
+    {
+      "path": "build/foliage-quality/test-web-leaf-first.log",
+      "sha256": "0def530d5187d5b3ab1c4778eaf1ea01a0dee06c71d8390385d9b9cee1c964e9"
+    },
+    {
+      "path": "build/foliage-quality/test-native-leaf-first-merge.log",
+      "sha256": "0770a8dc09c0a43d053b22ecc0c1d1244afc6d79e17ae360038d22f38954e9f9"
+    },
+    {
+      "path": "build/foliage-quality/test-web-leaf-first-merge.log",
+      "sha256": "7dc73473bc20f71a6e1e481dd68d96b49974c01eaf28e9ae06256aa2cb734823"
+    }
+  ]
+}

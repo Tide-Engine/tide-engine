@@ -88,8 +88,65 @@ process arguments omitted. After all final checks/captures/builds completed,
 the [second attempt](attempt-20261102T044800Z/status.json) acquired the gate at
 04:49:12.689 UTC and released/disposed it at 04:50:42.733 UTC. Recognized external
 correctness checks remained active for its 90-second quiet guard. It also
-launched zero measurement children. **New quality-path timings and speedup
-claims are withheld.** No benchmark/gate process remains queued from this task.
+launched zero measurement children. Timing claims were withheld at that stage.
+
+### Completed quiet comparisons
+
+The host became available after GI finished. The unchanged source/binary
+completed [twelve processes](attempt-20261102T064607Z/status.json), then the
+foliage-first candidate completed [twelve more](attempt-20261102T070649Z/status.json).
+Both retained all 1200/1200 expected GPU samples, clean source/binary identities,
+matching common settings, repeated per-mode world hashes and no recognized
+contention. The shared gate finally released/disposed at 07:10:53.332 UTC.
+
+The initial cohort exposed a ground-camera GPU regression: atlas process
+medians were 97.9/91.8 ms versus mesh-only 44.9/76.7 ms. Primary atlas cards
+occupied bark rows and were drawn before near leaf depth. The candidate reverses
+only the fixture's planting part order so leaf rows precede bark/proxy rows.
+No renderer pass, additional query scan, material approximation, lower resolution
+or shader expression change is introduced. Entity IDs/world hashes change with
+planting order, while each variant still preserves its own simulation state.
+
+The reordered candidate's paired results are:
+
+| Camera | CPU view-recording median change | GPU draw-interval median change |
+| --- | ---: | ---: |
+| Ground | 18.3–20.0% lower | 5.7% lower / 10.3% higher |
+| Canopy | 18.0–18.1% lower | 18.9–36.9% lower |
+| Wide | 32.2–32.8% lower | 0.2–0.6% higher |
+
+![Frozen candidate process medians and both repetitions](timing-leaf-first.svg)
+
+CPU **view recording** improves in all three views. CPU submission is separate
+and rises with the atlas in ground/canopy views. GPU results improve in canopy,
+are mixed at ground level, and are effectively neutral in wide view; there is
+no uniform GPU or FPS claim. GPU tails remain variable (ground process p95s
+reach 122–139 ms); the dots show both process medians and raw p95s remain in JSON.
+Two repetitions on one host provide local observations, not a general result.
+
+The candidate's ground atlas medians are 56.6/62.2 ms. The source cohorts were
+not interleaved with one another, so this descriptive before/after difference
+does not establish an exact causal speedup. The mesh-only control remains in
+both cohorts. See the [initial summary](timing-initial.json),
+[candidate summary](timing-leaf-first.json), [initial chart](timing-initial.svg),
+and [summary script](summarize.py).
+
+The foliage-first change passes five native ASan and seven web checks, including
+approach/retreat across every representation and transition. Three 1920x1080
+captures retain exact work counts and change 4/18/0 RGBA pixels for
+ground/canopy/wide (2073600 pixels each), consistent with depth ownership at
+touching surfaces. They are close to identical, not pixel equivalent.
+[Image evidence](leaf-first-equivalence.json) records decoded hashes and deltas.
+Regenerated closure identifiers change raw shader bytes; shader expressions were
+not edited. The original visual witnesses above precede this ordering change.
+
+Timings are frozen to source `ac89eaf9a98043301c85256396a4cc828e6565be` and
+binary SHA256 `f87eb9a1ffe5712cb19dd1a5f8e25d426184993655a0330887841ebe050abaa1`.
+Merging dev `8dfacea84` adds compiler list-loop views. Rebuilding the affected
+forest/loop-view targets passes six native and eight web checks; three new
+captures match the frozen candidate exactly, as do GPU programs/layouts.
+[Merge validation](leaf-first-merge-validation.json) pins the coverage.
+Post-merge CPU performance was not remeasured. No benchmark/gate remains queued.
 
 Other native OSes, mobile, Unity execution and hardware-web performance were not
 run locally. No extra CI run was dispatched.

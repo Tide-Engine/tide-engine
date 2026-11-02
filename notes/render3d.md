@@ -22,8 +22,14 @@ representation/draw/vertex counts. Ground/canopy/wide change 4/18/0 RGBA pixels
 out of 2073600 each, consistent with LESS_OR_EQUAL depth ownership at touching
 surfaces; this is not pixel equivalence. No shader expressions were edited;
 source-position changes regenerate callback identifiers, so raw shader byte
-identity is not claimed. Paired timing evidence is retained in the foliage
-report; the reordered candidate's measurement check follows this experiment.
+identity is not claimed. The candidate's twelve-process/1200-sample quiet cohort
+passes. Paired CPU view-recording medians are 18–33% lower with the atlas;
+canopy GPU improves, ground is mixed and wide is effectively neutral. Separate
+source cohorts are not an interleaved causal test of the ordering change, and
+these intervals are not FPS. Detailed ranges and tails remain in the report.
+After merging compiler list-loop work from dev 8dfacea84, six native/eight web
+checks pass; three captures and GPU programs/layouts match the frozen candidate.
+The original timing cohort remains pinned; post-merge CPU was not remeasured.
 
 ## Foliage quality reference and moving representations (2026-11-02)
 

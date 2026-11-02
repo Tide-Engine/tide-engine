@@ -920,10 +920,11 @@
   "limitations": [
     "Focused integration checks, not full CTest suites",
     "Capture timing fields are diagnostics only",
-    "No quiet paired timing claim",
-    "No mobile, other desktop OS, Unity execution or hardware-web performance coverage"
+    "No mobile, other desktop OS, Unity execution or hardware-web performance coverage",
+    "Two paired process repetitions per camera/mode; CPU view recording is not total CPU time",
+    "Source cohorts were not interleaved; post-merge CPU performance not remeasured"
   ],
-  "measurement_status": "withheld: both bounded quiet guards timed out; zero timing children",
+  "measurement_status": "completed: two frozen twelve-process cohorts,2400/2400GPU samples,no recognized contention; no uniform GPU/FPS claim",
   "quiet_attempts": [
     {
       "path": "bench/results/foliage-quality-20261102/attempt-20261102T043149Z/status.json",
@@ -937,5 +938,17 @@
       "processes": 0,
       "sha256": "fb603a259e359db6d6c703ccefde14fd5b92ae36355af9a62852b9456c6aa2f2"
     }
-  ]
+  ],
+  "followup": {
+    "initial": "timing-initial.json",
+    "candidate": "timing-leaf-first.json",
+    "image_comparison": "leaf-first-equivalence.json",
+    "merge_validation": "leaf-first-merge-validation.json",
+    "native_before_merge": 5,
+    "web_before_merge": 7,
+    "native_after_merge": 6,
+    "web_after_merge": 8,
+    "timing_processes": 24,
+    "gpu_samples": 2400
+  }
 }

@@ -16,6 +16,13 @@ checks pass. Three captures retain identical work counts, changing 4/18/0 pixels
 for ground/canopy/wide. Initial raw rows, per-pair summaries, image comparison
 and the subsequent candidate cohort are recorded in
 [the foliage report](../bench/results/foliage-quality-20261102/README.md).
+The candidate also passes twelve processes/1200 GPU samples without recognized
+contention. Atlas CPU view-recording medians are 18–33% lower; GPU canopy improves,
+ground is mixed and wide is effectively neutral. This is not a general GPU/FPS
+win or a directly interleaved before/after source comparison. The final gate
+released/disposed at 07:10:53.332 UTC. Merging dev 8dfacea84 passes six native and
+eight web affected checks with exact candidate capture/program equality;
+post-merge CPU timings were not rerun. No forest measurement remains queued.
 
 ## Forest foliage quality and moving representations (2026-11-02)
 
