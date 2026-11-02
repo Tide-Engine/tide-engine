@@ -1,0 +1,24 @@
+{
+  "source_sha": "b1c69748f47a800269fae11fbf7d4f3370df7c8c",
+  "binary_sha256": "d54420435d89e0ed455c88665b26f7826f32d82536391d2f8f1a53f5affc3318",
+  "method": "Single supplemental native Vulkan process in the same coordinated quiet window, before notifying the other task that measurements finished. Not pooled with the three-trial groups.",
+  "arguments": [
+    "--scene",
+    "district",
+    "--buildings",
+    "64",
+    "--mode",
+    "update4",
+    "--travel",
+    "--moving-light",
+    "--frames",
+    "240",
+    "--warmup",
+    "1"
+  ],
+  "gpu_samples": 240,
+  "frames": 240,
+  "log_created_utc": "2026-11-02T00:45:24.906269+00:00",
+  "row_written_utc": "2026-11-02T00:45:41.702024+00:00",
+  "observed_completed_utc": "2026-11-02T00:45:59+00:00"
+}

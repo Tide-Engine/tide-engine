@@ -253,6 +253,27 @@ adaptive implementation's cost. Other native OSes, Android, Unity execution and
 device-loss recovery are not locally exercised. No dev merge or CI dispatch is
 part of this work.
 
+The controlled source is `b1c69748f47a800269fae11fbf7d4f3370df7c8c` on the
+queried Ryzen 9 7900X / RTX 4080 SUPER, NVIDIA 617.42, native Vulkan 960x720.
+All 30 planned processes retain 6300 GPU samples. Across three 100-frame process
+medians, the 256-building scene costs 1.551456 ms whole-frame GPU / 1.1064 ms
+CPU recording in the settled idle cache, and 3.277920 ms GPU / 1.4061 ms CPU
+with a moving light and four actual captures/frame. GI-off is 0.349088 ms GPU /
+0.8716 ms CPU. Moving-light also changes direct shadow work, so subtraction does
+not isolate GI cost. CPU scene bookkeeping/live capture queries still scale with
+instances; no fully sublinear CPU or general game-FPS claim follows.
+
+Three separate 1200-frame static runs reach aged background refresh: median GPU
+1.562624 ms and p95 3.620864 ms, CPU recording median 1.1682 ms and p95 2.0463 ms,
+with 0.602 captures/frame on average. A separate single 240-frame camera-travel
+and moving-light run retains all 240 samples: GPU median/p95 3.927392/6.642688 ms,
+CPU recording 0.5579/14.4221 ms. Synchronous topology reconstruction remains a
+streaming CPU spike, and the ending field still has 440 pending captures/refreshes
+at the four-update budget. These limits remain experimental work, not an
+unqualified large-world performance or fully converged streaming-quality claim.
+The report retains ranges, raw rows, source/binary hashes, actual captures,
+CPU-selected placement maps and an interrupted pre-window start separately.
+
 ## Spatial quality follow-up (2026-11-01)
 
 The owner's "wobbling" report means uneven bands in the still image, not

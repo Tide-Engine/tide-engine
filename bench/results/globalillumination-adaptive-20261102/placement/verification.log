@@ -1,0 +1,3 @@
+room.json instances 7 probes 364 blocks 46 viewDistance 48 dirty CPU records 8 block spacings [1.5]
+district64-near.json instances 448 probes 510 blocks 74 viewDistance 48 dirty CPU records 10 block spacings [1.5, 3, 6, 12]
+district64-overview.json instances 448 probes 502 blocks 77 viewDistance 400 dirty CPU records 2 block spacings [12, 24]

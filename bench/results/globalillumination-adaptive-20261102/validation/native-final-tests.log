@@ -1,0 +1,22 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize
+    Start 2806: bench_globalillumination
+1/7 Test #2806: bench_globalillumination ..................   Passed   39.00 sec
+    Start 2807: bench_globalillumination_opengl
+2/7 Test #2807: bench_globalillumination_opengl ...........   Passed    6.88 sec
+    Start 2845: tide_globalillumination
+3/7 Test #2845: tide_globalillumination ...................   Passed    1.42 sec
+    Start 2853: tide_globalillumination_skinning
+4/7 Test #2853: tide_globalillumination_skinning ..........   Passed   22.71 sec
+    Start 2854: tide_globalillumination_skinning_opengl
+5/7 Test #2854: tide_globalillumination_skinning_opengl ...   Passed    7.76 sec
+    Start 2855: tide_globalillumination_pixels
+6/7 Test #2855: tide_globalillumination_pixels ............   Passed    5.61 sec
+    Start 2856: tide_globalillumination_pixels_opengl
+7/7 Test #2856: tide_globalillumination_pixels_opengl .....   Passed    9.28 sec
+
+100% tests passed, 0 tests failed out of 7
+
+Label Time Summary:
+gpu    =  91.25 sec*proc (6 tests)
+
+Total Test time (real) =  92.85 sec

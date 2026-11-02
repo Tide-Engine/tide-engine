@@ -1,0 +1,242 @@
+[
+  {
+    "sequence": 1,
+    "trial": 1,
+    "buildings": 1,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 2,
+    "trial": 1,
+    "buildings": 1,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 3,
+    "trial": 1,
+    "buildings": 1,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 4,
+    "trial": 1,
+    "buildings": 64,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 5,
+    "trial": 1,
+    "buildings": 64,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 6,
+    "trial": 1,
+    "buildings": 64,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 7,
+    "trial": 1,
+    "buildings": 256,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 8,
+    "trial": 1,
+    "buildings": 256,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 9,
+    "trial": 1,
+    "buildings": 256,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 10,
+    "trial": 2,
+    "buildings": 256,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 11,
+    "trial": 2,
+    "buildings": 256,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 12,
+    "trial": 2,
+    "buildings": 256,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 13,
+    "trial": 2,
+    "buildings": 64,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 14,
+    "trial": 2,
+    "buildings": 64,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 15,
+    "trial": 2,
+    "buildings": 64,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 16,
+    "trial": 2,
+    "buildings": 1,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 17,
+    "trial": 2,
+    "buildings": 1,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 18,
+    "trial": 2,
+    "buildings": 1,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 19,
+    "trial": 3,
+    "buildings": 1,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 20,
+    "trial": 3,
+    "buildings": 1,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 21,
+    "trial": 3,
+    "buildings": 1,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 22,
+    "trial": 3,
+    "buildings": 64,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 23,
+    "trial": 3,
+    "buildings": 64,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 24,
+    "trial": 3,
+    "buildings": 64,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 25,
+    "trial": 3,
+    "buildings": 256,
+    "case": "off",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 26,
+    "trial": 3,
+    "buildings": 256,
+    "case": "static-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 27,
+    "trial": 3,
+    "buildings": 256,
+    "case": "moving-light-update4",
+    "frames": 100,
+    "warmup": 20
+  },
+  {
+    "sequence": 28,
+    "trial": 1,
+    "buildings": 256,
+    "case": "long-static-update4",
+    "frames": 1200,
+    "warmup": 20
+  },
+  {
+    "sequence": 29,
+    "trial": 2,
+    "buildings": 256,
+    "case": "long-static-update4",
+    "frames": 1200,
+    "warmup": 20
+  },
+  {
+    "sequence": 30,
+    "trial": 3,
+    "buildings": 256,
+    "case": "long-static-update4",
+    "frames": 1200,
+    "warmup": 20
+  }
+]

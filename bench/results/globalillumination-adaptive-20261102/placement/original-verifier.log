@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "C:\Users\blenm\.t3\worktrees\PurrEngine\t3-0f6a1f0b\bench\results\globalillumination-adaptive-20261102\placement\verify-original-clean-assumption.py", line 23, in <module>
+    assert probe["captured"] and not probe["dirty"]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

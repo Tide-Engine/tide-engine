@@ -1,0 +1,8 @@
+{
+  "stopped_utc": "2026-11-02T00:32:36.1057796+00:00",
+  "reason": "A short quiet gap let the first GI-off process finish; unrelated builds restarted before the second case. Stopped the runner while case2 was waiting at the quiet gate so the final comparison can use one coordinated quiet window. No raw rows were removed or rewritten.",
+  "completed_processes": 1,
+  "last_completed_utc": "2026-11-02T00:30:53.2656086+00:00",
+  "external_build_restart_utc": "2026-11-02T00:30:56+00:00",
+  "included_in_final_summary": false
+}

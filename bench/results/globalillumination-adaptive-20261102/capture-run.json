@@ -1,0 +1,78 @@
+{
+  "source_sha": "b1c69748f47a800269fae11fbf7d4f3370df7c8c",
+  "binary_sha256": "D54420435D89E0ED455C88665B26F7826F32D82536391D2F8F1A53F5AFFC3318",
+  "note": "Actual captures under concurrent build load. Their timing fields are not controlled performance evidence.",
+  "cases": [
+    {
+      "key": "room-on",
+      "frames": 1,
+      "args": [
+        "--scene",
+        "room",
+        "--mode",
+        "update4"
+      ]
+    },
+    {
+      "key": "room-off",
+      "frames": 1,
+      "args": [
+        "--scene",
+        "room",
+        "--mode",
+        "off"
+      ]
+    },
+    {
+      "key": "room-probes",
+      "frames": 1,
+      "args": [
+        "--scene",
+        "room",
+        "--mode",
+        "update4",
+        "--debug"
+      ]
+    },
+    {
+      "key": "district-on",
+      "frames": 1,
+      "args": [
+        "--scene",
+        "district",
+        "--buildings",
+        "256",
+        "--mode",
+        "update4"
+      ]
+    },
+    {
+      "key": "district-probes",
+      "frames": 1,
+      "args": [
+        "--scene",
+        "district",
+        "--buildings",
+        "64",
+        "--mode",
+        "update4",
+        "--overview",
+        "--debug"
+      ]
+    },
+    {
+      "key": "travel",
+      "frames": 240,
+      "args": [
+        "--scene",
+        "district",
+        "--buildings",
+        "64",
+        "--mode",
+        "update4",
+        "--travel",
+        "--moving-light"
+      ]
+    }
+  ]
+}

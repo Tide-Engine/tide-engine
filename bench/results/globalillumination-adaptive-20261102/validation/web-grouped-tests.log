@@ -1,0 +1,45 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-debug
+      Start 2689: bench_globalillumination
+ 1/18 Test #2689: bench_globalillumination .........................   Passed   57.44 sec
+      Start 2690: bench_globalillumination_webgpu
+ 2/18 Test #2690: bench_globalillumination_webgpu ..................   Passed   26.26 sec
+      Start 2725: tide_globalillumination
+ 3/18 Test #2725: tide_globalillumination ..........................   Passed    3.04 sec
+      Start 2733: tide_globalillumination_skinning
+ 4/18 Test #2733: tide_globalillumination_skinning .................   Passed    8.44 sec
+      Start 2734: tide_globalillumination_skinning_d3d11
+ 5/18 Test #2734: tide_globalillumination_skinning_d3d11 ...........   Passed   22.55 sec
+      Start 2735: tide_globalillumination_skinning_webgpu
+ 6/18 Test #2735: tide_globalillumination_skinning_webgpu ..........   Passed   62.75 sec
+      Start 2736: tide_globalillumination_pixels_analytic
+ 7/18 Test #2736: tide_globalillumination_pixels_analytic ..........   Passed    6.76 sec
+      Start 2737: tide_globalillumination_pixels_analytic_d3d11
+ 8/18 Test #2737: tide_globalillumination_pixels_analytic_d3d11 ....   Passed   23.23 sec
+      Start 2738: tide_globalillumination_pixels_analytic_webgpu
+ 9/18 Test #2738: tide_globalillumination_pixels_analytic_webgpu ...   Passed   31.12 sec
+      Start 2739: tide_globalillumination_pixels_room
+10/18 Test #2739: tide_globalillumination_pixels_room ..............   Passed   78.48 sec
+      Start 2740: tide_globalillumination_pixels_room_d3d11
+11/18 Test #2740: tide_globalillumination_pixels_room_d3d11 ........   Passed  119.92 sec
+      Start 2741: tide_globalillumination_pixels_room_webgpu
+12/18 Test #2741: tide_globalillumination_pixels_room_webgpu .......   Passed   55.28 sec
+      Start 2742: tide_globalillumination_pixels_direct
+13/18 Test #2742: tide_globalillumination_pixels_direct ............   Passed   70.35 sec
+      Start 2743: tide_globalillumination_pixels_direct_d3d11
+14/18 Test #2743: tide_globalillumination_pixels_direct_d3d11 ......   Passed  112.13 sec
+      Start 2744: tide_globalillumination_pixels_direct_webgpu
+15/18 Test #2744: tide_globalillumination_pixels_direct_webgpu .....   Passed   64.62 sec
+      Start 2745: tide_globalillumination_pixels_geometry
+16/18 Test #2745: tide_globalillumination_pixels_geometry ..........   Passed   74.17 sec
+      Start 2746: tide_globalillumination_pixels_geometry_d3d11
+17/18 Test #2746: tide_globalillumination_pixels_geometry_d3d11 ....   Passed  108.73 sec
+      Start 2747: tide_globalillumination_pixels_geometry_webgpu
+18/18 Test #2747: tide_globalillumination_pixels_geometry_webgpu ...   Passed   58.16 sec
+
+100% tests passed, 0 tests failed out of 18
+
+Label Time Summary:
+webgl_d3d11    = 9277.35 sec*proc (5 tests)
+webgpu         = 7156.77 sec*proc (6 tests)
+
+Total Test time (real) = 983.52 sec

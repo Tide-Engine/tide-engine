@@ -1,0 +1,31 @@
+{
+  "sequence": 3,
+  "trial": 1,
+  "buildings": 1,
+  "case": "moving-light-update4",
+  "frames": 100,
+  "warmup": 20,
+  "started_utc": "2026-11-02T00:41:07.9257503+00:00",
+  "status": "passed",
+  "arguments": [
+    "--scene",
+    "district",
+    "--buildings",
+    "1",
+    "--mode",
+    "update4",
+    "--frames",
+    "100",
+    "--warmup",
+    "20",
+    "--output",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\bench\\results\\globalillumination-adaptive-20261102\\raw\\03-r1-n1-moving-light-update4.jsonl",
+    "--moving-light"
+  ],
+  "jsonl": "raw/03-r1-n1-moving-light-update4.jsonl",
+  "log": "raw/03-r1-n1-moving-light-update4.log",
+  "gpu_before": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2820, 11501, 48, 68.43, 35",
+  "gate_exit_code": 0,
+  "ended_utc": "2026-11-02T00:41:14.5518969+00:00",
+  "gpu_after": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2820, 11501, 45, 60.22, 71"
+}

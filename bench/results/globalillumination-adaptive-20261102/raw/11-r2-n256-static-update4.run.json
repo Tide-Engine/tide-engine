@@ -1,0 +1,30 @@
+{
+  "sequence": 11,
+  "trial": 2,
+  "buildings": 256,
+  "case": "static-update4",
+  "frames": 100,
+  "warmup": 20,
+  "started_utc": "2026-11-02T00:42:03.9129892+00:00",
+  "status": "passed",
+  "arguments": [
+    "--scene",
+    "district",
+    "--buildings",
+    "256",
+    "--mode",
+    "update4",
+    "--frames",
+    "100",
+    "--warmup",
+    "20",
+    "--output",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\bench\\results\\globalillumination-adaptive-20261102\\raw\\11-r2-n256-static-update4.jsonl"
+  ],
+  "jsonl": "raw/11-r2-n256-static-update4.jsonl",
+  "log": "raw/11-r2-n256-static-update4.log",
+  "gpu_before": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2835, 11501, 43, 83.25, 33",
+  "gate_exit_code": 0,
+  "ended_utc": "2026-11-02T00:42:10.9485358+00:00",
+  "gpu_after": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P0, 2820, 11501, 47, 77.90, 45"
+}

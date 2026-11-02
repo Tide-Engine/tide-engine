@@ -1,0 +1,6 @@
+# Keep captured evidence bytes and checksums intact, including native newlines.
+* -text whitespace=cr-at-eol
+# Preserve the generators' intentional path whitespace and cache EOF bytes.
+CMakeCache.txt -whitespace
+diagnostics/**/CMakeCache.txt -whitespace
+*.svg -whitespace

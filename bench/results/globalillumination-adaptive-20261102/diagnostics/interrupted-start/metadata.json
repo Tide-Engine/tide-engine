@@ -1,0 +1,114 @@
+{
+  "source_sha": "b1c69748f47a800269fae11fbf7d4f3370df7c8c",
+  "binary_path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release\\bin\\bench_globalillumination.exe",
+  "binary_sha256": "d54420435d89e0ed455c88665b26f7826f32d82536391d2f8f1a53f5affc3318",
+  "started_utc": "2026-11-02T00:30:45.8861867+00:00",
+  "complete": false,
+  "compiler": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Program Files\\LLVM\\bin\nBuild config: +alloc:rpmalloc",
+  "build_directory": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release",
+  "powershell": "7.6.9",
+  "backend": "vulkan",
+  "tide_hidden": "1",
+  "cpu": [
+    {
+      "Name": "AMD Ryzen 9 7900X 12-Core Processor            ",
+      "NumberOfCores": 12,
+      "NumberOfLogicalProcessors": 24
+    }
+  ],
+  "system": {
+    "Manufacturer": "Micro-Star International Co., Ltd.",
+    "Model": "MS-7E16",
+    "TotalPhysicalMemory": 67839250432
+  },
+  "os": {
+    "Caption": "Microsoft Windows 11 Pro",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200"
+  },
+  "graphics": [
+    {
+      "Name": "NVIDIA GeForce RTX 4080 SUPER",
+      "DriverVersion": "32.0.16.1742"
+    },
+    {
+      "Name": "AMD Radeon(TM) Graphics",
+      "DriverVersion": "32.0.11034.2"
+    }
+  ],
+  "gpu_before": "NVIDIA GeForce RTX 4080 SUPER, 617.42, P8, 210, 405, 36, 12.55, 21",
+  "notes": "Other builds/GPU tests must be stopped by the operator; other desktop activity and clocks remain uncontrolled.",
+  "input_hashes": [
+    {
+      "path": "packages/globalillumination/world.tide",
+      "sha256": "62227e3e33a0040ad458e958992c09f3650e09895713ea22b0b70e2630b9a29e"
+    },
+    {
+      "path": "packages/globalillumination/placement.tide",
+      "sha256": "e22b451a7ba9874d1c95f3cb6ca738aaaf9ea1c49e97658c72c9e79370eae39c"
+    },
+    {
+      "path": "packages/globalillumination/sampling.tide",
+      "sha256": "6c9e205295af583d6f3ecd71d7dfda0c740abbeddc61a1139365a8d16dbd36d5"
+    },
+    {
+      "path": "packages/globalillumination/globalillumination.tide",
+      "sha256": "2d998a8f994aa3647654ac4b7354d87af2745ae403a143ddd2b7ea4a3c445804"
+    },
+    {
+      "path": "packages/globalillumination/cache.c",
+      "sha256": "3e52bfa483cffdf147cdbb1aae51cb71e4761bb3c41d06d1358004382b00ae3d"
+    },
+    {
+      "path": "bench/globalillumination/game.tide",
+      "sha256": "536491377bd9d1e58ec27e2eb6b107f06cb215a3910aab5f4cb82ad4cf65f0cb"
+    },
+    {
+      "path": "bench/globalillumination/main.c",
+      "sha256": "771be02a799d42615be18edb9c179b2be7c6c86f65184a4e21b39ecff338258b"
+    },
+    {
+      "path": "packages/render3d/render3d.tide",
+      "sha256": "2be7cd8ac2dff571f54af12a778e11dbea8dad5a1cedb509cb76a83975d77b7b"
+    },
+    {
+      "path": "packages/render3d/materials.tide",
+      "sha256": "237f9b7efb0f528798dc0ab8bf0456a6cc1caeb6c27bf7d408bcdb410b829b5c"
+    },
+    {
+      "path": "packages/render3d/vertex.tide",
+      "sha256": "7a36d5680f19ee0e5893509c76cc0e6d23baf231f3187e2535d44c28269c95b9"
+    },
+    {
+      "path": "build/release/bench/tide/bench_globalillumination/game.c",
+      "sha256": "3f94b5dd2c12e6bbe0f773b5f12a77be2d9f66fb77805c7e007c25872f59ef89"
+    },
+    {
+      "path": "build/release/bench/tide/bench_globalillumination/game.h",
+      "sha256": "8634293ccde42e8988e43b4a9ba850cd5b1fd8cc6724243fc1bfc0d8ecbab27f"
+    },
+    {
+      "path": "build/release/bench/tide/bench_globalillumination/game_pack.c",
+      "sha256": "2e65bd2cfda9d5de5d818876e4f0c5e3fe0d0656f3e2631780eb87e4de53acc1"
+    },
+    {
+      "path": "build/release/packages/tide_globalillumination.lib",
+      "sha256": "f13ded6ecae31b559fa53cb9a4ba199f6cd11342a66c9d0c117c355144be893e"
+    },
+    {
+      "path": "build/release/packages/tide_render3d.lib",
+      "sha256": "f4f7a51d7f857821f90b0ae284b8a35874adf580edad0bce40fecc40b2b3a7f2"
+    },
+    {
+      "path": "build/release/engine/tide.lib",
+      "sha256": "459a7ed8e065432cc108ed1e611785c9e4dfeb6a659d7c951a300b2051d6fd8e"
+    },
+    {
+      "path": "build/release/platform/tide_platform.lib",
+      "sha256": "ac914c4a94f928d9c6d077d795094d9dd836455527f9251e095fcdbfee6490f7"
+    }
+  ],
+  "long_static_enabled": true,
+  "method": "27 adjacent processes, rounds forward/reverse/forward;100 frames,20 warmup; optional3 final N256 static1200-frame processes; gate5s; no retries or exclusions",
+  "limitations": "No continuous contention/clock guard; synchronized readback; CPU/GPU overlap; moving-light includes direct-shadow changes; no old-grid before/after comparison"
+}

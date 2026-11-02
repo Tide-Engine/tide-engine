@@ -1,0 +1,168 @@
+{
+  "source_sha": "b1c69748f47a800269fae11fbf7d4f3370df7c8c",
+  "method": "CPU-only production tide_frame recording; no platform/window/GPU submission",
+  "compiler": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)\r\nTarget: x86_64-pc-windows-msvc\r\nThread model: posix\r\nInstalledDir: C:\\Program Files\\LLVM\\bin\r\nBuild config: +alloc:rpmalloc",
+  "compiler_path": "C:/Program Files/LLVM/bin/clang.exe",
+  "compile_arguments": [
+    "-O2",
+    "-DNDEBUG",
+    "-std=c17",
+    "-D_DLL",
+    "-D_MT",
+    "-D_CRT_SECURE_NO_WARNINGS",
+    "-Xclang",
+    "--dependent-lib=msvcrt",
+    "-g",
+    "-Xclang",
+    "-gcodeview",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Werror",
+    "-fno-fast-math",
+    "-ffp-contract=off",
+    "-ffunction-sections",
+    "-fdata-sections",
+    "-IC:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/bench/tide/bench_globalillumination",
+    "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/engine/include",
+    "-IC:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/platform/include",
+    "-c",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-adaptive\\probe-export\\probe_export.c",
+    "-o",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-adaptive\\probe-export\\probe_export.c.obj"
+  ],
+  "link_arguments": [
+    "-O2",
+    "-DNDEBUG",
+    "-D_DLL",
+    "-D_MT",
+    "-Xclang",
+    "--dependent-lib=msvcrt",
+    "-g",
+    "-Xclang",
+    "-gcodeview",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-adaptive\\probe-export\\probe_export.c.obj",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/engine/tide.lib",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/tide_font_bold.lib",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/platform/tide_platform.lib",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/packages/tide_globalillumination.lib",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/packages/tide_render3d.lib",
+    "-lws2_32.lib",
+    "-lsecur32.lib",
+    "-lole32.lib",
+    "-lkernel32",
+    "-luser32",
+    "-lgdi32",
+    "-lwinspool",
+    "-lshell32",
+    "-lole32",
+    "-loleaut32",
+    "-luuid",
+    "-lcomdlg32",
+    "-ladvapi32",
+    "-loldnames",
+    "-Xlinker",
+    "/subsystem:console",
+    "-fuse-ld=lld-link",
+    "-o",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-adaptive\\probe-export\\bench_gi_probe_exporter.exe"
+  ],
+  "executable_sha256": "d2850cd0003ec139c95d5850d5c0c722e442dce05f954410264fa036e31c87ef",
+  "host_sha256": "abd712153ed79bc3524f98ab9abd257c6d0f8dcb842eea917f45a7603b387ee8",
+  "generated_header_sha256": "8634293ccde42e8988e43b4a9ba850cd5b1fd8cc6724243fc1bfc0d8ecbab27f",
+  "inputs": [
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj",
+      "sha256": "ccf275d61cb448fdb7b5372814928ed75e65d23d95778f296c1f49c539538d13"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj",
+      "sha256": "3967f1d883ffb20e29abadce4f2f626f3944b01a272878eceaa6ca2a8d593ff0"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/engine/tide.lib",
+      "sha256": "459a7ed8e065432cc108ed1e611785c9e4dfeb6a659d7c951a300b2051d6fd8e"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/tide_font_bold.lib",
+      "sha256": "8b2022148425f31e38ec637d751b9dad7797515d21e657056892c428e1bc086b"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/platform/tide_platform.lib",
+      "sha256": "ac914c4a94f928d9c6d077d795094d9dd836455527f9251e095fcdbfee6490f7"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/packages/tide_globalillumination.lib",
+      "sha256": "f13ded6ecae31b559fa53cb9a4ba199f6cd11342a66c9d0c117c355144be893e"
+    },
+    {
+      "path": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\release/packages/tide_render3d.lib",
+      "sha256": "f4f7a51d7f857821f90b0ae284b8a35874adf580edad0bce40fecc40b2b3a7f2"
+    }
+  ],
+  "started_utc": "2026-11-02T00:39:33.3039601+00:00",
+  "ended_utc": "2026-11-02T00:39:33.7706299+00:00",
+  "snapshots": [
+    {
+      "name": "room",
+      "arguments": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-adaptive\\probe-export\\room.json",
+        "--quick",
+        "--mode",
+        "update4",
+        "--frames",
+        "160",
+        "--scene",
+        "room"
+      ],
+      "json_sha256": "9184e377befdf50d000499348f1693ec75ea4cda4cf115af5358c07702c8a910",
+      "scene_instances": 7,
+      "probes": 364,
+      "blocks": 46,
+      "view_distance": 48
+    },
+    {
+      "name": "district64-near",
+      "arguments": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-adaptive\\probe-export\\district64-near.json",
+        "--quick",
+        "--mode",
+        "update4",
+        "--frames",
+        "160",
+        "--scene",
+        "district",
+        "--buildings",
+        "64"
+      ],
+      "json_sha256": "00c930a0f7e5ef8cd19e35636d298cbbd976a5ed7fc7a09cdd8f0c13bab09967",
+      "scene_instances": 448,
+      "probes": 510,
+      "blocks": 74,
+      "view_distance": 48
+    },
+    {
+      "name": "district64-overview",
+      "arguments": [
+        "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-0f6a1f0b\\build\\gi-adaptive\\probe-export\\district64-overview.json",
+        "--quick",
+        "--mode",
+        "update4",
+        "--frames",
+        "160",
+        "--scene",
+        "district",
+        "--buildings",
+        "64",
+        "--overview"
+      ],
+      "json_sha256": "d0eee0eae563f9ef7b71316ae2da7e3419b2bc6eece4086031c8ef7dc2ffe294",
+      "scene_instances": 448,
+      "probes": 502,
+      "blocks": 77,
+      "view_distance": 400
+    }
+  ]
+}

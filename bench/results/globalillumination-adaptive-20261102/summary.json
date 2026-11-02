@@ -1,0 +1,2561 @@
+{
+  "source_sha": "b1c69748f47a800269fae11fbf7d4f3370df7c8c",
+  "binary_sha256": "d54420435d89e0ed455c88665b26f7826f32d82536391d2f8f1a53f5affc3318",
+  "process_count": 30,
+  "measured_frames": 6300,
+  "gpu_samples": 6300,
+  "short_process_count": 27,
+  "short_gpu_samples": 2700,
+  "long_static_process_count": 3,
+  "long_static_gpu_samples": 3600,
+  "statistic": "Median of 3 process medians; min/max are process-median ranges. P95 uses median of 3 process p95 values, not pooled frames. 1200-frame long-static rows are separate from 100-frame rows.",
+  "limitations": "Whole-frame GPU scopes, synchronized native readback and CPU/GPU overlap. Moving-light includes changed direct shadows; no matching moving-light GI-off control. Static delta is derived process-median subtraction.",
+  "groups": [
+    {
+      "case": "off",
+      "buildings": 1,
+      "scene_meshes": 7,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "9ab0f5f6038d1932",
+      "probes": 0,
+      "probe_capacity": 0,
+      "active_blocks": 0,
+      "finest_spacing": 0,
+      "primary_spacing": 0,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 0.0133,
+          "minimum": 0.0126,
+          "maximum": 0.0133,
+          "process_values": [
+            0.0133,
+            0.0126,
+            0.0133
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 0.0154,
+          "minimum": 0.0138,
+          "maximum": 0.017,
+          "process_values": [
+            0.0138,
+            0.017,
+            0.0154
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.0315,
+          "minimum": 0.0303,
+          "maximum": 0.0316,
+          "process_values": [
+            0.0316,
+            0.0303,
+            0.0315
+          ]
+        },
+        "gpu_ms": {
+          "median": 0.235424,
+          "minimum": 0.235424,
+          "maximum": 0.235808,
+          "process_values": [
+            0.235808,
+            0.235424,
+            0.235424
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 0.240768,
+          "minimum": 0.240736,
+          "maximum": 0.241248,
+          "process_values": [
+            0.241248,
+            0.240736,
+            0.240768
+          ]
+        },
+        "setup_record_ms": {
+          "median": 0.0189,
+          "minimum": 0.0157,
+          "maximum": 0.019,
+          "process_values": [
+            0.0189,
+            0.0157,
+            0.019
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 0.0366,
+          "minimum": 0.0296,
+          "maximum": 0.042,
+          "process_values": [
+            0.042,
+            0.0296,
+            0.0366
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 0.8286,
+          "minimum": 0.8188,
+          "maximum": 0.8306,
+          "process_values": [
+            0.8306,
+            0.8188,
+            0.8286
+          ]
+        },
+        "total_readback_ms": {
+          "median": 0.8728,
+          "minimum": 0.8596,
+          "maximum": 0.8758,
+          "process_values": [
+            0.8758,
+            0.8596,
+            0.8728
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 24.0,
+          "minimum": 24.0,
+          "maximum": 24.0,
+          "process_values": [
+            24.0,
+            24.0,
+            24.0
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 12612.0,
+          "minimum": 12612.0,
+          "maximum": 12612.0,
+          "process_values": [
+            12612.0,
+            12612.0,
+            12612.0
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 28821968,
+          "minimum": 28821968,
+          "maximum": 28821968,
+          "process_values": [
+            28821968,
+            28821968,
+            28821968
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "dirty_probes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "validation_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 0.0133,
+      "cpu_record_ms_min": 0.0126,
+      "cpu_record_ms_max": 0.0133,
+      "cpu_record_p95_ms": 0.0154,
+      "cpu_record_p95_ms_min": 0.0138,
+      "cpu_record_p95_ms_max": 0.017,
+      "cpu_submit_ms": 0.0315,
+      "cpu_submit_ms_min": 0.0303,
+      "cpu_submit_ms_max": 0.0316,
+      "gpu_ms": 0.235424,
+      "gpu_ms_min": 0.235424,
+      "gpu_ms_max": 0.235808,
+      "gpu_p95_ms": 0.240768,
+      "gpu_p95_ms_min": 0.240736,
+      "gpu_p95_ms_max": 0.241248,
+      "setup_record_ms": 0.0189,
+      "setup_record_ms_min": 0.0157,
+      "setup_record_ms_max": 0.019,
+      "capture_updates_mean": 0.0,
+      "capture_updates_mean_min": 0.0,
+      "capture_updates_mean_max": 0.0,
+      "capture_candidates_mean": 0.0,
+      "capture_candidates_mean_min": 0.0,
+      "capture_candidates_mean_max": 0.0,
+      "capture_draws_mean": 0.0,
+      "capture_draws_mean_min": 0.0,
+      "capture_draws_mean_max": 0.0
+    },
+    {
+      "case": "off",
+      "buildings": 64,
+      "scene_meshes": 448,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "5d24d04ebb18feac",
+      "probes": 0,
+      "probe_capacity": 0,
+      "active_blocks": 0,
+      "finest_spacing": 0,
+      "primary_spacing": 0,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 0.2235,
+          "minimum": 0.221,
+          "maximum": 0.2304,
+          "process_values": [
+            0.221,
+            0.2235,
+            0.2304
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 0.2464,
+          "minimum": 0.2412,
+          "maximum": 0.3422,
+          "process_values": [
+            0.2464,
+            0.2412,
+            0.3422
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.183,
+          "minimum": 0.1828,
+          "maximum": 0.2179,
+          "process_values": [
+            0.1828,
+            0.183,
+            0.2179
+          ]
+        },
+        "gpu_ms": {
+          "median": 0.260928,
+          "minimum": 0.25904,
+          "maximum": 0.263616,
+          "process_values": [
+            0.260928,
+            0.25904,
+            0.263616
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 0.265696,
+          "minimum": 0.262752,
+          "maximum": 0.274496,
+          "process_values": [
+            0.265696,
+            0.262752,
+            0.274496
+          ]
+        },
+        "setup_record_ms": {
+          "median": 0.2334,
+          "minimum": 0.2318,
+          "maximum": 0.2455,
+          "process_values": [
+            0.2334,
+            0.2318,
+            0.2455
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 0.4782,
+          "minimum": 0.461,
+          "maximum": 0.5312,
+          "process_values": [
+            0.461,
+            0.5312,
+            0.4782
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 0.8546,
+          "minimum": 0.8472,
+          "maximum": 0.8857,
+          "process_values": [
+            0.8546,
+            0.8472,
+            0.8857
+          ]
+        },
+        "total_readback_ms": {
+          "median": 1.2684,
+          "minimum": 1.2585,
+          "maximum": 1.3813,
+          "process_values": [
+            1.2684,
+            1.2585,
+            1.3813
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 782.0,
+          "minimum": 782.0,
+          "maximum": 782.0,
+          "process_values": [
+            782.0,
+            782.0,
+            782.0
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 694920.0,
+          "minimum": 694920.0,
+          "maximum": 694920.0,
+          "process_values": [
+            694920.0,
+            694920.0,
+            694920.0
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 29080016,
+          "minimum": 29080016,
+          "maximum": 29080016,
+          "process_values": [
+            29080016,
+            29080016,
+            29080016
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "dirty_probes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "validation_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 0.2235,
+      "cpu_record_ms_min": 0.221,
+      "cpu_record_ms_max": 0.2304,
+      "cpu_record_p95_ms": 0.2464,
+      "cpu_record_p95_ms_min": 0.2412,
+      "cpu_record_p95_ms_max": 0.3422,
+      "cpu_submit_ms": 0.183,
+      "cpu_submit_ms_min": 0.1828,
+      "cpu_submit_ms_max": 0.2179,
+      "gpu_ms": 0.260928,
+      "gpu_ms_min": 0.25904,
+      "gpu_ms_max": 0.263616,
+      "gpu_p95_ms": 0.265696,
+      "gpu_p95_ms_min": 0.262752,
+      "gpu_p95_ms_max": 0.274496,
+      "setup_record_ms": 0.2334,
+      "setup_record_ms_min": 0.2318,
+      "setup_record_ms_max": 0.2455,
+      "capture_updates_mean": 0.0,
+      "capture_updates_mean_min": 0.0,
+      "capture_updates_mean_max": 0.0,
+      "capture_candidates_mean": 0.0,
+      "capture_candidates_mean_min": 0.0,
+      "capture_candidates_mean_max": 0.0,
+      "capture_draws_mean": 0.0,
+      "capture_draws_mean_min": 0.0,
+      "capture_draws_mean_max": 0.0
+    },
+    {
+      "case": "off",
+      "buildings": 256,
+      "scene_meshes": 1792,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "5ebd58d6db90bc49",
+      "probes": 0,
+      "probe_capacity": 0,
+      "active_blocks": 0,
+      "finest_spacing": 0,
+      "primary_spacing": 0,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 0.8716,
+          "minimum": 0.8707,
+          "maximum": 0.8785,
+          "process_values": [
+            0.8716,
+            0.8785,
+            0.8707
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 0.9743,
+          "minimum": 0.9601,
+          "maximum": 1.3106,
+          "process_values": [
+            0.9743,
+            1.3106,
+            0.9601
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.6521,
+          "minimum": 0.6428,
+          "maximum": 0.6666,
+          "process_values": [
+            0.6521,
+            0.6666,
+            0.6428
+          ]
+        },
+        "gpu_ms": {
+          "median": 0.349088,
+          "minimum": 0.346912,
+          "maximum": 0.349248,
+          "process_values": [
+            0.349088,
+            0.349248,
+            0.346912
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 0.353184,
+          "minimum": 0.352352,
+          "maximum": 0.3544,
+          "process_values": [
+            0.3544,
+            0.352352,
+            0.353184
+          ]
+        },
+        "setup_record_ms": {
+          "median": 0.9188,
+          "minimum": 0.8836,
+          "maximum": 0.9208,
+          "process_values": [
+            0.9208,
+            0.9188,
+            0.8836
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 1.8199,
+          "minimum": 1.7569,
+          "maximum": 1.8224,
+          "process_values": [
+            1.8199,
+            1.8224,
+            1.7569
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 0.9585,
+          "minimum": 0.946,
+          "maximum": 0.9726,
+          "process_values": [
+            0.9585,
+            0.9726,
+            0.946
+          ]
+        },
+        "total_readback_ms": {
+          "median": 2.5024,
+          "minimum": 2.4897,
+          "maximum": 2.5795,
+          "process_values": [
+            2.5024,
+            2.5795,
+            2.4897
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 3086.0,
+          "minimum": 3086.0,
+          "maximum": 3086.0,
+          "process_values": [
+            3086.0,
+            3086.0,
+            3086.0
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 2768520.0,
+          "minimum": 2768520.0,
+          "maximum": 2768520.0,
+          "process_values": [
+            2768520.0,
+            2768520.0,
+            2768520.0
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 29866448,
+          "minimum": 29866448,
+          "maximum": 29866448,
+          "process_values": [
+            29866448,
+            29866448,
+            29866448
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "dirty_probes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "validation_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 0.8716,
+      "cpu_record_ms_min": 0.8707,
+      "cpu_record_ms_max": 0.8785,
+      "cpu_record_p95_ms": 0.9743,
+      "cpu_record_p95_ms_min": 0.9601,
+      "cpu_record_p95_ms_max": 1.3106,
+      "cpu_submit_ms": 0.6521,
+      "cpu_submit_ms_min": 0.6428,
+      "cpu_submit_ms_max": 0.6666,
+      "gpu_ms": 0.349088,
+      "gpu_ms_min": 0.346912,
+      "gpu_ms_max": 0.349248,
+      "gpu_p95_ms": 0.353184,
+      "gpu_p95_ms_min": 0.352352,
+      "gpu_p95_ms_max": 0.3544,
+      "setup_record_ms": 0.9188,
+      "setup_record_ms_min": 0.8836,
+      "setup_record_ms_max": 0.9208,
+      "capture_updates_mean": 0.0,
+      "capture_updates_mean_min": 0.0,
+      "capture_updates_mean_max": 0.0,
+      "capture_candidates_mean": 0.0,
+      "capture_candidates_mean_min": 0.0,
+      "capture_candidates_mean_max": 0.0,
+      "capture_draws_mean": 0.0,
+      "capture_draws_mean_min": 0.0,
+      "capture_draws_mean_max": 0.0
+    },
+    {
+      "case": "static-update4",
+      "buildings": 1,
+      "scene_meshes": 7,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "9ab0f5f6038d1932",
+      "probes": 364,
+      "probe_capacity": 512,
+      "active_blocks": 46,
+      "finest_spacing": 1.5,
+      "primary_spacing": 1.5,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 0.0191,
+          "minimum": 0.0186,
+          "maximum": 0.0197,
+          "process_values": [
+            0.0191,
+            0.0186,
+            0.0197
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 0.0272,
+          "minimum": 0.0237,
+          "maximum": 0.0273,
+          "process_values": [
+            0.0273,
+            0.0237,
+            0.0272
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.0341,
+          "minimum": 0.0319,
+          "maximum": 0.0347,
+          "process_values": [
+            0.0341,
+            0.0319,
+            0.0347
+          ]
+        },
+        "gpu_ms": {
+          "median": 1.414624,
+          "minimum": 1.409952,
+          "maximum": 1.416128,
+          "process_values": [
+            1.416128,
+            1.409952,
+            1.414624
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 1.972416,
+          "minimum": 1.738624,
+          "maximum": 2.062784,
+          "process_values": [
+            1.972416,
+            1.738624,
+            2.062784
+          ]
+        },
+        "setup_record_ms": {
+          "median": 2.6158,
+          "minimum": 2.6138,
+          "maximum": 2.6767,
+          "process_values": [
+            2.6158,
+            2.6138,
+            2.6767
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 7.7781,
+          "minimum": 7.7071,
+          "maximum": 8.2167,
+          "process_values": [
+            7.7071,
+            7.7781,
+            8.2167
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 2.0733,
+          "minimum": 2.0241,
+          "maximum": 2.0964,
+          "process_values": [
+            2.0733,
+            2.0241,
+            2.0964
+          ]
+        },
+        "total_readback_ms": {
+          "median": 2.1271,
+          "minimum": 2.0812,
+          "maximum": 2.1572,
+          "process_values": [
+            2.1271,
+            2.0812,
+            2.1572
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 24.0,
+          "minimum": 24.0,
+          "maximum": 24.0,
+          "process_values": [
+            24.0,
+            24.0,
+            24.0
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 12612.0,
+          "minimum": 12612.0,
+          "maximum": 12612.0,
+          "process_values": [
+            12612.0,
+            12612.0,
+            12612.0
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 33220560,
+          "minimum": 33220560,
+          "maximum": 33220560,
+          "process_values": [
+            33220560,
+            33220560,
+            33220560
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "dirty_probes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 120,
+          "minimum": 120,
+          "maximum": 120,
+          "process_values": [
+            120,
+            120,
+            120
+          ]
+        },
+        "validation_frames": {
+          "median": 23,
+          "minimum": 23,
+          "maximum": 23,
+          "process_values": [
+            23,
+            23,
+            23
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 0.0191,
+      "cpu_record_ms_min": 0.0186,
+      "cpu_record_ms_max": 0.0197,
+      "cpu_record_p95_ms": 0.0272,
+      "cpu_record_p95_ms_min": 0.0237,
+      "cpu_record_p95_ms_max": 0.0273,
+      "cpu_submit_ms": 0.0341,
+      "cpu_submit_ms_min": 0.0319,
+      "cpu_submit_ms_max": 0.0347,
+      "gpu_ms": 1.414624,
+      "gpu_ms_min": 1.409952,
+      "gpu_ms_max": 1.416128,
+      "gpu_p95_ms": 1.972416,
+      "gpu_p95_ms_min": 1.738624,
+      "gpu_p95_ms_max": 2.062784,
+      "setup_record_ms": 2.6158,
+      "setup_record_ms_min": 2.6138,
+      "setup_record_ms_max": 2.6767,
+      "capture_updates_mean": 0.0,
+      "capture_updates_mean_min": 0.0,
+      "capture_updates_mean_max": 0.0,
+      "capture_candidates_mean": 0.0,
+      "capture_candidates_mean_min": 0.0,
+      "capture_candidates_mean_max": 0.0,
+      "capture_draws_mean": 0.0,
+      "capture_draws_mean_min": 0.0,
+      "capture_draws_mean_max": 0.0,
+      "derived_static_gpu_delta_ms": {
+        "median": 1.1792,
+        "process_differences": [
+          1.18032,
+          1.174528,
+          1.1792
+        ]
+      }
+    },
+    {
+      "case": "static-update4",
+      "buildings": 64,
+      "scene_meshes": 448,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "5d24d04ebb18feac",
+      "probes": 510,
+      "probe_capacity": 512,
+      "active_blocks": 74,
+      "finest_spacing": 1.5,
+      "primary_spacing": 1.5,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 0.2791,
+          "minimum": 0.2776,
+          "maximum": 0.2793,
+          "process_values": [
+            0.2776,
+            0.2793,
+            0.2791
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 0.3461,
+          "minimum": 0.3456,
+          "maximum": 0.4067,
+          "process_values": [
+            0.3461,
+            0.3456,
+            0.4067
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.1865,
+          "minimum": 0.1864,
+          "maximum": 0.188,
+          "process_values": [
+            0.1865,
+            0.188,
+            0.1864
+          ]
+        },
+        "gpu_ms": {
+          "median": 1.47184,
+          "minimum": 1.469792,
+          "maximum": 1.4736,
+          "process_values": [
+            1.47184,
+            1.469792,
+            1.4736
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 1.82832,
+          "minimum": 1.823392,
+          "maximum": 2.117504,
+          "process_values": [
+            1.823392,
+            1.82832,
+            2.117504
+          ]
+        },
+        "setup_record_ms": {
+          "median": 15.5445,
+          "minimum": 15.5255,
+          "maximum": 15.767,
+          "process_values": [
+            15.5255,
+            15.5445,
+            15.767
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 48.7377,
+          "minimum": 48.4496,
+          "maximum": 48.8975,
+          "process_values": [
+            48.8975,
+            48.7377,
+            48.4496
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 2.093,
+          "minimum": 2.0891,
+          "maximum": 2.0959,
+          "process_values": [
+            2.0959,
+            2.0891,
+            2.093
+          ]
+        },
+        "total_readback_ms": {
+          "median": 2.5965,
+          "minimum": 2.5629,
+          "maximum": 2.6084,
+          "process_values": [
+            2.6084,
+            2.5965,
+            2.5629
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 782.0,
+          "minimum": 782.0,
+          "maximum": 782.0,
+          "process_values": [
+            782.0,
+            782.0,
+            782.0
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 694920.0,
+          "minimum": 694920.0,
+          "maximum": 694920.0,
+          "process_values": [
+            694920.0,
+            694920.0,
+            694920.0
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 33712080,
+          "minimum": 33712080,
+          "maximum": 33712080,
+          "process_values": [
+            33712080,
+            33712080,
+            33712080
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "dirty_probes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 120,
+          "minimum": 120,
+          "maximum": 120,
+          "process_values": [
+            120,
+            120,
+            120
+          ]
+        },
+        "validation_frames": {
+          "median": 32,
+          "minimum": 32,
+          "maximum": 32,
+          "process_values": [
+            32,
+            32,
+            32
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 0.2791,
+      "cpu_record_ms_min": 0.2776,
+      "cpu_record_ms_max": 0.2793,
+      "cpu_record_p95_ms": 0.3461,
+      "cpu_record_p95_ms_min": 0.3456,
+      "cpu_record_p95_ms_max": 0.4067,
+      "cpu_submit_ms": 0.1865,
+      "cpu_submit_ms_min": 0.1864,
+      "cpu_submit_ms_max": 0.188,
+      "gpu_ms": 1.47184,
+      "gpu_ms_min": 1.469792,
+      "gpu_ms_max": 1.4736,
+      "gpu_p95_ms": 1.82832,
+      "gpu_p95_ms_min": 1.823392,
+      "gpu_p95_ms_max": 2.117504,
+      "setup_record_ms": 15.5445,
+      "setup_record_ms_min": 15.5255,
+      "setup_record_ms_max": 15.767,
+      "capture_updates_mean": 0.0,
+      "capture_updates_mean_min": 0.0,
+      "capture_updates_mean_max": 0.0,
+      "capture_candidates_mean": 0.0,
+      "capture_candidates_mean_min": 0.0,
+      "capture_candidates_mean_max": 0.0,
+      "capture_draws_mean": 0.0,
+      "capture_draws_mean_min": 0.0,
+      "capture_draws_mean_max": 0.0,
+      "derived_static_gpu_delta_ms": {
+        "median": 1.210752,
+        "process_differences": [
+          1.210912,
+          1.210752,
+          1.209984
+        ]
+      }
+    },
+    {
+      "case": "static-update4",
+      "buildings": 256,
+      "scene_meshes": 1792,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "5ebd58d6db90bc49",
+      "probes": 510,
+      "probe_capacity": 512,
+      "active_blocks": 74,
+      "finest_spacing": 1.5,
+      "primary_spacing": 1.5,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 1.1064,
+          "minimum": 1.1038,
+          "maximum": 1.1359,
+          "process_values": [
+            1.1064,
+            1.1038,
+            1.1359
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 1.1937,
+          "minimum": 1.1754,
+          "maximum": 1.5231,
+          "process_values": [
+            1.1754,
+            1.1937,
+            1.5231
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.6563,
+          "minimum": 0.6455,
+          "maximum": 0.6611,
+          "process_values": [
+            0.6563,
+            0.6455,
+            0.6611
+          ]
+        },
+        "gpu_ms": {
+          "median": 1.551456,
+          "minimum": 1.547488,
+          "maximum": 1.556064,
+          "process_values": [
+            1.547488,
+            1.551456,
+            1.556064
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 1.956288,
+          "minimum": 1.945376,
+          "maximum": 1.964864,
+          "process_values": [
+            1.956288,
+            1.945376,
+            1.964864
+          ]
+        },
+        "setup_record_ms": {
+          "median": 25.7871,
+          "minimum": 25.5709,
+          "maximum": 25.9031,
+          "process_values": [
+            25.5709,
+            25.9031,
+            25.7871
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 92.3324,
+          "minimum": 91.5494,
+          "maximum": 92.897,
+          "process_values": [
+            91.5494,
+            92.3324,
+            92.897
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 2.1867,
+          "minimum": 2.1753,
+          "maximum": 2.2033,
+          "process_values": [
+            2.2033,
+            2.1753,
+            2.1867
+          ]
+        },
+        "total_readback_ms": {
+          "median": 3.9924,
+          "minimum": 3.9552,
+          "maximum": 4.0372,
+          "process_values": [
+            3.9924,
+            3.9552,
+            4.0372
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 3086.0,
+          "minimum": 3086.0,
+          "maximum": 3086.0,
+          "process_values": [
+            3086.0,
+            3086.0,
+            3086.0
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 2768520.0,
+          "minimum": 2768520.0,
+          "maximum": 2768520.0,
+          "process_values": [
+            2768520.0,
+            2768520.0,
+            2768520.0
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 34236368,
+          "minimum": 34236368,
+          "maximum": 34236368,
+          "process_values": [
+            34236368,
+            34236368,
+            34236368
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 0.0,
+          "minimum": 0.0,
+          "maximum": 0.0,
+          "process_values": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "dirty_probes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 120,
+          "minimum": 120,
+          "maximum": 120,
+          "process_values": [
+            120,
+            120,
+            120
+          ]
+        },
+        "validation_frames": {
+          "median": 32,
+          "minimum": 32,
+          "maximum": 32,
+          "process_values": [
+            32,
+            32,
+            32
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 1.1064,
+      "cpu_record_ms_min": 1.1038,
+      "cpu_record_ms_max": 1.1359,
+      "cpu_record_p95_ms": 1.1937,
+      "cpu_record_p95_ms_min": 1.1754,
+      "cpu_record_p95_ms_max": 1.5231,
+      "cpu_submit_ms": 0.6563,
+      "cpu_submit_ms_min": 0.6455,
+      "cpu_submit_ms_max": 0.6611,
+      "gpu_ms": 1.551456,
+      "gpu_ms_min": 1.547488,
+      "gpu_ms_max": 1.556064,
+      "gpu_p95_ms": 1.956288,
+      "gpu_p95_ms_min": 1.945376,
+      "gpu_p95_ms_max": 1.964864,
+      "setup_record_ms": 25.7871,
+      "setup_record_ms_min": 25.5709,
+      "setup_record_ms_max": 25.9031,
+      "capture_updates_mean": 0.0,
+      "capture_updates_mean_min": 0.0,
+      "capture_updates_mean_max": 0.0,
+      "capture_candidates_mean": 0.0,
+      "capture_candidates_mean_min": 0.0,
+      "capture_candidates_mean_max": 0.0,
+      "capture_draws_mean": 0.0,
+      "capture_draws_mean_min": 0.0,
+      "capture_draws_mean_max": 0.0,
+      "derived_static_gpu_delta_ms": {
+        "median": 1.202208,
+        "process_differences": [
+          1.1984,
+          1.202208,
+          1.209152
+        ]
+      }
+    },
+    {
+      "case": "moving-light-update4",
+      "buildings": 1,
+      "scene_meshes": 7,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "9ab0f5f6038d1932",
+      "probes": 364,
+      "probe_capacity": 512,
+      "active_blocks": 46,
+      "finest_spacing": 1.5,
+      "primary_spacing": 1.5,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 0.094,
+          "minimum": 0.0924,
+          "maximum": 0.1028,
+          "process_values": [
+            0.094,
+            0.1028,
+            0.0924
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 0.1259,
+          "minimum": 0.1227,
+          "maximum": 0.1446,
+          "process_values": [
+            0.1227,
+            0.1446,
+            0.1259
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.5391,
+          "minimum": 0.5226,
+          "maximum": 0.5754,
+          "process_values": [
+            0.5391,
+            0.5754,
+            0.5226
+          ]
+        },
+        "gpu_ms": {
+          "median": 2.371936,
+          "minimum": 2.360544,
+          "maximum": 2.389664,
+          "process_values": [
+            2.389664,
+            2.371936,
+            2.360544
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 3.014912,
+          "minimum": 3.002272,
+          "maximum": 3.136672,
+          "process_values": [
+            3.002272,
+            3.136672,
+            3.014912
+          ]
+        },
+        "setup_record_ms": {
+          "median": 2.6307,
+          "minimum": 2.5731,
+          "maximum": 2.8609,
+          "process_values": [
+            2.8609,
+            2.6307,
+            2.5731
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 7.8363,
+          "minimum": 7.5589,
+          "maximum": 8.2197,
+          "process_values": [
+            8.2197,
+            7.8363,
+            7.5589
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 3.0741,
+          "minimum": 3.0472,
+          "maximum": 3.148,
+          "process_values": [
+            3.0741,
+            3.148,
+            3.0472
+          ]
+        },
+        "total_readback_ms": {
+          "median": 3.7215,
+          "minimum": 3.7064,
+          "maximum": 3.8556,
+          "process_values": [
+            3.7215,
+            3.8556,
+            3.7064
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 141.7,
+          "minimum": 141.7,
+          "maximum": 141.7,
+          "process_values": [
+            141.7,
+            141.7,
+            141.7
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 31220.76,
+          "minimum": 31220.76,
+          "maximum": 31220.76,
+          "process_values": [
+            31220.76,
+            31220.76,
+            31220.76
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 2848.0,
+          "minimum": 2848.0,
+          "maximum": 2848.0,
+          "process_values": [
+            2848.0,
+            2848.0,
+            2848.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 33239036,
+          "minimum": 33239036,
+          "maximum": 33239036,
+          "process_values": [
+            33239036,
+            33239036,
+            33239036
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 4.0,
+          "minimum": 4.0,
+          "maximum": 4.0,
+          "process_values": [
+            4.0,
+            4.0,
+            4.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 24.0,
+          "minimum": 24.0,
+          "maximum": 24.0,
+          "process_values": [
+            24.0,
+            24.0,
+            24.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 28.0,
+          "minimum": 28.0,
+          "maximum": 28.0,
+          "process_values": [
+            28.0,
+            28.0,
+            28.0
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 84.7,
+          "minimum": 84.7,
+          "maximum": 84.7,
+          "process_values": [
+            84.7,
+            84.7,
+            84.7
+          ]
+        },
+        "dirty_probes": {
+          "median": 360,
+          "minimum": 360,
+          "maximum": 360,
+          "process_values": [
+            360,
+            360,
+            360
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "validation_frames": {
+          "median": 23,
+          "minimum": 23,
+          "maximum": 23,
+          "process_values": [
+            23,
+            23,
+            23
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 0.094,
+      "cpu_record_ms_min": 0.0924,
+      "cpu_record_ms_max": 0.1028,
+      "cpu_record_p95_ms": 0.1259,
+      "cpu_record_p95_ms_min": 0.1227,
+      "cpu_record_p95_ms_max": 0.1446,
+      "cpu_submit_ms": 0.5391,
+      "cpu_submit_ms_min": 0.5226,
+      "cpu_submit_ms_max": 0.5754,
+      "gpu_ms": 2.371936,
+      "gpu_ms_min": 2.360544,
+      "gpu_ms_max": 2.389664,
+      "gpu_p95_ms": 3.014912,
+      "gpu_p95_ms_min": 3.002272,
+      "gpu_p95_ms_max": 3.136672,
+      "setup_record_ms": 2.6307,
+      "setup_record_ms_min": 2.5731,
+      "setup_record_ms_max": 2.8609,
+      "capture_updates_mean": 4.0,
+      "capture_updates_mean_min": 4.0,
+      "capture_updates_mean_max": 4.0,
+      "capture_candidates_mean": 28.0,
+      "capture_candidates_mean_min": 28.0,
+      "capture_candidates_mean_max": 28.0,
+      "capture_draws_mean": 84.7,
+      "capture_draws_mean_min": 84.7,
+      "capture_draws_mean_max": 84.7
+    },
+    {
+      "case": "moving-light-update4",
+      "buildings": 64,
+      "scene_meshes": 448,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "5d24d04ebb18feac",
+      "probes": 510,
+      "probe_capacity": 512,
+      "active_blocks": 74,
+      "finest_spacing": 1.5,
+      "primary_spacing": 1.5,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 0.5064,
+          "minimum": 0.4985,
+          "maximum": 0.5225,
+          "process_values": [
+            0.5225,
+            0.4985,
+            0.5064
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 0.6613,
+          "minimum": 0.6402,
+          "maximum": 0.6614,
+          "process_values": [
+            0.6613,
+            0.6614,
+            0.6402
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 1.8756,
+          "minimum": 1.7646,
+          "maximum": 1.8778,
+          "process_values": [
+            1.8756,
+            1.7646,
+            1.8778
+          ]
+        },
+        "gpu_ms": {
+          "median": 3.236,
+          "minimum": 3.199008,
+          "maximum": 3.269088,
+          "process_values": [
+            3.199008,
+            3.236,
+            3.269088
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 4.227904,
+          "minimum": 4.199424,
+          "maximum": 4.5032,
+          "process_values": [
+            4.227904,
+            4.199424,
+            4.5032
+          ]
+        },
+        "setup_record_ms": {
+          "median": 15.5044,
+          "minimum": 15.4154,
+          "maximum": 15.5328,
+          "process_values": [
+            15.4154,
+            15.5328,
+            15.5044
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 48.6984,
+          "minimum": 48.6055,
+          "maximum": 49.6177,
+          "process_values": [
+            48.6984,
+            49.6177,
+            48.6055
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 3.9929,
+          "minimum": 3.9859,
+          "maximum": 4.0663,
+          "process_values": [
+            3.9929,
+            3.9859,
+            4.0663
+          ]
+        },
+        "total_readback_ms": {
+          "median": 6.5276,
+          "minimum": 6.3421,
+          "maximum": 6.5324,
+          "process_values": [
+            6.5276,
+            6.3421,
+            6.5324
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 1151.87,
+          "minimum": 1151.87,
+          "maximum": 1151.87,
+          "process_values": [
+            1151.87,
+            1151.87,
+            1151.87
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 774108.84,
+          "minimum": 774108.84,
+          "maximum": 774108.84,
+          "process_values": [
+            774108.84,
+            774108.84,
+            774108.84
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 2848.0,
+          "minimum": 2848.0,
+          "maximum": 2848.0,
+          "process_values": [
+            2848.0,
+            2848.0,
+            2848.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 33730908,
+          "minimum": 33730908,
+          "maximum": 33730908,
+          "process_values": [
+            33730908,
+            33730908,
+            33730908
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 4.0,
+          "minimum": 4.0,
+          "maximum": 4.0,
+          "process_values": [
+            4.0,
+            4.0,
+            4.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 24.0,
+          "minimum": 24.0,
+          "maximum": 24.0,
+          "process_values": [
+            24.0,
+            24.0,
+            24.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 183.78,
+          "minimum": 183.78,
+          "maximum": 183.78,
+          "process_values": [
+            183.78,
+            183.78,
+            183.78
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 336.87,
+          "minimum": 336.87,
+          "maximum": 336.87,
+          "process_values": [
+            336.87,
+            336.87,
+            336.87
+          ]
+        },
+        "dirty_probes": {
+          "median": 506,
+          "minimum": 506,
+          "maximum": 506,
+          "process_values": [
+            506,
+            506,
+            506
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "validation_frames": {
+          "median": 32,
+          "minimum": 32,
+          "maximum": 32,
+          "process_values": [
+            32,
+            32,
+            32
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 0.5064,
+      "cpu_record_ms_min": 0.4985,
+      "cpu_record_ms_max": 0.5225,
+      "cpu_record_p95_ms": 0.6613,
+      "cpu_record_p95_ms_min": 0.6402,
+      "cpu_record_p95_ms_max": 0.6614,
+      "cpu_submit_ms": 1.8756,
+      "cpu_submit_ms_min": 1.7646,
+      "cpu_submit_ms_max": 1.8778,
+      "gpu_ms": 3.236,
+      "gpu_ms_min": 3.199008,
+      "gpu_ms_max": 3.269088,
+      "gpu_p95_ms": 4.227904,
+      "gpu_p95_ms_min": 4.199424,
+      "gpu_p95_ms_max": 4.5032,
+      "setup_record_ms": 15.5044,
+      "setup_record_ms_min": 15.4154,
+      "setup_record_ms_max": 15.5328,
+      "capture_updates_mean": 4.0,
+      "capture_updates_mean_min": 4.0,
+      "capture_updates_mean_max": 4.0,
+      "capture_candidates_mean": 183.78,
+      "capture_candidates_mean_min": 183.78,
+      "capture_candidates_mean_max": 183.78,
+      "capture_draws_mean": 336.87,
+      "capture_draws_mean_min": 336.87,
+      "capture_draws_mean_max": 336.87
+    },
+    {
+      "case": "moving-light-update4",
+      "buildings": 256,
+      "scene_meshes": 1792,
+      "frames_per_process": 100,
+      "gpu_samples": 300,
+      "world_hash": "5ebd58d6db90bc49",
+      "probes": 510,
+      "probe_capacity": 512,
+      "active_blocks": 74,
+      "finest_spacing": 1.5,
+      "primary_spacing": 1.5,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 1.4061,
+          "minimum": 1.3837,
+          "maximum": 1.7114,
+          "process_values": [
+            1.4061,
+            1.3837,
+            1.7114
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 1.6318,
+          "minimum": 1.5968,
+          "maximum": 2.5722,
+          "process_values": [
+            1.6318,
+            1.5968,
+            2.5722
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 2.3676,
+          "minimum": 2.2937,
+          "maximum": 2.7034,
+          "process_values": [
+            2.2937,
+            2.3676,
+            2.7034
+          ]
+        },
+        "gpu_ms": {
+          "median": 3.27792,
+          "minimum": 3.254112,
+          "maximum": 3.285984,
+          "process_values": [
+            3.254112,
+            3.285984,
+            3.27792
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 4.30128,
+          "minimum": 4.250304,
+          "maximum": 4.692608,
+          "process_values": [
+            4.30128,
+            4.250304,
+            4.692608
+          ]
+        },
+        "setup_record_ms": {
+          "median": 25.4368,
+          "minimum": 25.2973,
+          "maximum": 26.5707,
+          "process_values": [
+            25.2973,
+            25.4368,
+            26.5707
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 93.9484,
+          "minimum": 93.3613,
+          "maximum": 97.6107,
+          "process_values": [
+            93.9484,
+            93.3613,
+            97.6107
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 4.0292,
+          "minimum": 3.9902,
+          "maximum": 4.2845,
+          "process_values": [
+            4.0292,
+            3.9902,
+            4.2845
+          ]
+        },
+        "total_readback_ms": {
+          "median": 7.8891,
+          "minimum": 7.8569,
+          "maximum": 8.9025,
+          "process_values": [
+            7.8569,
+            7.8891,
+            8.9025
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 3455.87,
+          "minimum": 3455.87,
+          "maximum": 3455.87,
+          "process_values": [
+            3455.87,
+            3455.87,
+            3455.87
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 2847708.84,
+          "minimum": 2847708.84,
+          "maximum": 2847708.84,
+          "process_values": [
+            2847708.84,
+            2847708.84,
+            2847708.84
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 2848.0,
+          "minimum": 2848.0,
+          "maximum": 2848.0,
+          "process_values": [
+            2848.0,
+            2848.0,
+            2848.0
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 34255196,
+          "minimum": 34255196,
+          "maximum": 34255196,
+          "process_values": [
+            34255196,
+            34255196,
+            34255196
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 4.0,
+          "minimum": 4.0,
+          "maximum": 4.0,
+          "process_values": [
+            4.0,
+            4.0,
+            4.0
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 24.0,
+          "minimum": 24.0,
+          "maximum": 24.0,
+          "process_values": [
+            24.0,
+            24.0,
+            24.0
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 183.78,
+          "minimum": 183.78,
+          "maximum": 183.78,
+          "process_values": [
+            183.78,
+            183.78,
+            183.78
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 336.87,
+          "minimum": 336.87,
+          "maximum": 336.87,
+          "process_values": [
+            336.87,
+            336.87,
+            336.87
+          ]
+        },
+        "dirty_probes": {
+          "median": 506,
+          "minimum": 506,
+          "maximum": 506,
+          "process_values": [
+            506,
+            506,
+            506
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "validation_frames": {
+          "median": 32,
+          "minimum": 32,
+          "maximum": 32,
+          "process_values": [
+            32,
+            32,
+            32
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 1.4061,
+      "cpu_record_ms_min": 1.3837,
+      "cpu_record_ms_max": 1.7114,
+      "cpu_record_p95_ms": 1.6318,
+      "cpu_record_p95_ms_min": 1.5968,
+      "cpu_record_p95_ms_max": 2.5722,
+      "cpu_submit_ms": 2.3676,
+      "cpu_submit_ms_min": 2.2937,
+      "cpu_submit_ms_max": 2.7034,
+      "gpu_ms": 3.27792,
+      "gpu_ms_min": 3.254112,
+      "gpu_ms_max": 3.285984,
+      "gpu_p95_ms": 4.30128,
+      "gpu_p95_ms_min": 4.250304,
+      "gpu_p95_ms_max": 4.692608,
+      "setup_record_ms": 25.4368,
+      "setup_record_ms_min": 25.2973,
+      "setup_record_ms_max": 26.5707,
+      "capture_updates_mean": 4.0,
+      "capture_updates_mean_min": 4.0,
+      "capture_updates_mean_max": 4.0,
+      "capture_candidates_mean": 183.78,
+      "capture_candidates_mean_min": 183.78,
+      "capture_candidates_mean_max": 183.78,
+      "capture_draws_mean": 336.87,
+      "capture_draws_mean_min": 336.87,
+      "capture_draws_mean_max": 336.87
+    }
+  ],
+  "long_static_groups": [
+    {
+      "case": "long-static-update4",
+      "buildings": 256,
+      "scene_meshes": 1792,
+      "frames_per_process": 1200,
+      "gpu_samples": 3600,
+      "world_hash": "5ebd58d6db90bc49",
+      "probes": 510,
+      "probe_capacity": 512,
+      "active_blocks": 74,
+      "finest_spacing": 1.5,
+      "primary_spacing": 1.5,
+      "metrics": {
+        "cpu_record_ms": {
+          "median": 1.1682,
+          "minimum": 1.1333,
+          "maximum": 1.1749,
+          "process_values": [
+            1.1333,
+            1.1749,
+            1.1682
+          ]
+        },
+        "cpu_record_p95_ms": {
+          "median": 2.0463,
+          "minimum": 1.5731,
+          "maximum": 2.0921,
+          "process_values": [
+            1.5731,
+            2.0921,
+            2.0463
+          ]
+        },
+        "cpu_submit_ms": {
+          "median": 0.7075,
+          "minimum": 0.6892,
+          "maximum": 0.7133,
+          "process_values": [
+            0.6892,
+            0.7133,
+            0.7075
+          ]
+        },
+        "gpu_ms": {
+          "median": 1.562624,
+          "minimum": 1.56064,
+          "maximum": 1.564576,
+          "process_values": [
+            1.562624,
+            1.56064,
+            1.564576
+          ]
+        },
+        "gpu_p95_ms": {
+          "median": 3.620864,
+          "minimum": 3.493504,
+          "maximum": 3.621568,
+          "process_values": [
+            3.621568,
+            3.620864,
+            3.493504
+          ]
+        },
+        "setup_record_ms": {
+          "median": 25.9123,
+          "minimum": 25.3326,
+          "maximum": 26.3747,
+          "process_values": [
+            25.9123,
+            26.3747,
+            25.3326
+          ]
+        },
+        "convergence_record_ms": {
+          "median": 95.3649,
+          "minimum": 92.4094,
+          "maximum": 95.8286,
+          "process_values": [
+            95.3649,
+            95.8286,
+            92.4094
+          ]
+        },
+        "completion_readback_ms": {
+          "median": 2.3655,
+          "minimum": 2.3257,
+          "maximum": 2.4233,
+          "process_values": [
+            2.3257,
+            2.4233,
+            2.3655
+          ]
+        },
+        "total_readback_ms": {
+          "median": 4.3769,
+          "minimum": 4.2298,
+          "maximum": 4.4165,
+          "process_values": [
+            4.2298,
+            4.4165,
+            4.3769
+          ]
+        },
+        "draw_calls_mean": {
+          "median": 3138.762,
+          "minimum": 3138.762,
+          "maximum": 3138.762,
+          "process_values": [
+            3138.762,
+            3138.762,
+            3138.762
+          ]
+        },
+        "submitted_vertices_mean": {
+          "median": 2779810.855,
+          "minimum": 2779810.855,
+          "maximum": 2779810.855,
+          "process_values": [
+            2779810.855,
+            2779810.855,
+            2779810.855
+          ]
+        },
+        "texture_upload_bytes_mean": {
+          "median": 29.28,
+          "minimum": 29.28,
+          "maximum": 29.28,
+          "process_values": [
+            29.28,
+            29.28,
+            29.28
+          ]
+        },
+        "gpu_memory_bytes": {
+          "median": 34255196,
+          "minimum": 34255196,
+          "maximum": 34255196,
+          "process_values": [
+            34255196,
+            34255196,
+            34255196
+          ]
+        },
+        "capture_updates_mean": {
+          "median": 0.602,
+          "minimum": 0.602,
+          "maximum": 0.602,
+          "process_values": [
+            0.602,
+            0.602,
+            0.602
+          ]
+        },
+        "capture_faces_per_frame": {
+          "median": 3.61,
+          "minimum": 3.61,
+          "maximum": 3.61,
+          "process_values": [
+            3.61,
+            3.61,
+            3.61
+          ]
+        },
+        "capture_candidates_mean": {
+          "median": 26.003,
+          "minimum": 26.003,
+          "maximum": 26.003,
+          "process_values": [
+            26.003,
+            26.003,
+            26.003
+          ]
+        },
+        "capture_draws_mean": {
+          "median": 47.798,
+          "minimum": 47.798,
+          "maximum": 47.798,
+          "process_values": [
+            47.798,
+            47.798,
+            47.798
+          ]
+        },
+        "dirty_probes": {
+          "median": 0,
+          "minimum": 0,
+          "maximum": 0,
+          "process_values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "idle_capture_frames": {
+          "median": 1039,
+          "minimum": 1039,
+          "maximum": 1039,
+          "process_values": [
+            1039,
+            1039,
+            1039
+          ]
+        },
+        "validation_frames": {
+          "median": 32,
+          "minimum": 32,
+          "maximum": 32,
+          "process_values": [
+            32,
+            32,
+            32
+          ]
+        },
+        "convergence_frames": {
+          "median": 1,
+          "minimum": 1,
+          "maximum": 1,
+          "process_values": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "cpu_record_ms": 1.1682,
+      "cpu_record_ms_min": 1.1333,
+      "cpu_record_ms_max": 1.1749,
+      "cpu_record_p95_ms": 2.0463,
+      "cpu_record_p95_ms_min": 1.5731,
+      "cpu_record_p95_ms_max": 2.0921,
+      "cpu_submit_ms": 0.7075,
+      "cpu_submit_ms_min": 0.6892,
+      "cpu_submit_ms_max": 0.7133,
+      "gpu_ms": 1.562624,
+      "gpu_ms_min": 1.56064,
+      "gpu_ms_max": 1.564576,
+      "gpu_p95_ms": 3.620864,
+      "gpu_p95_ms_min": 3.493504,
+      "gpu_p95_ms_max": 3.621568,
+      "setup_record_ms": 25.9123,
+      "setup_record_ms_min": 25.3326,
+      "setup_record_ms_max": 26.3747,
+      "capture_updates_mean": 0.602,
+      "capture_updates_mean_min": 0.602,
+      "capture_updates_mean_max": 0.602,
+      "capture_candidates_mean": 26.003,
+      "capture_candidates_mean_min": 26.003,
+      "capture_candidates_mean_max": 26.003,
+      "capture_draws_mean": 47.798,
+      "capture_draws_mean_min": 47.798,
+      "capture_draws_mean_max": 47.798
+    }
+  ]
+}
