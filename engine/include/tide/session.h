@@ -125,6 +125,13 @@ typedef struct tide_game {
     uint8_t *(*client_state)(const void *world, tide_player_id recipient, uint32_t *size);
     bool (*load_client_state)(void *world, const uint8_t *data, uint32_t size);
     uint64_t (*client_hash)(const void *world, tide_player_id recipient);
+    // Optional, with them: `world` was loaded from `had` (load_client_state
+    // or this) and is as it was loaded; it becomes what loading `data` would
+    // make it, its values alike, keeping as they are the singletons and
+    // archetypes whose bytes are the same in both. False, with the world as
+    // it was, for bytes it refuses, as load_client_state's. A lone player's
+    // client takes the server's projection every tick this way.
+    bool (*reload_client_state)(void *world, const uint8_t *data, uint32_t size, const uint8_t *had, uint32_t had_size);
     // Optional: client_hash for `count` recipients at once, into `out`, the
     // same values; what's alike for them all is worked out once. The server
     // asks for every player's after each tick.

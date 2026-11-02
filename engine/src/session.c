@@ -3616,6 +3616,12 @@ struct tide_client {
     const tide_server *host;
     uint32_t host_due;
     uint32_t taken_from, taken_to;
+    // The last projection it took, as loaded, never ticked, and the bytes it
+    // was loaded from: the next is loaded over it (reload_client_state),
+    // keeping what's alike. NULL where the game can't, or none was taken.
+    void *taken_world;
+    uint8_t *taken_bytes;
+    uint32_t taken_size;
     double tick_cost;      // Seconds one of its predicted ticks takes, a moving mean (tide_client_desc.now_ns)
     // What running ticks again costs, measured as it happens (note_tick_cost):
     // the first tick of a rollback, which has to find or make what C keeps
@@ -3883,6 +3889,18 @@ static void drop_had(tide_client *c)
     free_world(c->game, c->had);
     free(c->had);
     c->had = NULL;
+}
+
+// The last projection taken (twin_take), with its build's code, before a
+// build changes and when the client goes.
+static void drop_taken(tide_client *c)
+{
+    free_world(c->game, c->taken_world);
+    free(c->taken_world);
+    free(c->taken_bytes);
+    c->taken_world = NULL;
+    c->taken_bytes = NULL;
+    c->taken_size = 0;
 }
 
 // Whether it can start the match itself, to have a world to build the
@@ -4645,9 +4663,31 @@ static void twin_take(tide_server *s, const uint32_t tick)
 {
     tide_client *c = s->twin;
     if (!c || !twin_takes(s, c, tick) || !room_ahead(c)) return;
+    const tide_game *g = c->game;
     uint32_t size = 0;
-    uint8_t *bytes = c->game->client_state(s->world, tide_player_from_index(c->player), &size);
-    const bool ok = bytes && c->game->load_client_state(world_at(c, tick + 1u), bytes, size);
+    uint8_t *bytes = g->client_state(s->world, tide_player_from_index(c->player), &size);
+    bool ok = false;
+    if (bytes && g->reload_client_state) {
+        // Loaded over the last one taken, keeping what's alike, then shared
+        // with the client's world as a snapshot is
+        ok = c->taken_world && g->reload_client_state(c->taken_world, bytes, size, c->taken_bytes, c->taken_size);
+        if (!ok) {
+            if (!c->taken_world) c->taken_world = calloc(1, g->world_size);
+            if (!c->taken_world) tide_out_of_memory();
+            ok = g->load_client_state(c->taken_world, bytes, size);
+        }
+        if (ok) {
+            g->copy_world(world_at(c, tick + 1u), c->taken_world);
+            free(c->taken_bytes);
+            c->taken_bytes = bytes;
+            c->taken_size = size;
+            bytes = NULL;
+        } else {
+            drop_taken(c);
+        }
+    } else {
+        ok = bytes && g->load_client_state(world_at(c, tick + 1u), bytes, size);
+    }
     free(bytes);
     if (!ok) return; // It predicts the tick after all
     if (c->taken_to != tick) c->taken_from = tick;
@@ -6017,6 +6057,7 @@ void tide_client_destroy(tide_client *c)
     tide_hearing_free(&c->hearing);
     drop_base(c);
     drop_had(c);
+    drop_taken(c);
     free(c->handover_bytes);
     free(c->handover.digests);
     free_commands(&c->commands);
@@ -6945,6 +6986,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
 // A client's build changed with the same layout: it goes on as it is
 static void client_set_game(tide_client *c, const tide_game *game)
 {
+    drop_taken(c); // Loaded by the last build's code
     c->desc.game = game;
     c->game = game;
     // What the last build recorded is laid out its own way: the ticks it ran
@@ -7208,6 +7250,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
     stop_receiving(c); // A world it was receiving is the old build's: the server sends it again
     drop_base(c);      // ...and so is the one it would have built it from
     drop_had(c);       // ...and the one it had: every entity of its first world is heard
+    drop_taken(c);     // ...and the last projection it took
     tide_hearing_rebuilt(&c->hearing); // ...and what its ticks sent, as its handlers heard it
     c->game = g;
     c->desc.game = g;

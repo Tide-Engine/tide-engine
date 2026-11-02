@@ -30,6 +30,25 @@ component Carried
 
 scene Main { }
 
+// From the second tick on, something changes each tick, but not all of it:
+// a singleton's list, a component's list, entities coming and going. A
+// projection loaded over the last one keeps what's alike.
+system Churn(mut Bulk bulk, Time time)
+{
+    if (time.tick < 1) return;
+    if (time.tick % 2 == 0) bulk.few[0] = time.tick;
+    if (time.tick % 3 == 0) bulk.names.Add("more " + time.tick);
+    if (time.tick % 4 == 0) bulk.big[time.tick % 3000] = Point { at = float3(1, 2, 3), id = -time.tick };
+    if (time.tick % 5 == 0) Spawn(Carried { kind = 10 + time.tick }, Visibility);
+}
+
+system Grow(mut Carried carried, Time time)
+{
+    if (time.tick < 1) return;
+    if (carried.kind == 0 && time.tick % 2 == 0) carried.tags.Add("t" + time.tick);
+    if (carried.kind >= 10 && carried.kind + 12 < time.tick) this.Destroy();
+}
+
 event(Spawned) Setup(with Main, mut Bulk bulk)
 {
     for (var i = 0; i < 3000; i++) bulk.big.Add(Point { at = float3(i, i * 0.5, -i), id = i * 7 });
