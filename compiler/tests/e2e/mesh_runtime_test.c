@@ -63,21 +63,24 @@ TIDE_TEST(made_meshes_draw_as_one_mesh_by_their_key)
     tide_local_init(&local);
     frame();
     // The local copy, the match's list's, and one made in the view: one mesh, so one run of three instances. Then
-    // the map's other triangle, and the box
-    TIDE_REQUIRE(draw.count == 3);
-    for (uint32_t i = 0; i < 3; i++) TIDE_CHECK(draw.commands[i].kind == TIDE_DRAW_MESH_3D);
+    // the map's other triangle, the box, and the first mesh again with levels asked for: another mesh
+    TIDE_REQUIRE(draw.count == 4);
+    for (uint32_t i = 0; i < 4; i++) TIDE_CHECK(draw.commands[i].kind == TIDE_DRAW_MESH_3D);
     const uint32_t made = draw.commands[0].mesh3.mesh;
     TIDE_CHECK(made && draw.commands[0].mesh3.count == 3);
     TIDE_CHECK(draw.commands[1].mesh3.mesh != made && draw.commands[2].mesh3.mesh != made);
-    TIDE_CHECK(draw.commands[1].mesh3.mesh != draw.commands[2].mesh3.mesh && draw.mesh_count == 3);
+    TIDE_CHECK(draw.commands[1].mesh3.mesh != draw.commands[2].mesh3.mesh);
+    const uint32_t leveled = draw.commands[3].mesh3.mesh;
+    TIDE_CHECK(leveled && leveled != made && draw.mesh_count == 4);
     const tide_draw_mesh_data *m = &draw.meshes[made - 1u];
     TIDE_CHECK(m->vertex_count == 3 && m->index_count == 3 && m->vertices[1].position.x == 1.0f);
     TIDE_CHECK(draw.mesh_key == 0); // Told no more after each draw
 
     // Kept from frame to frame with no list read: a mesh's key is its version
     frame();
-    TIDE_REQUIRE(draw.count == 3);
-    TIDE_CHECK(draw.commands[0].mesh3.mesh == made && draw.commands[0].mesh3.count == 3 && draw.mesh_count == 3);
+    TIDE_REQUIRE(draw.count == 4);
+    TIDE_CHECK(draw.commands[0].mesh3.mesh == made && draw.commands[0].mesh3.count == 3);
+    TIDE_CHECK(draw.commands[3].mesh3.mesh == leveled && draw.mesh_count == 4);
     tide_world_free(&world);
     tide_local_free(&local);
     tide_draw_free(&draw);

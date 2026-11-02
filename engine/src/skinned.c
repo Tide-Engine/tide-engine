@@ -12,6 +12,7 @@
 #include "tide/pack.h"
 #include "tide/skinned_data.h"
 #include "asset_store.h"
+#include "mesh_levels.h"
 #include "skinned_cache.h"
 
 _Static_assert(sizeof(tide_bone_transform) == 40u, "bone transforms have ten float words");
@@ -2339,7 +2340,10 @@ static void prepare_atlas_poses(void *context, const uint32_t thread)
 
 void tide_draw_prepare(const tide_draw_list *draw, const tide_jobs *jobs)
 {
-    if (draw) tide_draw_gather_levels(draw);
+    if (draw) {
+        tide_draw_gather_levels(draw);
+        tide_draw_lod_submit(draw, jobs); // Levels of detail a game's meshes asked for, made in the background
+    }
     if (!draw || !draw->skinned) return;
     struct tide_skinned_draw_cache *c = draw->skinned;
     uint64_t nodes = 0u;

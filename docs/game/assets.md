@@ -323,7 +323,8 @@ system Build(mut Terrain terrain)
 - **Where it's kept decides its cost.** In match state its geometry is part of the match: in snapshots and hashes, sent whole to a player who joins, and to the others once, as it's made. Its pages never change after, so rollback copies and the per-tick hash cost almost nothing more. Keep geometry only the screen needs in local state, where none of that applies, or make it in a view each frame.
 - **Copies are one mesh on the GPU.** Every copy draws with no list read: the mesh's id is worked out from its contents once, when it's made, and the draw uses it as the geometry's version. A copy of the value copies its two lists.
 - **Equality compares contents:** two meshes made of the same lists are `==`, and a made mesh is never an asset's or `default`, even with no triangles.
-- **Not there:** [levels of detail](#levels-of-detail), which only an asset's mesh has; a made `SkinnedMesh<V>`; and a 2D mesh, which draws from its two lists, `Draw.Mesh(vertices, indices)`.
+- **Levels of detail** are the draw's to ask for, `lod:`, as for any mesh your game makes (below).
+- **Not there:** a made `SkinnedMesh<V>`; and a 2D mesh, which draws from its two lists, `Draw.Mesh(vertices, indices)`.
 
 Collections follow ordinary value-copy and mutation rules. Copying an immutable asset collection can share its ID storage until a write. Geometry stays in the asset pack. Singular IDs follow the qualified declaration name; glob-element IDs also include the written file key, so changing a glob's order keeps retained selections stable. A removed or unknown ID resolves to empty geometry. Renaming a declaration or file key changes that identity.
 
@@ -355,6 +356,22 @@ That's all there is to write. There are no distances to set, no levels to author
 - **A list or a map of meshes** takes it for every file: `[LOD] asset List<Mesh<Corner>> rocks = "art/rocks/*.glb";`.
 - **An asset can accept more error:** `[LOD(2)] asset Mesh<Corner> rock = "art/rock.glb";` multiplies the draw's pixel tolerance by 2. `[LOD]` means 1. The argument must be a positive finite constant number; fractions below 1 keep more detail. It applies to every file in a list or map and works on skinned meshes too. The generated levels stay the same.
 - **They're made once.** tide keeps a mesh's levels in the game's `.tide/` folder, by what's in the file, so later builds don't make them again.
+
+**A mesh your game makes gets levels with `lod:`.** Terrain chunks, generated buildings, anything built into a `List<Vertex3>` or a list of your own vertex while the game runs: write `lod:` last in its 3D `Draw.Mesh` or `Draw.Instanced`, with the same multiplier `[LOD(...)]` takes:
+
+```csharp
+view Terrain(Chunk chunk)
+{
+    Draw.Mesh(chunk.vertices, chunk.indices, chunk.transform, Look, lod: 1);
+}
+```
+
+- **The levels are the ones an asset of the same mesh would get**, made by the same code: the same floor of 1,000 triangles, the same seams kept, the same picking, and the same levels on every machine.
+- **They're made in the background**, on threads beside the frame's, never in it. Until they're there the mesh draws whole: a frame or so for a mesh of thousands of triangles, longer for a big one. Where there are no threads to make them on (a web page that isn't [cross-origin isolated](../tools/cli.md#threads-on-the-web)), such meshes draw whole.
+- **They're kept by what's in the mesh.** Drawing the same lists again costs nothing more, nor does making the same mesh again or drawing it again after a while away. Lists made again with other numbers start over: what was being made of the old ones stops. A mesh that changes every frame keeps drawing whole, which is right for one that moves its vertices.
+- **The fields weighed are your vertex's `position` (a `float3`), and `normal`, `uv`, `uv2`, `color` and `tangent` where it has them** with those names and types, as an asset's file fills them.
+- **The same lists drawn without `lod:` are another mesh**, drawn whole, and so are the same lists drawn with another multiplier. `lod: 0`, or a multiplier that's no number, is 1, as `Draw.LODPixels` takes them.
+- It's for 3D meshes: a 2D mesh draws as it is. A model with bones takes it too, `Draw.SkinnedMesh(model, transform, lod: 1)`, with its bones weighed as `[LOD]` weighs them, so a model decoded while the game runs (`SkinnedMesh<V>.Decode`) gets the levels its file would get as a marked asset.
 
 **A game's vert isn't known to the pick.** Where the mesh is and how big it is come from the file's own geometry and the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been: draw such a mesh with `Draw.LOD(0)`, below, or leave `[LOD]` off it.
 

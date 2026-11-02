@@ -76,4 +76,6 @@ view Draws(mut Seen seen, Shapes shapes)
     Draw.Mesh(Mesh(Triangle(0), [0, 1, 2]), float4x4.Translate(float3(2, 0, 0)));
     Draw.Mesh(shapes.byId[1], float4x4.identity);
     Draw.Mesh(box, float4x4.identity);
+    // Levels asked for: another mesh than the one drawn whole, still by its key
+    Draw.Mesh(seen.kept, float4x4.Translate(float3(0, 0, 50)), lod: 1);
 }

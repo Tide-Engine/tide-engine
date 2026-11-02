@@ -55,8 +55,25 @@ run of one GPU mesh kept across frames, the runtime key/hint contract).
 metadata rows. Diagnostics: `mesh_made_arguments`, `mesh_made_2d`,
 `mesh_made_indices`, `mesh_made_not_asset`; `asset_reference_vertex` and
 `skinned_asset_reference_static` now name `Mesh<Vertex3>`; the LSP hover pin
-in `lsp_asset_meshes` follows the new text. Gaps: no LOD, skinned or 2D made
-meshes; LSP has no signature help for `Mesh(`.
+in `lsp_asset_meshes` follows the new text. Gaps: no skinned or 2D made meshes;
+LSP has no signature help for `Mesh(`. Merged with `lod:` on mesh draws (same
+day): its want wraps the keyed draw, and `tide_draw_lod_version` mixes into
+keyed versions as into list versions.
+
+## `lod:` on mesh draws (2026-11-02)
+
+`check_mesh_draw` takes a last argument named `lod` off `args` (with its name and place) before peeling verts,
+frags and values, and checks it once the vertex's dimensions are known: a float or int (`check_expr_want` with
+float), refused on a 2D vertex, kept as `expr.mesh_lod` with `mesh_lod_vertex`. Any
+other name written on a mesh draw's argument is an error naming `lod:` (it formerly fell through to the overload
+mismatch). `gen_expr` writes a call with `mesh_lod` as `(tide_draw_want_levels(tide_draw, (float)(m), layout),
+<the call>, tide_draw_want_levels(tide_draw, 0.0f, NULL))`, the call generated from a copy without `mesh_lod`.
+The multiplier is evaluated after hoisted operands, which keeps written order, as it's written last. Works for
+lists, `Mesh<V>` values (whose arguments are rewritten after the peel), instances, shaders and targets (the list
+is `tide_draw` for every destination) and models with bones, where `tide_draw_want_bones(tide_draw, (model).data)`
+follows the want, the model being the operand the skinned adapter already reads (`e->skin_mesh`). The language
+server offers `lod:` in completion after a mesh draw's lists and shows it last in 3D forms' signature help
+(`MESH_LOD`). Feature notes: assets-and-files.md, Levels of detail for meshes a game makes.
 
 ## Non-drawing views of shader components (2026-11-01)
 
@@ -321,7 +338,6 @@ expectations from the preceding completion; both corrected cases pass, along
 with mesh/reference/alias checks after direct-member/type-tree updates. The
 production docs build passes on Node 24.22.1. GPU backends and other native
 platforms remain CI coverage.
-
 
 ## Resource values in collections (2026-10-30)
 
@@ -2188,7 +2204,6 @@ The instance list follows the model/pose argument borrow rule when no later
 operand can change it; later Tide/C effects preserve nested value snapshots.
 No general GPU support for Pose or implicit shader inputs was added. See
 `notes/drawing.md` for the full contract, fixtures and validation.
-
 
 ## Recorded containers for local handlers (2026-10-19)
 
