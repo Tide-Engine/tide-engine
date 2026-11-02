@@ -1,0 +1,9 @@
+// expect: 'lod:' takes how many times the pixels a level may be off by, a float, and this is string
+// expect: 'lod: 2' for twice it
+scene Main { }
+
+view Show()
+{
+    List<Vertex3> corners = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }];
+    Draw.Mesh(corners, [0, 1, 2], float4x4.identity, lod: "far");
+}

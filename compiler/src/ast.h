@@ -1216,6 +1216,8 @@ struct expr {
     int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct expr *values;        // mesh draw and Blit: the struct it gives its vert and frag after their names, or NULL
+    struct expr *mesh_lod;      // A 3D mesh draw's `lod:` multiplier: levels made for the mesh while the game runs, or NULL
+    struct decl *mesh_lod_vertex; // ...and the vertex they weigh
     struct decl *values_type;   // ...and its type: sent once, for the draw
     struct decl *frag;
     struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither

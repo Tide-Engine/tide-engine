@@ -15,6 +15,21 @@ How it's built, and what code relies on:
 - **Not built:** an uncalled generic is never checked, so its own errors wait for a call; generic structs and methods; async generics and workers (errors); a generic as a `Func` value (an error that says to use a lambda); tidels shows an instantiation's code at the generic's locations with nothing generic-aware (hover, rename, completion of `<`).
 - **Tests:** `compiler/tests/e2e/generics` (inference through containers and `T?`, types in `<>` including a parameter only `<>` gives, a plain overload winning, `has` with `else`, `!` and `&&` over a struct with and without the fields, generics calling generics, recursion through one instantiation) and `compiler/tests/errors/generic_*.tide` (clashing arguments, a parameter nothing gives, the count in `<>`, `<>` on a plain function, a parameter named as a type, an error inside an instantiation with its note, an endless chain, a method's type parameters, a generic as a value, a component as a type argument). The full sanitize build compiles every repository game with the changed parser and checker. `packages/geometry` (`notes/geometry-package.md`) is the first package written with them.
 
+## `lod:` on mesh draws (2026-11-02)
+
+`check_mesh_draw` takes a last argument named `lod` off `args` (with its name and place) before peeling verts,
+frags and values, and checks it once the vertex's dimensions are known: a float or int (`check_expr_want` with
+float), refused on a 2D vertex, kept as `expr.mesh_lod` with `mesh_lod_vertex`. Any
+other name written on a mesh draw's argument is an error naming `lod:` (it formerly fell through to the overload
+mismatch). `gen_expr` writes a call with `mesh_lod` as `(tide_draw_want_levels(tide_draw, (float)(m), layout),
+<the call>, tide_draw_want_levels(tide_draw, 0.0f, NULL))`, the call generated from a copy without `mesh_lod`.
+The multiplier is evaluated after hoisted operands, which keeps written order, as it's written last. Works for
+lists, `Mesh<V>` values (whose arguments are rewritten after the peel), instances, shaders and targets (the list
+is `tide_draw` for every destination) and models with bones, where `tide_draw_want_bones(tide_draw, (model).data)`
+follows the want, the model being the operand the skinned adapter already reads (`e->skin_mesh`). The language
+server offers `lod:` in completion after a mesh draw's lists and shows it last in 3D forms' signature help
+(`MESH_LOD`). Feature notes: assets-and-files.md, Levels of detail for meshes a game makes.
+
 ## Non-drawing views of shader components (2026-11-01)
 
 The forest stress scene exposed an overly broad partial-lane fallback: a

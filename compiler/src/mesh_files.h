@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "tide/mesh_data.h"
+
 // A mesh file as an `asset Mesh<V>` reads it (docs/spec.md, Assets, Meshes):
 // glTF 2.0 (a .glb, or a .gltf with its buffers inside it or in files beside
 // it), Wavefront OBJ, and FBX (through the compiler's ufbx import). Whatever the
@@ -48,25 +50,13 @@
 // about 330 million.
 #define TIDE_MESH_MAX_READS (1u << 29)
 
-typedef struct mesh_file {
-    uint32_t vertices;
-    uint32_t indices;  // Three a triangle
-    float *position;   // 3 a vertex
-    float *normal;     // 3: the file's, or its triangle's own where the file has none
-    float *uv;         // 2: (0, 0) at the texture's top left; zeros where the file has none
-    float *uv2;        // 2: its second set, the same way
-    float *color;      // 4: the vertex's color times its material's, as the screen shows it; white where the file has neither
-    float *tangent;    // 4: xyz and bitangent handedness; zeros where the file has none
-    uint32_t *index;
-    bool has_normals, has_uvs, has_uvs2, has_colors, has_tangents; // What any part of the file had, for the editor
-    uint32_t parts;    // How many meshes of the file it's made of: a glTF's primitives as its nodes place them, an OBJ's one
-    uint8_t hash[32];  // SHA-256 of all of the above: what's in the mesh, whatever files it came from
-    uint8_t *sources;  // Private import provenance per vertex: authored tangent (1), first UV (2); not hashed/packed
-} mesh_file;
+// The mesh a read gives: the engine's (tide/mesh_data.h), whose reader this
+// is, so `asset Mesh<V>` and a game's Mesh<V>.Decode read a file alike.
+typedef tide_mesh_data mesh_file;
 
 // A file a .gltf names beside it (its buffers'), by the path it writes, from
 // the .gltf's own folder: its bytes, which stay the caller's, or NULL.
-typedef const uint8_t *(*mesh_side_fn)(void *user, const char *path, size_t *size);
+typedef tide_mesh_side_fn mesh_side_fn;
 
 // Reads `size` bytes as a mesh. `name` is the file's name, whose extension
 // says what it is where its first bytes don't. False for bytes that aren't a

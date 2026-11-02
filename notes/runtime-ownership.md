@@ -1,5 +1,20 @@
 # Runtime written by Claude for now
 
+## Levels for meshes a game makes (2026-11-02)
+
+Owner-approved (the proposal's recommendations, `lod:` on mesh draws). Within the existing drawing maintenance
+exception: generated views call the new `tide_draw_want_levels(list, multiplier, layout)` (`tide/draw.h`), before
+a mesh draw and again with NULL after it, passing a compound-literal `tide_mesh_lod_layout` of 1 + field offsets.
+`tide_draw_levels_pending` is for tests and hosts. `tide_draw_prepare` now also hands waiting level jobs to the
+jobs' optional `background`; `tide_draw_reset` collects them and `tide_draw_free` stops and waits for them. The
+simplifier moved from tidec into the engine (`engine/src/mesh_lod.c`, `tide/internal/mesh_lod.h`,
+`tide_mesh_lod_make`/`_free`), agent-maintained as the draw list is; generated code doesn't call it. Draw list and
+mesh data layouts grew, so hosts, libraries and games rebuild together. Contracts: drawing.md; tests and
+validation: assets-and-files.md, both "Levels ... meshes a game makes". Follow-up the same day: generated skinned
+draws with `lod:` also call `tide_draw_want_bones(list, model.data)` (`tide/mesh.h`), and tidec's bone weighing
+moved beside the maker (`tide_mesh_lod_bones_of`, `_apart`, `_free` in `tide/internal/mesh_lod.h`), which tidec
+calls for assets; generated code calls neither.
+
 ## Flat shader-data capture memo (2026-11-02)
 
 Within the approved forest submission optimization and existing drawing
@@ -975,6 +990,7 @@ Sampling/capture optimization validation (2026-10-10): the frozen implementation
 - `engine/include/tide/math.h`, `engine/src/math.c` (vectors, quaternions, matrices and transcendental functions) and `engine/src/noise.c` (Perlin, simplex and cellular noise) are Claude's too, on the same terms. Generated code calls them by the names `tide_<function>_<type>`. The transcendental functions are in-house, computed in double from basic operations; CORE-MATH remains an option to replace them.
 - `engine/include/tide/random.h` (random number generators: the state, its seeding and every method) is Claude's too, on the same terms. Generated code calls the `tide_random_*` functions by the names in `compiler/src/builtins.c`, and uses `tide_random` as Tide's `Random`.
 - `engine/include/tide/color.h`, `engine/include/tide/draw.h`, `engine/src/draw.c`, `engine/src/draw_coordinates.c`, `engine/src/primitives.c` (colors, the draw list, render targets, screen and world conversions, and the 3D primitives' meshes), `engine/include/tide/mesh.h` and `engine/src/mesh.c` (Tide's mesh draws: lists, and grids as textures) are Claude's too, on the same terms. Generated views call the `tide_draw_*` and `tide_render_target_*` functions (`tide_draw_mesh_shaded` and `tide_draw_grid_texture` for a mesh through a shader), and a game's C does when a view passes it its list.
+- `engine/include/tide/mesh_data.h` and `engine/src/mesh_decode.c` (the static mesh reader: glTF 2.0 and OBJ into one mesh's streams) are Claude's too, on the same terms, approved 2026-11-02 for `Mesh<V>.Decode` (notes/assets-and-files.md, The static mesh reader in the engine). tidec's `asset Mesh<V>` imports call it through `compiler/src/mesh_files.c`, which keeps FBX and file names. `tide_mesh_data_decode` takes the caller's limits (`tide_mesh_decode_limits` for a game's decode) and returns malloc-compatible streams freed by `tide_mesh_data_free`; nothing it gives points into the caller's bytes.
 - `engine/include/tide/attached.h` and `engine/src/attached.c` (what the local world keeps for the match's entities: the tables of local fields) are Claude's too, on the same terms. Generated code calls the `tide_attached_*` functions.
 - `engine/include/tide/skinned.h`, `engine/src/skinned.c`, `engine/include/tide/skinned_data.h`, `engine/src/skinned_data.c` and `engine/src/skinned_decode.c` (portable model data and decoding, deterministic animation/pose operations and GPU palette capture) are temporary runtime implementations maintained with the transpiler, on the same terms. The approved generated-C boundary uses ordinary immutable `List<byte>` model data and owned `List<BoneTransform>` pose data; `tide_bone_transform` is the ten-float C alias (40 bytes). Generated adapters call the `tide_skinned_*` functions and either `tide_draw_skinned_atlas` or the immediate `tide_draw_skinned_data`; omitted poses use `tide_draw_skinned_rest_atlas` or `tide_draw_skinned_rest_data` with the same respective output shapes. No platform headers enter simulation code.
   - The raw decoder returns free-compatible temporary canonical bytes through `tide_skinned_data_decode`/`free`; runtime input is self-contained GLB only. Build-time glTF uses the same decoder with an explicit side-buffer callback. Parser/accessor code is shared with the static importer in `tide/internal/gltf_json.h` and `gltf_read.h`, and allocations use the engine's worker-safe page functions. Full portable validation and checked getters never retain pointers beyond the caller's bytes. The pack's model-content preflight runs before replacing a loaded pack; its entry records are three ordinary list handles (`notes/assets-and-files.md`).
