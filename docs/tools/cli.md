@@ -37,6 +37,15 @@ Project build and package commands automatically use the version pinned with
 `tide pin`, asking before downloading a missing release into the shared
 version cache. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
+Pinned build/run/schedule/shader commands select the project version before
+validating its options. Put an explicit game folder before options introduced
+by a newer version; otherwise an unknown option uses the folder already found,
+or the current directory. Known option values are skipped during discovery.
+Older installed launchers that reject newer flags must be upgraded with
+`tide upgrade`, or bypassed by invoking the cached version directly. Changing
+the project pin cannot change an already released launcher binary.
+
+
 Managed deployment, project selection, prepaid credit and current availability
 are described in [Managed hosting](../multiplayer/hosting.md).
 
