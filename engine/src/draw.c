@@ -13,6 +13,7 @@
 #include "tide/page.h"
 #include "skinned_cache.h"
 #include "list_data_cache.h"
+#include "frustum_cull.h"
 #include "mesh_levels.h"
 
 static void reindex_meshes(tide_draw_list *d);
@@ -3078,21 +3079,7 @@ static const tide_draw_frustum *frustum_camera(tide_draw_list *d)
         const tide_float4x4 matrix = tide_draw_world_to_clip(d, d->screen);
         float c[16];
         memcpy(c, &matrix, sizeof c);
-        d->frustum.count = 0;
-        bool valid = true;
-        for (uint32_t i = 0; i < 16; i++) valid &= tide_is_finite_f(c[i]);
-        for (uint32_t plane = 0; valid && plane < 6; plane++) {
-            const uint32_t row = plane / 2u;
-            const double sign = plane & 1u ? -1.0 : 1.0;
-            double *p = d->frustum.plane[d->frustum.count], *error = d->frustum.magnitude[d->frustum.count];
-            for (uint32_t axis = 0; axis < 4; axis++) {
-                const double a = c[axis * 4 + 3], b = c[axis * 4 + row];
-                p[axis] = a + sign * b;
-                error[axis] = (a < 0.0 ? -a : a) + (b < 0.0 ? -b : b);
-            }
-            // Infinite far projections (and an unknown size's zero matrix) have no far rejection plane.
-            if (p[0] != 0.0 || p[1] != 0.0 || p[2] != 0.0 || p[3] < 0.0) d->frustum.count++;
-        }
+        cull_frustum_build(&d->frustum, c);
         memcpy(d->frustum_seen, seen, sizeof seen);
         d->frustum_screen = d->screen;
         d->frustum_ready = true;
@@ -3100,78 +3087,41 @@ static const tide_draw_frustum *frustum_camera(tide_draw_list *d)
     return &d->frustum;
 }
 
-// Conservative support test of the transformed box against all six clip
-// planes. Double intermediates avoid overflow for arbitrary finite game values.
-// The error allowance also keeps boxes touching a plane despite GPU rounding.
+// One instance's frustum test (frustum_cull.h), counted where a profile is collected.
 static bool bounds_visible(const tide_draw_bounds *bounds, const tide_draw_frustum *camera,
                            const tide_float4x4 *own, const tide_float4x4 *through, tide_draw_diagnostic *profile)
 {
-    if (bounds->set != 1 || !camera->count) {
-        if (profile) profile->untestable++;
-        return true;
-    }
+    const cull_box box = cull_box_of(bounds, camera);
     float w[16];
-    if (through) {
-        const tide_float4x4 world = tide_mul_f4x4(*through, *own);
-        memcpy(w, &world, sizeof w);
-    } else {
-        matrix_read(w, own); // The caller's, just made (see color_read)
+    matrix_read(w, own); // The caller's, just made (see color_read)
+    const int result = cull_instance(camera, &box, w, through);
+    if (profile) {
+        profile->untestable += result == CULL_UNTESTABLE;
+        profile->tested += result != CULL_UNTESTABLE;
+        profile->rejected += result == CULL_REJECTED;
     }
-    for (uint32_t i = 0; i < 16; i++) {
-        if (!tide_is_finite_f(w[i])) {
-            if (profile) profile->untestable++;
-            return true;
-        }
-    }
-    if (w[3] != 0.0f || w[7] != 0.0f || w[11] != 0.0f || w[15] != 1.0f) {
-        if (profile) profile->untestable++;
-        return true;
-    }
-    if (profile) profile->tested++;
-    const double center[3] = {bounds->center.x, bounds->center.y, bounds->center.z};
-    const double extent[3] = {bounds->extents.x, bounds->extents.y, bounds->extents.z};
-    double at[3], radius[3];
-    for (uint32_t row = 0; row < 3; row++) {
-        at[row] = w[12 + row];
-        radius[row] = 0.0;
-        for (uint32_t axis = 0; axis < 3; axis++) {
-            const double scale = w[axis * 4 + row];
-            at[row] += scale * center[axis];
-            radius[row] += (scale < 0.0 ? -scale : scale) * extent[axis];
-        }
-    }
-    // The rounding allowance is never less than 0, so a box on a plane's inner side, or on it, is in front of
-    // it whatever the allowance is: it's worked out only for one past a plane, once (a frame of visible
-    // instances needs none, and the answer is the same)
-    double magnitude[3];
-    bool measured = false;
-    for (uint32_t plane = 0; plane < camera->count; plane++) {
-        const double *p = camera->plane[plane], *rounding = camera->magnitude[plane];
-        double distance = p[3];
-        for (uint32_t axis = 0; axis < 3; axis++) {
-            const double n = p[axis];
-            distance += n * at[axis] + (n < 0.0 ? -n : n) * radius[axis];
-        }
-        if (!(distance < 0.0)) continue;
-        if (!measured) {
-            for (uint32_t row = 0; row < 3; row++) {
-                magnitude[row] = tide_abs_f(w[12 + row]);
-                for (uint32_t axis = 0; axis < 3; axis++) {
-                    const double scale = w[axis * 4 + row];
-                    const double part = scale * center[axis];
-                    magnitude[row] += (part < 0.0 ? -part : part) + (scale < 0.0 ? -scale : scale) * extent[axis];
-                }
-            }
-            measured = true;
-        }
-        double error = rounding[3];
-        for (uint32_t axis = 0; axis < 3; axis++) error += rounding[axis] * magnitude[axis];
-        if (distance < -1e-5 * (error + 1.0)) {
-            if (profile) profile->rejected++;
-            return false;
-        }
-    }
-    return true;
+    return result != CULL_REJECTED;
+}
+
+// The counts of a call's instances, added to a profile once
+typedef struct cull_counts {
+    uint32_t tested, rejected, untestable;
+} cull_counts;
+
+static inline bool cull_counted(cull_counts *counts, const int result)
+{
+    counts->untestable += result == CULL_UNTESTABLE;
+    counts->tested += result != CULL_UNTESTABLE;
+    counts->rejected += result == CULL_REJECTED;
+    return result != CULL_REJECTED;
+}
+
+static void cull_add(tide_draw_diagnostic *profile, const cull_counts *counts)
+{
+    if (!profile) return;
+    profile->tested += counts->tested;
+    profile->rejected += counts->rejected;
+    profile->untestable += counts->untestable;
 }
 
 static const tide_draw_bounds *draw_bounds(tide_draw_list *d, const uint32_t mesh, const uint32_t position,
@@ -3198,16 +3148,27 @@ static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const ui
         return;
     }
     const tide_draw_frustum *camera = frustum_camera(d);
+    const cull_box box = cull_box_of(&bounds, camera);
     const tide_float4x4 *through = d->place.moved & TIDE_DRAW_MOVED_3D ? &d->place.transform_3d : NULL;
+    cull_counts counts = {0};
     uint32_t first = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        tide_float4x4 own;
-        memcpy(&own, (const uint8_t *)instances + (size_t)i * size, sizeof own);
-        if (bounds_visible(&bounds, camera, &own, through, d->profile_active)) continue;
-        if (i > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
-                                      i - first, uniforms, textures, sampling);
-        first = i + 1u;
+    for (uint32_t i = 0; i < count; i += 4u) {
+        // Four at a time (the last again where fewer are left)
+        const uint32_t n = count - i < 4u ? count - i : 4u;
+        const float *four[4];
+        for (uint32_t k = 0; k < 4; k++) {
+            four[k] = (const float *)(const void *)((const uint8_t *)instances + (size_t)(i + (k < n ? k : n - 1u)) * size);
+        }
+        int result[4];
+        cull_four(camera, &box, four, through, n, result);
+        for (uint32_t k = 0; k < n; k++) {
+            if (cull_counted(&counts, result[k])) continue;
+            if (i + k > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
+                                              i + k - first, uniforms, textures, sampling);
+            first = i + k + 1u;
+        }
     }
+    cull_add(d->profile_active, &counts);
     if (count > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
                                       count - first, uniforms, textures, sampling);
 }
@@ -3511,13 +3472,25 @@ static void instances_placed(tide_draw_list *d, const uint32_t mesh, const tide_
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
     const tide_draw_bounds bounds = *draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position), count);
     uint32_t first = 0;
-    for (uint32_t i = 0; bounds.set == 1 && transforms && i < count; i++) {
-        if (bounds_visible(&bounds, frustum_camera(d), &transforms[i], through, d->profile_active)) continue;
-        if (i > first) mesh_instances(d, mesh, transforms + first, i - first, texture, filter, wrap,
-                                      (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d), through,
-                                      through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
-        first = i + 1u;
+    const tide_draw_frustum *camera = bounds.set == 1 && transforms && count ? frustum_camera(d) : NULL;
+    const cull_box box = camera ? cull_box_of(&bounds, camera) : (cull_box){0};
+    cull_counts counts = {0};
+    for (uint32_t i = 0; camera && i < count; i += 4u) {
+        // Four at a time (the last again where fewer are left)
+        const uint32_t n = count - i < 4u ? count - i : 4u;
+        const float *four[4];
+        for (uint32_t k = 0; k < 4; k++) four[k] = (const float *)&transforms[i + (k < n ? k : n - 1u)];
+        int result[4];
+        cull_four(camera, &box, four, through, n, result);
+        for (uint32_t k = 0; k < n; k++) {
+            if (cull_counted(&counts, result[k])) continue;
+            if (i + k > first) mesh_instances(d, mesh, transforms + first, i + k - first, texture, filter, wrap,
+                                              (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d),
+                                              through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
+            first = i + k + 1u;
+        }
     }
+    cull_add(d->profile_active, &counts);
     if (count > first) mesh_instances(d, mesh, transforms ? transforms + first : NULL, count - first, texture, filter,
                                      wrap, (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d), through,
                                      through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
