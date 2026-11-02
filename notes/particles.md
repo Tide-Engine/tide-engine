@@ -114,3 +114,11 @@ measurements, not throughput guarantees. The scratch harness remains under
 `build/particle-bench` locally, not a committed benchmark. No GPU throughput
 claim is made; the measured Tide list/storage gap was not expanded into a
 runtime optimization task.
+
+Merged `origin/dev`'s Render2D package and compiler/CLI diagnostic improvements.
+Resolved only package-list, docs-example registration and notes conflicts,
+retaining both packages and the same pure-Tide link guard. The updated compiler
+rebuilt the particle CPU/pixel targets and example on native ASan and web-release;
+all three native and four web particle CTests pass again. The merged production
+docs build also passes. No runtime or particle behavior conflict required a
+broader suite.

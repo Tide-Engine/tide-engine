@@ -1,4 +1,4 @@
-// expect: a list's element is a copy, so it can't be changed where it is: it holds text or a list
+// expect: an indexed element is a copy, so it can't be changed in place: replace the whole element to update text or container fields
 struct Slot { string? label; }
 component Bag { List<Slot> slots; }
 system Name(mut Bag bag) { bag.slots[0].label = "first"; }

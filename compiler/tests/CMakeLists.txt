@@ -572,6 +572,12 @@ endforeach()
 # Error tests: each errors/<name>.tide must fail to compile, and tidec's output
 # must contain the text on the file's first line, written as `// expect: <text>`.
 # A folder errors/<name>/ is one program of several files.
+add_test(NAME tidec_diagnostics_frontend_cli
+    COMMAND "${CMAKE_COMMAND}"
+        "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/diagnostics_frontend_cli"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics_frontend_cli.cmake")
+
 file(GLOB TIDE_ERROR_TESTS CONFIGURE_DEPENDS LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/errors/*")
 foreach(source IN LISTS TIDE_ERROR_TESTS)
     if(NOT IS_DIRECTORY "${source}" AND NOT source MATCHES "\\.tide$")

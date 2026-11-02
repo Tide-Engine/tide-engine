@@ -75,6 +75,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Overview', link: '/packages' },
             { text: 'Using and writing packages', link: '/packages/using-and-writing' },
+            { text: 'Render2D', link: '/packages/render2d' },
             { text: 'Render3D', link: '/packages/render3d' },
             { text: 'Corner Culling', link: '/packages/cornerculling' },
             { text: 'Geometry', link: '/packages/geometry' },

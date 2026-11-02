@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 
@@ -81,5 +81,7 @@ pin('9.8.7');
 // A cache with a misleading VERSION must fail without dispatching recursively.
 copyFileSync(driver, join(cache, '9.8.7', 'bin', exe));
 p = run('', false); assert.equal(p.code, 1); assert.match(p.said, /isn't tide 9.8.7/);
+assert.ok(p.said.includes(`move the cached folder ${join(cache, '9.8.7').split(sep).join('/')}`));
+assert.match(p.said, /rerun this command in a terminal to download it again/);
 assert.equal(readFileSync(join(game, 'tide.packages'), 'utf8'), 'tide = 9.8.7\n');
 console.log('Pinned version consent, checksums, publication, reuse, forwarding and damaged-cache checks pass.');

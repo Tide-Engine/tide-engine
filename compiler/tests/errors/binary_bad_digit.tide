@@ -1,4 +1,5 @@
 // expect: invalid number '0b102'
+// expect: binary integers use only 0 and 1, with optional '_' separators after 0b or between digits and an optional L suffix
 scene Main { }
 
 event(Spawned) Setup(with Main)

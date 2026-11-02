@@ -1,4 +1,5 @@
 // expect: invalid number '1_'
+// expect: put '_' only between digits; use at most one suffix: L for an integer, f or d for a float or double, or deg for degrees
 scene Main { }
 
 event(Spawned) Setup(with Main)

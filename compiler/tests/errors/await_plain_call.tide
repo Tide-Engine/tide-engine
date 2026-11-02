@@ -1,4 +1,5 @@
-// expect: 'await' waits for an async function's call, or for Wait, like 'await Wait.Ticks(30)'
+// expect: 'await' needs a task handle or an async call, like 'await Wait.Ticks(30)'
+// expect: 'Twice' is synchronous; remove 'await' from this call
 singleton Clock { int ticks; }
 scene Main { }
 

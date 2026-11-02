@@ -1,3 +1,4 @@
 // expect: local variable 'value' needs an initial value
+// expect: initialize it with 'var value = ...;', or write its type for assignment later, like 'int value;'
 scene Main { }
 int F() { var value; return value; }

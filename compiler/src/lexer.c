@@ -91,7 +91,7 @@ static bool skip_trivia(lexer *lx)
                 lx->p++;
             }
             if (lx->p >= lx->end) {
-                diag_error(start, "unterminated comment");
+                diag_error(start, "unterminated comment; add '*/' to close this '/*'");
                 return false;
             }
             lx->p += 2;
@@ -228,7 +228,7 @@ static char lex_text(lexer *lx, const bool values, const loc start)
                 valid = lx->p + i < lx->end && ((unsigned char)lx->p[i] & 0xC0u) == 0x80u;
             }
             if (!valid) {
-                diag_error(here(lx), "text must be UTF-8, and this isn't");
+                diag_error(here(lx), "text contains invalid UTF-8; save this file with UTF-8 encoding");
                 lx->p++;
                 return 0;
             }
@@ -741,7 +741,7 @@ static bool lex_char(lexer *lx, const loc start)
                 valid = false;
             }
             if (!valid) {
-                diag_error(start, "a char must be UTF-8, and this isn't");
+                diag_error(start, "a char contains invalid UTF-8; save this file with UTF-8 encoding and use one Unicode character");
                 lx->p = p + 1;
                 return false;
             }
@@ -831,11 +831,18 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
             // "0x" or "0b" with no digits after it.
             if (t.text.len == 2 && t.text.ptr[0] == '0' && strchr("xXbB", t.text.ptr[1])) {
                 diag_error(t.at, "'" STR_FMT "' needs digits after it", STR_ARG(t.text));
+                diag_note("write hexadecimal digits after 0x, like 0x1F, or binary digits after 0b, like 0b1010");
                 ok = false;
                 continue;
             }
             if (lx.p < lx.end && is_ident_char(*lx.p)) {
                 diag_error(t.at, "invalid number '%.*s'", (int)(lx.p - start) + 1, start);
+                if (start[0] == '0' && lx.p - start >= 2 && (start[1] == 'b' || start[1] == 'B'))
+                    diag_note("binary integers use only 0 and 1, with optional '_' separators after 0b or between digits and an optional L suffix");
+                else if (start[0] == '0' && lx.p - start >= 2 && (start[1] == 'x' || start[1] == 'X'))
+                    diag_note("hexadecimal integers use digits 0-9 and A-F, with optional '_' separators after 0x or between digits and an optional L suffix");
+                else
+                    diag_note("put '_' only between digits; use at most one suffix: L for an integer, f or d for a float or double, or deg for degrees");
                 ok = false;
                 lx.p++;
                 continue;
@@ -961,7 +968,7 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
         case '|': t.kind = n == '|' ? (len = 2, T_OR) : n == '=' ? (len = 2, T_PIPE_ASSIGN) : T_PIPE; break;
         default:
             if ((unsigned char)c >= 0x80) {
-                diag_error(t.at, "non-ASCII characters are only allowed in comments and text");
+                diag_error(t.at, "non-ASCII characters are only allowed in comments, text and character literals; use ASCII letters, digits and '_' in names");
                 // Skip the rest of the UTF-8 sequence so one character is one error.
                 lx.p++;
                 while (lx.p < lx.end && ((unsigned char)*lx.p & 0xC0) == 0x80) lx.p++;
