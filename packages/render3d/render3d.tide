@@ -145,8 +145,8 @@ local singleton Renderer
     Texture indirect0;
     Texture indirect1;
     // Diffuse captures reuse the material pipeline and emit optional geometry
-    // metadata to color attachment one: radial distance R, backface G, hit B.
-    // Geometry hooks retain the main eye; black clears have no geometry hit.
+    // metadata to attachment one: plane distance R, octahedral normal GB,
+    // alpha 1 front/.5 one-sided back/0 miss. Geometry hooks retain the main eye.
     bool diffuseCapture;
     float3 captureEye;
     float captureFar = 1000;

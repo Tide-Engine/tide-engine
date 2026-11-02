@@ -50,7 +50,7 @@ view ConfigureGI(mut GlobalIllumination.Environment environment)
 | `probeSpacing` | `1.5` | Requested finest spacing in world units, clamped to 0.1–1000 |
 | `maxProbes` | `512` | Physical probe capacity, clamped to 125–2048; coincident block anchors share captures |
 | `updatesPerFrame` | `4` | Maximum complete captures per rendered frame, clamped to 0–16; zero freezes captures |
-| `viewDistance` | `48` | Distance from the main camera considered for resident receiver coverage, clamped to 1–1,000,000 |
+| `viewDistance` | `48` | Nearby receiver/detail radius; visible receivers also retain coarse coverage through the main camera frustum, clamped to 1–1,000,000 |
 | `captureDistance` | `48` | Maximum capture distance around each probe, clamped to 1–1,000,000 |
 | `refreshInterval` | `600` | Age in rendered frames after which unchanged probes become eligible for background refresh, clamped to 1–36000 |
 | `intensity` | `1` | Multiplier on received linear irradiance, clamped to 0–16 |
@@ -80,18 +80,29 @@ planes. At very large coordinates, the base spacing increases in power-of-two st
 anchor positions remain representable without changing phase on every camera
 movement.
 
-`viewDistance` bounds the working set around the camera. Moving across coverage
-cells changes the required blocks; matching blocks and anchors retain their
+The working set includes the nearby `viewDistance` sphere and conservative
+receiver support inside the main camera frustum. Distant visible surfaces retain
+coarse blocks instead of losing indirect lighting when nearby regions refine.
+The camera's far distance bounds visible coverage, capped at 1,000,000 units.
+Geometry outside both the nearby sphere and the padded conservative frustum
+does not consume residency.
+Moving across coverage cells or changing the camera projection changes the
+required blocks; matching blocks and anchors retain their
 atlas slots, captured lighting and relocation offsets. Newly required anchors
 start uncaptured, while retired slots can be reused. Adding distant buildings
 does not force one world-sized grid to become coarser. More geometry competing
-within the resident working set can still reduce detail.
+within the resident working set can still reduce detail. Conservative padding
+covers small camera movement/rotation between topology rebuilds, including roll.
 
 `probeSpacing` is a requested finest level, not a guarantee for every receiver.
 Coarser blocks use fewer probes in less important regions. Increasing the probe
-capacity can retain more detail; increasing view distance spreads that capacity
-over more of the world. Receivers outside resident coverage can have no GI.
+capacity can retain more detail; increasing view distance includes more nearby
+offscreen receivers as well as the visible scene. Receivers outside both the
+nearby sphere and the conservative camera frustum can have no GI.
 Coverage is automatic, but it does not provide unlimited detail or residency.
+Planning also uses progressively coarser targets beyond the nearby radius,
+avoiding a full finest-detail plan for distant blocks that the budget would
+immediately coarsen again.
 
 Before capture, nearby eligible triangles can move a probe out of a recognized
 solid or improve surface clearance. Movement is limited to 45% of the common base
@@ -106,7 +117,11 @@ surfaces remain in captures but do not guide relocation. Tight gaps and deep
 solid interiors can still leave probes rejected within the movement bound.
 
 Each block interpolates visible neighboring probes. Equal-resolution neighbors
-share their face records, so they use one gather up to that face. A small
+share their face records, so they use one gather up to that face. Physical probe
+facing and visibility filtering use the common base-spacing metric, so a shared
+capture has the same physical weights across coarse/fine grids. Support behind
+the unperturbed geometric receiver plane is excluded; black captures behind a
+wall cannot dilute its valid front-side lighting. A small
 world-space box filter blends only where resolution changes or coverage is
 missing, with separate handling for affected faces, edges and corners.
 Uncovered portions fade toward no indirect lighting. The field's

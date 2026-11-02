@@ -3,7 +3,17 @@
 #
 # cmake -DNODE=<node> -DBROWSER=<Chrome or Edge> -DPAGE=<page.html> [-DQUERY=<query>] -DPROFILE=<scratch dir>
 #       [-DANGLE_BACKEND=swiftshader|d3d11-warp]
+#       [-DTIDE_WEB_TEST_TIMEOUT_SECONDS=<integer 1..600, default 120>]
 #       -P run_web_test.cmake
+
+if(NOT DEFINED TIDE_WEB_TEST_TIMEOUT_SECONDS)
+    set(TIDE_WEB_TEST_TIMEOUT_SECONDS 120)
+endif()
+if(NOT "${TIDE_WEB_TEST_TIMEOUT_SECONDS}" MATCHES "^[0-9]+$"
+        OR TIDE_WEB_TEST_TIMEOUT_SECONDS LESS 1
+        OR TIDE_WEB_TEST_TIMEOUT_SECONDS GREATER 600)
+    message(FATAL_ERROR "TIDE_WEB_TEST_TIMEOUT_SECONDS must be an integer from 1 to 600 (got '${TIDE_WEB_TEST_TIMEOUT_SECONDS}').")
+endif()
 
 if(NOT EXISTS "${BROWSER}")
     message("SKIPPED: no Chrome or Edge found. Set TIDE_BROWSER to run web tests.")
@@ -45,9 +55,9 @@ execute_process(
     OUTPUT_VARIABLE dom
     ERROR_VARIABLE browser_errors
     RESULT_VARIABLE browser_result
-    TIMEOUT 120)
+    TIMEOUT ${TIDE_WEB_TEST_TIMEOUT_SECONDS})
 if(browser_result MATCHES "timeout")
-    message("The browser didn't exit within 120 seconds, and was stopped.")
+    message("The browser didn't exit within ${TIDE_WEB_TEST_TIMEOUT_SECONDS} seconds, and was stopped.")
 endif()
 
 string(REGEX MATCH "<pre id=\"log\">([^<]*)</pre>" _ "${dom}")

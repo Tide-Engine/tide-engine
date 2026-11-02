@@ -1,5 +1,33 @@
 # Test infrastructure
 
+## Explicit budget for the new GI regional stress case (2026-11-02)
+
+`cmake/run_web_test.cmake` accepts optional
+`TIDE_WEB_TEST_TIMEOUT_SECONDS`, an integer from 1 through 600. Omission keeps
+its existing 120-second browser guard and timeout diagnostic. The test helper's
+`WEBGL_SECONDS` keyword forwards an explicit value only to WebGL and D3D11;
+served WebGPU retains its independent `SECONDS` option and 100-second default.
+
+Only the newly added `tide_globalillumination_pixels_regional2048` and its
+Windows `_d3d11` counterpart request 300 seconds, with outer CTest guards of
+330 seconds. Every pre-existing WebGL/D3D11 registration keeps its 120-second
+runner guard; the regional2048 WebGPU case keeps its original 100 seconds.
+The per-group optional argument is reset on each registration.
+
+This stress fixture captures 1,184 active probes with the unchanged 384 rays
+per probe over approximately 74 convergence frames. Its original 120-second
+WebGL/D3D11 attempts remain failed runs. One quiet, extended software-WebGL
+diagnostic completed all 32 numeric wall/floor oracles in 188.65 seconds,
+without a quality failure; it did not pass the original 120-second deadline.
+The explicit budget accommodates this new workload without changing geometry,
+resolution, probes, rays, settings, assertions or tolerances. The diagnostic
+is correctness evidence, not a renderer performance measurement or a claim
+that the earlier deadline failures passed. Final registered validation passes
+all 35 scoped optimized web checks, including both explicit-budget cases and
+the unchanged 100-second WebGPU cases. CTest command inspection confirms only
+those two overrides, and an invalid zero timeout is rejected. Raw attempts
+remain in the [lighting repair report](../bench/results/globalillumination-lighting-20261102/README.md).
+
 ## Cache cleanup tests (2026-10-30)
 
 .github/cache-cleanup.test.mjs checks bounded compiler-cache retention with fake

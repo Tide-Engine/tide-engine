@@ -898,7 +898,7 @@ view Update(mut Environment environment, mut WorldBounds bounds, mut Render3D.Re
             capture.hdr.SetCamera(float4x4.TRS(position, FaceRotation(face), float3(1)),
                 float4x4.PerspectiveFov(Math.PI * 0.5, 1, near, settings.captureDistance));
             // Clear settles the selected target/camera before packet replay.
-            capture.hdr.Clear(Color.black);
+            capture.hdr.Clear(Color(0, 0, 0, 0));
             if (face == 0)
             {
                 capture.hdr.SetFrustumCulling(false);
@@ -944,7 +944,15 @@ view Update(mut Environment environment, mut WorldBounds bounds, mut Render3D.Re
     environment.dirtyProbes = 0;
     for (var probe = 0; probe < environment.layout.total; probe++)
         if (environment.active[probe] && (!environment.captured[probe] || environment.dirty[probe])) environment.dirtyProbes++;
+    BindRenderer(renderer, environment);
+}
+
+// One provider registration keeps alternate field writers from adding another
+// callable branch to every material shader that consumes the same world field.
+void BindRenderer(mut Render3D.Renderer renderer, Environment environment)
+{
     FieldLayout layout = environment.layout;
+    Settings settings = ClampSettings(environment.settings);
     float intensity = settings.intensity;
     int initialized = environment.initialized;
     renderer.indirect = (SurfaceInput input, Surface surface, Texture a, Texture b) =>

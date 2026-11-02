@@ -1,15 +1,20 @@
 using Render3D;
 namespace GlobalIllumination;
 
-float3 FaceDirection(int face, float2 uv)
+float3 FaceVector(int face, float2 uv)
 {
     float2 p = uv * 2 - float2(1);
-    if (face == 0) return Math.Normalize(float3(1, -p.y, -p.x));
-    if (face == 1) return Math.Normalize(float3(-1, -p.y, p.x));
-    if (face == 2) return Math.Normalize(float3(p.x, 1, p.y));
-    if (face == 3) return Math.Normalize(float3(p.x, -1, -p.y));
-    if (face == 4) return Math.Normalize(float3(p.x, -p.y, 1));
-    return Math.Normalize(float3(-p.x, -p.y, -1));
+    if (face == 0) return float3(1, -p.y, -p.x);
+    if (face == 1) return float3(-1, -p.y, p.x);
+    if (face == 2) return float3(p.x, 1, p.y);
+    if (face == 3) return float3(p.x, -1, -p.y);
+    if (face == 4) return float3(p.x, -p.y, 1);
+    return float3(-p.x, -p.y, -1);
+}
+
+float3 FaceDirection(int face, float2 uv)
+{
+    return Math.Normalize(FaceVector(face, uv));
 }
 
 // Octahedral borders reflect into the opposite edge. Each probe has its own
@@ -182,6 +187,21 @@ Color CaptureData(Texture data0, Texture data1, Texture data2,
     return data;
 }
 
+// One means unsupported. A valid hit is inside the radial far sphere, so its
+// normalized axial distance is strictly below one on every cube face.
+float CaptureAxialDepth(Color record, int face, float2 uv)
+{
+    if (record.a <= 0.25) return 1;
+    float3 ray = FaceVector(face, uv);
+    float3 normal = OctDirection(float2(record.g, record.b));
+    float denominator = Math.Dot(normal, ray);
+    // The stored normal points from the eye towards the physical plane.
+    // An ideal ray across its grazing boundary must not hit behind the eye.
+    if (denominator <= 0.000001
+        || record.r * record.r * Math.Dot(ray, ray) >= denominator * denominator) return 1;
+    return record.r / denominator;
+}
+
 frag PackRays(Vertex vertex, out Color light, out Color data, Environment environment)
 {
     int face = Math.Clamp(int(Math.Floor(vertex.uv.y * 6)), 0, 5);
@@ -200,10 +220,10 @@ frag PackRays(Vertex vertex, out Color light, out Color data, Environment enviro
     Color hit = CaptureData(environment.data0, environment.data1, environment.data2,
         environment.data3, environment.data4, environment.data5, face, uv);
     // A cube's axial far planes include corners outside the radial capture
-    // range. Saturated radial depth marks those hits as unsupported, rather
+    // range. Intersect the captured plane with the ideal pixel ray, rather
     // than keeping their light or treating them as nearby back-face geometry.
-    bool beyond = hit.b > 0.5 && hit.r >= 1;
-    float back = hit.b > 0.5 && !beyond ? Math.Clamp(hit.g, 0, 1) : 0;
+    bool beyond = hit.a > 0.25 && CaptureAxialDepth(hit, face, uv) >= 1;
+    float back = hit.a > 0.25 && hit.a < 0.75 && !beyond ? 1 : 0;
     // Both images use ordinary color targets. Alpha retains front-face
     // validity in the first and solid angle in the second; Sample returns
     // their straight RGB values. Encode the ray so Rgba8 can keep its signs.
@@ -245,9 +265,8 @@ float CaptureInverseDepth(Texture data0, Texture data1, Texture data2,
 {
     float2 uv = (pixel + float2(0.5)) / 32;
     Color data = CaptureData(data0, data1, data2, data3, data4, data5, face, uv);
-    float2 plane = uv * 2 - float2(1);
-    float radial = Math.Max(data.r * far, spacing * 0.001);
-    return data.b > 0.5 && data.r < 1 ? spacing * Math.Sqrt(1 + Math.Dot(plane, plane)) / radial : 0;
+    float axial = CaptureAxialDepth(data, face, uv);
+    return axial < 1 ? spacing / Math.Max(axial * far, spacing * 0.001) : 0;
 }
 
 frag Convolve(Vertex vertex, out Color irradiance, out Color moments, Environment environment)
@@ -261,8 +280,8 @@ frag Convolve(Vertex vertex, out Color irradiance, out Color moments, Environmen
     }
     float3 direction = OctDirection((pixel - float2(1)) / 16);
     // Positive cosine quadrature avoids the extra lobes introduced by a
-    // truncated signed SH reconstruction. A small packing pass retains every
-    // capture ray while removing face selection and normalization from here.
+    // truncated signed SH reconstruction. The packed image retains radiance
+    // and sidedness; fixed quadrature geometry is reconstructed analytically.
     mut float3 light = float3(0);
     mut float cosineWeight = 0;
     mut float sphereWeight = 0;
@@ -272,13 +291,24 @@ frag Convolve(Vertex vertex, out Color irradiance, out Color moments, Environmen
     {
         float2 uv = (float2(sample % 64, sample / 64) + float2(0.5)) / float2(64, 6);
         Color radiance = environment.rayLight.Sample(uv, Filter.Point, Wrap.Clamp);
-        Color data = environment.rayData.Sample(uv, Filter.Point, Wrap.Clamp);
-        float3 weightedRay = (float3(data.r, data.g, data.b) * 2 - float3(1)) * data.a;
+        int face = sample / 64;
+        int rayIndex = sample % 64;
+        int x = rayIndex % 8;
+        int y = rayIndex / 8;
+        int px = x < 4 ? 2 + x * 4 : 17 + (x - 4) * 4;
+        int py = y < 4 ? 2 + y * 4 : 17 + (y - 4) * 4;
+        float2 captureUV = (float2(px, py) + float2(0.5)) / 32;
+        float2 plane = captureUV * 2 - float2(1);
+        float lengthSq = 1 + Math.Dot(plane, plane);
+        float solidAngle = 1 / (lengthSq * Math.Sqrt(lengthSq));
+        // unitRay * solidAngle = FaceVector / lengthSq^2. This avoids a
+        // second texture read and its FP16 geometry/unpremultiply rounding.
+        float3 weightedRay = FaceVector(face, captureUV) / (lengthSq * lengthSq);
         float weight = Math.Max(Math.Dot(direction, weightedRay), 0);
         light += float3(radiance.r, radiance.g, radiance.b) * (weight * radiance.a);
         cosineWeight += weight;
-        sphereWeight += data.a;
-        backfaces += (1 - radiance.a) * data.a;
+        sphereWeight += solidAngle;
+        backfaces += (1 - radiance.a) * solidAngle;
     }
     // Correct the discrete cosine kernel's small direction-dependent integral
     // error. Every ray remains in the denominator, including rejected backfaces:
@@ -328,17 +358,19 @@ float2 ReceiverTapVisibility(Color moments, float3 ray, float3 normal,
                               float metricSpacing = 0)
 {
     float metric = metricSpacing > 0 ? metricSpacing : spacing;
-    float planeWeight = Math.SmoothStep(spacing * 0.0001, spacing * 0.01, Math.Abs(planeDistance));
-    float denominator = Math.Abs(planeDistance) >= spacing * 0.0000001 ? planeDistance
-        : planeDistance < 0 ? -spacing * 0.0000001 : spacing * 0.0000001;
+    // Visibility belongs to the physical capture, independently of which
+    // coarse/fine interpolation brick references that record.
+    float planeWeight = Math.SmoothStep(metric * 0.0001, metric * 0.01, Math.Abs(planeDistance));
+    float denominator = Math.Abs(planeDistance) >= metric * 0.0000001 ? planeDistance
+        : planeDistance < 0 ? -metric * 0.0000001 : metric * 0.0000001;
     float expected = metric * Math.Dot(normal, ray) / denominator;
     mut float support = Math.Lerp(1, expected > 0 ? 1 : 0, planeWeight);
     // Grazing rays can meet the receiver plane far outside the actual surface
     // neighborhood. Prefer taps whose projected footprint stays near the pixel.
     float rayNormal = Math.Dot(normal, ray);
     float rayDenominator = Math.Abs(rayNormal) >= 0.000001 ? rayNormal : rayNormal < 0 ? -0.000001 : 0.000001;
-    float3 projected = ray * ((planeDistance / spacing) / rayDenominator);
-    float footprint = Math.Min(Math.LengthSq(projected - delta / spacing) * 4, 1000000);
+    float3 projected = ray * ((planeDistance / metric) / rayDenominator);
+    float footprint = Math.Min(Math.LengthSq(projected - delta / metric) * 4, 1000000);
     support *= Math.Lerp(1, 1 / (1 + footprint * footprint), planeWeight);
     float inverse = Math.Lerp(pointInverse, Math.Clamp(expected, 0, 1000), planeWeight);
     return float2(ProbeVisibility(moments.r, moments.g, inverse, tolerance) * support, support);
@@ -431,7 +463,10 @@ IrradianceBlend GatherSparseIrradiance(Texture irradiance, Texture distance, Fie
         float3 delta = world - eye;
         float receiverDistance = Math.Length(delta);
         float alignment = Math.Clamp(Math.Dot(n, -delta) / Math.Max(receiverDistance, 0.000001), -1, 1);
-        float radius = Math.Saturate(receiverDistance / (layout.spacing * 0.04));
+        // This is a property of the physical capture, which may be shared by
+        // coarse and fine bricks. Its near-eye regularization must not change
+        // with the interpolation grid that happens to reference it.
+        float radius = Math.Saturate(receiverDistance / (metric * 0.04));
         // Tangent probes have ill-conditioned plane projections. Their
         // small base weight retains dark support without visible arcs.
         float forward = Math.Max(alignment, 0);
@@ -440,10 +475,17 @@ IrradianceBlend GatherSparseIrradiance(Texture irradiance, Texture distance, Fie
         // Invalid neighbors still count as missing coverage, so the
         // remaining light fades continuously as valid support vanishes.
         result.base += baseWeight;
+        // A capture behind the unperturbed receiver plane cannot supply its
+        // incoming hemisphere. Otherwise a black exterior probe can pass a
+        // coplanar depth comparison and darken a valid interior receiver.
+        // Retain tangent support and fade the tiny quantization margin smoothly.
+        float side = Math.Dot(visibilityNormal, -delta);
+        float frontSupport = Math.SmoothStep(-metric * 0.001, 0, side);
+        if (frontSupport <= 0) continue;
         float2 visibility = ReceiverVisibility(distance, probe, layout.atlasRows, delta, visibilityNormal,
             layout.spacing, tolerance, metric);
         if (visibility.y >= 0.25) continue;
-        float weight = baseWeight * visibility.x;
+        float weight = baseWeight * frontSupport * visibility.x;
         Color sampled = irradiance.Sample(AtlasUV(probe, layout.atlasRows, n), Filter.Bilinear, Wrap.Clamp);
         result.light += ClampHdr(float3(sampled.r, sampled.g, sampled.b)) * weight;
         result.weight += weight;

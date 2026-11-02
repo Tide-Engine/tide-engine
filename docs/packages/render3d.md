@@ -168,7 +168,8 @@ run after `Stages.Shadows` and before `Stages.Color`.
 Lighting packages can reuse the material pipeline for diffuse captures. On a
 copy of `Renderer`, set `diffuseCapture = true`, set `captureEye` to the capture
 position and `captureFar` to its positive distance scale, then direct `hdr` to
-the capture target and call the ordinary material drawing helpers.
+the capture target. Clear it to `Color(0, 0, 0, 0)` before calling the ordinary
+material drawing helpers.
 
 Capture shading contains diffuse direct reflection and emission. It excludes
 ambient irradiance, the indirect provider and direct specular reflection, so a
@@ -178,16 +179,24 @@ the main-camera `VertexInput.eye`, shared with the ordinary color and shadow
 passes. Captures draw both triangle sides; transparent objects are omitted by
 the gathering package.
 
-`Lit` also writes optional color attachment 1 as numeric metadata with alpha 1:
+`Lit` also writes optional color attachment 1 as numeric plane metadata:
 
 | Channel | Value |
 |---|---|
-| R | Surface-to-`captureEye` radial distance divided by `captureFar`, clamped to 0–1 |
-| G | 1 for a geometric back face of a one-sided material; 0 otherwise |
-| B | 1 where geometry was drawn |
-| A | 1 |
+| R | Perpendicular distance from `captureEye` to the encoded plane, divided by `captureFar` |
+| G, B | Octahedral coordinates of the plane normal, pointing away from `captureEye` |
+| A | 1 for a front hit, .5 for a one-sided back hit, 0 for a miss |
 
-A black clear has B = 0 and therefore means no geometry hit. Double-sided cards
+The geometric plane comes from world-position derivatives before any cutout
+discard. Its octahedral normal is rounded to an exact FP16 grid; distance is
+computed with that same normal. A gathering package reconstructs the ideal
+pixel ray's intersection with each sampled plane before interpolating depth.
+It rejects parallel rays and intersections behind the eye, and applies its
+radial distance limit to the reconstructed hit. This avoids treating raster
+subpixel rounding on large triangles as a physical occluder displacement.
+FP16 precision and grazing geometry still limit the representation.
+
+A transparent-black clear has alpha 0 and means no geometry hit. Double-sided cards
 do not mark back faces as solid interiors. A target with one color attachment
 simply drops this metadata output. These capture settings do not modify match
 state or replace the camera's ordinary presentation pass.

@@ -14,7 +14,8 @@ static tide_world world;
 static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
-static enum { GROUP_ALL, GROUP_ANALYTIC, GROUP_ROOM, GROUP_DIRECT, GROUP_GEOMETRY } group;
+static enum { GROUP_ALL, GROUP_ANALYTIC, GROUP_ROOM, GROUP_DIRECT, GROUP_GEOMETRY,
+    GROUP_REGIONAL512, GROUP_REGIONAL2048 } group;
 
 #define CHECK(condition) do { if (!(condition)) { \
     printf("FAIL: world GI pixels line %d: %s (scenario %d synthetic %d initialized %d/%d)\n", \
@@ -23,10 +24,11 @@ static enum { GROUP_ALL, GROUP_ANALYTIC, GROUP_ROOM, GROUP_DIRECT, GROUP_GEOMETR
     return false; \
 } } while (0)
 
-static void start(const int scenario)
+static void start_sized(const int scenario, const tide_float3 extents)
 {
     tide_world_init(&world, 1.0f / 60.0f);
     world.GIFixture.scenario = scenario;
+    world.GIFixture.roomExtents = extents;
     tide_world_tick(&world);
     tide_local_init(&local);
     draw.target_pixels = tide_platform_target_pixels;
@@ -34,6 +36,11 @@ static void start(const int scenario)
     local.GIProbe.settings.updatesPerFrame = 16;
     gui.width = WIDTH;
     gui.height = HEIGHT;
+}
+
+static void start(const int scenario)
+{
+    start_sized(scenario, tide_f3(3, 3, 3));
 }
 
 static bool render(uint32_t results[MAX_POINTS], const float scale)
@@ -231,6 +238,124 @@ static bool room_cases(void)
     return true;
 }
 
+static bool capture_plane_depth_case(void)
+{
+    // Find the physical anchor, not an allocator-specific ordinal. This probe
+    // sits .75 above the authored floor and sees it in the +Z face.
+    const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
+    int index = -1;
+    tide_float3 eye = {0};
+    const int count = tide_list_read_count(&local.heap, environment->anchors);
+    for (int at = 0; at < count; at++) {
+        const tide_float3 *anchor = tide_list_read(&local.heap, environment->anchors, at, sizeof *anchor);
+        if (!anchor || anchor->x != -5.25f || anchor->y != -11.25f || anchor->z != -11.25f) continue;
+        const tide_float3 *offset = tide_list_read(&local.heap, environment->offsets, at, sizeof *offset);
+        CHECK(offset);
+        eye = tide_f3(anchor->x + offset->x, anchor->y + offset->y, anchor->z + offset->z);
+        index = at;
+        break;
+    }
+    CHECK(index >= 0 && eye.y > -12);
+    GIProbe *probe = &local.GIProbe;
+    const GIProbe saved = *probe;
+    probe->settings.updatesPerFrame = 1;
+    probe->refreshCapture = index + 1;
+    probe->showCaptureDepth = true;
+    probe->sampleCount = 4;
+    for (int at = 0; at < 4; at++) probe->positions.at[at] = tide_f3((float)at, 0, 0);
+    uint32_t pixels[MAX_POINTS];
+    CHECK(render(pixels, 1));
+    const int32_t *last = tide_list_read(&local.heap, environment->lastCapture, index, sizeof *last);
+    CHECK(environment->updates == 1 && last && *last == environment->frame);
+    const double plane = ((double)eye.y + 12) / probe->settings.captureDistance;
+    for (int at = 0; at < 4; at++) {
+        // Independently intersect the ideal texel-center camera ray with y=-12.
+        const double downward = 2 * (20 + at / 2 + 0.5) / 32 - 1;
+        CHECK(rgb(pixels[at], plane / downward * 32, plane * 32, 1, true, 2));
+    }
+    *probe = saved;
+    return true;
+}
+
+static bool oblique_capture_depth_case(void)
+{
+    start(5);
+    GIProbe *probe = &local.GIProbe;
+    probe->settings.updatesPerFrame = 0;
+    probe->showCaptureDepth = true;
+    probe->captureOblique = true;
+    probe->sampleCount = 4;
+    for (int at = 0; at < 4; at++) probe->positions.at[at] = tide_f3((float)at, 0, 0);
+    uint32_t pixels[MAX_POINTS];
+    CHECK(render(pixels, 1));
+    // The authored plane is .4*x + 2*y + z = .5. Its octahedral
+    // normal is not exactly FP16-representable, and the lower row grazes it.
+    const double plane = 0.5 / sqrt(0.4 * 0.4 + 2 * 2 + 1) / 128;
+    for (int at = 0; at < 4; at++) {
+        const double x = 2 * (10 + at % 2 + 0.5) / 32 - 1;
+        const double y = 1 - 2 * (20 + at / 2 + 0.5) / 32;
+        const double axial = 0.5 / (0.4 * x + 2 * y + 1) / 128;
+        CHECK(rgb(pixels[at], axial * 32, plane * 32, 1, true, 2));
+    }
+    puts("ok: GI oblique capture-depth witnesses");
+    fflush(stdout);
+    cleanup();
+    return true;
+}
+
+static bool large_enclosure_case(void)
+{
+    // A closed uniform emitter has exact incident radiance L in every inward
+    // hemisphere, independent of position, spacing and probe interpolation.
+    // Scan whole wall/floor patches rather than a single convenient witness.
+    static const int capacities[] = {512, 2048};
+    for (size_t cap = 0; cap < sizeof capacities / sizeof capacities[0]; cap++) {
+        if (group == GROUP_REGIONAL512 && capacities[cap] != 512) continue;
+        if (group == GROUP_REGIONAL2048 && capacities[cap] != 2048) continue;
+        start_sized(2, tide_f3(24, 12, 32));
+        GIProbe *probe = &local.GIProbe;
+        probe->compactBackdrop = true;
+        probe->settings.maxProbes = capacities[cap];
+        probe->settings.captureDistance = 128;
+        probe->sampleCount = 16;
+        uint32_t pixels[MAX_POINTS];
+        for (int at = 0; at < 16; at++) {
+            probe->positions.at[at] = tide_f3(-18 + 12 * (float)(at % 4), -10 + (20.0f / 3) * (float)(at / 4), 32);
+            probe->normals.at[at] = tide_f3(0, 0, -1);
+        }
+        CHECK(refresh(pixels, 1));
+        bool uniform = true;
+        for (int at = 0; at < 16; at++) {
+            if (!rgb(pixels[at], 0.2, 0.1, 0.05, true, 5)) {
+                printf("enclosure wall: capacity %d sample %d (%g,%g,%g)\n", capacities[cap], at,
+                    (double)probe->positions.at[at].x, (double)probe->positions.at[at].y, (double)probe->positions.at[at].z);
+                uniform = false;
+            }
+        }
+        CHECK(uniform);
+        for (int at = 0; at < 16; at++) {
+            probe->positions.at[at] = tide_f3(-18 + 12 * (float)(at % 4), -12, -24 + 16 * (float)(at / 4));
+            probe->normals.at[at] = tide_f3(0, 1, 0);
+        }
+        CHECK(render(pixels, 1));
+        uniform = true;
+        for (int at = 0; at < 16; at++) {
+            if (!rgb(pixels[at], 0.2, 0.1, 0.05, true, 5)) {
+                printf("enclosure floor: capacity %d sample %d (%g,%g,%g)\n", capacities[cap], at,
+                    (double)probe->positions.at[at].x, (double)probe->positions.at[at].y, (double)probe->positions.at[at].z);
+                uniform = false;
+            }
+        }
+        CHECK(uniform);
+        if (capacities[cap] == 512) CHECK(capture_plane_depth_case());
+        printf("ok: GI enclosure capacity %d, 32 wall/floor witnesses%s\n", capacities[cap],
+            capacities[cap] == 512 ? " and physical floor capture depth" : "");
+        fflush(stdout);
+        cleanup();
+    }
+    return group == GROUP_REGIONAL2048 || oblique_capture_depth_case();
+}
+
 static bool adaptive_boundary_cases(void)
 {
     start(5);
@@ -331,6 +456,65 @@ static bool adaptive_boundary_cases(void)
     // Its bit19 lies in B of the extra record, beyond the ordinary RG index.
     CHECK(rgb(pixels[0], 0.2 * 0.889408, 0.1 * 0.889408, 0.05 * 0.889408, true, 2));
     for (int at = 1; at < 4; at++) CHECK(rgb(pixels[at], 0.2, 0.1, 0.05, true, 2));
+    probe->synthetic = 15;
+    probe->sampleCount = 8;
+    static const tide_float3 shared_points[] = {
+        {0, 0.08f, 0.08f}, {0, 0.12f, 0.02f},
+        {0, 0.02f, 0.12f}, {0, 0.1f, 0.06f}
+    };
+    for (int at = 0; at < 4; at++) {
+        probe->positions.at[at * 2] = probe->positions.at[at * 2 + 1] = shared_points[at];
+        probe->normals.at[at * 2] = tide_f3(1, 0, 0);  // Coarse grid selector.
+        probe->normals.at[at * 2 + 1] = tide_f3(-1, 0, 0); // Fine grid selector.
+    }
+    CHECK(render(pixels, 1));
+    // Both grids share their x=0 physical anchors. All face captures lie
+    // tangent to the +X receiver normal and beyond the physical near-eye radius,
+    // so their facing weights are the same .01. Bilinear interpolation must
+    // reproduce the authored affine L=(y+z)/8, amplified eight in the readout.
+    // Brick-scaled regularization instead overweights the dark origin anchor
+    // on the coarse side and creates a resolution-dependent lighting pit.
+    for (int at = 0; at < 4; at++) {
+        const double expected = shared_points[at].y + shared_points[at].z;
+        CHECK(rgb(pixels[at * 2], expected, expected, expected, true, 2));
+        CHECK(rgb(pixels[at * 2 + 1], expected, expected, expected, true, 2));
+        CHECK(abs((int)(pixels[at * 2] >> 24) - (int)(pixels[at * 2 + 1] >> 24)) <= 1);
+    }
+    probe->synthetic = 16;
+    probe->sampleCount = 3;
+    for (int at = 0; at < 3; at++) probe->positions.at[at] = tide_f3((float)(1 << at), 0, 0);
+    CHECK(render(pixels, 1));
+    // For physical metric one, projected offsets 1/3 and 1/2 give support
+    // 81/97 and 1/2. The first tap is clear; the second has inverse depth2,
+    // expected inverse1, .02 margin and .002 sigma. This fixed scene has one
+    // answer regardless of a coarse/fine brick referencing the same probe.
+    const double clear_support = 81.0 / 97.0, blocked_support = 0.5;
+    const double blocked_probability = 0.000004 / (0.000004 + 0.98 * 0.98);
+    const double probability = (clear_support + blocked_support * blocked_probability) / (clear_support + blocked_support);
+    for (int at = 0; at < 3; at++) CHECK(rgb(pixels[at], probability * probability * probability,
+        probability * probability * probability, probability * probability * probability, true, 2));
+    probe->synthetic = 17;
+    probe->sampleCount = 5;
+    static const tide_float3 front_points[] = {
+        {0.35f, 0.4f, 1.01f}, {0.8f, 1.3f, 1.1f},
+        {1.2f, 0.6f, 1.25f}, {1.6f, 1.4f, 1.4f}
+    };
+    for (int at = 0; at < 4; at++) {
+        probe->positions.at[at] = front_points[at];
+        probe->normals.at[at] = tide_f3(0, 0, 1);
+    }
+    probe->positions.at[4] = tide_f3(0.5f, 0.5f, 1.7f);
+    probe->normals.at[4] = tide_f3(0, 0, -1);
+    for (int scale = 1; scale <= 2; scale++) {
+        CHECK(render(pixels, (float)scale));
+        // An unobstructed front layer has known constant irradiance; the
+        // black layer behind each receiver cannot dilute it even where its
+        // trilinear weight dominates. All points stay inside filter borders.
+        for (int at = 0; at < 4; at++) CHECK(rgb(pixels[at], 0.2, 0.1, 0.05, true, 2));
+        // Reverse the geometric normal: that same bright layer is behind the
+        // surface and must not leak into its black incoming hemisphere.
+        CHECK(rgb(pixels[4], 0, 0, 0, true, 1));
+    }
     cleanup();
     return true;
 }
@@ -423,6 +607,8 @@ static int frame(void *context, const float seconds)
     if (passed && (group == GROUP_ALL || group == GROUP_ROOM)) passed = room_cases();
     if (passed && (group == GROUP_ALL || group == GROUP_DIRECT)) passed = direct_bounce_case();
     if (passed && (group == GROUP_ALL || group == GROUP_GEOMETRY)) passed = sphere_contact_case() && thin_wall_case();
+    if (passed && (group == GROUP_ALL || group == GROUP_REGIONAL512
+        || group == GROUP_REGIONAL2048)) passed = large_enclosure_case();
     tide_draw_free(&draw);
     if (!passed) return 1;
     puts("ok: world GI automatic coverage, adaptive lookup, coarse/fine continuity and sparse readiness, isotropic integral, positive cosine lobes, contact/occluder visibility, relocated metadata, emissive/direct bounce and unchanged match hashes");
@@ -442,6 +628,8 @@ int main(const int argc, char **argv)
         else if (!strcmp(name, "room")) group = GROUP_ROOM;
         else if (!strcmp(name, "direct")) group = GROUP_DIRECT;
         else if (!strcmp(name, "geometry")) group = GROUP_GEOMETRY;
+        else if (!strcmp(name, "regional512")) group = GROUP_REGIONAL512;
+        else if (!strcmp(name, "regional2048")) group = GROUP_REGIONAL2048;
         else {
             fprintf(stderr, "Unknown GI pixel group: %s\n", name);
             return 2;

@@ -31,7 +31,7 @@ Two continuous architectural scenes extend beyond the separated-room workload:
 Both use a real directional sun and six shadowed spotlights, with zero ambient
 irradiance. A fixed directional shadow volume covers the architecture; the sun
 uses one map and each spotlight one, for seven maps total. Hero cameras keep
-their shaded display-wall receiver within the ordinary 48-unit resident range.
+their shaded display-wall receiver within the ordinary 48-unit nearby range.
 Neither scene authors probes or baked light. These are static examples;
 `--travel` and `--moving-light` are rejected for them.
 
@@ -55,10 +55,12 @@ Additional options:
 - `--overview` frames the whole district from above and requests a larger GI
   view distance of `2 * extent + 16`, where `extent` is the larger grid dimension
   times 24 world units. The elevated camera otherwise has no nearby geometry
-  within the ordinary 48-unit working set. This is a different coverage workload;
+  within the ordinary 48-unit nearby-detail radius. This is a different detail workload;
   the nearby and travel cameras retain the production default. Atrium and
   courtyard overviews request view distances 200 and 350 respectively, covering
-  their full scene from the elevated cameras. Their hero views retain 48.
+  their full scene from the elevated cameras. Their hero views retain 48 for
+  nearby coverage/detail priority; distant visible receivers keep conservative
+  coarse coverage through the rendered camera frustum in both views.
 - `--debug` draws the actual resident relocated probe positions. Large-scene
   markers grow with camera distance to stay visible in the overview, using the
   same package shader and depth test; this changes only visualization size.
@@ -102,6 +104,32 @@ five budgets, unchanged match hashes and a rendered white-box witness that must
 brighten by more than fifteen summed RGB levels with GI. Room/district witnesses
 use the original camera. Each large scene instead projects its own shaded +Z
 display-wall face through its own hero camera, with that scene's sun/spots.
+The original fifteen-level display-wall witness remains. Each large scene also
+checks fifteen world-anchored samples on a separate, directly shaded rear-wall
+patch: the atrium's central wall at x=-4..4/y=6..10, and the courtyard wall at
+x=-46..-26/y=16..20. The authored camera rays pass above foreground objects and
+through open arch interiors; sun direction and spot cones exclude direct light.
+The GI-off samples must remain dark (at most three summed RGB levels), guarding
+against an accidentally projected direct-lit object. Conservative sunlit floor
+patches in front of the walls establish positive one-bounce transport.
+
+Every sample requires all eight interpolation nodes mapped, active and captured,
+more than one summed RGB level of GI gain (the quantization/readback margin),
+and the region must average more than three added summed RGB levels. This is a
+coverage/nonzero-energy regression rather than a reference-quality lighting
+solution; independent uniform-irradiance fixtures check reconstruction.
+These fixed thresholds are chosen from the lighting/visibility setup, before
+inspecting candidate output. Increasing probe capacity must not make these
+visible receiver patches fall out of coverage.
+
+Rows retain `regional_samples` with each world point, projected pixel, paired
+off/on RGBA and mapped block spacing, plus minimum/mean/maximum gain and covered/
+nonzero counts. `regional_camera` is `hero_validation` even when the final
+requested capture is an overview. `regional_on_valid` is false for GI-off rows;
+their `on` entries repeat the reference and are not a second rendered state.
+Failures print the same sample diagnostics and retain the diagnostic-capture
+behavior. Regional readbacks/accounting stay outside all measured intervals.
+
 Validation uses still lighting outside measurement, including when
 overview/debug/travel is requested. Field
 accounting and capture budgets are checked; frozen captures must remain zero,

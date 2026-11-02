@@ -112,6 +112,17 @@ struct CoverageNode
     int probeMask = 134217727;
 }
 
+// Numeric receiver visibility, independent of GPU resources or draw-list state.
+// The finite prototype range matches the existing coverage/capture controls.
+struct CoverageView
+{
+    float3 eye;
+    float3[6] normals;
+    float[6] distances;
+    float padding;
+    LocalBounds bounds;
+}
+
 // Local geometry facts are read once per pack generation. Entity-to-slot
 // maps avoid searching the distinct asset list for every instance each frame.
 local singleton WorldBounds
@@ -134,6 +145,12 @@ local singleton WorldBounds
     float requestedCaptureDistance;
     float3 viewCell;
     float3 viewDirection;
+    quaternion viewRotation;
+    float requestedFov;
+    float requestedNear;
+    float requestedFar;
+    float requestedAspect;
+    CoverageView coverageView;
     List<SceneInstance> instances;
     Map<Entity, int> instanceSlots;
     Map<Entity, int> skinInstanceSlots;
@@ -452,10 +469,94 @@ double BoundsDistanceSq(LocalBounds bounds, float3 point)
     return Math.LengthSq(delta);
 }
 
+CoverageView MakeCoverageView(Render3D.Camera camera, float aspect, float padding)
+{
+    mut CoverageView frustum = default;
+    frustum.eye = camera.position;
+    frustum.padding = padding;
+    quaternion rotation = Math.Normalize(camera.rotation);
+    float3 right = Math.Rotate(rotation, float3(1, 0, 0));
+    float3 up = Math.Rotate(rotation, float3(0, 1, 0));
+    float3 forward = Math.Rotate(rotation, float3(0, 0, 1));
+    float vertical = Math.Tan(Math.Clamp(camera.verticalFov, 1deg, 179deg) * 0.5);
+    float horizontal = vertical * Math.Max(aspect, 0.000001);
+    float near = Math.Clamp(camera.near, 0.001, 999999);
+    float far = Math.Clamp(camera.far, near + 0.001, 1000000);
+    frustum.normals[0] = Math.Normalize(forward * horizontal + right);
+    frustum.normals[1] = Math.Normalize(forward * horizontal - right);
+    frustum.normals[2] = Math.Normalize(forward * vertical + up);
+    frustum.normals[3] = Math.Normalize(forward * vertical - up);
+    frustum.normals[4] = forward;
+    frustum.normals[5] = -forward;
+    frustum.distances[4] = near;
+    frustum.distances[5] = -far;
+    // Until the next rebuild, full camera rotation changes by at most ten
+    // degrees. A unit plane normal then changes by at most 2*sin(5deg)<.175.
+    // Cover that displacement and translation within the retained view cell.
+    double reach = double(far) * Math.Sqrt(1d + double(horizontal) * double(horizontal)
+        + double(vertical) * double(vertical));
+    float margin = float(reach * 0.175d + double(padding));
+    for (var corner = 0; corner < 8; corner++)
+    {
+        float depth = (corner & 4) == 0 ? near : far;
+        float3 point = camera.position + forward * depth
+            + right * (depth * horizontal * ((corner & 1) == 0 ? -1 : 1))
+            + up * (depth * vertical * ((corner & 2) == 0 ? -1 : 1));
+        if (!FiniteBoundsValue(point) || !FiniteBoundsValue(margin)) return default;
+        frustum.bounds = JoinBounds(frustum.bounds,
+            LocalBounds { valid = true, minimum = point - float3(margin), maximum = point + float3(margin) });
+    }
+    return frustum;
+}
+
+bool CoverageVisible(CoverageView frustum, LocalBounds receiver)
+{
+    if (!frustum.bounds.valid || !receiver.valid
+        || !BoxesOverlap(receiver.minimum, receiver.maximum, frustum.bounds.minimum, frustum.bounds.maximum)) return false;
+    double3 center = (double3(receiver.minimum) + double3(receiver.maximum)) * 0.5d - double3(frustum.eye);
+    double3 extent = (double3(receiver.maximum) - double3(receiver.minimum)) * 0.5d;
+    double movement = double(frustum.padding) + (Math.Length(center) + Math.Length(extent)) * 0.175d;
+    for (var plane = 0; plane < 6; plane++)
+    {
+        double3 normal = double3(frustum.normals[plane]);
+        double support = Math.Dot(normal, center) + Math.Dot(Math.Abs(normal), extent) + movement;
+        if (support < double(frustum.distances[plane])) return false;
+    }
+    return true;
+}
+
+bool CoverageEligible(WorldBounds bounds, LocalBounds receiver, float3 eye, float viewDistance)
+{
+    float near = viewDistance + bounds.coverageView.padding;
+    return receiver.valid && (BoundsDistanceSq(receiver, eye) <= double(near) * double(near)
+        || CoverageVisible(bounds.coverageView, receiver));
+}
+
+LocalBounds CoverageReceiverBounds(WorldBounds bounds, float3 eye, float viewDistance)
+{
+    mut LocalBounds result = default;
+    float near = viewDistance + bounds.coverageView.padding;
+    float3 nearMin = eye - float3(near);
+    float3 nearMax = eye + float3(near);
+    foreach (var instance in bounds.instances)
+    {
+        LocalBounds receiver = instance.bounds;
+        if (!receiver.valid) continue;
+        if (BoundsDistanceSq(receiver, eye) <= double(near) * double(near))
+            result = JoinBounds(result, LocalBounds { valid = true,
+                minimum = Math.Max(receiver.minimum, nearMin), maximum = Math.Min(receiver.maximum, nearMax) });
+        if (CoverageVisible(bounds.coverageView, receiver))
+            result = JoinBounds(result, LocalBounds { valid = true,
+                minimum = Math.Max(receiver.minimum, bounds.coverageView.bounds.minimum),
+                maximum = Math.Min(receiver.maximum, bounds.coverageView.bounds.maximum) });
+    }
+    return result;
+}
+
 bool UsefulCoverage(WorldBounds bounds, float3 minimum, float size, float3 eye, float viewDistance, float padding)
 {
     LocalBounds cell = LocalBounds { valid = true, minimum = minimum, maximum = minimum + float3(size) };
-    if (BoundsDistanceSq(cell, eye) > double(viewDistance) * double(viewDistance)) return false;
+    if (!CoverageEligible(bounds, cell, eye, viewDistance)) return false;
     float3 center = minimum + float3(size * 0.5);
     float radius = size * 0.9 + padding;
     var candidates = CaptureCandidates(bounds.scene, center, radius);
@@ -463,9 +564,12 @@ bool UsefulCoverage(WorldBounds bounds, float3 minimum, float size, float3 eye, 
     {
         if (index < 0 || index >= bounds.instances.count) continue;
         SceneInstance instance = bounds.instances[index];
-        if (!instance.bounds.valid || BoundsDistanceSq(instance.bounds, eye) > double(viewDistance) * double(viewDistance)) continue;
+        LocalBounds receiver = LocalBounds { valid = instance.bounds.valid,
+            minimum = Math.Max(minimum - float3(padding), instance.bounds.minimum),
+            maximum = Math.Min(minimum + float3(size + padding), instance.bounds.maximum) };
         if (!BoxesOverlap(minimum - float3(padding), minimum + float3(size + padding),
                           instance.bounds.minimum, instance.bounds.maximum)) continue;
+        if (!CoverageEligible(bounds, receiver, eye, viewDistance)) continue;
         if (instance.placementEligible && instance.slot >= 0 && instance.slot < bounds.staticBounds.count
             && bounds.staticBounds[instance.slot].placement.valid)
         {
@@ -498,8 +602,10 @@ int CoverageProbeMask(WorldBounds bounds, float3 minimum, float size, float base
     {
         if (index < 0 || index >= bounds.instances.count) continue;
         LocalBounds receiver = bounds.instances[index].bounds;
-        if (!receiver.valid || BoundsDistanceSq(receiver, eye) > double(viewDistance) * double(viewDistance)
-            || !BoxesOverlap(lower, upper, receiver.minimum, receiver.maximum)) continue;
+        if (!receiver.valid || !BoxesOverlap(lower, upper, receiver.minimum, receiver.maximum)) continue;
+        LocalBounds support = LocalBounds { valid = true,
+            minimum = Math.Max(lower, receiver.minimum), maximum = Math.Min(upper, receiver.maximum) };
+        if (!CoverageEligible(bounds, support, eye, viewDistance)) continue;
         float3 lo = Math.Clamp((receiver.minimum - float3(padding) - minimum) / spacing, float3(0), float3(2));
         float3 hi = Math.Clamp((receiver.maximum + float3(padding) - minimum) / spacing, float3(0), float3(2));
         int3 first = int3(Math.Floor(lo));
@@ -528,10 +634,11 @@ float CoveragePriority(WorldBounds bounds, float3 minimum, float size, float3 ey
     {
         if (index < 0 || index >= bounds.instances.count) continue;
         LocalBounds receiver = bounds.instances[index].bounds;
-        if (!receiver.valid || BoundsDistanceSq(receiver, eye) > double(viewDistance) * double(viewDistance)) continue;
+        if (!receiver.valid) continue;
         float3 receiverMin = Math.Max(lower, receiver.minimum);
         float3 receiverMax = Math.Min(upper, receiver.maximum);
         if (receiverMin.x > receiverMax.x || receiverMin.y > receiverMax.y || receiverMin.z > receiverMax.z) continue;
+        if (!CoverageEligible(bounds, LocalBounds { valid = true, minimum = receiverMin, maximum = receiverMax }, eye, viewDistance)) continue;
         float3 closest = Math.Clamp(eye, receiverMin, receiverMax);
         double distanceSq = Math.LengthSq(double3(closest) - double3(eye));
         float3 support = Math.Clamp(eye + forward * minimumSize, receiverMin, receiverMax);
@@ -686,8 +793,10 @@ void CopyCoverageNode(List<CoverageNode> source, mut List<CoverageNode> destinat
         CopyCoverageNode(source, destination, first + child, node.children + child, depth + 1);
 }
 
-void BuildCoverage(mut WorldBounds bounds, Settings settings, float3 eye, float3 forward)
+void BuildCoverage(mut WorldBounds bounds, Settings settings, Render3D.Camera camera, float aspect)
 {
+    float3 eye = camera.position;
+    float3 forward = Math.Rotate(Math.Normalize(camera.rotation), float3(0, 0, 1));
     bounds.nodes.Clear();
     bounds.lookup.Clear();
     bounds.ready = false;
@@ -699,33 +808,45 @@ void BuildCoverage(mut WorldBounds bounds, Settings settings, float3 eye, float3
     }
     float spacing = StableProbeSpacing(eye, settings.probeSpacing);
     float minimumSize = spacing * 2;
+    bounds.coverageView = MakeCoverageView(camera, aspect, minimumSize * 2);
+    LocalBounds receivers = CoverageReceiverBounds(bounds, eye, settings.viewDistance);
+    if (!receivers.valid)
+    {
+        bounds.layout = default;
+        bounds.topologyRevision++;
+        return;
+    }
     mut float size = minimumSize * 128;
     mut int depth = 7;
-    while (double(settings.viewDistance) > double(size) * 0.25d && depth < 24)
+    mut float3 root = float3(0);
+    for (var attempt = 0; attempt < 18; attempt++)
     {
+        root = Math.Floor(eye / (size * 0.25)) * (size * 0.25)
+            - float3(size * 0.5) + float3(spacing * 0.5);
+        if (receivers.minimum.x >= root.x + spacing && receivers.minimum.y >= root.y + spacing
+            && receivers.minimum.z >= root.z + spacing && receivers.maximum.x <= root.x + size - spacing
+            && receivers.maximum.y <= root.y + size - spacing && receivers.maximum.z <= root.z + size - spacing) break;
+        if (depth >= 24) break;
         size *= 2;
         depth++;
     }
     // Every subdivision keeps the same half-base-cell phase. This avoids
     // probes coinciding with common integer wall/floor planes, including
     // thin-wall edges whose tangential captures can see around the occluder.
-    float3 root = Math.Floor(eye / (size * 0.25)) * (size * 0.25)
-        - float3(size * 0.5) + float3(spacing * 0.5);
-    float viewDistance = Math.Min(settings.viewDistance, size * 0.25);
+    float viewDistance = settings.viewDistance;
     if (!FiniteBoundsValue(root) || !FiniteBoundsValue(root + float3(size)) || size <= 0)
     {
         bounds.layout = default;
         bounds.topologyRevision++;
         return;
     }
-    // Build triangle caches only for instances that can influence resident
-    // receiver coverage. Distant assets do not force eager geometry decoding.
-    var nearby = CaptureCandidates(bounds.scene, eye, viewDistance);
-    foreach (var i in nearby)
+    // Only eligible receiver assets need triangle caches. An off-camera scene
+    // cannot enlarge the field or consume its probe budget merely by existing.
+    for (var i = 0; i < bounds.instances.count; i++)
     {
         if (i < 0 || i >= bounds.instances.count) continue;
         SceneInstance instance = bounds.instances[i];
-        if (!instance.placementEligible || BoundsDistanceSq(instance.bounds, eye) > double(viewDistance) * double(viewDistance)) continue;
+        if (!instance.placementEligible || !CoverageEligible(bounds, instance.bounds, eye, viewDistance)) continue;
         int slot = instance.slot;
         if (slot < 0 || slot >= bounds.staticBounds.count || bounds.staticBounds[slot].placementReady) continue;
         mut StaticBounds cached = bounds.staticBounds[slot];
@@ -759,7 +880,15 @@ void BuildCoverage(mut WorldBounds bounds, Settings settings, float3 eye, float3
         int best = PopCoverage(pending, bounds.nodes);
         if (best < 0) break;
         CoverageNode node = bounds.nodes[best];
-        if (!node.relevant || node.size <= minimumSize * 1.001 || node.depth >= depth) continue;
+        // Visible distant receivers need coarse support, not a full base-detail
+        // plan which would immediately be discarded by the budget merge pass.
+        // A cell touching the nearby radius keeps the original finest target.
+        LocalBounds cell = LocalBounds { valid = true,
+            minimum = node.minimum, maximum = node.minimum + float3(node.size) };
+        double distance = Math.Sqrt(BoundsDistanceSq(cell, eye));
+        double detailRadius = Math.Max(double(viewDistance), double(minimumSize));
+        double targetSize = double(minimumSize) * Math.Max(1d, distance / detailRadius);
+        if (!node.relevant || double(node.size) <= targetSize * 1.001d || node.depth >= depth) continue;
         float half = node.size * 0.5;
         mut List<CoverageNode> children = [];
         mut int count = 0;
@@ -988,12 +1117,17 @@ view CollectWorldBounds(mut WorldBounds bounds, Environment environment, Render3
     float3 eye = renderer.camera.position;
     float precisionSpacing = StableProbeSpacing(eye, settings.probeSpacing);
     float3 viewCell = Math.Floor(eye / (precisionSpacing * 2));
-    float3 forward = Math.Mul(float4x4.TRS(float3(0), renderer.camera.rotation, float3(1)), float4(0, 0, 1, 0)).xyz;
+    quaternion rotation = Math.Normalize(renderer.camera.rotation);
+    float3 forward = Math.Rotate(rotation, float3(0, 0, 1));
+    float aspect = Math.Max(Screen.width, 1) / Math.Max(Screen.height, 1);
     bool changed = !bounds.ready || !FiniteBoundsValue(eye) || bounds.geometryChanged
         || bounds.layout.spacing != precisionSpacing || bounds.requestedSpacing != settings.probeSpacing
         || bounds.requestedMaxProbes != settings.maxProbes || bounds.requestedViewDistance != settings.viewDistance
         || bounds.requestedCaptureDistance != settings.captureDistance
-        || Math.LengthSq(viewCell - bounds.viewCell) > 0 || Math.Dot(forward, bounds.viewDirection) < 0.95;
+        || bounds.requestedFov != renderer.camera.verticalFov || bounds.requestedNear != renderer.camera.near
+        || bounds.requestedFar != renderer.camera.far || bounds.requestedAspect != aspect
+        || Math.LengthSq(viewCell - bounds.viewCell) > 0
+        || Math.Abs(Math.Dot(rotation.value, bounds.viewRotation.value)) < 0.9961947;
     if (!changed) return;
     bounds.requestedSpacing = settings.probeSpacing;
     bounds.requestedMaxProbes = settings.maxProbes;
@@ -1001,5 +1135,10 @@ view CollectWorldBounds(mut WorldBounds bounds, Environment environment, Render3
     bounds.requestedCaptureDistance = settings.captureDistance;
     bounds.viewCell = viewCell;
     bounds.viewDirection = forward;
-    BuildCoverage(bounds, settings, eye, forward);
+    bounds.viewRotation = rotation;
+    bounds.requestedFov = renderer.camera.verticalFov;
+    bounds.requestedNear = renderer.camera.near;
+    bounds.requestedFar = renderer.camera.far;
+    bounds.requestedAspect = aspect;
+    BuildCoverage(bounds, settings, renderer.camera, aspect);
 }

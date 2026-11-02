@@ -213,10 +213,13 @@ draw both sides with diffuse direct reflection and emission, excluding ambient,
 indirect and direct specular. Material callbacks use the capture view direction;
 vertex deformation retains the main eye.
 
-`Lit` optionally writes a second target image: R is radial distance divided by
-`captureFar`, G marks one-sided geometric back faces, B marks a geometry hit,
-and A is 1. A black clear means no hit. Double-sided cards never mark an
-interior back face. A target with only one color image drops the second output.
+`Lit` optionally writes a second target image: R is perpendicular plane
+distance divided by `captureFar`, and GB encode its octahedral normal pointing
+away from the capture eye. Alpha is 1 for a front hit, .5 for a one-sided back
+hit, and 0 for a miss. Clear captures to `Color(0, 0, 0, 0)`. A gathering package
+intersects each pixel's ideal ray with this plane before filtering distance.
+Double-sided cards never mark an interior back face. A target with only one
+color image drops the second output.
 See the [package guide](https://tide-engine.dev/packages/render3d#indirect-lighting-providers)
 for the complete provider contract.
 

@@ -41,6 +41,13 @@ static int frozen_initialized;
 static uint32_t max_textures;
 static double setup_record_ms, convergence_record_ms, untimed_record_ms;
 static float primary_spacing;
+enum { REGION_COLUMNS = 5, REGION_ROWS = 3, REGION_SAMPLES = REGION_COLUMNS * REGION_ROWS };
+static tide_float3 region_world[REGION_SAMPLES];
+static tide_float2 region_pixels[REGION_SAMPLES];
+static uint32_t region_off[REGION_SAMPLES], region_on[REGION_SAMPLES];
+static float region_spacing[REGION_SAMPLES];
+static bool region_on_valid;
+static int region_count, region_nonzero, region_covered, region_gain_min, region_gain_max, region_gain_sum;
 
 static int expected_meshes(void)
 {
@@ -177,37 +184,38 @@ static void primary_probe_spacing(void)
     }
 }
 
+static bool project_receiver(const tide_float3 p, tide_float2 *point)
+{
+    // Independent double pinhole projection through the actual rendered camera.
+    const Render3D_Camera camera = local.Render3D_Renderer.camera;
+    const tide_float3 eye = camera.position;
+    const tide_float3 forward = tide_forward_q(camera.rotation);
+    const tide_float3 right = tide_right_q(camera.rotation);
+    const tide_float3 up = tide_up_q(camera.rotation);
+    const double x = p.x - eye.x, y = p.y - eye.y, z = p.z - eye.z;
+    const double depth = x * forward.x + y * forward.y + z * forward.z;
+    const double tangent = tan((double)camera.verticalFov * 0.5);
+    if (!isfinite(depth) || depth <= 0 || !isfinite(tangent) || tangent <= 0) {
+        fprintf(stderr, "GI %s receiver has invalid camera depth/FOV\n", scene_names[scene]);
+        return false;
+    }
+    const double scale = height / (2 * depth * tangent);
+    const double screen_x = floor(width * 0.5 + (x * right.x + y * right.y + z * right.z) * scale);
+    const double screen_y = floor(height * 0.5 - (x * up.x + y * up.y + z * up.z) * scale);
+    if (!isfinite(screen_x) || !isfinite(screen_y)
+        || screen_x < 0 || screen_x >= width || screen_y < 0 || screen_y >= height) {
+        fprintf(stderr, "GI %s receiver projects outside the frame: %.6g, %.6g\n",
+            scene_names[scene], screen_x, screen_y);
+        return false;
+    }
+    *point = (tide_float2){(float)screen_x, (float)screen_y};
+    return true;
+}
+
 static bool receiver_pixel(uint32_t *pixel)
 {
     tide_float2 point = {(float)width * 0.4f, (float)height * 0.62f};
-    if (scene >= ATRIUM) {
-        // Independent pinhole projection of the authored +Z display-wall face
-        // through this frame's actual validation camera, using double math.
-        // In particular, overview never validates an unrelated Cornell room.
-        const Render3D_Camera camera = local.Render3D_Renderer.camera;
-        const tide_float3 eye = camera.position;
-        const tide_float3 forward = tide_forward_q(camera.rotation);
-        const tide_float3 right = tide_right_q(camera.rotation);
-        const tide_float3 up = tide_up_q(camera.rotation);
-        const tide_float3 p = receiver_position();
-        const double x = p.x - eye.x, y = p.y - eye.y, z = p.z - eye.z;
-        const double depth = x * forward.x + y * forward.y + z * forward.z;
-        const double tangent = tan((double)camera.verticalFov * 0.5);
-        if (!isfinite(depth) || depth <= 0 || !isfinite(tangent) || tangent <= 0) {
-            fprintf(stderr, "GI %s receiver has invalid camera depth/FOV\n", scene_names[scene]);
-            return false;
-        }
-        const double scale = height / (2 * depth * tangent);
-        const double screen_x = floor(width * 0.5 + (x * right.x + y * right.y + z * right.z) * scale);
-        const double screen_y = floor(height * 0.5 - (x * up.x + y * up.y + z * up.z) * scale);
-        if (!isfinite(screen_x) || !isfinite(screen_y)
-            || screen_x < 0 || screen_x >= width || screen_y < 0 || screen_y >= height) {
-            fprintf(stderr, "GI %s receiver projects outside the frame: %.6g, %.6g\n",
-                scene_names[scene], screen_x, screen_y);
-            return false;
-        }
-        point = (tide_float2){(float)screen_x, (float)screen_y};
-    }
+    if (scene >= ATRIUM && !project_receiver(receiver_position(), &point)) return false;
     *pixel = 0;
     tide_platform_read_pixels(&draw, &point, 1, pixel);
     return true;
@@ -216,6 +224,120 @@ static bool receiver_pixel(uint32_t *pixel)
 static unsigned brightness(const uint32_t color)
 {
     return (color >> 24) + (color >> 16 & 255u) + (color >> 8 & 255u);
+}
+
+static bool regional_reference(void)
+{
+    region_count = scene >= ATRIUM ? REGION_SAMPLES : 0;
+    for (int index = 0; index < region_count; index++) {
+        const int column = index % REGION_COLUMNS, row = index / REGION_COLUMNS;
+        // These are authored planar receiver patches, not selected screenshot
+        // pixels. The atrium's central rear wall is above the display/sculptures,
+        // inside the side galleries and visible through the open arch interiors.
+        // Its spots aim outward, away from this central patch. The courtyard
+        // patch is above the bridge/arcades and all spot positions. Both +Z faces
+        // oppose the sun, so only indirect light should brighten these grids.
+        region_world[index] = scene == ATRIUM
+            ? (tide_float3){-4 + (float)column * 2, 6 + (float)row * 2, -35.69f}
+            : (tide_float3){-46 + (float)column * 5, 16 + (float)row * 2, -51.99f};
+        if (!project_receiver(region_world[index], &region_pixels[index])) return false;
+    }
+    if (region_count) tide_platform_read_pixels(&draw, region_pixels, region_count, region_off);
+    for (int index = 0; index < region_count; index++) {
+        region_on[index] = region_off[index];
+        region_spacing[index] = 0;
+        // Catch a misplaced/occluded receiver rather than interpreting a bright
+        // direct-lit column or arch as successful indirect illumination.
+        if (brightness(region_off[index]) > 3) {
+            fprintf(stderr, "GI %s regional receiver %d is not directly shaded: %08x\n",
+                scene_names[scene], index, region_off[index]);
+            return false;
+        }
+    }
+    return true;
+}
+
+static float regional_support(const tide_float3 world_point)
+{
+    const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
+    const tide_float3 point = {world_point.x, world_point.y, world_point.z + environment->layout.spacing * 0.04f};
+    const int32_t count = tide_list_read_count(&local.heap, environment->blocks);
+    for (int32_t index = 0; index < count; index++) {
+        const GlobalIllumination_ProbeBlock *block = tide_list_read(&local.heap,
+            environment->blocks, index, sizeof *block);
+        if (!block || !block->active || !(block->spacing > 0)) continue;
+        const float size = block->spacing * 2;
+        if (point.x < block->minimum.x || point.y < block->minimum.y || point.z < block->minimum.z
+            || point.x > block->minimum.x + size || point.y > block->minimum.y + size
+            || point.z > block->minimum.z + size) continue;
+        const int x = (int)fmax(0, fmin(1, floor((point.x - block->minimum.x) / block->spacing)));
+        const int y = (int)fmax(0, fmin(1, floor((point.y - block->minimum.y) / block->spacing)));
+        const int z = (int)fmax(0, fmin(1, floor((point.z - block->minimum.z) / block->spacing)));
+        bool complete = true;
+        for (int corner = 0; corner < 8; corner++) {
+            const int logical = x + (corner & 1) + 3 * (y + ((corner >> 1) & 1)) + 9 * (z + (corner >> 2));
+            const int32_t *probe = tide_list_read(&local.heap, block->probes, logical, sizeof *probe);
+            if (!probe || *probe < 0 || *probe >= environment->layout.total) { complete = false; break; }
+            const bool *active = tide_list_read(&local.heap, environment->active, *probe, sizeof *active);
+            const bool *captured = tide_list_read(&local.heap, environment->captured, *probe, sizeof *captured);
+            if (!active || !*active || !captured || !*captured) { complete = false; break; }
+        }
+        if (complete) return block->spacing;
+    }
+    return 0;
+}
+
+static void regional_report(FILE *file)
+{
+    fprintf(file, ",\"regional_camera\":\"hero_validation\",\"regional_count\":%d,\"regional_on_valid\":%s,\"regional_covered\":%d,"
+        "\"regional_nonzero\":%d,\"regional_gain_min\":%d,\"regional_gain_mean\":%.6f,"
+        "\"regional_gain_max\":%d,\"regional_samples\":[",
+        region_count, region_on_valid ? "true" : "false", region_covered, region_nonzero,
+        region_gain_min, region_count ? (double)region_gain_sum / region_count : 0, region_gain_max);
+    for (int index = 0; index < region_count; index++) {
+        const tide_float3 p = region_world[index];
+        const tide_float2 pixel = region_pixels[index];
+        fprintf(file, "%s{\"world\":[%.6g,%.6g,%.6g],\"pixel\":[%.0f,%.0f],"
+            "\"off\":%u,\"on\":%u,\"spacing\":%.6g}", index ? "," : "",
+            (double)p.x, (double)p.y, (double)p.z, (double)pixel.x, (double)pixel.y,
+            region_off[index], region_on[index], (double)region_spacing[index]);
+    }
+    fputc(']', file);
+}
+
+static bool regional_check(void)
+{
+    if (!region_count) return true;
+    tide_platform_read_pixels(&draw, region_pixels, region_count, region_on);
+    region_on_valid = true;
+    region_gain_min = 765;
+    region_gain_max = -765;
+    for (int index = 0; index < region_count; index++) {
+        region_spacing[index] = regional_support(region_world[index]);
+        region_covered += region_spacing[index] > 0;
+        const int gain = (int)brightness(region_on[index]) - (int)brightness(region_off[index]);
+        region_gain_sum += gain;
+        if (gain < region_gain_min) region_gain_min = gain;
+        if (gain > region_gain_max) region_gain_max = gain;
+        // One summed level is the readback/quantization margin, not useful fill.
+        region_nonzero += gain > 1;
+    }
+    // A conservative sunlit floor patch lies in front of each receiver grid:
+    // courtyard x[-40,-24], z[-30,-20] is past the rear facade's ~14.4m shadow;
+    // atrium x[-7,-2] U [0,7], z[-20.5,-18.5] avoids roof/arch shadow strips.
+    // Lambert transfer is positive throughout these patches. Only a very small
+    // aggregate increase (>3 summed RGB levels per point) is required here;
+    // this is a coverage/nonzero-energy oracle, not an exact bounce solution.
+    if (region_covered == region_count && region_nonzero == region_count && region_gain_sum > region_count * 3)
+        return true;
+    fprintf(stderr, "GI %s regional fill failed: %d/%d mapped, %d/%d nonzero, mean gain %.6f\n",
+        scene_names[scene], region_covered, region_count, region_nonzero, region_count,
+        (double)region_gain_sum / region_count);
+    fprintf(stderr, "{\"diagnostic\":\"gi_regional_fill\",\"scene\":\"%s\",\"probe_capacity\":%d",
+        scene_names[scene], probe_capacity);
+    regional_report(stderr);
+    fputs("}\n", stderr);
+    return false;
 }
 
 static void collect_gpu(void)
@@ -262,6 +384,7 @@ static void report_to(FILE *file)
         (double)updates_sum / frames, (double)updates_sum * 6 / frames,
         (double)candidates_sum / frames, (double)capture_draws_sum / frames, idle_capture_frames,
         max_textures, gpu_count, (unsigned long long)world_hash, quick ? "true" : "false", dark_reference, lit_reference);
+    if (scene >= ATRIUM) regional_report(file);
     if (!quick) {
         fprintf(file, ",\"setup_record_ms\":%.6f,\"convergence_record_ms\":%.6f,"
             "\"cpu_record_ms\":%.6f,\"cpu_record_p95_ms\":%.6f,\"cpu_submit_ms\":%.6f,"
@@ -321,6 +444,9 @@ static int frame(void *context, const float seconds)
         setup_record_ms = convergence_record_ms = 0;
         max_textures = 0;
         lit_reference = 0;
+        region_on_valid = false;
+        region_nonzero = region_covered = region_gain_min = region_gain_max = region_gain_sum = 0;
+        memset(region_spacing, 0, sizeof region_spacing);
         // Quick static smoke modes share one fully validated field. Repeating
         // the same 512-probe convolution four times dominates software WebGL
         // without adding a new lighting oracle. Timed and moving/view-changing
@@ -336,6 +462,7 @@ static int frame(void *context, const float seconds)
         // before taking the GI-off reference, including the first mode.
         if (!untimed() || !untimed()) return 1;
         if (!receiver_pixel(&dark_reference)) return 1;
+        if (!regional_reference()) return 1;
         phase = VALIDATE_GI;
         return TIDE_KEEP_RUNNING;
     }
@@ -354,6 +481,13 @@ static int frame(void *context, const float seconds)
             if (!receiver_pixel(&lit_reference)) return 1;
             if (brightness(lit_reference) <= brightness(dark_reference) + 15u) {
                 fprintf(stderr, "GI %s receiver did not brighten: %08x -> %08x\n", scene_names[scene], dark_reference, lit_reference);
+#ifndef __wasm__
+                if (capture_path && !tide_platform_capture(capture_path))
+                    fputs("Could not save diagnostic GI capture\n", stderr);
+#endif
+                return 1;
+            }
+            if (!regional_check()) {
 #ifndef __wasm__
                 if (capture_path && !tide_platform_capture(capture_path))
                     fputs("Could not save diagnostic GI capture\n", stderr);

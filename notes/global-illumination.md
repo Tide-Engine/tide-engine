@@ -1,5 +1,130 @@
 # Global Illumination package
 
+## Lighting quality repair (2026-11-02)
+
+The owner rejected the large examples' lighting, independently of their art.
+This repair keeps their geometry, materials, direct lights, camera and exposure
+unchanged. It supersedes the hard nearby-only receiver eligibility described
+below; it adds no ambient fill, sky source or multiple-bounce feedback.
+
+Receiver eligibility now includes the nearby `viewDistance` sphere and a
+conservative numeric main-camera frustum. Visible distant receivers retain
+coarse blocks while nearby detail refines. This fixes the prior budget-dependent
+loss of distant wall lighting: coarse cells accidentally extended outside the
+48-unit sphere, then finer cells removed that incidental support. Root bounds
+expand dyadically only for eligible receivers; geometry outside both the nearby
+sphere and padded conservative frustum does not consume the field. Camera FOV/aspect/near/far and roll
+changes trigger rebuilds. Padded planes cover the existing view-cell and
+rotation hysteresis. Camera far is capped at one million units; extreme frusta
+or world coordinates can still exceed the bounded hierarchy's useful detail.
+The single hierarchy, physical capacity bounds, 128 blocks, stable anchor phase,
+slot history, two GI atlases and twelve-texture mapped path remain.
+
+Outside the nearby radius, planning uses a target cell size proportional to a
+conservative lower bound on camera distance. It does not build every distant
+visible surface at base detail only to discard that plan in the merge pass.
+Near cells keep the original finest target. This bounds unnecessary distant
+planning, but cold topology construction and repeated probe recounts still cost
+CPU time and must be measured separately from a settled field.
+Coverage also prepares triangle caches for newly eligible distinct static
+assets, including distant coarse receivers. That asset-dependent cold/reveal
+work is not bounded by the probe count; the simple architectural examples do
+not establish its cost for many distinct complex meshes.
+
+Shared physical probes now use the common base-spacing metric for both facing
+regularization and receiver-PCF footprint/near-plane blending. Referencing a
+record through a coarse versus fine brick cannot change those physical weights.
+Controlled nonuniform shared-anchor and two-tap visibility cases pin these
+invariants; the latter failed before repair despite identical physical inputs.
+
+A larger uniform-emitter enclosure exposed a separate loss even with complete
+mapped support. Captures inside it held the correct radiance, but black probes
+behind a wall passed coplanar visibility while their global backface fractions
+stayed below .25. Their small facing floor diluted valid front-side lighting.
+Sparse gathering now excludes support behind the unperturbed geometric receiver
+plane, with a continuous .001-base-spacing coplanar margin. Tangent/front-side
+support remains; rejected support still enters the confidence denominator.
+Normal maps cannot move that geometric plane. The independent legacy analytic
+sampler is unchanged. No distance-atlas encoding, capture resolution or ray count
+changes are required.
+
+The enclosure also exposed a separate capture-ray error on the browser renderer.
+A standalone WebGL program reproduced shortened depth on the same large plane,
+without Tide, while native/WASI recorded cameras, vertices and instance bytes
+matched exactly. Intermediate capture data now stores the physical triangle
+plane instead of a world-position-derived radial distance. GI intersects each
+point-sampled plane with its ideal cube ray before inverse-depth interpolation.
+Normal coordinates and plane distance use the same quantized normal; independent
+physical floor and oblique-plane witnesses check that contract. Captures retain
+the radial far limit, transparent misses and distinct one-sided backfaces.
+The final distance atlas and receiver visibility margin are unchanged. The
+encoding, rejected depth-buffer candidate and precision limits are recorded in
+[Render3D's capture-plane note](render3d.md#physical-capture-planes-2026-11-02).
+
+New tests scan 16 wall and 16 floor points in a uniformly emitting 48x24x64
+enclosure at capacities 512 and 2048. Every point must reconstruct the same
+known incoming radiance, with the original five-level pixel tolerance. A
+controlled black-back-layer/bright-front-layer case also pins valid energy and
+opposite-side blocking. Each large benchmark scene retains its original shaded
+wall witness and now checks fifteen additional analytically visible rear-wall
+points: direct-only darkness, complete mapped/captured interpolation support,
+nonzero bounce and a conservative regional energy lower bound. Raw paired
+colors/world positions/spacing are retained outside timed frames. These are
+regional failure oracles, not a claim of path-traced agreement everywhere.
+
+Browser selectors `--group=regional512` and `--group=regional2048` run the
+enclosure capacities independently on WebGL, ANGLE D3D11 and WebGPU. The 512
+group retains its 32 wall/floor points, physical floor capture-depth witness
+and independent oblique capture-depth witness; the 2048 group retains all 32
+of its wall/floor points. Native no-argument execution still runs both
+capacities, all 64 points and both raw-depth witnesses together. The combined
+optimized browser regional run reached its existing 120-second guard, so the
+split partitions cumulative fixture work by capacity. Per-capacity geometry,
+settings, full convergence/capture work, assertions and tolerances are
+unchanged. The new regional2048 software-WebGL deadline is documented below.
+All six split regional browser registrations pass in final validation;
+no renderer speedup follows from this fixture partition.
+
+The regional enclosure alone now replaces its newly prepared backdrop HDR
+target once with `RenderTarget.Window(.125, Format.Rgba16f)`, before GI updates
+or color recording. It disposes the unused full-size target at that boundary;
+Render3D retains ordinary ownership of the replacement. On the 128x64 test
+root, this reduces only unasserted main-camera PBR backdrop shading to 16x8.
+The full-resolution screen witness quads/readback points remain unchanged, as
+do screen/camera aspect, world geometry, GI surface provider, all physical
+32x32 capture targets, rays, update budgets, convergence frames and assertions.
+The regular room tests still render and assert their full-size PBR center;
+new locals restore default flags/target ownership for every other fixture.
+Production examples and the 960x720 benchmark are unaffected. This removes
+unasserted harness work after standalone regional2048 reached its original
+120-second guard; the reduced-backdrop fixture still exceeded that guard.
+This is a reduction in harness work, not a renderer speedup.
+Capacity and raw-depth success messages flush after their assertions, allowing
+later timeout reports to identify completed sections.
+
+The newly added regional2048 stress fixture captures 1,184 active probes,
+384 rays each, over approximately 74 convergence frames. One quiet, extended
+software-WebGL diagnostic completed all 32 wall/floor oracles in 188.65 seconds
+without a quality failure. Original 120-second WebGL/D3D11 deadline failures
+remain failed runs; the extended diagnostic does not turn them into passes.
+Only `tide_globalillumination_pixels_regional2048` and its `_d3d11` counterpart
+now request an explicit 300-second browser budget and 330-second outer CTest
+guard. All pre-existing WebGL/D3D11 defaults remain 120 seconds; served WebGPU,
+including regional2048, retains its original 100-second guard. Geometry,
+resolution, probe counts, rays, settings and every numeric oracle/tolerance
+are unchanged. This new heavy case has a scoped correctness-test budget,
+not a relaxed lighting assertion or a renderer performance claim. The harness
+contract is in [testing.md](testing.md#explicit-budget-for-the-new-gi-regional-stress-case-2026-11-02).
+Final scoped validation passes all 17 affected Windows ASan CTests and all 35
+optimized web CTests across Vulkan/OpenGL and WebGL/ANGLE D3D11/WebGPU. This
+combines the fresh 11/26 GI checks with unchanged 6/9 Render3D pixel/material/
+skinning checks. The docs production build passes on Node 24.22.1. CTest command
+inspection pins the two timeout overrides; an invalid zero timeout is rejected.
+Raw successful and failed attempts, source hashes and matched large captures
+are retained in the [lighting repair report](../bench/results/globalillumination-lighting-20261102/README.md).
+No other native OS/mobile or hardware-web validation was performed, and no CI
+was dispatched. This work remains on `feat/render3d-gi`, off dev.
+
 ## Larger continuous examples (2026-11-02)
 
 The owner requested larger examples after the adaptive district work. The
@@ -224,8 +349,8 @@ patching shader-specific uniform offsets or adding a runtime entry point.
 Ordinary capture updates reupload the lookup strip as well, allowing it to
 recover with captures after GPU resources are lost.
 
-`PackRays` and inverse-depth gathering ignore hits whose normalized radial
-distance is at least one. Cube-face corner geometry beyond the finite radial
+`PackRays` and inverse-depth gathering ignore hits whose reconstructed radial
+distance reaches the capture limit. Cube-face corner geometry beyond the finite radial
 capture range therefore contributes neither radiance nor visibility, despite
 being inside a face's axial far plane. This requires no Render3D change.
 
@@ -265,10 +390,12 @@ independent cold starts. Lighting oracles, all budgets, hashes, shader texture
 limits and runner deadlines remain. Cold topology construction and warmed
 rendering require separate measurement.
 
-The expanded browser pixel fixture has independent analytic, room, direct-bounce
-and geometry groups on WebGL, ANGLE D3D11 and WebGPU. Native no-argument runs
+The expanded browser pixel fixture has independent analytic, room, direct-bounce,
+geometry, regional512 and regional2048 groups on WebGL, ANGLE D3D11 and WebGPU. Native no-argument runs
 still execute every case together. Every group retains its original lighting
-oracles, probe settings and 120/100-second browser guards. This partitions
+oracles and probe settings. Existing groups retain their 120/100-second browser
+guards; only the newly added regional2048 WebGL/D3D11 runs have the explicit
+300-second budget described above, with WebGPU unchanged. This partitions
 cumulative test work rather than reducing capture quality or claiming a runtime
 speedup. The refresh helper always records a first frame, then waits for both
 all active slots captured and zero dirty probes within its bounded cycle;
@@ -387,9 +514,20 @@ remain in the normalization denominator, so rejected radiance is not restored.
 A 64x6 two-color scratch target packs each ray once per updated probe. One
 output holds radiance with front-face coverage alpha; the other holds encoded
 direction with solid-angle alpha. Ordinary texture reads recover straight
-channels, so convolution explicitly restores the required alpha factors. Its
-inner loop uses two coherent image reads rather than repeatedly decoding six
-cube faces and reconstructing rays. The SH projection/reduction targets and
+channels, so convolution explicitly restores the required radiance alpha.
+The retained geometry image is still written, preserving its resource/lifecycle
+contract, but convolution no longer reads it. For each of the same 384 indices,
+it derives the exact PackRays face and symmetric 32-square texel center. With
+`v = FaceVector(face, uv)` and `L = 1 + dot(plane, plane)`, the unit ray is
+`v / sqrt(L)` and solid angle is `1 / (L * sqrt(L))`; therefore the cosine
+weighted ray is exactly `v / (L * L)`. Sphere/back-face normalization uses that
+same analytic solid angle. Only the retained radiance/front-face image is read
+inside the loop, removing one RGBA16F sample and unpremultiply per ray.
+This also removes the old intermediate FP16 ray/solid-angle rounding; radiance,
+all ray positions/counts, positive-cosine correction, visibility, captures and
+budgets remain unchanged. Existing independent integral/directional/occlusion
+oracles retain their expected values and tolerances. The fresh 11 native ASan and 26 optimized web GI checks pass with these
+analytic weights; fewer samples alone is not a measured renderer speedup. The SH projection/reduction targets and
 passes are removed. The six captures and final two-atlas sampling boundary stay
 the same.
 
@@ -397,7 +535,7 @@ Visibility stores inverse projective depth in R and its standard-deviation
 channel in G, with the per-probe back-face fraction in B. Captures currently
 write zero G; numerical sigma is max(G, mean * .001, 1e-5). For a probe-relative displacement
 v, the receiver metric is spacing / (abs(v.x)+abs(v.y)+abs(v.z)). A capture's
-radial depth is converted to the same metric using its ray direction. This
+plane metadata is intersected with its ideal pixel ray, then converted to the same metric. This
 metric is affine over an octahedral fold for a planar occluder. Misses contribute
 zero inverse depth. Four capture pixels first interpolate inverse axial cube
 depth, then convert to the octahedral metric. This avoids point-sampled angular
@@ -531,9 +669,9 @@ main eye. Transparent surfaces receive GI but are omitted from captures.
 Eligible world transforms are resolved once per frame and reused across all
 faces and probes; borrowed query rows supply current material resources.
 
-The first capture image is radiance. The second has R normalized radial
-distance, G one-sided unperturbed vertex-normal back-face flag, B geometry-hit flag and alpha
-one. Empty black B=0 means far/unoccluded; this preserves nearby distance
+The first capture image is radiance. The second has R normalized perpendicular
+plane distance, GB an octahedral plane normal facing away from the capture eye,
+and alpha 1 front/.5 one-sided back/0 miss. Transparent-black alpha0 means far/unoccluded; this preserves nearby distance
 precision without per-face auxiliary clear draws. Double-sided cards have no
 solid interior and do not mark back faces.
 

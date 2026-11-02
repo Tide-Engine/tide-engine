@@ -1,5 +1,51 @@
 # Render3D package
 
+## Physical capture planes (2026-11-02)
+
+The unchanged large uniform-emitter GI enclosure exposed a browser capture
+depth error: at receiver (-6,-12,-8), four probe60 floor rays stored radial
+depths about 4.7–4.9% shorter than the physical plane. GPU camera/uniform and
+vertex/model reads, exact native/WASI camera parity, 32-square viewport and
+RGBA16F attachments ruled out the Tide inputs. A standalone plain WebGL test
+with the exact camera/floor reproduces the bad world/depth without Tide,
+WASM, texture sampling or instancing. Reconstructing axial distance from
+`this.depth` has the same error; that candidate and its renderer scalar were
+reverted. A hardware ANGLE diagnostic timed out without renderer output, so
+no hardware/software-only attribution is claimed.
+
+A subsequent plain WebGL proof recovers the physical floor distance from its
+geometric plane despite the wrong interpolated X/Z. Capture metadata now
+stores perpendicular plane distance divided by `captureFar` in R, its
+octahedral normal pointing from the capture eye toward the plane in GB, and
+alpha1 front/.5 one-sided back/0
+miss. Captures clear to transparent black. Geometric normal derivatives run
+before coverage/discard, with normalization inside the draw-uniform capture
+branch and the unperturbed normal as a degeneracy fallback. Invalid normals
+emit no captured radiance. The .5 alpha survives normal premultiplied Color
+storage/sampling without a special backend path.
+
+Octahedral coordinates are rounded to a 1/2048 grid, exactly representable in
+FP16 even after .5 back-face alpha multiplication. D is computed against the
+decoded stored normal at the captured coplanar point, avoiding inconsistent
+normal/distance quantization. An independent oblique-plane calculation found
+1.1–2.1% depth error without that consistency step. FP16 distance precision,
+normal quantization and extremely grazing geometry still limit this encoding.
+
+GI point-samples each plane, rejects ideal rays parallel to or behind it,
+checks the physical radial capture limit, and reconstructs inverse axial
+depth before interpolating the existing four taps. No receiver tolerance or
+bias changes. Two capture outputs, six data textures, the final two GI
+atlases, twelve mapped-material bindings, capture resolution and ray/probe
+budgets are retained. There is no new renderer field or C runtime/backend
+function or ABI. Controlled near/back/far fixtures use the new encoding with unchanged
+lighting oracles; the far shell includes cube corners inside the axial
+frustum. Separate physical floor and oblique raw-depth witnesses compare
+against analytic ray/plane intersections. Final scoped validation passes 17
+native Windows ASan and 35 optimized web CTests, including unchanged Render3D
+pixel/material/skinning regressions and all fresh GI checks. The docs build
+passes. See the [lighting repair report](../bench/results/globalillumination-lighting-20261102/README.md)
+for raw attempts and coverage limits; this is not an active-update speedup claim.
+
 ## General indirect provider and diffuse capture boundary (2026-11-01)
 
 The owner approved the separate optional Global Illumination package and
@@ -26,10 +72,9 @@ Render3D. External gathering can run between Shadows and Color.
 material draws for outgoing diffuse radiance plus emission. Capture shading
 excludes ambient, indirect and direct specular; material view callbacks use the
 capture eye while geometry deformation retains the main eye. Capture helpers
-draw both sides. Lit's optional second color output has normalized radial
-distance R, one-sided unperturbed vertex-normal back-face G, geometry hit B and alpha one.
-Black-cleared B=0 denotes a miss/far range; double-sided cards do not mark solid
-interior back faces. One-color targets drop that output normally. No backend
+draw both sides. Lit's optional second color output has plane distance R,
+octahedral normal GB and alpha1 front/.5 one-sided back/0 miss, as detailed
+above. Double-sided cards do not mark solid interior back faces. One-color targets drop that output normally. No backend
 or engine ABI changed.
 
 The guide and package README document the general boundary and link to the

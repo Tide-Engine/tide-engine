@@ -495,6 +495,153 @@ TIDE_TEST(globalillumination_large_coordinate_camera_streaming_keeps_spacing_sta
     finish();
 }
 
+static void receiver_records(const int at)
+{
+    const GIProbe *probe = &local.GIProbe;
+    const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
+    const int slot = probe->coverageSlots.at[at];
+    TIDE_CHECK(slot >= 0 && probe->coverageEligible.at[at]);
+    if (slot < 0) return;
+    const GlobalIllumination_ProbeBlock *block = block_at(slot);
+    TIDE_CHECK(block && block->active && block->spacing > 0);
+    if (!block || block->spacing <= 0) return;
+    const tide_float3 point = probe->coveragePositions.at[at];
+    const int x = (int)fminf(fmaxf(floorf((point.x - block->minimum.x) / block->spacing), 0), 1);
+    const int y = (int)fminf(fmaxf(floorf((point.y - block->minimum.y) / block->spacing), 0), 1);
+    const int z = (int)fminf(fmaxf(floorf((point.z - block->minimum.z) / block->spacing), 0), 1);
+    for (int sample = 0; sample < 8; sample++) {
+        const int logical = x + (sample & 1) + 3 * (y + (sample >> 1 & 1)) + 9 * (z + (sample >> 2));
+        const int32_t *record = tide_list_at(block->probes, logical, sizeof(int32_t));
+        TIDE_CHECK((block->probeMask & (1 << logical)) != 0);
+        TIDE_CHECK(record && *record >= 0 && *record < environment->layout.total);
+        if (record && *record >= 0 && *record < environment->layout.total)
+            TIDE_CHECK(flag_at(environment->active, *record));
+    }
+}
+
+TIDE_TEST(globalillumination_visible_receiver_regions_keep_support_across_probe_budgets)
+{
+    start(13);
+    GIProbe *probe = &local.GIProbe;
+    probe->settings.viewDistance = 48;
+    probe->settings.updatesPerFrame = 0;
+    const uint64_t hash = tide_world_hash(&world);
+    const int budgets[] = {125, 512, 2048};
+    float previous_near_spacing = INFINITY;
+    for (int budget = 0; budget < 3; budget++) {
+        probe->settings.maxProbes = budgets[budget];
+        probe->coverageCount = 16;
+        // This independent grid spans the whole interior of an actual wall
+        // ninety units from the camera, well beyond the near-detail radius.
+        for (int at = 0; at < 16; at++)
+            probe->coveragePositions.at[at] = tide_f3((float)(at % 4) * 6 - 9,
+                (float)(at / 4) * 4 - 6, 87.94f);
+        frame();
+        const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
+        TIDE_CHECK(environment->ready && environment->layout.total == budgets[budget]);
+        TIDE_CHECK(environment->activeProbes > 0 && environment->activeProbes <= budgets[budget]);
+        TIDE_CHECK(environment->activeBlocks > 0 && environment->activeBlocks <= 128);
+        for (int at = 0; at < 16; at++) receiver_records(at);
+        probe->coverageCount = 2;
+        probe->coveragePositions.at[0] = tide_f3(0, 0, 5.94f);
+        probe->coveragePositions.at[1] = tide_f3(0, 0, -11.94f);
+        frame();
+        receiver_records(0);
+        receiver_records(1); // Near receivers remain resident behind the eye.
+        TIDE_CHECK(probe->coverageSpacing.at[0] <= previous_near_spacing);
+        previous_near_spacing = probe->coverageSpacing.at[0];
+        TIDE_CHECK(environment->updates == 0 && tide_world_hash(&world) == hash);
+    }
+    finish();
+}
+
+TIDE_TEST(globalillumination_offscreen_geometry_does_not_consume_visible_field_budget)
+{
+    GlobalIllumination_FieldLayout baseline = {0};
+    int baseline_probes = 0, baseline_blocks = 0;
+    float baseline_spacing = 0;
+    for (int scenario = 13; scenario <= 14; scenario++) {
+        start(scenario);
+        GIProbe *probe = &local.GIProbe;
+        probe->settings.maxProbes = 512;
+        probe->settings.updatesPerFrame = 0;
+        probe->coverageCount = 1;
+        probe->coveragePositions.at[0] = tide_f3(0, 0, 87.94f);
+        frame();
+        receiver_records(0);
+        const GlobalIllumination_Environment *environment = &local.GlobalIllumination_Environment;
+        if (scenario == 13) {
+            baseline = environment->layout;
+            baseline_probes = environment->activeProbes;
+            baseline_blocks = environment->activeBlocks;
+            baseline_spacing = probe->coverageSpacing.at[0];
+        } else {
+            TIDE_CHECK(environment->activeProbes == baseline_probes && environment->activeBlocks == baseline_blocks);
+            TIDE_CHECK(environment->layout.size == baseline.size && environment->layout.nodeCount == baseline.nodeCount);
+            TIDE_CHECK(environment->layout.minimum.x == baseline.minimum.x
+                && environment->layout.minimum.y == baseline.minimum.y && environment->layout.minimum.z == baseline.minimum.z);
+            TIDE_CHECK(probe->coverageSpacing.at[0] == baseline_spacing);
+        }
+        finish();
+    }
+}
+
+TIDE_TEST(globalillumination_camera_projection_and_hysteresis_preserve_visible_support)
+{
+    start(13);
+    GIProbe *probe = &local.GIProbe;
+    probe->settings.updatesPerFrame = 0;
+    probe->coverageCount = 2;
+    probe->coveragePositions.at[0] = tide_f3(0, 0, 87.94f);
+    probe->coveragePositions.at[1] = tide_f3(108, 0, 87.94f);
+    frame();
+    receiver_records(0);
+    receiver_records(1); // Retained angular guard includes the incoming edge.
+    GlobalIllumination_WorldBounds *bounds = &local.GlobalIllumination_WorldBounds;
+    int revision = bounds->topologyRevision;
+    probe->cameraRotation = tide_axisangle_q(tide_f3(0, 1, 0), TIDE_PI_F * (8.0f / 180.0f));
+    probe->cameraPosition.x = 0.5f;
+    frame();
+    TIDE_CHECK(bounds->topologyRevision == revision);
+    receiver_records(0);
+    receiver_records(1);
+    probe->cameraRotation = tide_axisangle_q(tide_f3(0, 1, 0), TIDE_PI_F * (12.0f / 180.0f));
+    frame();
+    TIDE_CHECK(bounds->topologyRevision > revision);
+    receiver_records(1);
+    revision = bounds->topologyRevision;
+    probe->cameraRotation = tide_identity_q();
+    probe->cameraFar = 30;
+    frame();
+    TIDE_CHECK(bounds->topologyRevision > revision && !probe->coverageEligible.at[0]);
+    revision = bounds->topologyRevision;
+    probe->cameraFar = 100;
+    frame();
+    TIDE_CHECK(bounds->topologyRevision > revision);
+    receiver_records(0);
+    revision = bounds->topologyRevision;
+    probe->cameraFov = TIDE_PI_F / 6;
+    frame();
+    TIDE_CHECK(bounds->topologyRevision > revision && !probe->coverageEligible.at[1]);
+    revision = bounds->topologyRevision;
+    probe->cameraFov = TIDE_PI_F / 3;
+    gui.width = 64;
+    gui.height = 128;
+    frame();
+    TIDE_CHECK(bounds->topologyRevision > revision && !probe->coverageEligible.at[1]);
+    receiver_records(0);
+    revision = bounds->topologyRevision;
+    probe->cameraNear = 1;
+    frame();
+    TIDE_CHECK(bounds->topologyRevision > revision && bounds->requestedNear == 1);
+    revision = bounds->topologyRevision;
+    probe->cameraRotation = tide_axisangle_q(tide_f3(0, 0, 1), TIDE_PI_F / 4);
+    frame();
+    TIDE_CHECK(bounds->topologyRevision > revision); // Roll changes the frustum.
+    receiver_records(0);
+    finish();
+}
+
 TIDE_TEST(globalillumination_translated_open_receiver_covers_biased_filter_support)
 {
     start(11);

@@ -139,6 +139,28 @@ Coverage MaterialCoverage(SurfaceInput input, float alpha, float cutoff,
 // captures. Returning zero keeps the default direct-light path unchanged.
 using IndirectLight = Func<SurfaceInput, Surface, Texture, Texture, float3>;
 
+// Two octahedral coordinates retain a triangle's plane normal in capture data.
+float2 CaptureNormalUV(float3 normal)
+{
+    float scale = Math.Abs(normal.x) + Math.Abs(normal.y) + Math.Abs(normal.z);
+    if (scale <= 0) return float2(0.5);
+    float3 p = normal / scale;
+    float2 folded = p.z >= 0 ? p.xy
+        : float2((1 - Math.Abs(p.y)) * (p.x >= 0 ? 1 : -1),
+                 (1 - Math.Abs(p.x)) * (p.y >= 0 ? 1 : -1));
+    return folded * 0.5 + float2(0.5);
+}
+
+float3 CaptureNormal(float2 uv)
+{
+    float2 p = uv * 2 - float2(1);
+    mut float3 normal = float3(p, 1 - Math.Abs(p.x) - Math.Abs(p.y));
+    if (normal.z < 0)
+        normal = float3((1 - Math.Abs(p.y)) * (p.x >= 0 ? 1 : -1),
+                        (1 - Math.Abs(p.x)) * (p.y >= 0 ? 1 : -1), normal.z);
+    return Math.Normalize(normal);
+}
+
 float3 NoIndirect(SurfaceInput input, Surface surface, Texture first, Texture second)
 {
     return float3(0);
@@ -149,6 +171,10 @@ frag Lit(MeshVertex vertex, out Color color, out Color captureData,
          MaterialMaps maps, Func<SurfaceInput, mut Surface, void> surface)
 {
     float3 normal = instance.Normal(vertex.normal);
+    mut float3 capturePlane = float3(0);
+    // Derivatives precede coverage callbacks and lane-varying cutout discard.
+    if (renderer.diffuseCapture)
+        capturePlane = Math.Normalize(Math.Cross(this.Ddx(this.world), this.Ddy(this.world)));
     float3 viewDirection = Math.Normalize((renderer.diffuseCapture ? renderer.captureEye : renderer.eye) - this.world);
     SurfaceInput frame = MaterialInput(this.world, normal, vertex.tangent,
         instance.Normal(TangentPlaneNormal(vertex.normal, vertex.tangent)),
@@ -234,16 +260,30 @@ frag Lit(MeshVertex vertex, out Color color, out Color captureData,
     }
     float alpha = material.mode == SurfaceMode.Transparent ? coverage.alpha : 1;
     color = Color(radiance.x, radiance.y, radiance.z, alpha);
-    captureData = Color(0, 0, 0, 1);
+    captureData = Color(0, 0, 0, 0);
     if (renderer.diffuseCapture)
     {
-        // Distance and sidedness are numeric target channels with alpha one.
-        // Blue marks geometry hits so black clears mean unoccluded far range.
-        // Double-sided cards have no solid interior and never mark backfaces.
-        float distance = Math.Clamp(Math.Length(renderer.captureEye - this.world)
-            / Math.Max(renderer.captureFar, 0.001), 0, 1);
-        float backface = !material.doubleSided && Math.Dot(normal, viewDirection) < 0 ? 1 : 0;
-        captureData = Color(distance, backface, 1, 1);
+        // Interpolated points stay on the triangle's physical plane even when
+        // raster subpixel rounding shifts their position along that plane.
+        // Store the plane so the gathering package can intersect its ideal ray.
+        mut float3 plane = Math.LengthSq(capturePlane) >= 0.5 ? capturePlane : Math.Normalize(normal);
+        if (Math.LengthSq(plane) < 0.5) { color = Color.black; return; }
+        float distance = Math.Dot(plane, this.world - renderer.captureEye);
+        if (distance < 0) plane = -plane;
+        // Every coordinate on this grid survives FP16, including alpha .5
+        // premultiplication. Anchor D to that exact stored normal; otherwise
+        // tiny normal-rounding errors amplify into depth errors at grazing rays.
+        mut float2 encoded = Math.Floor(CaptureNormalUV(plane) * 2048 + float2(0.5)) / 2048;
+        plane = CaptureNormal(encoded);
+        mut float storedDistance = Math.Dot(plane, this.world - renderer.captureEye);
+        if (storedDistance < 0)
+        {
+            encoded = Math.Floor(CaptureNormalUV(-plane) * 2048 + float2(0.5)) / 2048;
+            storedDistance = Math.Dot(CaptureNormal(encoded), this.world - renderer.captureEye);
+        }
+        bool backface = !material.doubleSided && Math.Dot(normal, viewDirection) < 0;
+        captureData = Color(Math.Abs(storedDistance) / Math.Max(renderer.captureFar, 0.001),
+            encoded.x, encoded.y, backface ? 0.5 : 1);
     }
 }
 

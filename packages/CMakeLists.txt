@@ -107,10 +107,20 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_globalillumination_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         # Independent pixel fixtures retain their full capture work and assertions.
-        # Separate browser runs keep each within the existing software-GPU guard.
-        foreach(group analytic room direct geometry)
+        # The new regional2048 stress case needs its own software-WebGL budget.
+        foreach(group analytic room direct geometry regional512 regional2048)
+            set(webgl_timeout_args "")
+            if(group STREQUAL "regional2048")
+                set(webgl_timeout_args WEBGL_SECONDS 300)
+            endif()
             tide_add_web_test(tide_globalillumination_pixels_${group} TARGET tide_globalillumination_pixels
-                QUERY "group=${group}" WEBGPU EXPECT "ok: world GI automatic" D3D11)
+                QUERY "group=${group}" WEBGPU EXPECT "ok: world GI automatic" D3D11 ${webgl_timeout_args})
+            if(group STREQUAL "regional2048")
+                set_tests_properties(tide_globalillumination_pixels_${group} PROPERTIES TIMEOUT 330)
+                if(CMAKE_HOST_WIN32)
+                    set_tests_properties(tide_globalillumination_pixels_${group}_d3d11 PROPERTIES TIMEOUT 330)
+                endif()
+            endif()
         endforeach()
     else()
         add_test(NAME tide_globalillumination_pixels COMMAND tide_globalillumination_pixels)

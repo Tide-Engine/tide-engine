@@ -12,6 +12,7 @@ singleton GIFixture
     bool built;
     bool spawnFar;
     bool farBuilt;
+    float3 roomExtents = float3(3);
     float3 offset;
     float3 farPosition = float3(30, 2, -11);
     bool casterShadows = true;
@@ -41,7 +42,16 @@ local singleton GIProbe
     bool showOffset;
     bool showMoments;
     int offsetIndex;
+    bool showCaptureDepth;
+    bool captureOblique;
+    bool compactBackdrop;
+    bool compactBackdropReady;
+    int refreshCapture;
     float3 cameraPosition = float3(0, 0, -2);
+    quaternion cameraRotation = quaternion.identity;
+    float cameraFov = 60deg;
+    float cameraNear = 0.1;
+    float cameraFar = 100;
     bool shadowsEnabled = true;
     int shadowMaps = 6;
     bool invalidate;
@@ -49,6 +59,7 @@ local singleton GIProbe
     int coverageCount;
     float3[16] coveragePositions;
     int[16] coverageSlots;
+    bool[16] coverageEligible;
     float[16] coverageSpacing;
     float3[16] coverageMinimum;
     float3[16] positions;
@@ -80,9 +91,12 @@ system BuildGIWorld(mut GIFixture fixture)
         {
             float3 forward = GIWallForward(face);
             float3 up = face == 2 ? float3(0, 0, -1) : face == 3 ? float3(0, 0, 1) : float3(0, 1, 0);
+            float3 extent = fixture.roomExtents;
+            float2 span = face < 2 ? float2(extent.z, extent.y)
+                : face < 4 ? float2(extent.x, extent.z) : float2(extent.x, extent.y);
             Spawn(GIRoomWall, MeshRenderer { mesh = giQuad }, Material,
-                Transform { localPosition = forward * 3, localRotation = quaternion.LookRotation(forward, up),
-                            localScale = float3(6, 6, 1) });
+                Transform { localPosition = forward * extent, localRotation = quaternion.LookRotation(forward, up),
+                            localScale = float3(span * 2, 1) });
         }
         Spawn(MeshRenderer { mesh = giQuad }, Material { baseColor = Color.white },
             Transform { localScale = float3(0.25, 0.25, 1) });
@@ -153,6 +167,28 @@ system BuildGIWorld(mut GIFixture fixture)
         Spawn(PointLight { intensity = float3(1), range = 100, castShadows = true },
             Transform { localPosition = float3(0, 8, 0) });
     }
+    if (fixture.scenario == 13 || fixture.scenario == 14)
+    {
+        // Fine nearby support, a broad far-visible wall, a camera-edge wall,
+        // and a nearby receiver behind the camera exercise the coverage union.
+        Spawn(MeshRenderer { mesh = giQuad }, Material,
+            Transform { localPosition = float3(0, 0, 6), localScale = float3(8, 6, 1) });
+        Spawn(MeshRenderer { mesh = giQuad }, Material,
+            Transform { localPosition = float3(0, 0, 88), localScale = float3(24, 16, 1) });
+        Spawn(MeshRenderer { mesh = giQuad }, Material,
+            Transform { localPosition = float3(108, 0, 88), localScale = float3(4, 4, 1) });
+        Spawn(MeshRenderer { mesh = giQuad }, Material,
+            Transform { localPosition = float3(0, 0, -12), localScale = float3(4, 4, 1) });
+        if (fixture.scenario == 14)
+        {
+            Spawn(MeshRenderer { mesh = giBox }, Material,
+                Transform { localPosition = float3(220, 0, 88), localScale = float3(8) });
+            Spawn(MeshRenderer { mesh = giBox }, Material,
+                Transform { localPosition = float3(0, 0, -90), localScale = float3(8) });
+            Spawn(MeshRenderer { mesh = giBox }, Material,
+                Transform { localPosition = float3(0, 0, 260), localScale = float3(8) });
+        }
+    }
 }
 
 system MoveGIWorld(with GIMoving, mut Transform transform, GIFixture fixture)
@@ -185,13 +221,18 @@ view ConfigureGIProbe(mut Renderer renderer, mut GlobalIllumination.Environment 
     if (probe.dispose) GlobalIllumination.Dispose(environment);
     renderer.enabled = !probe.disabled;
     environment.settings = probe.settings;
+    if (probe.refreshCapture > 0)
+    {
+        environment.dirty[probe.refreshCapture - 1] = true;
+        probe.refreshCapture = 0;
+    }
     if (probe.invalidate)
     {
         GlobalIllumination.Invalidate(environment, probe.invalidateRegion);
         probe.invalidate = false;
     }
-    renderer.camera = Camera { position = probe.cameraPosition, rotation = quaternion.identity,
-                               verticalFov = 60deg, near = 0.1, far = 100 };
+    renderer.camera = Camera { position = probe.cameraPosition, rotation = probe.cameraRotation,
+                               verticalFov = probe.cameraFov, near = probe.cameraNear, far = probe.cameraFar };
     renderer.shadows = fixture.scenario == 6 || (fixture.scenario == 12 && probe.shadowsEnabled);
     renderer.shadowResolution = fixture.scenario == 6 ? 512 : 16;
     renderer.maxShadowMaps = probe.shadowMaps;
@@ -204,6 +245,18 @@ view ConfigureGIProbe(mut Renderer renderer, mut GlobalIllumination.Environment 
         probe.lightBuilt = true;
         local Spawn(DirectionalLight { direction = float3(0, 0, 1), radiance = float3(0), castShadows = false });
     }
+}
+
+// Regional assertions read full-resolution Draw.Screen witnesses, never the
+// PBR backdrop. Replace its fresh target before any color/capture recording.
+// Prepare owns the target thereafter; each new test local resets these flags.
+[After(Stages.Prepare), Before(GlobalIllumination.Update)]
+view CompactGIBackdrop(mut Renderer renderer, mut GIProbe probe)
+{
+    if (!probe.compactBackdrop || probe.compactBackdropReady || !renderer.enabled || !renderer.ready) return;
+    renderer.hdr.Dispose();
+    renderer.hdr = RenderTarget.Window(0.125, Format.Rgba16f);
+    probe.compactBackdropReady = true;
 }
 
 [Before(Stages.Prepare)]
@@ -274,8 +327,18 @@ frag SparseControlledField(Vertex vertex, out Color light, out Color moments,
         moments = captured ? Color(float3(128.0 / 255.0), 1) : Color(0, 0, 0, 0);
         return;
     }
-    float3 radiance = probe.synthetic == 9 ? float3(slot == 0 ? 0.2 : slot == 1 ? 0.8 : 0.4)
+    mut float3 radiance = probe.synthetic == 9 ? float3(slot == 0 ? 0.2 : slot == 1 ? 0.8 : 0.4)
         : float3(0.2, 0.1, 0.05);
+    if (probe.synthetic == 15)
+    {
+        // An affine physical field, independent of the brick referencing it.
+        // Fine face anchors common to the coarse face use its physical IDs.
+        float3 coordinate = float3(local % 3, (local / 3) % 3, local / 9);
+        float3 anchor = slot == 0 ? float3(-8, 0, 0) + coordinate * 4 : coordinate * 2;
+        radiance = float3((anchor.y + anchor.z) / 8);
+    }
+    if (probe.synthetic == 17)
+        radiance = local / 9 == 2 ? float3(0.2, 0.1, 0.05) : float3(0);
     light = Color(radiance * Math.PI, 1);
     moments = Color(0, 0, 0, 1);
 }
@@ -286,10 +349,16 @@ frag GIIncoming(Vertex vertex, out Color light, out Color data, ControlledIncomi
         || (incoming.mode == 7 && (incoming.face != 0
             || int(Math.Floor(vertex.uv.x * 32)) != 17 || int(Math.Floor(vertex.uv.y * 32)) != 17));
     light = dark ? Color.black : incoming.mode == 7 ? Color(20, 10, 5) : Color(0.2, 0.1, 0.05);
-    // R is radial distance/far, G a one-sided backface, B says a hit exists.
-    data = incoming.mode == 12 ? Color(1, 1, 1, 1)
-         : incoming.mode == 2 ? Color(0.001, 0, 1, 1)
-         : incoming.mode == 5 ? Color(0.1, 1, 1, 1) : Color(0, 0, 0, 1);
+    // Each controlled ray hits a plane normal to that ray. R is normalized
+    // perpendicular plane distance, GB its octahedral normal, alpha sidedness.
+    // Mode12 is a shell outside radial range, including cube corners whose
+    // forward axial distance is below the face far plane.
+    float3 ray = GlobalIllumination.FaceDirection(incoming.face, vertex.uv);
+    float2 encoded = GlobalIllumination.OctUV(ray);
+    float distance = incoming.mode == 12 ? 1.25 : incoming.mode == 2 ? 0.001 : 0.1;
+    data = incoming.mode == 12 || incoming.mode == 2 || incoming.mode == 5
+        ? Color(distance, encoded.x, encoded.y, incoming.mode == 2 ? 1 : 0.5)
+        : Color(0, 0, 0, 0);
 }
 
 // Use the real convolution and receiver sampling with analytically controlled
@@ -317,8 +386,9 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
         GlobalIllumination.PrepareResources(environment, GlobalIllumination.FieldLayout {
             minimum = float3(0), spacing = 1, counts = int3(3),
             total = probe.synthetic == 14 ? 189 : 108, atlasRows = probe.synthetic == 14 ? 6 : 4,
-            far = 48, sparse = true, size = probe.synthetic >= 13 ? 4 : 8,
-            nodeCount = probe.synthetic >= 13 ? 9 : 17, depthLimit = probe.synthetic >= 13 ? 1 : 2
+            far = 48, sparse = true, size = probe.synthetic == 17 ? 2 : probe.synthetic == 15 ? 16 : probe.synthetic >= 13 ? 4 : 8,
+            nodeCount = probe.synthetic == 17 ? 1 : probe.synthetic == 15 ? 17 : probe.synthetic >= 13 ? 9 : 17,
+            depthLimit = probe.synthetic == 17 ? 0 : probe.synthetic == 15 ? 2 : probe.synthetic >= 13 ? 1 : 2
         });
         // Root child zero is a coarse brick, child one splits into two fine
         // bricks along Y. Other children are empty. Nonzero high index bytes
@@ -333,12 +403,23 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
         if (probe.synthetic == 14)
             codes = [257, 1 | (21 << 16), 2 | (63 << 16), 3 | (63 << 16), 4 | (63 << 16),
                 5 | (63 << 16), 6 | (63 << 16), 7 | (63 << 16), 0];
+        if (probe.synthetic == 15)
+            codes = [257, 1 | (63 << 16), 265, 0, 0, 0, 0, 0, 0,
+                2 | (63 << 16), 0, 0, 0, 0, 0, 0, 0];
+        if (probe.synthetic == 17) codes = [1 | (63 << 16)];
         // Deliberately give these constant/contrast bricks separate physical
         // records; runtime bricks share identical anchors through this table.
-        int blocks = probe.synthetic == 14 ? 7 : probe.synthetic == 13 ? 4 : 3;
+        int blocks = probe.synthetic == 17 ? 1 : probe.synthetic == 15 ? 2 : probe.synthetic == 14 ? 7 : probe.synthetic == 13 ? 4 : 3;
         for (var slot = 0; slot < blocks; slot++)
         {
-            for (var index = 0; index < 27; index++) codes.Add(slot * 27 + index + 1);
+            for (var index = 0; index < 27; index++)
+            {
+                // At x=0 the fine face shares the coarse physical corners.
+                bool shared = probe.synthetic == 15 && slot == 1 && index % 3 == 0
+                    && (index / 3) % 3 != 1 && index / 9 != 1;
+                int coarse = 2 + 3 * (((index / 3) % 3) / 2) + 9 * ((index / 9) / 2);
+                codes.Add(shared ? coarse + 1 : slot * 27 + index + 1);
+            }
             // One extra RGB record keeps the twenty local edge/corner bits.
             codes.Add(probe.synthetic == 14 && slot == 0 ? 1 << 19 : (1 << 20) - 1);
         }
@@ -394,22 +475,52 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
 view BindControlledGI(mut Renderer renderer, GlobalIllumination.Environment environment, GIProbe probe)
 {
     if (!environment.ready || probe.synthetic == 0) return;
-    // Controlled layouts can recreate the targets after the automatic update.
-    // All ordinary material draws must receive the current live resources too.
-    GlobalIllumination.FieldLayout layout = environment.layout;
-    float intensity = environment.settings.intensity;
-    int initialized = environment.initialized;
-    if (layout.sparse)
-        renderer.indirect = (SurfaceInput input, Surface surface, Texture a, Texture b) =>
-            GlobalIllumination.Indirect(input, surface, a, b, layout, intensity, initialized);
-    else
-        renderer.indirect = (SurfaceInput input, Surface surface, Texture a, Texture b) =>
-            GlobalIllumination.IndirectLegacy(input, surface, a, b, layout, intensity, initialized);
-    renderer.indirect0 = environment.irradiance;
-    renderer.indirect1 = environment.distance;
+    // Sparse controlled layouts may recreate live resources after Update.
+    // Reuse the production registration, so ordinary materials compile only
+    // one sparse provider. Dense analytic assertions use ReadGILegacyWitness;
+    // their field is not a production material provider.
+    if (environment.layout.sparse) GlobalIllumination.BindRenderer(renderer, environment);
 }
 
 struct GIWitness { float3 position; float3 normal; }
+
+// Keep these independent physical-weight oracles out of the production world
+// sampler's shader graph. The CPU view chooses them only for their own cases;
+// ordinary room checks should not compile another gather and PCF call path.
+frag ReadGIPhysicalVisibility(Vertex vertex, out Color color, GIWitness witness)
+{
+    // The same physical receiver and two angular depth taps must not change
+    // visibility when only the referencing brick spacing changes.
+    float spacing = witness.position.x;
+    float3 delta = float3(0, 0, 1);
+    float2 a = GlobalIllumination.ReceiverTapVisibility(Color(0, 0, 0, 1),
+        float3(1.0 / 3.0, 0, 1), float3(0, 0, -1), -1, 1, spacing, 0.01, delta, 1);
+    float2 b = GlobalIllumination.ReceiverTapVisibility(Color(2, 0, 0, 1),
+        float3(0.5, 0, 1), float3(0, 0, -1), -1, 1, spacing, 0.01, delta, 1);
+    float probability = (a.x + b.x) / (a.y + b.y);
+    color = Color(float3(probability * probability * probability), 1);
+}
+
+frag ReadGISharedFacing(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness)
+{
+    // Compare the same physical face from coarse and fine interpolation grids.
+    // The witness normal's sign selects the grid only; the actual shading and
+    // visibility normal is +X for both. No cross-brick filter or geometry
+    // allocator participates in this physical-weight oracle.
+    bool coarse = witness.normal.x > 0;
+    GlobalIllumination.FieldLayout field = GlobalIllumination.FieldLayout {
+        minimum = coarse ? float3(-8, 0, 0) : float3(0), spacing = coarse ? 4 : 2,
+        counts = int3(3), total = environment.layout.total,
+        atlasRows = environment.layout.atlasRows, sparse = true, nodeCount = environment.layout.nodeCount
+    };
+    mut float3 grid = Math.Clamp((witness.position - field.minimum) / field.spacing, float3(0), float3(2));
+    // Both gathers are restricted to their common x=0 face.
+    grid.x = coarse ? 2 : 0;
+    var blend = GlobalIllumination.GatherSparseIrradiance(environment.irradiance, environment.distance,
+        field, environment.initialized, witness.position, float3(1, 0, 0), float3(1, 0, 0),
+        grid, 0.01, coarse ? 0 : 28, environment.layout.spacing);
+    color = Color(GlobalIllumination.ResolveIrradiance(blend) * (8 / Math.PI), 1);
+}
 
 frag ReadGIWitness(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness, GIProbe probe)
 {
@@ -429,6 +540,37 @@ frag ReadGIWitness(Vertex vertex, out Color color, GlobalIllumination.Environmen
         environment.layout, environment.settings.intensity, environment.initialized,
         witness.position, witness.normal) / Math.PI;
     color = Color(light, 1);
+}
+
+// A separate shader pins the physical capture-depth contract without adding
+// plane decoding or diagnostic branches to ordinary world witnesses.
+frag ReadGICaptureDepth(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness)
+{
+    int at = Math.Clamp(int(witness.position.x), 0, 3);
+    float2 uv = (float2(10 + at % 2, 20 + at / 2) + float2(0.5)) / 32;
+    Color plane = environment.data4.Sample(uv, Filter.Point, Wrap.Clamp);
+    float axial = GlobalIllumination.CaptureAxialDepth(plane, 4, uv);
+    color = Color(axial * 32, plane.r * 32, plane.a, 1);
+}
+
+// Exercise real Render3D metadata for a known oblique plane independently of
+// probe placement. Only the raw-depth fixture enables this single capture.
+[After(GlobalIllumination.Update), Before(Stages.Color)]
+view CaptureObliquePlane(Renderer renderer, GlobalIllumination.Environment environment, GIProbe probe,
+    query (MeshRenderer mesh, Material material) meshes)
+{
+    if (!probe.captureOblique) return;
+    mut Renderer capture = renderer;
+    capture.diffuseCapture = true;
+    capture.captureEye = float3(0);
+    capture.captureFar = 128;
+    capture.hdr = environment.resources.face4;
+    ResetTarget(capture.hdr);
+    capture.hdr.SetCamera(float4x4.identity, float4x4.PerspectiveFov(Math.PI * 0.5, 1, 0.015, 128));
+    capture.hdr.Clear(Color(0, 0, 0, 0));
+    float4x4 transform = float4x4.TRS(float3(0, 0, 0.5),
+        quaternion.LookRotation(Math.Normalize(float3(0.4, 2, 1)), float3(0, 1, 0)), float3(24, 24, 1));
+    foreach (var object in meshes) DrawMaterial(capture, object.mesh, object.material, transform);
 }
 
 frag ReadGILegacyWitness(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness, GIProbe probe)
@@ -496,6 +638,10 @@ view AuditGICoverage(GlobalIllumination.Environment environment, GlobalIlluminat
     {
         int slot = GlobalIllumination.FindBlock(bounds, probe.coveragePositions[i]);
         probe.coverageSlots[i] = slot;
+        probe.coverageEligible[i] = GlobalIllumination.CoverageEligible(bounds,
+            GlobalIllumination.LocalBounds { valid = true,
+                minimum = probe.coveragePositions[i], maximum = probe.coveragePositions[i] },
+            bounds.coverageView.eye, environment.settings.viewDistance);
         probe.coverageSpacing[i] = slot >= 0 && slot < environment.blocks.count ? environment.blocks[slot].spacing : 0;
         probe.coverageMinimum[i] = slot >= 0 && slot < environment.blocks.count ? environment.blocks[slot].minimum : float3(0);
     }
@@ -517,7 +663,13 @@ view GIWitnesses(Renderer renderer, GIProbe probe, GlobalIllumination.Environmen
                 Vertex { position = float2(x + 4, 8) }, Vertex { position = float2(x, 8) }];
             List<int> indices = [0, 1, 2, 0, 2, 3];
             GIWitness witness = GIWitness { position = probe.positions[i], normal = probe.normals[i] };
-            if (environment.layout.sparse)
+            if (probe.showCaptureDepth)
+                Draw.Mesh(vertices, indices, ReadGICaptureDepth, witness);
+            else if (probe.synthetic == 15)
+                Draw.Mesh(vertices, indices, ReadGISharedFacing, witness);
+            else if (probe.synthetic == 16)
+                Draw.Mesh(vertices, indices, ReadGIPhysicalVisibility, witness);
+            else if (environment.layout.sparse)
                 Draw.Mesh(vertices, indices, ReadGIWitness, witness);
             else
                 Draw.Mesh(vertices, indices, ReadGILegacyWitness, witness);
