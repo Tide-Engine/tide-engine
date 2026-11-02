@@ -993,6 +993,31 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(last_sent(), "did you mean 'Parts'?"));
 }
 
+// `lod:` on a mesh the game makes: no diagnostic, offered by completion after the lists, shown and followed by
+// signature help as the last parameter of a 3D mesh's draw, and absent from a 2D one's.
+TIDE_TEST(lsp_generated_levels_of_detail)
+{
+    start();
+#define LOD_TYPES "scene Main { }\nlocal singleton Art\n{\n    List<Vertex3> corners;\n    List<int> faces;\n}\n"
+    open_document(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, lod: 2);\n"
+                            "    Draw.Instanced(art.corners, art.faces, [float4x4.identity], lod: 1);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *offered = complete(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, $\n}\n");
+    TIDE_CHECK(offers(offered, "lod:") && has(offered, "made in the background"));
+    const char *early = complete(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, $\n}\n");
+    TIDE_CHECK(!offers(early, "lod:"));
+    const char *once = complete(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, lod: 1, $\n}\n");
+    TIDE_CHECK(!offers(once, "lod:"));
+    open_document(LOD_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, float4x4.identity, lod: $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "[, values][, lod: multiplier])") && has(help, "\"activeParameter\":9"));
+    TIDE_CHECK(has(help, "made in the background"));
+    open_document("scene Main { }\nlocal singleton Flat { List<Vertex> corners; }\nview V(Flat flat)\n{\n"
+                  "    Draw.Mesh(flat.corners, $\n}\n");
+    TIDE_CHECK(!has(request("textDocument/signatureHelp"), "lod: multiplier"));
+#undef LOD_TYPES
+}
+
 // Cull, which side of a 3D mesh's triangles draws: both forms, its sides, hovers, and rename fixes.
 TIDE_TEST(lsp_draw_cull)
 {
@@ -1394,7 +1419,7 @@ TIDE_TEST(lsp_draw_values)
 
     open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Wave, Shade, $\n}\n");
     const char *help = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(help, "[, vert][, frag][, values])") && has(help, "\"activeParameter\":8"));
+    TIDE_CHECK(has(help, "[, vert][, frag][, values][, lod: multiplier])") && has(help, "\"activeParameter\":8"));
     TIDE_CHECK(has(help, "A struct's value, after the vert and the frag"));
     open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Shade, Swell { height = 2 }$);\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":8"));
@@ -11942,7 +11967,7 @@ TIDE_TEST(lsp_asset_meshes)
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Mesh(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);
     const char *help = request_at(uri_main, "textDocument/signatureHelp", 14, 20, "");
-    TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])"));
+    TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])"));
     TIDE_CHECK(has(help, "\"activeParameter\":1") && has(help, "A `Mesh<V>`: an asset's vertices and its indices as one"));
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Instanced(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);

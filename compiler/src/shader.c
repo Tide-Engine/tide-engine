@@ -4444,6 +4444,7 @@ static void ex(emit *em, const expr *e)
         put_float(em, strtod(text, NULL));
         return;
     }
+    case E_HAS: // The checker made it a bool
     case E_BOOL:
         sb_put(em->o, e->bool_value ? "true" : "false");
         return;

@@ -10,7 +10,10 @@ jobs' optional `background`; `tide_draw_reset` collects them and `tide_draw_free
 simplifier moved from tidec into the engine (`engine/src/mesh_lod.c`, `tide/internal/mesh_lod.h`,
 `tide_mesh_lod_make`/`_free`), agent-maintained as the draw list is; generated code doesn't call it. Draw list and
 mesh data layouts grew, so hosts, libraries and games rebuild together. Contracts: drawing.md; tests and
-validation: assets-and-files.md, both "Levels ... meshes a game makes".
+validation: assets-and-files.md, both "Levels ... meshes a game makes". Follow-up the same day: generated skinned
+draws with `lod:` also call `tide_draw_want_bones(list, model.data)` (`tide/mesh.h`), and tidec's bone weighing
+moved beside the maker (`tide_mesh_lod_bones_of`, `_apart`, `_free` in `tide/internal/mesh_lod.h`), which tidec
+calls for assets; generated code calls neither.
 
 ## Flat shader-data capture memo (2026-11-02)
 

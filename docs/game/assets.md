@@ -349,7 +349,7 @@ view Terrain(Chunk chunk)
 - **They're kept by what's in the mesh.** Drawing the same lists again costs nothing more, nor does making the same mesh again or drawing it again after a while away. Lists made again with other numbers start over: what was being made of the old ones stops. A mesh that changes every frame keeps drawing whole, which is right for one that moves its vertices.
 - **The fields weighed are your vertex's `position` (a `float3`), and `normal`, `uv`, `uv2`, `color` and `tangent` where it has them** with those names and types, as an asset's file fills them.
 - **The same lists drawn without `lod:` are another mesh**, drawn whole, and so are the same lists drawn with another multiplier. `lod: 0`, or a multiplier that's no number, is 1, as `Draw.LODPixels` takes them.
-- It's for 3D meshes: a 2D mesh draws as it is. A `SkinnedMesh` has its levels from its asset's `[LOD]`.
+- It's for 3D meshes: a 2D mesh draws as it is. A model with bones takes it too, `Draw.SkinnedMesh(model, transform, lod: 1)`, with its bones weighed as `[LOD]` weighs them, so a model decoded while the game runs (`SkinnedMesh<V>.Decode`) gets the levels its file would get as a marked asset.
 
 **A game's vert isn't known to the pick.** Where the mesh is and how big it is come from the file's own geometry and the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been: draw such a mesh with `Draw.LOD(0)`, below, or leave `[LOD]` off it.
 

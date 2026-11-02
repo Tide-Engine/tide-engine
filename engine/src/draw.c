@@ -416,6 +416,7 @@ void tide_draw_reset(tide_draw_list *d)
     if (freed) reindex_meshes(d);
     d->leveled = 0;
     d->lod_want = 0.0f;
+    d->lod_model = 0;
     tide_draw_lod_collect(d); // Levels made in the background since, for the meshes that are still here
     d->frame++;
 }

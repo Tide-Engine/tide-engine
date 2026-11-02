@@ -43,6 +43,7 @@ typedef struct lod_job {
     uint32_t vertex_count, index_count;
     float *position, *normal, *uv, *uv2, *color, *tangent;
     uint32_t *index;
+    tide_mesh_lod_bones bones; // A skinned model's, or none
     tide_mesh_lod made;
 } lod_job;
 
@@ -82,6 +83,7 @@ static void job_free(lod_job *job)
 {
     free(job->position), free(job->normal), free(job->uv), free(job->uv2), free(job->color), free(job->tangent);
     free(job->index);
+    tide_mesh_lod_bones_free(&job->bones);
     tide_mesh_lod_free(&job->made);
     free(job);
 }
@@ -93,7 +95,8 @@ static void make_levels(void *context)
     const tide_mesh_lod_source source = {
         .vertices = job->vertex_count, .position = job->position, .normal = job->normal, .uv = job->uv,
         .uv2 = job->uv2, .color = job->color, .tangent = job->tangent, .index = job->index,
-        .indices = job->index_count, .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
+        .indices = job->index_count, .apart = job->bones.first ? tide_mesh_lod_bones_apart : NULL,
+        .user = &job->bones, .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
         .triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST, .stop = &job->stop};
     tide_mesh_lod_make(&source, &job->made);
 }
@@ -141,12 +144,18 @@ static void give(tide_draw_list *d, const uint32_t mesh, const lod_kept *k)
 
 void tide_draw_want_levels(tide_draw_list *d, const float multiplier, const tide_mesh_lod_layout *layout)
 {
+    d->lod_model = 0;
     if (!layout) {
         d->lod_want = 0.0f;
         return;
     }
     d->lod_want = multiplier > 0.0f && multiplier <= FLT_MAX ? multiplier : 1.0f;
     d->lod_layout = *layout;
+}
+
+void tide_draw_want_bones(tide_draw_list *d, const tide_list model)
+{
+    d->lod_model = model.at;
 }
 
 uint32_t tide_draw_levels_pending(const tide_draw_list *d)
@@ -175,7 +184,19 @@ void tide_draw_lod_request(tide_draw_list *d, const uint32_t mesh)
         || m->vertex_count > TIDE_MESH_LOD_VERTICES_MOST) return; // Too few to gain, or too many to make
     const tide_mesh_lod_layout *layout = &d->lod_layout;
     if (!fits(layout->position, 3u * sizeof(float), m->vertex_size)) return;
-    // What the levels are made of: the list's copy, which left out triangles past the vertices
+    // A skinned model's bones, from its bytes: a model that isn't one of this many vertices weighs none
+    tide_mesh_lod_bones bones = {0};
+    if (d->lod_model) {
+        const tide_list model = {d->lod_model};
+        const int32_t size = tide_list_count(model);
+        if (size > 0) {
+            bool copied;
+            uint8_t *bytes = tide_list_flatten(model, 1u, false, &copied);
+            if (bytes) tide_mesh_lod_bones_of(bytes, (size_t)size, m->vertex_count, &bones);
+            tide_list_unflatten(model, bytes, 1u, false, copied);
+        }
+    }
+    // What the levels are made of: the list's copy, which left out triangles past the vertices, and the bones
     uint64_t h = tide_hash_more(TIDE_HASH_START, &(const uint64_t){LOD_VERSION}, sizeof(uint64_t));
     h = tide_hash_more(h, layout, sizeof *layout);
     h = tide_hash_more(h, &m->vertex_size, sizeof m->vertex_size);
@@ -183,15 +204,25 @@ void tide_draw_lod_request(tide_draw_list *d, const uint32_t mesh)
     h = tide_hash_more(h, m->bytes, (size_t)m->vertex_count * m->vertex_size);
     h = tide_hash_more(h, &m->index_count, sizeof m->index_count);
     h = tide_hash_more(h, m->indices, (size_t)m->index_count * sizeof(uint32_t));
+    if (bones.first) {
+        const uint32_t all = bones.vertices ? bones.first[bones.vertices - 1u] + bones.count[bones.vertices - 1u] : 0u;
+        h = tide_hash_more(h, bones.count, (size_t)bones.vertices * sizeof(uint32_t));
+        h = tide_hash_more(h, bones.palette, (size_t)all * sizeof(uint32_t));
+        h = tide_hash_more(h, bones.weight, (size_t)all * sizeof(float));
+    }
     const uint64_t key = tide_hash_end(h) | 1u; // Never 0, which is no mesh's
     m->lod_key = key;
     m->lod_want = d->lod_want;
     tide_draw_lod_builds *b = builds(d);
-    if (!b) return;
+    if (!b) {
+        tide_mesh_lod_bones_free(&bones);
+        return;
+    }
     lod_kept *k = kept_of(b, key, m->vertex_count);
     if (k) {
         k->used = d->frame;
         give(d, mesh, k);
+        tide_mesh_lod_bones_free(&bones);
         return;
     }
     // Lists the world keeps that are being made again: what was made of them before is of no use now. Lists made
@@ -200,22 +231,22 @@ void tide_draw_lod_request(tide_draw_list *d, const uint32_t mesh)
     const bool owned = m->id != scratch && m->other != scratch;
     for (uint32_t i = 0; i < b->job_count; i++) {
         lod_job *job = b->jobs[i];
-        if (job->key == key && job->vertex_count == m->vertex_count) return; // Being made: given when it's there
+        if (job->key == key && job->vertex_count == m->vertex_count) goto none; // Being made: given when it's there
         if (owned && job->space == m->space && job->id == m->id && job->other == m->other)
             __atomic_store_n(&job->stop, 1u, __ATOMIC_RELAXED);
     }
-    if (b->job_count >= LOD_WAITING_MOST) return;
+    if (b->job_count >= LOD_WAITING_MOST) goto none;
     if (b->job_count == b->job_capacity) {
         const uint32_t capacity = b->job_capacity ? b->job_capacity * 2u : 8u;
         lod_job **jobs = realloc(b->jobs, (size_t)capacity * sizeof *jobs);
-        if (!jobs) return;
+        if (!jobs) goto none;
         b->jobs = jobs;
         b->job_capacity = capacity;
     }
     lod_job *job = calloc(1, sizeof *job);
-    if (!job) return;
+    if (!job) goto none;
     *job = (lod_job){.key = key, .space = m->space, .id = m->id, .other = m->other, .vertex_count = m->vertex_count,
-                     .index_count = m->index_count};
+                     .index_count = m->index_count, .bones = bones};
     job->position = read_field(m, layout->position, 3u);
     job->index = malloc((size_t)m->index_count * sizeof(uint32_t));
     if (!job->position || !job->index) {
@@ -230,6 +261,9 @@ void tide_draw_lod_request(tide_draw_list *d, const uint32_t mesh)
     job->color = read_field(m, layout->color, 4u);
     job->tangent = read_field(m, layout->tangent, 4u);
     b->jobs[b->job_count++] = job;
+    return;
+none:
+    tide_mesh_lod_bones_free(&bones);
 }
 
 void tide_draw_lod_submit(const tide_draw_list *d, const tide_jobs *jobs)

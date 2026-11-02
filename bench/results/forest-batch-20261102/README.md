@@ -67,6 +67,19 @@ These correctness captures used the shared mutex without an idle-CPU requirement
 their timing values are not performance evidence. The timing cohort below remains
 pinned to its original pre-merge frozen candidate; it was not rerun after merging.
 
+A later dev update at 70db4a9f5 adds generic functions and skinned/model LOD.
+The skinned written-operand path also needs to take the retained `lod:` child
+before returning. A regression checks an earlier transform and an earlier
+nested helper argument against a later mutating LOD helper. Generic instances
+remain ordinary checked functions, so their bodies/effects stay visible to the
+preparation proof. All 26 focused native ASan and 26 web-release checks pass.
+The final release was rebuilt and frozen under build/forest-batch/final-dev;
+three final captures and all shader blocks again match the original baseline.
+[validation-finaldev.json](validation-finaldev.json),
+[pixel-equivalence-finaldev.json](pixel-equivalence-finaldev.json) and
+[shader-equivalence-finaldev.json](shader-equivalence-finaldev.json) pin this
+final integration. No new paired timing was performed.
+
 ## Initial elapsed-timing cohort
 
 Windows; operator-supplied Ryzen 9 7900X / RTX 4080 SUPER, driver 617.42; Clang

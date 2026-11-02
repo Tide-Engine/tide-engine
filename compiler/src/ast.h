@@ -467,6 +467,8 @@ typedef enum decl_kind {
     DECL_SHADER,   // frag Shade(...) { ... } and vert Wave(...) { ... }: code the GPU runs for a mesh's pixels or vertices
     DECL_ASSET,    // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name, read-only, packed with the game
     DECL_ALIAS,    // using Name = Type;: a namespace-scoped name for an existing closed type.
+    DECL_GENERIC,  // T Max<T>(T a, T b) { ... }: a generic function, never checked or generated as written; each
+                   // instantiation is a DECL_FUNCTION of its own (generic_instances)
 } decl_kind;
 
 // How a frag or vert reads a texture: a color, or a target's depth, as a
@@ -605,6 +607,22 @@ typedef struct decl {
     bool shares_name;     // Another declaration of its kind has its name, where it's declared
     const char *c_suffix; // ...so its name in generated C goes on with its parameters' types: "_float_Weapon"
     const char *signature; // ...and messages and tools write it with them, as code names it: "Move(Position, with Player)"
+    // Generics. A DECL_GENERIC's type parameters as written, `T` and `U` of `Max<T, U>`, and how to read it again
+    // (parse_generic_instance): each instantiation is parsed anew from its tokens, a syntax tree of its own
+    VEC(str) type_params;
+    VEC(loc) type_param_at;
+    void *generic_parser;
+    VEC(struct decl *) generic_instances; // ...each one made, found by its type arguments
+    // An instantiation: the DECL_GENERIC it's of, its type arguments in the parameters' order, and for each of
+    // them a DECL_ALIAS (type_param) that its code finds the parameter's name as, which no other code does
+    struct decl *generic_of;
+    VEC(type) type_args;
+    VEC(struct decl *) type_arg_decls;
+    const char *generic_name; // As tools and messages write it: "Max<float>"
+    loc generic_at;           // The first call that made it, for messages
+    int generic_depth;        // How many instantiations made it, one inside another (an endless chain stops)
+    bool generic_placed;      // In program.decls: a call picked it, so it's checked and generated
+    bool type_param;          // A type parameter's DECL_ALIAS, bound to alias_type
     bool device_group;  // Devices, Keyboard, Mouse, Gamepad, Dpad, Touch, ...: records made of device values
     int leaves_count;   // ...how many
     VEC(int) instances; // ...where each place it has in the devices starts in program.device_leaves
@@ -935,6 +953,7 @@ typedef enum expr_kind {
     E_DEFAULTED, // lhs!: lhs's value, or its type's default when it failed or is nothing
     E_AWAIT,     // await lhs: an async call's value once it's done, or Wait.Ticks(n) and the like
     E_STEP,      // ++lhs, lhs++, --lhs, lhs--: lhs goes up or down by 1, and its value after (or, `postfix`, before) is the expression's
+    E_HAS,       // T has float3 normal: whether type `name` has a field `pattern_field` of type `pattern_ref`, a constant
 } expr_kind;
 
 // What `x is ...` looks for.
@@ -1206,6 +1225,9 @@ struct expr {
     loc type_arg_at;      // ...its last part, if it's qualified
     loc type_arg_qual_at; // ...and where it starts
     const type_ref *type_arg_ref; // ...as written, or NULL
+    VEC(const type_ref *) type_args; // E_CALL, E_METHOD: the types written in <> before the arguments, Max<float>(a, b)
+    str pattern_field;    // E_HAS: the field's name
+    loc pattern_field_at;
 
     // E_BINARY, E_UNARY; E_CONDITIONAL's two sides. `method` is the struct's
     // operator, if one is used.
@@ -1741,6 +1763,7 @@ void print_outline(const program *prog, sb *out);
 // keeps what it could read, skipping a broken statement or declaration: for
 // editors, which need structure while code is half typed.
 bool parse_file(program *prog, const source *src, token *toks, bool recover);
+decl *parse_generic_instance(const decl *generic);
 
 // Whether the attributes starting at toks[i] (a '[') belong to a field: after
 // the last ']' come a type name and a field name. Otherwise they belong to a

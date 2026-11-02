@@ -1,0 +1,5 @@
+// expect: 'Twice' takes no types in '<>': it isn't generic
+scene Main { }
+int Twice(int a) { return a * 2; }
+singleton S { int x; }
+system Run(mut S s) { s.x = Twice<int>(1); }

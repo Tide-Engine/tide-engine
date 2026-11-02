@@ -35,6 +35,10 @@ verification captures and all shader blocks still match the frozen baseline.
 No post-merge paired timings were run; validation-merge.json pins the separate
 executable and evidence without changing the original timing cohort.
 
+The later generic-function/skinned-LOD integration passes 26 focused native and
+26 web checks; final rebuilt release captures/programs again match the baseline.
+validation-finaldev.json pins that separate correctness-only verification.
+
 [All pairs, identities, fidelity/validation evidence and control status](../bench/results/forest-batch-20261102/README.md)
 remain recorded without exclusions or replacement runs.
 

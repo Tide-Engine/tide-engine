@@ -3,6 +3,7 @@
 
 #include "game.h"
 #include "tide/internal/mesh_lod.h"
+#include "tide/pack.h"
 #include "tide/worker.h"
 #include "tide_test.h"
 
@@ -10,6 +11,9 @@
 // which tide_draw_prepare hands to a background (here, one that runs when the test says), and the frame after
 // they're made has them, as an asset's levels are: picked by each draw, made by the same code from the same
 // vertices and triangles, kept by what's in the mesh.
+
+extern const unsigned char tide_game_pack[];
+extern const size_t tide_game_pack_size;
 
 static tide_world world;
 static tide_local local;
@@ -49,6 +53,7 @@ static const tide_jobs jobs = {.threads = 1, .background = background, .help = h
 
 static void start(void)
 {
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     tide_world_init(&world, 1.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
@@ -63,6 +68,7 @@ static void finish(void)
     draw = (tide_draw_list){0};
     tide_local_free(&local);
     tide_world_free(&world);
+    tide_pack_unload();
 }
 
 // A frame of the view's `mode`, in a window 600 pixels high, then prepared as a renderer would, with the jobs
@@ -240,5 +246,90 @@ TIDE_TEST(lod_generated_wild_numbers_and_freeing_while_made)
     // Given to the background and not run when the list goes: freeing it helps them through
     frame(1);
     TIDE_CHECK(queued_count == 1);
+    finish();
+}
+
+// A model with bones drawn with `lod:` (mode 7 an asset, 8 one decoded while the game runs) has its bones weighed,
+// as the same file's [LOD] does as the game is built:
+// the levels made while the game runs are the build's, bit for bit.
+static void skinned_levels_are_the_builds(const int32_t mode)
+{
+    start();
+    frame(mode);
+    TIDE_CHECK(tide_draw_levels_pending(&draw) == 1);
+    run_all();
+    frame(mode);
+    const tide_draw_mesh_data *asked[4];
+    TIDE_REQUIRE(meshes(asked, 4, true) == 1);
+    const tide_draw_mesh_data *built = NULL;
+    for (uint32_t i = 0; i < draw.mesh_count; i++) {
+        const tide_draw_mesh_data *m = &draw.meshes[i];
+        if (m->space != TIDE_MESH_NONE && !m->base && !m->lod_key && m->levels) built = m;
+    }
+    TIDE_REQUIRE(built);
+    const tide_draw_mesh_data *m = asked[0];
+    TIDE_REQUIRE(m->levels >= 2 && m->levels == built->levels && m->vertex_count == built->vertex_count);
+    TIDE_CHECK(m->index_count == built->index_count && m->radius == built->radius);
+    for (uint32_t level = 0; level < m->levels; level++) {
+        TIDE_CHECK(m->level_error[level] == built->level_error[level] && m->level_count[level] == built->level_count[level]);
+        TIDE_CHECK(memcmp(&m->level_indices[m->level_first[level]], &built->level_indices[built->level_first[level]],
+                          m->level_count[level] * sizeof(uint32_t)) == 0);
+    }
+    // ...where the same mesh weighed without its bones would have other levels
+    static float position[4096 * 3], normal[4096 * 3], uv[4096 * 2];
+    TIDE_REQUIRE(m->vertex_count <= 4096u && m->vertex_size == 32u);
+    for (uint32_t v = 0; v < m->vertex_count; v++) {
+        const uint8_t *corner = (const uint8_t *)m->bytes + (size_t)v * 32u;
+        memcpy(&position[v * 3u], corner, 12u), memcpy(&normal[v * 3u], corner + 12u, 12u), memcpy(&uv[v * 2u], corner + 24u, 8u);
+    }
+    const tide_mesh_lod_source boneless = {.vertices = m->vertex_count, .position = position, .normal = normal, .uv = uv,
+                                           .index = m->indices, .indices = m->index_count,
+                                           .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
+                                           .triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST};
+    tide_mesh_lod lod;
+    tide_mesh_lod_make(&boneless, &lod);
+    bool same = lod.levels == m->levels;
+    for (uint32_t level = 0; same && level < lod.levels; level++) {
+        same = lod.count[level] == m->level_count[level]
+            && memcmp(&lod.index[lod.first[level]], &m->level_indices[m->level_first[level]],
+                      lod.count[level] * sizeof(uint32_t)) == 0;
+    }
+    TIDE_CHECK(!same);
+    tide_mesh_lod_free(&lod);
+    finish();
+}
+
+TIDE_TEST(lod_generated_skinned_models_weigh_their_bones_as_an_asset_does)
+{
+    skinned_levels_are_the_builds(7);
+}
+
+// A model decoded while the game runs (SkinnedMesh<V>.Decode), which has no declaration to mark, the same.
+TIDE_TEST(lod_generated_decoded_models_weigh_their_bones_too)
+{
+    skinned_levels_are_the_builds(8);
+}
+
+TIDE_TEST(lod_generated_skinned_operands_precede_mutating_lod)
+{
+    start();
+    local.Art.multiplier = -1.0f;
+    const uint64_t hash = tide_world_hash(&world);
+    frame(9);
+    TIDE_CHECK(local.Art.multiplier == 2.0f && local.Art.lodMutations == 1);
+    TIDE_CHECK(local.Art.observedLodOperand == -1.0f);
+    unsigned instances = 0;
+    for (uint32_t r = 0; r < draw.run_count; r++) {
+        const tide_draw_run *run = &draw.runs[r];
+        TIDE_REQUIRE(run->shader && run->shader->instance_floats >= 4);
+        const uint32_t stride = tide_shader_instance_size(run->shader);
+        for (uint32_t i = 0; i < run->count; i++) {
+            tide_float4x4 transform;
+            memcpy(&transform, draw.instances + run->first + i * stride, sizeof transform);
+            TIDE_CHECK(transform.c3.x == -1.0f && transform.c3.z == 900.0f);
+            instances++;
+        }
+    }
+    TIDE_CHECK(instances == 1 && tide_world_hash(&world) == hash);
     finish();
 }

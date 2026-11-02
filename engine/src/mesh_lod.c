@@ -5,6 +5,8 @@
 
 #include "tide/internal/mesh_lod.h"
 
+#include "tide/skinned_data.h"
+
 
 #include <math.h>
 #include <stdlib.h>
@@ -859,4 +861,83 @@ void tide_mesh_lod_free(tide_mesh_lod *lod)
 {
     free(lod->index);
     *lod = (tide_mesh_lod){0};
+}
+
+// ---------------------------------------------------------------------------
+// A skinned mesh's bones, weighed (moved from tidec, where an asset's levels were the only ones)
+
+float tide_mesh_lod_bones_apart(void *user, const uint32_t from, const uint32_t to)
+{
+    const tide_mesh_lod_bones *w = user;
+    if (from >= w->vertices || to >= w->vertices) return 0.0f;
+    float apart = 0.0f;
+    for (uint32_t i = 0; i < w->count[from]; i++) {
+        const uint32_t palette = w->palette[w->first[from] + i];
+        float theirs = 0.0f;
+        for (uint32_t k = 0; k < w->count[to]; k++) {
+            if (w->palette[w->first[to] + k] == palette) theirs += w->weight[w->first[to] + k];
+        }
+        bool counted = false; // A palette named twice is counted once, with all of its weight
+        for (uint32_t k = 0; k < i && !counted; k++) counted = w->palette[w->first[from] + k] == palette;
+        if (counted) continue;
+        float mine = 0.0f;
+        for (uint32_t k = i; k < w->count[from]; k++) {
+            if (w->palette[w->first[from] + k] == palette) mine += w->weight[w->first[from] + k];
+        }
+        apart += mine > theirs ? mine - theirs : theirs - mine;
+    }
+    for (uint32_t i = 0; i < w->count[to]; i++) { // ...and the bones only `to` follows
+        const uint32_t palette = w->palette[w->first[to] + i];
+        bool shared = false;
+        for (uint32_t k = 0; k < w->count[from] && !shared; k++) shared = w->palette[w->first[from] + k] == palette;
+        if (!shared) apart += w->weight[w->first[to] + i];
+    }
+    return apart * 0.5f;
+}
+
+void tide_mesh_lod_bones_free(tide_mesh_lod_bones *bones)
+{
+    free(bones->first), free(bones->count), free(bones->palette), free(bones->weight);
+    *bones = (tide_mesh_lod_bones){0};
+}
+
+bool tide_mesh_lod_bones_of(const uint8_t *model, const size_t size, const uint32_t vertices, tide_mesh_lod_bones *out)
+{
+    *out = (tide_mesh_lod_bones){0};
+    tide_skinned_data_view view;
+    if (!model || !tide_skinned_data_open(model, size, &view)) return false;
+    tide_mesh_lod_bones w = {.vertices = vertices};
+    w.first = calloc(vertices ? vertices : 1u, sizeof(uint32_t));
+    w.count = calloc(vertices ? vertices : 1u, sizeof(uint32_t));
+    bool ok = w.first && w.count;
+    uint64_t all = 0;
+    for (uint32_t v = 0; ok && v < vertices; v++) {
+        tide_skinned_vertex_data vertex;
+        ok = tide_skinned_data_vertex(&view, v, &vertex) && all + vertex.influences <= UINT32_MAX;
+        if (!ok) break;
+        w.first[v] = (uint32_t)all;
+        w.count[v] = vertex.influences;
+        all += vertex.influences;
+    }
+    if (ok) {
+        w.palette = calloc(all ? (size_t)all : 1u, sizeof(uint32_t));
+        w.weight = calloc(all ? (size_t)all : 1u, sizeof(float));
+        ok = w.palette && w.weight;
+    }
+    for (uint32_t v = 0; ok && v < vertices; v++) {
+        tide_skinned_vertex_data vertex;
+        ok = tide_skinned_data_vertex(&view, v, &vertex);
+        for (uint32_t i = 0; ok && i < w.count[v]; i++) {
+            tide_skinned_influence_data influence;
+            ok = tide_skinned_data_influence(&view, vertex.first_influence + i, &influence);
+            w.palette[w.first[v] + i] = influence.palette;
+            w.weight[w.first[v] + i] = influence.weight;
+        }
+    }
+    if (!ok) {
+        tide_mesh_lod_bones_free(&w);
+        return false;
+    }
+    *out = w;
+    return true;
 }

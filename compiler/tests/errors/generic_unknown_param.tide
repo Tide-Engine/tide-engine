@@ -1,0 +1,6 @@
+// expect: nothing in the arguments says what 'U' of 'Make' is
+// expect: write the types in '<>', like 'Make<int>(...)'
+scene Main { }
+U Make<U>(int n) { return default; }
+singleton S { int x; }
+system Run(mut S s) { s.x = Make(1); }

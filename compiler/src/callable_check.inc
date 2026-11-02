@@ -141,8 +141,13 @@ static type check_callable_value(checker *c, expr *e, const type want)
         if (!first) return T_VOID_;
         decl_list choices = {0};
         sharing_name(c->prog, first, &choices);
+        bool generic = false;
         for (int i = 0; i < choices.count; i++) {
             decl *candidate = choices.items[i];
+            if (candidate->kind == DECL_GENERIC) { // Called in a lambda, it's an instantiation
+                generic = true;
+                continue;
+            }
             if (candidate->return_type.kind == TY_ERROR) {
                 checker declaration = *c;
                 declaration.unit = candidate->unit;
@@ -154,6 +159,12 @@ static type check_callable_value(checker *c, expr *e, const type want)
                 return e->type = T_ERR;
             }
             fn = candidate;
+        }
+        if (!fn && generic) {
+            diag_error(e->at, "'" STR_FMT "' is generic: as a value, it's one of its instantiations, which a name alone doesn't say",
+                       STR_ARG(name));
+            diag_note("call it in a lambda, like '(int a, int b) => " STR_FMT "(a, b)'", STR_ARG(name));
+            return e->type = T_ERR;
         }
         if (!fn) {
             diag_error(e->at, "function '" STR_FMT "' does not match this Func's argument and result types (including mut parameter modes)", STR_ARG(name));

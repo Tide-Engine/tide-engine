@@ -31,6 +31,12 @@ dependencies. A rebuilt release executable again produces byte-identical shader
 blocks and zero changed pixels in all three captures. These post-merge captures
 are correctness checks; the original timed binaries and results stay pinned.
 
+The subsequent generic-function/skinned-LOD merge passes another 26 focused
+native ASan and 26 web-release checks after including retained LOD in the skinned
+written-operand path. The final rebuilt release again matches all shader blocks,
+pixels, draw work and world hashes. validation-finaldev.json pins this integration;
+no further paired timings were run.
+
 Frozen baseline/candidate forest programs have byte-identical 28 GLSL, 14 WGSL,
 14 SPIR-V and 14 shader metadata/layout blocks. Three 1920x1080 same-timestep
 captures (10k canopy, 100k wide and ground) match every decoded RGBA pixel.
