@@ -72,6 +72,15 @@ build passes. Logs are build/profile-native-tests.log, profile-web-tests.log
 and profile-docs-build.log. Other native platforms and Android were not run
 locally. These diagnostics establish no performance improvement.
 
+Integration with dev through 4dce92689 preserves its mesh-version hints, shared
+shader preparation and CLI diagnostic improvements. Only independent notes
+sections conflicted. Affected native/web targets rebuild cleanly; all 16 native
+and 11 web integration tests pass, covering the profile report, engine/draw
+tests, mesh values/runtime/LOD, shared bindings and native CLI/source stripping.
+The merged docs production build also passes. Logs use the
+build/profile-merge-{native,web}-{build,tests}.log and
+build/profile-merge-docs-build.log names.
+
 ## Compact vertex counts (2026-10-30)
 
 The stats drawer formats vertices with decimal K/M/B/T/P/E suffixes, rounded
