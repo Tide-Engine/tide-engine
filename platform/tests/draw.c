@@ -373,6 +373,15 @@ static void resident_pack_textures(void)
     selected = 0;
     for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
     expect(selected == (1u << 1), "idle texture slot pressure has a stable tie order and safe byte arithmetic");
+    // The budget: 128 MiB, or a sixteenth of a device's own memory where that's more
+    expect(tide_texture_idle_budget(0) == TIDE_TEXTURE_IDLE_BYTES, "a device that says no memory of its own keeps 128 MiB of idle images");
+    expect(tide_texture_idle_budget(UINT64_C(1) << 30) == TIDE_TEXTURE_IDLE_BYTES, "a 1 GiB GPU keeps 128 MiB");
+    expect(tide_texture_idle_budget(UINT64_C(16) << 30) == UINT64_C(1) << 30, "a 16 GiB GPU keeps a sixteenth, 1 GiB");
+    expect(tide_texture_idle_budget(UINT64_MAX) == UINT64_MAX / TIDE_TEXTURE_IDLE_SHARE, "the share of any size doesn't overflow");
+    expect(tide_texture_idle_bytes() == tide_texture_idle_budget(tide_texture_device_memory()),
+           "the renderer weighs idle images by its device's budget");
+    printf("idle image budget on this device: %llu MiB, of %llu MiB its own\n",
+           (unsigned long long)(tide_texture_idle_bytes() >> 20), (unsigned long long)(tide_texture_device_memory() >> 20));
 
     uint8_t pixels[32 * 32 * 4], hash[32] = {37};
     for (uint32_t i = 0; i < sizeof pixels; i += 4u) {
@@ -430,6 +439,87 @@ static void resident_pack_textures(void)
     tide_draw_clear(&list, background);
     tide_platform_read_pixels(&list, &point, 1, &got);
     expect(tide_platform_gpu_memory() == base_memory, "a changed draw epoch clears idle pack images after unload");
+}
+
+// Big pack images, together over 128 MiB as a forest's 4096 by 4096 maps are,
+// stay while a frame doesn't draw them, where the device's budget has room
+// for them (a discrete GPU's share of its memory). Under 128 MiB they went as
+// soon as a frame left them out, and were sent again when they came back.
+static void resident_large_pack_textures(void)
+{
+    enum { SIDE = 4096, COUNT = 2 };
+    const uint64_t each = (uint64_t)SIDE * SIDE * 4u, mipped = each + each / 3u;
+    if (tide_texture_idle_budget(tide_texture_device_memory()) < COUNT * mipped + (UINT64_C(16) << 20)) {
+        printf("big idle images: this device's budget hasn't room for them, so they aren't checked here\n");
+        return;
+    }
+    uint8_t *pixels = malloc(each);
+    expect(pixels != NULL, "big idle images: memory for their pixels");
+    if (!pixels) return;
+    tide_pack_builder pack = {0};
+    const tide_color colors[COUNT] = {red, blue};
+    for (uint32_t t = 0; t < COUNT; t++) {
+        const uint8_t color[4] = {(uint8_t)(colors[t].r * 255.0f), (uint8_t)(colors[t].g * 255.0f),
+                                  (uint8_t)(colors[t].b * 255.0f), 255};
+        for (uint64_t i = 0; i < each; i += 4u) memcpy(pixels + i, color, 4);
+        uint8_t hash[32] = {91, (uint8_t)t};
+        const uint64_t block = tide_pack_texture(&pack, hash, SIDE, SIDE, pixels);
+        tide_pack_name(&pack, t ? "big1" : "big0", TIDE_PACK_TEXTURE, block, 0, 0);
+    }
+    free(pixels);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&pack, &size);
+    const bool loaded = tide_pack_load(bytes, size);
+    free(bytes);
+    expect(loaded, "big idle images: the fixture pack loads");
+    if (!loaded) return;
+    tide_texture_ref images[COUNT];
+    for (uint32_t t = 0; t < COUNT; t++) {
+        images[t] = tide_texture_filtered(tide_pack_texture_of(tide_pack_find(t ? "big1" : "big0", TIDE_PACK_TEXTURE)),
+                                          TIDE_FILTER_TRILINEAR);
+    }
+    const tide_float2 points[COUNT] = {{8.5f, 8.5f}, {40.5f, 8.5f}};
+    const int32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_list triangles = tide_list_from(indices, 6, sizeof *indices);
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    uint32_t got[COUNT];
+    tide_platform_read_pixels(&list, points, COUNT, got);
+    const uint64_t base_memory = tide_platform_gpu_memory();
+    uint64_t drawn_memory = 0;
+    for (uint32_t frame = 0; frame < 4; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_set_screen(&list);
+        tide_draw_clear(&list, background);
+        const bool visible = frame != 1 && frame != 2;
+        for (uint32_t t = 0; visible && t < COUNT; t++) {
+            const float x = 32.0f * (float)t;
+            const tide_vertex vertices[] = {
+                {{x, 0}, {0, 0}, {1, 1, 1, 1}}, {{x + 16, 0}, {1, 0}, {1, 1, 1, 1}},
+                {{x + 16, 16}, {1, 1}, {1, 1, 1, 1}}, {{x, 16}, {0, 1}, {1, 1, 1, 1}},
+            };
+            tide_draw_mesh_texture(&list, tide_list_from(vertices, 4, sizeof *vertices), triangles, images[t]);
+        }
+        const uint64_t before = tide_platform_gpu_written();
+        tide_platform_read_pixels(&list, points, COUNT, got);
+        const uint64_t sent = tide_platform_gpu_written() - before;
+        char what[160];
+        snprintf(what, sizeof what, "big idle images: frame %u sends %llu bytes", frame, (unsigned long long)sent);
+        expect(sent == (frame == 0 ? COUNT * each : 0u), what);
+        for (uint32_t t = 0; t < COUNT; t++) {
+            expect(near(got[t], rgba(visible ? colors[t] : background), 8), "big idle images: their pixels, drawn or not");
+        }
+        if (frame == 0) drawn_memory = tide_platform_gpu_memory();
+        else expect(tide_platform_gpu_memory() == drawn_memory, "big idle images keep their whole allocations while unused");
+    }
+    expect(drawn_memory >= base_memory + COUNT * mipped, "big idle images are counted with their smaller images");
+    tide_pack_unload();
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, points, COUNT, got);
+    expect(tide_platform_gpu_memory() == base_memory, "big idle images go once the pack does");
 }
 
 static void compressed_pack_textures(void)
@@ -4735,6 +4825,7 @@ static int frame(void *user, const float seconds)
         meshes();
         many_cached_textures();
         resident_pack_textures();
+        resident_large_pack_textures();
         compressed_pack_textures();
         authored_mip_textures();
         changed_textures();

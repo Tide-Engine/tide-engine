@@ -1,5 +1,14 @@
 # The platform layer and the renderer
 
+## The device's own memory (2026-11-02)
+
+`tide_gpu.device_memory` (`gpu.h`, optional) is the bytes of memory a discrete GPU has of its own: Vulkan's
+biggest device-local heap there (`vk_device_memory`), 0 for an integrated GPU or a phone, NULL on OpenGL, WebGL,
+WebGPU and the recorder. Its one reader is the idle image budget, a sixteenth of it where that's more than
+128 MiB. Why, what it fixed (Mount & Rifle's forest maps sent to the GPU again after a frame out of view), the
+measurements, tests and the other hitch causes found (cold pipelines in runs with no window, Vulkan's second
+image for runtime mips): `notes/textures.md`, Idle images by the device's memory.
+
 ## Meshes a frame skips stay resident (2026-11-02)
 
 Internal optimization from the 2026-11-02 review. Until now a 3D mesh place
