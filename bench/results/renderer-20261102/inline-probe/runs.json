@@ -1,0 +1,44 @@
+[
+  {
+    "finishedUtc": "2026-11-02T16:55:34.2581424Z",
+    "exitCode": 0,
+    "label": "before-r1",
+    "contention": [],
+    "startedUtc": "2026-11-02T16:55:28.8310026Z"
+  },
+  {
+    "finishedUtc": "2026-11-02T16:55:38.5980591Z",
+    "exitCode": 0,
+    "label": "after-r1",
+    "contention": [],
+    "startedUtc": "2026-11-02T16:55:34.2693753Z"
+  },
+  {
+    "finishedUtc": "2026-11-02T16:55:42.0280626Z",
+    "exitCode": 0,
+    "label": "after-r2",
+    "contention": [],
+    "startedUtc": "2026-11-02T16:55:38.5997910Z"
+  },
+  {
+    "finishedUtc": "2026-11-02T16:55:46.0414578Z",
+    "exitCode": 0,
+    "label": "before-r2",
+    "contention": [],
+    "startedUtc": "2026-11-02T16:55:42.0297410Z"
+  },
+  {
+    "finishedUtc": "2026-11-02T16:55:50.0937975Z",
+    "exitCode": 0,
+    "label": "before-r3",
+    "contention": [],
+    "startedUtc": "2026-11-02T16:55:46.0431247Z"
+  },
+  {
+    "finishedUtc": "2026-11-02T16:55:53.5307168Z",
+    "exitCode": 0,
+    "label": "after-r3",
+    "contention": [],
+    "startedUtc": "2026-11-02T16:55:50.0954429Z"
+  }
+]

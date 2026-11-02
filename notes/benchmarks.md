@@ -2,6 +2,16 @@
 
 ## Renderer overhead investigation (2026-11-02)
 
+Follow-up sampling and a generated-C-only inlining experiment identify a
+promising material-helper opportunity. Three alternating pairs force Maps,
+DrawMaterial and DrawMaterialGeometry inline: recording improves in every
+10,000-cube pair, with median paired reductions of 12.5% unshadowed and 16.8%
+mixed shadows, but substantial baseline spread. All 24 rows/2,400 GPU samples
+retain matching work/hashes; six final captures are byte-identical. Smaller
+cases include adverse pairs. No production compiler policy is changed and
+ordinary generated output is restored. Method, limits and raw results:
+[inlining experiment](../bench/results/renderer-20261102/inline-probe/README.md).
+
 The Render3D runner now waits up to five seconds for exclusive access before
 hashing artifacts: PowerShell's redirected writer can outlive process exit.
 Length and digest come from the same read handle; persistent locks still fail.

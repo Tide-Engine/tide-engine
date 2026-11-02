@@ -1,0 +1,49 @@
+--- before.c
++++ after.c
+@@ -420,7 +420,7 @@
+ TIDE_CODE bool tide_function_Render3D_MaskedCaster(const Render3D_Material material, const Render3D_Material_local *tide_lf_material);
+ TIDE_CODE bool tide_function_Render3D_Mirrors(const tide_float4x4 matrix);
+ TIDE_CODE void tide_function_Render3D_CastBatch(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer *renderer, const tide_list batches, const int32_t i, const Render3D_ShadowView *shadow);
+-TIDE_CODE Render3D_MaterialMaps tide_function_Render3D_Maps(const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
++static inline __attribute__((always_inline, unused)) Render3D_MaterialMaps tide_function_Render3D_Maps(const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
+ TIDE_CODE void tide_function_Render3D_CastMasked(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform, const tide_float4 rect);
+ TIDE_CODE void tide_function_Render3D_CastMaskedGeometry(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform, const tide_float4 rect);
+ TIDE_CODE TideGenerated_Callable7c82de5a tide_function_Render3D_VertexHook(const Render3D_Material material, const Render3D_Material_local *tide_lf_material);
+@@ -428,8 +428,8 @@
+ TIDE_CODE void tide_function_Render3D_CastSkinnedMaterialGeometry(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_SkinnedMeshRenderer mesh, const Render3D_SkinnedMeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform, const tide_float4 rect);
+ TIDE_CODE int32_t tide_function_Render3D_PointFace(const tide_float3 direction);
+ TIDE_CODE Render3D_ShadowKernel tide_function_Render3D_ShadowAxis(const float coordinate);
+-TIDE_CODE void tide_function_Render3D_DrawMaterial(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
+-TIDE_CODE void tide_function_Render3D_DrawMaterialGeometry(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
++static inline __attribute__((always_inline, unused)) void tide_function_Render3D_DrawMaterial(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
++static inline __attribute__((always_inline, unused)) void tide_function_Render3D_DrawMaterialGeometry(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
+ TIDE_CODE void tide_function_Render3D_DrawSkinnedMaterial(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_SkinnedMeshRenderer mesh, const Render3D_SkinnedMeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
+ TIDE_CODE void tide_function_Render3D_DrawSkinnedMaterialGeometry(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_SkinnedMeshRenderer mesh, const Render3D_SkinnedMeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform);
+ TIDE_CODE void tide_function_Render3D_StandardVertex(const Render3D_VertexInput input, Render3D_MeshVertex *vertex, const uint32_t tide_where_vertex);
+@@ -41384,7 +41384,7 @@
+ 
+ // Render3D.Maps
+ #line 694 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+-TIDE_CODE Render3D_MaterialMaps tide_function_Render3D_Maps(const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform)
++static inline __attribute__((always_inline, unused)) Render3D_MaterialMaps tide_function_Render3D_Maps(const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform)
+ #line 694 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+ {
+ #line 694 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+@@ -41838,7 +41838,7 @@
+ 
+ // Render3D.DrawMaterial
+ #line 897 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+-TIDE_CODE void tide_function_Render3D_DrawMaterial(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform)
++static inline __attribute__((always_inline, unused)) void tide_function_Render3D_DrawMaterial(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform)
+ #line 897 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+ {
+ #line 897 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+@@ -41889,7 +41889,7 @@
+ 
+ // Render3D.DrawMaterialGeometry
+ #line 909 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+-TIDE_CODE void tide_function_Render3D_DrawMaterialGeometry(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform)
++static inline __attribute__((always_inline, unused)) void tide_function_Render3D_DrawMaterialGeometry(tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed, const Render3D_Renderer renderer, const Render3D_MeshRenderer mesh, const Render3D_MeshRenderer_local *tide_lf_mesh, const Render3D_Material material, const Render3D_Material_local *tide_lf_material, const tide_float4x4 transform)
+ #line 909 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"
+ {
+ #line 909 "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-8c449f69/packages/render3d/render3d.tide"

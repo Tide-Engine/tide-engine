@@ -1,0 +1,62 @@
+[
+  {
+    "meshes": 1000,
+    "case": "unshadowed",
+    "before": [
+      0.27675,
+      0.26235,
+      0.26055
+    ],
+    "after": [
+      0.24945,
+      0.2502,
+      0.2612
+    ],
+    "paired_reduction_percent": 4.631217838765023
+  },
+  {
+    "meshes": 1000,
+    "case": "mixed",
+    "before": [
+      0.3966,
+      0.38125,
+      0.3909
+    ],
+    "after": [
+      0.36205,
+      0.38515,
+      0.37265
+    ],
+    "paired_reduction_percent": 4.668713225888988
+  },
+  {
+    "meshes": 10000,
+    "case": "unshadowed",
+    "before": [
+      3.77855,
+      2.8078,
+      2.84305
+    ],
+    "after": [
+      2.57225,
+      2.518,
+      2.4863
+    ],
+    "paired_reduction_percent": 12.548143718893435
+  },
+  {
+    "meshes": 10000,
+    "case": "mixed",
+    "before": [
+      4.17885,
+      6.56675,
+      4.88345
+    ],
+    "after": [
+      4.1003,
+      4.08115,
+      4.06485
+    ],
+    "paired_reduction_percent": 16.76273945673653
+  }
+]
