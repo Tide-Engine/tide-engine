@@ -1,17 +1,17 @@
 ---
-description: "Add experimental automatic diffuse global illumination to Render3D with bounded probe counts, progressive updates and local quality controls."
+description: "Add experimental automatic diffuse GI to Render3D with adaptive probe blocks, a bounded resident field and regional updates."
 ---
 
 # Global Illumination
 
 `globalillumination` is an optional package depending on [Render3D](./render3d.md).
-It gathers light reflected by lit surfaces and emitted by materials, then adds
-one diffuse bounce to the scene. It derives coverage from rendered geometry;
-games do not author GI boxes or place probe volumes.
+It gathers diffuse light reflected by lit surfaces and emitted by materials,
+then adds one diffuse bounce. Coverage is derived automatically from rendered
+geometry and the main view. Games author no GI boxes or probe volumes.
 
 ::: info Experimental branch
-This package is under development on `feat/render3d-gi`. It has not been merged
-to `dev` or published in a Tide release. Its API and quality limits may change.
+Development remains on `feat/render3d-gi`. This package has not been merged to
+`dev` or published in a Tide release. Its API and quality limits may change.
 :::
 
 ## Add and configure
@@ -22,14 +22,14 @@ In a checkout or installation containing this experimental package:
 tide add globalillumination
 ```
 
-Its dependency line is `globalillumination` and its namespace is
-`GlobalIllumination`. The dependency includes `render3d`. Adding the package
-opts into GI; games omitting it compile and ship none of its field management,
-capture passes or sampling implementation. Render3D's ordinary lights,
-materials and presentation remain usable without it.
+Its dependency line is `globalillumination` and namespace `GlobalIllumination`.
+The dependency includes `render3d`. Adding the package opts into GI; games
+omitting it compile and ship none of its field management, capture passes or
+sampling. Render3D continues to expose its general indirect-light provider and
+owns no GI field when used alone.
 
-GI starts enabled when the package is present. Use the ordinary Render3D mesh,
-material and light components, then configure the machine-local environment:
+Use ordinary Render3D mesh, material and light components. GI starts enabled
+when present. Configure its machine-local environment before preparation:
 
 ```csharp
 [Before(Render3D.Stages.Prepare)]
@@ -38,117 +38,206 @@ view ConfigureGI(mut GlobalIllumination.Environment environment)
     environment.settings.probeSpacing = 1.5;
     environment.settings.maxProbes = 512;
     environment.settings.updatesPerFrame = 4;
-    environment.settings.debug = false;
+    environment.settings.viewDistance = 48;
+    environment.settings.captureDistance = 48;
+    environment.settings.refreshInterval = 600;
 }
 ```
 
 | `Environment.settings` field | Default | Behavior |
 |---|---|---|
-| `enabled` | `true` | Enable GI on this machine; false releases the GI targets |
-| `probeSpacing` | `1.5` | Requested probe spacing in world units, clamped to 0.1–1000 |
-| `maxProbes` | `512` | Total probe budget, clamped to 125–2048 |
-| `updatesPerFrame` | `4` | Whole probes refreshed per rendered frame, clamped to 0–16; zero freezes updates |
+| `enabled` | `true` | Enable GI locally; false releases its targets |
+| `probeSpacing` | `1.5` | Requested finest spacing in world units, clamped to 0.1–1000 |
+| `maxProbes` | `512` | Physical probe capacity, clamped to 125–2048; coincident block anchors share captures |
+| `updatesPerFrame` | `4` | Maximum complete captures per rendered frame, clamped to 0–16; zero freezes captures |
+| `viewDistance` | `48` | Distance from the main camera considered for resident receiver coverage, clamped to 1–1,000,000 |
+| `captureDistance` | `48` | Maximum capture distance around each probe, clamped to 1–1,000,000 |
+| `refreshInterval` | `600` | Age in rendered frames after which unchanged probes become eligible for background refresh, clamped to 1–36000 |
 | `intensity` | `1` | Multiplier on received linear irradiance, clamped to 0–16 |
-| `debug` | `false` | Show probe placement, gathered light and invalid probes |
+| `debug` | `false` | Show actual probe positions, gathered light and rejected/uncaptured probes |
 
-These are presentation settings. Each machine can choose its own quality and
-update budget without changing the match, networking, snapshots or hashes.
+These are presentation settings. Each machine can choose its quality and update
+budget without changing simulation, networking, snapshots or match hashes.
 
-## Automatic world coverage
+## Adaptive automatic coverage
 
-The package computes bounds from visible Render3D mesh assets and their world
-transforms. A padded probe lattice covers those receivers, including floors
-and walls. Its anchors remain aligned to world space. Geometry moving inside
-retained coverage does not move the grid; expansion beyond it can rebuild the
-field. Coverage is retained rather than shrinking around every small movement.
-An empty scene releases the targets.
+The package uses sparse blocks of 3×3×3 logical probe anchors. It checks for
+nearby receiver geometry, skips empty regions and refines useful blocks toward
+the requested finest spacing. Geometry proximity uses actual opaque static
+triangles where available, with conservative bounds for other geometry. Detail
+is prioritized near the main view under the finite probe budget. Coincident
+anchors share physical captures, including anchors common to different
+subdivision levels. There are at most 128 resident blocks. Logical anchors
+whose interpolation support cannot reach receiver bounds are omitted,
+including padding for surface bias and boundary blending, so empty outer
+anchors do not consume the physical budget. The package plans useful geometry
+within a bounded hierarchy, then coarsens less important
+sibling regions until the physical probe and block limits fit. It compacts the
+surviving hierarchy before uploading the lookup table.
 
-Before refreshing a probe, the package checks nearby mesh triangles and can
-relocate the capture position out of a recognized solid or away from a surface.
-Movement is limited to 45% of actual probe spacing from the anchor, preserving
-the probe budget and grid coverage. An established free position stays fixed
-until it loses surface clearance. Blending stays aligned to the grid; visibility
-and orientation weights use the actual capture positions. Games need no
-placement volumes or per-object GI setup.
+A half-base-spacing anchor phase reduces exact alignment with common wall/floor
+planes. At very large coordinates, the base spacing increases in power-of-two steps so
+anchor positions remain representable without changing phase on every camera
+movement.
+
+`viewDistance` bounds the working set around the camera. Moving across coverage
+cells changes the required blocks; matching blocks and anchors retain their
+atlas slots, captured lighting and relocation offsets. Newly required anchors
+start uncaptured, while retired slots can be reused. Adding distant buildings
+does not force one world-sized grid to become coarser. More geometry competing
+within the resident working set can still reduce detail.
+
+`probeSpacing` is a requested finest level, not a guarantee for every receiver.
+Coarser blocks use fewer probes in less important regions. Increasing the probe
+capacity can retain more detail; increasing view distance spreads that capacity
+over more of the world. Receivers outside resident coverage can have no GI.
+Coverage is automatic, but it does not provide unlimited detail or residency.
+
+Before capture, nearby eligible triangles can move a probe out of a recognized
+solid or improve surface clearance. Movement is limited to 45% of the common base
+spacing. Established free positions stay fixed until clearance is lost. Shared
+anchors use that same base unit for relocation and visibility, so their captured
+data remains consistent when neighboring blocks have different spacings.
 
 Opaque, single-sided static meshes without custom vertex deformation guide
-relocation. Closed geometry can classify an embedded probe; open geometry only
-provides surface clearance. Cutout, skinned, double-sided and custom-deformed
-surfaces remain in captures but do not guide relocation. Tight gaps, deep solid
-interiors and ambiguous geometry can leave probes unusable within the movement
-bound; capture-based rejection still handles them.
+triangle relocation. Closed meshes can classify embedded probes; open meshes
+only provide surface clearance. Skinned, cutout, double-sided and deformed
+surfaces remain in captures but do not guide relocation. Tight gaps and deep
+solid interiors can still leave probes rejected within the movement bound.
 
-Asset-local bounds and placement geometry are cached once per mesh per asset-pack
-generation. World transforms are applied to bounds each frame. Pack changes
-invalidate these caches and restart the captured field. Skinned and custom-deformed
-meshes currently use their authored rest geometry for coverage; large excursions
-beyond those bounds are not automatically tracked.
+Each block interpolates visible neighboring probes. Equal-resolution neighbors
+share their face records, so they use one gather up to that face. A small
+world-space box filter blends only where resolution changes or coverage is
+missing, with separate handling for affected faces, edges and corners.
+Uncovered portions fade toward no indirect lighting. The field's
+lookup and initialization metadata share its two GI texture bindings; ordinary
+fully mapped skinned materials retain the twelve-texture limit. A reused slot
+cannot contribute its old light before its new capture is initialized.
 
-`probeSpacing` is a request, not a guarantee. Actual spacing increases when
-needed to keep the field under `maxProbes`. The current implementation uses
-one uniform grid: a very large world therefore gets coarser lighting detail
-under the same budget. Automatic placement removes authored volumes, but does
-not make this a sparse or unlimited-detail world GI solution.
+When a region refines, available retained outer-corner probes can supply provisional
+lighting while new edge/face/interior probes fill. Their contribution blends
+toward the fine field as captured fine support increases. Pruned corners and
+topology changes across several levels can still expose uncaptured coverage.
 
-## Refresh and quality
+## Regional refresh
 
-The package updates complete probes in round-robin order. Each update captures
-six 32×32 views of visible opaque and cutout meshes, including skinned meshes
-and shared vertex deformation. Captures contain diffuse direct reflection and
-emission. They exclude ambient irradiance, previous indirect light and direct
-specular reflection, so the field provides one diffuse bounce without recursive
-feedback. Transparent materials receive GI but do not appear in captures.
+Newly needed probes are captured first, followed by the oldest dirty probes and
+aged background refreshes. Age prevents a continuously moving light or object
+from repeatedly refreshing only the nearest probes. `updatesPerFrame` is a
+maximum; unchanged regions can
+perform no captures. Existing lighting remains available while dirty probes
+wait for their turn. Initial fill time depends on the active probe count and
+capture budget; the atlas capacity includes unused slots and is not the fill
+target.
 
-Directional irradiance is gathered with positive cosine weights for diffuse
-transport, then retained with directional visibility between frames.
-Probe back-face hits identify locations inside one-sided solid geometry;
-probes with excessive back-face coverage are rejected during interpolation.
-Visible valid neighbors are normalized together, with a confidence check when
-none is trustworthy. This avoids treating every occluded neighbor as black
-incident light. Thin double-sided cards do not classify a probe as inside a
-solid. Probes that cannot find usable nearby space within the relocation bound
-can remain rejected.
+The package tracks numeric world transforms, material values, added/removed
+geometry and selected Render3D lights. Changes dirty affected capture
+neighborhoods. Point/spot light changes affect their old and new regions;
+directional light changes affect all resident probes. Moving shadow casters,
+caster flags and cutout coverage can change lighting at distant captured
+surfaces, so their changes propagate through affected selected shadow lights.
+Directional shadow changes can dirty the whole resident field. Opaque emission,
+color and roughness changes retain local invalidation when their shadow
+silhouette is unchanged. Shadow enablement/allocation changes also trigger
+refresh. Skinned and custom-deformed shadow casters use conservative propagation
+because authored rest bounds do not constrain their current silhouette. Asset
+pack changes clear geometry caches and captured history.
 
-New fields start dark and fill progressively. A full update cycle takes
-approximately `ceil(environment.layout.total / updatesPerFrame)` rendered
-frames. Changed lights, emission, poses and geometry appear as their probes
-refresh. Lower `probeSpacing` can retain finer spatial lighting changes; more
-probes increase memory and refresh latency, while a higher update budget does
-more work each frame. The field can still miss small emitters, thin occluders
-or contact detail. Choose settings using the scene's actual images and frame
-cost on its target hardware.
+Texture identity/content changes and values captured inside shader callbacks
+are not detectable through ordinary numeric material comparisons. After such a
+change, call `GlobalIllumination.Invalidate` before `GlobalIllumination.Update`.
+Pass an affected world-space region:
 
-Set `updatesPerFrame = 0` to freeze the captured field. Subsequent lighting or
-geometry changes leave it stale until updates resume. Changing spacing or the
-probe-count budget can restart the field; intensity and debug changes retain
-its captures. GI uses Render3D's indirect irradiance provider, so material AO
-attenuates received GI without darkening direct light or emission.
+```csharp
+void RefreshChangedGI(mut GlobalIllumination.Environment environment)
+{
+    GlobalIllumination.Invalidate(environment, GlobalIllumination.LocalBounds {
+        valid = true,
+        minimum = float3(-4, 0, -4),
+        maximum = float3(4, 6, 4)
+    });
+}
+```
+
+Probes whose capture range intersects the region become dirty. Possible shadow
+changes also propagate through affected selected shadow lights, including
+receivers whose probes cannot see the edited geometry directly. To dirty all
+active probes, use:
+
+```csharp
+GlobalIllumination.Invalidate(environment, default);
+```
+
+An invalid/default region means all active probes. Background refresh provides
+a fallback for unreported changes. Its default 600-frame threshold makes a probe
+eligible; the capture budget and other dirty work decide when it is updated.
+It is not a guaranteed complete refresh period.
+
+Set `updatesPerFrame = 0` to freeze captures. Changes then leave retained light
+stale. The working set can still change with the camera, so newly streamed
+regions remain uncaptured until updates resume. Intensity, debug, update budget
+and refresh-age changes preserve captures. Probe capacity/base-spacing changes,
+pack replacement and disabling/re-enabling GI can recreate the field. Changing
+capture distance marks the existing field dirty.
+
+## Captures and cost
+
+Each updated probe uses six 32×32 raster views of opaque and cutout static/skinned
+geometry, retaining material maps, callbacks and prepared poses. Captures gather
+direct diffuse reflection and emission. They exclude ambient irradiance, previous
+GI and direct specular reflection, so there is one diffuse bounce without
+recursive feedback. Transparent surfaces receive GI but are omitted from
+captures. Material AO attenuates received GI without darkening direct light or
+emission.
+
+An instance BVH selects nearby capture candidates and is shared with coverage
+queries. Static triangle caches are built as needed near resident geometry.
+For each updated probe, current material/pose query bindings record owned draw
+packets once; the other faces reuse those packets with face culling. Skinned and
+custom-deformed instances are kept as conservative unbounded candidates rather
+than rejected using potentially stale rest bounds.
+
+Scene bookkeeping still scans instances each frame, including when captures are
+frozen. Recording an updated probe still scans its live world queries to obtain
+the selected bound materials. These CPU scans remain proportional to scene
+instance count. This is not a claim that all large-scene work becomes sublinear.
+Topology construction and geometry changes have additional CPU costs; sampling
+near mixed-resolution boundaries can cost more than sampling block interiors.
+Choose budgets from actual images and measurements on target hardware.
+
+Positive cosine integration retains directional diffuse irradiance with
+directional visibility. Excessive one-sided back-face hits reject a probe.
+Trustworthy visible neighbors are normalized together, with a confidence check
+when none can support the receiver. Thin geometry, sparse usable probes, small
+emitters and coarse coverage can still cause missed light, leaks or contact
+artifacts.
+
+`captureDistance` bounds radial geometry distance, including the corners of each
+cube-face view. Geometry outside that range is omitted, so distant emissive
+surfaces and occluders can be missed. Selected direct lights still shade the
+surfaces captured within range. Captures reuse selected Render3D lights and the main-camera
+shadow atlas; camera-fitted directional shadows may not cover every surface
+visible from probes. Surface/UV callbacks see the probe view direction. Vertex
+callbacks retain the main-camera `VertexInput.eye`, including after skinning.
+Coverage uses authored rest bounds for skinned/deformed meshes, so large
+excursions beyond those bounds are not automatically included.
 
 ## Debug and lifetime
 
-Set `debug = true` to show small octahedral markers at actual capture positions,
-including relocated probes.
-Uncaptured probes are magenta, rejected probes are orange/red, and valid probes
-show their gathered lighting. Markers are drawn after transparent objects and
-before post-processing.
+Set `debug = true` to show octahedral markers at actual relocated capture
+positions. Uncaptured probes are magenta, rejected probes orange/red, and valid
+probes show gathered light. Markers are depth tested after transparent objects
+and before post-processing.
 
-Disabling GI or Render3D releases the package's targets. Re-enabling starts a
-fresh progressive field. Explicit disposal uses
-`GlobalIllumination.Dispose(environment)` before recording a new frame. A GPU
-device reset loses retained lighting, which refills through ordinary updates;
-a frozen field cannot recover until updates resume.
+All field state is local presentation data. Disabling GI or Render3D releases
+its resources; re-enabling starts a fresh field. Explicit disposal is
+`GlobalIllumination.Dispose(environment)` before recording. A GPU device reset
+loses retained lighting, which refills through ordinary updates; a frozen field
+cannot recover until captures resume. Capture updates upload the field lookup
+table again so it can recover alongside the lighting after GPU resource loss.
 
-## Rendering limits
-
-Captures reuse selected Render3D lights and its existing main-camera shadow
-atlas. Ensure that shadow coverage includes surfaces visible from the probes;
-camera-fitted directional cascades can otherwise leave capture surfaces
-unshadowed. Surface and UV callbacks see the probe view direction during
-capture. Vertex callbacks keep the main-camera `VertexInput.eye`, including
-after skinning.
-
-There is no automatic sky lighting, glossy GI, light baking or multiple-bounce
-transport in this implementation. The renderer's existing float-target
-fallback can clip HDR and reduce the precision of visibility data on devices
-without float render targets. Native and web use the same package design;
-supported quality and update budgets depend on the scene and hardware.
+There is no automatic sky lighting, glossy GI, light baker or multiple-bounce
+transport. The renderer's float-target fallback can clip HDR and reduce
+visibility precision on devices without float render targets. Native and web
+use the same package design; supported quality and budgets depend on the scene
+and hardware.

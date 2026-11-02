@@ -80,6 +80,150 @@ float3 RelocateProbe(WorldBounds bounds, List<PlacementInstance> instances,
     return previous;
 }
 
+struct ProbeBlock
+{
+    bool active;
+    float3 minimum;
+    float spacing;
+    List<int> probes;
+    int probeMask = 134217727;
+}
+
+// Exact positions use hash buckets with explicit collision checks; a hash is
+// never treated as a position identity. Zero is canonicalized as in topology.
+struct ProbePositions
+{
+    Map<int, int> heads;
+    List<PlacementWeld> points;
+    List<int> values;
+
+    int Find(float3 input)
+    {
+        float3 point = float3(input.x == 0 ? 0 : input.x, input.y == 0 ? 0 : input.y, input.z == 0 ? 0 : input.z);
+        mut int at = heads[Math.Hash(point)];
+        while (at > 0)
+        {
+            PlacementWeld item = points[at - 1];
+            if (item.point.x == point.x && item.point.y == point.y && item.point.z == point.z) return at - 1;
+            at = item.next;
+        }
+        return -1;
+    }
+    bool Has(float3 point) { return Find(point) >= 0; }
+    int Get(float3 point) { int index = Find(point); return index >= 0 ? values[index] : 0; }
+    mut void Set(float3 point, int value)
+    {
+        int index = PlacementWeldIndex(heads, points, point, 0);
+        if (values.count <= index) values.Resize(index + 1);
+        values[index] = value;
+    }
+}
+
+struct SceneEntry { int instance; LocalBounds bounds; }
+struct SceneNode { LocalBounds bounds; int first; int count; int escape; }
+
+// The instance BVH is rebuilt only after geometry changes. Material rows are
+// refreshed separately; captures query this index instead of the world query.
+struct SceneIndex
+{
+    List<SceneEntry> entries;
+    List<SceneNode> nodes;
+    List<int> unbounded;
+
+    mut void Branch(int first, int count)
+    {
+        int at = nodes.count;
+        mut LocalBounds box = default;
+        for (var i = first; i < first + count; i++) box = JoinBounds(box, entries[i].bounds);
+        nodes.Add(SceneNode { bounds = box, first = first, count = count });
+        if (count > 4)
+        {
+            float3 span = box.maximum - box.minimum;
+            int axis = span.x >= span.y && span.x >= span.z ? 0 : span.y >= span.z ? 1 : 2;
+            int middle = first + count / 2;
+            PartitionScene(entries, first, first + count, middle, axis);
+            Branch(first, middle - first);
+            Branch(middle, first + count - middle);
+            nodes[at].count = 0;
+        }
+        nodes[at].escape = nodes.count;
+    }
+}
+
+double SceneKey(SceneEntry entry, int axis)
+{
+    double3 center = (double3(entry.bounds.minimum) + double3(entry.bounds.maximum)) * 0.5d;
+    return axis == 0 ? center.x : axis == 1 ? center.y : center.z;
+}
+
+void SwapScene(mut List<SceneEntry> entries, int a, int b)
+{
+    SceneEntry saved = entries[a]; entries[a] = entries[b]; entries[b] = saved;
+}
+
+void PartitionScene(mut List<SceneEntry> entries, int first, int end, int middle, int axis)
+{
+    mut int lo = first;
+    mut int hi = end;
+    while (hi - lo > 1)
+    {
+        double a = SceneKey(entries[lo], axis);
+        double b = SceneKey(entries[lo + (hi - lo) / 2], axis);
+        double c = SceneKey(entries[hi - 1], axis);
+        double pivot = Math.Max(Math.Min(a, b), Math.Min(Math.Max(a, b), c));
+        mut int less = lo;
+        mut int scan = lo;
+        mut int greater = hi;
+        while (scan < greater)
+        {
+            double key = SceneKey(entries[scan], axis);
+            if (key < pivot) { SwapScene(entries, less, scan); less++; scan++; }
+            else if (key > pivot) { greater--; SwapScene(entries, scan, greater); }
+            else scan++;
+        }
+        if (middle < less) hi = less;
+        else if (middle >= greater) lo = greater;
+        else return;
+    }
+}
+
+bool WithinRange(LocalBounds bounds, float3 eye, float range)
+{
+    if (!bounds.valid) return false;
+    double3 nearest = Math.Clamp(double3(eye), double3(bounds.minimum), double3(bounds.maximum));
+    return Math.LengthSq(nearest - double3(eye)) <= double(range) * double(range);
+}
+
+List<int> CaptureCandidates(SceneIndex scene, float3 eye, float range)
+{
+    mut List<int> result = [];
+    mut int at = 0;
+    while (at < scene.nodes.count)
+    {
+        SceneNode node = scene.nodes[at];
+        if (node.escape <= at || node.escape > scene.nodes.count) break;
+        if (!WithinRange(node.bounds, eye, range)) { at = node.escape; continue; }
+        for (var i = node.first; node.count > 0 && i < node.first + node.count; i++)
+            if (WithinRange(scene.entries[i].bounds, eye, range)) result.Add(scene.entries[i].instance);
+        at++;
+    }
+    foreach (var index in scene.unbounded) result.Add(index);
+    return result;
+}
+
+bool CaptureFaceVisible(LocalBounds bounds, float3 eye, int face, float near)
+{
+    float3 center = (bounds.minimum * 0.5 + bounds.maximum * 0.5) - eye;
+    float3 extent = bounds.maximum * 0.5 - bounds.minimum * 0.5;
+    float forward = face == 0 ? center.x : face == 1 ? -center.x : face == 2 ? center.y
+        : face == 3 ? -center.y : face == 4 ? center.z : -center.z;
+    float depth = face < 2 ? extent.x : face < 4 ? extent.y : extent.z;
+    float2 lateral = face < 2 ? center.yz : face < 4 ? center.xz : center.xy;
+    float2 width = face < 2 ? extent.yz : face < 4 ? extent.xz : extent.xy;
+    float end = forward + depth;
+    return end >= near && Math.Abs(lateral.x) <= end + width.x && Math.Abs(lateral.y) <= end + width.y;
+}
+
 // Including this optional package opts into GI; it can also be disabled locally.
 local singleton Environment
 {
@@ -93,6 +237,27 @@ local singleton Environment
     int rayCount = 384;
     long generation;
     List<float3> offsets;
+    List<ProbeBlock> blocks;
+    List<bool> active;
+    List<float3> anchors;
+    List<bool> captured;
+    List<bool> dirty;
+    List<int> lastCapture;
+    List<int> lookup;
+    SceneIndex scene;
+    List<LightData> previousLights;
+    bool shadowsEnabled;
+    int sceneRevision = -1;
+    int topologyRevision = -1;
+    int frame;
+    int activeBlocks;
+    int activeProbes;
+    int dirtyProbes;
+    int captureCandidates;
+    int captureDraws;
+    float finestSpacing;
+    float captureSpacing;
+    float captureFar;
     float3 captureOffset;
     Texture light0;
     Texture light1;
@@ -129,6 +294,25 @@ void Dispose(mut Environment environment)
     environment.updates = 0;
     environment.generation = 0;
     environment.offsets = default;
+    environment.blocks = default;
+    environment.active = default;
+    environment.anchors = default;
+    environment.captured = default;
+    environment.dirty = default;
+    environment.lastCapture = default;
+    environment.lookup = default;
+    environment.scene = default;
+    environment.previousLights = default;
+    environment.shadowsEnabled = false;
+    environment.sceneRevision = -1;
+    environment.topologyRevision = -1;
+    environment.frame = 0;
+    environment.activeBlocks = 0;
+    environment.activeProbes = 0;
+    environment.dirtyProbes = 0;
+    environment.captureCandidates = 0;
+    environment.captureDraws = 0;
+    environment.finestSpacing = 0;
     environment.captureOffset = float3(0);
     environment.light0 = default;
     environment.light1 = default;
@@ -156,7 +340,14 @@ bool LayoutChanged(FieldLayout a, FieldLayout b)
 
 void PrepareResources(mut Environment environment, FieldLayout layout)
 {
-    if (environment.ready && !LayoutChanged(environment.layout, layout)) return;
+    // Sparse roots and leaf topology may change while the atlas and every
+    // retained physical slot survive. Only a capacity/mode change recreates it.
+    if (environment.ready && environment.layout.sparse == layout.sparse
+        && (layout.sparse ? (environment.layout.total == layout.total && environment.layout.spacing == layout.spacing) : !LayoutChanged(environment.layout, layout)))
+    {
+        environment.layout = layout;
+        return;
+    }
     GlobalIllumination.Dispose(environment);
     environment.layout = layout;
     environment.resources.face0 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
@@ -165,7 +356,7 @@ void PrepareResources(mut Environment environment, FieldLayout layout)
     environment.resources.face3 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
     environment.resources.face4 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
     environment.resources.face5 = RenderTarget(32, 32, 1, Format.Rgba16f, Format.Rgba16f);
-    environment.resources.atlas = RenderTarget(576, layout.atlasRows * 19, 1, Format.Rgba16f, Format.Rgba16f);
+    environment.resources.atlas = RenderTarget(576, AtlasHeight(layout.atlasRows), 1, Format.Rgba16f, Format.Rgba16f);
     environment.resources.rays = RenderTarget(64, 6, 1, Format.Rgba16f, Format.Rgba16f);
     environment.rayLight = environment.resources.rays.color;
     environment.rayData = environment.resources.rays.colors[1];
@@ -204,8 +395,14 @@ void PrepareResources(mut Environment environment, FieldLayout layout)
     environment.resources.markerIndices = [2, 0, 4, 2, 4, 1, 2, 1, 5, 2, 5, 0,
         3, 4, 0, 3, 1, 4, 3, 5, 1, 3, 0, 5];
     ResetTarget(environment.resources.atlas);
-    environment.resources.atlas.Clear(Color.black);
+    environment.resources.atlas.Clear(Color(0, 0, 0, 0));
     environment.offsets.Resize(layout.total);
+    environment.active.Resize(layout.total);
+    environment.anchors.Resize(layout.total);
+    environment.captured.Resize(layout.total);
+    environment.dirty.Resize(layout.total);
+    environment.lastCapture.Resize(layout.total);
+    if (layout.sparse) environment.blocks.Resize(128);
     environment.ready = true;
 }
 
@@ -232,7 +429,10 @@ quaternion FaceRotation(int face)
 void IntegrateProbe(mut Environment environment, int probe)
 {
     if (!environment.ready || probe < 0 || probe >= environment.layout.total) return;
-    environment.captureOffset = environment.offsets[probe] / environment.layout.spacing;
+    if (environment.layout.sparse && !environment.active[probe]) return;
+    environment.captureSpacing = ProbeSpacing(environment, probe);
+    environment.captureFar = environment.layout.far;
+    environment.captureOffset = environment.offsets[probe] / environment.captureSpacing;
     ResetTarget(environment.resources.rays);
     environment.resources.rays.SetScreen();
     environment.resources.rays.Mesh(environment.resources.rayQuad, environment.resources.indices, PackRays);
@@ -242,21 +442,372 @@ void IntegrateProbe(mut Environment environment, int probe)
     {
         environment.resources.atlas.Mesh(environment.resources.quad, environment.resources.indices, Convolve);
     }
-    environment.initialized = Math.Max(environment.initialized, probe + 1);
+    if (!environment.captured[probe]) { environment.captured[probe] = true; environment.initialized++; }
+    environment.dirty[probe] = false;
+    environment.lastCapture[probe] = environment.frame;
 }
 
 float3 Indirect(SurfaceInput input, Surface surface, Texture irradiance, Texture distance,
                  FieldLayout layout, float intensity, int initialized)
 {
-    return Sample(irradiance, distance, layout, intensity, initialized, input.world, surface.normal, input.normal);
+    return SampleWorld(irradiance, distance, layout, intensity, initialized, input.world, surface.normal, input.normal);
+}
+
+float3 IndirectLegacy(SurfaceInput input, Surface surface, Texture irradiance, Texture distance,
+                       FieldLayout layout, float intensity, int initialized)
+{
+    return SampleLegacy(irradiance, distance, layout, intensity, initialized, input.world, surface.normal, input.normal);
+}
+
+// A missing/reused slot has transparent metadata until its own capture.
+frag ClearRecords(Vertex vertex, out Color light, out Color data)
+{
+    light = Color(0, 0, 0, 0); data = Color(0, 0, 0, 0);
+}
+
+struct LookupUpload { List<int> codes; }
+frag WriteLookup(Vertex vertex, out Color light, out Color data, LookupUpload upload)
+{
+    int address = int(Math.Floor(vertex.uv.x * 576)) + int(Math.Floor(vertex.uv.y * 64)) * 576;
+    int code = address < upload.codes.count ? upload.codes[address] : 0;
+    light = Color(0, 0, 0, 0);
+    data = Color(float(code & 255) / 255, float((code >> 8) & 255) / 255, float((code >> 16) & 255) / 255, 1);
+}
+
+void UploadLookup(mut Environment environment, List<int> codes)
+{
+    environment.lookup = codes;
+    if (!environment.ready || !environment.layout.sparse) return;
+    ResetTarget(environment.resources.atlas);
+    environment.resources.atlas.SetScreen();
+    float y = float(environment.layout.atlasRows * 19);
+    environment.resources.atlas.Mesh([
+        Vertex { position = float2(0, y), uv = float2(0, 0) },
+        Vertex { position = float2(576, y), uv = float2(1, 0) },
+        Vertex { position = float2(576, y + 64), uv = float2(1, 1) },
+        Vertex { position = float2(0, y + 64), uv = float2(0, 1) }
+    ], environment.resources.indices, WriteLookup, LookupUpload { codes = codes });
+}
+
+float ProbeSpacing(Environment environment, int probe)
+{
+    return environment.layout.spacing;
+}
+
+float3 ProbePosition(Environment environment, int probe)
+{
+    if (!environment.layout.sparse) return ProbePosition(environment.layout, probe);
+    return probe >= 0 && probe < environment.anchors.count ? environment.anchors[probe] : float3(0);
+}
+
+void ClearNewProbes(mut Environment environment, List<bool> fresh)
+{
+    ResetTarget(environment.resources.atlas);
+    environment.resources.atlas.SetScreen();
+    mut int probe = 0;
+    while (probe < fresh.count)
+    {
+        if (!fresh[probe]) { probe++; continue; }
+        mut int end = probe + 1;
+        while (end < fresh.count && end % 32 != 0 && fresh[end]) end++;
+        float x = float(probe % 32 * 18);
+        float y = float(probe / 32 * 19);
+        float width = float((end - probe) * 18);
+        environment.resources.atlas.Mesh([
+            Vertex { position = float2(x, y) }, Vertex { position = float2(x + width, y) },
+            Vertex { position = float2(x + width, y + 19) }, Vertex { position = float2(x, y + 19) }
+        ], environment.resources.indices, ClearRecords);
+        for (var index = probe; index < end; index++)
+        {
+            environment.offsets[index] = float3(0);
+            environment.captured[index] = false;
+            environment.dirty[index] = true;
+            environment.lastCapture[index] = 0;
+        }
+        probe = end;
+    }
+}
+
+bool SameBlock(ProbeBlock block, CoverageNode node)
+{
+    return block.active && block.spacing == node.size * 0.5
+        && block.minimum.x == node.minimum.x && block.minimum.y == node.minimum.y && block.minimum.z == node.minimum.z;
+}
+
+int BlockTransitions(WorldBounds bounds, List<ProbeBlock> blocks, int slot)
+{
+    ProbeBlock own = blocks[slot];
+    float3 minimum = own.minimum;
+    float3 maximum = minimum + float3(own.spacing * 2);
+    float3 middle = minimum + float3(own.spacing);
+    float radius = bounds.layout.spacing * 0.25;
+    mut int mask = 0;
+    // Equal-resolution dyadic cells tile complete faces. Check all 26 adjacent
+    // regions as well as faces. Keep diagonal bits separate so only pixels
+    // actually near that edge/corner pay for cross-block filtering.
+    for (var region = 0; region < 27; region++)
+    {
+        if (region == 13) continue;
+        int x = region % 3 - 1;
+        int y = (region / 3) % 3 - 1;
+        int z = region / 9 - 1;
+        float3 point = float3(x < 0 ? minimum.x - radius : x > 0 ? maximum.x + radius : middle.x,
+            y < 0 ? minimum.y - radius : y > 0 ? maximum.y + radius : middle.y,
+            z < 0 ? minimum.z - radius : z > 0 ? maximum.z + radius : middle.z);
+        int other = FindBlock(bounds, point);
+        if (other >= 0 && other < blocks.count && blocks[other].active && blocks[other].spacing == own.spacing) continue;
+        int axes = (x != 0 ? 1 : 0) + (y != 0 ? 1 : 0) + (z != 0 ? 1 : 0);
+        if (axes == 1)
+        {
+            if (x < 0) mask |= 1;
+            if (x > 0) mask |= 2;
+            if (y < 0) mask |= 4;
+            if (y > 0) mask |= 8;
+            if (z < 0) mask |= 16;
+            if (z > 0) mask |= 32;
+        }
+        else
+        {
+            int bit = axes == 3 ? 12 + (x > 0 ? 1 : 0) + (y > 0 ? 2 : 0) + (z > 0 ? 4 : 0)
+                : z == 0 ? (x > 0 ? 1 : 0) + (y > 0 ? 2 : 0)
+                : y == 0 ? 4 + (x > 0 ? 1 : 0) + (z > 0 ? 2 : 0)
+                : 8 + (y > 0 ? 1 : 0) + (z > 0 ? 2 : 0);
+            mask |= 1 << (bit + 6);
+        }
+    }
+    return mask;
+}
+
+void ReconcileBlocks(mut Environment environment, mut WorldBounds bounds)
+{
+    if (environment.topologyRevision == bounds.topologyRevision) return;
+    mut List<bool> retained = [];
+    retained.Resize(environment.blocks.count);
+    // Reserve every surviving block before assigning new sparse leaves.
+    for (var node = 0; node < bounds.nodes.count; node++)
+    {
+        if (!bounds.nodes[node].relevant || bounds.nodes[node].children >= 0) continue;
+        bounds.nodes[node].slot = -1;
+        for (var slot = 0; slot < environment.blocks.count; slot++)
+            if (!retained[slot] && SameBlock(environment.blocks[slot], bounds.nodes[node]))
+            {
+                bounds.nodes[node].slot = slot;
+                environment.blocks[slot].probeMask = bounds.nodes[node].probeMask;
+                retained[slot] = true;
+                break;
+            }
+    }
+    for (var node = 0; node < bounds.nodes.count; node++)
+    {
+        CoverageNode leaf = bounds.nodes[node];
+        if (!leaf.relevant || leaf.children >= 0 || leaf.slot >= 0) continue;
+        for (var slot = 0; slot < environment.blocks.count; slot++)
+        {
+            if (retained[slot]) continue;
+            retained[slot] = true;
+            environment.blocks[slot] = ProbeBlock {
+                active = true, minimum = leaf.minimum, spacing = leaf.size * 0.5, probeMask = leaf.probeMask
+            };
+            bounds.nodes[node].slot = slot;
+            break;
+        }
+    }
+    mut ProbePositions previous = default;
+    for (var probe = 0; probe < environment.layout.total; probe++)
+        if (environment.active[probe]) previous.Set(environment.anchors[probe], probe + 1);
+    mut ProbePositions chosen = default;
+    mut List<float3> requested = [];
+    mut List<bool> active = [];
+    mut List<bool> fresh = [];
+    active.Resize(environment.layout.total);
+    fresh.Resize(environment.layout.total);
+    environment.activeBlocks = 0;
+    environment.finestSpacing = 1e30;
+    for (var slot = 0; slot < environment.blocks.count; slot++)
+    {
+        mut ProbeBlock block = environment.blocks[slot];
+        block.active = retained[slot];
+        block.probes.Clear();
+        environment.blocks[slot] = block;
+        if (!retained[slot]) continue;
+        environment.activeBlocks++;
+        environment.finestSpacing = Math.Min(environment.finestSpacing, block.spacing);
+        for (var local = 0; local < 27; local++)
+        {
+            if ((block.probeMask & (1 << local)) == 0) continue;
+            float3 point = block.minimum + float3(local % 3, (local / 3) % 3, local / 9) * block.spacing;
+            if (chosen.Has(point)) continue;
+            mut int id = -1;
+            int old = previous.Get(point);
+            if (old > 0) { id = old - 1; active[id] = true; }
+            chosen.Set(point, id + 1);
+            requested.Add(point);
+        }
+    }
+    mut int free = 0;
+    foreach (var point in requested)
+    {
+        if (chosen.Get(point) > 0) continue;
+        while (free < active.count && active[free]) free++;
+        if (free >= active.count) break;
+        chosen.Set(point, free + 1);
+        active[free] = true;
+        fresh[free] = true;
+        environment.anchors[free] = point;
+    }
+    environment.active = active;
+    environment.initialized = 0;
+    environment.activeProbes = 0;
+    for (var probe = 0; probe < active.count; probe++)
+        if (active[probe])
+        {
+            environment.activeProbes++;
+            if (!fresh[probe] && environment.captured[probe]) environment.initialized++;
+        }
+    ClearNewProbes(environment, fresh);
+    mut List<int> transitions = [];
+    transitions.Resize(environment.blocks.count);
+    for (var slot = 0; slot < environment.blocks.count; slot++)
+        if (environment.blocks[slot].active) transitions[slot] = BlockTransitions(bounds, environment.blocks, slot);
+    bounds.lookup.Resize(bounds.nodes.count + environment.blocks.count * 28);
+    for (var node = 0; node < bounds.nodes.count; node++)
+    {
+        CoverageNode entry = bounds.nodes[node];
+        bounds.lookup[node] = !entry.relevant ? 0 : entry.children >= 0 ? entry.children + 256
+            : (entry.slot + 1) | ((transitions[entry.slot] & 63) << 16);
+    }
+    for (var slot = 0; slot < environment.blocks.count; slot++)
+    {
+        mut ProbeBlock block = environment.blocks[slot];
+        for (var local = 0; local < 27; local++)
+        {
+            float3 point = block.minimum + float3(local % 3, (local / 3) % 3, local / 9) * block.spacing;
+            int encoded = block.active && (block.probeMask & (1 << local)) != 0 ? chosen.Get(point) : 0;
+            bounds.lookup[bounds.nodes.count + slot * 28 + local] = encoded;
+            block.probes.Add(encoded - 1);
+        }
+        environment.blocks[slot] = block;
+        bounds.lookup[bounds.nodes.count + slot * 28 + 27] = transitions[slot] >> 6;
+    }
+    UploadLookup(environment, bounds.lookup);
+    environment.topologyRevision = bounds.topologyRevision;
+}
+
+// Primitive invalidation does not propagate lighting dependencies. Light and
+// public external-change invalidation both use it, without calling each other.
+void MarkDirty(mut Environment environment, LocalBounds region)
+{
+    Settings settings = ClampSettings(environment.settings);
+    for (var probe = 0; probe < environment.layout.total; probe++)
+    {
+        if (environment.layout.sparse && !environment.active[probe]) continue;
+        float3 eye = ProbePosition(environment, probe) + environment.offsets[probe];
+        if (!region.valid || WithinRange(region, eye, settings.captureDistance)) environment.dirty[probe] = true;
+    }
+}
+
+bool SameLightVector(float3 a, float3 b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+bool SameLight(LightData a, LightData b)
+{
+    // A hash collision must never hide a changed light. The selected light
+    // list is small, so compare its actual radiometric/geometric values.
+    return a.kind == b.kind && SameLightVector(a.position, b.position)
+        && SameLightVector(a.direction, b.direction) && SameLightVector(a.intensity, b.intensity)
+        && a.range == b.range && a.innerCosine == b.innerCosine && a.outerCosine == b.outerCosine
+        && a.castShadows == b.castShadows && a.shadowIndex == b.shadowIndex
+        && a.cascadeCount == b.cascadeCount;
+}
+
+bool EffectiveShadowLight(LightData light)
+{
+    return light.castShadows && light.shadowIndex >= 0;
+}
+
+bool ShadowLightAffected(LightData light, LocalBounds region)
+{
+    return !region.valid || light.kind == LightKind.Directional
+        || WithinRange(region, light.position, Math.Max(light.range, 0));
+}
+
+void InvalidateLight(mut Environment environment, LightData light)
+{
+    LocalBounds region = LocalBounds { valid = light.kind != LightKind.Directional,
+        minimum = light.position - float3(Math.Max(light.range, 0)), maximum = light.position + float3(Math.Max(light.range, 0)) };
+    MarkDirty(environment, region);
+}
+
+// External cutout/callback/texture edits can change a distant receiver's direct
+// shadow even when that receiver's probe cannot capture the edited geometry.
+// Use the last effective light set before this frame's collection is complete.
+void Invalidate(mut Environment environment, LocalBounds region)
+{
+    MarkDirty(environment, region);
+    if (!region.valid || !environment.shadowsEnabled) return;
+    foreach (var light in environment.previousLights)
+        if (EffectiveShadowLight(light) && ShadowLightAffected(light, region)) InvalidateLight(environment, light);
+}
+
+SceneIndex BuildSceneIndex(WorldBounds bounds)
+{
+    mut SceneIndex result = default;
+    for (var i = 0; i < bounds.instances.count; i++)
+    {
+        SceneInstance instance = bounds.instances[i];
+        if (instance.skinned || instance.material.deformed) result.unbounded.Add(i);
+        else result.entries.Add(SceneEntry { instance = i, bounds = instance.bounds });
+    }
+    if (result.entries.count > 0) result.Branch(0, result.entries.count);
+    return result;
+}
+
+void PrepareSceneIndex(mut Environment environment, WorldBounds bounds)
+{
+    environment.scene = bounds.scene;
+}
+
+struct CapturePacket { int first; int end; int instance; }
+
+// These package helpers replay already owned frame packets within one probe.
+// Camera/target state is emitted by the destination clear before replay.
+extern int GIRecordMark(DrawList list);
+extern int GIReplay(DrawList list, int first, int end);
+extern int GIRecordMarkTo(DrawList list, RenderTarget target);
+extern int GIReplayTo(DrawList list, RenderTarget target, int first, int end);
+
+int ScheduledProbe(Environment environment, Settings settings, float3 eye)
+{
+    mut int chosen = -1;
+    mut double best = -1d;
+    for (var step = 0; step < environment.layout.total; step++)
+    {
+        int probe = (environment.cursor + step) % environment.layout.total;
+        if (environment.layout.sparse && !environment.active[probe]) continue;
+        int age = environment.frame - environment.lastCapture[probe];
+        bool required = !environment.captured[probe] || environment.dirty[probe];
+        if (!required && age < settings.refreshInterval) continue;
+        double distance = Math.LengthSq(double3(ProbePosition(environment, probe)) - double3(eye));
+        double proximity = 1d / (1d + distance);
+        // Strict priority classes and oldest-capture ordering prevent a moving
+        // light or animation from refreshing the same nearest probes forever.
+        double score = !environment.captured[probe] ? 3e12d + proximity
+            : environment.dirty[probe] ? 2e12d + double(age) + proximity * 0.25d : 1e12d + double(age);
+        if (score > best) { chosen = probe; best = score; }
+    }
+    return chosen;
 }
 
 [After(Render3D.Stages.Shadows), After(CollectWorldBounds), Before(Render3D.Stages.Color)]
-view Update(mut Environment environment, mut WorldBounds bounds, mut Render3D.Renderer renderer, World world,
-            query (MeshRenderer mesh, Material material) meshes,
-            query (SkinnedMeshRenderer mesh, Material material) skins)
+view Update(mut Environment environment, mut WorldBounds bounds, mut Render3D.Renderer renderer,
+    query (MeshRenderer mesh, Material material) meshes,
+    query (SkinnedMeshRenderer mesh, Material material) skins)
 {
     environment.updates = 0;
+    environment.captureCandidates = 0;
+    environment.captureDraws = 0;
     Settings settings = ClampSettings(environment.settings);
     renderer.indirect = Render3D.NoIndirect;
     renderer.indirect0 = default;
@@ -266,73 +817,133 @@ view Update(mut Environment environment, mut WorldBounds bounds, mut Render3D.Re
         if (environment.ready) GlobalIllumination.Dispose(environment);
         return;
     }
-    if (environment.ready && environment.generation != bounds.generation)
-        GlobalIllumination.Dispose(environment);
+    if (environment.ready && environment.generation != bounds.generation) GlobalIllumination.Dispose(environment);
+    bool rangeChanged = environment.ready && environment.layout.far != bounds.layout.far;
     PrepareResources(environment, bounds.layout);
+    if (rangeChanged) MarkDirty(environment, default);
     environment.generation = bounds.generation;
-    // Resolve stored hierarchy once per eligible instance, shared by all six
-    // faces and every probe in this frame. Borrowed material rows stay live.
-    mut List<float4x4> transforms = [];
-    mut List<float4x4> skinTransforms = [];
-    mut List<PlacementInstance> placements = [];
-    int budget = Math.Min(settings.updatesPerFrame, environment.layout.total);
-    if (budget > 0)
+    if (environment.frame >= 1000000000)
     {
-        foreach (var object in meshes)
-        {
-            if (!object.mesh.visible || object.material.mode == SurfaceMode.Transparent) continue;
-            float4x4 transform = world.LocalToWorld(object.entity);
-            transforms.Add(transform);
-            // Cutout coverage, skinning and arbitrary deformation are raster
-            // facts; authored solid triangles cannot classify their interiors.
-            if (object.material.mode != SurfaceMode.Opaque || object.material.doubleSided || object.material.vertex != null) continue;
-            int slot = PlacementSlot(bounds, object.entity, object.mesh.mesh);
-            if (slot < 0 || !bounds.staticBounds[slot].placement.valid) continue;
-            LocalBounds placed = TransformBounds(bounds.staticBounds[slot].bounds, transform);
-            if (placed.valid) placements.Add(PlacementInstance { slot = slot, transform = transform, bounds = placed });
-        }
-        foreach (var object in skins)
-            if (object.mesh.visible && object.material.mode != SurfaceMode.Transparent)
-                skinTransforms.Add(world.LocalToWorld(object.entity));
+        for (var probe = 0; probe < environment.lastCapture.count; probe++)
+            environment.lastCapture[probe] = Math.Max(environment.lastCapture[probe] - environment.frame, -36000);
+        environment.frame = 0;
     }
+    environment.frame++;
+    ReconcileBlocks(environment, bounds);
+    PrepareSceneIndex(environment, bounds);
+    foreach (var region in bounds.changes) MarkDirty(environment, region);
+    if (environment.shadowsEnabled != renderer.shadows) MarkDirty(environment, default);
+    if (renderer.shadows)
+    {
+        // Propagate a shadow change through each affected light once, rather
+        // than multiplying the dirty-probe scan by the number of casters.
+        foreach (var light in renderer.lights)
+        {
+            if (!EffectiveShadowLight(light)) continue;
+            mut bool affected = false;
+            foreach (var region in bounds.shadowChanges)
+                if (ShadowLightAffected(light, region)) { affected = true; break; }
+            if (affected) InvalidateLight(environment, light);
+        }
+    }
+    for (var i = 0; i < Math.Max(renderer.lights.count, environment.previousLights.count); i++)
+    {
+        bool old = i < environment.previousLights.count;
+        bool current = i < renderer.lights.count;
+        if (old && current && SameLight(environment.previousLights[i], renderer.lights[i])) continue;
+        if (old) InvalidateLight(environment, environment.previousLights[i]);
+        if (current) InvalidateLight(environment, renderer.lights[i]);
+    }
+    environment.previousLights = renderer.lights;
+    environment.shadowsEnabled = renderer.shadows;
+    int budget = Math.Min(settings.updatesPerFrame, environment.activeProbes);
     for (var update = 0; update < budget; update++)
     {
-        int probe = environment.cursor;
-        float3 anchor = ProbePosition(environment.layout, probe);
-        environment.offsets[probe] = RelocateProbe(bounds, placements, anchor,
-            environment.offsets[probe], environment.layout.spacing);
+        int probe = ScheduledProbe(environment, settings, renderer.eye);
+        if (probe < 0) break;
+        float spacing = ProbeSpacing(environment, probe);
+        float3 anchor = ProbePosition(environment, probe);
+        var nearby = CaptureCandidates(environment.scene, anchor + environment.offsets[probe], settings.captureDistance + spacing);
+        mut List<PlacementInstance> placements = [];
+        foreach (var index in nearby)
+        {
+            SceneInstance instance = bounds.instances[index];
+            if (instance.placementEligible && instance.slot >= 0 && instance.slot < bounds.staticBounds.count
+                && bounds.staticBounds[instance.slot].placement.valid)
+                placements.Add(PlacementInstance { slot = instance.slot, transform = instance.transform, bounds = instance.bounds });
+        }
+        environment.offsets[probe] = RelocateProbe(bounds, placements, anchor, environment.offsets[probe], spacing);
         float3 position = anchor + environment.offsets[probe];
+        var candidates = CaptureCandidates(environment.scene, position, settings.captureDistance);
+        environment.captureCandidates += candidates.count;
         mut Render3D.Renderer capture = renderer;
         capture.diffuseCapture = true;
         capture.captureEye = position;
-        capture.captureFar = environment.layout.far;
+        capture.captureFar = settings.captureDistance;
+        float near = Math.Min(0.02, spacing * 0.01);
+        mut Map<Entity, int> selectedMeshes = default;
+        mut Map<Entity, int> selectedSkins = default;
+        foreach (var index in candidates)
+        {
+            SceneInstance instance = bounds.instances[index];
+            if (instance.material.mode == SurfaceMode.Transparent) continue;
+            if (instance.skinned) selectedSkins[instance.entity] = index + 1;
+            else selectedMeshes[instance.entity] = index + 1;
+        }
+        mut List<CapturePacket> packets = [];
         for (var face = 0; face < 6; face++)
         {
             capture.hdr = FaceTarget(environment, face);
             ResetTarget(capture.hdr);
-            capture.hdr.Clear(Color.black);
             capture.hdr.SetCamera(float4x4.TRS(position, FaceRotation(face), float3(1)),
-                float4x4.PerspectiveFov(Math.PI * 0.5, 1,
-                    Math.Min(0.02, environment.layout.spacing * 0.01), environment.layout.far));
-            mut int index = 0;
-            foreach (var object in meshes)
+                float4x4.PerspectiveFov(Math.PI * 0.5, 1, near, settings.captureDistance));
+            // Clear settles the selected target/camera before packet replay.
+            capture.hdr.Clear(Color.black);
+            if (face == 0)
             {
-                if (!object.mesh.visible || object.material.mode == SurfaceMode.Transparent) continue;
-                DrawMaterial(capture, object.mesh, object.material, transforms[index]);
-                index++;
+                capture.hdr.SetFrustumCulling(false);
+                capture.hdr.SetLOD(0);
+                // Query rows retain attached material/pose capabilities. Record
+                // local candidates once, then reuse the owned packets for the
+                // other faces rather than copying component borrows.
+                foreach (var object in meshes)
+                {
+                    if (!selectedMeshes.TryGet(object.entity, out var selected)) continue;
+                    int instance = selected - 1;
+                    int first = GIRecordMarkTo(Draw.list, capture.hdr);
+                    DrawMaterial(capture, object.mesh, object.material, bounds.instances[instance].transform);
+                    int end = GIRecordMarkTo(Draw.list, capture.hdr);
+                    packets.Add(CapturePacket { first = first, end = end, instance = instance });
+                    environment.captureDraws++;
+                }
+                foreach (var object in skins)
+                {
+                    if (!selectedSkins.TryGet(object.entity, out var selected)) continue;
+                    int instance = selected - 1;
+                    int first = GIRecordMarkTo(Draw.list, capture.hdr);
+                    DrawSkinnedMaterial(capture, object.mesh, object.material, bounds.instances[instance].transform);
+                    int end = GIRecordMarkTo(Draw.list, capture.hdr);
+                    packets.Add(CapturePacket { first = first, end = end, instance = instance });
+                    environment.captureDraws++;
+                }
+                capture.hdr.SetFrustumCulling();
+                capture.hdr.SetLOD();
             }
-            index = 0;
-            foreach (var object in skins)
+            else foreach (var packet in packets)
             {
-                if (!object.mesh.visible || object.material.mode == SurfaceMode.Transparent) continue;
-                DrawSkinnedMaterial(capture, object.mesh, object.material, skinTransforms[index]);
-                index++;
+                SceneInstance instance = bounds.instances[packet.instance];
+                if (!instance.skinned && !instance.material.deformed && !CaptureFaceVisible(instance.bounds, position, face, near)) continue;
+                environment.captureDraws += GIReplayTo(Draw.list, capture.hdr, packet.first, packet.end);
             }
         }
         IntegrateProbe(environment, probe);
         environment.cursor = (probe + 1) % environment.layout.total;
         environment.updates++;
     }
+    if (environment.updates > 0) UploadLookup(environment, environment.lookup);
+    environment.dirtyProbes = 0;
+    for (var probe = 0; probe < environment.layout.total; probe++)
+        if (environment.active[probe] && (!environment.captured[probe] || environment.dirty[probe])) environment.dirtyProbes++;
     FieldLayout layout = environment.layout;
     float intensity = settings.intensity;
     int initialized = environment.initialized;
@@ -346,7 +957,7 @@ struct ProbeIndex { int index; }
 
 frag DebugProbe(Vertex3 vertex, out Color color, Environment environment, ProbeIndex probe)
 {
-    if (probe.index >= environment.initialized) { color = Color(0.2, 0, 0.2); return; }
+    if (!environment.captured[probe.index]) { color = Color(0.2, 0, 0.2); return; }
     float2 uv = AtlasUV(probe.index, environment.layout.atlasRows, vertex.position);
     Color validity = environment.distance.Sample(uv, Filter.Bilinear, Wrap.Clamp);
     if (validity.b >= 0.25) { color = Color(1, 0.05, 0); return; }
@@ -361,8 +972,11 @@ view DebugProbes(Environment environment, Render3D.Renderer renderer)
     renderer.hdr.Cull(Cull.None), renderer.hdr.Depth(Depth.Read), renderer.hdr.Blend(Blend.Replace)
     {
         for (var probe = 0; probe < environment.layout.total; probe++)
+        {
+            if (environment.layout.sparse && !environment.active[probe]) continue;
             renderer.hdr.Mesh(environment.resources.markers, environment.resources.markerIndices,
-                float4x4.TRS(ProbePosition(environment.layout, probe) + environment.offsets[probe], quaternion.identity, float3(environment.layout.spacing * 0.05)),
+                float4x4.TRS(ProbePosition(environment, probe) + environment.offsets[probe], quaternion.identity, float3(ProbeSpacing(environment, probe) * 0.05)),
                 DebugProbe, ProbeIndex { index = probe });
+        }
     }
 }

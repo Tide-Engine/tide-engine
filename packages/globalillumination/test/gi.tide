@@ -13,10 +13,17 @@ singleton GIFixture
     bool spawnFar;
     bool farBuilt;
     float3 offset;
+    float3 farPosition = float3(30, 2, -11);
+    bool casterShadows = true;
+    float3 casterEmission;
+    float casterRoughness = 0.5;
+    bool casterCutout;
+    float casterAlpha = 1;
 }
 
 component GIRoomWall { }
 component GIMoving { }
+component GIShadowCaster { }
 
 local singleton GIProbe
 {
@@ -32,7 +39,18 @@ local singleton GIProbe
     int synthetic;
     int sampleCount;
     bool showOffset;
+    bool showMoments;
     int offsetIndex;
+    float3 cameraPosition = float3(0, 0, -2);
+    bool shadowsEnabled = true;
+    int shadowMaps = 6;
+    bool invalidate;
+    GlobalIllumination.LocalBounds invalidateRegion;
+    int coverageCount;
+    float3[16] coveragePositions;
+    int[16] coverageSlots;
+    float[16] coverageSpacing;
+    float3[16] coverageMinimum;
     float3[16] positions;
     float3[16] normals;
 }
@@ -109,6 +127,32 @@ system BuildGIWorld(mut GIFixture fixture)
         Spawn(MeshRenderer { mesh = giQuad }, Material { emission = float3(2, 1, 0.5) },
             Transform { localPosition = float3(0, 0, 2), localScale = float3(4, 4, 1) });
     }
+    if (fixture.scenario == 9)
+    {
+        Spawn(MeshRenderer { mesh = giBox }, Material);
+        Spawn(MeshRenderer { mesh = giBox }, Material,
+            Transform { localPosition = float3(32, 0, 0) });
+    }
+    if (fixture.scenario == 10)
+    {
+        Spawn(MeshRenderer { mesh = giBox }, Material,
+            Transform { localPosition = float3(2000000, 0, 0) });
+        Spawn(MeshRenderer { mesh = giBox }, Material,
+            Transform { localPosition = float3(2001000, 0, 0) });
+    }
+    if (fixture.scenario == 11)
+        Spawn(MeshRenderer { mesh = giQuad }, Material { emission = float3(0.2, 0.1, 0.05) },
+            Transform { localPosition = float3(0, 0, 1.089), localScale = float3(0.1) });
+    if (fixture.scenario == 12)
+    {
+        // The far receiver is beyond a six-unit capture of the caster but
+        // remains inside this light's shadow influence and the resident view.
+        Spawn(GIShadowCaster, MeshRenderer { mesh = giBox }, Material, Transform);
+        Spawn(MeshRenderer { mesh = giBox }, Material,
+            Transform { localPosition = float3(32, 0, 0) });
+        Spawn(PointLight { intensity = float3(1), range = 100, castShadows = true },
+            Transform { localPosition = float3(0, 8, 0) });
+    }
 }
 
 system MoveGIWorld(with GIMoving, mut Transform transform, GIFixture fixture)
@@ -116,12 +160,23 @@ system MoveGIWorld(with GIMoving, mut Transform transform, GIFixture fixture)
     transform.localPosition = float3(2, -1, 3) + fixture.offset;
 }
 
+system ChangeGIShadowCaster(with GIShadowCaster, mut MeshRenderer mesh,
+                            mut Transform transform, mut Material material, GIFixture fixture)
+{
+    mesh.castShadows = fixture.casterShadows;
+    transform.localPosition = fixture.offset;
+    material.emission = fixture.casterEmission;
+    material.roughness = fixture.casterRoughness;
+    material.mode = fixture.casterCutout ? SurfaceMode.Cutout : SurfaceMode.Opaque;
+    material.baseColor = Color(1, 1, 1, fixture.casterAlpha);
+}
+
 system AddFarGIObject(mut GIFixture fixture)
 {
     if (!fixture.spawnFar || fixture.farBuilt) return;
     fixture.farBuilt = true;
     Spawn(MeshRenderer { mesh = giBox }, Material,
-        Transform { localPosition = float3(30, 2, -11), localScale = float3(2) });
+        Transform { localPosition = fixture.farPosition, localScale = float3(2) });
 }
 
 [Before(Stages.Prepare)]
@@ -130,12 +185,17 @@ view ConfigureGIProbe(mut Renderer renderer, mut GlobalIllumination.Environment 
     if (probe.dispose) GlobalIllumination.Dispose(environment);
     renderer.enabled = !probe.disabled;
     environment.settings = probe.settings;
-    renderer.camera = Camera { position = float3(0, 0, -2), rotation = quaternion.identity,
+    if (probe.invalidate)
+    {
+        GlobalIllumination.Invalidate(environment, probe.invalidateRegion);
+        probe.invalidate = false;
+    }
+    renderer.camera = Camera { position = probe.cameraPosition, rotation = quaternion.identity,
                                verticalFov = 60deg, near = 0.1, far = 100 };
-    renderer.shadows = fixture.scenario == 6;
+    renderer.shadows = fixture.scenario == 6 || (fixture.scenario == 12 && probe.shadowsEnabled);
     renderer.shadowResolution = fixture.scenario == 6 ? 512 : 16;
-    renderer.maxShadowMaps = 6;
-    renderer.maxLights = fixture.scenario == 6 ? 2 : 1;
+    renderer.maxShadowMaps = probe.shadowMaps;
+    renderer.maxLights = fixture.scenario == 6 || fixture.scenario == 12 ? 2 : 1;
     renderer.background = Color.black;
     renderer.ambientIrradiance = probe.ambient;
     probe.bounded = GlobalIllumination.ClampSettings(probe.raw);
@@ -188,11 +248,36 @@ frag PartialVisibility(Vertex vertex, out Color light, out Color moments,
         return;
     }
     int column = int(Math.Floor(vertex.uv.x * 32));
-    float3 radiance = probe.synthetic == 6 ? float3(column % 2 == 0 ? 0.2 : 0.8) : float3(0.2, 0.1, 0.05);
+    int row = int(Math.Floor(vertex.uv.y * float(environment.layout.atlasRows * 19))) / 19;
+    int slot = (column + row * 32) / 27;
+    float3 radiance = probe.synthetic == 6 ? float3(column % 2 == 0 ? 0.2 : 0.8)
+        : probe.synthetic == 9 ? float3(slot == 0 ? 0.2 : slot == 1 ? 0.8 : 0.4)
+        : float3(0.2, 0.1, 0.05);
     light = Color(radiance * Math.PI, 1);
     // Inverse projective depth and its standard deviation. Mode 4 supplies
     // uncertain finite visibility; mode 6 has no blocker in any direction.
-    moments = probe.synthetic == 6 ? Color(0, 0, 0, 1) : Color(2, 1, 0, 1);
+    moments = probe.synthetic == 6 || probe.synthetic >= 8 ? Color(0, 0, 0, 1) : Color(2, 1, 0, 1);
+}
+
+frag SparseControlledField(Vertex vertex, out Color light, out Color moments,
+                           GlobalIllumination.Environment environment, GIProbe probe)
+{
+    float2 pixel = vertex.uv * float2(576, environment.layout.atlasRows * 19);
+    int index = int(Math.Floor(pixel.x / 18)) + int(Math.Floor(pixel.y / 19)) * 32;
+    int slot = index / 27;
+    int local = index % 27;
+    bool outer = local % 3 != 1 && (local / 3) % 3 != 1 && local / 9 != 1;
+    bool captured = probe.synthetic == 11 ? slot == 2 && outer : probe.synthetic != 10 || slot == 2;
+    if (int(Math.Floor(pixel.y)) % 19 == 18)
+    {
+        light = Color.black;
+        moments = captured ? Color(float3(128.0 / 255.0), 1) : Color(0, 0, 0, 0);
+        return;
+    }
+    float3 radiance = probe.synthetic == 9 ? float3(slot == 0 ? 0.2 : slot == 1 ? 0.8 : 0.4)
+        : float3(0.2, 0.1, 0.05);
+    light = Color(radiance * Math.PI, 1);
+    moments = Color(0, 0, 0, 1);
 }
 
 frag GIIncoming(Vertex vertex, out Color light, out Color data, ControlledIncoming incoming)
@@ -202,16 +287,74 @@ frag GIIncoming(Vertex vertex, out Color light, out Color data, ControlledIncomi
             || int(Math.Floor(vertex.uv.x * 32)) != 17 || int(Math.Floor(vertex.uv.y * 32)) != 17));
     light = dark ? Color.black : incoming.mode == 7 ? Color(20, 10, 5) : Color(0.2, 0.1, 0.05);
     // R is radial distance/far, G a one-sided backface, B says a hit exists.
-    data = incoming.mode == 2 ? Color(0.001, 0, 1, 1)
+    data = incoming.mode == 12 ? Color(1, 1, 1, 1)
+         : incoming.mode == 2 ? Color(0.001, 0, 1, 1)
          : incoming.mode == 5 ? Color(0.1, 1, 1, 1) : Color(0, 0, 0, 1);
 }
 
 // Use the real convolution and receiver sampling with analytically controlled
-// incident light. The field itself is still automatically fitted to geometry.
+// incident light. Explicit synthetic layouts keep these reconstruction oracles
+// independent of the automatic world's current placement and budget policy.
+[After(GlobalIllumination.CollectWorldBounds), Before(GlobalIllumination.Update)]
+view ControlledGIWorld(mut GlobalIllumination.WorldBounds bounds, GIProbe probe)
+{
+    // Avoid recording automatic atlas writes that a controlled layout would
+    // replace later in this same frame. Ordinary world scenarios use Update.
+    if (probe.synthetic != 0) bounds.ready = false;
+}
+
 [After(GlobalIllumination.Update), Before(Stages.Color)]
 view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
 {
-    if (!environment.ready || probe.synthetic == 0) return;
+    if (probe.synthetic == 0) return;
+    // Preserve the original analytic lattice cases independently of the
+    // geometry-driven runtime allocator, then exercise sparse lookup below.
+    if (probe.synthetic < 8 || probe.synthetic == 12)
+        GlobalIllumination.PrepareResources(environment,
+            GlobalIllumination.BuildLayout(float3(-0.05), float3(0.05), 1.5, 125));
+    else
+    {
+        GlobalIllumination.PrepareResources(environment, GlobalIllumination.FieldLayout {
+            minimum = float3(0), spacing = 1, counts = int3(3),
+            total = probe.synthetic == 14 ? 189 : 108, atlasRows = probe.synthetic == 14 ? 6 : 4,
+            far = 48, sparse = true, size = probe.synthetic >= 13 ? 4 : 8,
+            nodeCount = probe.synthetic >= 13 ? 9 : 17, depthLimit = probe.synthetic >= 13 ? 1 : 2
+        });
+        // Root child zero is a coarse brick, child one splits into two fine
+        // bricks along Y. Other children are empty. Nonzero high index bytes
+        // exercise the same lookup encoding used by runtime tree uploads.
+        // These authored independent brick fields need every boundary filtered;
+        // runtime equal-resolution shared faces can clear their transition bit.
+        mut List<int> codes = [257, 1 | (63 << 16), 265, 0, 0, 0, 0, 0, 0,
+            2 | (63 << 16), 0, 3 | (63 << 16), 0, 0, 0, 0, 0];
+        if (probe.synthetic == 13)
+            codes = [257, 1 | (21 << 16), 2 | (63 << 16), 3 | (63 << 16), 0,
+                4 | (63 << 16), 0, 0, 0];
+        if (probe.synthetic == 14)
+            codes = [257, 1 | (21 << 16), 2 | (63 << 16), 3 | (63 << 16), 4 | (63 << 16),
+                5 | (63 << 16), 6 | (63 << 16), 7 | (63 << 16), 0];
+        // Deliberately give these constant/contrast bricks separate physical
+        // records; runtime bricks share identical anchors through this table.
+        int blocks = probe.synthetic == 14 ? 7 : probe.synthetic == 13 ? 4 : 3;
+        for (var slot = 0; slot < blocks; slot++)
+        {
+            for (var index = 0; index < 27; index++) codes.Add(slot * 27 + index + 1);
+            // One extra RGB record keeps the twenty local edge/corner bits.
+            codes.Add(probe.synthetic == 14 && slot == 0 ? 1 << 19 : (1 << 20) - 1);
+        }
+        GlobalIllumination.UploadLookup(environment, codes);
+        environment.initialized = probe.synthetic == 10 ? 27 : probe.synthetic == 11 ? 8 : blocks * 27;
+        ResetTarget(environment.resources.atlas);
+        environment.resources.atlas.Screen()
+        {
+            float height = float(environment.layout.atlasRows * 19);
+            environment.resources.atlas.Mesh([
+                Vertex { position = float2(0, 0), uv = float2(0, 0) }, Vertex { position = float2(576, 0), uv = float2(1, 0) },
+                Vertex { position = float2(576, height), uv = float2(1, 1) }, Vertex { position = float2(0, height), uv = float2(0, 1) }
+            ], [0, 1, 2, 0, 2, 3], SparseControlledField);
+        }
+        return;
+    }
     if (probe.synthetic == 4 || probe.synthetic == 6)
     {
         // Author a known constant irradiance with partial probe visibility.
@@ -226,6 +369,7 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
                 Vertex { position = float2(576, height), uv = float2(1, 1) }, Vertex { position = float2(0, height), uv = float2(0, 1) }
             ], [0, 1, 2, 0, 2, 3], PartialVisibility);
         }
+        environment.initialized = environment.layout.total;
         return;
     }
     for (var face = 0; face < 6; face++)
@@ -246,17 +390,62 @@ view ControlledGI(mut GlobalIllumination.Environment environment, GIProbe probe)
         GlobalIllumination.IntegrateProbe(environment, index);
 }
 
+[After(ControlledGI), Before(Stages.Color)]
+view BindControlledGI(mut Renderer renderer, GlobalIllumination.Environment environment, GIProbe probe)
+{
+    if (!environment.ready || probe.synthetic == 0) return;
+    // Controlled layouts can recreate the targets after the automatic update.
+    // All ordinary material draws must receive the current live resources too.
+    GlobalIllumination.FieldLayout layout = environment.layout;
+    float intensity = environment.settings.intensity;
+    int initialized = environment.initialized;
+    if (layout.sparse)
+        renderer.indirect = (SurfaceInput input, Surface surface, Texture a, Texture b) =>
+            GlobalIllumination.Indirect(input, surface, a, b, layout, intensity, initialized);
+    else
+        renderer.indirect = (SurfaceInput input, Surface surface, Texture a, Texture b) =>
+            GlobalIllumination.IndirectLegacy(input, surface, a, b, layout, intensity, initialized);
+    renderer.indirect0 = environment.irradiance;
+    renderer.indirect1 = environment.distance;
+}
+
 struct GIWitness { float3 position; float3 normal; }
 
 frag ReadGIWitness(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness, GIProbe probe)
 {
+    if (probe.showMoments)
+    {
+        color = environment.distance.Sample(GlobalIllumination.AtlasUV(probe.offsetIndex,
+            environment.layout.atlasRows, witness.normal), Filter.Bilinear, Wrap.Clamp);
+        return;
+    }
     if (probe.showOffset)
     {
         color = Color(GlobalIllumination.ProbeOffset(environment.distance, probe.offsetIndex,
             environment.layout.atlasRows) + float3(128.0 / 255.0), 1);
         return;
     }
-    float3 light = GlobalIllumination.Sample(environment.irradiance, environment.distance,
+    float3 light = GlobalIllumination.SampleWorld(environment.irradiance, environment.distance,
+        environment.layout, environment.settings.intensity, environment.initialized,
+        witness.position, witness.normal) / Math.PI;
+    color = Color(light, 1);
+}
+
+frag ReadGILegacyWitness(Vertex vertex, out Color color, GlobalIllumination.Environment environment, GIWitness witness, GIProbe probe)
+{
+    if (probe.showMoments)
+    {
+        color = environment.distance.Sample(GlobalIllumination.AtlasUV(probe.offsetIndex,
+            environment.layout.atlasRows, witness.normal), Filter.Bilinear, Wrap.Clamp);
+        return;
+    }
+    if (probe.showOffset)
+    {
+        color = Color(GlobalIllumination.ProbeOffset(environment.distance, probe.offsetIndex,
+            environment.layout.atlasRows) + float3(128.0 / 255.0), 1);
+        return;
+    }
+    float3 light = GlobalIllumination.SampleLegacy(environment.irradiance, environment.distance,
         environment.layout, environment.settings.intensity, environment.initialized,
         witness.position, witness.normal) / Math.PI;
     color = Color(light, 1);
@@ -280,9 +469,12 @@ view AuditGIPlacement(GlobalIllumination.Environment environment, mut GIPlacemen
     if (!audit.enabled || !environment.ready) return;
     audit.relocated = 0;
     audit.maxFraction = 0;
-    for (var i = 0; i < environment.initialized; i++)
+    for (var i = 0; i < environment.layout.total; i++)
     {
-        float3 offset = environment.offsets[i] / environment.layout.spacing;
+        if (!environment.active[i] || !environment.captured[i]) continue;
+        float spacing = GlobalIllumination.ProbeSpacing(environment, i);
+        if (spacing <= 0) continue;
+        float3 offset = environment.offsets[i] / spacing;
         float length = Math.Length(offset);
         audit.maxFraction = Math.Max(audit.maxFraction, length);
         if (length > 0.00001)
@@ -293,8 +485,20 @@ view AuditGIPlacement(GlobalIllumination.Environment environment, mut GIPlacemen
         if (audit.compare && (audit.reference.count != environment.layout.total
             || Math.LengthSq(environment.offsets[i] - audit.reference[i]) > 0)) audit.stable = false;
     }
-    if (environment.initialized == environment.layout.total && audit.reference.count == 0)
+    if (environment.initialized == environment.activeProbes && audit.reference.count == 0)
         audit.reference = environment.offsets;
+}
+
+[After(GlobalIllumination.Update), Before(ControlledGI)]
+view AuditGICoverage(GlobalIllumination.Environment environment, GlobalIllumination.WorldBounds bounds, mut GIProbe probe)
+{
+    for (var i = 0; i < probe.coverageCount && i < 16; i++)
+    {
+        int slot = GlobalIllumination.FindBlock(bounds, probe.coveragePositions[i]);
+        probe.coverageSlots[i] = slot;
+        probe.coverageSpacing[i] = slot >= 0 && slot < environment.blocks.count ? environment.blocks[slot].spacing : 0;
+        probe.coverageMinimum[i] = slot >= 0 && slot < environment.blocks.count ? environment.blocks[slot].minimum : float3(0);
+    }
 }
 
 [Stage(Stages.Present, 1)]
@@ -309,10 +513,14 @@ view GIWitnesses(Renderer renderer, GIProbe probe, GlobalIllumination.Environmen
         for (var i = 0; i < probe.sampleCount && i < 16; i++)
         {
             float x = float(i * 4);
-            Draw.Mesh([Vertex { position = float2(x, 0) }, Vertex { position = float2(x + 4, 0) },
-                       Vertex { position = float2(x + 4, 8) }, Vertex { position = float2(x, 8) }],
-                [0, 1, 2, 0, 2, 3], ReadGIWitness,
-                GIWitness { position = probe.positions[i], normal = probe.normals[i] });
+            List<Vertex> vertices = [Vertex { position = float2(x, 0) }, Vertex { position = float2(x + 4, 0) },
+                Vertex { position = float2(x + 4, 8) }, Vertex { position = float2(x, 8) }];
+            List<int> indices = [0, 1, 2, 0, 2, 3];
+            GIWitness witness = GIWitness { position = probe.positions[i], normal = probe.normals[i] };
+            if (environment.layout.sparse)
+                Draw.Mesh(vertices, indices, ReadGIWitness, witness);
+            else
+                Draw.Mesh(vertices, indices, ReadGILegacyWitness, witness);
         }
     }
 }

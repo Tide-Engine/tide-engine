@@ -106,8 +106,12 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
     target_link_libraries(tide_globalillumination_pixels PRIVATE tide_platform tide_globalillumination)
     if(TIDE_WEB)
         tide_web_page(tide_globalillumination_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
-        tide_add_web_test(tide_globalillumination_pixels TARGET tide_globalillumination_pixels
-            WEBGPU EXPECT "ok: world GI automatic" D3D11)
+        # Independent pixel fixtures retain their full capture work and assertions.
+        # Separate browser runs keep each within the existing software-GPU guard.
+        foreach(group analytic room direct geometry)
+            tide_add_web_test(tide_globalillumination_pixels_${group} TARGET tide_globalillumination_pixels
+                QUERY "group=${group}" WEBGPU EXPECT "ok: world GI automatic" D3D11)
+        endforeach()
     else()
         add_test(NAME tide_globalillumination_pixels COMMAND tide_globalillumination_pixels)
         add_test(NAME tide_globalillumination_pixels_opengl COMMAND tide_globalillumination_pixels)

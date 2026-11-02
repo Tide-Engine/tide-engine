@@ -1,5 +1,258 @@
 # Global Illumination package
 
+## Adaptive coverage and regional updates (2026-11-02)
+
+The owner approved replacing the world-sized uniform lattice after inspecting
+its probe placement and questioning large-scene scalability. This section
+supersedes the earlier topology, initialization and round-robin descriptions
+below. Those sections retain their source-pinned quality experiments and room
+measurements as history; their timings do not measure the adaptive implementation.
+The package remains opt-in, machine-local and on `feat/render3d-gi`; no dev merge,
+publication or light baker is included. Render3D's general provider/capture
+interface is unchanged, with no compiler, engine runtime or backend API change.
+
+### Coverage, physical slots and interpolation
+
+`WorldBounds` tracks current visible mesh/skinned instances, their numeric
+material facts, transforms and asset-local bounds. A balanced instance BVH is
+rebuilt after geometry changes and shared by coverage, placement and capture
+candidate queries. Nearby eligible static assets lazily acquire their existing
+triangle BVHs. Coverage tests actual triangle proximity where available rather
+than treating a whole mesh AABB as a filled receiver volume; other geometry
+uses conservative bounds. Skinned and custom-deformed instances are kept as
+unbounded capture candidates so rest-bound culling cannot discard their current
+rendered pose.
+
+The production field is sparse. A bounded hierarchy skips empty regions and
+refines relevant leaves toward `probeSpacing`, prioritizing geometry near the
+main view. Leaves are 3x3x3 logical probe blocks, at most 128 blocks and depth 24.
+The physical probe capacity is exactly the clamped `Settings.maxProbes` (default
+512, range 125..2048); it is not rounded to a multiple of 27. Coincident dyadic
+anchors share physical IDs across neighboring blocks and subdivision levels.
+Each node also caches a 27-bit support mask. A conservative instance query
+retains only logical anchors whose interpolation support can reach receiver
+bounds, including the normal-bias and boundary-filter padding. The same mask
+drives physical budget counting and reconciliation; omitted logical entries
+encode zero on the GPU and -1 in the CPU block. Block capacity is independently
+bounded at 128 rather than estimated as maxProbes / 8. Reserving every outer
+anchor could otherwise force the 125-probe thin-wall fixture to 96-unit spacing
+even though its actual fine support fits: the pruned fixture needs 88 physical
+anchors at the requested spacing 3. Real geometry controls leaf relevance;
+conservative bounds control support pruning within each relevant leaf.
+The planner first resolves useful geometry within its bounded planning table,
+then coarsens complete sibling groups from the least important eligible parents
+until both the unique physical-anchor count and block cap fit. Checking the
+physical budget at each individual split could trap neighboring coarse cells
+whose collective refinement fits while a single intermediate refinement does
+not. Importance measures nearby receiver support intersecting the cell, rather
+than letting a cell's empty portion claim proximity to the camera. It combines
+cell size with squared receiver distance and a continuous view bonus in 1..2.
+The requested finest spacing remains a request, not a guarantee at any named
+receiver. Eligible sibling groups use min-heaps with stable ties, avoiding a
+whole-plan scan for every merge. Unique-anchor counts are still recomputed
+within the bounded plan as merges proceed; this is not a constant-cost topology
+builder. The reachable budgeted tree is compacted before reconciliation and
+GPU upload. The representation does not allocate a full enclosing world lattice.
+
+Base spacing increases in stable power-of-two steps only when needed for
+coordinate precision. Every subdivision retains a half-base-cell anchor phase,
+reducing exact alignment with common planes without making spacing continuously
+track the camera coordinate. Geometry relevance has .3 base-spacing padding,
+covering the .04 normal bias and .25 boundary filter together.
+
+`viewDistance` defaults to 48 world units and bounds receiver residency around
+the main camera. View-cell crossings, significant orientation changes, geometry
+changes and coverage settings can rebuild topology. `ReconcileBlocks` reserves
+surviving blocks and exact matching physical anchors before assigning new ones.
+Matching probes retain their atlas ID, light, captured flag and relocation
+offset; new/reused anchors have their records cleared before use. Root/topology
+changes retain a compatible atlas. Capacity or base-spacing changes and pack
+replacement can recreate the field. Empty coverage or disabling GI/Render3D
+releases it. This is a finite working set, not unlimited detailed world coverage;
+competing geometry inside the resident range can still force coarse blocks.
+
+The existing 18x19 physical records retain their 16-square octahedral interior,
+gutters and offset metadata row. A 64-row strip appended below all probe records
+stores byte-encoded hierarchy codes and 28 entries per block in the distance
+atlas: 27 physical probe IDs plus a 20-bit edge/corner transition mask in RGB.
+Codes are zero for missing, 1..128 for blocks and child-table offset + 256 for
+branches; physical IDs use index + 1. Each leaf's B channel holds six direct
+face-transition flags. Atlas size is
+`576 x (19 * ceil(maxProbes / 32) + 64)`, at most 576x1280. Pixel-center lookups
+share the existing bilinear/clamp sampler, preserving two GI texture bindings
+and the fully mapped skinning path's twelve-binding limit.
+
+Physical slots initialize independently. `Environment.initialized` counts
+captured active probes, not a prefix of atlas indices, and `activeProbes` counts
+unique resident physical anchors. Metadata alpha marks a slot captured on the GPU;
+fresh slots stay transparent until convolution writes their own metadata.
+Debug uses active/captured flags and actual relocated positions.
+
+Each block performs its eight-neighbor visible-irradiance gather. Interior
+receivers need one hierarchy lookup. Equal-resolution shared faces are already
+C0-continuous and retain one gather up to the face. Direct-face flags and separate
+edge/corner bits restrict the multi-block path to actual resolution transitions
+or missing coverage near the affected feature. A fixed world-space box filter
+of radius .25 base spacing weights those blocks by overlap; up to eight blocks
+can contribute. Neighboring leaf and empty-domain lookups are cached within the
+gather to avoid repeating a serial hierarchy walk. Shared anchors capture only
+once, though boundary gathering can sample a shared record through more than
+one contributing block. Visibility
+metrics, encoded offsets and bounded relocation use the common base spacing,
+independent of a block's interpolation spacing. This preserves the meaning of a
+physical record across subdivision changes. The positive cosine convolution,
+receiver-plane visibility and one-bounce diffuse contract remain.
+
+Partial refinement also gathers available captured outer corners while new fine
+nodes initialize, blending to the fine result as captured fine spatial support
+becomes complete. It can preserve provisional light through an ordinary
+subdivision, but pruned corners and changes across several levels can leave
+insufficient retained support. Populated history is not guaranteed through every
+topology change. Missing metadata never licenses stale reused-slot lighting.
+
+The analytic dense sampler and production world sampler have separate entry
+and gather paths (`SampleLegacy` and `SampleWorld`). A shader using one does not
+compile both large sampling branches into its software-driver JIT path. The
+legacy path remains for independent controlled-light fixtures; it is not the
+production world's allocation policy.
+
+### Changes, scheduling and captures
+
+New settings are `viewDistance = 48`, `captureDistance = 48` (both clamp
+1..1000000) and `refreshInterval = 600` (clamp 1..36000 rendered frames).
+`updatesPerFrame` remains 0..16 but is a maximum actual capture count, rather
+than a requirement to spend the full budget. Initialization precedes dirty
+refresh, then aged background refresh. Dirty selection orders by oldest capture
+before proximity, preventing continuous motion from starving farther dirty
+probes by continually selecting the same nearest ones. Age makes a probe eligible
+subject to the budget; it is not a guaranteed complete refresh interval. Zero
+freezes captures while residency can still change, leaving newly streamed anchors
+uncaptured until updates resume.
+
+Comparable numeric transforms/material values, additions/removals and selected
+Render3D light changes mark affected probe capture neighborhoods dirty. Light
+comparison uses exact numeric values rather than hash equality as identity.
+Point/spot lights invalidate old and new influence regions; directional light
+changes invalidate all resident probes. Skinned/custom-deformed instances request
+updates conservatively each frame. Dirty captures retain their previous light
+while awaiting refresh. Changing capture range dirties the field.
+
+Shadow dependencies also include castShadows flags, moved/added/removed casters
+and cutout silhouette controls. Such changes propagate through each affected
+selected shadow light once per frame, so a caster outside a probe's capture
+range can still invalidate a captured receiver's changed direct shadow.
+Directional shadow lights dirty the whole resident field; unbounded skinned or
+deformed casters conservatively affect all selected shadow lights. Numeric
+opaque emission/color/roughness edits do not propagate as silhouette changes.
+`SameLight` includes allocated shadowIndex/cascadeCount, and changes to
+Renderer.shadows invalidate retained captures.
+
+Callback captures and live texture identities/contents have no comparable value
+API. Games report those changes with
+`GlobalIllumination.Invalidate(mut Environment, LocalBounds region)` before the
+package update. A valid region dirties probes whose finite capture range can
+intersect it and propagates possible shadow effects through affected selected
+shadow lights; an invalid/default region dirties all active probes. This uses
+the previous effective light set when called before this frame's collection.
+The function queues work, never captures synchronously. Background refresh is a
+fallback for unreported changes, not immediate change detection.
+
+The instance BVH chooses local candidates for a probe. Current attached material
+resources and prepared poses cannot be stored as component copies: live query
+bindings record each selected instance once into the first face, with automatic
+frustum rejection disabled and LOD(0) forced for an all-direction source packet.
+Package-local `GIRecordMarkTo`/`GIReplayTo` in `cache.c` reuse those frame-owned
+shaded packets for the other five faces. Their explicit RenderTarget restores
+the face destination because evaluating Draw.list first selects the window.
+The face camera is settled by Clear before replay; per-face static bounds can
+reject packets conservatively. Raw mark/replay helpers remain the CPU command
+test boundary. Each replay gets an independent run descriptor while sharing owned instance/uniform/texture
+bytes. This retains shader callbacks and resources without escaping query rows,
+patching shader-specific uniform offsets or adding a runtime entry point.
+Ordinary capture updates reupload the lookup strip as well, allowing it to
+recover with captures after GPU resources are lost.
+
+`PackRays` and inverse-depth gathering ignore hits whose normalized radial
+distance is at least one. Cube-face corner geometry beyond the finite radial
+capture range therefore contributes neither radiance nor visibility, despite
+being inside a face's axial far plane. This requires no Render3D change.
+
+Scene maintenance still walks instances each frame. Obtaining live bound
+materials still scans the mesh/skinned queries once per updated probe, so this
+CPU work remains proportional to total scene instances. Captures no longer
+repeat that traversal for all six faces. Dynamic/unbounded geometry, BVH rebuilds
+and adaptive topology construction have further costs; no fully sublinear or
+general large-world performance claim follows from these bounds. Finite capture
+distance can omit distant emissive geometry/occluders, and coverage limits from
+selected lights and the main shadow atlas remain. Small emitters, thin geometry, rest bounds, coarse
+support and mixed-resolution filtering remain quality/performance limits.
+Entity-to-asset slot-cache clearing thresholds scale with the live population
+above a 4096-entry floor, so a large stable scene does not clear/rebuild those
+maps every frame merely for exceeding the old fixed threshold.
+
+The tracked benchmark adds 1..256 separated buildings, overview/debug captures,
+camera travel and a local moving light. It distinguishes physical capacity,
+resident probes/blocks, dirty probes and actual capture/candidate/draw counts;
+primary receiver validation, convergence and allocation audits stay outside
+timing. Its elevated overview requests view distance `2 * extent + 16` (extent is
+the larger grid dimension times 24), explicitly covering the district from that
+camera rather than applying the ordinary nearby-view default 48 in empty air.
+Nearby/travel views retain production defaults; overview is a different coverage
+workload. Scene construction now runs once on the first simulation tick after
+host workload options are set. The former Main Spawned handler ran during
+world initialization before those options: early uncommitted exploratory
+district rows therefore still contained the seven-mesh room and are invalid
+large-scene scaling evidence. They must not enter the final report. Enabled
+benchmark runs now require geometryCount == 7 * buildings and report
+`gi_scene_instances` alongside the requested count.
+
+Static quick runs without overview/travel/moving light reuse the once-filled,
+validated resident field across budget modes rather than repeating identical
+full-field convolution. Timed runs and moving/view-changing quick cases retain
+independent cold starts. Lighting oracles, all budgets, hashes, shader texture
+limits and runner deadlines remain. Cold topology construction and warmed
+rendering require separate measurement.
+
+The expanded browser pixel fixture has independent analytic, room, direct-bounce
+and geometry groups on WebGL, ANGLE D3D11 and WebGPU. Native no-argument runs
+still execute every case together. Every group retains its original lighting
+oracles, probe settings and 120/100-second browser guards. This partitions
+cumulative test work rather than reducing capture quality or claiming a runtime
+speedup. The refresh helper always records a first frame, then waits for both
+all active slots captured and zero dirty probes within its bounded cycle;
+an initialized count alone cannot skip a changed-light recapture.
+
+### Validation and evidence
+
+All seven focused native Windows ASan CTests and all eighteen focused web-debug
+CTest checks pass with Clang 23.1.2 and Node 24.22.1. Native GPU coverage is
+Vulkan with validation and OpenGL; browser coverage is SwiftShader WebGL,
+ANGLE D3D11/WARP and WebGPU. The package CPU fixture now has 22 cases, including
+shared/omitted anchors, retained history, camera recentering at large coordinates,
+regional and shadow invalidation, continuously dirty fairness and packet replay
+safety. Pixel checks retain the independent constant/directional-light,
+visibility, coarse/fine/filter-edge, sparse readiness, sphere contact and real
+thin-wall oracles. The D3D11 room group passed at 119.92 seconds against its
+unchanged 120-second guard; this is a local pass with little timing margin,
+not a guarantee for other software-renderer hosts.
+
+Additional native ASan quick cases pass for the actual 256-building nearby view
+(1792 mesh instances), a 64-building expanded overview with debug markers and
+240 frames of camera travel with a moving light. The nearby 256-building case
+has 510 resident physical probes in 74 blocks and keeps base spacing 1.5 at the
+primary floor receiver under capacity 512. The overview deliberately spreads
+that capacity over a wider range. All these cases retain unchanged match hashes,
+the twelve-texture limit and capture counts within the requested maximum.
+The production docs build passes on Node 24.22.1; subsequent prose corrections
+do not change its structure or examples.
+
+Controlled optimized timing rows and actual engine captures are recorded in
+[the adaptive evidence report](../bench/results/globalillumination-adaptive-20261102/README.md)
+after this source commit. Historical room timings below do not establish the
+adaptive implementation's cost. Other native OSes, Android, Unity execution and
+device-loss recovery are not locally exercised. No dev merge or CI dispatch is
+part of this work.
+
 ## Spatial quality follow-up (2026-11-01)
 
 The owner's "wobbling" report means uneven bands in the still image, not

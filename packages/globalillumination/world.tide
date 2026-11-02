@@ -1,3 +1,4 @@
+using Render3D;
 namespace GlobalIllumination;
 
 // Quality and work controls; placement is derived from rendered geometry.
@@ -7,6 +8,9 @@ struct Settings
     float probeSpacing = 1.5;
     int maxProbes = 512;
     int updatesPerFrame = 4;
+    float viewDistance = 48;
+    float captureDistance = 48;
+    int refreshInterval = 600;
     float intensity = 1;
     bool debug;
 }
@@ -19,6 +23,10 @@ struct FieldLayout
     int total;
     int atlasRows;
     float far;
+    bool sparse;
+    float size;
+    int nodeCount;
+    int depthLimit;
 }
 
 struct LocalBounds
@@ -42,6 +50,68 @@ struct SkinBounds
     LocalBounds bounds;
 }
 
+// Comparable material facts for regional invalidation. Live material resources
+// and prepared poses remain in the renderer query used for capture packets.
+struct CaptureMaterial
+{
+    SurfaceMode mode;
+    Color baseColor = Color.white;
+    float metallic;
+    float roughness = 0.5;
+    float3 emission;
+    bool receiveShadows = true;
+    bool doubleSided;
+    float alphaCutoff = 0.5;
+    float normalScale = 1;
+    float occlusionStrength = 1;
+    float heightScale;
+    float2 uvScale = float2(1);
+    float2 uvOffset;
+    bool deformed;
+}
+
+CaptureMaterial CaptureMaterialOf(Render3D.Material material)
+{
+    return CaptureMaterial {
+        mode = material.mode, baseColor = material.baseColor, metallic = material.metallic,
+        roughness = material.roughness, emission = material.emission,
+        receiveShadows = material.receiveShadows, doubleSided = material.doubleSided,
+        alphaCutoff = material.alphaCutoff, normalScale = material.normalScale,
+        occlusionStrength = material.occlusionStrength, heightScale = material.heightScale,
+        uvScale = material.uvScale, uvOffset = material.uvOffset, deformed = material.vertex != null
+    };
+}
+
+// Current presentation instance identities and comparable facts. Stored
+// transforms and bounds are shared by coverage, relocation and capture queries
+// rather than being recomputed per capture face.
+struct SceneInstance
+{
+    Entity entity;
+    bool skinned;
+    bool castShadows;
+    Asset<Render3D.Mesh3D> mesh;
+    Asset<Render3D.SkinnedMesh3D> skin;
+    CaptureMaterial material;
+    float4x4 transform;
+    LocalBounds bounds;
+    int slot;
+    bool placementEligible;
+    bool seen;
+}
+
+struct CoverageNode
+{
+    float3 minimum;
+    float size;
+    int children = -1;
+    int slot = -1;
+    int depth;
+    bool relevant;
+    float priority;
+    int probeMask = 134217727;
+}
+
 // Local geometry facts are read once per pack generation. Entity-to-slot
 // maps avoid searching the distinct asset list for every instance each frame.
 local singleton WorldBounds
@@ -60,6 +130,23 @@ local singleton WorldBounds
     float3 maximum;
     float requestedSpacing;
     int requestedMaxProbes;
+    float requestedViewDistance;
+    float requestedCaptureDistance;
+    float3 viewCell;
+    float3 viewDirection;
+    List<SceneInstance> instances;
+    Map<Entity, int> instanceSlots;
+    Map<Entity, int> skinInstanceSlots;
+    List<LocalBounds> changes;
+    List<LocalBounds> shadowChanges;
+    bool geometryChanged;
+    int revision;
+    int geometryRevision;
+    int sceneRevision = -1;
+    SceneIndex scene;
+    int topologyRevision;
+    List<CoverageNode> nodes;
+    List<int> lookup;
 }
 
 // Package-local C bridge to the existing pack generation counter. This is
@@ -73,6 +160,9 @@ Settings ClampSettings(Settings settings)
         probeSpacing = Math.Clamp(settings.probeSpacing, 0.1, 1000),
         maxProbes = Math.Clamp(settings.maxProbes, 125, 2048),
         updatesPerFrame = Math.Clamp(settings.updatesPerFrame, 0, 16),
+        viewDistance = Math.Clamp(settings.viewDistance, 1, 1000000),
+        captureDistance = Math.Clamp(settings.captureDistance, 1, 1000000),
+        refreshInterval = Math.Clamp(settings.refreshInterval, 1, 36000),
         intensity = Math.Clamp(settings.intensity, 0, 16),
         debug = settings.debug
     };
@@ -252,10 +342,552 @@ void ClearWorldBounds(mut WorldBounds world)
     world = default;
 }
 
+bool SameVector2(float2 a, float2 b)
+{
+    return a.x == b.x && a.y == b.y;
+}
+
+bool SameVector3(float3 a, float3 b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+bool SameVector4(float4 a, float4 b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+}
+
+bool SameTransform(float4x4 a, float4x4 b)
+{
+    // Squared differences can underflow to zero for distinct finite values.
+    return SameVector4(a.c0, b.c0) && SameVector4(a.c1, b.c1)
+        && SameVector4(a.c2, b.c2) && SameVector4(a.c3, b.c3);
+}
+
+bool SameMaterial(CaptureMaterial a, CaptureMaterial b)
+{
+    // Callback captures and texture identity/contents have no comparison API.
+    // Explicit invalidation and background refresh cover those parameters.
+    return a.mode == b.mode && a.baseColor.r == b.baseColor.r && a.baseColor.g == b.baseColor.g
+        && a.baseColor.b == b.baseColor.b && a.baseColor.a == b.baseColor.a
+        && a.metallic == b.metallic && a.roughness == b.roughness
+        && SameVector3(a.emission, b.emission) && a.receiveShadows == b.receiveShadows
+        && a.doubleSided == b.doubleSided && a.alphaCutoff == b.alphaCutoff
+        && a.normalScale == b.normalScale && a.occlusionStrength == b.occlusionStrength
+        && a.heightScale == b.heightScale && SameVector2(a.uvScale, b.uvScale)
+        && SameVector2(a.uvOffset, b.uvOffset);
+}
+
+bool SameShadowCoverage(CaptureMaterial a, CaptureMaterial b)
+{
+    if (a.mode != b.mode || a.doubleSided != b.doubleSided) return false;
+    // Opaque color/roughness/emission cannot change the shadow silhouette.
+    // Cutout UV/parallax and numeric alpha controls can. Opaque callback and
+    // texture changes use explicit invalidation instead of guessed identity.
+    if (a.mode != Render3D.SurfaceMode.Cutout && b.mode != Render3D.SurfaceMode.Cutout) return true;
+    return a.baseColor.a == b.baseColor.a && a.alphaCutoff == b.alphaCutoff
+        && a.heightScale == b.heightScale && SameVector2(a.uvScale, b.uvScale)
+        && SameVector2(a.uvOffset, b.uvOffset);
+}
+
+LocalBounds ShadowRegion(SceneInstance instance)
+{
+    // Rest bounds do not constrain the current extent of a skin or callback.
+    return instance.skinned || instance.material.deformed ? default : instance.bounds;
+}
+
+int ExistingInstance(WorldBounds bounds, Entity entity, bool skinned = false)
+{
+    mut int slot = 0;
+    bool found = skinned ? bounds.skinInstanceSlots.TryGet(entity, out slot) : bounds.instanceSlots.TryGet(entity, out slot);
+    if (!found) return -1;
+    return slot > 0 && slot <= bounds.instances.count ? slot - 1 : -1;
+}
+
+void StoreInstance(mut WorldBounds bounds, SceneInstance input, int previous)
+{
+    mut SceneInstance instance = input;
+    mut bool geometryChanged = previous < 0;
+    mut bool materialChanged = previous < 0;
+    mut bool casterChanged = previous < 0;
+    mut bool shadowChanged = previous < 0;
+    if (previous >= 0)
+    {
+        SceneInstance before = bounds.instances[previous];
+        geometryChanged = before.skinned != instance.skinned || !SameTransform(before.transform, instance.transform)
+            || before.placementEligible != instance.placementEligible
+            || before.material.deformed != instance.material.deformed
+            || (instance.skinned ? before.skin != instance.skin : before.mesh != instance.mesh);
+        materialChanged = !SameMaterial(before.material, instance.material);
+        casterChanged = before.castShadows != instance.castShadows;
+        shadowChanged = geometryChanged || casterChanged || !SameShadowCoverage(before.material, instance.material);
+        if (geometryChanged || materialChanged || casterChanged) bounds.changes.Add(before.bounds);
+        if (shadowChanged && before.castShadows) bounds.shadowChanges.Add(ShadowRegion(before));
+    }
+    if (geometryChanged || materialChanged || casterChanged || instance.skinned || instance.material.deformed)
+        bounds.changes.Add(instance.bounds);
+    if (instance.castShadows && (shadowChanged || instance.skinned || instance.material.deformed))
+        bounds.shadowChanges.Add(ShadowRegion(instance));
+    bounds.geometryChanged = bounds.geometryChanged || geometryChanged;
+    instance.seen = true;
+    if (previous >= 0) bounds.instances[previous] = instance;
+    else
+    {
+        if (instance.skinned) bounds.skinInstanceSlots[instance.entity] = bounds.instances.count + 1;
+        else bounds.instanceSlots[instance.entity] = bounds.instances.count + 1;
+        bounds.instances.Add(instance);
+    }
+}
+
+bool BoxesOverlap(float3 aMin, float3 aMax, float3 bMin, float3 bMax)
+{
+    return aMin.x <= bMax.x && aMax.x >= bMin.x && aMin.y <= bMax.y
+        && aMax.y >= bMin.y && aMin.z <= bMax.z && aMax.z >= bMin.z;
+}
+
+double BoundsDistanceSq(LocalBounds bounds, float3 point)
+{
+    if (!bounds.valid) return 1e300d;
+    double3 delta = double3(point) - Math.Clamp(double3(point), double3(bounds.minimum), double3(bounds.maximum));
+    return Math.LengthSq(delta);
+}
+
+bool UsefulCoverage(WorldBounds bounds, float3 minimum, float size, float3 eye, float viewDistance, float padding)
+{
+    LocalBounds cell = LocalBounds { valid = true, minimum = minimum, maximum = minimum + float3(size) };
+    if (BoundsDistanceSq(cell, eye) > double(viewDistance) * double(viewDistance)) return false;
+    float3 center = minimum + float3(size * 0.5);
+    float radius = size * 0.9 + padding;
+    var candidates = CaptureCandidates(bounds.scene, center, radius);
+    foreach (var index in candidates)
+    {
+        if (index < 0 || index >= bounds.instances.count) continue;
+        SceneInstance instance = bounds.instances[index];
+        if (!instance.bounds.valid || BoundsDistanceSq(instance.bounds, eye) > double(viewDistance) * double(viewDistance)) continue;
+        if (!BoxesOverlap(minimum - float3(padding), minimum + float3(size + padding),
+                          instance.bounds.minimum, instance.bounds.maximum)) continue;
+        if (instance.placementEligible && instance.slot >= 0 && instance.slot < bounds.staticBounds.count
+            && bounds.staticBounds[instance.slot].placement.valid)
+        {
+            // Actual triangles, rather than the filled instance AABB, decide
+            // whether a block has nearby receiver geometry.
+            GeometryHit hit = PlacementSurface(bounds.staticBounds[instance.slot].placement,
+                instance.transform, center, radius);
+            if (!hit.found) continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+int CoverageProbeMask(WorldBounds bounds, float3 minimum, float size, float baseSpacing,
+                      float3 eye, float viewDistance)
+{
+    float spacing = size * 0.5;
+    if (spacing <= 0) return 0;
+    // A logical node is useful only where its interpolation support overlaps a
+    // receiver. Include the normal bias and the cross-block filter footprint.
+    // One conservative instance query supplies all 27 bits for this node.
+    float padding = baseSpacing * 0.3;
+    float3 lower = minimum - float3(padding);
+    float3 upper = minimum + float3(size + padding);
+    float3 center = minimum + float3(size * 0.5);
+    var candidates = CaptureCandidates(bounds.scene, center, size * 0.9 + padding * 1.733);
+    mut int mask = 0;
+    foreach (var index in candidates)
+    {
+        if (index < 0 || index >= bounds.instances.count) continue;
+        LocalBounds receiver = bounds.instances[index].bounds;
+        if (!receiver.valid || BoundsDistanceSq(receiver, eye) > double(viewDistance) * double(viewDistance)
+            || !BoxesOverlap(lower, upper, receiver.minimum, receiver.maximum)) continue;
+        float3 lo = Math.Clamp((receiver.minimum - float3(padding) - minimum) / spacing, float3(0), float3(2));
+        float3 hi = Math.Clamp((receiver.maximum + float3(padding) - minimum) / spacing, float3(0), float3(2));
+        int3 first = int3(Math.Floor(lo));
+        int3 last = int3(Math.Ceil(hi));
+        for (var z = first.z; z <= last.z; z++)
+            for (var y = first.y; y <= last.y; y++)
+                for (var x = first.x; x <= last.x; x++) mask |= 1 << (x + 3 * y + 9 * z);
+        if (mask == 134217727) return mask;
+    }
+    return mask;
+}
+
+float CoveragePriority(WorldBounds bounds, float3 minimum, float size, float3 eye,
+                       float3 forward, float minimumSize, float viewDistance)
+{
+    float padding = minimumSize * 0.15;
+    float3 maximum = minimum + float3(size);
+    float3 lower = minimum - float3(padding);
+    float3 upper = maximum + float3(padding);
+    float3 center = minimum + float3(size * 0.5);
+    var candidates = CaptureCandidates(bounds.scene, center, size * 0.9 + padding);
+    mut bool found = false;
+    mut double nearest = 1e300d;
+    mut float facing = 0;
+    foreach (var index in candidates)
+    {
+        if (index < 0 || index >= bounds.instances.count) continue;
+        LocalBounds receiver = bounds.instances[index].bounds;
+        if (!receiver.valid || BoundsDistanceSq(receiver, eye) > double(viewDistance) * double(viewDistance)) continue;
+        float3 receiverMin = Math.Max(lower, receiver.minimum);
+        float3 receiverMax = Math.Min(upper, receiver.maximum);
+        if (receiverMin.x > receiverMax.x || receiverMin.y > receiverMax.y || receiverMin.z > receiverMax.z) continue;
+        float3 closest = Math.Clamp(eye, receiverMin, receiverMax);
+        double distanceSq = Math.LengthSq(double3(closest) - double3(eye));
+        float3 support = Math.Clamp(eye + forward * minimumSize, receiverMin, receiverMax);
+        double3 delta = double3(support) - double3(eye);
+        double supportDistance = Math.Sqrt(Math.LengthSq(delta));
+        float alignment = supportDistance > 0d ? float(Math.Dot(delta / supportDistance, double3(forward))) : 1;
+        float visible = Math.Clamp(alignment, 0, 1);
+        if (!found || distanceSq < nearest || (distanceSq == nearest && visible > facing))
+        {
+            found = true;
+            nearest = distanceSq;
+            facing = visible;
+        }
+    }
+    if (!found)
+    {
+        float3 closest = Math.Clamp(eye, minimum, maximum);
+        nearest = Math.LengthSq(double3(closest) - double3(eye));
+        float3 support = Math.Clamp(eye + forward * minimumSize, minimum, maximum);
+        double3 delta = double3(support) - double3(eye);
+        double supportDistance = Math.Sqrt(Math.LengthSq(delta));
+        facing = supportDistance > 0d ? Math.Clamp(float(Math.Dot(delta / supportDistance, double3(forward))), 0, 1) : 1;
+    }
+    // Empty space in a large cell is not nearby receiver support. Measure the
+    // closest geometry intersection, so a distant building cannot claim the
+    // camera's detail budget just because its containing cell reaches the view.
+    // Nested receiver intersections preserve parent/child distance ordering;
+    // the linear size and bounded 1..2 facing bonus keep importance monotone.
+    double denominator = Math.Sqrt(nearest) + double(minimumSize) * 0.25d;
+    float front = facing * facing;
+    return float(double(size) / (denominator * denominator)) * (1 + front * front);
+}
+
+int CountCoverageProbes(List<CoverageNode> nodes, List<CoverageNode> replacement,
+                        int replaceIndex, int maxProbes)
+{
+    // Neighboring bricks share physical captures wherever their dyadic anchors
+    // coincide. Count the proposed leaf set, not 27 private records per brick.
+    mut Map<int, int> heads = default;
+    mut List<PlacementWeld> positions = default;
+    for (var source = 0; source < 2; source++)
+    {
+        int count = source == 0 ? nodes.count : replacement.count;
+        for (var index = 0; index < count; index++)
+        {
+            if (source == 0 && index == replaceIndex) continue;
+            CoverageNode node = source == 0 ? nodes[index] : replacement[index];
+            if (!node.relevant || node.children >= 0) continue;
+            for (var probe = 0; probe < 27; probe++)
+            {
+                if ((node.probeMask & (1 << probe)) == 0) continue;
+                float3 position = node.minimum
+                    + float3(probe % 3, (probe / 3) % 3, probe / 9) * (node.size * 0.5);
+                int shared = PlacementWeldIndex(heads, positions, position, 0);
+                if (shared >= maxProbes) return positions.count;
+            }
+        }
+    }
+    return positions.count;
+}
+
+float StableProbeSpacing(float3 eye, float requested)
+{
+    mut double spacing = double(Math.Clamp(requested, 0.1, 1000));
+    if (!FiniteBoundsValue(eye)) return float(spacing);
+    double precision = Math.Cmax(Math.Abs(double3(eye))) * 1e-6d;
+    // Keep one world-anchored phase while the view moves. A continuously
+    // varying precision floor makes eye / spacing constant at large positions,
+    // preventing cell-based streaming and invalidating every retained capture.
+    for (var attempt = 0; attempt < 112; attempt++)
+    {
+        if (spacing >= precision) return float(spacing);
+        spacing *= 2d;
+    }
+    return float(spacing);
+}
+
+bool CoverageAhead(List<CoverageNode> nodes, int a, int b, bool minimum)
+{
+    return (minimum ? nodes[a].priority < nodes[b].priority : nodes[a].priority > nodes[b].priority)
+        || (nodes[a].priority == nodes[b].priority && a < b);
+}
+
+void QueueCoverage(mut List<int> queue, List<CoverageNode> nodes, int index, bool minimum = false)
+{
+    mut int at = queue.count;
+    queue.Add(index);
+    while (at > 0)
+    {
+        int parent = (at - 1) / 2;
+        if (!CoverageAhead(nodes, index, queue[parent], minimum)) break;
+        queue[at] = queue[parent];
+        at = parent;
+    }
+    queue[at] = index;
+}
+
+int PopCoverage(mut List<int> queue, List<CoverageNode> nodes, bool minimum = false)
+{
+    if (queue.count <= 0) return -1;
+    int result = queue[0];
+    int last = queue[queue.count - 1];
+    queue.RemoveAt(queue.count - 1);
+    if (queue.count == 0) return result;
+    mut int at = 0;
+    while (at * 2 + 1 < queue.count)
+    {
+        mut int child = at * 2 + 1;
+        if (child + 1 < queue.count && CoverageAhead(nodes, queue[child + 1], queue[child], minimum)) child++;
+        if (!CoverageAhead(nodes, queue[child], last, minimum)) break;
+        queue[at] = queue[child];
+        at = child;
+    }
+    queue[at] = last;
+    return result;
+}
+
+int MergeableCoverageChildren(List<CoverageNode> nodes, int index)
+{
+    if (index < 0 || index >= nodes.count) return 0;
+    CoverageNode node = nodes[index];
+    if (!node.relevant || node.children < 0 || node.children > nodes.count - 8) return 0;
+    mut int count = 0;
+    for (var child = 0; child < 8; child++)
+    {
+        CoverageNode entry = nodes[node.children + child];
+        if (!entry.relevant) continue;
+        if (entry.children >= 0) return 0;
+        count++;
+    }
+    return count;
+}
+
+void CopyCoverageNode(List<CoverageNode> source, mut List<CoverageNode> destination,
+                      int sourceIndex, int destinationIndex, int depth)
+{
+    if (sourceIndex < 0 || sourceIndex >= source.count
+        || destinationIndex < 0 || destinationIndex >= destination.count) return;
+    mut CoverageNode node = source[sourceIndex];
+    node.slot = -1;
+    if (!node.relevant || node.children < 0 || depth >= 24)
+    {
+        node.children = -1;
+        destination[destinationIndex] = node;
+        return;
+    }
+    int first = node.children;
+    node.children = destination.count;
+    destination[destinationIndex] = node;
+    for (var child = 0; child < 8; child++) destination.Add(default);
+    for (var child = 0; child < 8; child++)
+        CopyCoverageNode(source, destination, first + child, node.children + child, depth + 1);
+}
+
+void BuildCoverage(mut WorldBounds bounds, Settings settings, float3 eye, float3 forward)
+{
+    bounds.nodes.Clear();
+    bounds.lookup.Clear();
+    bounds.ready = false;
+    if (bounds.instances.count == 0 || !FiniteBoundsValue(eye))
+    {
+        bounds.layout = default;
+        bounds.topologyRevision++;
+        return;
+    }
+    float spacing = StableProbeSpacing(eye, settings.probeSpacing);
+    float minimumSize = spacing * 2;
+    mut float size = minimumSize * 128;
+    mut int depth = 7;
+    while (double(settings.viewDistance) > double(size) * 0.25d && depth < 24)
+    {
+        size *= 2;
+        depth++;
+    }
+    // Every subdivision keeps the same half-base-cell phase. This avoids
+    // probes coinciding with common integer wall/floor planes, including
+    // thin-wall edges whose tangential captures can see around the occluder.
+    float3 root = Math.Floor(eye / (size * 0.25)) * (size * 0.25)
+        - float3(size * 0.5) + float3(spacing * 0.5);
+    float viewDistance = Math.Min(settings.viewDistance, size * 0.25);
+    if (!FiniteBoundsValue(root) || !FiniteBoundsValue(root + float3(size)) || size <= 0)
+    {
+        bounds.layout = default;
+        bounds.topologyRevision++;
+        return;
+    }
+    // Build triangle caches only for instances that can influence resident
+    // receiver coverage. Distant assets do not force eager geometry decoding.
+    var nearby = CaptureCandidates(bounds.scene, eye, viewDistance);
+    foreach (var i in nearby)
+    {
+        if (i < 0 || i >= bounds.instances.count) continue;
+        SceneInstance instance = bounds.instances[i];
+        if (!instance.placementEligible || BoundsDistanceSq(instance.bounds, eye) > double(viewDistance) * double(viewDistance)) continue;
+        int slot = instance.slot;
+        if (slot < 0 || slot >= bounds.staticBounds.count || bounds.staticBounds[slot].placementReady) continue;
+        mut StaticBounds cached = bounds.staticBounds[slot];
+        cached.placement = BuildPlacementMesh(cached.mesh.Value);
+        cached.placementReady = true;
+        bounds.staticBounds[slot] = cached;
+    }
+    // Cover the normal bias (.04 spacing) and boundary filter (.25 spacing),
+    // so receivers do not fade just because geometry lies near a leaf face.
+    bool relevant = UsefulCoverage(bounds, root, size, eye, viewDistance, spacing * 0.3);
+    bounds.nodes.Add(CoverageNode {
+        minimum = root, size = size, relevant = relevant,
+        priority = relevant ? CoveragePriority(bounds, root, size, eye, forward, minimumSize, viewDistance) : 0,
+        probeMask = relevant ? CoverageProbeMask(bounds, root, size, spacing, eye, viewDistance) : 0
+    });
+    mut int leaves = relevant ? 1 : 0;
+    int budget = Math.Clamp(settings.maxProbes, 125, 2048);
+    int limit = 128;
+    int maxNodes = 576 * 64 - limit * 28;
+    mut List<int> pending = [];
+    if (relevant) QueueCoverage(pending, bounds.nodes, 0);
+    // Plan the useful receiver geometry before applying the physical budget.
+    // Fitting one split at a time can deadlock: eight coarse neighboring bricks
+    // share 125 anchors, but shrinking just one temporarily needs more anchors
+    // even when refining all eight together still fits the same 125 probes.
+    // The heap spends the bounded planning table on the most important regions
+    // first if the requested detail cannot fit even the CPU planning budget.
+    for (var iteration = 0; iteration < 4096; iteration++)
+    {
+        if (pending.count == 0 || bounds.nodes.count > maxNodes - 8) break;
+        int best = PopCoverage(pending, bounds.nodes);
+        if (best < 0) break;
+        CoverageNode node = bounds.nodes[best];
+        if (!node.relevant || node.size <= minimumSize * 1.001 || node.depth >= depth) continue;
+        float half = node.size * 0.5;
+        mut List<CoverageNode> children = [];
+        mut int count = 0;
+        for (var child = 0; child < 8; child++)
+        {
+            float3 lower = node.minimum + float3(child % 2, (child / 2) % 2, child / 4) * half;
+            bool useful = UsefulCoverage(bounds, lower, half, eye, viewDistance, spacing * 0.3);
+            children.Add(CoverageNode {
+                minimum = lower, size = half, depth = node.depth + 1, relevant = useful,
+                priority = useful ? CoveragePriority(bounds, lower, half, eye, forward, minimumSize, viewDistance) : 0,
+                probeMask = useful ? CoverageProbeMask(bounds, lower, half, spacing, eye, viewDistance) : 0
+            });
+            if (useful) count++;
+        }
+        if (count == 0)
+        {
+            bounds.nodes[best].relevant = false;
+            leaves--;
+            continue;
+        }
+        int first = bounds.nodes.count;
+        bounds.nodes[best].children = first;
+        foreach (var child in children) bounds.nodes.Add(child);
+        for (var child = 0; child < 8; child++)
+            if (children[child].relevant) QueueCoverage(pending, bounds.nodes, first + child);
+        leaves += count - 1;
+    }
+    // Cull any parent whose padded receiver candidates vanished at finer detail.
+    // Node indices increase down the tree, so one reverse pass propagates this.
+    for (var index = bounds.nodes.count - 1; index >= 0; index--)
+    {
+        CoverageNode node = bounds.nodes[index];
+        if (!node.relevant || node.children < 0) continue;
+        mut bool any = false;
+        for (var child = 0; child < 8; child++)
+            any = any || bounds.nodes[node.children + child].relevant;
+        if (!any) bounds.nodes[index].relevant = false;
+    }
+    mut List<int> parents = [];
+    parents.Resize(bounds.nodes.count);
+    for (var index = 0; index < parents.count; index++) parents[index] = -1;
+    mut List<int> multiple = [];
+    mut List<int> single = [];
+    for (var index = 0; index < bounds.nodes.count; index++)
+    {
+        CoverageNode node = bounds.nodes[index];
+        if (node.children >= 0)
+            for (var child = 0; child < 8; child++) parents[node.children + child] = index;
+        int count = MergeableCoverageChildren(bounds.nodes, index);
+        if (count > 1) QueueCoverage(multiple, bounds.nodes, index, true);
+        else if (count == 1) QueueCoverage(single, bounds.nodes, index, true);
+    }
+    mut int probes = CountCoverageProbes(bounds.nodes, [], -1, budget);
+    // Coarsening whole sibling groups lets neighboring regions reach a useful
+    // shared resolution before the budget is checked. Every merge removes at
+    // least one internal node, so even non-monotonic unique counts eventually
+    // reach the root's 27-probe fallback within the bounded plan.
+    // Compare both min-heaps by importance. Cheap distant single-child paths
+    // must be allowed to collapse before expensive nearby sibling groups.
+    for (var iteration = 0; iteration < 32768 && (probes > budget || leaves > limit); iteration++)
+    {
+        mut int best = -1;
+        mut int bestCount = 0;
+        while (best < 0 && (multiple.count > 0 || single.count > 0))
+        {
+            bool group = multiple.count > 0 && (single.count == 0
+                || CoverageAhead(bounds.nodes, multiple[0], single[0], true));
+            int candidate = group ? PopCoverage(multiple, bounds.nodes, true) : PopCoverage(single, bounds.nodes, true);
+            int count = MergeableCoverageChildren(bounds.nodes, candidate);
+            if (count <= 0) continue;
+            if (group && count == 1) { QueueCoverage(single, bounds.nodes, candidate, true); continue; }
+            if (!group && count > 1) { QueueCoverage(multiple, bounds.nodes, candidate, true); continue; }
+            best = candidate;
+            bestCount = count;
+        }
+        if (best < 0) break;
+        int first = bounds.nodes[best].children;
+        for (var child = 0; child < 8; child++) bounds.nodes[first + child].relevant = false;
+        bounds.nodes[best].children = -1;
+        leaves -= bestCount - 1;
+        int parent = parents[best];
+        int count = MergeableCoverageChildren(bounds.nodes, parent);
+        if (count > 1) QueueCoverage(multiple, bounds.nodes, parent, true);
+        else if (count == 1) QueueCoverage(single, bounds.nodes, parent, true);
+        probes = CountCoverageProbes(bounds.nodes, [], -1, budget);
+    }
+    // The complete plan is temporary. Keep only the budgeted reachable tree so
+    // atlas uploads, stable-slot reconciliation and later lookups stay small.
+    mut List<CoverageNode> compact = [];
+    compact.Add(default);
+    CopyCoverageNode(bounds.nodes, compact, 0, 0, 0);
+    bounds.nodes = compact;
+    int total = budget;
+    bounds.layout = FieldLayout {
+        sparse = true, minimum = root, size = size, spacing = spacing,
+        counts = int3(3), total = total, atlasRows = (total + 31) / 32,
+        far = settings.captureDistance, nodeCount = bounds.nodes.count, depthLimit = depth
+    };
+    bounds.lookup.Resize(bounds.nodes.count);
+    for (var i = 0; i < bounds.nodes.count; i++)
+        bounds.lookup[i] = bounds.nodes[i].children >= 0 ? bounds.nodes[i].children + 256 : 0;
+    bounds.ready = leaves > 0;
+    bounds.topologyRevision++;
+}
+
+int FindBlock(WorldBounds bounds, float3 position)
+{
+    if (!bounds.ready || bounds.nodes.count == 0) return -1;
+    mut int at = 0;
+    for (var depth = 0; depth <= bounds.layout.depthLimit && depth <= 24; depth++)
+    {
+        if (at < 0 || at >= bounds.nodes.count) return -1;
+        CoverageNode node = bounds.nodes[at];
+        if (!node.relevant || position.x < node.minimum.x || position.y < node.minimum.y || position.z < node.minimum.z
+            || position.x > node.minimum.x + node.size || position.y > node.minimum.y + node.size
+            || position.z > node.minimum.z + node.size) return -1;
+        if (node.children < 0) return node.slot;
+        float3 middle = node.minimum + float3(node.size * 0.5);
+        at = node.children + (position.x >= middle.x ? 1 : 0)
+            + (position.y >= middle.y ? 2 : 0) + (position.z >= middle.z ? 4 : 0);
+    }
+    return -1;
+}
+
 [After(Render3D.Stages.Prepare), Before(Render3D.Stages.Lights)]
 view CollectWorldBounds(mut WorldBounds bounds, Environment environment, Render3D.Renderer renderer,
-    World world, query (Render3D.MeshRenderer mesh, with Render3D.Material) meshes,
-    query (Render3D.SkinnedMeshRenderer mesh, with Render3D.Material) skins)
+    World world, query (Render3D.MeshRenderer mesh, Render3D.Material material) meshes,
+    query (Render3D.SkinnedMeshRenderer mesh, Render3D.Material material) skins)
 {
     Settings settings = ClampSettings(environment.settings);
     if (!renderer.enabled || !settings.enabled)
@@ -269,59 +901,105 @@ view CollectWorldBounds(mut WorldBounds bounds, Environment environment, Render3
         ClearWorldBounds(bounds);
         bounds.generation = generation;
     }
-    // Entity generations prevent stale reuse; bound the retained lookup maps
-    // as a world repeatedly spawns and destroys objects without a pack reload.
-    if (bounds.staticSlots.count > 4096) bounds.staticSlots.Clear();
-    if (bounds.skinnedSlots.count > 4096) bounds.skinnedSlots.Clear();
+    // Retain stable entity-to-asset lookups for large live scenes while still
+    // bounding stale entries from spawn churn and invalid visible assets.
+    int slotLimit = Math.Max(4096, Math.Min(bounds.geometryCount, 1000000000) * 2);
+    if (bounds.staticSlots.count > slotLimit) bounds.staticSlots.Clear();
+    if (bounds.skinnedSlots.count > slotLimit) bounds.skinnedSlots.Clear();
+    bounds.changes.Clear();
+    bounds.shadowChanges.Clear();
+    bounds.geometryChanged = false;
+    for (var i = 0; i < bounds.instances.count; i++) bounds.instances[i].seen = false;
     mut LocalBounds observed = default;
-    bounds.geometryCount = 0;
     foreach (var object in meshes)
     {
         if (!object.mesh.visible) continue;
         LocalBounds local = StaticLocalBounds(bounds, object.entity, object.mesh.mesh);
-        LocalBounds placed = TransformBounds(local, world.LocalToWorld(object.entity));
+        float4x4 transform = world.LocalToWorld(object.entity);
+        int previous = ExistingInstance(bounds, object.entity);
+        bool sameGeometry = previous >= 0 && !bounds.instances[previous].skinned
+            && bounds.instances[previous].mesh == object.mesh.mesh
+            && SameTransform(bounds.instances[previous].transform, transform);
+        LocalBounds placed = sameGeometry ? bounds.instances[previous].bounds : TransformBounds(local, transform);
         if (!placed.valid) continue;
+        int slot = bounds.staticSlots[object.entity] - 1;
+        StoreInstance(bounds, SceneInstance {
+            entity = object.entity, mesh = object.mesh.mesh, material = CaptureMaterialOf(object.material),
+            castShadows = object.mesh.castShadows && object.material.mode != SurfaceMode.Transparent,
+
+            transform = transform, bounds = placed, slot = slot,
+            placementEligible = object.material.mode == Render3D.SurfaceMode.Opaque
+                && !object.material.doubleSided && object.material.vertex == null
+        }, previous);
         observed = JoinBounds(observed, placed);
-        bounds.geometryCount++;
     }
     foreach (var object in skins)
     {
         if (!object.mesh.visible) continue;
         LocalBounds local = SkinnedLocalBounds(bounds, object.entity, object.mesh.mesh);
-        LocalBounds placed = TransformBounds(local, world.LocalToWorld(object.entity));
+        float4x4 transform = world.LocalToWorld(object.entity);
+        int previous = ExistingInstance(bounds, object.entity, true);
+        bool sameGeometry = previous >= 0 && bounds.instances[previous].skinned
+            && bounds.instances[previous].skin == object.mesh.mesh
+            && SameTransform(bounds.instances[previous].transform, transform);
+        LocalBounds placed = sameGeometry ? bounds.instances[previous].bounds : TransformBounds(local, transform);
         if (!placed.valid) continue;
+        StoreInstance(bounds, SceneInstance {
+            entity = object.entity, skinned = true, skin = object.mesh.mesh,
+            material = CaptureMaterialOf(object.material),
+            castShadows = object.mesh.castShadows && object.material.mode != SurfaceMode.Transparent,
+
+            transform = transform, bounds = placed, slot = bounds.skinnedSlots[object.entity] - 1
+        }, previous);
         observed = JoinBounds(observed, placed);
-        bounds.geometryCount++;
     }
-    if (!observed.valid)
+    // Compact disappeared instances and rebuild their bounded identity index.
+    // Stable scene order is retained for unchanged entities.
+    mut bool removed = false;
+    for (var i = bounds.instances.count - 1; i >= 0; i--)
     {
-        bounds.ready = false;
-        bounds.layout = default;
-        return;
+        if (bounds.instances[i].seen) continue;
+        bounds.changes.Add(bounds.instances[i].bounds);
+        if (bounds.instances[i].castShadows) bounds.shadowChanges.Add(ShadowRegion(bounds.instances[i]));
+        bounds.instances.RemoveAt(i);
+        removed = true;
     }
-    bool reset = !bounds.ready || bounds.requestedSpacing != settings.probeSpacing
-        || bounds.requestedMaxProbes != settings.maxProbes;
-    if (reset)
+    if (removed)
     {
-        bounds.minimum = observed.minimum;
-        bounds.maximum = observed.maximum;
+        bounds.geometryChanged = true;
+        bounds.instanceSlots.Clear();
+        bounds.skinInstanceSlots.Clear();
+        for (var i = 0; i < bounds.instances.count; i++)
+        {
+            if (bounds.instances[i].skinned) bounds.skinInstanceSlots[bounds.instances[i].entity] = i + 1;
+            else bounds.instanceSlots[bounds.instances[i].entity] = i + 1;
+        }
     }
-    else
+    if (bounds.changes.count > 0) bounds.revision++;
+    if (bounds.geometryChanged) bounds.geometryRevision++;
+    if (bounds.sceneRevision != bounds.geometryRevision)
     {
-        float3 coveredMax = bounds.layout.minimum
-            + float3(bounds.layout.counts - int3(1)) * bounds.layout.spacing;
-        float margin = bounds.layout.spacing * 0.2;
-        if (observed.minimum.x >= bounds.layout.minimum.x + margin
-            && observed.minimum.y >= bounds.layout.minimum.y + margin
-            && observed.minimum.z >= bounds.layout.minimum.z + margin
-            && observed.maximum.x <= coveredMax.x - margin
-            && observed.maximum.y <= coveredMax.y - margin
-            && observed.maximum.z <= coveredMax.z - margin) return;
-        bounds.minimum = Math.Min(bounds.minimum, observed.minimum);
-        bounds.maximum = Math.Max(bounds.maximum, observed.maximum);
+        bounds.scene = BuildSceneIndex(bounds);
+        bounds.sceneRevision = bounds.geometryRevision;
     }
-    bounds.layout = BuildLayout(bounds.minimum, bounds.maximum, settings.probeSpacing, settings.maxProbes);
-    bounds.ready = bounds.layout.total > 0;
+    bounds.geometryCount = bounds.instances.count;
+    bounds.minimum = observed.valid ? observed.minimum : float3(0);
+    bounds.maximum = observed.valid ? observed.maximum : float3(0);
+    float3 eye = renderer.camera.position;
+    float precisionSpacing = StableProbeSpacing(eye, settings.probeSpacing);
+    float3 viewCell = Math.Floor(eye / (precisionSpacing * 2));
+    float3 forward = Math.Mul(float4x4.TRS(float3(0), renderer.camera.rotation, float3(1)), float4(0, 0, 1, 0)).xyz;
+    bool changed = !bounds.ready || !FiniteBoundsValue(eye) || bounds.geometryChanged
+        || bounds.layout.spacing != precisionSpacing || bounds.requestedSpacing != settings.probeSpacing
+        || bounds.requestedMaxProbes != settings.maxProbes || bounds.requestedViewDistance != settings.viewDistance
+        || bounds.requestedCaptureDistance != settings.captureDistance
+        || Math.LengthSq(viewCell - bounds.viewCell) > 0 || Math.Dot(forward, bounds.viewDirection) < 0.95;
+    if (!changed) return;
     bounds.requestedSpacing = settings.probeSpacing;
     bounds.requestedMaxProbes = settings.maxProbes;
+    bounds.requestedViewDistance = settings.viewDistance;
+    bounds.requestedCaptureDistance = settings.captureDistance;
+    bounds.viewCell = viewCell;
+    bounds.viewDirection = forward;
+    BuildCoverage(bounds, settings, eye, forward);
 }

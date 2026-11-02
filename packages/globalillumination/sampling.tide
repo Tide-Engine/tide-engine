@@ -51,22 +51,109 @@ float2 OctUV(float3 direction)
     return folded * 0.5 + float2(0.5);
 }
 
+int AtlasHeight(int rows)
+{
+    // The last 64 rows hold sparse lookup codes, outside every probe gutter.
+    return rows * 19 + 64;
+}
+
 float2 AtlasUV(int probe, int rows, float3 direction)
 {
     float2 tile = float2(probe % 32, probe / 32) * float2(18, 19);
-    return (tile + float2(1) + OctUV(direction) * 16) / float2(576, rows * 19);
+    return (tile + float2(1) + OctUV(direction) * 16) / float2(576, AtlasHeight(rows));
 }
 
 // A separate row keeps position metadata outside the octahedral filter gutter.
 // Offsets are relative to the stable lattice anchor, in units of spacing.
-float3 ProbeOffset(Texture distance, int probe, int rows)
+Color ProbeMetadata(Texture distance, int probe, int rows)
 {
     float2 pixel = float2(probe % 32, probe / 32) * float2(18, 19) + float2(0.5, 18.5);
     // Pixel-center reads share the moment sampler, including its filter, so
     // fully mapped skinned materials still use only two GI texture bindings.
-    Color value = distance.Sample(pixel / float2(576, rows * 19), Filter.Bilinear, Wrap.Clamp);
+    return distance.Sample(pixel / float2(576, AtlasHeight(rows)), Filter.Bilinear, Wrap.Clamp);
+}
+
+float3 ProbeOffset(Texture distance, int probe, int rows)
+{
+    Color value = ProbeMetadata(distance, probe, rows);
     // 128/255 represents zero exactly on the Rgba8 fallback as well.
     return float3(value.r, value.g, value.b) - float3(128.0 / 255.0);
+}
+
+struct SampleBrick
+{
+    int slot = -1;
+    float3 minimum;
+    float size;
+    int transitions = 63;
+}
+
+Color LookupData(Texture distance, int rows, int address)
+{
+    if (address < 0 || address >= 576 * 64) return Color(0, 0, 0, 1);
+    float2 pixel = float2(address % 576, rows * 19 + address / 576) + float2(0.5);
+    return distance.Sample(pixel / float2(576, AtlasHeight(rows)), Filter.Bilinear, Wrap.Clamp);
+}
+
+int DecodeLookupCode(Color packed)
+{
+    return int(Math.Floor(packed.r * 255 + 0.5)) + int(Math.Floor(packed.g * 255 + 0.5)) * 256;
+}
+
+int DecodeLookupMask(Color packed)
+{
+    return DecodeLookupCode(packed) + int(Math.Floor(packed.b * 255 + 0.5)) * 65536;
+}
+
+int LookupCode(Texture distance, int rows, int address)
+{
+    return DecodeLookupCode(LookupData(distance, rows, address));
+}
+
+SampleBrick LookupBrick(Texture distance, FieldLayout layout, float3 position)
+{
+    SampleBrick missing = SampleBrick { slot = -1, transitions = 63 };
+    if (layout.nodeCount <= 0 || layout.size <= 0
+        || position.x < layout.minimum.x || position.y < layout.minimum.y || position.z < layout.minimum.z
+        || position.x > layout.minimum.x + layout.size || position.y > layout.minimum.y + layout.size
+        || position.z > layout.minimum.z + layout.size) return missing;
+    mut float3 minimum = layout.minimum;
+    mut float size = layout.size;
+    mut int address = 0;
+    // Read the root and at most depthLimit descendants. The CPU and shader
+    // both bound lookup depth; a malformed child can never escape the strip.
+    int end = Math.Clamp(layout.depthLimit, 0, 24);
+    for (var depth = 0; depth <= end; depth++)
+    {
+        if (address < 0 || address >= layout.nodeCount || address >= 576 * 64) return missing;
+        Color packed = LookupData(distance, layout.atlasRows, address);
+        int code = DecodeLookupCode(packed);
+        if (code <= 0)
+        {
+            // Keep the known empty domain so nearby filter corners can reuse
+            // the miss without repeating the same serial tree traversal.
+            if (code == 0) return SampleBrick { slot = -1, minimum = minimum, size = size, transitions = 63 };
+            return missing;
+        }
+        if (code <= 128)
+        {
+            int slot = code - 1;
+            if (layout.nodeCount + slot * 28 + 27 >= 576 * 64) return missing;
+            return SampleBrick { slot = slot, minimum = minimum, size = size,
+                transitions = int(Math.Floor(packed.b * 255 + 0.5)) };
+        }
+        if (code < 256 || depth == end) return missing;
+        int first = code - 256;
+        if (first < 0 || first > layout.nodeCount - 8) return missing;
+        size *= 0.5;
+        float3 middle = minimum + float3(size);
+        int x = position.x >= middle.x ? 1 : 0;
+        int y = position.y >= middle.y ? 1 : 0;
+        int z = position.z >= middle.z ? 1 : 0;
+        minimum += float3(x, y, z) * size;
+        address = first + x + y * 2 + z * 4;
+    }
+    return missing;
 }
 
 float3 CaptureLight(Texture light0, Texture light1, Texture light2,
@@ -112,11 +199,15 @@ frag PackRays(Vertex vertex, out Color light, out Color data, Environment enviro
         environment.light3, environment.light4, environment.light5, face, uv);
     Color hit = CaptureData(environment.data0, environment.data1, environment.data2,
         environment.data3, environment.data4, environment.data5, face, uv);
-    float back = hit.b > 0.5 ? Math.Clamp(hit.g, 0, 1) : 0;
+    // A cube's axial far planes include corners outside the radial capture
+    // range. Saturated radial depth marks those hits as unsupported, rather
+    // than keeping their light or treating them as nearby back-face geometry.
+    bool beyond = hit.b > 0.5 && hit.r >= 1;
+    float back = hit.b > 0.5 && !beyond ? Math.Clamp(hit.g, 0, 1) : 0;
     // Both images use ordinary color targets. Alpha retains front-face
     // validity in the first and solid angle in the second; Sample returns
     // their straight RGB values. Encode the ray so Rgba8 can keep its signs.
-    light = Color(radiance, 1 - back);
+    light = Color(beyond ? float3(0) : radiance, 1 - back);
     data = Color(ray * 0.5 + float3(0.5), solidAngle);
 }
 
@@ -156,7 +247,7 @@ float CaptureInverseDepth(Texture data0, Texture data1, Texture data2,
     Color data = CaptureData(data0, data1, data2, data3, data4, data5, face, uv);
     float2 plane = uv * 2 - float2(1);
     float radial = Math.Max(data.r * far, spacing * 0.001);
-    return data.b > 0.5 ? spacing * Math.Sqrt(1 + Math.Dot(plane, plane)) / radial : 0;
+    return data.b > 0.5 && data.r < 1 ? spacing * Math.Sqrt(1 + Math.Dot(plane, plane)) / radial : 0;
 }
 
 frag Convolve(Vertex vertex, out Color irradiance, out Color moments, Environment environment)
@@ -203,16 +294,16 @@ frag Convolve(Vertex vertex, out Color irradiance, out Color moments, Environmen
     float2 fraction = capturePixel - lower;
     float a = CaptureInverseDepth(environment.data0, environment.data1, environment.data2,
         environment.data3, environment.data4, environment.data5, tap.face, lower,
-        environment.layout.spacing, environment.layout.far);
+        environment.captureSpacing, environment.captureFar);
     float b = CaptureInverseDepth(environment.data0, environment.data1, environment.data2,
         environment.data3, environment.data4, environment.data5, tap.face, lower + float2(1, 0),
-        environment.layout.spacing, environment.layout.far);
+        environment.captureSpacing, environment.captureFar);
     float c = CaptureInverseDepth(environment.data0, environment.data1, environment.data2,
         environment.data3, environment.data4, environment.data5, tap.face, lower + float2(0, 1),
-        environment.layout.spacing, environment.layout.far);
+        environment.captureSpacing, environment.captureFar);
     float d = CaptureInverseDepth(environment.data0, environment.data1, environment.data2,
         environment.data3, environment.data4, environment.data5, tap.face, lower + float2(1, 1),
-        environment.layout.spacing, environment.layout.far);
+        environment.captureSpacing, environment.captureFar);
     float axial = Math.Max(Math.Lerp(Math.Lerp(a, b, fraction.x), Math.Lerp(c, d, fraction.x), fraction.y), 0);
     float3 absolute = Math.Abs(direction);
     float inverse = axial * Math.Cmax(absolute) / (absolute.x + absolute.y + absolute.z);
@@ -233,12 +324,14 @@ float ProbeVisibility(float mean, float standardDeviation, float inverse, float 
 }
 
 float2 ReceiverTapVisibility(Color moments, float3 ray, float3 normal,
-                              float planeDistance, float pointInverse, float spacing, float tolerance, float3 delta)
+                              float planeDistance, float pointInverse, float spacing, float tolerance, float3 delta,
+                              float metricSpacing = 0)
 {
+    float metric = metricSpacing > 0 ? metricSpacing : spacing;
     float planeWeight = Math.SmoothStep(spacing * 0.0001, spacing * 0.01, Math.Abs(planeDistance));
     float denominator = Math.Abs(planeDistance) >= spacing * 0.0000001 ? planeDistance
         : planeDistance < 0 ? -spacing * 0.0000001 : spacing * 0.0000001;
-    float expected = spacing * Math.Dot(normal, ray) / denominator;
+    float expected = metric * Math.Dot(normal, ray) / denominator;
     mut float support = Math.Lerp(1, expected > 0 ? 1 : 0, planeWeight);
     // Grazing rays can meet the receiver plane far outside the actual surface
     // neighborhood. Prefer taps whose projected footprint stays near the pixel.
@@ -251,15 +344,17 @@ float2 ReceiverTapVisibility(Color moments, float3 ray, float3 normal,
     return float2(ProbeVisibility(moments.r, moments.g, inverse, tolerance) * support, support);
 }
 
-float2 ReceiverVisibility(Texture distance, int probe, int rows, float3 delta, float3 normal, float spacing, float tolerance)
+float2 ReceiverVisibility(Texture distance, int probe, int rows, float3 delta, float3 normal, float spacing, float tolerance,
+                           float metricSpacing = 0)
 {
-    float2 size = float2(576, rows * 19);
+    float metric = metricSpacing > 0 ? metricSpacing : spacing;
+    float2 size = float2(576, AtlasHeight(rows));
     float2 tile = float2(probe % 32, probe / 32) * float2(18, 19);
     float2 pixel = AtlasUV(probe, rows, delta) * size - float2(0.5);
     float2 lower = Math.Floor(pixel);
     float2 fraction = pixel - lower;
     float2 center = lower + float2(0.5);
-    float inverse = spacing / Math.Max(Math.Abs(delta.x) + Math.Abs(delta.y) + Math.Abs(delta.z), spacing * 0.001);
+    float inverse = metric / Math.Max(Math.Abs(delta.x) + Math.Abs(delta.y) + Math.Abs(delta.z), metric * 0.001);
     float planeDistance = Math.Dot(normal, delta);
     mut float2 previous = float2(0);
     mut float2 top = float2(0);
@@ -275,7 +370,7 @@ float2 ReceiverVisibility(Texture distance, int probe, int rows, float3 delta, f
         float2 offset = float2(x, y);
         Color moments = distance.Sample((center + offset) / size, Filter.Bilinear, Wrap.Clamp);
         float2 uv = (center + offset - tile - float2(1)) / 16;
-        float2 visibility = ReceiverTapVisibility(moments, OctVector(uv), normal, planeDistance, inverse, spacing, tolerance, delta);
+        float2 visibility = ReceiverTapVisibility(moments, OctVector(uv), normal, planeDistance, inverse, spacing, tolerance, delta, metric);
         if (sample == 0) back = moments.b;
         if (x == 0) previous = visibility;
         else
@@ -294,11 +389,14 @@ struct IrradianceBlend
     float3 light;
     float weight;
     float base;
+    float available;
 }
 
-IrradianceBlend GatherIrradiance(Texture irradiance, Texture distance, FieldLayout layout,
-                               int initialized, float3 world, float3 n, float3 visibilityNormal, float3 grid, float tolerance)
+IrradianceBlend GatherSparseIrradiance(Texture irradiance, Texture distance, FieldLayout layout,
+                               int initialized, float3 world, float3 n, float3 visibilityNormal, float3 grid, float tolerance,
+                               int baseProbe = 0, float metricSpacing = 0, int coordinateStride = 1)
 {
+    float metric = metricSpacing > 0 ? metricSpacing : layout.spacing;
     int3 lower = Math.Min(int3(Math.Floor(grid)), layout.counts - int3(2));
     float3 fraction = grid - float3(lower);
     mut IrradianceBlend result = default;
@@ -311,14 +409,23 @@ IrradianceBlend GatherIrradiance(Texture irradiance, Texture distance, FieldLayo
         int y = (sample / 2) % 2;
         int z = sample / 4;
         int3 coordinate = lower + int3(x, y, z);
-        int probe = coordinate.x + layout.counts.x * (coordinate.y + layout.counts.y * coordinate.z);
-        if (probe >= initialized) continue;
+        int3 lookupCoordinate = coordinate * coordinateStride;
+        int logical = baseProbe + lookupCoordinate.x + 3 * (lookupCoordinate.y + 3 * lookupCoordinate.z);
+        // Bricks share physical probe records at identical world anchors,
+        // including anchors common to different subdivision levels.
+        int probe = LookupCode(distance, layout.atlasRows, layout.nodeCount + logical) - 1;
+        if (probe < 0 || probe >= layout.total || initialized <= 0) continue;
         float3 axis = float3(x == 0 ? 1 - fraction.x : fraction.x,
             y == 0 ? 1 - fraction.y : fraction.y, z == 0 ? 1 - fraction.z : fraction.z);
         float spatial = axis.x * axis.y * axis.z;
         if (spatial <= 0) continue;
-        float3 eye = layout.minimum + (float3(coordinate)
-            + ProbeOffset(distance, probe, layout.atlasRows)) * layout.spacing;
+        Color metadata = ProbeMetadata(distance, probe, layout.atlasRows);
+        // Sparse slots initialize independently and can be reused. Their
+        // metadata alpha replaces the dense field's initialized prefix.
+        if (metadata.a < 0.5) continue;
+        result.available += spatial;
+        float3 offset = float3(metadata.r, metadata.g, metadata.b) - float3(128.0 / 255.0);
+        float3 eye = layout.minimum + float3(coordinate) * layout.spacing + offset * metric;
         // Cell selection is biased; occlusion ends at the real surface.
         // Moving the visibility endpoint could cross a thin occluder.
         float3 delta = world - eye;
@@ -333,7 +440,51 @@ IrradianceBlend GatherIrradiance(Texture irradiance, Texture distance, FieldLayo
         // Invalid neighbors still count as missing coverage, so the
         // remaining light fades continuously as valid support vanishes.
         result.base += baseWeight;
-        float2 visibility = ReceiverVisibility(distance, probe, layout.atlasRows, delta, visibilityNormal, layout.spacing, tolerance);
+        float2 visibility = ReceiverVisibility(distance, probe, layout.atlasRows, delta, visibilityNormal,
+            layout.spacing, tolerance, metric);
+        if (visibility.y >= 0.25) continue;
+        float weight = baseWeight * visibility.x;
+        Color sampled = irradiance.Sample(AtlasUV(probe, layout.atlasRows, n), Filter.Bilinear, Wrap.Clamp);
+        result.light += ClampHdr(float3(sampled.r, sampled.g, sampled.b)) * weight;
+        result.weight += weight;
+    }
+    return result;
+}
+
+// The analytic lattice path has a separate call graph. Keeping sparse tree
+// traversal out of these shaders avoids compiling it for every dense fixture.
+IrradianceBlend GatherLegacyIrradiance(Texture irradiance, Texture distance, FieldLayout layout,
+                                      int initialized, float3 world, float3 n, float3 visibilityNormal,
+                                      float3 grid, float tolerance)
+{
+    int3 lower = Math.Min(int3(Math.Floor(grid)), layout.counts - int3(2));
+    float3 fraction = grid - float3(lower);
+    mut IrradianceBlend result = default;
+    int end = Math.Min(layout.total, 8);
+    for (var sample = 0; sample < end; sample++)
+    {
+        int x = sample % 2;
+        int y = (sample / 2) % 2;
+        int z = sample / 4;
+        int3 coordinate = lower + int3(x, y, z);
+        int probe = coordinate.x + layout.counts.x * (coordinate.y + layout.counts.y * coordinate.z);
+        if (probe < 0 || probe >= layout.total || probe >= initialized) continue;
+        float3 axis = float3(x == 0 ? 1 - fraction.x : fraction.x,
+            y == 0 ? 1 - fraction.y : fraction.y, z == 0 ? 1 - fraction.z : fraction.z);
+        float spatial = axis.x * axis.y * axis.z;
+        if (spatial <= 0) continue;
+        float3 eye = layout.minimum + (float3(coordinate)
+            + ProbeOffset(distance, probe, layout.atlasRows)) * layout.spacing;
+        float3 delta = world - eye;
+        float receiverDistance = Math.Length(delta);
+        float alignment = Math.Clamp(Math.Dot(n, -delta) / Math.Max(receiverDistance, 0.000001), -1, 1);
+        float radius = Math.Saturate(receiverDistance / (layout.spacing * 0.04));
+        float forward = Math.Max(alignment, 0);
+        float facing = Math.Lerp(1, forward * forward + 0.01, radius);
+        float baseWeight = spatial * facing;
+        result.base += baseWeight;
+        float2 visibility = ReceiverVisibility(distance, probe, layout.atlasRows, delta, visibilityNormal,
+            layout.spacing, tolerance);
         if (visibility.y >= 0.25) continue;
         float weight = baseWeight * visibility.x;
         Color sampled = irradiance.Sample(AtlasUV(probe, layout.atlasRows, n), Filter.Bilinear, Wrap.Clamp);
@@ -350,23 +501,204 @@ float3 ResolveIrradiance(IrradianceBlend blend)
     return blend.weight > 0.0000001 ? ClampHdr(blend.light / blend.weight * trusted) : float3(0);
 }
 
-float3 Sample(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
-                int initialized, float3 world, float3 normal, float3 visibilityNormal, float tolerance = 0.01)
+float3 SampleBrickIrradiance(Texture irradiance, Texture distance, FieldLayout layout,
+                            int initialized, SampleBrick brick, float3 world, float3 n,
+                            float3 visibilityNormal, float3 position, float tolerance)
 {
-    if (initialized <= 0 || intensity <= 0 || layout.total <= 0) return float3(0);
-    float3 n = Math.Normalize(normal);
-    if (Math.LengthSq(n) < 0.5) return float3(0);
-    mut float3 planeNormal = Math.Normalize(visibilityNormal);
-    if (Math.LengthSq(planeNormal) < 0.5) planeNormal = n;
-    float3 position = world + n * (layout.spacing * 0.04);
+    FieldLayout local = FieldLayout {
+        minimum = brick.minimum, spacing = brick.size * 0.5, counts = int3(3),
+        total = layout.total, atlasRows = layout.atlasRows, sparse = true, nodeCount = layout.nodeCount
+    };
+    float3 grid = Math.Clamp((position - brick.minimum) / local.spacing, float3(0), float3(2));
+    IrradianceBlend blend = GatherSparseIrradiance(irradiance, distance, local, initialized,
+        world, n, visibilityNormal, grid, tolerance, brick.slot * 28, layout.spacing);
+    float3 fine = ResolveIrradiance(blend);
+    mut float3 result = fine;
+    // Refinement preserves the old parent nodes as this child's eight outer
+    // corners. Keep their lighting while new edge/face/interior nodes fill;
+    // otherwise an exact new midpoint has no captured fine-grid weight at all.
+    // Treat roundoff at complete support as full to retain the interior fast
+    // path instead of repeating a gather for a rounding-only missing weight.
+    if (blend.available < 0.99999)
+    {
+        FieldLayout coarse = FieldLayout {
+            minimum = brick.minimum, spacing = brick.size, counts = int3(2),
+            total = layout.total, atlasRows = layout.atlasRows, sparse = true, nodeCount = layout.nodeCount
+        };
+        float3 coarseGrid = Math.Clamp((position - brick.minimum) / brick.size, float3(0), float3(1));
+        IrradianceBlend corners = GatherSparseIrradiance(irradiance, distance, coarse, initialized,
+            world, n, visibilityNormal, coarseGrid, tolerance, brick.slot * 28, layout.spacing, 2);
+        result = Math.Lerp(ResolveIrradiance(corners), fine, Math.Saturate(blend.available));
+    }
+    return result;
+}
+
+float3 SampleSparse(Texture irradiance, Texture distance, FieldLayout layout, int initialized,
+                     float3 world, float3 n, float3 visibilityNormal, float3 position, float tolerance)
+{
+    // Different resolutions and missing coverage use a fixed world-space
+    // filter. Equal-resolution neighbors share their face records already,
+    // so they retain the ordinary single-brick gather all the way to the face.
+    float radius = layout.spacing * 0.25;
+    SampleBrick own = LookupBrick(distance, layout, position);
+    mut float3 result = float3(0);
+    // Keep one explicitly initialized result and one return for all paths;
+    // this also avoids an ANGLE/HLSL false uninitialized-return diagnostic.
+    int nx = position.x < own.minimum.x + radius ? -1 : position.x > own.minimum.x + own.size - radius ? 1 : 0;
+    int ny = position.y < own.minimum.y + radius ? -1 : position.y > own.minimum.y + own.size - radius ? 1 : 0;
+    int nz = position.z < own.minimum.z + radius ? -1 : position.z > own.minimum.z + own.size - radius ? 1 : 0;
+    int sx = nx > 0 ? 1 : 0;
+    int sy = ny > 0 ? 1 : 0;
+    int sz = nz > 0 ? 1 : 0;
+    mut bool transition = (nx != 0 && (own.transitions & (1 << sx)) != 0)
+        || (ny != 0 && (own.transitions & (1 << (2 + sy))) != 0)
+        || (nz != 0 && (own.transitions & (1 << (4 + sz))) != 0);
+    if (own.slot >= 0 && !transition
+        && ((nx != 0 && ny != 0) || (nx != 0 && nz != 0) || (ny != 0 && nz != 0)))
+    {
+        // A missing/coarser diagonal must affect just its nearby edge or
+        // corner, rather than forcing every pixel along either whole face
+        // through the expensive multi-brick filter.
+        int mask = DecodeLookupMask(LookupData(distance, layout.atlasRows,
+            layout.nodeCount + own.slot * 28 + 27));
+        transition = (nx != 0 && ny != 0 && (mask & (1 << (sx + sy * 2))) != 0)
+            || (nx != 0 && nz != 0 && (mask & (1 << (4 + sx + sz * 2))) != 0)
+            || (ny != 0 && nz != 0 && (mask & (1 << (8 + sy + sz * 2))) != 0)
+            || (nx != 0 && ny != 0 && nz != 0 && (mask & (1 << (12 + sx + sy * 2 + sz * 4))) != 0);
+    }
+    bool single = own.slot >= 0 && !transition;
+    if (single)
+    {
+        result = SampleBrickIrradiance(irradiance, distance, layout, initialized,
+            own, world, n, visibilityNormal, position, tolerance);
+    }
+    else
+    {
+        float3 lower = position - float3(radius);
+        float3 upper = position + float3(radius);
+        mut int4 first = int4(-1);
+        mut int4 second = int4(-1);
+        mut SampleBrick cached = own;
+        // Every leaf is at least four filter widths across, so the eight corners
+        // find every intersecting leaf. Integrate each leaf's overlap only once.
+        int end = Math.Min(layout.total, 8);
+        for (var corner = 0; corner < end; corner++)
+        {
+            float3 point = float3((corner & 1) == 0 ? lower.x : upper.x,
+                (corner & 2) == 0 ? lower.y : upper.y, (corner & 4) == 0 ? lower.z : upper.z);
+            mut SampleBrick brick = own;
+            if (own.size <= 0 || point.x < own.minimum.x || point.y < own.minimum.y || point.z < own.minimum.z
+                || point.x >= own.minimum.x + own.size || point.y >= own.minimum.y + own.size
+                || point.z >= own.minimum.z + own.size)
+            {
+                // The x-alternating corner order often revisits the same
+                // neighboring leaf or empty branch. Preserve that cached
+                // domain while intervening corners use the receiver's own.
+                if (cached.size > 0 && point.x >= cached.minimum.x && point.y >= cached.minimum.y
+                    && point.z >= cached.minimum.z && point.x < cached.minimum.x + cached.size
+                    && point.y < cached.minimum.y + cached.size && point.z < cached.minimum.z + cached.size)
+                    brick = cached;
+                else
+                {
+                    brick = LookupBrick(distance, layout, point);
+                    cached = brick;
+                }
+            }
+            int slot = brick.slot;
+            if (slot < 0 || slot == first.x || slot == first.y || slot == first.z || slot == first.w
+                || slot == second.x || slot == second.y || slot == second.z || slot == second.w) continue;
+            if (corner == 0) first.x = slot;
+            else if (corner == 1) first.y = slot;
+            else if (corner == 2) first.z = slot;
+            else if (corner == 3) first.w = slot;
+            else if (corner == 4) second.x = slot;
+            else if (corner == 5) second.y = slot;
+            else if (corner == 6) second.z = slot;
+            else second.w = slot;
+            float3 overlap = Math.Max(Math.Min(upper, brick.minimum + float3(brick.size))
+                - Math.Max(lower, brick.minimum), float3(0)) / (2 * radius);
+            float weight = overlap.x * overlap.y * overlap.z;
+            if (weight <= 0) continue;
+            result += SampleBrickIrradiance(irradiance, distance, layout, initialized,
+                brick, world, n, visibilityNormal, position, tolerance) * weight;
+        }
+    }
+    // Uncovered portions retain zero weight: sparse exterior coverage fades
+    // continuously instead of extrapolating a distant brick into empty space.
+    return result;
+}
+
+struct SamplingFrame
+{
+    bool valid;
+    float3 normal;
+    float3 visibilityNormal;
+    float3 position;
+}
+
+SamplingFrame PrepareSamplingFrame(FieldLayout layout, float intensity, int initialized,
+                                    float3 world, float3 normal, float3 visibilityNormal)
+{
+    mut SamplingFrame frame = default;
+    if (!(initialized <= 0 || intensity <= 0 || layout.total <= 0))
+    {
+        float3 n = Math.Normalize(normal);
+        if (!(Math.LengthSq(n) < 0.5))
+        {
+            mut float3 planeNormal = Math.Normalize(visibilityNormal);
+            if (Math.LengthSq(planeNormal) < 0.5) planeNormal = n;
+            frame.valid = true;
+            frame.normal = n;
+            frame.visibilityNormal = planeNormal;
+            frame.position = world + n * (layout.spacing * 0.04);
+        }
+    }
+    return frame;
+}
+
+float3 SampleLegacy(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
+                    int initialized, float3 world, float3 normal, float3 visibilityNormal, float tolerance = 0.01)
+{
+    SamplingFrame frame = PrepareSamplingFrame(layout, intensity, initialized, world, normal, visibilityNormal);
+    if (!frame.valid) return float3(0);
     // Automatic world coverage extrapolates smoothly at its retained edge.
-    float3 rawGrid = (position - layout.minimum) / layout.spacing;
+    float3 rawGrid = (frame.position - layout.minimum) / layout.spacing;
     float3 grid = Math.Clamp(rawGrid, float3(0), float3(layout.counts - int3(1)));
     float beyond = Math.Length(rawGrid - grid);
     float fade = 1 / (1 + beyond * beyond);
-    IrradianceBlend fine = GatherIrradiance(irradiance, distance, layout, initialized, world, n, planeNormal, grid, tolerance);
+    IrradianceBlend fine = GatherLegacyIrradiance(irradiance, distance, layout, initialized,
+        world, frame.normal, frame.visibilityNormal, grid, tolerance);
     float3 result = ResolveIrradiance(fine);
     return ClampHdr(result * (intensity * fade));
+}
+
+float3 SampleLegacy(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
+                    int initialized, float3 world, float3 normal)
+{
+    return SampleLegacy(irradiance, distance, layout, intensity, initialized, world, normal, normal);
+}
+
+float3 SampleWorld(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
+                    int initialized, float3 world, float3 normal, float3 visibilityNormal, float tolerance = 0.01)
+{
+    SamplingFrame frame = PrepareSamplingFrame(layout, intensity, initialized, world, normal, visibilityNormal);
+    if (!frame.valid) return float3(0);
+    return ClampHdr(SampleSparse(irradiance, distance, layout, initialized,
+        world, frame.normal, frame.visibilityNormal, frame.position, tolerance) * intensity);
+}
+
+float3 SampleWorld(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
+                    int initialized, float3 world, float3 normal)
+{
+    return SampleWorld(irradiance, distance, layout, intensity, initialized, world, normal, normal);
+}
+
+float3 Sample(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
+                int initialized, float3 world, float3 normal, float3 visibilityNormal, float tolerance = 0.01)
+{
+    if (layout.sparse)
+        return SampleWorld(irradiance, distance, layout, intensity, initialized, world, normal, visibilityNormal, tolerance);
+    return SampleLegacy(irradiance, distance, layout, intensity, initialized, world, normal, visibilityNormal, tolerance);
 }
 
 float3 Sample(Texture irradiance, Texture distance, FieldLayout layout, float intensity,
