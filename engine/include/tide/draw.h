@@ -1266,14 +1266,26 @@ typedef struct tide_mesh_levels {
 // A 3D mesh the list has, for the commands that draw it: a copy of its
 // vertices and triangles at a version. It never changes while it has its
 // place: another version of the mesh takes a place of its own, so what a
-// frame drew before it changed still shows. One no command of a frame named
-// is let go when the next frame starts, and one that frames go on drawing
-// keeps its place, so renderers can keep theirs by its place.
+// frame drew before it changed still shows. One that frames go on drawing
+// keeps its place, so renderers can keep theirs by its place. One a frame
+// didn't draw is kept for when it's drawn again (a chunk of terrain that left
+// the view, a mesh a game skipped for a frame), within the idle budget below,
+// if a frame before drew it too and its lists weren't drawn at another
+// version since: a mesh made again each frame goes as the next frame starts.
+//
+// The idle budget, a list's and the renderer's each: unused meshes are kept
+// for TIDE_MESH_IDLE_FRAMES frames at most (ten minutes' at 60 a second), and
+// TIDE_MESH_IDLE_COUNT of them and TIDE_MESH_IDLE_BYTES of their copies at
+// most, the longest unused going first (by their places where they're as
+// old). Meshes a frame draws are outside it.
+enum { TIDE_MESH_IDLE_FRAMES = 36000, TIDE_MESH_IDLE_COUNT = 4096 };
+#define TIDE_MESH_IDLE_BYTES (UINT64_C(64) * 1024u * 1024u)
 typedef struct tide_draw_mesh_data {
     uint64_t id, other; // Whose: C's addresses of its vertices and indices, or Tide's lists
     uint64_t version;
     uint32_t space;     // What the ids are: TIDE_MESH_*, or TIDE_MESH_NONE for a free place
     uint32_t frame;     // The frame that last drew it
+    uint32_t made;      // The frame it was copied in
     uint32_t epoch;     // The list's when it was copied (see tide_draw_forget)
     uint32_t next_free; // A free place's: 1 + the next free one, or 0
     union {

@@ -110,6 +110,126 @@ TIDE_TEST(draw_list_grows)
 }
 
 // ---------------------------------------------------------------------------
+// Meshes a frame didn't draw: kept, within the idle budget (tide/draw.h)
+
+static const tide_vertex3 idle_corners[3] = {
+    {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+    {{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+    {{0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+};
+static const uint32_t idle_triangle[3] = {0, 1, 2};
+
+// A frame draws a mesh where it finds its place: its copy is made where the place is new.
+static uint32_t idle_mesh(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t other,
+                          const uint64_t version, bool *fill)
+{
+    const uint32_t mesh = tide_draw_mesh_slot(d, space, id, other, version, fill);
+    if (*fill) tide_draw_mesh_fill(d, mesh, idle_corners, 3, idle_triangle, 3);
+    return mesh;
+}
+
+static bool mesh_gone(const tide_draw_list *d, const uint32_t mesh)
+{
+    return d->meshes[mesh - 1u].space == TIDE_MESH_NONE;
+}
+
+TIDE_TEST(draw_idle_meshes_are_kept_for_when_drawn_again)
+{
+    tide_draw_list d = {0};
+    bool fill;
+    const uint32_t kept = idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill);
+    TIDE_CHECK(fill);
+    const uint32_t once = idle_mesh(&d, TIDE_MESH_MEMORY, 3, 4, 7, &fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill) == kept && !fill);
+    // A mesh one frame drew and the next didn't goes, as one made again each frame does
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, once) && !mesh_gone(&d, kept));
+    // One drawn in two frames stays through a frame that skips it, and is found where it was, uncopied
+    tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, kept));
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill) == kept && !fill);
+
+    // Another version of its lists drawn in a frame that skips it: it goes, as nothing would draw it again
+    const uint32_t old = idle_mesh(&d, TIDE_MESH_MEMORY, 5, 6, 1, &fill);
+    tide_draw_reset(&d);
+    idle_mesh(&d, TIDE_MESH_MEMORY, 5, 6, 1, &fill);
+    tide_draw_reset(&d);
+    const uint32_t newer = idle_mesh(&d, TIDE_MESH_MEMORY, 5, 6, 2, &fill);
+    TIDE_CHECK(fill && newer != old);
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, old) && !mesh_gone(&d, newer));
+    // ...but lists made along the way are all one place's (and a pack's): two of them are told apart by version alone
+    const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
+    const uint32_t a = idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 11, &fill);
+    const uint32_t b = idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 12, &fill);
+    tide_draw_reset(&d);
+    idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 11, &fill);
+    idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 12, &fill);
+    tide_draw_reset(&d);
+    idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 11, &fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, a) && !mesh_gone(&d, b));
+
+    // Kept for TIDE_MESH_IDLE_FRAMES frames unused, and no longer
+    idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill);
+    tide_draw_reset(&d);
+    for (uint32_t i = 0; i < TIDE_MESH_IDLE_FRAMES; i++) tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, kept));
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, kept));
+
+    // Forgetting the list lets them all go
+    tide_draw_forget(&d);
+    TIDE_CHECK(d.mesh_count == 0);
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_idle_meshes_past_the_budget_go_longest_unused_first)
+{
+    // TIDE_MESH_IDLE_COUNT of them at most: drawn in two frames, the last
+    // also in a third, then none. The last is the most recently drawn, so of
+    // the others, which are as old, the one in the highest place goes.
+    tide_draw_list d = {0};
+    bool fill;
+    enum { COUNT = TIDE_MESH_IDLE_COUNT + 1 };
+    uint32_t *meshes = malloc(COUNT * sizeof(uint32_t));
+    TIDE_REQUIRE(meshes);
+    for (int frame = 0; frame < 2; frame++) {
+        for (uint32_t i = 0; i < COUNT; i++) meshes[i] = idle_mesh(&d, TIDE_MESH_MEMORY, 100u + i, 0, 1, &fill);
+        tide_draw_reset(&d);
+    }
+    idle_mesh(&d, TIDE_MESH_MEMORY, 100u + COUNT - 1u, 0, 1, &fill);
+    tide_draw_reset(&d);
+    for (uint32_t i = 0; i < COUNT; i++) TIDE_CHECK(!mesh_gone(&d, meshes[i])); // TIDE_MESH_IDLE_COUNT unused
+    tide_draw_reset(&d);
+    uint32_t gone = 0;
+    for (uint32_t i = 0; i < COUNT; i++) gone += mesh_gone(&d, meshes[i]);
+    TIDE_CHECK(gone == 1u && mesh_gone(&d, meshes[COUNT - 2u]) && !mesh_gone(&d, meshes[COUNT - 1u]));
+    free(meshes);
+    tide_draw_free(&d);
+
+    // TIDE_MESH_IDLE_BYTES of their copies at most: two meshes over half of it each
+    tide_draw_list big = {0};
+    const uint32_t vertex_size = 1024u * 1024u, vertex_count = (uint32_t)(TIDE_MESH_IDLE_BYTES / 2u / vertex_size) + 1u;
+    uint8_t *bytes = calloc(vertex_count, vertex_size);
+    TIDE_REQUIRE(bytes);
+    uint32_t halves[2];
+    for (int frame = 0; frame < 2; frame++) {
+        for (uint32_t i = 0; i < 2; i++) {
+            halves[i] = tide_draw_mesh_slot(&big, TIDE_MESH_BYTES, 200u + i, 0, 1, &fill);
+            if (fill) tide_draw_mesh_fill_bytes(&big, halves[i], bytes, vertex_size, vertex_count, idle_triangle, 3);
+        }
+        tide_draw_reset(&big);
+    }
+    tide_draw_mesh_slot(&big, TIDE_MESH_BYTES, 201u, 0, 1, &fill); // The second, drawn once more
+    tide_draw_reset(&big);
+    TIDE_CHECK(mesh_gone(&big, halves[0]) && !mesh_gone(&big, halves[1]));
+    free(bytes);
+    tide_draw_free(&big);
+}
+
+// ---------------------------------------------------------------------------
 // Meshes
 
 TIDE_TEST(draw_targets_preserve_recording_state_and_append_sources)
