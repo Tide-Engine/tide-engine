@@ -1,5 +1,18 @@
 # No Tide code can corrupt memory
 
+## Levels of detail of a game's own meshes (2026-11-02)
+
+`lod:` hands game-made vertices and indices to the simplifier while the game runs (assets-and-files.md, Levels
+of detail for meshes a game makes). It reads only the draw list's copy, whose triangles past the vertices were
+already left out, copied again into the job's own arrays, so the game can change or free its lists meanwhile.
+Field offsets come from generated `offsetof`s but are checked against the vertex size before any read
+(`fits`). The maker's sizes are bounded (2^26 vertices and triangles, so its 32-bit products can't wrap),
+allocation failure and a stop give no levels instead of aborting, and positions, normals, uvs and colors that
+are no number only change costs, never an index. Results are checked again as they're given to a slot
+(`tide_draw_mesh_levels`: every index under the slot's vertices, errors rising), so a key collision could only
+show other triangles of the same mesh. `tidec_e2e_lod_generated` runs NaN positions and indices under 0 and past
+the vertices under ASan and on WASI.
+
 ## Packed local-field migration alignment (2026-10-31)
 
 Migration's attached local rows may start at any byte offset in packed state.

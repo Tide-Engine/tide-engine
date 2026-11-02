@@ -130,6 +130,29 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
+# Production foliage path across a kilometre-scale forest.
+if(NOT TIDE_ANDROID)
+    tide_add_game(bench_forest NAME game SOURCES forest/game.tide
+        PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/wind.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
+        HOST forest/main.c)
+    target_link_libraries(bench_forest PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(bench_forest SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(bench_forest TARGET bench_forest QUERY "quick"
+            WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11)
+    else()
+        add_test(NAME bench_forest COMMAND bench_forest --quick)
+        add_test(NAME bench_forest_opengl COMMAND bench_forest --quick)
+        tide_gpu_test(bench_forest)
+        tide_gpu_test(bench_forest_opengl OPENGL)
+    endif()
+endif()
+
 # Tide's drawing benchmark's workloads by hand in OpenGL and Vulkan, timed the same way
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(draw)

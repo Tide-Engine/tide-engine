@@ -215,17 +215,55 @@ static const byte_writes *code_reads(const decl *code, const int index)
     return &read_memo.items[at].w;
 }
 
+// Views themselves do not carry the helper-only decl.draws summary. Find
+// direct drawing and calls to drawing helpers, including nested Action blocks.
+static bool stmt_has_drawing(const stmt *s);
+
+static bool expr_has_drawing(const expr *e)
+{
+    if (!e) return false;
+    if (e->call == CALL_DRAW || e->call == CALL_GUI || (e->method && e->method->draws)) return true;
+    if (expr_has_drawing(e->object) || expr_has_drawing(e->lhs) || expr_has_drawing(e->rhs)
+        || expr_has_drawing(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) if (expr_has_drawing(e->args.items[i])) return true;
+    for (int i = 0; i < e->written.count; i++) if (expr_has_drawing(e->written.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (expr_has_drawing(e->inits.items[i].value)) return true;
+    return expr_has_drawing(e->lambda_body) || expr_has_drawing(e->values) || expr_has_drawing(e->skin_mesh)
+        || expr_has_drawing(e->skin_pose) || expr_has_drawing(e->callable_receiver)
+        || expr_has_drawing(e->task_source) || expr_has_drawing(e->binding_value) || stmt_has_drawing(e->block)
+        || stmt_has_drawing(e->step) || stmt_has_drawing(e->compare[0]) || stmt_has_drawing(e->compare[1])
+        || stmt_has_drawing(e->out_local) || stmt_has_drawing(e->binding);
+}
+
+static bool stmt_has_drawing(const stmt *s)
+{
+    if (!s) return false;
+    for (int i = 0; i < s->stmts.count; i++) if (stmt_has_drawing(s->stmts.items[i])) return true;
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++)
+            if (expr_has_drawing(s->cases.items[i].labels.items[k])) return true;
+        for (int k = 0; k < s->cases.items[i].body.count; k++)
+            if (stmt_has_drawing(s->cases.items[i].body.items[k])) return true;
+    }
+    return expr_has_drawing(s->cond) || expr_has_drawing(s->value) || expr_has_drawing(s->target)
+        || expr_has_drawing(s->property_set) || expr_has_drawing(s->by) || expr_has_drawing(s->offset)
+        || stmt_has_drawing(s->init) || stmt_has_drawing(s->step) || stmt_has_drawing(s->then_stmt)
+        || stmt_has_drawing(s->else_stmt);
+}
+
 // Whether a view can copy only some of component `d`'s lanes: one whose
 // blending, corrections and copies all go field by field
-static bool reads_some_allowed(const gen *g, const decl *d)
+static bool reads_some_allowed(const gen *g, const decl *d, const decl *code)
 {
     const int lanes = comp_lanes(d);
     // A frag or a vert takes a component from the entity the view draws for, through no name in the view's code
+    // Non-drawing views have no implicit shader reads: binding attached local
+    // material fields need not gather the material's numeric match lanes.
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *s = g->prog->decls.items[i];
         if (s->kind != DECL_SHADER) continue;
         for (int k = 0; k < s->params.count; k++) {
-            if (s->params.items[k].type.decl == d) return false;
+            if (s->params.items[k].type.decl == d && stmt_has_drawing(code->body)) return false;
         }
     }
     return lanes > 1 && lanes <= LANE_MASK_MOST && decl_layout(d).size <= LANE_WRITES_MOST && !decl_corrects(d) && !d->interpolate
@@ -264,7 +302,7 @@ static bool view_param_lanes(const gen *g, const decl *sys, const int i, lane_ma
     const param *p = &sys->params.items[i];
     if (!sys->is_view || !sys->body || sys->starts_tasks || sys->is_async || p->type.kind != TY_COMPONENT
         || (p->mode != PARAM_READ && p->mode != PARAM_MUT) || (p->mode == PARAM_MUT && p->type.decl->is_local) // Put back whole
-        || p->verified || joined(sys, p) || !reads_some_allowed(g, p->type.decl)) {
+        || p->verified || joined(sys, p) || !reads_some_allowed(g, p->type.decl, sys)) {
         return false;
     }
     return reads_lane_mask(p->type.decl, code_reads(sys, i), mask);
@@ -356,7 +394,7 @@ static bool view_query_lanes(const gen *g, const decl *sys, const int qi, const 
     const param *q = &sys->params.items[qi];
     const param *p = &q->query.items[b];
     if (!sys->is_view || !sys->body || !q->query_rows || q->query_verified_entities || q->query_verified_join || p->verified
-        || !reads_some_allowed(g, p->type.decl)) {
+        || !reads_some_allowed(g, p->type.decl, sys)) {
         return false;
     }
     query_uses u = {q, 0, 0};

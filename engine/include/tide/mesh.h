@@ -80,6 +80,11 @@ void tide_draw_mesh_texture(tide_draw_list *d, tide_list vertices, tide_list ind
 // a mesh the draw list keeps (see tide_draw_mesh_slot): a list that doesn't
 // change costs a hash of its pages' hashes to draw again, not a copy.
 void tide_draw_mesh3_lists(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform);
+
+// The next mesh draw that asks for levels (tide_draw_want_levels) draws a skinned model whose canonical bytes are
+// `model` (SkinnedMesh<V>.data): how its vertices follow their bones is weighed too, as an asset's [LOD] does.
+// Read while that draw is recorded; tide_draw_want_levels(d, 0, NULL) forgets it.
+void tide_draw_want_bones(tide_draw_list *d, tide_list model);
 void tide_draw_mesh3_texture(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform,
                              tide_texture_ref texture);
 

@@ -1,5 +1,54 @@
 # Language features, as tidec builds them
 
+## `lod:` on mesh draws (2026-11-02)
+
+`check_mesh_draw` takes a last argument named `lod` off `args` (with its name and place) before peeling verts,
+frags and values, and checks it once the vertex's dimensions are known: a float or int (`check_expr_want` with
+float), refused on a 2D vertex, kept as `expr.mesh_lod` with `mesh_lod_vertex`. Any
+other name written on a mesh draw's argument is an error naming `lod:` (it formerly fell through to the overload
+mismatch). `gen_expr` writes a call with `mesh_lod` as `(tide_draw_want_levels(tide_draw, (float)(m), layout),
+<the call>, tide_draw_want_levels(tide_draw, 0.0f, NULL))`, the call generated from a copy without `mesh_lod`.
+The multiplier is evaluated after hoisted operands, which keeps written order, as it's written last. Works for
+lists, `Mesh<V>` values (whose arguments are rewritten after the peel), instances, shaders and targets (the list
+is `tide_draw` for every destination) and models with bones, where `tide_draw_want_bones(tide_draw, (model).data)`
+follows the want, the model being the operand the skinned adapter already reads (`e->skin_mesh`). The language
+server offers `lod:` in completion after a mesh draw's lists and shows it last in 3D forms' signature help
+(`MESH_LOD`). Feature notes: assets-and-files.md, Levels of detail for meshes a game makes.
+
+## Non-drawing views of shader components (2026-11-01)
+
+The forest stress scene exposed an overly broad partial-lane fallback: a
+component named by any shader forced every view of that type to gather and
+blend all its match lanes, even a view only binding attached local fields.
+The existing lane-read analysis now applies to non-drawing views of these
+components too. An attached-only binder has a zero numeric-lane mask; ordinary
+field readers retain their precise masks and normal selected-lane blending.
+
+Drawing views retain the complete shader-input fallback. Views do not carry
+the helper-only `decl.draws` summary, so a conservative AST walk detects direct
+Draw/GUI operations, drawing-helper calls and nested blocks/operands before
+allowing the optimization. Correction, custom Interpolate, verified/joined
+bindings, local-component writeback, heap-reading interpolation and sharding
+retain their existing guards. Attached fields still use their current local
+cells and normal writeback; no API, runtime call, layout, ownership or language
+semantics change is introduced.
+
+The extended `view_reads` fixture uses a shader-read material with an attached
+counter. Generated-C checks require zero numeric lanes for its binding view,
+selected lanes for its ordinary reader and complete lanes for its drawing
+view. Execution checks blended and current values, actual shader capture,
+persisted attached writes and unchanged current/previous world hashes.
+The five affected E2E targets build warning-free on native ASan; all six scoped
+CTests pass (`view_reads`, its generated-C assertions, `view_corrections`,
+`view_queries`, `local_fields` and `query_local_fields`). Final integration
+passes all 2,908 enabled native sanitizer and 2,794 enabled web-release CTests.
+Independent drawing-traversal review finds no blocker. Three corresponding
+1920x1080 forest before/after captures have zero changed RGBA pixels.
+[Paired measurements and reproduction](../bench/results/forest-opt-20261102/README.md)
+cover the combined safe list-cache, shared-binding-factory and partial-lane
+changes; they do not isolate this compiler optimization's timing contribution.
+No forced-inline heuristic is shipped or measured.
+
 ## LOD attribute multiplier (2026-10-31)
 
 The owner approved `[LOD(multiplier)]` multiplying the destination's pixel

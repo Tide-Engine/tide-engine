@@ -1,5 +1,89 @@
 # Benchmarks
 
+## Forest submission preparation (2026-11-02)
+
+The owner requested optimizing the forest without reducing visual fidelity.
+The measured change combines frame-local memoization of repeated flat numeric
+list captures, partial component-lane gathers in views without drawing, and
+shared callback factories for the forest's wind and leaf materials. Contracts
+and regression coverage are in drawing.md, language.md and runtime-ownership.md.
+The combined result does not attribute a measured percentage to each change.
+
+Windows release O2, Clang 23.1.2, Ryzen 9 7900X / RTX 4080 SUPER driver 617.42,
+Vulkan at 1920x1080. Against frozen `1f825bbe532cdfdef1318aad990b633ea480841a`,
+three alternating before/after pairs per case use the same 20 warmup and 100
+measured frames, shadows, wind, geometry representations, cameras and timesteps.
+CPU recording milliseconds, medians of three process medians (process-median
+ranges in parentheses):
+
+| Trees / camera | Before | After | Median paired reduction |
+| --- | ---: | ---: | ---: |
+| 10,000 / canopy | 16.16 (16.10–16.62) | 14.82 (14.64–15.41) | 9.4% |
+| 100,000 / wide | 151.09 (144.09–159.16) | 118.72 (114.56–128.24) | 17.6% |
+| 100,000 / ground | 148.35 (134.50–164.94) | 129.58 (112.74–145.60) | 16.2% |
+
+The reductions are the medians of the three paired relative changes, rather
+than ratios of the displayed medians. All 18 processes, 1,800 measured frames
+and 1,800 completed GPU queries are retained. Each pair matches world hashes,
+submitted indices, draw calls, zero warmed texture uploads and main-target
+bark/foliage counts: canopy 8,262 of each kind in 24 calls; wide 96,479 in six;
+ground 78,286 in 24. Separate 1920x1080 before/after RGBA captures of all three
+cases are byte-identical. The wide case remains a distant-canopy workload
+without tree shadow casters; canopy and ground retain nearby moving shadows.
+
+The shared benchmark mutex and five-second initial quiet guard separate the
+batch from task builds/tests. No task build or test ran during measurements;
+there was no per-run clock or contention monitor, and other desktop activity
+remained uncontrolled. CPU submission medians remain approximately 0.28/1.5/1.45
+ms for canopy/wide/ground. GPU observations vary between runs, including adverse
+canopy results; no GPU speedup is claimed. CPU/GPU intervals overlap and are not
+added. Native completion/readback is separate synchronization work, and these
+results establish neither shipping FPS nor playable 100,000-tree performance.
+
+The full enabled native and web correctness suites pass 2,908 and 2,794 tests,
+respectively, with zero failures. Performance uses the ordinary optimized
+native build, separately from correctness validation; no web timing claim is
+made. [Saved runs, exact ranges, identities, pixel checks, validation and reproduction](../bench/results/forest-opt-20261102/README.md)
+retain the combined result and the diagnostic view profiles.
+
+## Forest scale stress (2026-11-01)
+
+The owner requested Render3D foliage and a large forest stress test. `bench_forest`
+uses the production ECS/material path with shared wind and thin-leaf lighting,
+three fixed cameras and setup-selected detailed/medium/coarse tree meshes.
+100,000 planted trees cover 1.74 km, with two mesh entities per tree. The fixture
+and controls are documented in bench/forest/README.md; implementation/validation
+contracts are in render3d.md.
+
+Windows release O2, Clang 23.1.2, Ryzen 9 7900X / RTX 4080 SUPER driver 617.42,
+Vulkan 1920x1080. Three processes per case, 20 warmup/100 measured frames each.
+Medians of process medians, CPU recording / GPU ms: wide 1,000 2.55/5.04,
+10,000 11.15/6.36, 50,000 48.51/22.73, 100,000 113.70/36.67; canopy 10,000 16.05/9.49;
+ground 100,000 164.02/31.96. Full-detail canopy 10,000 is 16.69/12.61. Ground/wide
+100,000 main-target foliage counts are 78,286/96,479, with 24/6 total calls.
+The overview's 50,000/100,000 camera is beyond caster range: these rows contain no
+tree shadow casters. Canopy/ground supplement exercises actual nearby shadows.
+
+All 21 rows verify 2,100 measured frames/completed GPU queries, unchanged hashes,
+positive independent main-target bark/foliage counts and zero warmed texture
+uploads. At 10,000 canopy, geometry levels reduce submitted indices from 11.94M to
+4.08M with 8,262 main instances of each kind. Representations differ visually.
+CPU recording is the major large-count limit despite GPU batching. Source
+inspection suggests full entity/query/material traversals and per-mesh capture
+work, without measured attribution or a handwritten equivalent. This is not a
+claim of playable 100,000 performance, dynamic LOD/impostors or shipping FPS.
+
+The shared benchmark mutex and 5-second initial quiet guard separate both batches
+from task builds/tests. No clock or per-run contention monitoring was used;
+other desktop activity is uncontrolled. All runs/spreads are retained, including
+large GPU variation. CPU/GPU intervals overlap and are not added; native readback
+is a separate synchronization interval. No software-web timing claim is made.
+
+[Evidence, ranges, source/binary identities, verifier and reproduction](../bench/results/forest-20261101/README.md).
+24 focused native ASan and 32 web correctness CTests pass across initial/corrected
+selections, plus the docs build; limitations are recorded in render3d.md.
+
+
 ## Baked poses (2026-10-31)
 
 ### OpenGL investigation

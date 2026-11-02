@@ -1,0 +1,87 @@
+using Render3D;
+
+scene Main;
+singleton Simulation { int marker = 53; bool cutout; bool splitBounds; bool built; }
+asset Mesh3D windQuad = "quad.obj";
+component WindActor { int index; }
+
+system BuildWind(mut Simulation simulation)
+{
+    if (simulation.built) return;
+    simulation.built = true;
+    for (var i = 0; i < 2; i++)
+        Spawn(WindActor { index = i }, MeshRenderer { mesh = windQuad },
+            Material { mode = simulation.cutout ? SurfaceMode.Cutout : SurfaceMode.Opaque },
+            Transform { localPosition = float3(simulation.splitBounds ? (i - 1) * 10000 : i * 10000, 0, 0) });
+    Spawn(DirectionalLight { direction = float3(0, 0, 1) });
+}
+
+local singleton WindProbe
+{
+    Wind wind;
+    VertexInput input;
+    MeshVertex vertex;
+    float bend = 0.02;
+    float flutter = 0.015;
+    MeshVertex result;
+    float3 dx;
+    float3 dy;
+    float3 dz;
+    float[9] wave;
+    float[9] derivative;
+    bool render;
+    bool bounds;
+    bool mixedBounds;
+}
+
+MeshVertex WindPoint(VertexInput input, MeshVertex vertex, Wind wind, float bend, float flutter, float3 offset)
+{
+    mut MeshVertex result = vertex;
+    result.position += offset;
+    ApplyWind(input, result, wind, bend, flutter);
+    return result;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view EvaluateWind(mut WindProbe probe, mut Renderer renderer)
+{
+    renderer.enabled = probe.render;
+    renderer.camera = Camera { position = float3(0, 0, -6), rotation = quaternion.identity };
+    renderer.shadowCascades = 0;
+    renderer.shadowCenter = float3(0);
+    renderer.shadowExtent = 10;
+    renderer.shadowDistance = 40;
+    renderer.shadowResolution = 64;
+    probe.result = WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0));
+    float epsilon = 0.0005;
+    probe.dx = (WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(epsilon, 0, 0)).position
+        - WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(-epsilon, 0, 0)).position) / (2 * epsilon);
+    probe.dy = (WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, epsilon, 0)).position
+        - WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, -epsilon, 0)).position) / (2 * epsilon);
+    probe.dz = (WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, 0, epsilon)).position
+        - WindPoint(probe.input, probe.vertex, probe.wind, probe.bend, probe.flutter, float3(0, 0, -epsilon)).position) / (2 * epsilon);
+    for (var i = 0; i < 9; i++)
+    {
+        probe.wave[i] = WindWave(float(i) * 0.125);
+        probe.derivative[i] = WindWaveDerivative(float(i) * 0.125);
+    }
+}
+
+[Before(Render3D.Stages.Prepare)]
+view BindWind(WindActor actor, mut Material material, WindProbe probe, Simulation simulation)
+{
+    Wind wind = probe.wind;
+    float offset = simulation.splitBounds && actor.index == 0 ? 10000 : 0;
+    material.vertex = Deform {
+        vertex = (VertexInput input, mut MeshVertex vertex) => OffsetWind(input, vertex, wind, offset)
+    };
+    material.customBounds = probe.bounds && !(probe.mixedBounds && actor.index == 0);
+    material.boundsCenter = float3(offset, 0, 0);
+    material.boundsSize = float3(3, 3, 3);
+}
+
+void OffsetWind(VertexInput input, mut MeshVertex vertex, Wind wind, float offset)
+{
+    ApplyWind(input, vertex, wind, 0.02, 0.015);
+    vertex.position.x += offset;
+}

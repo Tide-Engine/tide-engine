@@ -1,5 +1,66 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Levels for meshes a game makes (2026-11-02)
+
+What the draw list relies on (the feature, its tests and the simplifier's move: assets-and-files.md, Levels of
+detail for meshes a game makes):
+
+- **The request is list state for one draw.** `tide_draw_list.lod_want` (0 for none) and `lod_layout` are set by
+  `tide_draw_want_levels` just before a mesh draw's call and cleared just after, in one comma expression of
+  generated code; `tide_draw_reset` clears it too. Arguments with ordered effects are hoisted before the
+  statement, so no other mesh draw runs between. It records no command and isn't a destination's setting.
+- **A mesh that asks is its own slot.** `tide_draw_lod_version` mixes the multiplier and the layout into the
+  version `mesh3_slot` and `tide_draw_mesh_shaded_instances` look the slot up by, so the same lists drawn without
+  `lod:` keep their slot, whole. After filling (and after a pack's levels, which win), `tide_draw_lod_request`
+  sets `tide_draw_mesh_data.lod_key` (a hash of the copied vertices and indices, vertex size, layout and
+  `LOD_VERSION`, never 0) and `lod_want`, which `give` passes as `tide_mesh_levels.multiplier`.
+- **Results reach slots only at `tide_draw_reset`**, after it lets go of the meshes no frame drew: each slot whose
+  `lod_key` is the result's and that has no levels gets them through `tide_draw_mesh_levels`, which checks every
+  index against the slot's own vertices again. So commands recorded in a frame never see levels change under
+  them, and a slot reused for another mesh (its key is set again at fill) never takes another mesh's levels.
+- **The kept levels** (`tide_draw_lod_builds.kept`, at most 64 MiB beside the newest, least recently used out)
+  outlive slots and `tide_draw_forget`; they're freed with the list. A result with no levels is kept too, so a
+  mesh that has none isn't made again; a stopped job's result is never kept.
+- **Jobs** (`lod_job`, a `tide_background` each) own copies of what they read; the only code they run is
+  `make_levels` of whichever engine copy called `tide_draw_prepare`, which is the host's, so unloading a game's
+  library on a reload can't unload a job's code. `tide_draw_free` stops them all, then helps the provider
+  (`help`) and yields until each submitted one is done, as `tide_workers_free` does.
+- **A model's bones** (`tide_draw_want_bones`) are a borrowed list handle on the list (`lod_model`), read only by
+  the request inside that draw, cleared with the want and at reset; the job owns the weights it read.
+- Layout: `tide_draw_list` gained `lod_builds`, `lod_want`, `lod_layout` and `lod_model`, `tide_draw_mesh_data` `lod_key` and
+  `lod_want`; hosts, libraries and games rebuild together.
+
+## Repeated flat numeric-list captures (2026-11-02)
+
+Forest profiling identified repeated shader-data list hashing and texture lookup
+inside per-entity material recording. `tide_draw_list_data` now keeps eight
+frame-local captures in a draw-list-owned fixed-size allocation. Only ordinary
+nonchunked heap lists qualify. A probe resolves the current heap and page, then
+checks the handle, heap identity/used span, count, element size, word layout,
+writer, and the page's valid hash plus hashed byte count. It validates the
+captured texture slot's identity/version, dimensions, integer format and writer
+kind before returning it. Dirty pages always take the original hashing path.
+
+The cache retains no source/page/header pointer. Heap identity is a uintptr_t;
+current storage is resolved on every probe. Hits increment `heap.moves` exactly
+as `tide_heap_block_hash` does, preserving retained writable list/grid cache
+invalidation, and mark the texture used this frame. Reset and forget clear entries
+before texture pruning; free releases the bounded metadata. Scratch, packed,
+asset-backed, chunked and map/grid captures retain their existing paths.
+
+Three `draw_list_data_cache` regressions compare complete texture identities,
+versions, layouts and padded bytes against fresh conversion across in-place
+cached writes, COW/verified endpoints, layout/size changes, overwritten texture
+slots/kinds, empty/resize, frame/prune/forget/free, source disposal and same-offset
+reuse, scratch reuse and chunked mutations. All three pass on Windows ASan.
+The first same-offset test used different allocation size classes; it was fixed
+to exercise actual same-class reuse. Full integration passes all 2,908 native
+Windows sanitizer CTests and all 2,794 web-release CTests. Three 1920x1080
+before/after forest captures (10k canopy, 100k wide and 100k ground) have zero
+changed RGBA pixels. Independent cache review found no blocking issues.
+[Measured forest results and reproduction](../bench/results/forest-opt-20261102/README.md)
+record the complete optimization task; those timings do not isolate this cache.
+
 ## Asset tolerance multiplies draw tolerance (2026-10-31)
 
 Each leveled mesh retains `lod_multiplier` from `tide_mesh_levels.multiplier`,

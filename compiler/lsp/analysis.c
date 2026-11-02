@@ -8135,6 +8135,16 @@ static void complete_argument_names(completion *c, const int open, const int las
         else if (named.count == 0) unnamed++;
         start = i + 1;
     }
+    // Draw.Mesh(vertices, indices, transform, lod: 1): a 3D mesh draw's one name, after its lists or its Mesh
+    if (method && unnamed >= 2 && (str_eq_c(name, "Mesh") || str_eq_c(name, "Instanced") || str_eq_c(name, "SkinnedMesh"))) {
+        bool given = false;
+        for (int n = 0; n < named.count; n++) given |= str_eq_c(named.items[n], "lod");
+        if (!given)
+            item(c, "lod:", CK_VARIABLE, "float multiplier",
+                 "Levels of detail for a 3D mesh the game makes, made in the background and kept by what's in the mesh: "
+                 "the multiplier `[LOD(...)]` takes on an asset. Written last.",
+                 "lod: ");
+    }
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         for (int k = -1; k < d->methods.count; k++) {
@@ -8930,7 +8940,7 @@ static type names_type(const scope *sc, const int first, const int last)
 // Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
 enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
-       MESH_VALUES, MESH_WHOLE, MESH_SKINNED, MESH_POSE, MESH_PARAMS };
+       MESH_VALUES, MESH_WHOLE, MESH_SKINNED, MESH_POSE, MESH_LOD, MESH_PARAMS };
 
 // What an argument of Draw.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
@@ -8955,6 +8965,7 @@ static int mesh_argument(const scope *sc, const int first, const int last)
 {
     const token *toks = DOC->toks;
     if (first > last || toks[first].kind != T_IDENT) return MESH_PARAMS;
+    if (first < last && toks[first + 1].kind == T_COLON && str_eq_c(toks[first].text, "lod")) return MESH_LOD; // lod: 2
     // A vert or a frag, by name: what the checker bound it to, or the game's one of that name
     const decl *shader = shader_written(first, last);
     if (shader) return shader->is_frag ? MESH_FRAG : MESH_VERT;
@@ -11687,18 +11698,18 @@ static void collect_label(void *user, const char *label, const char *doc)
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
     "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])",
-    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])",
+    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])",
 };
 
 static const char *const instanced_labels[2] = {
     "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
-    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])",
 };
 
 // ...and the forms a Mesh asset is drawn by: the Mesh where its vertices and its indices go.
-static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])";
-static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])";
-static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform[, pose][, texture[, filter[, wrap]]][, vert][, frag][, values])";
+static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
+static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
+static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform[, pose][, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])";
 
 // Each of its parameters: what it's called in those, and what it takes, in a
 // 2D mesh and, where that differs, in a 3D one.
@@ -11734,6 +11745,9 @@ static const struct {
                              "\"art/tree.glb\";`. Instanced also accepts a `SkinnedMesh<V>`. A vert and a frag take its vertex struct, V."}},
     [MESH_SKINNED] = {"mesh", {"An immutable `SkinnedMesh<V>` model. A vert and a frag take its ordinary vertex struct, V."}},
     [MESH_POSE] = {"pose", {"An optional Pose: skinning applies its transforms before the user vertex stage. Omit it to draw the model's authored rest pose."}},
+    [MESH_LOD] = {"lod", {"Written last, by name: `lod: 1` gives a mesh the game makes levels of detail, made in the background "
+                          "and kept by what's in the mesh; until they're there it draws whole. The number multiplies the "
+                          "pixels a level may be off by, as `[LOD(2)]` does on an asset. 3D meshes and models with bones, whose bones are weighed."}},
 };
 
 // The names of the parameters a checked call's arguments go to, in order:
@@ -11953,11 +11967,11 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
 {
     static const int forms[6][MESH_PARAMS] = {
         {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
-        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
-        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
-        {MESH_WHOLE, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
-        {MESH_WHOLE, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
-        {MESH_SKINNED, MESH_TRANSFORM, MESH_POSE, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
+        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES, MESH_LOD},
+        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES, MESH_LOD},
+        {MESH_WHOLE, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES, MESH_LOD},
+        {MESH_WHOLE, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES, MESH_LOD},
+        {MESH_SKINNED, MESH_TRANSFORM, MESH_POSE, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES, MESH_LOD},
     };
     const scope sc = scope_at(at);
     call_args args;
@@ -11976,7 +11990,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const bool three_d = skinned || whole || (drawn ? vertex_is_3d(drawn)
                                          : args.count > 2 && mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM);
     const int *order = forms[skinned ? 5 : whole ? (instanced ? 4 : 3) : instanced ? 2 : three_d ? 1 : 0];
-    const int count = whole ? 8 : instanced || three_d ? 9 : 8;
+    const int count = (whole ? 8 : instanced || three_d ? 9 : 8) + (three_d ? 1 : 0); // A 3D mesh's lod: last
     const int fixed = skinned || whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances
 
     int active = 0;

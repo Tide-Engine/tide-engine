@@ -6,6 +6,8 @@
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/pack.h"
+#include "list_data_cache.h"
+#include "mesh_levels.h"
 
 static float unit(const float v)
 {
@@ -571,6 +573,65 @@ static uint64_t numbers_id(const tide_handle at, const uint32_t layout)
     return h & ~(UINT64_C(1) << 63);
 }
 
+// Only a current ordinary flat heap page supplies a cheap mutation witness.
+// moves alone is insufficient: writes into unique pages merely dirty hashed.
+// Scratch offsets can be reused or written without any revision; chunked and
+// immutable asset-backed lists keep the existing general path too.
+static bool list_data_page(const tide_list list, tide_list_data_entry *seen)
+{
+    if (!list.at || tide_handle_where(list.at) == TIDE_IN_SCRATCH) return false;
+    const tide_heap *heap = tide_heap_read(tide_handle_where(list.at));
+    const uint64_t offset = tide_handle_offset(list.at);
+    if (!heap || (offset >> TIDE_HEAP_PAGE_SHIFT) >= heap->pages
+        || offset > heap->used || sizeof(tide_block) > heap->used - offset) return false;
+    tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
+    const tide_page *page = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
+    if (!page || page->hashed == UINT32_MAX) return false;
+    const uint64_t first = (uint64_t)page->first << TIDE_HEAP_PAGE_SHIFT;
+    if (offset < first || offset - first > page->size || sizeof(tide_block) > page->size - (offset - first)) return false;
+    const tide_block *block = (const tide_block *)(const void *)((const uint8_t *)tide_page_data(page)
+        + (size_t)(offset - first));
+    if (block->b & (TIDE_LIST_CHUNKED | TIDE_LIST_ASSET)) return false;
+    seen->heap = (uintptr_t)heap;
+    seen->heap_used = heap->used;
+    seen->page_hash = page->hash;
+    seen->hashed = page->hashed;
+    return true;
+}
+
+static bool list_data_same_page(const tide_list_data_entry *a, const tide_list_data_entry *b)
+{
+    return a->heap == b->heap && a->heap_used == b->heap_used
+        && a->page_hash == b->page_hash && a->hashed == b->hashed;
+}
+
+static uint32_t list_data_cached(tide_draw_list *d, const tide_list list, const uint32_t element_size,
+                                const uint32_t words, const uint32_t layout, tide_list_words_fn *write,
+                                const int32_t held, int32_t *count)
+{
+    if (!d->list_data) return 0;
+    tide_list_data_entry seen = {0};
+    if (!list_data_page(list, &seen)) return 0;
+    for (uint32_t i = 0; i < TIDE_LIST_DATA_CACHE_ENTRIES; i++) {
+        const tide_list_data_entry *entry = &d->list_data->entries[i];
+        if (entry->at != list.at || entry->element_size != element_size || entry->words != words
+            || entry->layout != layout || entry->write != write || entry->held != held
+            || !entry->slot || entry->slot > d->texture_count || !list_data_same_page(entry, &seen)) continue;
+        tide_draw_texture *texture = &d->textures[entry->slot - 1u];
+        if (texture->space != TIDE_PIXELS_LIST || texture->id != entry->id || texture->version != entry->version
+            || texture->format != TIDE_TEXELS_INTS || texture->width != entry->width || texture->height != entry->height
+            || !texture->changes || texture->changes->kind != entry->kind) continue;
+        // Observing a valid hash must invalidate retained writable list/grid
+        // addresses, just as tide_heap_block_hash does on the general path.
+        tide_heap *heap = (tide_heap *)seen.heap;
+        __atomic_add_fetch(&heap->moves, 1u, __ATOMIC_RELAXED);
+        texture->frame = d->frame;
+        *count = entry->count;
+        return entry->slot;
+    }
+    return 0;
+}
+
 uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint32_t element_size, const uint32_t words,
                              const uint32_t layout, tide_list_words_fn *write, int32_t *count)
 {
@@ -581,6 +642,8 @@ uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint
         *count = held;
         return 0;
     }
+    const uint32_t cached = list_data_cached(d, list, element_size, words, layout, write, held, count);
+    if (cached) return cached;
     const uint32_t stride = tide_data_stride(words); // Ints from an element to the next
     const uint64_t most = (uint64_t)TIDE_LIST_DATA_MOST * 4u / stride;
     if (most == 0) return 0;
@@ -593,11 +656,31 @@ uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint
     const uint64_t version = tide_hash_end(tide_hash_more(list_version(list, element_size), &kind, sizeof kind));
     // One made along the way is what's in it, wherever it is in the scratch area
     const uint64_t id = tide_handle_where(list.at) == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1 : numbers_id(list.at, layout);
+    tide_list_data_entry seen = {0};
+    const bool cacheable = list_data_page(list, &seen);
     uint8_t *out;
     bool kept;
     const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_LIST, id, version, width, height, TIDE_TEXELS_INTS, kind,
                                                  &out, &kept);
     if (out) list_numbers(d, slot, (int32_t *)(void *)out, kept, list, element_size, elements, stride, write);
+    if (cacheable && slot) {
+        if (!d->list_data) d->list_data = tide_alloc_zeroed(1, sizeof *d->list_data);
+        tide_list_data_entry *entry = &d->list_data->entries[d->list_data->next++ % TIDE_LIST_DATA_CACHE_ENTRIES];
+        *entry = seen;
+        entry->at = list.at;
+        entry->element_size = element_size;
+        entry->words = words;
+        entry->layout = layout;
+        entry->write = write;
+        entry->held = held;
+        entry->count = (int32_t)elements;
+        entry->width = width;
+        entry->height = height;
+        entry->slot = slot;
+        entry->id = id;
+        entry->version = version;
+        entry->kind = kind;
+    }
     *count = (int32_t)elements;
     return slot;
 }
@@ -780,7 +863,7 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
     // instances are still one mesh's
     uint64_t version = list_version(vertices, sizeof(tide_vertex3));
     const uint64_t index_version = list_version(indices, sizeof(uint32_t));
-    version = tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version));
+    version = tide_draw_lod_version(d, tide_hash_end(tide_hash_more(version, &index_version, sizeof index_version)));
     const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0); // No world's list's place
     const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
     const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
@@ -794,6 +877,7 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
         tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
         tide_list_unflatten(vertices, v, sizeof(tide_vertex3), false, vertices_copied);
         mesh_levels(d, mesh, indices);
+        tide_draw_lod_request(d, mesh);
     }
     return mesh;
 }
@@ -818,7 +902,7 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
     uint64_t version = list_version(vertices, size);
     const uint64_t index_version = list_version(indices, sizeof(uint32_t));
     version = tide_hash_more(version, &index_version, sizeof index_version);
-    version = tide_hash_end(tide_hash_more(version, &size, sizeof size));
+    version = tide_draw_lod_version(d, tide_hash_end(tide_hash_more(version, &size, sizeof size)));
     const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
     const uint64_t id = tide_handle_where(vertices.at) == TIDE_IN_SCRATCH ? scratch : vertices.at;
     const uint64_t other = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? scratch : indices.at;
@@ -832,6 +916,7 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
         tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
         tide_list_unflatten(vertices, v, size, false, vertices_copied);
         mesh_levels(d, mesh, indices);
+        tide_draw_lod_request(d, mesh);
     }
     tide_draw_shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling);
 }

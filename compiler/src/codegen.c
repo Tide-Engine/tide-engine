@@ -3789,8 +3789,50 @@ static void gen_visibility_call(gen *g, sb *o, const expr *e)
     sb_put(o, ")");
 }
 
+// The fields of a game's vertex a mesh's levels are weighed by, as tide_mesh_lod_layout has them: 1 + each one's
+// offset, for a field of that name and type, as an asset's levels weigh what its file fills.
+static void gen_lod_layout(sb *o, const decl *vertex)
+{
+    static const struct {
+        const char *name;
+        type_kind kind;
+    } weighed[] = {{"position", TY_FLOAT3}, {"normal", TY_FLOAT3}, {"uv", TY_FLOAT2},
+                   {"uv2", TY_FLOAT2},      {"color", TY_COLOR},    {"tangent", TY_FLOAT4}};
+    sb_put(o, "&(const tide_mesh_lod_layout){");
+    bool first = true;
+    for (size_t w = 0; w < sizeof weighed / sizeof weighed[0]; w++) {
+        for (int i = 0; i < vertex->fields.count; i++) {
+            const field *f = &vertex->fields.items[i];
+            if (!str_eq_c(f->name, weighed[w].name) || f->type.kind != weighed[w].kind) continue;
+            sb_printf(o, "%s.%s = 1u + (uint32_t)offsetof(%s, %s)", first ? "" : ", ", weighed[w].name, type_cname(vertex),
+                      field_cname(f));
+            first = false;
+        }
+    }
+    sb_put(o, "}");
+}
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
+    if (e->mesh_lod && e->mesh_lod_vertex && (e->kind == E_CALL || e->kind == E_METHOD)) {
+        // A mesh the game made, drawn with `lod:` (tide_draw_want_levels): the draw asks for its levels, and the
+        // draws after it don't. Arguments with effects of their own already ran, before the statement
+        expr call = *e;
+        call.mesh_lod = NULL;
+        sb_put(o, "(tide_draw_want_levels(tide_draw, (float)(");
+        gen_expr(g, o, e->mesh_lod);
+        sb_put(o, "), ");
+        gen_lod_layout(o, e->mesh_lod_vertex);
+        sb_put(o, "), ");
+        if (e->skinned && e->skin_mesh) { // A model's bones are weighed too, as an asset's [LOD] weighs them
+            sb_put(o, "tide_draw_want_bones(tide_draw, (");
+            gen_expr(g, o, e->skin_mesh);
+            sb_put(o, ").data), ");
+        }
+        gen_expr(g, o, &call);
+        sb_put(o, ", tide_draw_want_levels(tide_draw, 0.0f, NULL))");
+        return;
+    }
     if (e->binding_value) {
         // Draw checking marks the argument as a stage, but it remains an
         // ordinary evaluated value. Keep hoisting/snapshot metadata on that
@@ -19842,85 +19884,6 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
 // with its triangles: its two blocks' offsets. A field a file has something
 // for, by its name, is filled from it. Any other is zeros here, and the
 // struct's own default once the pack is loaded (gen_assets).
-// How a skinned mesh's vertices follow their bones, for its levels of detail (mesh_lod_source.apart): each
-// vertex's influences, a palette and a weight each.
-typedef struct bone_weights {
-    uint32_t vertices;
-    uint32_t *first, *count;
-    uint32_t *palette;
-    float *weight;
-} bone_weights;
-
-// How differently two vertices follow their bones: 0 for the same weights on the same bones, 1 for bones that
-// share nothing.
-static float bones_apart(void *user, const uint32_t from, const uint32_t to)
-{
-    const bone_weights *w = user;
-    if (from >= w->vertices || to >= w->vertices) return 0.0f;
-    float apart = 0.0f;
-    for (uint32_t i = 0; i < w->count[from]; i++) {
-        const uint32_t palette = w->palette[w->first[from] + i];
-        float theirs = 0.0f;
-        for (uint32_t k = 0; k < w->count[to]; k++) {
-            if (w->palette[w->first[to] + k] == palette) theirs += w->weight[w->first[to] + k];
-        }
-        bool counted = false; // A palette named twice is counted once, with all of its weight
-        for (uint32_t k = 0; k < i && !counted; k++) counted = w->palette[w->first[from] + k] == palette;
-        if (counted) continue;
-        float mine = 0.0f;
-        for (uint32_t k = i; k < w->count[from]; k++) {
-            if (w->palette[w->first[from] + k] == palette) mine += w->weight[w->first[from] + k];
-        }
-        apart += mine > theirs ? mine - theirs : theirs - mine;
-    }
-    for (uint32_t i = 0; i < w->count[to]; i++) { // ...and the bones only `to` follows
-        const uint32_t palette = w->palette[w->first[to] + i];
-        bool shared = false;
-        for (uint32_t k = 0; k < w->count[from] && !shared; k++) shared = w->palette[w->first[from] + k] == palette;
-        if (!shared) apart += w->weight[w->first[to] + i];
-    }
-    return apart * 0.5f;
-}
-
-// The bones' weights of a skinned model's `vertices` vertices, from its bytes: none (`first` NULL) for bytes
-// that aren't a model of that many, which then has its levels made as a mesh that follows no bones.
-static bone_weights bone_weights_of(const uint8_t *model, const size_t size, const uint32_t vertices)
-{
-    bone_weights w = {0};
-    tide_skinned_data_view view;
-    if (!model || !tide_skinned_data_open(model, size, &view)) return w;
-    uint32_t *first = calloc(vertices ? vertices : 1u, sizeof(uint32_t)), *count = calloc(vertices ? vertices : 1u, sizeof(uint32_t));
-    if (!first || !count) abort();
-    uint64_t all = 0;
-    bool ok = true;
-    for (uint32_t v = 0; ok && v < vertices; v++) {
-        tide_skinned_vertex_data vertex;
-        ok = tide_skinned_data_vertex(&view, v, &vertex) && all + vertex.influences <= UINT32_MAX;
-        if (!ok) break;
-        first[v] = (uint32_t)all;
-        count[v] = vertex.influences;
-        all += vertex.influences;
-    }
-    uint32_t *palette = calloc(all ? (size_t)all : 1u, sizeof(uint32_t));
-    float *weight = calloc(all ? (size_t)all : 1u, sizeof(float));
-    if (!palette || !weight) abort();
-    for (uint32_t v = 0; ok && v < vertices; v++) {
-        tide_skinned_vertex_data vertex;
-        ok = tide_skinned_data_vertex(&view, v, &vertex);
-        for (uint32_t i = 0; ok && i < count[v]; i++) {
-            tide_skinned_influence_data influence;
-            ok = tide_skinned_data_influence(&view, vertex.first_influence + i, &influence);
-            palette[first[v] + i] = influence.palette;
-            weight[first[v] + i] = influence.weight;
-        }
-    }
-    if (!ok) {
-        free(first), free(count), free(palette), free(weight);
-        return w;
-    }
-    return (bone_weights){.vertices = vertices, .first = first, .count = count, .palette = palette, .weight = weight};
-}
-
 // The levels of detail of an asset marked [LOD] (docs/spec.md, Levels of detail): made of what the file has, once
 // a file (mesh_lod_cached). `skinned` is a skinned model's bytes, whose bones' weights are weighed too. False for
 // a mesh that has none, which is packed as one with no [LOD] is. `key` gets what tells these levels from any other.
@@ -19933,7 +19896,7 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
     static const char tangent_version[] = "tide levels of detail 7, values by area, of meshes of 1000 triangles and "
                                           "levels of 64 at the least, ordered for the vertex cache, with tangent "
                                           "handedness seams";
-    _Static_assert(MESH_LOD_MESH_LEAST == 1000 && MESH_LOD_TRIANGLES_LEAST == 64,
+    _Static_assert(TIDE_MESH_LOD_MESH_LEAST == 1000 && TIDE_MESH_LOD_TRIANGLES_LEAST == 64,
                    "the levels' version says the fewest triangles a mesh and a level have");
     const bool tangent_sides = tangents && !skinned;
     tide_sha256 s;
@@ -19947,15 +19910,16 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
         tide_sha256_add(&s, model, sizeof model);
     }
     tide_sha256_end(&s, key);
-    bone_weights bones = skinned ? bone_weights_of(skinned, skinned_size, m->vertices) : (bone_weights){0};
-    const mesh_lod_source source = {
+    tide_mesh_lod_bones bones = {0};
+    if (skinned) tide_mesh_lod_bones_of(skinned, skinned_size, m->vertices, &bones);
+    const tide_mesh_lod_source source = {
         .vertices = m->vertices, .position = m->position, .normal = m->normal, .uv = m->has_uvs ? m->uv : NULL,
         .uv2 = m->has_uvs2 ? m->uv2 : NULL, .color = m->has_colors ? m->color : NULL, .index = m->index, .indices = m->indices,
         .tangent = tangent_sides ? m->tangent : NULL,
-        .apart = bones.first ? bones_apart : NULL, .user = &bones, .mesh_least = MESH_LOD_MESH_LEAST,
-        .triangles_least = MESH_LOD_TRIANGLES_LEAST};
-    const mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
-    free(bones.first), free(bones.count), free(bones.palette), free(bones.weight);
+        .apart = bones.first ? tide_mesh_lod_bones_apart : NULL, .user = &bones, .mesh_least = TIDE_MESH_LOD_MESH_LEAST,
+        .triangles_least = TIDE_MESH_LOD_TRIANGLES_LEAST};
+    const tide_mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
+    tide_mesh_lod_bones_free(&bones);
     if (made->levels == 0) return false;
     *levels = (tide_mesh_levels){.radius = made->radius, .count = made->levels, .index = made->index, .index_count = made->indices};
     memcpy(levels->center, made->center, sizeof levels->center);
