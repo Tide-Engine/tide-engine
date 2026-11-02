@@ -123,7 +123,7 @@ static int command_main(const int argc, char **argv)
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--update") == 0) only_updates = true; // Used by tide upgrade
             else {
-                fprintf(stderr, "tide: editors doesn't take '%s'\n", argv[i]);
+                fprintf(stderr, "tide: editors doesn't take '%s'; see `tide help editors`\n", argv[i]);
                 return 2;
             }
         }
@@ -193,7 +193,9 @@ static int command_main(const int argc, char **argv)
             else if (strcmp(argv[i], "--stable") == 0) channel = "stable";
             else if (strcmp(argv[i], "--version") == 0 && i + 1 < argc) exact = argv[++i];
             else {
-                fprintf(stderr, "tide: upgrade doesn't take '%s'\n", argv[i]);
+                if (strcmp(argv[i], "--version") == 0)
+                    fputs("tide: --version takes the release to install, like `tide upgrade --version 0.5.0`\n", stderr);
+                else fprintf(stderr, "tide: upgrade doesn't take '%s'; see `tide help upgrade`\n", argv[i]);
                 return 2;
             }
         }
@@ -221,8 +223,8 @@ static int command_main(const int argc, char **argv)
     build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
     // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, a
-    // network made worse, and a run with no window. Each once is 43 arguments, and --latency, --jitter and --loss
-    // can say several players' too
+    // network made worse, profiling, and a run with no window. There is room for every option once, and
+    // --latency, --jitter and --loss can say several players' too
     const char *game_args[128] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
@@ -231,6 +233,7 @@ static int command_main(const int argc, char **argv)
     bool sized = false;
     bool data_directory = false;
     bool server_args = false;
+    bool profile = false, profile_warmup = false, profile_bounded = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
@@ -275,13 +278,35 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--data-dir") == 0) {
             if (left < 1 || !argv[i + 1][0] || argv[i + 1][0] == '-') {
-                fprintf(stderr, "tide: --data-dir takes a nonempty save directory, like `--data-dir test-saves`\n");
+                fprintf(stderr, "tide: --data-dir takes a nonempty save directory, like `--data-dir test-saves`; use ./-name for a folder starting with '-'\n");
                 free(defines);
                 return 2;
             }
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
             data_directory = true;
+        } else if (run && strcmp(a, "--profile") == 0) {
+            if (left < 1 || !argv[i + 1][0] || argv[i + 1][0] == '-' || profile) {
+                fputs("tide: --profile takes one nonempty report path, like `--profile profile.json`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = path_absolute(argv[++i]);
+            profile = true;
+        } else if (run && strcmp(a, "--profile-warmup") == 0) {
+            const char *number = left >= 1 ? argv[i + 1] : "";
+            const char *c = number;
+            uint64_t value = 0;
+            for (; *c >= '0' && *c <= '9' && value <= 1000000000u; c++) value = value * 10u + (uint64_t)(*c - '0');
+            if (profile_warmup || c == number || *c || value > 1000000000u) {
+                fputs("tide: --profile-warmup takes one whole number from 0 to 1000000000, like `--profile-warmup 60`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+            profile_warmup = true;
         } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--record") == 0 ||
                            strcmp(a, "--script") == 0 || strcmp(a, "--microphone") == 0 || strcmp(a, "--interactive") == 0)) {
             if (left < 1) {
@@ -299,6 +324,7 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
             headless = true;
+            if (strcmp(a, "--script") == 0 || strcmp(a, "--interactive") == 0) profile_bounded = true;
         } else if (run && (strcmp(a, "--frames") == 0 || strcmp(a, "--scale") == 0)) {
             if (left < 1) {
                 fprintf(stderr, "tide: %s takes a number, like `%s`\n", a, a[2] == 'f' ? "--frames 300" : "--scale 2");
@@ -307,7 +333,7 @@ static int command_main(const int argc, char **argv)
             }
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
-            if (a[2] == 'f') headless = true;
+            if (a[2] == 'f') headless = profile_bounded = true;
         } else if (run && (strcmp(a, "--latency") == 0 || strcmp(a, "--jitter") == 0 || strcmp(a, "--loss") == 0)) {
             // The game says what's wrong with a value: a player's (2:120) needs its --players
             if (left < 1) {
@@ -373,7 +399,7 @@ static int command_main(const int argc, char **argv)
             if (!lex_symbol_ok(name)) {
                 fprintf(stderr, "tide: --define takes a symbol for the game's #if lines, like `--define FAST`%s\n",
                         strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
-                            ? ": symbols that start with TIDE_ and PACKAGE_ are tide's to say"
+                            ? ": TIDE_ and PACKAGE_ prefixes are reserved by Tide; choose a different symbol"
                             : "");
                 free(defines);
                 return 2;
@@ -409,7 +435,23 @@ static int command_main(const int argc, char **argv)
         else if ((unity || build || run || schedule) && strcmp(a, "--assets") == 0 && i + 1 < argc) opts.unity_assets = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {
-            fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
+            // Recognized options with no value used to look like unknown options.
+            const char *example = NULL;
+            if (!left) {
+                if (strcmp(a, "--title") == 0) example = "--title \"My Game\"";
+                else if (strcmp(a, "--assets") == 0) example = "--assets Assets";
+                else if ((build || unity) && strcmp(a, "-o") == 0) example = "-o output/game";
+                else if (run && strcmp(a, "--join") == 0) example = "--join K7QF2M";
+                else if (run && strcmp(a, "--connect") == 0) example = "--connect 127.0.0.1:7777";
+                else if (run && strcmp(a, "--port") == 0) example = "--port 7777";
+                else if (run && strcmp(a, "--max-matches") == 0) example = "--max-matches 64";
+                else if (run && strcmp(a, "--max-connections") == 0) example = "--max-connections 256";
+                else if (run && strcmp(a, "--shards") == 0) example = "--shards 4";
+                else if (run && strcmp(a, "--shard-width") == 0) example = "--shard-width 100";
+                else if (run && strcmp(a, "--shard-most") == 0) example = "--shard-most 1000";
+            }
+            if (example) fprintf(stderr, "tide: %s needs a value, like `%s`; see `tide help %s`\n", a, example, a);
+            else fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
             free(defines);
             return 2;
         }
@@ -444,7 +486,7 @@ static int command_main(const int argc, char **argv)
             if (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
                 || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0 || strcmp(a, "--shards") == 0
                 || strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0 || strcmp(a, "--shard-journal") == 0) { i++; continue; }
-            fprintf(stderr, "tide: --server does not take %s\n", a);
+            fprintf(stderr, "tide: --server does not take %s; remove it or omit --server to run a player\n", a);
             free(defines);
             return 2;
         }
@@ -460,7 +502,22 @@ static int command_main(const int argc, char **argv)
         return 2;
     }
     if (opts.web && opts.android) {
-        fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
+        fprintf(stderr, "tide: a build is for the web or for Android, not both at once; use only --web or --android\n");
+        free(defines);
+        return 2;
+    }
+    if (profile_warmup && !profile) {
+        fputs("tide: --profile-warmup requires --profile <report.json>\n", stderr);
+        free(defines);
+        return 2;
+    }
+    if (profile && (opts.web || opts.android)) {
+        fputs("tide: --profile captures a native desktop run, not --web or --android\n", stderr);
+        free(defines);
+        return 2;
+    }
+    if (profile && !profile_bounded) {
+        fputs("tide: --profile needs --frames <n>, --script <file> or --interactive <replay.txt> to end the capture\n", stderr);
         free(defines);
         return 2;
     }

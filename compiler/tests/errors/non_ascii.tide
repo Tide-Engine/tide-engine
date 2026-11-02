@@ -1,4 +1,4 @@
-// expect: non-ASCII characters are only allowed in comments and text
+// expect: non-ASCII characters are only allowed in comments, text and character literals; use ASCII letters, digits and '_' in names
 // Comments can say café freely.
 scene Main { }
 

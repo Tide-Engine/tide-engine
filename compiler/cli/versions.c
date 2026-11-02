@@ -76,7 +76,8 @@ int tide_use_pinned(const char *folder, const int argc, char **argv, const char 
     char said[256], prefix[128];
     snprintf(prefix, sizeof prefix, "tide %s (", game.pinned);
     if (sys_capture(probe, said, sizeof said) != 0 || strncmp(said, prefix, strlen(prefix)) != 0) {
-        fprintf(stderr, "tide: %s isn't tide %s; repair that cached installation\n", program, game.pinned);
+        fprintf(stderr, "tide: %s isn't tide %s\n", program, game.pinned);
+        fprintf(stderr, "  = note: move the cached folder %s aside, then rerun this command in a terminal to download it again\n", root);
         goto done;
     }
     const char **args = calloc((size_t)argc + 1, sizeof *args);

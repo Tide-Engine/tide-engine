@@ -11968,7 +11968,7 @@ TIDE_TEST(lsp_asset_meshes)
     open_uri(uri_main, drawing);
     const char *help = request_at(uri_main, "textDocument/signatureHelp", 14, 20, "");
     TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values][, lod: multiplier])"));
-    TIDE_CHECK(has(help, "\"activeParameter\":1") && has(help, "A `Mesh<V>`: an asset's vertices and its indices as one"));
+    TIDE_CHECK(has(help, "\"activeParameter\":1") && has(help, "A `Mesh<V>`: its vertices and its indices as one"));
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Instanced(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);
     help = request_at(uri_main, "textDocument/signatureHelp", 14, 25, "");
@@ -12355,6 +12355,22 @@ TIDE_TEST(lsp_skinned_blend_shapes_complete_hover_and_help)
     TIDE_CHECK(has(request("textDocument/hover"), "TryGetByName"));
     completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
     TIDE_CHECK(offers(completion, "Decode") && !offers(completion, "Shaped"));
+}
+
+TIDE_TEST(lsp_mesh_decode_completes_hovers_and_checks)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    var model = Mesh<Vertex3>.$\n}\n");
+    TIDE_CHECK(offers(completion, "Decode") && has(completion, "Decode(List<byte> bytes)"));
+    open_document("scene Main { }\nsingleton Art { List<byte> bytes; Mesh<Vertex3> model; }\n"
+                  "system Read(mut Art art) { art.model = Mesh<Vertex3>.Dec$ode(art.bytes)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Mesh<Vertex3>.Decode(List<byte> bytes)") && has(hover, "fails IOError") && has(hover, ".obj"));
+    open_document("scene Main { }\nusing Model = Mesh<Vertex3>;\nsingleton Art { List<byte> bytes; Model model; }\n"
+                  "system Read(mut Art art) { art.model = Model.Decode($art.bytes)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Decode(List<byte> bytes)"));
 }
 
 TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)

@@ -147,6 +147,7 @@ static void heard_read_expr(heard_walk *w, const expr *e, const bool select)
     heard_read_expr(w, e->rhs, !user);
     heard_read_expr(w, e->cond, true);
     heard_read_expr(w, e->values, true);
+    heard_read_expr(w, e->mesh_lod, true);
     heard_read_expr(w, e->skin_mesh, true);
     heard_read_expr(w, e->skin_pose, true);
     for (int i = 0; i < e->args.count; i++) heard_read_expr(w, e->args.items[i], !user);

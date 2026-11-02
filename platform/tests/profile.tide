@@ -1,0 +1,51 @@
+// A known workload for machine-readable profile captures. Each draw view has
+// one camera/destination and exact culling outcomes, independent of timing.
+settings { maxPlayers = 2; }
+
+asset Mesh<Vertex3> card = "../../compiler/tests/e2e/assets/meshes/box.obj";
+
+scene Main { }
+
+singleton Counter { int ticks; }
+system Advance(mut Counter counter) { counter.ticks += 1; }
+
+local singleton Controls { bool bypass; }
+
+view Camera(Devices devices, mut Controls controls)
+{
+    if (devices.keyboard.space.down) controls.bypass = !controls.bypass;
+    Draw.Clear(Color.black);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(160, 120, 0.1, 100));
+}
+
+float4x4 Place(float x)
+{
+    return float4x4.TRS(float3(x, 20, 10), quaternion.identity, float3(16));
+}
+
+// The agent's candidate: tests cost work, but reject nothing. Space selects
+// the existing scoped opt-out; its picture must stay exactly the same.
+view AllVisible(Controls controls)
+{
+    Draw.Cull(Cull.None)
+    {
+        Draw.FrustumCulling(!controls.bypass) { Draw.Mesh(card, Place(-40)); }
+    }
+}
+
+view AlreadyVisible()
+{
+    Draw.Cull(Cull.None)
+    {
+        Draw.FrustumCulling(false) { Draw.Mesh(card, Place(0)); }
+    }
+}
+
+view MixedCandidates()
+{
+    Draw.Cull(Cull.None)
+    {
+        Draw.Mesh(card, Place(40));
+        Draw.Mesh(card, Place(10000));
+    }
+}

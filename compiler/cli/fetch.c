@@ -76,9 +76,11 @@ static bool curl(const char *url, const char *path, const char *timeout)
     const int code = sys_run(argv, NULL, false);
     const bool written = sys_exists(path);
     if (code != 0 || !written) {
-        fprintf(stderr, "tide: download tool %s exited with %d%s\n", tool, code,
-                written ? "" : " and wrote no output file");
+        if (code < 0) fprintf(stderr, "tide: couldn't start download tool %s; check that curl is installed and can run on this machine\n", tool);
+        else fprintf(stderr, "tide: download tool %s exited with %d%s\n", tool, code,
+                     written ? "" : " and wrote no output file");
         if (code == 0) {
+            fprintf(stderr, "  = note: update curl and retry; also check download folder permissions and free disk space\n");
             const char *const version[] = {tool, "--version", NULL};
             sys_run(version, NULL, false);
         }
@@ -187,6 +189,7 @@ bool fetch_package(void *user, const package_line *line, const char *dir)
         fprintf(stderr, "  = note: check that the repository is public and has that commit\n");
     } else if (!sys_mkdirs(files) || sys_run(tar, NULL, false) != 0) {
         fprintf(stderr, "tide: couldn't unpack %s at %s\n", repo, line->commit);
+        fprintf(stderr, "  = note: check that tar is installed and the package cache is writable, then retry the download\n");
         ok = false;
     }
     char failed[1024];

@@ -155,6 +155,7 @@ typedef struct gen {
     VEC(transition) moves;
     int indent;
     bool in_input; // Generating the input's constructor: fields live in tide_self.
+    const expr *keyed_draw; // The Mesh<V> draw whose key gen_expr has given the draw list, written out within it
     const decl *routine; // The method or function being generated: a mut method's fields are tide_self->
     const borrow_variant *borrow;
     VEC(borrow_variant *) borrows;
@@ -189,6 +190,9 @@ typedef struct gen {
     // what names each (cache_key), and the view's name in C
     VEC(const char *) lv_keys;
     VEC(const char *) lv_names;
+    bool **shader_prep_views; // Proven read-only drawing regions, by view and reachable shader.
+    bool *shader_prep_shaders;
+    bool shader_prep_active;
     VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
     size_t lc_patch;       // ...and where the array's size goes in `lc_sb`, once the body says how many (close_list_caches)
     sb *lc_sb;
@@ -757,20 +761,28 @@ static uint64_t asset_reference_id(const decl *d)
 
 // A row of a generated Map<string, long>, which a mesh glob's metadata is, and
 // of the map of meshes it's made from in its place (tide_pack_mesh_map).
+// A Mesh<V> value as generated C lays it out: its id, and the two lists of a mesh the game made, none for an asset's
+typedef struct mesh_reference_value {
+    int64_t id;
+    tide_handle vertices;
+    tide_handle indices;
+} mesh_reference_value;
+
 typedef struct mesh_reference_pack_entry {
     int64_t order;
     tide_handle key;
-    int64_t id;
+    mesh_reference_value value;
 } mesh_reference_pack_entry;
 
 typedef struct mesh_geometry_pack_entry {
     int64_t order;
     tide_handle key;
-    tide_mesh_lists value;
+    tide_skinned_lists value; // Laid out as a skinned model's three lists: the room a Mesh<V> value takes
 } mesh_geometry_pack_entry;
 
-_Static_assert(sizeof(mesh_reference_pack_entry) <= sizeof(mesh_geometry_pack_entry) && sizeof(int64_t) <= sizeof(tide_mesh_lists),
-               "mesh metadata reuses map allocation");
+_Static_assert(sizeof(mesh_reference_pack_entry) == sizeof(mesh_geometry_pack_entry)
+                   && sizeof(mesh_reference_value) == sizeof(tide_skinned_lists),
+               "mesh metadata takes the skinned builder's allocation");
 
 typedef struct mesh_identity { uint64_t id; const decl *asset; } mesh_identity;
 static int mesh_identity_compare(const void *a, const void *b)
@@ -2168,6 +2180,14 @@ static void gen_draw_texture(gen *g, sb *o, expr *texture, expr *filter, expr *w
 
 // `e` converted to `want`: int -> float, scalars splatted to vectors, int
 // vectors widened to float vectors.
+// An Asset<Mesh<V>> where a Mesh<V> goes: the same identity, with no geometry of its own
+static void gen_mesh_of_asset(gen *g, sb *o, const expr *e, const type want)
+{
+    sb_printf(o, "((%s){.id = (", c_type(want));
+    gen_expr(g, o, e);
+    sb_put(o, ").id})");
+}
+
 static void gen_as(gen *g, sb *o, expr *e, const type want)
 {
     const type have = e->type;
@@ -2207,6 +2227,11 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_printf(o, "tide_skin_%s_from(tide_skin_%s_to(", type_cname(want.decl), type_cname(have.decl));
         gen_expr(g, o, e);
         sb_put(o, "))");
+        return;
+    }
+    if (want.kind == TY_STRUCT && have.kind == TY_STRUCT && want.decl != have.decl && want.decl->asset_ref_geometry
+        && have.decl->asset_ref_of && !have.decl->asset_ref_geometry) {
+        gen_mesh_of_asset(g, o, e, want);
         return;
     }
     if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
@@ -3541,6 +3566,20 @@ static void gen_c_raw_literal(sb *o, const str text)
     sb_put(o, "\"");
 }
 
+static void gen_profile_source(const gen *g, sb *o, const decl *d, const char *kind)
+{
+    sb_put(o, "    {");
+    gen_c_literal(o, diagnostic_name(g, tool_name(d), kind, d->index), false);
+    const source *src = diag_source(d->at.file);
+    if (g->opts->strip_names || !src) {
+        sb_put(o, ", NULL, 0u, 0u},\n");
+    } else {
+        sb_put(o, ", ");
+        gen_c_raw_literal(o, str_from(src->path));
+        sb_printf(o, ", %du, %du},\n", d->at.line, d->at.col);
+    }
+}
+
 static void gen_c_text(gen *g, sb *o, const expr *e)
 {
     if (e->kind == E_STRING) {
@@ -4071,6 +4110,14 @@ static void gen_visibility_call(gen *g, sb *o, const expr *e)
     sb_put(o, ")");
 }
 
+// A draw of a Mesh<V> value, whose two lists its arguments are (check_mesh_draw)
+static bool keyed_mesh_draw(const expr *e)
+{
+    if (e->kind != E_METHOD || e->call != CALL_DRAW || e->args.count < 2 || e->args.items[0]->mesh_part != 1) return false;
+    const type mesh = e->args.items[0]->object->type;
+    return mesh.kind == TY_STRUCT && mesh.decl->asset_ref_geometry;
+}
+
 // The fields of a game's vertex a mesh's levels are weighed by, as tide_mesh_lod_layout has them: 1 + each one's
 // offset, for a field of that name and type, as an asset's levels weigh what its file fills.
 static void gen_lod_layout(sb *o, const decl *vertex)
@@ -4394,7 +4441,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             break;
         }
         if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
-            sb_put(o, "tide_texture_size(");
+            sb_put(o, g->shader_prep_active ? "tide_shader_prep_size(" : "tide_texture_size(");
             if (e->object->type.kind == TY_DEPTH_TEXTURE)
                 sb_put(o, "(tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (");
             gen_expr(g, o, e->object);
@@ -4434,7 +4481,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             break;
         }
         if (e->asset_ref_value && e->object->type.decl->asset_ref_of->kind == DECL_MESH) {
-            gen_expr(g, o, e->object);
+            if (e->object->type.decl->asset_ref_geometry) gen_expr(g, o, e->object);
+            else gen_mesh_of_asset(g, o, e->object, e->type);
             break;
         }
         if (e->mesh_part && e->object->type.kind == TY_STRUCT && e->object->type.decl->asset_ref_of
@@ -4541,6 +4589,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         } else if (e->call == CALL_SPAWN) {
             if (e->hoisted) sb_put(o, e->hoisted); // Already ran, before the statement
             else gen_spawn(g, o, e);
+        } else if (e->call == CALL_NEW_MESH) { // Mesh(vertices, indices): copies, in the scratch area until a world owns them
+            sb_printf(o, "tide_mesh_make_%s(", type_cname(e->type.decl));
+            gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
+            sb_put(o, ", ");
+            gen_as(g, o, e->args.items[1], e->arg_want.items[1]);
+            sb_put(o, ")");
         } else if (e->call == CALL_NEW_GRID) { // Grid2(w, h): its size, in the scratch area until a world owns it
             sb_printf(o, "tide_grid_new(%du", e->type_decl->dims);
             for (int i = 0; i < 3; i++) {
@@ -4604,6 +4658,22 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         // Math.Dot(a, b) and friends, and Draw calls, which record into the
         // view's draw list. Entity methods (Add, Remove, Destroy) are
         // statements; see gen_method.
+        if (keyed_mesh_draw(e) && g->keyed_draw != e) {
+            // A Mesh<V> drawn: the draw list is told its key first, which a mesh the game made has (a negative id),
+            // and told no more after (tide_draw_mesh_key)
+            const expr *mesh = e->args.items[0]->object;
+            const expr *was = g->keyed_draw;
+            g->keyed_draw = e;
+            sb_printf(o, "(tide_draw_mesh_key(tide_draw, tide_resolve_%s(", type_cname(mesh->type.decl));
+            gen_expr(g, o, mesh);
+            sb_put(o, "), (uint64_t)(");
+            gen_expr(g, o, mesh);
+            sb_put(o, ").id), ");
+            gen_expr(g, o, e);
+            sb_put(o, ", tide_draw_mesh_key(tide_draw, (tide_mesh_lists){0}, 0))");
+            g->keyed_draw = was;
+            break;
+        }
         if (e->call == CALL_VISIBILITY) {
             gen_visibility_call(g, o, e);
         } else if (e->call == CALL_ENUM_COUNT) {
@@ -4671,6 +4741,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 gen_as(g, o, e->args.items[i], e->type_decl->fields.items[0].type);
             }
             if (!reads) sb_printf(o, ", %s", place_where(g, e->object)); // Where the map is
+            sb_put(o, ")");
+        } else if (e->call == CALL_MESH_DECODE) { // Mesh<V>.Decode(bytes): a mesh of the file's, in the scratch area
+            sb_printf(o, "tide_mesh_decode_%s(", type_cname(e->type_decl));
+            gen_as(g, o, e->args.items[0], e->args.items[0]->type);
             sb_put(o, ")");
         } else if (e->call == CALL_GRID && str_eq_c(e->name, "Decode")) { // cells.Decode(bytes): the PNG's pixels
             sb_put(o, "tide_checked_grid_decode(&(");
@@ -6082,7 +6156,7 @@ static bool holds_writer(const expr *e)
         return false;
     }
     if (writes(e) || holds_writer(e->object) || holds_writer(e->lhs) || holds_writer(e->rhs) || holds_writer(e->cond)
-        || holds_writer(e->skin_pose)) return true;
+        || holds_writer(e->skin_pose) || holds_writer(e->mesh_lod)) return true;
     for (int i = 0; i < e->args.count; i++) {
         if (holds_writer(e->args.items[i])) return true;
     }
@@ -6312,6 +6386,7 @@ static void call_operands(expr *e, operand_list *ops)
     }
     if (e->skinned && e->written.count) {
         for (int n = 0; n < e->written.count; n++) take(ops, e->written.items[n]);
+        take(ops, e->mesh_lod);
         return;
     }
     for (int n = 0; n < e->args.count; n++) {
@@ -6336,6 +6411,7 @@ static void call_operands(expr *e, operand_list *ops)
         if (role == TAKEN) take(ops, arg);
         else operand_push(ops, arg, role);
     }
+    take(ops, e->mesh_lod); // Written last, retained outside args by mesh checking.
 }
 
 // Whether a temporary can hold a value of type `t`.
@@ -6418,6 +6494,18 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         // temporaries its vertices' turn made
         if (e->mesh_part == 2) {
             if (holds_ordered(e->object)) out->forced = true;
+            break;
+        }
+        // A Mesh<V> a call gives, Mesh(vertices, indices) among them, is written out for each list and its key: it's
+        // worked out once, before
+        if (e->mesh_part == 1 && e->object->kind == E_CALL && e->object->type.kind == TY_STRUCT
+            && e->object->type.decl->asset_ref_geometry) {
+            collect_ordered(e->object, out, later);
+            if (!out->items.count || out->items.items[out->items.count - 1].e != e->object) {
+                const ordered_item item = {e->object, true, false};
+                vec_push(out->items, item);
+            }
+            out->forced = true;
             break;
         }
         const int had = out->items.count;
@@ -8799,6 +8887,7 @@ static void gen_header(gen *g)
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
               "#include \"tide/jobs.h\"\n#include \"tide/worker.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
     if (prog->decodes) sb_put(o, "#include \"tide/png.h\"\n"); // grid.Decode: only in a game that calls it
+    if (prog->mesh_decodes) sb_put(o, "#include \"tide/mesh_data.h\"\n#include \"tide/skinned_data.h\"\n"); // Mesh<V>.Decode
     if (prog->uses_resident) sb_put(o, "#include \"tide/resident.h\"\n"); // A Resident field: only in a game that has one
     sb_put(o, "\n");
     if (prog->random->named) sb_put(o, "#include \"tide/random.h\"\n\n"); // Random, in the games that have one
@@ -10045,17 +10134,21 @@ static void gen_text_helpers(gen *g)
                   "    for (int32_t i = 0; i < tide_list_count(*sources); i++)\n"
                   "        tide_skinned_own(tide_list_at_mut(*sources, i, sizeof(tide_list)), where);\n}\n\n");
     }
-    // The program's value types, the local parts of the match's components and
-    // singletons, then the maps' entries (what a foreach gives)
-    const int models = prog->decls.count + prog->skinned_types.count;
+    // Mesh<V> values (a mesh the game made has two lists), the program's value
+    // types, the local parts of the match's components and singletons, then
+    // the maps' entries (what a foreach gives)
+    const int refs = prog->asset_refs.count;
+    const int declared = refs + prog->decls.count;
+    const int models = declared + prog->skinned_types.count;
     const int parts = models + prog->local_parts.count;
     const int entries = parts + prog->maps.count;
     for (int i = 0; i < entries + prog->optional_fields.count; i++) {
-        const decl *d = i < prog->decls.count ? prog->decls.items[i]
-                      : i < models            ? prog->skinned_types.items[i - prog->decls.count]
-                      : i < parts             ? prog->local_parts.items[i - models]
-                      : i < entries           ? prog->maps.items[i - parts]->entry
-                                              : prog->optional_fields.items[i - entries]; // What T? fields are kept as
+        const decl *d = i < refs     ? prog->asset_refs.items[i]
+                      : i < declared ? prog->decls.items[i - refs]
+                      : i < models   ? prog->skinned_types.items[i - declared]
+                      : i < parts    ? prog->local_parts.items[i - models]
+                      : i < entries  ? prog->maps.items[i - parts]->entry
+                                     : prog->optional_fields.items[i - entries]; // What T? fields are kept as
         if (!d) continue;
         const bool value_type = d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON
                              || d->kind == DECL_EVENT;
@@ -19205,6 +19298,8 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
     sb_printf(o, "tide_fallback:\n    tide_task_%s_slow(tide_world_v, tide_task, tide_pieces);\n}\n\n", name);
 }
 
+#include "shader_prep_codegen.inc"
+
 static void gen_system_run(gen *g, const decl *sys)
 {
     if (sys->extern_system) {
@@ -19277,6 +19372,7 @@ static void gen_system_run(gen *g, const decl *sys)
                   name, sys->takes_verified ? "const tide_world *tide_verified, const tide_world *tide_vprev, float tide_valpha, " : "");
         if (reads_match(sys)) sb_put(o, "    if (!tide_w) return; // It reads the match, and there's none.\n");
         if (sys->takes_verified) sb_put(o, "    if (!tide_verified) return; // ...nor a world the server confirmed\n");
+        gen_shader_prep_enter(g, sys, view_number);
         // The devices it reads keep what it claimed last frame, and its claims are its own
         sb_printf(o, "    tide_gui_view(tide_ui, %du);\n", view_number + 1);
         // What it reads of the match, between last tick and this one. The
@@ -19440,6 +19536,7 @@ static void gen_system_run(gen *g, const decl *sys)
     if (queries) sb_put(o, "    tide_scratch_reset(tide_qmark);\n");
     if (fresh_mark) sb_put(o, "    tide_scratch_reset(tide_fresh_mark);\n");
     if (confirmed_mark) sb_put(o, "    tide_scratch_reset(tide_confirmed_mark);\n");
+    if (view) gen_shader_prep_leave(g, view_number);
     sb_put(o, "}\n\n");
     if (fast_task) gen_system_cached_task(g, sys, rows);
     if (!view && system_settles(sys) && settles_fields(sys)) gen_system_settle(g, sys);
@@ -19778,6 +19875,7 @@ static void dependency_expr(asset_dependency_walk *w, const expr *e)
     dependency_expr(w, e->skin_mesh);
     dependency_expr(w, e->skin_pose);
     dependency_expr(w, e->values);
+    dependency_expr(w, e->mesh_lod);
     for (int i = 0; i < e->args.count; i++) dependency_expr(w, e->args.items[i]);
     for (int i = 0; i < e->inits.count; i++) dependency_expr(w, e->inits.items[i].value);
     dependency_stmt(w, e->binding);
@@ -19846,6 +19944,11 @@ static void collect_asset_dependencies(gen *g)
         const type t = r->fields.items[0].type;
         if (r->fields.count == 2 && t.kind == TY_STRUCT && t.decl->skin_kind == SKIN_MESH)
             dependency_vertex(&w, t.decl->skin_vertex.decl);
+    }
+    // ...and so does a static Mesh<V>.Decode, whose vertices are match state where match code decodes
+    for (int i = 0; i < g->prog->asset_refs.count; i++) {
+        const decl *ref = g->prog->asset_refs.items[i];
+        if (ref->asset_ref_geometry && ref->mesh_decoded) dependency_vertex(&w, ref->asset_ref_of->fields.items[0].type.decl);
     }
     if (w.assets.count > 1) qsort(w.assets.items, (size_t)w.assets.count, sizeof *w.assets.items, dependency_order);
     for (int i = 0; i < w.assets.count; i++) {
@@ -19958,6 +20061,101 @@ static void gen_asset_fingerprint_check(gen *g, const asset_dependency *assets, 
               defaults ? "skinned vertex-default dependencies" : "skinned assets");
 }
 
+// Mesh<V>.Decode(bytes) (check_mesh_decode): the engine's reader (tide/mesh_data.h) within Decode's limits, the
+// vertices filled by their fields' names as an asset's are (mesh_fills, pack_mesh), every other field its default,
+// and the mesh's id what's in its lists (tide_mesh_key), as Mesh(vertices, indices) makes one. A vertex with
+// 'joints' or 'weights' is a Mesh with bones: read as a skinned model is (a .glb), at rest, with its bones. The
+// arithmetic is the build's own, so a file decoded gives the vertices its asset has, on every machine.
+static void gen_mesh_decode(gen *g, const decl *ref)
+{
+    sb *o = &g->c;
+    const decl *result = NULL;
+    for (int i = 0; i < g->prog->results.count && !result; i++) {
+        const decl *r = g->prog->results.items[i];
+        if (r->fields.count == 2 && r->fields.items[0].type.kind == TY_STRUCT && r->fields.items[0].type.decl == ref
+            && r->fields.items[1].type.kind == TY_ENUM && r->fields.items[1].type.decl == g->prog->io_error) result = r;
+    }
+    if (!result) return;
+    const decl *vertex = ref->asset_ref_of->fields.items[0].type.decl;
+    bool bones = false, tangent4 = false;
+    for (int f = 0; f < vertex->fields.count; f++) {
+        const field *field = &vertex->fields.items[f];
+        const int fill = mesh_fills(field);
+        bones |= fill == FILL_JOINTS || fill == FILL_WEIGHTS;
+        tangent4 |= fill == FILL_TANGENT && field->type.kind == TY_FLOAT4;
+    }
+    const char *result_c = c_type((type){TY_FAILABLE, (decl *)result});
+    sb_printf(o, "\nTIDE_HELPER %s tide_mesh_decode_%s(const tide_list input)\n{\n"
+                 "    %s result = {.error = IOError_InvalidData};\n"
+                 "    bool copied = false;\n"
+                 "    void *raw = tide_list_flatten(input, 1u, false, &copied);\n"
+                 "    const size_t size = (size_t)tide_list_count(input);\n"
+                 "    char why[256], note[256];\n"
+                 "    tide_mesh_data m;\n",
+              result_c, type_cname(ref), result_c);
+    if (bones) {
+        // As the build reads one (asset_files.c's skin_geometry, codegen's rest_mesh and fill_bones)
+        sb_put(o, "    uint8_t *model = NULL;\n    uint32_t model_size = 0;\n"
+                  "    const bool ok = tide_skinned_data_decode(raw, size, true, NULL, NULL, &model, &model_size, why, note);\n"
+                  "    tide_list_unflatten(input, raw, 1u, false, copied);\n"
+                  "    if (!ok) return result;\n"
+                  "    tide_skinned_data_view view;\n"
+                  "    if (!tide_skinned_data_open(model, model_size, &view) || !tide_mesh_data_of_model(model, model_size, &m)) {\n"
+                  "        tide_skinned_data_free(model);\n        return result;\n    }\n"
+                  "    {\n"
+                  "        float *position = tide_alloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));\n"
+                  "        float *normal = tide_alloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));\n"
+                  "        if (tide_mesh_data_rest(model, model_size, &m, position, normal)) {\n"
+                  "            free(m.position);\n            free(m.normal);\n"
+                  "            m.position = position;\n            m.normal = normal;\n"
+                  "        } else {\n            free(position);\n            free(normal);\n        }\n    }\n"
+                  "    if (!tide_mesh_data_finite(&m)) {\n"
+                  "        tide_mesh_data_free(&m);\n        tide_skinned_data_free(model);\n        return result;\n    }\n");
+    } else {
+        sb_put(o, "    const bool ok = tide_mesh_data_decode(raw, size, TIDE_MESH_ANY, &tide_mesh_decode_limits, NULL, NULL, &m, why, note, NULL);\n"
+                  "    tide_list_unflatten(input, raw, 1u, false, copied);\n"
+                  "    if (!ok) return result;\n");
+        if (tangent4) { // A float4 tangent: missing ones made, as an asset's are (mesh_file_with_tangents)
+            sb_put(o, "    {\n        tide_mesh_data sided;\n"
+                      "        const bool made = tide_mesh_data_with_tangents(&m, &tide_mesh_decode_limits, &sided, why, note);\n"
+                      "        tide_mesh_data_free(&m);\n"
+                      "        if (!made) return result;\n"
+                      "        m = sided;\n    }\n");
+        }
+    }
+    sb_printf(o, "    tide_list_resize(&result.value.vertices, (int32_t)m.vertices, sizeof(%s), TIDE_IN_SCRATCH);\n"
+                 "    tide_list_resize(&result.value.indices, (int32_t)m.indices, sizeof(int32_t), TIDE_IN_SCRATCH);\n"
+                 "    const %s defaults = ",
+              type_cname(vertex), type_cname(vertex));
+    gen_value(g, o, vertex, NULL, 0);
+    sb_printf(o, ";\n    for (uint32_t i = 0; i < m.vertices; i++) {\n"
+                 "        %s *to = tide_list_at_mut(result.value.vertices, (int32_t)i, sizeof *to);\n"
+                 "        *to = defaults;\n",
+              type_cname(vertex));
+    if (bones) sb_put(o, "        int32_t bone[4];\n        float weight[4];\n        tide_mesh_data_bones(&view, i, bone, weight);\n");
+    for (int f = 0; f < vertex->fields.count; f++) {
+        const field *field = &vertex->fields.items[f];
+        const char *name = field_cname(field);
+        switch (mesh_fills(field)) {
+        case FILL_POSITION: sb_printf(o, "        memcpy(&to->%s, m.position + 3u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_NORMAL: sb_printf(o, "        memcpy(&to->%s, m.normal + 3u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_UV: sb_printf(o, "        memcpy(&to->%s, m.uv + 2u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_UV2: sb_printf(o, "        memcpy(&to->%s, m.uv2 + 2u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_COLOR: sb_printf(o, "        memcpy(&to->%s, m.color + 4u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_TANGENT: sb_printf(o, "        memcpy(&to->%s, m.tangent + 4u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_JOINTS: sb_printf(o, "        memcpy(&to->%s, bone, sizeof to->%s);\n", name, name); break;
+        case FILL_WEIGHTS: sb_printf(o, "        memcpy(&to->%s, weight, sizeof to->%s);\n", name, name); break;
+        default: break;
+        }
+    }
+    sb_printf(o, "    }\n"
+                 "    for (uint32_t i = 0; i < m.indices; i++) *(int32_t *)tide_list_at_mut(result.value.indices, (int32_t)i, sizeof(int32_t)) = (int32_t)m.index[i];\n"
+                 "    tide_mesh_data_free(&m);\n%s"
+                 "    result.value.id = (int64_t)tide_mesh_key(result.value.vertices, (uint32_t)sizeof(%s), result.value.indices);\n"
+                 "    result.ok = true;\n    result.error = (IOError)0;\n    return result;\n}\n",
+              bones ? "    tide_skinned_data_free(model);\n" : "", type_cname(vertex));
+}
+
 static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
@@ -19988,7 +20186,22 @@ static void gen_assets(gen *g)
     for (int i = 0; i < prog->asset_refs.count; i++) {
         const decl *ref = prog->asset_refs.items[i];
         const type value = type_asset_reference_value(ref);
-        sb_printf(o, "\nTIDE_HELPER %s tide_resolve_%s(const %s ref)\n{\n    switch (ref.id) {\n", c_type(value), type_cname(ref), type_cname(ref));
+        if (ref->asset_ref_geometry) {
+            // Mesh(vertices, indices): copies of the two lists, which nothing writes again, and what's in them as
+            // its id, negative, which no asset's is (tide_mesh_key)
+            const type vertex = ref->asset_ref_of->fields.items[0].type;
+            sb_printf(o, "\nTIDE_HELPER %s tide_mesh_make_%s(const tide_list vertices, const tide_list indices)\n{\n"
+                         "    %s m = {0};\n"
+                         "    m.vertices = tide_list_copy(vertices, (uint32_t)sizeof(%s));\n"
+                         "    m.indices = tide_list_copy(indices, (uint32_t)sizeof(int32_t));\n"
+                         "    m.id = (int64_t)tide_mesh_key(m.vertices, (uint32_t)sizeof(%s), m.indices);\n"
+                         "    return m;\n}\n",
+                      type_cname(ref), type_cname(ref), type_cname(ref), c_type(vertex), c_type(vertex));
+        }
+        if (ref->asset_ref_geometry && ref->mesh_decoded) gen_mesh_decode(g, ref);
+        sb_printf(o, "\nTIDE_HELPER %s tide_resolve_%s(const %s ref)\n{\n", c_type(value), type_cname(ref), type_cname(ref));
+        if (ref->asset_ref_geometry) sb_put(o, "    if (ref.id < 0) return (tide_mesh_lists){ref.vertices, ref.indices}; // The game's own\n");
+        sb_put(o, "    switch (ref.id) {\n");
         for (int a = 0; a < prog->assets.count; a++) {
             const decl *asset = prog->assets.items[a];
             if (value.kind == TY_MESH && mesh_collection(asset)
@@ -20091,7 +20304,8 @@ static void gen_assets(gen *g)
                   name, map ? "tide_pack_map_of(e)" : "(tide_list){tide_pack_handle(e)}", name, name);
         sb_put(o, "    {\n");
         if (map) sb_put(o, "      typedef struct { int64_t order; tide_text key; tide_mesh_lists value; } tide_raw_mesh_entry;\n"
-                          "      typedef struct { int64_t order; tide_text key; int64_t id; } tide_ref_mesh_entry;\n");
+                          "      typedef struct { int64_t order; tide_text key; int64_t id; tide_list vertices, indices; } tide_ref_mesh_entry;\n");
+        else sb_put(o, "      typedef struct { int64_t id; tide_list vertices, indices; } tide_ref_mesh;\n");
         sb_printf(o, "      for (int32_t k = 0; k < %s(%s); k++) {\n", map ? "tide_map_entries" : "tide_list_count", name);
         if (map) {
             sb_printf(o, "        const tide_raw_mesh_entry *raw = tide_list_at(%s.entries, k, sizeof *raw);\n"
@@ -20100,8 +20314,8 @@ static void gen_assets(gen *g)
                          "        const tide_mesh_lists geometry = raw->value;\n        switch (ref->id) {\n", name, name);
         } else {
             sb_printf(o, "        const tide_mesh_lists *raw = tide_list_at(%s, k, sizeof *raw);\n"
-                         "        const int64_t *ref = tide_list_at(%s_refs, k, sizeof *ref);\n"
-                         "        if (!raw || !ref) continue;\n        const tide_mesh_lists geometry = *raw;\n        switch (*ref) {\n", name, name);
+                         "        const tide_ref_mesh *ref = tide_list_at(%s_refs, k, sizeof *ref);\n"
+                         "        if (!raw || !ref) continue;\n        const tide_mesh_lists geometry = *raw;\n        switch (ref->id) {\n", name, name);
         }
         for (int k = 0; d->asset && k < d->asset->count; k++)
             sb_printf(o, "        case INT64_C(%llu): %s_geometry[%d] = geometry; break;\n",
@@ -20261,40 +20475,13 @@ static void fill_bones(const asset_match *item, uint8_t *bytes, const int stride
     tide_skinned_data_view view;
     if (!item->skinned || !tide_skinned_data_open(item->skinned, item->skinned_size, &view)) return;
     for (uint32_t v = 0; v < vertices; v++) {
-        tide_skinned_vertex_data vertex;
-        if (!tide_skinned_data_vertex(&view, v, &vertex)) continue;
-        int32_t bone[4] = {0, 0, 0, 0};
-        float weight[4] = {0, 0, 0, 0};
-        for (uint32_t i = 0; i < vertex.influences; i++) {
-            tide_skinned_influence_data influence;
-            tide_skinned_palette_data palette;
-            if (!tide_skinned_data_influence(&view, vertex.first_influence + i, &influence)
-                || !tide_skinned_data_palette(&view, influence.palette, &palette) || !(influence.weight > 0.0f)) continue;
-            int slot = 4;
-            while (slot > 0 && weight[slot - 1] < influence.weight) slot--; // Heaviest first; a tie keeps the order
-            if (slot == 4) continue;
-            for (int k = 3; k > slot; k--) bone[k] = bone[k - 1], weight[k] = weight[k - 1];
-            bone[slot] = (int32_t)palette.node;
-            weight[slot] = influence.weight;
-        }
-        const float sum = weight[0] + weight[1] + weight[2] + weight[3];
-        for (int k = 0; k < 4 && sum > 0.0f; k++) weight[k] /= sum;
+        int32_t bone[4];
+        float weight[4];
+        tide_mesh_data_bones(&view, v, bone, weight);
         memcpy(bytes + (size_t)v * (size_t)stride + (size_t)at, joints ? (const void *)bone : (const void *)weight, 16u);
     }
 }
 
-// Column-major 4x4s: a times b.
-static void mat_mul(const float a[16], const float b[16], float out[16])
-{
-    float r[16];
-    for (int c = 0; c < 4; c++) {
-        for (int row = 0; row < 4; row++) {
-            r[c * 4 + row] = a[0 * 4 + row] * b[c * 4 + 0] + a[1 * 4 + row] * b[c * 4 + 1] + a[2 * 4 + row] * b[c * 4 + 2]
-                           + a[3 * 4 + row] * b[c * 4 + 3];
-        }
-    }
-    memcpy(out, r, sizeof r);
-}
 
 // A Mesh with bones is the model at rest (docs/spec.md, Models): each vertex where its bones' rest pose puts it,
 // in the skeleton's space, as a SkinnedMesh of the file draws at rest, so a pose's bones' model matrices against
@@ -20302,58 +20489,17 @@ static void mat_mul(const float a[16], const float b[16], float out[16])
 // False, leaving `rested` alone, for bytes that aren't a model of that many vertices.
 static bool rest_mesh(const asset_match *item, const mesh_file *m, mesh_file *rested)
 {
-    tide_skinned_data_view view;
-    if (!item->skinned || !tide_skinned_data_open(item->skinned, item->skinned_size, &view) || view.vertices != m->vertices) return false;
-    float(*model)[16] = calloc(view.nodes ? view.nodes : 1u, sizeof *model);
-    if (!model) abort();
-    for (uint32_t n = 0; n < view.nodes; n++) { // Parents come first
-        tide_skinned_node_data node;
-        float local[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        if (tide_skinned_data_node(&view, n, &node)) {
-            const float x = node.rotation[0], y = node.rotation[1], z = node.rotation[2], w = node.rotation[3];
-            const float r[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w),
-                                2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w),
-                                2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)};
-            for (int c = 0; c < 3; c++) {
-                for (int row = 0; row < 3; row++) local[c * 4 + row] = r[c * 3 + row] * node.scale[c];
-            }
-            local[12] = node.position[0], local[13] = node.position[1], local[14] = node.position[2];
-        }
-        if (n > 0 && node.parent >= 0 && (uint32_t)node.parent < n) mat_mul(model[node.parent], local, model[n]);
-        else memcpy(model[n], local, sizeof local);
+    float *position = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
+    float *normal = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
+    if (!position || !normal) abort();
+    if (!tide_mesh_data_rest(item->skinned, item->skinned_size, m, position, normal)) {
+        free(position);
+        free(normal);
+        return false;
     }
     *rested = *m;
-    rested->position = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
-    rested->normal = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
-    if (!rested->position || !rested->normal) abort();
-    for (uint32_t v = 0; v < m->vertices; v++) {
-        const float *p = m->position + (size_t)v * 3u, *nrm = m->normal + (size_t)v * 3u;
-        float at[3] = {0, 0, 0}, turned[3] = {0, 0, 0}, weights = 0.0f;
-        tide_skinned_vertex_data vertex;
-        for (uint32_t i = 0; tide_skinned_data_vertex(&view, v, &vertex) && i < vertex.influences; i++) {
-            tide_skinned_influence_data influence;
-            tide_skinned_palette_data palette;
-            if (!tide_skinned_data_influence(&view, vertex.first_influence + i, &influence)
-                || !tide_skinned_data_palette(&view, influence.palette, &palette) || palette.node >= view.nodes
-                || !(influence.weight > 0.0f)) continue;
-            float skin[16];
-            mat_mul(model[palette.node], palette.inverse_bind, skin);
-            for (int row = 0; row < 3; row++) {
-                at[row] += influence.weight * (skin[row] * p[0] + skin[4 + row] * p[1] + skin[8 + row] * p[2] + skin[12 + row]);
-                turned[row] += influence.weight * (skin[row] * nrm[0] + skin[4 + row] * nrm[1] + skin[8 + row] * nrm[2]);
-            }
-            weights += influence.weight;
-        }
-        if (!(weights > 0.0f)) { // No bone moves it: where it is
-            memcpy(at, p, sizeof at), memcpy(turned, nrm, sizeof turned), weights = 1.0f;
-        }
-        const float length = sqrtf(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]);
-        for (int row = 0; row < 3; row++) {
-            rested->position[(size_t)v * 3u + row] = at[row] / weights;
-            rested->normal[(size_t)v * 3u + row] = length > 0.0f ? turned[row] / length : nrm[row];
-        }
-    }
-    free(model);
+    rested->position = position;
+    rested->normal = normal;
     // Another mesh than the file's own, to the pack and to the levels' cache
     static const char kind[] = "tide mesh with bones, at rest";
     tide_sha256 h;
@@ -20510,27 +20656,26 @@ static void build_pack(gen *g)
                 tide_pack_name(&b, qualified, kind, at, (uint32_t)v->count, laid);
             }
             if (!skinned) {
+                // Mesh<V> values, as a map's rows (order, key, value: the id at 16) or a list's: a skinned model's
+                // three handles' room each, made by its builder (the map's index too), then written over with an id
+                // and no lists
+                uint64_t *rows = arena_alloc(sizeof *rows * 3u * (size_t)(v->count ? v->count : 1));
+                for (int k = 0; k < v->count; k++) {
+                    rows[3 * k] = meshes[2 * k];
+                    rows[3 * k + 1] = meshes[2 * k + 1];
+                    rows[3 * k + 2] = meshes[2 * k + 1];
+                }
                 uint64_t metadata_index = 0;
                 const uint64_t metadata = v->is_map
-                    ? tide_pack_mesh_map(&b, names, meshes, (uint32_t)v->count, &metadata_index)
-                    : tide_pack_mesh_list(&b, meshes, (uint32_t)v->count);
-                // Made again in their place as a map's rows of a long (order, key, id: the id at 16) or a list's
-                // longs, row by row from the first, each no further on than the mesh record it's made from; the
-                // block's bytes past them are zeros
+                    ? tide_pack_skinned_map(&b, names, rows, (uint32_t)v->count, &metadata_index)
+                    : tide_pack_skinned_list(&b, rows, (uint32_t)v->count);
                 uint8_t *data = b.region + metadata + sizeof(tide_block);
-                const size_t made = v->is_map ? sizeof(mesh_reference_pack_entry) : sizeof(int64_t);
-                const size_t was = v->is_map ? sizeof(mesh_geometry_pack_entry) : sizeof(tide_mesh_lists);
+                const size_t row_size = v->is_map ? sizeof(mesh_reference_pack_entry) : sizeof(mesh_reference_value);
                 for (int k = 0; k < v->count; k++) {
-                    const int64_t id = (int64_t)mesh_item_id(d, k);
-                    if (v->is_map) {
-                        mesh_reference_pack_entry row = {0};
-                        memcpy(&row.order, data + (size_t)k * was + offsetof(mesh_geometry_pack_entry, order), sizeof row.order);
-                        memcpy(&row.key, data + (size_t)k * was + offsetof(mesh_geometry_pack_entry, key), sizeof row.key);
-                        row.id = id;
-                        memcpy(data + (size_t)k * made, &row, sizeof row);
-                    } else memcpy(data + (size_t)k * made, &id, sizeof id);
+                    const mesh_reference_value value = {.id = (int64_t)mesh_item_id(d, k)};
+                    memcpy(data + (size_t)k * row_size + (v->is_map ? offsetof(mesh_reference_pack_entry, value) : 0u), &value,
+                           sizeof value);
                 }
-                memset(data + (size_t)v->count * made, 0, (size_t)v->count * (was - made));
                 tide_pack_name(&b, mesh_refs_name(d), v->is_map ? TIDE_PACK_MAP : TIDE_PACK_LIST,
                                metadata, v->is_map ? metadata_index : (uint32_t)v->count, v->is_map ? (uint32_t)v->count : 0);
             }
@@ -20740,6 +20885,11 @@ static void gen_api(gen *g)
         sb_put(o, "};\n\n");
     }
     if (any_settles) gen_settle_item(g);
+    if (prog->systems.count) {
+        sb_put(o, "static const tide_profile_source tide_system_sources[] = {\n");
+        for (int i = 0; i < prog->systems.count; i++) gen_profile_source(g, o, prog->systems.items[i], "system");
+        sb_put(o, "};\n\n");
+    }
     // What each thread does before its first task: text finds the match's heap, and the pack its slots.
     sb_put(o, "static void tide_prepare(void *w)\n{\n");
     if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
@@ -20765,11 +20915,12 @@ static void gen_api(gen *g)
     if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     if (rows_cache_count(g)) sb_put(o, "    tide_rows_cache_prepare(w); // Serial: publish immutable plans before worker dispatch\n");
     if (prog->systems.count) {
+        sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->systems, %du, tide_system_sources);\n", prog->systems.count);
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s%s};\n",
                   prog->systems.count, any_settles ? "tide_settle_item" : "NULL", sharded(g) ? ", tide_shard_create" : ", NULL");
         sb_put(o, "    tide_run_systems(w, &tide_tick, jobs);\n");
     } else {
-        sb_put(o, "    (void)tide_prepare;\n");
+        sb_put(o, "    (void)tide_prepare;\n    if (tide_p) tide_profile_count(&tide_p->systems, 0u);\n");
     }
     sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     sb_put(o, "    tide_apply_commands(w);\n");
@@ -20861,6 +21012,11 @@ static void gen_api(gen *g)
     }
     sb_put(o, "}\n\n");
 
+    if (prog->views.count) {
+        sb_put(o, "static const tide_profile_source tide_view_sources[] = {\n");
+        for (int i = 0; i < prog->views.count; i++) gen_profile_source(g, o, prog->views.items[i], "view");
+        sb_put(o, "};\n\n");
+    }
     sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
               "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
@@ -20904,10 +21060,14 @@ static void gen_api(gen *g)
     // A host that shows where frames' time goes gave the GUI a profile
     // (tide/profile.h): each view says how long it took
     if (prog->views.count) {
-        sb_put(o, "    tide_profile *tide_p = gui->profile;\n    uint64_t tide_at = tide_profile_now(tide_p);\n");
+        sb_put(o, "    tide_profile *tide_p = gui->profile;\n");
+        sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->views, %du, tide_view_sources);\n", prog->views.count);
+        sb_put(o, "    const tide_profile_source *tide_previous_source = draw ? draw->profile_source : NULL;\n"
+                  "    uint64_t tide_at = tide_profile_now(tide_p);\n");
     }
     for (int i = 0; i < prog->views.count; i++) {
         const decl *view = prog->views.items[i];
+        sb_printf(o, "    if (draw && draw->diagnostics) draw->profile_source = &tide_view_sources[%d];\n", i);
         // With no verified world given, the one views draw is all there is: it's the confirmed one
         sb_printf(o, "    tide_run_view_%s(w, previous, alpha, %slocal, draw, gui);\n", decl_cname(view),
                   view->takes_verified ? "verified ? verified : w, verified ? verified_previous : previous, verified ? verified_alpha : alpha, " : "");
@@ -20926,7 +21086,9 @@ static void gen_api(gen *g)
         gen_c_literal(o, diagnostic_name(g, tool_name(view), "view", view->index), false);
         sb_put(o, ", tide_at);\n");
     }
-    if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n    (void)gui;\n");
+    if (prog->views.count) sb_put(o, "    if (draw) draw->profile_source = tide_previous_source;\n");
+    if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n"
+                                       "    if (gui && gui->profile) tide_profile_count(&gui->profile->views, 0u);\n");
     sb_put(o, "    tide_local_apply_commands(local);\n");
     if (world_has_tasks(g, true)) {
         sb_put(o, "    tide_local_run_tasks(w, local);\n    tide_local_apply_commands(local);\n    local->tide_frames++;\n");
@@ -23466,6 +23628,8 @@ static void gen_shaders(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     if (prog->shaders.count == 0) return;
+    gen_shader_prep_plan(g);
+    gen_shader_prep_types(g);
     sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
     if (shaders_roll(prog, false)) {
         sb_put(o, "// What the generators of frags and verts that roll with Random are made of this frame: a number tide_frame\n"
@@ -23651,6 +23815,7 @@ static void gen_shaders(gen *g)
             gen_shader_value(o, to, value->field->type, access.data, &f, &i);
         }
         sb_printf(o, "    uint32_t tide_textures[%d] = {0};\n", sh->textures.count ? sh->textures.count : 1);
+        gen_shader_prep_begin(g, sh);
         if (sh->skinned && !sh->instanced) gen_shader_skin(o, sh);
         for (int t = 0; t < sh->sizes.count; t++) {
             const shader_texture *texture = &sh->sizes.items[t];
@@ -23674,9 +23839,10 @@ static void gen_shaders(gen *g)
                 sb_printf(&converted, "(tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (%s).target}", from.data);
                 from = converted;
             }
-            sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"
+            sb_printf(o, "    const tide_int2 tide_size%d = %s(%s);\n"
                          "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n",
-                      t, from.data, texture->count_at, t, texture->count_at + 1, t);
+                      t, g->shader_prep_active ? "tide_shader_prep_size" : "tide_texture_size", from.data,
+                      texture->count_at, t, texture->count_at + 1, t);
         }
         // What's read as the Texture it's given says: that texture's filter's and wrap's bits, for the draw's own
         // (a shader with no frag) all of it, and for a Sample what it leaves unsaid of a Texture that's no asset's
@@ -23788,6 +23954,7 @@ static void gen_shaders(gen *g)
                 sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, tide_%sb%d->%s, &%s);\n", t,
                           field_is_raw(texture->field) ? "_raw" : "", texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
         }
+        gen_shader_prep_end(g, sh);
         sb sampling = {0};
         if (blended <= UINT32_MAX) sb_printf(&sampling, "0x%xu%s", (unsigned)blended, carried.data ? carried.data : "");
         else sb_printf(&sampling, "0x%llxull%s", (unsigned long long)blended, carried.data ? carried.data : "");

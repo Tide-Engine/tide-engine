@@ -4,6 +4,19 @@
 
 Owner-approved ("im ok with redesigning things, if it doesnt touch language and is a net position = do it"): generated loops index lists through `tide_list_loop` (`tide/list.h`, new) with `tide_list_loop_chunk` and `tide_list_loop_own` (`engine/src/list.c`, new), agent-maintained as the generated-C side of list access. No existing runtime function, layout, snapshot or hash rule changed; `tide_list_cache` and its fill functions are as they were. Contracts, measurements and tests: `notes/ecs.md`, Loop views.
 
+## Mesh keys for meshes the game makes (2026-11-02)
+
+Owner-approved ("go with your recommendations", including a runtime entry
+point that draws a mesh at a given version): generated code calls two new
+functions in `tide/mesh.h`, implemented in `engine/src/mesh.c`.
+`tide_mesh_key(vertices, vertex_size, indices)` is called once as
+`Mesh(vertices, indices)` makes a mesh; its result is simulation state (a
+`Mesh<V>`'s id), so it's a fixed definition, the same on every platform.
+`tide_draw_mesh_key(d, lists, key)` is called around each draw of a `Mesh<V>`
+value. `tide_draw_list` gained `mesh_key_vertices`, `mesh_key_indices` and
+`mesh_key`: hosts, libraries and generated games rebuild together. Contracts
+in drawing.md, Drawing a mesh at a given version.
+
 ## Levels for meshes a game makes (2026-11-02)
 
 Owner-approved (the proposal's recommendations, `lod:` on mesh draws). Within the existing drawing maintenance
@@ -387,7 +400,6 @@ contracts: ecs.md, Pure row updates before conditional destruction.
 is build-time support tidec calls for `[BlendShapes]`; generated code calls
 nothing new. Contracts and tests: assets-and-files.md.
 
-
 ## Lenient separate-rig binding (2026-10-27)
 
 Owner-decided (docs/spec.md, Separate-file binding): `tide_skinned_sample_into`
@@ -395,7 +407,6 @@ and `tide_skinned_pose_into` skip required source nodes the target lacks;
 present nodes keep the strict parent rule. No signature, generated call,
 canonical byte or world byte changes. Contracts and tests:
 assets-and-files.md, Clips skip nodes the model lacks.
-
 
 ## Blend shapes (2026-10-27)
 
@@ -410,7 +421,6 @@ them only in programs that name `blendShapes`, `Shaped` or `BlendShape`; no
 existing function, struct, draw entry point or shader changes, and models
 without shapes keep their version 1 bytes. Contracts and tests:
 assets-and-files.md, Blend shapes.
-
 
 ## Prehashed asset lookup (2026-10-27)
 
@@ -834,7 +844,6 @@ Runtime implementation and ownership stay as recorded below. Pose values are
 captured before return and compatible items batch through existing palette
 pages. Compiler fixtures and platform pixels are recorded in `notes/drawing.md`.
 
-
 Recorded containers (2026-10-19) introduce no runtime API, struct or function
 contract. Compiler-private read analysis and self-contained journal tails reuse
 existing value codecs, tide_writer/reader, heap resolvers/allocation and event
@@ -1038,3 +1047,33 @@ The owner explicitly approved the internal tick-completion hook before generated
 ## T? fields (2026-10-11)
 
 Generated code calls no new runtime function for fields declared `T?`, and no engine header or structure changed: what a field is kept as, its conversion to and from the `T?` code reads, its text and list ownership, its packing and its JSON are generated, over `tide_text_view`, `tide_text_temp`, `tide_text_release`, the generated list and map helpers and the `tide_json_*` and `tide_bits_*` functions there were (`notes/language.md`, T? fields).
+
+## Approved profiler source boundary (2026-11-02)
+
+As part of the owner's approved agent-facing profiling work, generated systems and
+views now call `tide_profile_sources` in the existing agent-maintained profiling
+runtime. Its `tide_profile_source` carries the full diagnostic name and optional
+file/line/column. Timing rows own copies, retaining the existing 48-byte panel
+label separately; changed names or locations reset measurements, count changes
+release old sources, and free releases every owned string. Clearing totals retains
+source metadata and lifetime measurement counters. This keeps a host's retained
+profile valid after a game library unloads.
+
+Generated views also borrow their static source entry through
+`tide_draw_list.profile_source` while drawing diagnostics are attached, restoring
+the caller's pointer before local changes/tasks. Draw diagnostics own any source
+they retain. This boundary adds no match data or changes to hashes, snapshots,
+ordering or gameplay. The profile/draw structure changes require hosts and game
+libraries to rebuild together. Source registration does no clock reads; ordinary
+unmeasured execution remains clock-free. Runtime ownership/lifetime tests are in
+`tests/test_profile.c`; compiler fixtures and the stripping contract are recorded
+in `notes/language.md`. Coordinated validation is in `notes/standard-host.md`.
+
+The same exception covers host-owned `tide/profile_report.h` and
+`tide/draw_profile.h` collectors. No generated call reaches the report writer.
+Profile tables and rows carry replacement revisions so capture baselines can
+recognize reset counters. `tide_headless_desc.finished` is an optional host
+finalization callback, called before GPU shutdown and multiplayer process joining;
+it propagates report write failure as an exit status. The existing
+`tide_platform_players_file` helper is declared publicly for consistent report
+suffixes. These remain presentation/diagnostic data outside world storage.

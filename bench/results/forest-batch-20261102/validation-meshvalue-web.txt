@@ -1,0 +1,7 @@
+100% tests passed, 0 tests failed out of 15
+
+Label Time Summary:
+webgl_d3d11    = 123.81 sec*proc (1 test)
+webgpu         = 104.73 sec*proc (1 test)
+
+Total Test time (real) =  13.59 sec

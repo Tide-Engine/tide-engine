@@ -64,6 +64,7 @@ static void collect_borrow_expr(gen *g, const decl *owner, const borrow_variant 
     collect_borrow_expr(g, owner, variant, e->skin_mesh);
     collect_borrow_expr(g, owner, variant, e->skin_pose);
     collect_borrow_expr(g, owner, variant, e->values);
+    collect_borrow_expr(g, owner, variant, e->mesh_lod);
     for (int i = 0; i < e->args.count; i++) collect_borrow_expr(g, owner, variant, e->args.items[i]);
     for (int i = 0; i < e->inits.count; i++) {
         collect_borrow_expr(g, owner, variant, e->inits.items[i].value);

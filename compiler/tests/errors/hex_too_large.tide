@@ -1,4 +1,5 @@
 // expect: integer '0x1_0000_0000_0000_0000' is too large for long
+// expect: hexadecimal and binary integers hold at most 64 bits; use a smaller value or split the bits across several values
 scene Main { }
 
 event(Spawned) Setup(with Main)

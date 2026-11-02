@@ -66,7 +66,7 @@ static packages_text load(const char *folder)
 static bool save(packages_text *t)
 {
     const bool ok = sys_write_text(t->path, t->text);
-    if (!ok) fprintf(stderr, "tide: can't write %s\n", t->path);
+    if (!ok) fprintf(stderr, "tide: can't write %s; check file and folder permissions and free disk space\n", t->path);
     free(t->path);
     free(t->text);
     return ok;
@@ -270,6 +270,7 @@ int tide_add(const char *folder, const char *what)
     char *dir = packages_folder(&line, game.folder);
     if (!sys_is_dir(dir)) {
         fprintf(stderr, "tide: %s isn't a folder\n", line.local ? source : dir);
+        fprintf(stderr, "  = note: give an existing package folder; relative paths start at the game's folder, %s\n", game.folder);
         return 1;
     }
     packages_file pf;
@@ -555,7 +556,7 @@ int tide_eject(const char *folder, const char *name)
     char *to = path_join(game.folder, source + 2);
     if (sys_exists(to)) {
         fprintf(stderr, "tide: %s is there already, so %s wasn't copied\n", to, own);
-        fprintf(stderr, "  = note: a package is ejected into packages/ in the game's folder, under its own folder's name\n");
+        fprintf(stderr, "  = note: eject writes packages/ in the game's folder; move the existing folder aside if you want a fresh copy\n");
         return 1;
     }
     copy_walk walk = {from, to, true, sys_mkdirs(to)};

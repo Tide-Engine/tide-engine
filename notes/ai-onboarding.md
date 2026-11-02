@@ -1,5 +1,27 @@
 # Tide AI onboarding trials
 
+## Structured performance investigation (2026-11-02)
+
+The owner's profiler request adds a performance workflow to guide/ai.md,
+guide/ai-context.md and the downloadable project instructions and Tide skill.
+Agents reproduce a situation with a saved input script, run an optimized native
+`--profile` capture with an explicit frame bound and warmup, follow full source
+locations and engine draw counters, then compare one change under the same
+scenario. The guidance distinguishes fixed simulation-step FPS from measured
+CPU work, overlapping CPU/worker/GPU intervals, unavailable GPU samples and
+profiling overhead. Low culling rejection is an investigation candidate, not
+proof that the game can disable a test or reuse its main-camera visibility for
+shadows. Image and relevant simulation checks remain required for a claimed
+improvement. The concrete runtime/report contract is documented in
+tools/debug-views.md and notes/standard-host.md.
+
+No new model trial or performance result is claimed. The docs production build
+passed on Node 24.22.1 (build/profile-docs-build.log). Windows ASan CLI dispatch,
+help and hidden-run checks pass, along with the generated stripped-metadata
+regression. Final native/web profiler integration results are recorded in
+notes/standard-host.md. Existing downloaded game copies of the guide/skill still
+update only by explicit replacement.
+
 ## Materials and method (2026-10-21)
 
 The owner requested game-author onboarding for AI agents, including documentation,

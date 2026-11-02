@@ -1,0 +1,9 @@
+// expect: a Mesh is decoded in CPU code, and drawn
+singleton Field { List<byte> bytes; }
+scene Main { }
+frag Shade(Vertex vertex, out Color color, Field field)
+{
+    var m = Mesh<Vertex3>.Decode(field.bytes)!;
+    color = vertex.color;
+}
+view DrawIt() { Draw.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }

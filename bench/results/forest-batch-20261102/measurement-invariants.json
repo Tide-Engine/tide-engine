@@ -1,0 +1,9 @@
+﻿{
+    "processes":  18,
+    "measured_frames":  1800,
+    "completed_gpu_queries":  1800,
+    "settings_match":  true,
+    "paired_world_hashes_match":  true,
+    "baseline_capture_work_matches":  true,
+    "zero_warmed_texture_upload_bytes":  true
+}

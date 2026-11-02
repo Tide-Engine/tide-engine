@@ -1,4 +1,4 @@
-// expect: a list's element is a copy, so 'Heal' can't change it
+// expect: an indexed element can't be a 'mut' argument to 'Heal'
 scene Main { }
 struct Stats { int health; }
 component Party { List<Stats> members; }

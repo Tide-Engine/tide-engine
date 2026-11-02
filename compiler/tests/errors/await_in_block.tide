@@ -1,4 +1,5 @@
 // expect: a task can't wait inside a block written after a call: the function runs it
+// expect: move the wait before or after the call, or replace the callback with ordinary async control flow
 scene Main { }
 
 void Twice(Action content)

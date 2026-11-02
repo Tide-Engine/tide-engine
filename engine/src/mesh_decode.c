@@ -19,6 +19,7 @@
 #include "tide/math.h"
 #include "tide/page.h"
 #include "tide/sha256.h"
+#include "tide/skinned_data.h"
 
 #pragma STDC FP_CONTRACT OFF
 
@@ -33,6 +34,7 @@ const tide_mesh_limits tide_mesh_decode_limits = {
     .prefix = "TIDE_MESH_DECODE_MAX",
     .holder = "Mesh.Decode takes",
     .finite = true,
+    .report = "tide: Mesh.Decode refused a mesh",
 };
 
 // The most a limit can say: room for that many vertices or corners doubles
@@ -1181,7 +1183,7 @@ static void start_reader(reader *r, char why[256], char note[256], const tide_me
 }
 
 // Whether every number of the mesh is one a float holds.
-static bool all_finite(const mesh_file *m)
+bool tide_mesh_data_finite(const tide_mesh_data *m)
 {
     const struct {
         const float *at;
@@ -1229,6 +1231,7 @@ bool tide_mesh_data_decode(const uint8_t *data, const size_t size, const tide_me
     if ((uint64_t)size > limits->bytes) {
         past_limit(&r, "BYTES", limits->bytes, "bytes", (uint64_t)size);
         if (limited) *limited = true;
+        if (limits->report) fprintf(stderr, "%s: it %s\n", limits->report, why);
         return false;
     }
     builder b = {.r = &r};
@@ -1249,11 +1252,12 @@ bool tide_mesh_data_decode(const uint8_t *data, const size_t size, const tide_me
         ok = read_obj(&r, &b, (const char *)data, size);
     }
     if (ok && !b.m.indices) ok = fail(&r, NULL, "has no triangles: there's nothing in it to draw");
-    if (ok && limits->finite && !all_finite(&b.m)) {
+    if (ok && limits->finite && !tide_mesh_data_finite(&b.m)) {
         ok = fail(&r, "check the nodes' transforms: a vertex has to stay within a float's range once placed",
                   "places a vertex past what a float holds");
     }
     if (limited) *limited = r.limited;
+    if (!ok && r.limited && limits->report) fprintf(stderr, "%s: it %s\n", limits->report, why);
     if (!ok) {
         tide_mesh_data_free(&b.m);
         return false;
@@ -1293,4 +1297,133 @@ bool tide_mesh_data_with_tangents(const tide_mesh_data *source, const tide_mesh_
     finish(&b);
     *out = b.m;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// A Mesh with bones: its geometry, at rest, and each vertex's bones. Moved
+// here from tidec (asset_files.c's skin_geometry, codegen.c's rest_mesh and
+// fill_bones, 2026-11-02) so Decode gives the bits an asset does.
+
+bool tide_mesh_data_of_model(const uint8_t *model, const uint32_t size, tide_mesh_data *out)
+{
+    tide_skinned_data_view view;
+    if (!tide_skinned_data_open(model, size, &view)) return false;
+    mesh_file m = {0};
+    m.vertices = view.vertices;
+    m.indices = view.indices;
+    const size_t vertices = m.vertices ? m.vertices : 1u;
+    m.position = tide_alloc(sizeof(float) * 3u * vertices);
+    m.normal = tide_alloc(sizeof(float) * 3u * vertices);
+    m.uv = tide_alloc(sizeof(float) * 2u * vertices);
+    m.uv2 = tide_alloc(sizeof(float) * 2u * vertices);
+    m.color = tide_alloc(sizeof(float) * 4u * vertices);
+    m.tangent = tide_alloc(sizeof(float) * 4u * vertices);
+    m.index = tide_alloc(sizeof(uint32_t) * (m.indices ? m.indices : 1u));
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < m.vertices; i++) {
+        tide_skinned_vertex_data v;
+        ok = tide_skinned_data_vertex(&view, i, &v);
+        if (!ok) break;
+        memcpy(m.position + 3u * (size_t)i, v.position, sizeof v.position);
+        memcpy(m.normal + 3u * (size_t)i, v.normal, sizeof v.normal);
+        memcpy(m.uv + 2u * (size_t)i, v.uv, sizeof v.uv);
+        memcpy(m.uv2 + 2u * (size_t)i, v.uv2, sizeof v.uv2);
+        memcpy(m.color + 4u * (size_t)i, v.color, sizeof v.color);
+        memcpy(m.tangent + 4u * (size_t)i, v.tangent, sizeof v.tangent);
+    }
+    for (uint32_t i = 0; ok && i < m.indices; i++) ok = tide_skinned_data_index(&view, i, m.index + i) && m.index[i] < m.vertices;
+    if (!ok) {
+        tide_mesh_data_free(&m);
+        return false;
+    }
+    tide_sha256_of(model, size, m.hash);
+    *out = m;
+    return true;
+}
+
+// Column-major 4x4s: a times b.
+static void model_multiply(const float a[16], const float b[16], float out[16])
+{
+    float r[16];
+    for (int c = 0; c < 4; c++) {
+        for (int row = 0; row < 4; row++) {
+            r[c * 4 + row] = a[0 * 4 + row] * b[c * 4 + 0] + a[1 * 4 + row] * b[c * 4 + 1] + a[2 * 4 + row] * b[c * 4 + 2]
+                           + a[3 * 4 + row] * b[c * 4 + 3];
+        }
+    }
+    memcpy(out, r, sizeof r);
+}
+
+bool tide_mesh_data_rest(const uint8_t *model, const uint32_t size, const tide_mesh_data *m, float *position, float *normal)
+{
+    tide_skinned_data_view view;
+    if (!model || !tide_skinned_data_open(model, size, &view) || view.vertices != m->vertices) return false;
+    float(*matrices)[16] = tide_alloc_zeroed(view.nodes ? view.nodes : 1u, sizeof *matrices);
+    for (uint32_t n = 0; n < view.nodes; n++) { // Parents come first
+        tide_skinned_node_data node;
+        float local[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const bool has = tide_skinned_data_node(&view, n, &node);
+        if (has) {
+            const float x = node.rotation[0], y = node.rotation[1], z = node.rotation[2], w = node.rotation[3];
+            const float r[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w),
+                                2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w),
+                                2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)};
+            for (int c = 0; c < 3; c++) {
+                for (int row = 0; row < 3; row++) local[c * 4 + row] = r[c * 3 + row] * node.scale[c];
+            }
+            local[12] = node.position[0], local[13] = node.position[1], local[14] = node.position[2];
+        }
+        if (has && n > 0 && node.parent >= 0 && (uint32_t)node.parent < n) model_multiply(matrices[node.parent], local, matrices[n]);
+        else memcpy(matrices[n], local, sizeof local);
+    }
+    for (uint32_t v = 0; v < m->vertices; v++) {
+        const float *p = m->position + (size_t)v * 3u, *nrm = m->normal + (size_t)v * 3u;
+        float at[3] = {0, 0, 0}, turned[3] = {0, 0, 0}, weights = 0.0f;
+        tide_skinned_vertex_data vertex;
+        for (uint32_t i = 0; tide_skinned_data_vertex(&view, v, &vertex) && i < vertex.influences; i++) {
+            tide_skinned_influence_data influence;
+            tide_skinned_palette_data palette;
+            if (!tide_skinned_data_influence(&view, vertex.first_influence + i, &influence)
+                || !tide_skinned_data_palette(&view, influence.palette, &palette) || palette.node >= view.nodes
+                || !(influence.weight > 0.0f)) continue;
+            float skin[16];
+            model_multiply(matrices[palette.node], palette.inverse_bind, skin);
+            for (int row = 0; row < 3; row++) {
+                at[row] += influence.weight * (skin[row] * p[0] + skin[4 + row] * p[1] + skin[8 + row] * p[2] + skin[12 + row]);
+                turned[row] += influence.weight * (skin[row] * nrm[0] + skin[4 + row] * nrm[1] + skin[8 + row] * nrm[2]);
+            }
+            weights += influence.weight;
+        }
+        if (!(weights > 0.0f)) { // No bone moves it: where it is
+            memcpy(at, p, sizeof at), memcpy(turned, nrm, sizeof turned), weights = 1.0f;
+        }
+        const float length = sqrtf(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]);
+        for (int row = 0; row < 3; row++) {
+            position[(size_t)v * 3u + row] = at[row] / weights;
+            normal[(size_t)v * 3u + row] = length > 0.0f ? turned[row] / length : nrm[row];
+        }
+    }
+    free(matrices);
+    return true;
+}
+
+void tide_mesh_data_bones(const tide_skinned_data_view *view, const uint32_t v, int32_t bone[4], float weight[4])
+{
+    for (int k = 0; k < 4; k++) bone[k] = 0, weight[k] = 0.0f;
+    tide_skinned_vertex_data vertex;
+    if (!tide_skinned_data_vertex(view, v, &vertex)) return;
+    for (uint32_t i = 0; i < vertex.influences; i++) {
+        tide_skinned_influence_data influence;
+        tide_skinned_palette_data palette;
+        if (!tide_skinned_data_influence(view, vertex.first_influence + i, &influence)
+            || !tide_skinned_data_palette(view, influence.palette, &palette) || !(influence.weight > 0.0f)) continue;
+        int slot = 4;
+        while (slot > 0 && weight[slot - 1] < influence.weight) slot--; // Heaviest first; a tie keeps the order
+        if (slot == 4) continue;
+        for (int k = 3; k > slot; k--) bone[k] = bone[k - 1], weight[k] = weight[k - 1];
+        bone[slot] = (int32_t)palette.node;
+        weight[slot] = influence.weight;
+    }
+    const float sum = weight[0] + weight[1] + weight[2] + weight[3];
+    for (int k = 0; k < 4 && sum > 0.0f; k++) weight[k] /= sum;
 }

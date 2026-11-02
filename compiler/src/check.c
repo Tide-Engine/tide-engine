@@ -1490,25 +1490,41 @@ static type mesh_of(program *prog, const type vertex)
     return (type){TY_MESH, d};
 }
 
-static type asset_reference_of(const checker *c, const type mesh, const loc at)
+// Asset<Mesh<V>> (and Asset<SkinnedMesh<V>>): a model asset's identity, one hidden long. With `geometry`, a
+// static Mesh<V> itself: that identity, or, with the id negative, a mesh the game made (Mesh(vertices, indices)),
+// whose two lists are its own, in hidden fields that ordinary ownership copies, snapshots, hashes and packs.
+static type asset_reference_of(const checker *c, const type mesh, const loc at, bool geometry)
 {
+    geometry = geometry && mesh.kind == TY_MESH;
     for (int i = 0; i < c->prog->asset_refs.count; i++) {
         decl *d = c->prog->asset_refs.items[i];
-        if (d->asset_ref_of == mesh.decl) return (type){TY_STRUCT, d};
+        if (d->asset_ref_of == mesh.decl && d->asset_ref_geometry == geometry) return (type){TY_STRUCT, d};
     }
     decl *d = NEW(decl);
     d->kind = DECL_STRUCT;
     d->builtin = true;
     d->at = at;
     d->asset_ref_of = mesh.decl;
+    d->asset_ref_geometry = geometry;
     sb name_text = {0};
-    sb_printf(&name_text, "Asset<%s>", type_name(mesh));
+    if (geometry) sb_printf(&name_text, "%s", type_name(mesh));
+    else sb_printf(&name_text, "Asset<%s>", type_name(mesh));
     d->name = (str){name_text.data, (int)name_text.len};
     field id = {0};
     id.name = str_from("id");
     id.type = (type){TY_LONG, NULL};
     id.hidden = true;
     vec_push(d->fields, id);
+    if (geometry) {
+        field part = {0};
+        part.hidden = true;
+        part.name = str_from("vertices");
+        part.type = list_of(c->prog, mesh_vertex(mesh));
+        vec_push(d->fields, part);
+        part.name = str_from("indices");
+        part.type = list_of(c->prog, T_INT_);
+        vec_push(d->fields, part);
+    }
     vec_push(c->prog->asset_refs, d);
     return (type){TY_STRUCT, d};
 }
@@ -1525,6 +1541,19 @@ static bool holds_mesh(const type t)
         const type f = t.decl->fields.items[i].type;
         if (f.kind == TY_MESH || ((f.kind == TY_LIST || f.kind == TY_MAP) && holds_mesh(f))) return true;
     }
+    return false;
+}
+
+// Whether a value keeps heap data besides what a Mesh<V> in it keeps of its own: a mesh the game made has two
+// lists, which make no collection of meshes.
+static bool holds_heap_beside_meshes(const type t, const int depth)
+{
+    if (depth > 128) return false;
+    if (t.kind == TY_STRUCT && t.decl->asset_ref_geometry) return false;
+    if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) return true;
+    if (t.kind != TY_STRUCT && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+    for (int i = 0; i < t.decl->fields.count; i++)
+        if (holds_heap_beside_meshes(t.decl->fields.items[i].type, depth + 1)) return true;
     return false;
 }
 
@@ -2139,7 +2168,7 @@ static type resolve_mesh(const checker *c, const type_ref *r, const type_place p
         return T_ERR;
     }
     const type mesh = mesh_of(c->prog, vertex);
-    return place == PLACE_ASSET || c->raw_mesh ? mesh : asset_reference_of(c, mesh, at);
+    return place == PLACE_ASSET || c->raw_mesh ? mesh : asset_reference_of(c, mesh, at, true);
 }
 
 // The type `r` names, written at `place`, with errors at `at` (where the
@@ -2293,7 +2322,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
             diag_error(at, "Asset references a Mesh<V> or SkinnedMesh<V>, not %s", type_name(mesh));
             return T_ERR;
         }
-        return asset_reference_of(c, mesh, at);
+        return asset_reference_of(c, mesh, at, false);
     }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
@@ -2514,8 +2543,8 @@ static bool element_in_place(const expr *receiver)
         base = base->object;
     }
     if (!through_element(base)) return true;
-    diag_error(receiver->at, "a list's element is a copy, so what it holds can't be changed where it is");
-    diag_note("take it out, change it, and put it back: 'var e = items[i]; e.parts.Add(x); items[i] = e;'");
+    diag_error(receiver->at, "an indexed element is a copy, so what it holds can't be changed in place");
+    diag_note("take it out, change it, and put it back: 'mut var e = items[i]; e.parts.Add(x); items[i] = e;'");
     return false;
 }
 
@@ -2539,7 +2568,7 @@ static bool element_path_in_place(const expr *target)
         if (e->skin_operation == SKIN_OP_POSE_INDEX) only_arrays = false;
     }
     if (holds_grid(kept) || (holds_heap(kept) && !only_arrays))
-        why = "it holds text or a list, which an element's bytes can't take as they are";
+        why = "replace the whole element to update text or container fields";
     for (const expr *e = target; !why && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_MEMBER && !e->field && e->swizzle_len == 0) why = "it's a part of a value, not a field";
         if (e->kind == E_INDEX && e->object->type.kind == TY_GRID) cell = e;
@@ -2549,12 +2578,12 @@ static bool element_path_in_place(const expr *target)
     }
     if (cell) {
         diag_error(target->at, "a grid's cell is a copy, so it can't be changed where it is");
-        diag_note("take it out, change it, and put it back: 'var c = cells[p]; c.x = 5; cells[p] = c;'");
+        diag_note("take it out, change it, and put it back: 'mut var c = cells[p]; c.x = 5; cells[p] = c;'");
         return false;
     }
     if (!why) return true;
-    diag_error(target->at, "a list's element is a copy, so it can't be changed where it is: %s", why);
-    diag_note("take it out, change it, and put it back: 'var e = items[i]; e.x = 5; items[i] = e;'");
+    diag_error(target->at, "an indexed element is a copy, so it can't be changed in place: %s", why);
+    diag_note("take it out, change it, and put it back: 'mut var e = items[i]; e.x = 5; items[i] = e;'");
     return false;
 }
 
@@ -2580,6 +2609,8 @@ static type check_instance_call(expr *e);
 static type check_depth_read(const checker *c, expr *e);
 static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
+static bool is_new_mesh(const checker *c, const expr *e);
+static type check_new_mesh(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
 static void refuse_arg_names(const expr *e, type result);
 
@@ -2704,6 +2735,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         refuse_arg_names(e, grid);
         return grid;
     }
+    if (!checked && is_new_mesh(c, e) && !authored_alias(c, e->name, e->at)) return check_new_mesh(c, e, inner);
     if (e->kind == E_DEFAULT) return check_default_value(c, e, inner);
     if (e->kind == E_NULL) {
         null_error(e, want);
@@ -3454,8 +3486,9 @@ static type check_construct(checker *c, expr *e, const type target)
     // Cubemap(256), Cubemap(256, Format.Rgba16f): a cube that's drawn into, a face at a time
     if (target.kind == TY_CUBEMAP) return check_cube_target(c, e);
     if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
-        diag_error(e->at, "%s has no constructor yet", name);
+        diag_error(e->at, "%s has no constructor", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
+        else diag_note("declare a Texture asset for an image file, or read a render target's color image: 'target.color'");
         return T_ERR;
     }
 
@@ -4998,8 +5031,8 @@ static bool check_out_param(checker *c, const decl *m, const param *p, expr *arg
     } else if (arg->out_local) {
         // Its own, made here
     } else if (through_element(arg)) {
-        diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't make it", STR_ARG(m->name));
-        diag_note("make a variable, and put it in: '" STR_FMT "(..., out var e); items[i] = e;'", STR_ARG(m->name));
+        diag_error(arg->at, "an indexed element can't be an 'out' argument to '" STR_FMT "'", STR_ARG(m->name));
+        diag_note("receive the result in 'out var value', then assign value to the indexed destination after the call");
     } else if (through_swizzle(arg)) {
         diag_error(arg->at, "a swizzle of several components is a copy, so '" STR_FMT "' can't make it", STR_ARG(m->name));
         diag_note("make a variable, and assign the components from it: '" STR_FMT "(..., out var made); v.xy = made;'", STR_ARG(m->name));
@@ -5076,12 +5109,12 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             note_conversion(p->type, arg->type);
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
-                diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
+                diag_error(arg->at, "an indexed element can't be a 'mut' argument to '" STR_FMT "'", STR_ARG(m->name));
                 if (c->fields_ordered && holds_long_array(arg->type)) { // Nothing takes one out to put it back
                     diag_note("pass what holds the element as the 'mut' parameter, and which one it is: an element's own fields are "
                               "read and written where they are, 'sides[i].line[k]'");
                 } else {
-                    diag_note("take it out, change it, and put it back: 'var e = items[i]; ...; items[i] = e;'");
+                    diag_note("copy the argument into a 'mut' local, pass that local, then assign it back to the indexed destination");
                 }
             } else if (through_swizzle(arg)) {
                 diag_error(arg->at, "a swizzle of several components is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
@@ -5888,6 +5921,7 @@ static type check_call(checker *c, expr *e)
     if (resolve_builtin_alias(c, e->name, &builtin)) return check_construct(c, e, builtin);
     if (e->type_alias && e->type_alias->alias_type.kind == TY_GRID) return check_new_grid(c, e, e->type_alias->alias_type);
     if (is_new_grid(e)) return check_new_grid(c, e, T_VOID_); // Where nothing says its type: an error
+    if (is_new_mesh(c, e)) return check_new_mesh(c, e, T_VOID_);
 
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
 
@@ -7864,6 +7898,61 @@ static type check_window_target(checker *c, expr *e)
 static bool mesh_vertex_ok(const decl *vertex, loc at);
 #include "skinned_ops.inc"
 
+// Mesh<V>.Decode(bytes): a static Mesh<V> of a file's bytes (a .glb, a .gltf whose buffers are inside it, or an .obj;
+// tide/mesh_data.h), read as an asset of the file is, so the same vertices, on every machine: pure, so match code
+// decodes too. It fails with IOError.InvalidData. The receiver is `Mesh<V>` as written, or an alias of one.
+static type check_mesh_decode(checker *c, expr *e, bool *handled)
+{
+    *handled = false;
+    expr *receiver = e->object;
+    if (!receiver || receiver->kind != E_NAME) return T_ERR;
+    type mesh = T_ERR;
+    if (receiver->type_arg_ref && str_eq_c(receiver->type_arg_ref->name, "Mesh") && receiver->type_arg_ref->args.count == 1) {
+        *handled = true;
+        mesh = resolve_mesh(c, receiver->type_arg_ref, PLACE_LOCAL, receiver->at);
+    } else if (receiver->type_alias || (!receiver->type_arg_ref && !find_local(c, receiver->name) && !find_param(c, receiver->name)
+               && !field_in_scope(c, receiver->name))) {
+        // An alias: alias_receiver has already put the type it names in its place, and kept the alias
+        decl *alias = receiver->type_alias ? receiver->type_alias : authored_alias(c, receiver->name, receiver->at);
+        if (!alias) return T_ERR;
+        const type t = resolve_alias_type(c, alias);
+        if (t.kind != TY_STRUCT || !t.decl->asset_ref_geometry) return T_ERR;
+        *handled = true;
+        mesh = t;
+    } else return T_ERR;
+    if (mesh.kind == TY_ERROR) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if (!str_eq_c(e->name, "Decode")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "%s has the static method Decode(bytes), not '" STR_FMT "'", type_name(mesh), STR_ARG(e->name));
+        diag_note("a Mesh is made from lists with 'Mesh(vertices, indices)'");
+        return T_ERR;
+    }
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Mesh is decoded in CPU code, and drawn: 'Draw.Mesh(%s.Decode(bytes)!, transform)'", type_name(mesh));
+        return T_ERR;
+    }
+    const decl *vertex = mesh.decl->asset_ref_of->fields.items[0].type.decl;
+    if (!mesh_vertex_ok(vertex, e->at)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1, -1)) return T_ERR;
+    receiver->type = mesh;
+    receiver->type_decl = mesh.decl;
+    receiver->bind = BIND_TYPE;
+    e->call = CALL_MESH_DECODE;
+    e->type_decl = mesh.decl;
+    mesh.decl->mesh_decoded = true;
+    c->prog->mesh_decodes = true;
+    c->prog->uses_text = true; // Its lists are made in the scratch area, which code clears after it runs
+    return result_of(c->prog, mesh, (type){TY_ENUM, c->prog->io_error}, false);
+}
+
 static decl *named_enum(const checker *c, const expr *e);
 // Sample's filter and wrap have fixed enum types even though this call's
 // shader binding is checked separately from the ordinary signature table.
@@ -8252,6 +8341,9 @@ static type check_method(checker *c, expr *e)
     bool static_skin_handled = false;
     const type static_skin = check_skinned_static(c, e, &static_skin_handled);
     if (static_skin_handled) return static_skin;
+    bool mesh_decode_handled = false;
+    const type mesh_decoded = check_mesh_decode(c, e, &mesh_decode_handled);
+    if (mesh_decode_handled) return mesh_decoded;
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
         if (!world && str_eq_c(e->object->name, "world") && !field_in_scope(c, e->object->name)
@@ -8649,8 +8741,8 @@ static type check_method(checker *c, expr *e)
         decl called = {0}; // For what the messages call it
         called.name = e->name;
         if (through_element(e->object)) {
-            diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't step it", STR_ARG(e->name));
-            diag_note("take it out, roll, and put it back: 'var r = items[i]; r." STR_FMT "(...); items[i] = r;'", STR_ARG(e->name));
+            diag_error(e->at, "an indexed Random is a copy, so '" STR_FMT "' can't update its state in place", STR_ARG(e->name));
+            diag_note("take it out, roll, and put it back: 'mut var r = items[i]; r." STR_FMT "(...); items[i] = r;'", STR_ARG(e->name));
         } else {
             check_writable(c, e->object, &called, NULL);
         }
@@ -8693,8 +8785,8 @@ static type check_method(checker *c, expr *e)
             }
         }
         if (m->is_mut_method && through_element(e->object)) {
-            diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
-            diag_note("take it out, change it, and put it back: 'var e = items[i]; e." STR_FMT "(...); items[i] = e;'",
+            diag_error(e->at, "an indexed element is a copy, so the mut method '" STR_FMT "' can't change it in place", STR_ARG(m->name));
+            diag_note("take it out, change it, and put it back: 'mut var e = items[i]; e." STR_FMT "(...); items[i] = e;'",
                       STR_ARG(m->name));
         } else if (m->is_mut_method) {
             check_writable(c, e->object, m, NULL);
@@ -9566,6 +9658,7 @@ static type check_property(checker *c, expr *e, property *prop, const decl *plac
     }
     if (!prop->get) {
         diag_error(e->at, "property '" STR_FMT "' has no getter", STR_ARG(prop->name));
+        diag_note("this property can only be assigned; add a 'get { return ...; }' accessor to read it");
         return T_ERR;
     }
     decl *get = prop->get;
@@ -9700,7 +9793,10 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (obj.decl->asset_ref_of->kind == DECL_MESH) {
-            if (str_eq_c(e->member, "Value")) { e->asset_ref_value = true; return obj; }
+            if (str_eq_c(e->member, "Value")) { // The Mesh<V> it names
+                e->asset_ref_value = true;
+                return asset_reference_of(c, (type){TY_MESH, obj.decl->asset_ref_of}, e->at, true);
+            }
             if (str_eq_c(e->member, "vertices") || str_eq_c(e->member, "indices")) {
                 e->mesh_part = str_eq_c(e->member, "vertices") ? 1 : 2;
                 return list_of(c->prog, e->mesh_part == 1 ? obj.decl->asset_ref_of->fields.items[0].type : T_INT_);
@@ -10755,7 +10851,7 @@ static type check_sort(checker *c, expr *e, const type list)
     changer->name = str_from("List.Sort");
     if (through_element(e->object)) {
         diag_error(e->at, "a list that's an element of another is sorted as a copy, taken out and put back");
-        diag_note("'var inner = rows[i]; inner.Sort(a, b) { ... } rows[i] = inner;'");
+        diag_note("'mut var inner = rows[i]; inner.Sort(a, b) { ... } rows[i] = inner;'");
     } else {
         check_writable(c, e->object, changer, NULL);
     }
@@ -10914,6 +11010,69 @@ static type check_new_grid(checker *c, expr *e, const type want)
     e->type_decl = want.decl;
     c->prog->uses_text = true; // It's made in the scratch area, which code clears after it runs
     return e->type = want;
+}
+
+static bool is_new_mesh(const checker *c, const expr *e)
+{
+    if (e->kind != E_CALL) return false;
+    if (e->type_alias) return e->type_alias->alias_type.kind == TY_STRUCT && e->type_alias->alias_type.decl->asset_ref_geometry;
+    return str_eq_c(e->name, "Mesh") && !find_local(c, e->name) && !find_param(c, e->name);
+}
+
+// Mesh(vertices, indices): a static Mesh<V> of the game's own geometry, a copy of the two lists that nothing changes
+// after, whatever happens to the lists it was made from. V comes from the vertices, or from where it goes (an alias
+// of a Mesh<V>, or a field's type, which a list literal of vertices needs).
+static type check_new_mesh(checker *c, expr *e, const type want)
+{
+    const type alias = e->type_alias ? e->type_alias->alias_type : T_VOID_;
+    const type into = alias.kind == TY_STRUCT && alias.decl->asset_ref_geometry ? alias
+                    : want.kind == TY_STRUCT && want.decl->asset_ref_geometry ? want : T_VOID_;
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Mesh is made in CPU code, and drawn: 'Draw.Mesh(Mesh(vertices, indices), transform)'");
+        return e->type = T_ERR;
+    }
+    if (e->args.count != 2) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Mesh takes its vertices and its indices: 'Mesh(vertices, indices)'");
+        diag_note("the vertices are a List<V> of a struct with a 'float3 position', and the indices a List<int>, three a "
+                  "triangle");
+        return e->type = T_ERR;
+    }
+    if (!order_named_args(e, "vertices, indices", 0)) return e->type = T_ERR;
+    type vertices = into.kind == TY_STRUCT ? check_expr_want(c, e->args.items[0], into.decl->fields.items[1].type)
+                                           : check_expr(c, e->args.items[0]);
+    const type indices = check_expr_want(c, e->args.items[1], list_of(c->prog, T_INT_));
+    if (vertices.kind == TY_ERROR || indices.kind == TY_ERROR) return e->type = T_ERR;
+    if (vertices.kind != TY_LIST || vertices.decl->fields.items[0].type.kind != TY_STRUCT) {
+        diag_error(e->args.items[0]->at, "a Mesh's vertices are a List<V> of a vertex struct, like List<Vertex3>, not %s",
+                   type_name(vertices));
+        return e->type = T_ERR;
+    }
+    const type vertex = vertices.decl->fields.items[0].type;
+    if (into.kind == TY_STRUCT && !same_type(vertex, into.decl->fields.items[1].type.decl->fields.items[0].type)) {
+        diag_error(e->args.items[0]->at, "this makes a Mesh<%s>, and it goes where a %s goes", type_name(vertex),
+                   type_name(into));
+        return e->type = T_ERR;
+    }
+    const int dims = vertex_dims(vertex.decl, e->args.items[0]->at, true);
+    if (dims == 0) return e->type = T_ERR;
+    if (dims != 3) {
+        diag_error(e->args.items[0]->at, "a Mesh is a 3D mesh, and '" STR_FMT "' is a 2D mesh's vertex: its 'position' is a "
+                   "float2", STR_ARG(vertex.decl->name));
+        diag_note("draw 2D geometry from its two lists: 'Draw.Mesh(vertices, indices)'");
+        return e->type = T_ERR;
+    }
+    if (!type_assignable(list_of(c->prog, T_INT_), indices)) {
+        diag_error(e->args.items[1]->at, "a Mesh's indices are a List<int>, three a triangle, not %s", type_name(indices));
+        return e->type = T_ERR;
+    }
+    const type mesh = asset_reference_of(c, mesh_of(c->prog, vertex), e->at, true);
+    e->call = CALL_NEW_MESH;
+    vec_push(e->arg_want, mesh.decl->fields.items[1].type);
+    vec_push(e->arg_want, mesh.decl->fields.items[2].type);
+    c->prog->uses_text = true; // It's made in the scratch area, which code clears after it runs
+    return e->type = mesh;
 }
 
 // cells.Clear(): a grid's one method, every cell back to zero.
@@ -11229,21 +11388,28 @@ static type check_try(checker *c, expr *e)
     }
     if (t.kind != TY_FAILABLE) {
         diag_error(e->at, "'try' passes on the error of a call that can fail, and %s can't fail", wrapped_what(e->lhs));
+        diag_note("remove 'try' and use the expression directly");
         return T_ERR;
     }
     const type error = wrapped_error(t);
     const decl *m = c->method;
     if (!m) {
         diag_error(e->at, "'try' passes the error to the caller, and %s has none", code_what(c));
-        diag_note("handle it here: '?? fallback', 'is %s', or '!' to carry on with the default",
-                  pattern_example(error, true));
+        if (wrapped_value(t).kind == TY_VOID)
+            diag_note("handle its error here with 'is %s', or write 'call()!;' to continue if it fails", pattern_example(error, true));
+        else
+            diag_note("handle it here: '?? fallback', 'is %s', or '!' to carry on with the default",
+                      pattern_example(error, true));
         return T_ERR;
     }
     if (m->fails.kind == TY_VOID && m->fails_name.len > 0) return T_ERR; // Its `fails` is wrong, and said so
     if (m->fails.kind == TY_VOID) {
         diag_error(e->at, "'" STR_FMT "' doesn't fail, so 'try' can't pass the error on", STR_ARG(m->name));
         if (m->takes_action) {
-            diag_note("a function that takes an Action can't fail yet; handle it here with '?\?', 'is' or '!'");
+            diag_note("a function that takes an Action can't fail; handle the error here with 'is' or '!'");
+        } else if (wrapped_value(t).kind == TY_VOID) {
+            diag_note("declare '" STR_FMT " " STR_FMT "(...) fails %s' to pass the error on, or handle it here with 'is' or '!'",
+                      STR_ARG(m->return_type_name), STR_ARG(m->name), type_name(error));
         } else {
             diag_note("say it fails after its parameters, '" STR_FMT " " STR_FMT "(...) fails %s', or handle it here "
                       "with '?\?', 'is' or '!'", STR_ARG(m->return_type_name), STR_ARG(m->name), type_name(error));
@@ -11253,7 +11419,10 @@ static type check_try(checker *c, expr *e)
     if (!same_type(m->fails, error)) {
         diag_error(e->at, "%s fails with %s, and '" STR_FMT "' fails with %s", wrapped_what(e->lhs), type_name(error),
                    STR_ARG(m->name), type_name(m->fails));
-        diag_note("'try' passes the error on as it is; handle this one here with '?\?', 'is' or '!'");
+        if (wrapped_value(t).kind == TY_VOID)
+            diag_note("'try' passes the error on as it is; handle this one here with 'is' or '!'");
+        else
+            diag_note("'try' passes the error on as it is; handle this one here with '?\?', 'is' or '!'");
         return T_ERR;
     }
     return wrapped_value(t);
@@ -11427,7 +11596,11 @@ static type check_await(checker *c, expr *e)
     c->awaiting = outer;
     if (!async_code(c)) {
         diag_error(e->at, "'await' waits, and only async functions and handlers can");
-        if (in_routine(c) && c->method->kind == DECL_FUNCTION) {
+        if (in_routine(c) && c->method->is_worker) {
+            diag_note("a worker runs to completion; await other work in the local async function that starts it");
+        } else if (in_routine(c) && c->method->takes_action) {
+            diag_note("a function that takes an Action can't be async; move the wait into an async function called outside the callback");
+        } else if (in_routine(c) && c->method->kind == DECL_FUNCTION) {
             diag_note("make it async: 'async " STR_FMT " " STR_FMT "(...)'", STR_ARG(c->method->return_type_name),
                       STR_ARG(c->method->name));
         } else if (!c->method && c->system && c->system->is_handler) {
@@ -11440,6 +11613,7 @@ static type check_await(checker *c, expr *e)
     }
     if (c->block_depth > 0) {
         diag_error(e->at, "a task can't wait inside a block written after a call: the function runs it");
+        diag_note("move the wait before or after the call, or replace the callback with ordinary async control flow");
         return T_ERR;
     }
     if (c->grid_loops > 0) {
@@ -11457,9 +11631,9 @@ static type check_await(checker *c, expr *e)
     if (call->call == CALL_WAIT) return T_VOID_;
     if (call->storage_flush || call->web_fetch) return t;
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && (call->method->is_async || call->method->is_worker)) return t;
-    diag_error(e->at, "'await' waits for an async function's call, or for Wait, like 'await Wait.Ticks(30)'");
+    diag_error(e->at, "'await' needs a task handle or an async call, like 'await Wait.Ticks(30)'");
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION) {
-        diag_note("'" STR_FMT "' isn't async: it runs to its end as it's called, so there's nothing to wait for",
+        diag_note("'" STR_FMT "' is synchronous; remove 'await' from this call",
                   STR_ARG(call->method->name));
     }
     return T_ERR;
@@ -11674,12 +11848,12 @@ static type check_expr_any_raw(checker *c, expr *e)
         c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
         c->method->makes_text_at = e->at;
     }
-    if (holds_mesh_reference(t, 0) && (holds_heap(t) || t.kind == TY_ARRAY) && reading_code(c))
+    if (holds_mesh_reference(t, 0) && (holds_heap_beside_meshes(t, 0) || t.kind == TY_ARRAY) && reading_code(c))
         reading_code(c)->borrows_asset_collections = true;
     if ((holds_render_resource(t) || holds_callable(t)) && !gpu_code(c)) {
         decl *code = reading_code(c);
         if (code) {
-            if ((holds_render_resource(t) || holds_mesh_reference(t, 0)) && (holds_heap(t) || t.kind == TY_ARRAY))
+            if ((holds_render_resource(t) || holds_mesh_reference(t, 0)) && (holds_heap_beside_meshes(t, 0) || t.kind == TY_ARRAY))
                 code->borrows_asset_collections = true;
             if (!code->render_resources) code->render_resources_at = e->at;
             code->render_resources = true;
@@ -11806,8 +11980,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     if (arg_of && is_optional_field(target)) {
         diag_error(target->at, "a T? field can't be passed as '%s': the call would change it where it's kept, which isn't as a T?",
                    arg_of->is_out ? "out" : "mut");
-        diag_note("pass a local and assign it after: '%s value%s; ...; " STR_FMT " = value;'", type_name(read_type(target->field->type)),
-                  arg_of->is_out ? "" : " = ...", STR_ARG(target->field->name));
+        if (arg_of->is_out)
+            diag_note("pass 'out mut var value', then assign value back to the field after the call");
+        else
+            diag_note("copy the field into a 'mut' local, pass that local, then assign it back after the call");
         return false;
     }
     if (c->parallel && !check_step_write(c, target)) return false;
@@ -11973,6 +12149,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("store the value in a 'mut var' first");
         } else {
             diag_error(target->at, "can't assign to this expression");
+            diag_note("assign to a mutable variable, a writable field or an indexed element instead");
         }
         return false;
     }
@@ -12082,8 +12259,14 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     if (root->bind == BIND_LOCAL && root->local->kind == S_FOREACH) {
-        diag_error(root->at, "'" STR_FMT "' is a copy of the list's element, so it can't be changed", STR_ARG(root->name));
-        diag_note("change the list itself: 'for (var i = 0; i < items.count; i++) { ... items[i] = ...; }'");
+        diag_error(root->at, "'" STR_FMT "' is a read-only copy of a foreach element", STR_ARG(root->name));
+        const type_kind source = root->local->value->type.kind;
+        if (source == TY_SET) diag_note("change the source set with Add or Remove instead of assigning its foreach variable");
+        else if (source == TY_MAP) diag_note("assign the source map's value by key: 'items[key] = value;'");
+        else if (source == TY_STRING) diag_note("text is immutable; build a new string instead of assigning its foreach variable");
+        else if (source == TY_LIST || source == TY_ARRAY)
+            diag_note("change the source by index: 'for (var i = 0; i < items.count; i++) { ... items[i] = ...; }'");
+        else diag_note("change the source through its writable fields or indexed storage instead of assigning the foreach variable");
         return false;
     }
     if (root->bind == BIND_LOCAL && root->local->delayed && target == root
@@ -12757,6 +12940,7 @@ static void check_assign(checker *c, const stmt *s)
         property *prop = s->target->property;
         if (!prop->set) {
             diag_error(s->target->at, "property '" STR_FMT "' has no setter", STR_ARG(prop->name));
+            diag_note("this property can only be read; add a 'set { ... }' accessor to assign it");
             return;
         }
         expr *set = NEW(expr);
@@ -12844,7 +13028,7 @@ static void check_assign(checker *c, const stmt *s)
         return;
     }
     if (target.kind == TY_GRID && value.kind != TY_ERROR && !is_new_grid(s->value)) {
-        diag_error(s->value->at, "a grid can't be copied: every chunk would be");
+        diag_error(s->value->at, "a grid can't be copied; initialize a new grid or copy its cells explicitly");
         diag_note("make a new, empty one with 'Grid%d(...)', or change cells one by one", target.decl->dims);
         return;
     }
@@ -14475,11 +14659,11 @@ static type use_asset(checker *c, expr *e, decl *k)
     }
     if (k->sample_raw && k->return_type.kind == TY_TEXTURE && builds(c->prog)) vec_push(c->raw_uses, e);
     type t = k->return_type;
-    if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at);
+    if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at, true);
     if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_MESH)
-        return list_of(c->prog, asset_reference_of(c, t.decl->fields.items[0].type, e->at));
+        return list_of(c->prog, asset_reference_of(c, t.decl->fields.items[0].type, e->at, true));
     if (t.kind == TY_MAP && t.decl->fields.items[1].type.kind == TY_MESH)
-        return map_of(c->prog, t.decl->fields.items[0].type, asset_reference_of(c, t.decl->fields.items[1].type, e->at), false);
+        return map_of(c->prog, t.decl->fields.items[0].type, asset_reference_of(c, t.decl->fields.items[1].type, e->at, true), false);
     return t;
 }
 
@@ -15026,9 +15210,9 @@ static void check_default(checker *c, const field *f)
     c->raw_value = saved_raw;
     c->assets_constant = false;
     if (f->type.kind == TY_GRID && t.kind == TY_GRID && !own_grid(value)) {
-        diag_error(value->at, "a grid can't be copied: every chunk would be");
-        diag_note("an asset's grid is read where it is, by its name; a field starts as a new, empty one, like 'Grid%d(64, 64)'",
-                  f->type.decl->dims);
+        diag_error(value->at, "a grid can't be copied; initialize a new grid or copy its cells explicitly");
+        diag_note("an asset's grid is read where it is, by its name; a field starts as a new, empty one, like 'Grid%d(%s)'",
+                  f->type.decl->dims, f->type.decl->dims == 2 ? "64, 64" : "64, 64, 64");
         return;
     }
     if (f->type.kind != TY_ERROR && !type_assignable(f->type, t)) {
@@ -15915,7 +16099,7 @@ static void check_signature(checker *c, decl *m)
         m->return_type = T_ERR;
     }
     if ((holds_render_resource(m->return_type) || holds_mesh_reference(m->return_type, 0))
-        && (holds_heap(m->return_type) || m->return_type.kind == TY_ARRAY))
+        && (holds_heap_beside_meshes(m->return_type, 0) || m->return_type.kind == TY_ARRAY))
         m->borrows_asset_collections = true;
     if (holds_render_resource(m->return_type) || holds_callable(m->return_type)) {
         m->render_resources = true;
@@ -15987,7 +16171,7 @@ static void check_signature(checker *c, decl *m)
                 m->gpu_only_reads = TY_GRID;
             }
         }
-        if ((holds_render_resource(p->type) || holds_mesh_reference(p->type, 0)) && (holds_heap(p->type) || p->type.kind == TY_ARRAY))
+        if ((holds_render_resource(p->type) || holds_mesh_reference(p->type, 0)) && (holds_heap_beside_meshes(p->type, 0) || p->type.kind == TY_ARRAY))
             m->borrows_asset_collections = true;
         if (holds_render_resource(p->type) || holds_callable(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;

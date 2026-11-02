@@ -1,0 +1,4 @@
+// expect: a Mesh's indices are a List<int>, three a triangle, not List<float>
+singleton Shapes { List<Vertex3> corners; List<float> wrong; }
+scene Main;
+system Make(Shapes shapes) { var made = Mesh(shapes.corners, shapes.wrong); }

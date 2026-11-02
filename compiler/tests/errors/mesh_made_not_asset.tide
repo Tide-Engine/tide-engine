@@ -1,0 +1,4 @@
+// expect: can't assign Mesh<Vertex3> to Asset<Mesh<Vertex3>>
+singleton Shapes { Mesh<Vertex3> made; Asset<Mesh<Vertex3>> reference; }
+scene Main;
+system Keep(mut Shapes shapes) { shapes.reference = shapes.made; }

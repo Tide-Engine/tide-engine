@@ -1,4 +1,5 @@
 // expect: a T? field can't be passed as 'mut': the call would change it where it's kept, which isn't as a T?
+// expect: copy the field into a 'mut' local, pass that local, then assign it back after the call
 struct Slot { int? item; }
 void Bump(mut int? value) { value = 1; }
 void Use() { mut Slot slot = Slot { }; Bump(slot.item); }

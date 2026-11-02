@@ -1,0 +1,4 @@
+// expect: 'letter' is a read-only copy of a foreach element
+// expect: text is immutable; build a new string instead of assigning its foreach variable
+void Use(string text) { foreach (var letter in text) letter = 'a'; }
+scene Main;

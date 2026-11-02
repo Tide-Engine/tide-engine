@@ -91,7 +91,7 @@ static bool add_define(const char *name)
         return false;
     }
     if (define_count == 256) {
-        fprintf(stderr, "tidec: --define takes 256 symbols at most\n");
+        fprintf(stderr, "tidec: --define takes 256 symbols at most; remove unused definitions or combine conditions\n");
         return false;
     }
     defines[define_count++] = name;
@@ -140,7 +140,7 @@ static bool add_listed(const char *path, input_list *inputs)
 {
     FILE *f = fopen(path, "rb");
     if (!f) {
-        fprintf(stderr, "tidec: can't read the list of files '%s'\n", path);
+        fprintf(stderr, "tidec: can't read the list of files '%s'; check that it exists and is readable\n", path);
         return false;
     }
     fseek(f, 0, SEEK_END);
@@ -190,7 +190,7 @@ static bool write_dependencies(const char *path, const codegen_options *opts,
 {
     FILE *file = fopen(path, "wb");
     if (!file) {
-        fprintf(stderr, "tidec: can't write dependency file '%s'\n", path);
+        fprintf(stderr, "tidec: can't write dependency file '%s'; create its parent folder and check write permissions\n", path);
         return false;
     }
     sb target = {0};
@@ -208,7 +208,7 @@ static bool write_dependencies(const char *path, const codegen_options *opts,
     fputc('\n', file);
     bool ok = !ferror(file);
     if (fclose(file) != 0) ok = false;
-    if (!ok) fprintf(stderr, "tidec: can't finish dependency file '%s'\n", path);
+    if (!ok) fprintf(stderr, "tidec: can't finish dependency file '%s'; check free disk space and write permissions, then retry\n", path);
     return ok;
 }
 
@@ -233,7 +233,7 @@ int main(const int argc, char **argv)
             const char *replacement = argv[++i];
             opts.editor_text = overlay_text(replacement);
             if (!opts.editor_text) {
-                fprintf(stderr, "tidec: can't read the source overlay replacement '%s'\n", replacement);
+                fprintf(stderr, "tidec: can't read the source overlay replacement '%s'; check that it exists and is readable\n", replacement);
                 return 2;
             }
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
@@ -285,6 +285,21 @@ int main(const int argc, char **argv)
         } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {
             if (!add_define(argv[++i])) return 2;
         } else if (argv[i][0] == '-') {
+            static const char *const valued[] = {"-o", "--name", "--scene", "--game", "--depfile", "--editor-prefab",
+                                                "--spirv", "--hlsl", "--package", "--define"};
+            bool takes_value = false;
+            for (size_t j = 0; j < sizeof valued / sizeof valued[0]; j++) {
+                if (strcmp(argv[i], valued[j]) == 0) takes_value = true;
+            }
+            if ((strcmp(argv[i], "--scene") == 0 && opts.scene) || (strcmp(argv[i], "--depfile") == 0 && depfile)
+                || (strcmp(argv[i], "--source-overlay") == 0 && opts.editor_source))
+                fprintf(stderr, "tidec: '%s' can be specified only once; remove the duplicate option\n", argv[i]);
+            else if (takes_value)
+                fprintf(stderr, "tidec: '%s' needs a value after it; see the usage below\n", argv[i]);
+            else if (strcmp(argv[i], "--source-overlay") == 0)
+                fprintf(stderr, "tidec: --source-overlay needs the original source path and a replacement file path\n");
+            else
+                fprintf(stderr, "tidec: unknown option '%s'; check its spelling in the usage below\n", argv[i]);
             usage();
             return 2;
         } else if (argv[i][0] == '@') {
@@ -294,6 +309,14 @@ int main(const int argc, char **argv)
         }
     }
     if (inputs.count == 0 || (!opts.out_dir && !schedule) || (depfile && (schedule || !*depfile))) {
+        if (inputs.count == 0)
+            fprintf(stderr, "tidec: no source files; pass one or more .tide files, or @<list> for a file listing them\n");
+        else if (!opts.out_dir && !schedule)
+            fprintf(stderr, "tidec: no output folder; pass '-o <output-dir>' to generate C, or choose an inspection mode below\n");
+        else if (!*depfile)
+            fprintf(stderr, "tidec: --depfile needs a nonempty file path\n");
+        else
+            fprintf(stderr, "tidec: --depfile requires C generation; remove it for an inspection mode, or use '-o <output-dir>' without that mode\n");
         usage();
         return 2;
     }

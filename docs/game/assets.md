@@ -25,7 +25,7 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 | `string` | Any UTF-8 text file | Text |
 | `List<byte>` | Any file | Its original bytes |
 
-These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
+These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, runtime [`Mesh<V>.Decode`](#meshes) reads GLB, a glTF with its buffers inside it and OBJ, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
 
 WebP, TIFF, animated images, SVG, HDR/EXR and GPU texture containers such as DDS/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
 
@@ -283,7 +283,7 @@ Layouts without a tangent field, layouts with `float3 tangent`, and skinned mesh
 
 **It comes in as Tide has the world.** Tide's world is left-handed with fronts [clockwise](./3d.md#which-side-draws), like Unity's. glTF is right-handed with fronts counterclockwise: a file's `x` is turned around and its triangles are wound the other way, so `+y` stays up and a model that faces `+z` still faces `+z`. OBJ uses the same conversion. FBX first converts its declared axes and units to right-handed Y-up meters, then uses that conversion too. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
 
-**A mesh value is a stable ID.** Fields, lists, arrays, maps, parameters and tasks can keep a `Mesh<V>` without copying its vertices or indices. Reading `.vertices` or `.indices` borrows the currently loaded geometry. `Asset<Mesh<V>>` is the same checked reference type; its `.Value` spelling remains available, and ordinary `Mesh<V>` code needs no extra wrapper.
+**An asset's mesh value is a stable ID.** Fields, lists, arrays, maps, parameters and tasks can keep a `Mesh<V>` without copying an asset's vertices or indices. Reading `.vertices` or `.indices` borrows the currently loaded geometry. `Asset<Mesh<V>>` holds only that ID, for a reference that must name an asset (the editor assigns one); it goes wherever a `Mesh<V>` does, and its `.Value` is that `Mesh<V>`.
 
 ```csharp
 component Prop
@@ -303,6 +303,49 @@ view Props(Prop prop)
     Draw.Mesh(prop.model, float4x4.Translate(prop.position));
 }
 ```
+
+**A mesh the game makes is a `Mesh<V>` too.** `Mesh(vertices, indices)` takes a `List<V>` of a 3D vertex struct and a `List<int>` of indices, three a triangle, and makes a static mesh of copies of them. Nothing changes the copies after, whatever happens to the lists they came from, so there is nothing to free: the mesh lasts as long as the value holding it, like any list. It goes wherever an asset's mesh goes: fields, lists and maps of meshes beside assets', parameters, `Draw.Mesh` and `Draw.Instanced`, and anything else that takes a `Mesh<V>`. A type alias makes one too: `Model(vertices, indices)`.
+
+```csharp
+using Model = Mesh<Vertex3>;
+
+singleton Terrain { Model ground; List<Model> pieces; }
+
+system Build(mut Terrain terrain)
+{
+    List<Vertex3> corners = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(1, 0, 0) },
+                             Vertex3 { position = float3(0, 0, 1) }];
+    terrain.ground = Mesh(corners, [0, 2, 1]);
+    terrain.pieces = [rock, terrain.ground];
+}
+```
+
+- **Where it's kept decides its cost.** In match state its geometry is part of the match: in snapshots and hashes, sent whole to a player who joins, and to the others once, as it's made. Its pages never change after, so rollback copies and the per-tick hash cost almost nothing more. Keep geometry only the screen needs in local state, where none of that applies, or make it in a view each frame.
+- **Copies are one mesh on the GPU.** Every copy draws with no list read: the mesh's id is worked out from its contents once, when it's made, and the draw uses it as the geometry's version. A copy of the value copies its two lists.
+- **Equality compares contents:** two meshes made of the same lists are `==`, and a made mesh is never an asset's or `default`, even with no triangles.
+- **Levels of detail** are the draw's to ask for, `lod:`, as for any mesh your game makes (below).
+- **Not there:** a made `SkinnedMesh<V>`; and a 2D mesh, which draws from its two lists, `Draw.Mesh(vertices, indices)`.
+
+**A mesh read while the game runs is a `Mesh<V>` too.** `Mesh<V>.Decode(bytes)` reads a model from a `List<byte>`, from [`await Web.Fetch(url)`](./files.md), `File.ReadAllBytes(path)` or a player's upload, and gives a `Mesh<V> fails IOError`. It reads the file as an `asset Mesh<V>` of it does: the same vertices, filled by your vertex struct's field names, every other field its default, a `float4 tangent` made where the file has none. It's the same bits on every machine, so match code can decode too, and the mesh then lives as a mesh your game makes does (above).
+
+```csharp
+using Model = Mesh<Vertex3>;
+
+singleton Arena { Model statue; PlayerID host; string message; }
+
+command SetStatue { List<byte> model; }
+
+command(SetStatue value, PlayerID sender) Apply(mut Arena arena)
+{
+    if (sender != arena.host) return;
+    if (Model.Decode(value.model) is Model statue) arena.statue = statue;
+    else arena.message = "That isn't a model";
+}
+```
+
+- **Formats:** a `.glb`, a `.gltf` whose buffers are inside it (data URIs), and an `.obj`, told apart by their first bytes, as the bytes have no name. A `.gltf` that names buffer files, and an FBX, which Tide reads at build time only, are `IOError.InvalidData`, as is anything else that isn't a mesh.
+- **A vertex with `joints` or `weights`** is a [Mesh with bones](./animation.md), read from a `.glb` as its asset is: at rest, each corner with its four heaviest bones.
+- **Limits:** a file of more than 512 MiB, 1,048,576 vertices, 6,291,456 triangle corners, 4,194,304 JSON values or 67,108,864 numbers read (an `.obj`'s vertex, normal and uv lines count) is `InvalidData` before anything is made for it, and so is a mesh whose numbers a node's transform takes past what a float holds. Each machine that refused one says why on its log, naming the limit: `tide: Mesh.Decode refused a mesh: it has 2,000,000 vertices in a part, more than the 1,048,576 Mesh.Decode takes (TIDE_MESH_DECODE_MAX_VERTICES)`.
 
 Collections follow ordinary value-copy and mutation rules. Copying an immutable asset collection can share its ID storage until a write. Geometry stays in the asset pack. Singular IDs follow the qualified declaration name; glob-element IDs also include the written file key, so changing a glob's order keeps retained selections stable. A removed or unknown ID resolves to empty geometry. Renaming a declaration or file key changes that identity.
 

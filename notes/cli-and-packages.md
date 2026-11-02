@@ -1,5 +1,70 @@
 # `tide`, packages and the package
 
+## Agent-readable profile captures (2026-11-02)
+
+The owner's approved profiling work adds run-only `--profile <file.json>` and
+`--profile-warmup <n>`. The CLI makes the report path absolute from its invoking
+directory and forwards both arguments to the ordinary standalone host. Profiling
+does not select a window/headless mode by itself: the run must also have
+`--frames`, `--script` or `--interactive`, and keeps their one-shot build/run
+behavior. Web, Android and dedicated servers are refused before building.
+Warmup is one decimal integer from 0 through 1,000,000,000, defaults to zero,
+and requires a report path. Duplicate profile/warmup options, empty/option-like
+paths, malformed numbers and missing values fail with corrective diagnostics.
+
+The shared help catalog, CLI reference and agent materials describe optimized
+repeatable captures, actual callback CPU work rather than fixed-step FPS, and
+source/counter evidence before changing culling. Report lifecycle, multiplayer
+suffixes, measurement meanings and runtime contracts are in standard-host.md.
+No usage-data field or build mode changes.
+
+Regression coverage: run_exit_test.c checks all three bounded dispatch routes,
+argument/path forwarding, warmup boundaries and early invalid/unsupported
+refusals; hidden_test.cmake checks real CLI refusals without installed engine
+sources; help_test.cmake checks topic discovery, scope and limits. Validation:
+Windows ASan `tide_cli_run_exit`, `tide_cli_help` and `tide_cli_hidden` pass,
+as does the generated stripped-metadata regression. The docs production build
+passed on Node 24.22.1 (build/profile-docs-build.log). Final native/web profiler
+integration results are recorded in notes/standard-host.md.
+
+## Actionable CLI diagnostics (2026-11-02)
+
+The diagnostic wording pass keeps accepted arguments, exit codes, build modes,
+package selection and runtime interfaces unchanged. In main.c, known options
+with a missing trailing value now show a valid example and an argument help
+topic instead of claiming the command does not take the option: output/title,
+Unity assets, join/connect, server capacity/port and shard counts/width. Upgrade's
+missing --version has a concrete install example. Unknown upgrade/editor options
+point to command help; server/player and web/Android conflicts say which option
+to remove. Reserved #if symbols and dash-prefixed save directories explain the
+replacement spelling.
+
+Package saves and missing local folders now suggest permission/path checks,
+while eject's existing destination explains moving the folder aside for a fresh
+copy. A damaged pinned executable names the precise cached folder to move aside
+and says to rerun in a terminal for a consented download. Compiler launch failures
+identify the compiler and executable check; an unrecognized library says to
+supply one built for the selected target. Package fetching distinguishes a tool
+that could not start from a transfer's exit code, and suggests updating curl for
+its success-without-output failure and checking tar/cache access after unpacking
+fails. No URLs, credentials or new telemetry values are added to messages.
+
+Regression coverage: tide_cli_help exercises missing values across real command
+dispatch, checks a valid help route, reserved-symbol guidance and retained
+wrong-command option refusals. tide_cli_versions pins the exact cache-folder
+recovery note while retaining its consent/checksum/forwarding behavior checks.
+The CLI reference describes these recovery paths. Niche Android signing,
+deployment/service responses, Unity conversion and editor-install diagnostics
+were left unchanged; existing detailed messages remain the source of recovery
+guidance there.
+
+Validation: the Windows ASan build passes without compiler warnings.
+tide_cli_tests, tide_cli_help, tide_cli_hidden, tide_cli_run_exit,
+tide_cli_packages, tide_cli_versions and tide_cli_fetch all pass, alongside the
+compiler/editor diagnostic checks (2,203 selected CTests total). The docs
+production build passes. Changed paths are native tools shared by all game
+targets; no game runtime or web behavior changed.
+
 ## Compiler dependency files (2026-10-30)
 
 `tidec --depfile <path>` writes Make-style source and transitive asset dependencies

@@ -25,7 +25,7 @@ static const char *worker_invalid_expr(const expr *e)
     if (!e) return NULL;
     if (e->bind == BIND_ASSET || e->asset_ref_value)
         return "read live assets; capture their data before starting the worker";
-    const expr *children[] = {e->object, e->lhs, e->rhs, e->cond, e->values, e->skin_mesh, e->skin_pose};
+    const expr *children[] = {e->object, e->lhs, e->rhs, e->cond, e->values, e->mesh_lod, e->skin_mesh, e->skin_pose};
     for (size_t i = 0; i < sizeof children / sizeof *children; i++) {
         const char *error = worker_invalid_expr(children[i]);
         if (error) return error;
