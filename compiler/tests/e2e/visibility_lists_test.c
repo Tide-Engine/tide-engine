@@ -60,3 +60,77 @@ TIDE_TEST(visibility_lists_read_back_as_they_were_written)
     tide_world_free(&client);
     tide_world_free(&server);
 }
+
+// A world after a tick, as a projection: the bytes of its tick from a copy
+static uint8_t *ticked_projection(const tide_world *w, uint32_t *size)
+{
+    tide_world copy = {0};
+    tide_world_copy(&copy, w);
+    tide_world_tick(&copy);
+    uint8_t *bytes = project(&copy, size);
+    tide_world_free(&copy);
+    return bytes;
+}
+
+TIDE_TEST(visibility_lists_reload_over_the_last_projection)
+{
+    tide_world server = {0}, client = {0};
+    tide_world_init(&server, 0.1f);
+    tide_world_tick(&server);
+    uint32_t had_size;
+    uint8_t *had = project(&server, &had_size);
+    TIDE_CHECK(tide_game_api.load_client_state(&client, had, had_size));
+    TIDE_CHECK(tide_game_api.reload_client_state(&client, had, had_size, had, had_size)); // Nothing changed
+    uint32_t same_size;
+    uint8_t *same = project(&client, &same_size);
+    TIDE_CHECK(same_size == had_size && memcmp(same, had, had_size) == 0);
+    free(same);
+    uint32_t most_pages = 0, fresh_pages = 0, kept = 0;
+    for (int t = 1; t <= 120; t++) {
+        tide_world_tick(&server);
+        uint32_t size;
+        uint8_t *bytes = project(&server, &size);
+        if (t % 10 == 0) { // Refused, the world as it was
+            const uint64_t before = tide_world_hash(&client);
+            TIDE_CHECK(!tide_game_api.reload_client_state(&client, bytes, size - 1u, had, had_size));
+            TIDE_CHECK(!tide_game_api.reload_client_state(&client, bytes, size, had, had_size - 1u));
+            TIDE_CHECK(!tide_game_api.reload_client_state(&client, bytes, 7u, had, had_size));
+            TIDE_CHECK(tide_world_hash(&client) == before);
+        }
+        tide_world before = {0};
+        tide_world_copy(&before, &client);
+        TIDE_CHECK(tide_game_api.reload_client_state(&client, bytes, size, had, had_size));
+        // Bulk kept, not read again: its elements still on the page it shares with the world before
+        tide_text_use(&before.heap, NULL);
+        const void *was = tide_list_at(before.Bulk.big, 0, sizeof(Point));
+        tide_text_use(&client.heap, NULL);
+        if (tide_list_at(client.Bulk.big, 0, sizeof(Point)) == was) kept++;
+        tide_world_free(&before);
+        // What it loaded is the server's projection, as a fresh load is
+        uint32_t again_size;
+        uint8_t *again = project(&client, &again_size);
+        TIDE_CHECK(again_size == size && memcmp(again, bytes, size) == 0);
+        TIDE_CHECK(tide_game_api.client_hash(&client, tide_player_from_index(0))
+                   == tide_game_api.client_hash(&server, tide_player_from_index(0)));
+        tide_world fresh = {0};
+        TIDE_CHECK(tide_game_api.load_client_state(&fresh, bytes, size));
+        TIDE_CHECK(tide_world_entity_count(&fresh) == tide_world_entity_count(&client));
+        // ...and a tick predicted from it comes out as from a fresh load
+        uint32_t a_size, b_size;
+        uint8_t *a = ticked_projection(&client, &a_size), *b = ticked_projection(&fresh, &b_size);
+        TIDE_CHECK(a_size == b_size && memcmp(a, b, a_size) == 0);
+        if (client.heap.pages > most_pages) most_pages = client.heap.pages;
+        fresh_pages = fresh.heap.pages;
+        free(a); free(b); free(again);
+        tide_world_free(&fresh);
+        free(had);
+        had = bytes;
+        had_size = size;
+    }
+    // Blocks let go of are used again: the heap stays near a fresh load's
+    TIDE_CHECK(most_pages <= fresh_pages * 2u + 4u);
+    TIDE_CHECK(kept >= 30); // Ticks that changed none of Bulk
+    free(had);
+    tide_world_free(&client);
+    tide_world_free(&server);
+}

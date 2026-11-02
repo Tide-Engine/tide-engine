@@ -28,7 +28,7 @@
     registration = null;
     return true;
   }
-  if (query.get('args') === 'host') {
+  if (['host', 'handover-host'].includes(query.get('args'))) {
     const Socket = WebSocket;
     window.WebSocket = class extends Socket {
       send(text) {
@@ -37,6 +37,19 @@
       }
     };
   }
+  // Retain handshake progress if a hosted run fails before the match connects.
+  // These listeners observe WebRTC without changing its signaling or packets.
+  const Peer = RTCPeerConnection;
+  let peers = 0;
+  window.RTCPeerConnection = class extends Peer {
+    constructor(...args) {
+      super(...args);
+      const id = ++peers;
+      for (const event of ['iceconnectionstatechange', 'connectionstatechange']) {
+        this.addEventListener(event, () => tell('rtc ' + id + ': ice ' + this.iceConnectionState + ', connection ' + this.connectionState));
+      }
+    }
+  };
   var Tide = {
     canvas: document.getElementById('canvas'),
     arguments: (query.get('args') || '').split(',').filter(Boolean),

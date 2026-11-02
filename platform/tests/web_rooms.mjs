@@ -73,7 +73,7 @@ const page = `<!doctype html>
     fetch('result', { method: 'POST', body: JSON.stringify({ passed, log }) });
   }
   addEventListener('message', ({ data }) => {
-    log.push(data.who + ': ' + data.line);
+    log.push((performance.now() / 1000).toFixed(3) + ' ' + data.who + ': ' + data.line);
     fetch('say', { method: 'POST', body: data.who + ': ' + data.line }); // As it happens, in case the page hangs
     const keyed = /^room ([0-9A-Z]{6}) key ([0-9a-f]+)$/.exec(data.line);
     if (keyed) hosted = keyed;
