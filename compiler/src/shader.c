@@ -6425,6 +6425,41 @@ static const char *attribute_type(emit *em, const type t)
     return ty(em, t.kind == TY_COLOR ? (type){TY_FLOAT4, NULL} : t);
 }
 
+// Whether a shader's draws can be listed (shader.listed): an instanced 3D draw, not skinned, whose every value
+// for each instance is its list item's, or the transform (the item's, or the identity where it has none), with a
+// texture left for the list's numbers.
+static bool listable(const shader *sh)
+{
+    if (!sh->instanced || sh->skinned || sh->blit || sh->dims != 3 || sh->textures.count >= 12
+        || packs(sh->instance_floats) < 4) return false;
+    for (int i = 0; i < sh->values.count; i++) {
+        const shader_value *v = &sh->values.items[i];
+        if (v->per_instance && v->source && v->source != sh->instance_type) return false;
+    }
+    return true;
+}
+
+// The statements that start a listed vertex stage (shader.listed): each of the instance's packs, a pixel of its
+// list's numbers from where its place says, as the attributes of an ordinary one would have them. A list's rows
+// are TIDE_LIST_DATA_ACROSS (1024) pixels.
+static void put_listed_loads(const shader *sh, const lang l, sb *o)
+{
+    const bool wgsl = l == WGSL;
+    const int floats = packs(sh->instance_floats), all = floats + packs(sh->instance_ints);
+    const int texture = sh->textures.count;
+    sb_printf(o, wgsl ? "    let tide_listed_at = tide_listed * %d;\n" : "    int tide_listed_at = tide_listed * %d;\n", all);
+    for (int k = 0; k < all; k++) {
+        char at[96];
+        snprintf(at, sizeof at, "(tide_listed_at + %d) & 1023, (tide_listed_at + %d) >> %s", k, k, wgsl ? "10u" : "10");
+        const bool f = k < floats;
+        const int n = f ? k : k - floats;
+        if (wgsl) sb_printf(o, "    tide_%c%d = %stextureLoad(pixels%d, vec2i(%s), 0)%s;\n", f ? 'n' : 'j', n,
+                            f ? "bitcast<vec4f>(" : "", texture, at, f ? ")" : "");
+        else sb_printf(o, "    tide_%c%d = %stexelFetch(pixels%d, ivec2(%s), 0)%s;\n", f ? 'n' : 'j', n,
+                       f ? "intBitsToFloat(" : "", texture, at, f ? ")" : "");
+    }
+}
+
 static void write_glsl(program *prog, shader *sh)
 {
     for (int stage = STAGE_VERT; stage <= STAGE_FRAG; stage++) {
@@ -6437,30 +6472,50 @@ static void write_glsl(program *prog, shader *sh)
             write_stage(&em, sh->frag, STAGE_FRAG);
             put_fragment_main(&em, &main, "", "tide_pixel =");
         }
-        sb o = {0};
+        // The vertex stage's attributes are its mesh's, then its instance's: a listed one's are its place in its
+        // list, whose numbers are its packs (put_listed_loads)
+        sb o = {0}, inputs = {0}, listed_inputs = {0}, rest = {0};
         put_uniforms(sh, GLSL, &o);
         if (stage == STAGE_VERT) {
             int location = 0;
             for (int i = 0; i < sh->vertex->fields.count; i++) {
-                sb_printf(&o, "layout(location = %d) in %s tide_a%d;\n", location++, attribute_type(&em, sh->vertex->fields.items[i].type), i);
+                sb_printf(&inputs, "layout(location = %d) in %s tide_a%d;\n", location++, attribute_type(&em, sh->vertex->fields.items[i].type), i);
             }
-            for (int i = 0; i < packs(sh->instance_floats); i++) sb_printf(&o, "layout(location = %d) in vec4 tide_n%d;\n", location++, i);
-            for (int i = 0; i < packs(sh->instance_ints); i++) sb_printf(&o, "layout(location = %d) in ivec4 tide_j%d;\n", location++, i);
-            put_varyings(&em, &o, "out");
+            if (inputs.data) sb_put(&listed_inputs, inputs.data);
+            sb_printf(&listed_inputs, "layout(location = %d) in int tide_listed;\nuniform highp isampler2D pixels%d;\n",
+                      location, sh->textures.count);
+            for (int i = 0; i < packs(sh->instance_floats); i++) {
+                sb_printf(&inputs, "layout(location = %d) in vec4 tide_n%d;\n", location++, i);
+                sb_printf(&listed_inputs, "vec4 tide_n%d;\n", i);
+            }
+            for (int i = 0; i < packs(sh->instance_ints); i++) {
+                sb_printf(&inputs, "layout(location = %d) in ivec4 tide_j%d;\n", location++, i);
+                sb_printf(&listed_inputs, "ivec4 tide_j%d;\n", i);
+            }
+            put_varyings(&em, &rest, "out");
         } else {
-            put_varyings(&em, &o, "in");
+            put_varyings(&em, &rest, "in");
             const int outputs = shader_outputs(sh);
-            if (outputs == 1) sb_put(&o, "out vec4 tide_pixel;\n");
+            if (outputs == 1) sb_put(&rest, "out vec4 tide_pixel;\n");
             // Several say where each goes: a target's color images, in order
             for (int k = 0; outputs > 1 && k < outputs; k++) {
-                sb_printf(&o, "layout(location = %d) out vec4 %s;\n", k, output_name(true, k));
+                sb_printf(&rest, "layout(location = %d) out vec4 %s;\n", k, output_name(true, k));
             }
         }
-        put_dice_variable(&em, &o, stage_rolls(sh, stage));
-        if (stage == STAGE_FRAG && sh->frag && sh->frag->cutout) sb_put(&o, "float tide_cover;\n"); // What it covers
-        put_structs(&em, &o);
-        put_helpers(&em, &o);
-        if (em.functions.data) sb_put(&o, em.functions.data);
+        put_dice_variable(&em, &rest, stage_rolls(sh, stage));
+        if (stage == STAGE_FRAG && sh->frag && sh->frag->cutout) sb_put(&rest, "float tide_cover;\n"); // What it covers
+        put_structs(&em, &rest);
+        put_helpers(&em, &rest);
+        if (em.functions.data) sb_put(&rest, em.functions.data);
+        if (stage == STAGE_VERT && sh->listed) {
+            sb listed = {0}, loads = {0};
+            put_listed_loads(sh, GLSL, &loads);
+            sb_printf(&listed, "%s%s%svoid main() {\n%s%s}\n", o.data, listed_inputs.data, rest.data ? rest.data : "",
+                      loads.data, main.data ? main.data : "");
+            sh->glsl_listed_vertex = listed.data;
+        }
+        if (inputs.data) sb_put(&o, inputs.data);
+        if (rest.data) sb_put(&o, rest.data);
         sb_printf(&o, "void main() {\n%s}\n", main.data);
         if (stage == STAGE_VERT) sh->glsl_vertex = o.data;
         else sh->glsl_fragment = o.data;
@@ -6477,47 +6532,65 @@ static void write_wgsl(program *prog, shader *sh)
     put_fragment_main(&em, &fragment, "in.", "return");
 
     const bool rolls = stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG);
-    sb o = {0};
+    sb o = {0}, rest = {0};
     put_uniforms(sh, WGSL, &o);
-    put_wgsl_inputs(sh, &o);
-    put_dice_variable(&em, &o, rolls);
-    if (sh->frag && sh->frag->cutout) sb_put(&o, "var<private> tide_cover: f32;\n"); // What it covers
-    sb_put(&o, "struct tide_corner {\n    @builtin(position) tide_at: vec4f,\n");
-    put_varyings(&em, &o, "");
-    sb_put(&o, "}\n");
-    put_structs(&em, &o);
-    put_helpers(&em, &o);
-    if (em.functions.data) sb_put(&o, em.functions.data);
+    put_wgsl_inputs(sh, &rest);
+    put_dice_variable(&em, &rest, rolls);
+    if (sh->frag && sh->frag->cutout) sb_put(&rest, "var<private> tide_cover: f32;\n"); // What it covers
+    sb_put(&rest, "struct tide_corner {\n    @builtin(position) tide_at: vec4f,\n");
+    put_varyings(&em, &rest, "");
+    sb_put(&rest, "}\n");
+    put_structs(&em, &rest);
+    put_helpers(&em, &rest);
+    if (em.functions.data) sb_put(&rest, em.functions.data);
 
-    sb_put(&o, "@vertex fn vertex(");
+    // The vertex stage takes its mesh's attributes, then its instance's: a listed one's are its place in its list,
+    // whose numbers are its packs (put_listed_loads)
+    sb corners = {0}, after = {0}, listed = {0};
     int location = 0;
     for (int i = 0; i < sh->vertex->fields.count; i++) {
-        sb_printf(&o, "%s@location(%d) tide_a%d: %s", location ? ", " : "", location, i, attribute_type(&em, sh->vertex->fields.items[i].type));
+        sb_printf(&corners, "%s@location(%d) tide_a%d: %s", location ? ", " : "", location, i, attribute_type(&em, sh->vertex->fields.items[i].type));
         location++;
     }
-    for (int i = 0; i < packs(sh->instance_floats); i++, location++) sb_printf(&o, ", @location(%d) tide_in%d: vec4f", location, i);
-    for (int i = 0; i < packs(sh->instance_ints); i++, location++) sb_printf(&o, ", @location(%d) tide_ij%d: vec4i", location, i);
+    const int listed_at = location;
+    for (int i = 0; i < packs(sh->instance_floats); i++, location++) sb_printf(&after, ", @location(%d) tide_in%d: vec4f", location, i);
+    for (int i = 0; i < packs(sh->instance_ints); i++, location++) sb_printf(&after, ", @location(%d) tide_ij%d: vec4i", location, i);
     // Which vertex of the mesh, and which instance of the draw: what tells a vert's runs, and an instance's pixels, apart
-    if (rolls || sh->skinned) sb_put(&o, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
-    sb_put(&o, ") -> tide_corner {\n");
+    sb builtins = {0};
+    if (rolls || sh->skinned) sb_put(&builtins, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
+    sb_put(&builtins, ") -> tide_corner {\n");
+    if (sh->listed) {
+        sb_printf(&listed, "%s@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n%s@vertex fn vertex(%s, @location(%d) tide_listed: i32%s",
+                  o.data, 1 + 2 * sh->textures.count, sh->textures.count, rest.data, corners.data, listed_at, builtins.data);
+        put_listed_loads(sh, WGSL, &listed);
+        sb_printf(&listed, "%s    return out;\n}\n", vertex.data ? vertex.data : "");
+    }
+    sb_printf(&o, "%s@vertex fn vertex(%s%s%s", rest.data, corners.data, after.data ? after.data : "", builtins.data);
     for (int i = 0; i < packs(sh->instance_floats); i++) sb_printf(&o, "    tide_n%d = tide_in%d;\n", i, i);
     for (int i = 0; i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
     sb_printf(&o, "%s    return out;\n}\n", vertex.data);
 
+    // The fragment stage, the same for both
+    sb entry = {0};
     const int outputs = shader_outputs(sh);
     if (outputs == 1) {
-        sb_put(&o, "@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n");
+        sb_put(&entry, "@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n");
     } else { // Several colors, each to the color image of a target that's its place
-        sb_put(&o, "struct tide_colors {\n");
-        for (int k = 0; k < outputs; k++) sb_printf(&o, "    @location(%d) %s: vec4f,\n", k, output_name(false, k));
-        sb_put(&o, "}\n@fragment fn fragment(in: tide_corner) -> tide_colors {\n    tide_at = in.tide_at;\n");
+        sb_put(&entry, "struct tide_colors {\n");
+        for (int k = 0; k < outputs; k++) sb_printf(&entry, "    @location(%d) %s: vec4f,\n", k, output_name(false, k));
+        sb_put(&entry, "}\n@fragment fn fragment(in: tide_corner) -> tide_colors {\n    tide_at = in.tide_at;\n");
     }
-    if (sh->frag_world) sb_put(&o, "    tide_world = in.tide_world;\n");
-    for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(&o, "    tide_normals%d = in.tide_normals%d;\n", i, i);
-    for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(&o, "    tide_f%d = in.tide_f%d;\n", i, i);
-    for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(&o, "    tide_g%d = in.tide_g%d;\n", i, i);
-    sb_printf(&o, "%s}\n", fragment.data);
+    if (sh->frag_world) sb_put(&entry, "    tide_world = in.tide_world;\n");
+    for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(&entry, "    tide_normals%d = in.tide_normals%d;\n", i, i);
+    for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(&entry, "    tide_f%d = in.tide_f%d;\n", i, i);
+    for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(&entry, "    tide_g%d = in.tide_g%d;\n", i, i);
+    sb_printf(&entry, "%s}\n", fragment.data);
+    sb_put(&o, entry.data);
     sh->wgsl = o.data;
+    if (sh->listed) {
+        sb_put(&listed, entry.data);
+        sh->wgsl_listed = listed.data;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6854,6 +6927,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
                   "and compared, and each list the code reads is one; put several images side by side in one texture");
         return NULL;
     }
+    sh->listed = listable(sh);
     write_glsl(prog, sh);
     write_wgsl(prog, sh);
     vec_push(prog->shaders, sh);

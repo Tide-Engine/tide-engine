@@ -43,6 +43,7 @@ static void witness(const uint32_t indices, const unsigned color, const unsigned
             continue;
         }
         uint32_t slot, count, first = 0, stride = 0;
+        const tide_draw_run *shaded = NULL;
         if (command->kind == TIDE_DRAW_MESH_3D) {
             slot = command->mesh3.mesh;
             count = command->mesh3.count;
@@ -55,6 +56,7 @@ static void witness(const uint32_t indices, const unsigned color, const unsigned
             slot = run->mesh;
             count = run->count;
             first = run->first;
+            shaded = run;
             stride = tide_shader_instance_size(run->shader);
             TIDE_REQUIRE(stride >= sizeof(tide_float4x4));
             TIDE_REQUIRE((uint64_t)first + (uint64_t)count * stride <= draw.instance_used);
@@ -65,7 +67,7 @@ static void witness(const uint32_t indices, const unsigned color, const unsigned
         TIDE_REQUIRE(destination == local.Render3D_Renderer.hdr.id || destination == local.Render3D_Renderer.shadowMap.id);
         for (uint32_t i = 0; i < count; i++) {
             tide_float4x4 transform;
-            if (stride) memcpy(&transform, draw.instances + first + (size_t)i * stride, sizeof transform);
+            if (shaded) memcpy(&transform, tide_draw_run_instance(&draw, shaded, i), sizeof transform);
             else transform = draw.matrices[first + i];
             const unsigned bit = actor(transform);
             if (destination == local.Render3D_Renderer.hdr.id) {

@@ -199,7 +199,7 @@ TIDE_TEST(shared_bindings_fallback_preserves_mutations_scratch_and_texture_roles
             TIDE_REQUIRE(stride >= sizeof(tide_float4x4));
             for (uint32_t instance = 0; instance < run->count; instance++) {
                 tide_float4x4 transform;
-                memcpy(&transform, draw.instances + run->first + instance * stride, sizeof transform);
+                memcpy(&transform, tide_draw_run_instance(&draw, run, instance), sizeof transform);
                 TIDE_CHECK(transform.c3.x == (ordered_instances == 0 ? -1.0f : 2.0f));
                 ordered_instances++;
             }

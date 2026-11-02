@@ -173,7 +173,7 @@ static bool inspect_commands(void)
         }
         CHECK(destination == renderer->hdr.id && run->shader->texture_count <= 8);
         for (uint32_t item = 0; item < run->count; item++) {
-            const unsigned char *packet = draw.instances + run->first + (size_t)item * stride;
+            const unsigned char *packet = tide_draw_run_instance(&draw, run, item);
             tide_float4x4 transform;
             memcpy(&transform, packet, sizeof transform);
             // Lit's first per-instance integer is Material.mode (the first

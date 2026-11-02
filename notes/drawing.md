@@ -1,5 +1,69 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Instance lists kept on the GPU (2026-11-02, design)
+
+Task: a `Draw.Instanced(mesh, list, ...)` whose list didn't change still had
+every candidate converted by generated code into scratch, each visible run
+copied into `tide_draw_list.instances`, and those bytes uploaded whole every
+frame (mount-and-rifle: about 42,000 instances, 4 MB a frame). Internal: no
+Tide or draw API change, the same pixels. The design reuses what a shader's
+`list[i]` already has: `tide_draw_list_data` keeps a heap list's converted
+words as a draw-list texture slot at the list's version (its pages' hashes),
+rewrites only changed chunks, and the renderer keeps the texture by
+identity/version, partial updates, device epochs and pruning included.
+
+- **What's cached, keyed by what.** The instance packing itself
+  (`tide_shader_instance_size` bytes, float packs then int packs: what the
+  instance attributes read) becomes the list's data texture, one 16-byte
+  pixel a pack, through a generated `tide_list_words_fn` that writes what the
+  instance loop wrote. Key: the list handle, element size and a layout number
+  from the shader's instance layout (`numbers_id` / `numbers_kind`), at
+  `list_version`. Only draws whose per-instance values all come from the item
+  (or are constant, the identity for a list without `transform`) qualify; a
+  3D `Draw.Transform`, a skinned draw, a scratch list, a list past
+  `TIDE_LIST_DATA_MOST`, and a shader with all twelve textures used keep the
+  copying path.
+- **What goes each frame.** A run from such a list is *listed*
+  (`tide_draw_run.listed`): its `tide_draw_list.instances` bytes are `uint32_t`
+  places in the list, and the texture is the run's `textures[texture_count]`,
+  so prune, forget, append and the renderer's data-texture protection treat it
+  as any other run texture. Culling, levels of detail and mirroring read each
+  instance's transform from the texture's CPU copy, as they read the scratch
+  copy before, and produce the same runs in the same order; only survivors'
+  indices are written (4 bytes, where an instance was 64 to 256). Runs merge
+  as before (adjacent indices, the same texture).
+- **The GPU side.** tidec writes a second vertex stage for eligible
+  instanced shaders (`tide_shader.glsl_listed_vertex`, `wgsl_listed`,
+  `spirv_listed`): one int instance attribute in place of the packs, which it
+  loads from the texture (`texelFetch` / `textureLoad`, bits to floats), into
+  the same private values; the fragment stage is shared. The renderer draws a
+  listed run with that pipeline (its own key) and the index stream. Where it
+  can't (no listed sources, the Unity recorder, a backend refusing the
+  pipeline), it gathers the instance bytes from the texture's copy through the
+  indices into its instance buffer and draws the ordinary pipeline, so every
+  consumer still sees ordinary instances. `tide_draw_append` gathers too.
+- **When a list is listed.** A list is drawn listed in a frame whose version
+  equals the one seen the frame before (`tide_draw_list.listed`, a small table
+  by list handle and layout that keeps no pointer), so a list rebuilt every
+  frame stays on the copying path and never uploads its culled instances.
+  After four changes in a row its version isn't asked for 16 frames. The
+  table is frame state, cleared by `tide_draw_forget` and freed with the list.
+- **Invalidation.** List mutation: a new version (page hashes), the next frame
+  rewrites the texture's changed chunks. Hot reload: the table and slots hold
+  no shader or function pointer past a frame (a new build's shader has another
+  layout number when its instance layout changed). Lost devices and
+  render-target recreation: the texture is the renderer's like any other data
+  texture (made again at a new epoch from the list's copy).
+- **Memory bounds.** One texture per drawn list and layout, the size of the
+  converted list, alive while drawn each frame (a texture not drawn in a frame
+  goes at reset, as shader data does); at most `TIDE_LIST_DATA_MOST` pixels
+  each. The table is bounded (`TIDE_DRAW_LISTED_MOST` entries, oldest out).
+- **The CPU cull** (`bounds_visible`) is unchanged and runs per candidate, as
+  before; another task is speeding it up.
+
+The new generated call is `tide_draw_mesh_shaded_list` (`tide/mesh.h`),
+within the drawing maintenance exception (notes/runtime-ownership.md).
+
 ## Agent profiling of mesh recording (2026-11-02)
 
 The owner approved structured profiling and evidence for unnecessary culling.

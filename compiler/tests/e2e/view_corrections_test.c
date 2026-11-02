@@ -101,7 +101,7 @@ TIDE_TEST(corrections_accumulate_without_lagging_normal_motion_or_other_fields)
     for (uint32_t i = 0; i < draw.count; i++) if (draw.commands[i].kind == TIDE_DRAW_SHADED) r = &draw.runs[draw.commands[i].shaded.run];
     TIDE_REQUIRE(r != NULL);
     float instance, uniform;
-    memcpy(&instance, draw.instances + r->first, sizeof instance);
+    memcpy(&instance, tide_draw_run_instance(&draw, r, 0), sizeof instance);
     memcpy(&uniform, draw.uniforms + r->uniforms, sizeof uniform);
     TIDE_CHECK(near(instance, 11.5f) && near(uniform, 11.5f));
 }

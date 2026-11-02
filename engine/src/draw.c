@@ -573,6 +573,7 @@ void tide_draw_free(tide_draw_list *d)
     tide_draw_lod_free(d); // First: what its jobs make is stopped and waited for
     tide_skinned_draw_cache_free(d);
     free(d->list_data);
+    free(d->listed);
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     free_meshes(d);
     free(d->commands);
@@ -1458,6 +1459,7 @@ void tide_draw_forget(tide_draw_list *d)
 {
     tide_skinned_draw_cache_reset(d);
     if (d->list_data) memset(d->list_data, 0, sizeof *d->list_data);
+    if (d->listed) memset(d->listed, 0, sizeof *d->listed); // Its lists are drawn as if never seen
     const bool had_targets = d->target_count != 0;
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     d->texture_count = 0;
@@ -2911,17 +2913,56 @@ void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, const uint32
     tide_draw_shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, sampling);
 }
 
+// Where a shaded draw's instances are, where they aren't simply one after the other from the pointer it has:
+// `order` places them in `base` (a level of detail's picking sorts them so), and for a listed draw `base` is the
+// list's numbers, texture `listed` - 1 (tide_draw_mesh_shaded_list), whose runs record places in it. NULL for
+// instances one after the other whose bytes are copied, as ever.
+typedef struct shaded_from {
+    const uint32_t *order;
+    const uint8_t *base;
+    uint32_t listed;
+} shaded_from;
+
+// Instance `i` of those at `instances`, `size` bytes each.
+static inline const uint8_t *shaded_item(const uint8_t *instances, const shaded_from *from, const uint32_t i,
+                                         const uint32_t size)
+{
+    return from && from->order ? from->base + (size_t)from->order[i] * size : instances + (size_t)i * size;
+}
+
+// Their place in `from->base`: where an instance's bytes are, over `size`.
+static inline uint32_t shaded_place(const uint8_t *instances, const shaded_from *from, const uint32_t i,
+                                    const uint32_t size)
+{
+    return from->order ? from->order[i] : (uint32_t)((size_t)(instances - from->base) / size) + i;
+}
+
+// The instances from the `first` of them on.
+static inline const uint8_t *shaded_after(const uint8_t *instances, const shaded_from *from, shaded_from *after,
+                                          const uint32_t first, const uint32_t size)
+{
+    if (!from) return instances ? instances + (size_t)first * size : NULL;
+    *after = *from;
+    if (from->order) {
+        after->order += first;
+        return instances;
+    }
+    return instances + (size_t)first * size;
+}
+
 // A run of instances through a shader. `with` says what tints it and, for a
 // 2D one, what it goes through before the camera: the rest of it is made here.
 // `through` is what a 3D one's instances go through on their way to the
 // world, or NULL, `depth` what a 3D one does with depth, and `cull` its
 // command's (a tide_cull, with TIDE_DRAW_MIRRORED where the instances are):
-// a 2D one, and a blit, have neither.
+// a 2D one, and a blit, have neither. `from` (shaded_from) says where the
+// instances are, where it isn't NULL: a listed run's are recorded as their
+// places, and its list's texture is its textures[texture_count].
 static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                              const uint32_t count, const void *uniforms, const uint32_t *textures,
                              const uint64_t sampling, const tide_draw_kind kind, const tide_blend blend,
                              const tide_depth depth, const uint32_t cull, const tide_draw_run *with,
-                             const tide_float4x4 *through)
+                             const tide_float4x4 *through, const shaded_from *from)
 {
     if (count == 0 || !shader || mesh == 0 || mesh > d->mesh_count) return;
     const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
@@ -2929,20 +2970,37 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     const uint32_t instance_size = tide_shader_instance_size(shader);
     const uint32_t uniform_size = tide_shader_uniform_size(shader);
     if ((instance_size && !instances) || (uniform_size && !uniforms)) return; // Nothing to draw it with
+    const uint32_t listed = from && instance_size && from->listed && from->listed <= d->texture_count
+                          && shader->texture_count < TIDE_SHADER_TEXTURES && !through ? from->listed : 0u;
     if (d->profile_active) d->profile_active->submitted += count;
     const uint32_t texture_count = shader->texture_count < TIDE_SHADER_TEXTURES ? shader->texture_count : TIDE_SHADER_TEXTURES;
     tide_draw_run run = {.shader = shader, .mesh = mesh, .first = d->instance_used, .count = count, .sampling = sampling,
-                         .tint = with->tint, .moved = with->moved, .transform = with->transform};
+                         .tint = with->tint, .moved = with->moved, .transform = with->transform, .listed = listed != 0};
     for (uint32_t i = 0; i < texture_count; i++) {
         if (textures && textures[i] <= d->texture_count) run.textures[i] = textures[i];
     }
-    const uint64_t bytes = (uint64_t)instance_size * count;
+    if (listed) run.textures[texture_count] = listed; // Its list's numbers: what its places are places in
+    const uint32_t stride = tide_draw_run_stride(&run), compared = texture_count + (listed ? 1u : 0u);
+    const uint64_t bytes = (uint64_t)stride * count;
+    if (bytes > UINT32_MAX - (uint64_t)d->instance_used) tide_out_of_memory();
     d->instances = grow(d->instances, d->instance_used, &d->instance_capacity, bytes, 1, 4096u);
-    if (bytes) memcpy(d->instances + d->instance_used, instances, (size_t)bytes);
-    if (through && shader->dims == 3 && shader->instance_floats >= 4u) { // Each one's transform starts it
+    uint8_t *to = d->instances + d->instance_used;
+    if (listed) { // Places in the list
+        for (uint32_t i = 0; i < count; i++) {
+            const uint32_t place = shaded_place(instances, from, i, instance_size);
+            memcpy(to + (size_t)i * sizeof place, &place, sizeof place);
+        }
+    } else if (from && from->order) { // Bytes, as their order has them
+        for (uint32_t i = 0; i < count; i++) {
+            memcpy(to + (size_t)i * instance_size, shaded_item(instances, from, i, instance_size), instance_size);
+        }
+    } else if (bytes) {
+        memcpy(to, instances, (size_t)bytes);
+    }
+    if (!listed && through && shader->dims == 3 && shader->instance_floats >= 4u) { // Each one's transform starts it
         for (uint32_t i = 0; i < count; i++) {
             tide_float4x4 own;
-            uint8_t *at = d->instances + d->instance_used + (size_t)i * instance_size;
+            uint8_t *at = to + (size_t)i * instance_size;
             memcpy(&own, at, sizeof own);
             own = tide_mul_f4x4(*through, own);
             memcpy(at, &own, sizeof own);
@@ -2959,9 +3017,9 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
         && last->depth == deep && last->cull == sided) {
         tide_draw_run *r = &d->runs[last->shaded.run];
         if ((r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
-            && r->mesh == mesh && r->sampling == sampling
-            && r->first + (uint64_t)r->count * instance_size == run.first
-            && memcmp(r->textures, run.textures, texture_count * sizeof *run.textures) == 0
+            && r->mesh == mesh && r->sampling == sampling && r->listed == run.listed
+            && r->first + (uint64_t)r->count * stride == run.first
+            && memcmp(r->textures, run.textures, compared * sizeof *run.textures) == 0
             && same_color(r->tint, run.tint) && r->moved == run.moved
             && (!run.moved || memcmp(&r->transform, &run.transform, sizeof run.transform) == 0)
             && (uniform_size == 0 || memcmp(d->uniforms + r->uniforms, uniforms, uniform_size) == 0)) {
@@ -2994,7 +3052,8 @@ static bool instance_mirrors(const uint8_t *instance)
 // Instances through a shader as the selected destination's settings have them, of the mesh as it's named: a
 // level of detail is named by whoever picked it.
 static void shaded_visible(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
-                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling,
+                          const shaded_from *from)
 {
     const tide_draw_place *p = &d->place;
     tide_draw_run with = {.tint = tide_draw_tint(d)};
@@ -3009,19 +3068,21 @@ static void shaded_visible(tide_draw_list *d, const tide_shader *shader, const u
     if (!shader || shader->dims != 3 || p->cull == TIDE_CULL_NONE || shader->instance_floats < 4u || !instances
         || count == 0) {
         shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling, TIDE_DRAW_SHADED,
-                         (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull, &with, through);
+                         (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull, &with, through, from);
         return;
     }
     const bool turned = through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
     const uint8_t *bytes = instances;
     uint32_t first = 0;
-    bool mirrored = instance_mirrors(bytes) != turned;
+    bool mirrored = instance_mirrors(shaded_item(bytes, from, 0, size)) != turned;
     for (uint32_t i = 1; i <= count; i++) {
-        const bool next = i < count ? instance_mirrors(bytes + (size_t)i * size) != turned : !mirrored;
+        const bool next = i < count ? instance_mirrors(shaded_item(bytes, from, i, size)) != turned : !mirrored;
         if (next == mirrored) continue;
-        shaded_instances(d, shader, mesh, bytes + (size_t)first * size, i - first, uniforms, textures, sampling,
+        shaded_from after;
+        const uint8_t *theirs = shaded_after(bytes, from, &after, first, size);
+        shaded_instances(d, shader, mesh, theirs, i - first, uniforms, textures, sampling,
                          TIDE_DRAW_SHADED, (tide_blend)d->place.blend, (tide_depth)p->depth,
-                         p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through);
+                         p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through, from ? &after : NULL);
         first = i;
         mirrored = next;
     }
@@ -3187,37 +3248,39 @@ static const tide_draw_bounds *draw_bounds(tide_draw_list *d, const uint32_t mes
 }
 
 static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
-                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint64_t sampling,
+                          const shaded_from *from)
 {
     const uint32_t size = shader ? tide_shader_instance_size(shader) : 0;
     const tide_draw_bounds bounds = shader && shader->dims == 3 ? *draw_bounds(d, mesh, shader->bounds_position, count)
                                                                : no_bounds;
     if (bounds.set != 1 || !count || !instances || size < sizeof(tide_float4x4) || shader->instance_floats < 4u) {
         if (d->profile_active && bounds.set == 1) d->profile_active->untestable += count;
-        shaded_visible(d, shader, mesh, instances, count, uniforms, textures, sampling);
+        shaded_visible(d, shader, mesh, instances, count, uniforms, textures, sampling, from);
         return;
     }
     const tide_draw_frustum *camera = frustum_camera(d);
     const tide_float4x4 *through = d->place.moved & TIDE_DRAW_MOVED_3D ? &d->place.transform_3d : NULL;
     uint32_t first = 0;
+    shaded_from after;
     for (uint32_t i = 0; i < count; i++) {
         tide_float4x4 own;
-        memcpy(&own, (const uint8_t *)instances + (size_t)i * size, sizeof own);
+        memcpy(&own, shaded_item(instances, from, i, size), sizeof own);
         if (bounds_visible(&bounds, camera, &own, through, d->profile_active)) continue;
-        if (i > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
-                                      i - first, uniforms, textures, sampling);
+        if (i > first) shaded_visible(d, shader, mesh, shaded_after(instances, from, &after, first, size),
+                                      i - first, uniforms, textures, sampling, from ? &after : NULL);
         first = i + 1u;
     }
-    if (count > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
-                                      count - first, uniforms, textures, sampling);
+    if (count > first) shaded_visible(d, shader, mesh, shaded_after(instances, from, &after, first, size),
+                                      count - first, uniforms, textures, sampling, from ? &after : NULL);
 }
 
 static void shaded_at(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                                 const uint32_t count, const void *uniforms, const uint32_t *textures,
-                                const uint64_t sampling)
+                                const uint64_t sampling, const shaded_from *from)
 {
     if (!shader || shader->dims != 3 || count == 0 || mesh == 0 || mesh > d->mesh_count || d->meshes[mesh - 1u].levels == 0) {
-        shaded_placed(d, shader, mesh, instances, count, uniforms, textures, sampling);
+        shaded_placed(d, shader, mesh, instances, count, uniforms, textures, sampling, from);
         return;
     }
     // A mesh with levels of detail: each instance's own, by the transform that starts it (none is the identity).
@@ -3227,25 +3290,27 @@ static void shaded_at(tide_draw_list *d, const tide_shader *shader, const uint32
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
     const uint32_t size = tide_shader_instance_size(shader);
     const bool placed = shader->instance_floats >= 4u && instances && size >= sizeof(tide_float4x4);
-    const uint64_t bytes = (uint64_t)size * count;
-    uint8_t *sorted = level_room(d, bytes, count);
-    uint8_t *levels = sorted + bytes;
+    // Sorted, they're places: in `from`'s base, or in the instances as they were given
+    const uint64_t bytes = (uint64_t)sizeof(uint32_t) * count;
+    uint32_t *sorted = (uint32_t *)(void *)level_room(d, bytes, count);
+    uint8_t *levels = (uint8_t *)sorted + bytes;
     uint32_t counts[TIDE_MESH_LEVELS + 1] = {0};
     for (uint32_t i = 0; i < count; i++) {
         tide_float4x4 world = tide_identity_f4x4();
-        if (placed) memcpy(&world, (const uint8_t *)instances + (size_t)i * size, sizeof world);
+        if (placed) memcpy(&world, shaded_item(instances, from, i, size), sizeof world);
         if (through) world = tide_mul_f4x4(*through, world);
         levels[i] = (uint8_t)pick_level(&d->meshes[mesh - 1u], &view, &world);
         counts[levels[i]]++;
     }
     d->leveled = 1;
+    shaded_from after;
     if (ordered_levels(p->depth, p->blend)) {
         for (uint32_t first = 0; first < count;) {
             uint32_t end = first + 1u;
             while (end < count && levels[end] == levels[first]) end++;
             const uint32_t drawn = levels[first] ? level_mesh(d, mesh, levels[first]) : mesh;
-            const void *theirs = instances ? (const uint8_t *)instances + (size_t)first * size : NULL;
-            shaded_placed(d, shader, drawn, theirs, end - first, uniforms, textures, sampling);
+            const void *theirs = shaded_after(instances, from, &after, first, size);
+            shaded_placed(d, shader, drawn, theirs, end - first, uniforms, textures, sampling, from ? &after : NULL);
             first = end;
         }
         return;
@@ -3257,19 +3322,59 @@ static void shaded_at(tide_draw_list *d, const tide_shader *shader, const uint32
         at += counts[level];
     }
     const bool one = counts[levels[0]] == count; // All at one level: as they are
+    shaded_from order = {.order = sorted, .base = from ? from->base : instances, .listed = from ? from->listed : 0u};
     if (!one && size && instances) {
         uint32_t next[TIDE_MESH_LEVELS + 1];
         memcpy(next, starts, sizeof next);
         for (uint32_t i = 0; i < count; i++) {
-            memcpy(sorted + (size_t)next[levels[i]]++ * size, (const uint8_t *)instances + (size_t)i * size, size);
+            sorted[next[levels[i]]++] = from ? shaded_place(instances, from, i, size) : i;
         }
     }
     for (uint32_t level = 0; level <= TIDE_MESH_LEVELS; level++) {
         if (counts[level] == 0) continue;
         const uint32_t drawn = level ? level_mesh(d, mesh, level) : mesh;
-        const void *theirs = !instances ? NULL : one ? instances : (const void *)(sorted + (size_t)starts[level] * size);
-        shaded_placed(d, shader, drawn, theirs, counts[level], uniforms, textures, sampling);
+        if (!instances || one) {
+            shaded_placed(d, shader, drawn, instances, counts[level], uniforms, textures, sampling, from);
+            continue;
+        }
+        shaded_from theirs = order;
+        theirs.order = sorted + starts[level];
+        shaded_placed(d, shader, drawn, order.base, counts[level], uniforms, textures, sampling, &theirs);
     }
+}
+
+// The instances of a list the list keeps (tide_draw_mesh_shaded_list), as tide_draw_shaded_instances's: `slot` is
+// the texture of numbers they're in, from instance `first` on (tide_shader_instance_size bytes each), `count` of them.
+static void shaded_listed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const uint32_t slot,
+                          const uint32_t first, const uint32_t count, const void *uniforms, const uint32_t *textures,
+                          const uint64_t sampling)
+{
+    const uint8_t *numbers = d->textures[slot - 1u].pixels;
+    const uint8_t *theirs = numbers + (size_t)first * tide_shader_instance_size(shader);
+    const shaded_from from = {.base = numbers, .listed = slot};
+    if (!d->diagnostics || !count || !mesh || mesh > d->mesh_count || d->meshes[mesh - 1u].space != TIDE_MESH_BYTES
+        || !d->meshes[mesh - 1u].index_count || d->meshes[mesh - 1u].vertex_size != shader->vertex_size
+        || (tide_shader_uniform_size(shader) && !uniforms)) {
+        shaded_at(d, shader, mesh, theirs, count, uniforms, textures, sampling, &from);
+        return;
+    }
+    const tide_draw_diagnostic_scope scope = tide_draw_diagnostics_begin(d, count);
+    shaded_at(d, shader, mesh, theirs, count, uniforms, textures, sampling, &from);
+    tide_draw_diagnostics_end(d, scope);
+}
+
+void tide_draw_shaded_listed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const uint32_t slot,
+                             const uint32_t first, const uint32_t count, const void *uniforms, const uint32_t *textures,
+                             const uint64_t sampling)
+{
+    if (!shader || shader->dims != 3 || !count || !slot || slot > d->texture_count) return;
+    const tide_draw_texture *t = &d->textures[slot - 1u];
+    const uint32_t size = tide_shader_instance_size(shader);
+    // Its numbers have to hold them all, a pack a pixel
+    if (!size || t->space != TIDE_PIXELS_LIST || t->format != TIDE_TEXELS_INTS || !t->pixels || t->width <= 0
+        || t->height <= 0 || ((uint64_t)first + count) * (size / 16u) > (uint64_t)t->width * (uint64_t)t->height) return;
+    d->textures[slot - 1u].frame = d->frame;
+    shaded_listed(d, shader, mesh, slot, first, count, uniforms, textures, sampling);
 }
 
 void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
@@ -3280,12 +3385,53 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
         || d->meshes[mesh - 1u].space != TIDE_MESH_BYTES || !d->meshes[mesh - 1u].index_count
         || d->meshes[mesh - 1u].vertex_size != shader->vertex_size
         || (tide_shader_instance_size(shader) && !instances) || (tide_shader_uniform_size(shader) && !uniforms)) {
-        shaded_at(d, shader, mesh, instances, count, uniforms, textures, sampling);
+        shaded_at(d, shader, mesh, instances, count, uniforms, textures, sampling, NULL);
         return;
     }
     const tide_draw_diagnostic_scope scope = tide_draw_diagnostics_begin(d, count);
-    shaded_at(d, shader, mesh, instances, count, uniforms, textures, sampling);
+    shaded_at(d, shader, mesh, instances, count, uniforms, textures, sampling, NULL);
     tide_draw_diagnostics_end(d, scope);
+}
+
+const void *tide_draw_run_instance(const tide_draw_list *d, const tide_draw_run *run, const uint32_t i)
+{
+    if (!run || !run->shader || i >= run->count) return NULL;
+    const uint32_t size = tide_shader_instance_size(run->shader);
+    if (!size) return NULL;
+    const uint64_t at = (uint64_t)run->first + (uint64_t)i * tide_draw_run_stride(run);
+    if (at + tide_draw_run_stride(run) > d->instance_used) return NULL;
+    if (!run->listed) return d->instances + at;
+    const uint32_t texture_count = run->shader->texture_count;
+    const uint32_t slot = texture_count < TIDE_SHADER_TEXTURES ? run->textures[texture_count] : 0u;
+    if (!slot || slot > d->texture_count || !d->textures[slot - 1u].pixels) return NULL;
+    const tide_draw_texture *t = &d->textures[slot - 1u];
+    uint32_t place;
+    memcpy(&place, d->instances + at, sizeof place);
+    if (t->width <= 0 || t->height <= 0 || (uint64_t)place * size + size > (uint64_t)t->width * (uint64_t)t->height * 16u)
+        return NULL;
+    return t->pixels + (size_t)place * size;
+}
+
+void tide_draw_run_unlist(tide_draw_list *d, const uint32_t place)
+{
+    if (place >= d->run_count || !d->runs[place].listed || !d->runs[place].shader) return;
+    const tide_draw_run run = d->runs[place];
+    const uint32_t size = tide_shader_instance_size(run.shader);
+    const uint64_t bytes = (uint64_t)size * run.count;
+    if (bytes > UINT32_MAX - (uint64_t)d->instance_used) tide_out_of_memory();
+    d->instances = grow(d->instances, d->instance_used, &d->instance_capacity, bytes, 1, 4096u);
+    const uint32_t first = d->instance_used;
+    for (uint32_t i = 0; i < run.count; i++) {
+        const void *bytes_of = tide_draw_run_instance(d, &run, i);
+        uint8_t *to = d->instances + first + (size_t)i * size;
+        if (bytes_of) memcpy(to, bytes_of, size);
+        else memset(to, 0, size);
+    }
+    d->instance_used += (uint32_t)bytes;
+    tide_draw_run *r = &d->runs[place];
+    r->first = first;
+    r->listed = 0;
+    if (run.shader->texture_count < TIDE_SHADER_TEXTURES) r->textures[run.shader->texture_count] = 0;
 }
 
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_blend blend, const void *instance,
@@ -3316,7 +3462,7 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
     const tide_draw_run with = {.tint = TIDE_COLOR_WHITE};
     shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, sampling, TIDE_DRAW_BLIT,
                      (uint32_t)blend <= TIDE_BLEND_REPLACE ? blend : TIDE_BLEND_REPLACE, TIDE_DEPTH_READ_WRITE, 0, &with,
-                     NULL);
+                     NULL, NULL);
 }
 
 // Instances of a 3D mesh whose transforms are the list's from `at`, all
@@ -3753,10 +3899,11 @@ static bool level_follows(const tide_draw_list *d, const tide_draw_command *c, c
     const tide_draw_mesh_data *m = &d->meshes[b->mesh - 1u];
     const uint32_t uniform_size = tide_shader_uniform_size(a->shader);
     const uint32_t texture_count = a->shader->texture_count < TIDE_SHADER_TEXTURES ? a->shader->texture_count : TIDE_SHADER_TEXTURES;
+    const uint32_t compared = texture_count + (a->listed && texture_count < TIDE_SHADER_TEXTURES ? 1u : 0u);
     return (m->base ? m->base : b->mesh) == family
         && (a->shader == b->shader || (a->shader->id && a->shader->id == b->shader->id)) && a->sampling == b->sampling
-        && a->first + (uint64_t)a->count * tide_shader_instance_size(a->shader) == b->first
-        && memcmp(a->textures, b->textures, texture_count * sizeof *a->textures) == 0 && same_color(a->tint, b->tint) && a->moved == b->moved
+        && a->listed == b->listed && a->first + (uint64_t)a->count * tide_draw_run_stride(a) == b->first
+        && memcmp(a->textures, b->textures, compared * sizeof *a->textures) == 0 && same_color(a->tint, b->tint) && a->moved == b->moved
         && (!a->moved || memcmp(&a->transform, &b->transform, sizeof a->transform) == 0)
         && (uniform_size == 0 || a->uniforms == b->uniforms
             || memcmp(d->uniforms + a->uniforms, d->uniforms + b->uniforms, uniform_size) == 0);
@@ -3811,7 +3958,7 @@ void tide_draw_gather_levels(const tide_draw_list *d)
             i = end;
             continue;
         }
-        const size_t size = shaded ? tide_shader_instance_size(run->shader) : sizeof(tide_float4x4);
+        const size_t size = shaded ? tide_draw_run_stride(run) : sizeof(tide_float4x4);
         const uint32_t first = shaded ? run->first : c->mesh3.first;
         uint8_t *instances = shaded ? d->instances + first : (uint8_t *)(void *)(d->matrices + first);
         uint32_t starts[TIDE_MESH_LEVELS + 1], next[TIDE_MESH_LEVELS + 1];
@@ -3949,10 +4096,24 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             for (uint32_t t = 0; t < r->shader->texture_count && t < TIDE_SHADER_TEXTURES; t++)
                 textures[t] = append_texture(d, from, r->textures[t]);
             const uint32_t size = tide_shader_instance_size(r->shader);
-            shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count,
-                             tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL, textures,
+            const void *uniforms = tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL;
+            if (r->listed) { // Its instances' bytes, as they're the list's: `d` has its own of them
+                if (!size || (uint64_t)r->first + (uint64_t)r->count * sizeof(uint32_t) > from->instance_used) continue;
+                uint8_t *gathered = tide_alloc((size_t)r->count * size);
+                for (uint32_t k = 0; k < r->count; k++) {
+                    const void *bytes = tide_draw_run_instance(from, r, k);
+                    if (bytes) memcpy(gathered + (size_t)k * size, bytes, size);
+                    else memset(gathered + (size_t)k * size, 0, size);
+                }
+                shaded_instances(d, r->shader, slot, gathered, r->count, uniforms, textures, r->sampling,
+                                 (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, c->cull, r, NULL,
+                                 NULL);
+                free(gathered);
+                continue;
+            }
+            shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count, uniforms, textures,
                              r->sampling, (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, c->cull,
-                             r, NULL);
+                             r, NULL, NULL);
         } else if (c->kind == TIDE_DRAW_SHAPE) {
             if (c->shape < from->shape_count) push_shape(d, c->a, c->b, c->color, from->shapes[c->shape]);
         } else if (c->kind == TIDE_DRAW_PLAIN) {

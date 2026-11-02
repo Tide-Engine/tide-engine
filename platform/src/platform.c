@@ -898,6 +898,11 @@ typedef struct draw_step {
                       // solid_shape), where `smooth` is 0
     uint32_t quads;   // STEP_TEXT and STEP_MESH: 1 while every two of its triangles are a quad, which `first` and
                       // `count` are then of, else 0 (see quad)
+    // STEP_SHADED: for a listed run (tide_draw_run.listed), 1 where it draws through its shader's listed
+    // pipeline, its places as they are; else its instances' bytes start `instances_at` into the instance buffer
+    // (gathered after the list's for a listed run drawn the ordinary way: upload_shaded)
+    uint32_t listed;
+    uint32_t instances_at;
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
     tide_gpu_id pipeline; // What draws it, once it's found: its shader's, for a STEP_SHADED
     tide_color tint;  // STEP_MESH_3D: what its pixels' colors are multiplied by
@@ -3316,8 +3321,32 @@ static bool covers_by_samples(const tide_gpu_target_format into)
 // no image in its place goes nowhere (into depth alone, that's all of them;
 // the frag still runs, as it may discard the pixel), and the images past them
 // are left as they were.
-static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint32_t blend, uint32_t depth,
-                                uint32_t cull, const tide_gpu_target_format into, uint32_t state)
+// What a listed pipeline is found by: its shader's id, mixed so no shader's is it.
+static uint64_t listed_id(const uint64_t id)
+{
+    return id ^ UINT64_C(0x9E3779B97F4A7C15);
+}
+
+static tide_gpu_id shader_pipeline_of(const tide_shader *shader, bool listed, const bool blit, uint32_t blend,
+                                      uint32_t depth, uint32_t cull, const tide_gpu_target_format into, uint32_t state);
+
+static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, const uint32_t blend, const uint32_t depth,
+                                const uint32_t cull, const tide_gpu_target_format into, const uint32_t state)
+{
+    return shader_pipeline_of(shader, false, blit, blend, depth, cull, into, state);
+}
+
+// The same for a listed run (tide_draw_run.listed), through the shader's listed vertex stage: its instances are
+// one int each, its place in its list, whose numbers are texture `texture_count`. 0 for a shader with none.
+static tide_gpu_id listed_pipeline_for(const tide_shader *shader, const uint32_t blend, const uint32_t depth,
+                                       const uint32_t cull, const tide_gpu_target_format into, const uint32_t state)
+{
+    if (!shader->glsl_listed_vertex || shader->texture_count >= TIDE_SHADER_TEXTURES || shader->dims != 3) return 0;
+    return shader_pipeline_of(shader, true, false, blend, depth, cull, into, state);
+}
+
+static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool listed, const bool blit, uint32_t blend,
+                                      uint32_t depth, uint32_t cull, const tide_gpu_target_format into, uint32_t state)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
@@ -3330,7 +3359,8 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     if (!deep || cull >= CULLS) cull = TIDE_GPU_CULL_NONE; // ...and only a 3D mesh's triangles have a back
     if (blit) state = 0; // A blit neither tests stencil nor stores any
     if (shader_pipeline_count >= shader_index_capacity / 2u) index_shaders();
-    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, (uint8_t)state, into);
+    const uint64_t id = listed ? listed_id(shader->id) : shader->id;
+    const uint32_t slot = shader_slot(id, blit, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, (uint8_t)state, into);
     if (shader_index[slot]) {
         shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
         if (warming) {
@@ -3379,7 +3409,23 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         desc.attributes[i].offset = shader->attributes[i].offset;
     }
     desc.attribute_count = shader->attribute_count;
-    for (uint32_t i = 0; i < shader->instance_floats + shader->instance_ints; i++) {
+    if (listed) { // Its place in its list, and its list's numbers
+        desc.name = shader->name ? shader->name : "a listed shader";
+        desc.glsl_vertex = shader->glsl_listed_vertex;
+        desc.wgsl = shader->wgsl_listed;
+        desc.spirv = shader->spirv_listed;
+        desc.spirv_words = shader->spirv_listed_words;
+        desc.slots[1].stride = sizeof(uint32_t);
+        desc.slots[1].per_instance = true;
+        desc.slot_count = 2u;
+        desc.reads[shader->texture_count] = TIDE_GPU_READ_DATA;
+        desc.texture_count = shader->texture_count + 1u;
+        const uint32_t at = desc.attribute_count++;
+        desc.attributes[at].slot = 1;
+        desc.attributes[at].format = TIDE_GPU_INT;
+        desc.attributes[at].offset = 0;
+    }
+    for (uint32_t i = 0; !listed && i < shader->instance_floats + shader->instance_ints; i++) {
         const uint32_t at = desc.attribute_count++;
         desc.attributes[at].slot = 1;
         desc.attributes[at].format = i < shader->instance_floats ? TIDE_GPU_FLOAT4 : TIDE_GPU_INT4;
@@ -3392,7 +3438,7 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         shader_pipeline_capacity = capacity;
     }
     const tide_gpu_id pipeline = gpu->pipeline(&desc);
-    shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend,
+    shader_pipelines[shader_pipeline_count] = (shader_pipeline){id, pipeline, gpu_frame, (uint8_t)blend,
                                                                 (uint8_t)depth, (uint8_t)cull, (uint8_t)state, blit, into,
                                                                 warming ? warm_generation : 0u, !warming};
     shader_index[slot] = ++shader_pipeline_count;
@@ -3446,11 +3492,19 @@ static bool run_draws(const tide_draw_list *list, const uint32_t place)
     const tide_draw_mesh_data *m = &list->meshes[run->mesh - 1u];
     if (m->space != TIDE_MESH_BYTES || m->index_count == 0 || m->vertex_size != shader->vertex_size) return false;
     if (!shader_fits(shader)) return false;
-    const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
     const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
-    return run->first + instance_fields * 16u * run->count <= list->instance_used
+    if (run->listed) { // Its places, and the list's numbers they're places in
+        const uint32_t texture = shader->texture_count < TIDE_SHADER_TEXTURES ? run->textures[shader->texture_count] : 0u;
+        if (!texture || texture > list->texture_count || !tide_shader_instance_size(shader)) return false;
+    }
+    return run->first + (uint64_t)tide_draw_run_stride(run) * run->count <= list->instance_used
            && run->uniforms + uniform_fields * 16u <= list->uniform_used;
 }
+
+// A listed run's instances drawn the ordinary way (where its pipeline can't be had), their bytes gathered from
+// its list's numbers: after the list's instances in the instance buffer (upload_shaded)
+static uint8_t *gathered;
+static uint32_t gathered_used, gathered_capacity;
 
 // A pipeline tide_platform_prewarm asked for, which tide_platform_prewarm_waiting watches.
 static void warm_ask(const tide_gpu_id pipeline)
@@ -3597,15 +3651,50 @@ uint32_t tide_platform_prewarm_waiting(void)
 static bool upload_shaded(const tide_draw_list *list)
 {
     bool any = false;
+    gathered_used = 0;
     for (uint32_t i = 0; i < step_count; i++) {
         if (steps[i].kind != STEP_SHADED && steps[i].kind != STEP_BLIT) continue;
         if (!frame_targets[steps[i].target].valid || leaves_nothing(list, &steps[i])) continue;
         const tide_draw_run *run = &list->runs[steps[i].first];
         any = true;
         mesh_for(list, run->mesh);
-        steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend, steps[i].depth,
-                                         steps[i].cull, frame_targets[steps[i].target].into,
-                                         stencil_state(steps[i].stencil));
+        steps[i].listed = 0;
+        steps[i].instances_at = run->first;
+        if (run->listed) {
+            // Through its listed pipeline where there's one, made: the recorder for another program has none, and
+            // one made in the background may not be done yet
+            const tide_gpu_id listed = gpu == &tide_gpu_record ? 0 :
+                listed_pipeline_for(run->shader, steps[i].blend, steps[i].depth, steps[i].cull,
+                                    frame_targets[steps[i].target].into, stencil_state(steps[i].stencil));
+            if (listed && (!gpu->pipeline_ready || gpu->pipeline_ready(listed))) {
+                steps[i].pipeline = listed;
+                steps[i].listed = 1;
+            } else { // ...or the ordinary way, with its instances' bytes
+                const uint32_t size = tide_shader_instance_size(run->shader);
+                const uint64_t bytes = (uint64_t)size * run->count;
+                if (bytes > UINT32_MAX - (uint64_t)list->instance_used - gathered_used) tide_out_of_memory();
+                if (gathered_used + bytes > gathered_capacity) {
+                    uint64_t room = gathered_capacity ? gathered_capacity : 4096u;
+                    while (room < gathered_used + bytes) room *= 2u;
+                    if (room > UINT32_MAX) room = UINT32_MAX;
+                    gathered = tide_realloc(gathered, gathered_capacity, (size_t)room);
+                    gathered_capacity = (uint32_t)room;
+                }
+                for (uint32_t k = 0; k < run->count; k++) {
+                    const void *bytes_of = tide_draw_run_instance(list, run, k);
+                    uint8_t *to = gathered + gathered_used + (size_t)k * size;
+                    if (bytes_of) memcpy(to, bytes_of, size);
+                    else memset(to, 0, size);
+                }
+                steps[i].instances_at = list->instance_used + gathered_used;
+                gathered_used += (uint32_t)bytes;
+            }
+        }
+        if (!steps[i].listed) {
+            steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend, steps[i].depth,
+                                             steps[i].cull, frame_targets[steps[i].target].into,
+                                             stencil_state(steps[i].stencil));
+        }
         // A shader that reads a depth it may not be given reads the far one: made here, outside any pass
         for (uint32_t t = 0; t < run->shader->texture_count; t++) {
             const tide_gpu_read read = gpu_read(run->shader, t);
@@ -3623,10 +3712,12 @@ static bool upload_shaded(const tide_draw_list *list)
             gpu->end();
         }
     }
-    if (any && list->instance_used) {
-        buffer_room(&gpu_state.instances, &gpu_state.instance_capacity, list->instance_used, 1, 4096u);
-        gpu->buffer_write(gpu_state.instances, 0, list->instances, list->instance_used);
+    if (any && list->instance_used + gathered_used) {
+        buffer_room(&gpu_state.instances, &gpu_state.instance_capacity, list->instance_used + gathered_used, 1, 4096u);
+        if (list->instance_used) gpu->buffer_write(gpu_state.instances, 0, list->instances, list->instance_used);
+        if (gathered_used) gpu->buffer_write(gpu_state.instances, list->instance_used, gathered, gathered_used);
     }
+    gathered_used = 0;
     return any;
 }
 
@@ -3740,9 +3831,12 @@ static void prepare_data_textures(const tide_draw_list *list)
         const draw_step *s = &steps[i];
         if (s->kind != STEP_SHADED && s->kind != STEP_BLIT) continue;
         const tide_draw_run *run = &list->runs[s->first];
-        for (uint32_t k = 0; k < run->shader->texture_count; k++) {
+        // A listed one's list's too (upload_shaded, after this, says whether it's drawn through it)
+        const uint32_t textures = run->shader->texture_count + (run->listed && run->shader->texture_count < TIDE_SHADER_TEXTURES ? 1u : 0u);
+        for (uint32_t k = 0; k < textures; k++) {
             const uint32_t slot = run->textures[k];
-            if (gpu_read(run->shader, k) != TIDE_GPU_READ_DATA || !slot || slot > list->texture_count) continue;
+            const bool data = k == run->shader->texture_count || gpu_read(run->shader, k) == TIDE_GPU_READ_DATA;
+            if (!data || !slot || slot > list->texture_count) continue;
             const tide_draw_texture *t = &list->textures[slot - 1u];
             gpu_texture *g = find_gpu_texture(t->space, t->id);
             if (g) g->protected = true;
@@ -4272,8 +4366,13 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
         gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)),
                     gpu_filter(tide_sampling_filter(run->sampling, i)), gpu_wrap(tide_sampling_wrap(run->sampling, i)));
     }
+    if (s->listed) { // Its list's numbers, which its places are places in
+        const uint32_t t = shader->texture_count;
+        gpu->sample(t, texture_to_read(list, run->textures[t], TIDE_GPU_READ_DATA), gpu_filter(TIDE_FILTER_POINT),
+                    gpu_wrap(TIDE_WRAP_CLAMP));
+    }
     gpu->vertices(0, corners_of(g), 0);
-    if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
+    if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, s->instances_at);
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, run->count);
     return (uint64_t)g->index_count * run->count;

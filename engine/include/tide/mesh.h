@@ -201,3 +201,14 @@ void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, tide_li
 void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
                                      const void *instances, uint32_t count, const void *uniforms,
                                      const uint32_t *textures, uint64_t sampling);
+
+// Draw.Instanced of a list the list keeps: `write` writes an item's instance (tide_shader_instance_size bytes, as
+// ints) from the item alone, and `layout` names that writing among the list's textures (tide_draw_list_data's
+// layout). Where the shader has a listed vertex stage (tide_shader.wgsl_listed...) and the list is a world's that
+// was the same the frame before, its items' instances are the list's texture of numbers, kept at the list's
+// version, and the run's are only the places of those that are drawn (tide_draw_run.listed): culled and picked
+// as tide_draw_mesh_shaded_instances's, to the same runs. Otherwise nothing is drawn and it says false, for the
+// caller to draw the instances it packs.
+bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
+                                tide_list items, uint32_t item_size, tide_list_words_fn *write, uint32_t layout,
+                                const void *uniforms, const uint32_t *textures, uint64_t sampling);

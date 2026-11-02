@@ -322,10 +322,9 @@ TIDE_TEST(lod_generated_skinned_operands_precede_mutating_lod)
     for (uint32_t r = 0; r < draw.run_count; r++) {
         const tide_draw_run *run = &draw.runs[r];
         TIDE_REQUIRE(run->shader && run->shader->instance_floats >= 4);
-        const uint32_t stride = tide_shader_instance_size(run->shader);
         for (uint32_t i = 0; i < run->count; i++) {
             tide_float4x4 transform;
-            memcpy(&transform, draw.instances + run->first + i * stride, sizeof transform);
+            memcpy(&transform, tide_draw_run_instance(&draw, run, i), sizeof transform);
             TIDE_CHECK(transform.c3.x == -1.0f && transform.c3.z == 900.0f);
             instances++;
         }

@@ -1435,6 +1435,14 @@ typedef struct tide_shader {
     // uniforms' `screen.w` is below 0, and it cuts at 0.5 itself.
     bool cutout;
     uint32_t bounds_position; // 1 + float3 position's byte offset, only for undeformed 3D geometry; 0: unknown
+    // Its vertex stage for a listed run (tide_draw_run.listed), where it has one: an int instance attribute,
+    // the instance's place in its list, in place of the packs, which it reads from texture `texture_count` (its
+    // list's numbers: tide_draw_mesh_shaded_list), each pack a pixel. The fragment stage is glsl_fragment and
+    // the WGSL module's. NULL for a shader whose instances don't come from a list alone.
+    const char *glsl_listed_vertex;
+    const char *wgsl_listed;
+    const uint32_t *spirv_listed;
+    uint32_t spirv_listed_words;
 } tide_shader;
 
 static inline uint32_t tide_shader_outputs(const tide_shader *s)
@@ -1465,7 +1473,17 @@ typedef struct tide_draw_run {
     tide_color tint;   // What its pixels' colors are multiplied by
     uint32_t moved;    // Whether a 2D shader's mesh goes through `transform` before the camera
     tide_draw_transform transform;
+    // Whether its instances are a list's that the list keeps as texture textures[shader->texture_count]
+    // (tide_draw_mesh_shaded_list): then they're uint32_t places in that list, 4 bytes each, from `first`, and
+    // the list's numbers are each instance's bytes, tide_shader_instance_size each (tide_draw_run_instance).
+    uint32_t listed;
 } tide_draw_run;
+
+// How many bytes a run's instances take each in tide_draw_list.instances: a place in a list for a listed one.
+static inline uint32_t tide_draw_run_stride(const tide_draw_run *r)
+{
+    return r->listed ? (uint32_t)sizeof(uint32_t) : tide_shader_instance_size(r->shader);
+}
 
 // One frame's commands. Not simulation state: it lives outside the world. A
 // zeroed list is ready to use, and it grows as it needs, with no limit but
@@ -1561,6 +1579,7 @@ typedef struct tide_draw_list {
     uint32_t pack_frame;
     struct tide_skinned_draw_cache *skinned; // Private frame-local palette captures
     struct tide_list_data_cache *list_data; // Private frame-local numeric-list captures
+    struct tide_draw_listed *listed; // Private: instance lists' versions across frames (tide_draw_mesh_shaded_list)
     struct tide_draw_lod_builds *lod_builds; // Private: levels made in the background, and the ones kept (mesh_levels.c)
     // What the mesh draw recorded next asks of levels made for it (tide_draw_want_levels): its tolerance
     // multiplier, or 0 for none, and the fields they weigh
@@ -2445,6 +2464,22 @@ void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, uint32_t mes
 // take NULL with a positive count. A count of zero records nothing.
 void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instances,
                                 uint32_t count, const void *uniforms, const uint32_t *textures, uint64_t sampling);
+
+// The same for `count` instances of texture `slot`'s numbers (a TIDE_PIXELS_LIST of TIDE_TEXELS_INTS) from
+// instance `first` on, tide_shader_instance_size bytes each, a 16-byte pack a pixel, for a 3D shader: those drawn
+// are recorded as their places in it (tide_draw_run.listed), culled, picked and in runs as
+// tide_draw_shaded_instances's are. `textures` are the shader's own, as there. Nothing for a texture that doesn't
+// hold them.
+void tide_draw_shaded_listed(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, uint32_t slot, uint32_t first,
+                             uint32_t count, const void *uniforms, const uint32_t *textures, uint64_t sampling);
+
+// The bytes of instance `i` of run `run` of the list, a listed run's too (tide_draw_run.listed):
+// tide_shader_instance_size of them, or NULL past its instances, or where it has none.
+const void *tide_draw_run_instance(const tide_draw_list *d, const tide_draw_run *run, uint32_t i);
+
+// A listed run (tide_draw_run.listed) as an ordinary one: its instances' bytes copied after the list's
+// instances, which the run then has. Nothing for another run. For C that moves or reads a run's bytes.
+void tide_draw_run_unlist(tide_draw_list *d, uint32_t run);
 
 // Runs a frag over the entire selected destination. The fixed Vertex mesh has
 // clip-space positions, top-left uvs, and white color. The camera is identity,

@@ -111,7 +111,7 @@ TIDE_TEST(draw_cull_tells_mirrored_instances)
     TIDE_CHECK(shaded(15, TIDE_CULL_BACK, 1) && shaded(16, TIDE_CULL_BACK | MIRRORED, 1) && shaded(17, TIDE_CULL_BACK, 1));
     const tide_draw_run *middle = &draw.runs[draws[16].c->shaded.run];
     tide_float4x4 own;
-    memcpy(&own, draw.instances + middle->first, sizeof own);
+    memcpy(&own, tide_draw_run_instance(&draw, middle, 0), sizeof own);
     TIDE_CHECK(own.c0.x == -1.0f && own.c3.z == 1.0f);
     TIDE_CHECK(shaded(18, TIDE_CULL_NONE, 3));
 }

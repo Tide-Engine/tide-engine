@@ -1,6 +1,7 @@
 #include "tide/mesh.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tide/math.h"
@@ -938,15 +939,15 @@ void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, const t
     tide_draw_mesh_shaded_instances(d, shader, vertices, indices, instance, 1, uniforms, textures, sampling);
 }
 
-void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
-                                     const tide_list indices, const void *instances, const uint32_t count,
-                                     const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+// The mesh of a shader's draw of two lists, 0 for none: found by their versions, and filled where it's new.
+static uint32_t shaded_mesh(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
+                            const tide_list indices, const uint32_t count)
 {
     const uint64_t key = take_mesh_key(d, vertices, indices);
-    if (count == 0 || !shader) return;
+    if (count == 0 || !shader) return 0;
     const int32_t vertex_count = tide_list_count(vertices);
     const int32_t index_count = tide_list_count(indices);
-    if (vertex_count <= 0 || index_count < 3) return;
+    if (vertex_count <= 0 || index_count < 3) return 0;
     // As a 3D mesh: its two lists at their versions, and how big a vertex is,
     // so no other kind of list with the same bytes is taken for it
     const uint32_t size = shader->vertex_size;
@@ -975,7 +976,360 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
         mesh_levels(d, mesh, indices);
         tide_draw_lod_request(d, mesh);
     }
-    tide_draw_shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling);
+    return mesh;
+}
+
+void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
+                                     const tide_list indices, const void *instances, const uint32_t count,
+                                     const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+{
+    const uint32_t mesh = shaded_mesh(d, shader, vertices, indices, count);
+    if (mesh) tide_draw_shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling);
+}
+
+// The list's entry for an instance list (tide_draw_listed), NULL where none can be had: the table is full of
+// lists drawn this frame and the last.
+static tide_draw_listed_entry *listed_entry(tide_draw_list *d, const tide_handle at, const uint32_t item_size,
+                                            const uint32_t layout)
+{
+    if (!d->listed) d->listed = tide_alloc_zeroed(1, sizeof *d->listed);
+    tide_draw_listed *t = d->listed;
+    const uint32_t mask = TIDE_DRAW_LISTED_SLOTS - 1u;
+    const uint32_t key[4] = {(uint32_t)at, (uint32_t)(at >> 32), item_size, layout};
+    const uint32_t start = (uint32_t)tide_hash(key, sizeof key) & mask;
+    for (uint32_t i = start;; i = (i + 1u) & mask) {
+        tide_draw_listed_entry *e = &t->entries[i];
+        if (e->at == at && e->item_size == item_size && e->layout == layout) return e;
+        if (e->at) continue;
+        if (t->count < TIDE_DRAW_LISTED_MOST) {
+            t->count++;
+            // No version yet
+            *e = (tide_draw_listed_entry){.at = at, .item_size = item_size, .layout = layout, .since = UINT32_MAX,
+                                          .seen = d->frame};
+            return e;
+        }
+        break;
+    }
+    // Full: the lists no frame asked for since the last go, and the rest are placed again
+    tide_draw_listed_entry *old = tide_alloc((size_t)TIDE_DRAW_LISTED_SLOTS * sizeof *old);
+    memcpy(old, t->entries, sizeof t->entries);
+    memset(t->entries, 0, sizeof t->entries);
+    t->count = 0;
+    for (uint32_t k = 0; k < TIDE_DRAW_LISTED_SLOTS; k++) {
+        const tide_draw_listed_entry *e = &old[k];
+        if (!e->at || d->frame - e->seen > 1u) continue;
+        const uint32_t again[4] = {(uint32_t)e->at, (uint32_t)(e->at >> 32), e->item_size, e->layout};
+        uint32_t i = (uint32_t)tide_hash(again, sizeof again) & mask;
+        while (t->entries[i].at) i = (i + 1u) & mask;
+        t->entries[i] = *e;
+        t->count++;
+    }
+    free(old);
+    if (t->count >= TIDE_DRAW_LISTED_MOST) return NULL;
+    return listed_entry(d, at, item_size, layout);
+}
+
+// How many frames in a row a list's version changed before it isn't asked for a while, and how long that is.
+enum { LISTED_CHANGES = 4, LISTED_WAIT = 16 };
+
+// The list's entry, where the list is as it was the frame before, so its numbers are worth keeping; NULL for one
+// made again each frame, which is drawn from the bytes the caller packs, as ever, with only the visible ones sent.
+static tide_draw_listed_entry *listed_steady(tide_draw_list *d, const tide_list items, const uint32_t item_size,
+                                             const uint32_t layout)
+{
+    tide_draw_listed_entry *e = listed_entry(d, items.at, item_size, layout);
+    if (!e) return NULL;
+    const uint32_t frame = d->frame;
+    const bool asked_last = e->seen == frame || e->seen + 1u == frame;
+    e->seen = frame;
+    if (e->wait && frame - e->wait < (uint32_t)LISTED_WAIT) return NULL; // Changed again and again: not asked yet
+    const uint64_t version = list_version(items, item_size);
+    if (e->since != UINT32_MAX && e->version == version) {
+        e->changes = 0;
+        e->wait = 0;
+        return e->since != frame ? e : NULL;
+    }
+    e->changes = asked_last && e->since != UINT32_MAX && e->since != frame ? e->changes + 1u : 1u;
+    e->version = version;
+    e->since = frame;
+    e->wait = e->changes >= (uint32_t)LISTED_CHANGES ? frame : 0u;
+    return NULL;
+}
+
+// The draw list's own texture id for page `p`: no list's (numbers_id's are other hashes), and the top bit clear,
+// as a world's numbers have it (a made one's is set).
+static uint64_t listed_page_id(const uint32_t p)
+{
+    return (UINT64_C(0x4C69737465645067) + p) & ~(UINT64_C(1) << 63);
+}
+
+enum { LISTED_KIND = 0x4C495354u }; // What writes a page's pixels (tide_draw_texture_edit's kind)
+
+static bool listed_page_kept(const tide_draw_list *d, const tide_draw_listed_page *page)
+{
+    // A texture no frame drew with is let go at the next reset (tide_draw_reset)
+    return page->rows && (page->frame == d->frame || page->frame + 1u == d->frame);
+}
+
+// Page `p`'s texture this frame with room for `rows` rows, its pixels written again where `write`: its slot, or 0
+// past TIDE_DRAW_LISTED_ROWS. Where its pixels were lost, so are its regions (another generation).
+static uint32_t listed_page(tide_draw_list *d, const uint32_t p, const uint32_t rows, const bool write)
+{
+    tide_draw_listed_page *page = &d->listed->pages[p];
+    if (!listed_page_kept(d, page)) {
+        page->made++;
+        page->rows = 0;
+        page->end = 0;
+        page->transient_frame = 0;
+    }
+    uint32_t want = page->rows ? page->rows : (uint32_t)TIDE_DRAW_LISTED_FIRST_ROWS;
+    while (want < rows) want *= 2u;
+    if (want > (uint32_t)TIDE_DRAW_LISTED_ROWS) return 0;
+    const uint32_t had = page->rows;
+    if (write || want != had) page->version++;
+    uint8_t *pixels;
+    bool kept;
+    const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_LIST, listed_page_id(p), page->version,
+                                                 TIDE_LIST_DATA_ACROSS, (int32_t)want, TIDE_TEXELS_INTS, LISTED_KIND,
+                                                 &pixels, &kept);
+    if (!slot) return 0;
+    if (pixels && !kept) { // Made, or grown: its pixels as they were (a texture grows in place), and zeros after
+        const size_t row = (size_t)TIDE_LIST_DATA_ACROSS * 16u;
+        memset(pixels + (size_t)had * row, 0, (size_t)(want - had) * row);
+    }
+    page->rows = want;
+    page->frame = d->frame;
+    return slot;
+}
+
+typedef struct listed_span {
+    uint32_t start, end;
+} listed_span;
+
+static int listed_span_order(const void *left, const void *right)
+{
+    const listed_span *a = left, *b = right;
+    return a->start < b->start ? -1 : a->start != b->start;
+}
+
+// Where in page `p` `pixels` pixels can start, a multiple of `packs`, past the regions of its lists drawn this
+// frame or the last (those of others go): UINT32_MAX for nowhere within TIDE_DRAW_LISTED_ROWS rows.
+static uint32_t listed_room(tide_draw_list *d, const uint32_t p, const tide_draw_listed_entry *self,
+                            const uint32_t pixels, const uint32_t packs)
+{
+    tide_draw_listed *t = d->listed;
+    const tide_draw_listed_page *page = &t->pages[p];
+    const uint64_t most = (uint64_t)TIDE_DRAW_LISTED_ROWS * TIDE_LIST_DATA_ACROSS;
+    if (!listed_page_kept(d, page)) return pixels <= most ? 0u : UINT32_MAX; // All of it is free
+    // Past them all and the frame's own, as a rule, where the page has room without growing; else in the first
+    // gap, or past them
+    const bool transient = page->transient_frame == d->frame + 1u;
+    const uint32_t end = transient && page->transient_end > page->end ? page->transient_end : page->end;
+    const uint64_t after = (end + (uint64_t)packs - 1u) / packs * packs;
+    if (after + pixels <= (uint64_t)page->rows * TIDE_LIST_DATA_ACROSS) return (uint32_t)after;
+    listed_span *spans = tide_alloc(64u * sizeof *spans);
+    uint32_t count = 0, room = 64u;
+    if (transient) spans[count++] = (listed_span){page->transient_start, page->transient_end};
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS; i++) {
+        tide_draw_listed_entry *e = &t->entries[i];
+        if (!e->at || e == self || e->page != p + 1u || e->made != page->made) continue;
+        if (e->seen != d->frame && e->seen + 1u != d->frame) { // Not drawn lately: its room is free
+            e->page = 0;
+            continue;
+        }
+        if (count == room) {
+            room = room ? room * 2u : 64u;
+            spans = tide_realloc(spans, (size_t)count * sizeof *spans, (size_t)room * sizeof *spans);
+        }
+        spans[count++] = (listed_span){e->start, e->start + e->count * e->packs};
+    }
+    if (count) qsort(spans, count, sizeof *spans, listed_span_order);
+    // The first gap it fits in, or after them all
+    uint64_t at = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        at = (at + packs - 1u) / packs * packs;
+        if (at + pixels <= spans[i].start) break;
+        if (spans[i].end > at) at = spans[i].end;
+    }
+    at = (at + packs - 1u) / packs * packs;
+    free(spans);
+    return at + pixels <= most ? (uint32_t)at : UINT32_MAX;
+}
+
+// The page slot of the list's numbers this frame, as they are at its version, written where they weren't: 0
+// where there's no room for them.
+static uint32_t listed_numbers(tide_draw_list *d, tide_draw_listed_entry *e, const tide_list items,
+                               const uint32_t item_size, tide_list_words_fn *write, const uint32_t count,
+                               const uint32_t packs)
+{
+    tide_draw_listed *t = d->listed;
+    uint32_t p = e->page ? e->page - 1u : 0u;
+    bool here = e->page && e->made == t->pages[p].made && listed_page_kept(d, &t->pages[p]) && e->packs == packs;
+    if (here && e->written == e->version && e->count == count) return listed_page(d, p, t->pages[p].rows, false);
+    if (!(here && count <= e->count)) { // Room of its own, on the first page that has it
+        uint32_t start = UINT32_MAX;
+        for (p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) {
+            start = listed_room(d, p, e, count * packs, packs);
+            if (start != UINT32_MAX) break;
+        }
+        if (start == UINT32_MAX) {
+            e->page = 0;
+            return 0;
+        }
+        e->start = start;
+    }
+    const uint32_t end = e->start + count * packs;
+    const uint32_t rows = (end + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS;
+    const uint32_t slot = listed_page(d, p, rows, true);
+    if (!slot) {
+        e->page = 0;
+        return 0;
+    }
+    uint8_t *to = d->textures[slot - 1u].pixels + (size_t)e->start * 16u;
+    bool copied;
+    const uint8_t *flat = tide_list_flatten(items, item_size, false, &copied);
+    for (uint32_t i = 0; i < count; i++) write(flat + (size_t)i * item_size, (int32_t *)(void *)(to + (size_t)i * packs * 16u));
+    tide_list_unflatten(items, (void *)(uintptr_t)flat, item_size, false, copied);
+    const uint32_t top = e->start / (uint32_t)TIDE_LIST_DATA_ACROSS;
+    tide_draw_texture_changed(d, slot, 0, (int32_t)top, TIDE_LIST_DATA_ACROSS, (int32_t)(rows - top));
+    e->page = p + 1u;
+    e->made = t->pages[p].made;
+    if (end > t->pages[p].end) t->pages[p].end = end;
+    e->count = count;
+    e->packs = packs;
+    e->written = e->version;
+    return slot;
+}
+
+// How much room a page's regions can leave between them before they're packed together: half of what they take,
+// and this many pixels more (a pixel a pack).
+enum { LISTED_SLACK = 65536 };
+
+static int listed_entry_order(const void *left, const void *right)
+{
+    const tide_draw_listed_entry *a = *(tide_draw_listed_entry *const *)left, *b = *(tide_draw_listed_entry *const *)right;
+    return a->start < b->start ? -1 : a->start != b->start;
+}
+
+// As a frame's first listed draw starts, before any run of the frame names a place: the regions of lists not
+// drawn lately go, and a page whose regions left too much room between them (where lists changed, or a list kept
+// its numbers after the frame's own) has them moved down together, its own copy's pixels, and sends what moved.
+static void listed_pack(tide_draw_list *d)
+{
+    tide_draw_listed *t = d->listed;
+    if (t->packed == d->frame + 1u) return;
+    t->packed = d->frame + 1u;
+    uint64_t live[TIDE_DRAW_LISTED_PAGES] = {0};
+    uint32_t held[TIDE_DRAW_LISTED_PAGES] = {0};
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS; i++) {
+        tide_draw_listed_entry *e = &t->entries[i];
+        if (!e->at || !e->page || e->page > TIDE_DRAW_LISTED_PAGES) continue;
+        const tide_draw_listed_page *page = &t->pages[e->page - 1u];
+        if (e->made != page->made || !listed_page_kept(d, page)) {
+            e->page = 0;
+            continue;
+        }
+        if (e->seen != d->frame && e->seen + 1u != d->frame) { // Not drawn lately
+            e->page = 0;
+            continue;
+        }
+        live[e->page - 1u] += (uint64_t)e->count * e->packs;
+        held[e->page - 1u]++;
+    }
+    for (uint32_t p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) {
+        tide_draw_listed_page *page = &t->pages[p];
+        if (!listed_page_kept(d, page) || page->end <= live[p] + live[p] / 2u + LISTED_SLACK) continue;
+        const uint32_t slot = listed_page(d, p, page->rows, true);
+        if (!slot) continue;
+        tide_draw_listed_entry **order = tide_alloc((size_t)(held[p] ? held[p] : 1u) * sizeof *order);
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS && count < held[p]; i++) {
+            tide_draw_listed_entry *e = &t->entries[i];
+            if (e->at && e->page == p + 1u) order[count++] = e;
+        }
+        if (count) qsort(order, count, sizeof *order, listed_entry_order);
+        uint8_t *pixels = d->textures[slot - 1u].pixels;
+        uint64_t at = 0;
+        for (uint32_t i = 0; i < count; i++) { // Each down to the first room after the one before: none is passed
+            tide_draw_listed_entry *e = order[i];
+            at = (at + e->packs - 1u) / e->packs * e->packs;
+            const size_t bytes = (size_t)e->count * e->packs * 16u;
+            if (at != e->start) memmove(pixels + (size_t)at * 16u, pixels + (size_t)e->start * 16u, bytes);
+            e->start = (uint32_t)at;
+            at += (uint64_t)e->count * e->packs;
+        }
+        free(order);
+        page->end = (uint32_t)at;
+        page->transient_frame = 0;
+        const uint32_t rows = (uint32_t)((at + TIDE_LIST_DATA_ACROSS - 1u) / TIDE_LIST_DATA_ACROSS);
+        if (rows) tide_draw_texture_changed(d, slot, 0, 0, TIDE_LIST_DATA_ACROSS, (int32_t)rows);
+    }
+}
+
+// The page slot of a list's numbers for this frame alone, from pixel *start: for a list that changed, or one made
+// along the way, so its runs are runs of the same page as the others' (they join them as they did their bytes). 0
+// where there's no room.
+static uint32_t listed_transient(tide_draw_list *d, const tide_list items, const uint32_t item_size,
+                                 tide_list_words_fn *write, const uint32_t count, const uint32_t packs,
+                                 uint32_t *start)
+{
+    if (!d->listed) d->listed = tide_alloc_zeroed(1, sizeof *d->listed);
+    tide_draw_listed *t = d->listed;
+    const uint64_t most = (uint64_t)TIDE_DRAW_LISTED_ROWS * TIDE_LIST_DATA_ACROSS;
+    for (uint32_t p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) {
+        tide_draw_listed_page *page = &t->pages[p];
+        // After the lists it keeps, and after the frame's own before it (a page made now has neither)
+        const bool kept = listed_page_kept(d, page), going = kept && page->transient_frame == d->frame + 1u;
+        const uint32_t after = !kept ? 0u : going && page->transient_end > page->end ? page->transient_end : page->end;
+        const uint64_t at = (after + (uint64_t)packs - 1u) / packs * packs;
+        if (at + (uint64_t)count * packs > most) continue;
+        const uint32_t end = (uint32_t)at + count * packs;
+        const uint32_t rows = (end + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS;
+        const uint32_t slot = listed_page(d, p, rows, true);
+        if (!slot) continue;
+        if (!going) { // The frame's first
+            page->transient_frame = d->frame + 1u;
+            page->transient_start = (uint32_t)at;
+        }
+        page->transient_end = end;
+        uint8_t *to = d->textures[slot - 1u].pixels + (size_t)at * 16u;
+        bool copied;
+        const uint8_t *flat = tide_list_flatten(items, item_size, false, &copied);
+        for (uint32_t i = 0; i < count; i++) write(flat + (size_t)i * item_size, (int32_t *)(void *)(to + (size_t)i * packs * 16u));
+        tide_list_unflatten(items, (void *)(uintptr_t)flat, item_size, false, copied);
+        const uint32_t top = (uint32_t)at / (uint32_t)TIDE_LIST_DATA_ACROSS;
+        tide_draw_texture_changed(d, slot, 0, (int32_t)top, TIDE_LIST_DATA_ACROSS, (int32_t)(rows - top));
+        *start = (uint32_t)at;
+        return slot;
+    }
+    return 0;
+}
+
+bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
+                                const tide_list indices, const tide_list items, const uint32_t item_size,
+                                tide_list_words_fn *write, const uint32_t layout, const void *uniforms,
+                                const uint32_t *textures, const uint64_t sampling)
+{
+    // What the renderer draws a listed run with, and what keeps one from being one
+    if (!d || !shader || !write || !item_size || shader->dims != 3 || !shader->glsl_listed_vertex
+        || shader->texture_count >= TIDE_SHADER_TEXTURES || (d->place.moved & TIDE_DRAW_MOVED_3D)) return false;
+    const uint32_t size = tide_shader_instance_size(shader), packs = size / 16u;
+    const int32_t count = tide_list_count(items);
+    if (size < sizeof(tide_float4x4) || count <= 0
+        || (uint64_t)count * packs > (uint64_t)TIDE_DRAW_LISTED_ROWS * TIDE_LIST_DATA_ACROSS) return false;
+    if (!d->listed) d->listed = tide_alloc_zeroed(1, sizeof *d->listed);
+    listed_pack(d);
+    // A world's list that was as it is the frame before keeps its numbers; any other's are the frame's own
+    const bool kept = items.at && tide_handle_where(items.at) != TIDE_IN_SCRATCH && tide_heap_read(tide_handle_where(items.at));
+    tide_draw_listed_entry *e = kept ? listed_steady(d, items, item_size, layout) : NULL;
+    uint32_t slot = e ? listed_numbers(d, e, items, item_size, write, (uint32_t)count, packs) : 0u, start = 0;
+    if (slot) start = e->start;
+    else slot = listed_transient(d, items, item_size, write, (uint32_t)count, packs, &start);
+    if (!slot) return false;
+    const uint32_t first = start / packs;
+    const uint32_t mesh = shaded_mesh(d, shader, vertices, indices, (uint32_t)count);
+    if (mesh) tide_draw_shaded_listed(d, shader, mesh, slot, first, (uint32_t)count, uniforms, textures, sampling);
+    return true;
 }
 
 void tide_draw_mesh3_lists(tide_draw_list *d, const tide_list vertices, const tide_list indices,

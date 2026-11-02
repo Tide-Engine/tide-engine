@@ -30,14 +30,14 @@ static const tide_draw_run *run(int n)
 static float instance_float(const tide_draw_run *r, const uint32_t instance, const uint32_t word)
 {
     float v;
-    memcpy(&v, draw.instances + r->first + instance * tide_shader_instance_size(r->shader) + word * 4u, sizeof v);
+    memcpy(&v, (const uint8_t *)tide_draw_run_instance(&draw, r, instance) + word * 4u, sizeof v);
     return v;
 }
 
 static int32_t instance_int(const tide_draw_run *r, const uint32_t instance, const uint32_t word)
 {
     int32_t v;
-    memcpy(&v, draw.instances + r->first + instance * tide_shader_instance_size(r->shader) + r->shader->instance_floats * 16u + word * 4u,
+    memcpy(&v, (const uint8_t *)tide_draw_run_instance(&draw, r, instance) + r->shader->instance_floats * 16u + word * 4u,
            sizeof v);
     return v;
 }

@@ -136,7 +136,7 @@ static uint32_t capture(const tide_draw_list *d, packet *out, const uint32_t cap
                 p->blend = c->blend; p->depth = c->depth; p->cull = c->cull;
                 p->tint = r->tint;
                 p->transform = r->transform;
-                memcpy(p->instance, d->instances + r->first + (size_t)k * size, size);
+                memcpy(p->instance, tide_draw_run_instance(d, r, k), size);
                 if (uniform_size) memcpy(p->uniforms, d->uniforms + r->uniforms, uniform_size);
                 for (uint32_t t = 0; t < TIDE_SHADER_TEXTURES; t++) {
                     if (!r->textures[t]) continue;

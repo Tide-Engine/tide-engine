@@ -19,7 +19,7 @@ static void material_drawn(const float expected)
         if (!run->shader || strcmp(run->shader->name, "MaterialTint on Corner")) continue;
         TIDE_CHECK(run->count == 1 && tide_shader_instance_size(run->shader) >= sizeof(float));
         float captured;
-        memcpy(&captured, draw.instances + run->first, sizeof captured);
+        memcpy(&captured, tide_draw_run_instance(&draw, run, 0), sizeof captured);
         TIDE_CHECK(fabsf(captured - expected) < 0.000001f);
         found++;
     }

@@ -17,7 +17,7 @@ static void check_shared_bindings(tide_world *world, tide_local *local, tide_dra
         TIDE_REQUIRE(run->shader->uniform_floats == 1 && run->shader->uniform_ints == 1);
         TIDE_REQUIRE(run->shader->instance_floats == 5);
         float tint;
-        memcpy(&tint, draw->instances + run->first + 16 * sizeof(float), sizeof tint);
+        memcpy(&tint, (const uint8_t *)tide_draw_run_instance(draw, run, 0) + 16 * sizeof(float), sizeof tint);
         TIDE_CHECK(tint == (float)i * 0.125f);
         float gain;
         memcpy(&gain, draw->uniforms + run->uniforms, sizeof gain);

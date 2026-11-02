@@ -23506,11 +23506,11 @@ static void gen_shader_text(sb *o, const char *name, const char *text)
 // The shader's WGSL as SPIR-V, for Vulkan: its words, as an array named
 // `name`, and how many there are; 0 for WGSL the translator didn't take, which
 // tidec wrote, so it's a bug of tidec's, said as an error.
-static size_t gen_shader_spirv(sb *o, const char *name, const shader *sh)
+static size_t gen_shader_spirv(sb *o, const char *name, const shader *sh, const char *wgsl)
 {
     char error[256];
     size_t count = 0;
-    uint32_t *words = tide_wgsl_to_spirv(sh->wgsl, &count, error, sizeof error);
+    uint32_t *words = tide_wgsl_to_spirv(wgsl, &count, error, sizeof error);
     if (!words) {
         diag_error((loc){0}, "the WGSL tidec wrote for %s didn't become SPIR-V (%s): this is a bug in tidec, worth "
                              "reporting with the frag and vert", sh->name, error);
@@ -23664,6 +23664,12 @@ static void gen_shaders(gen *g)
             compact.glsl_fragment = shader_minify_names(compact.glsl_fragment, &g->shader_names);
             sb_printf(&g->shader_names, "# shader %d WGSL\n", s);
             compact.wgsl = shader_minify_names(compact.wgsl, &g->shader_names);
+            if (compact.listed) {
+                sb_printf(&g->shader_names, "# shader %d GLSL listed vertex\n", s);
+                compact.glsl_listed_vertex = shader_minify_names(compact.glsl_listed_vertex, &g->shader_names);
+                sb_printf(&g->shader_names, "# shader %d WGSL listed\n", s);
+                compact.wgsl_listed = shader_minify_names(compact.wgsl_listed, &g->shader_names);
+            }
         }
         const shader *sh = &compact;
         const char *vertex = type_cname(sh->vertex);
@@ -23677,8 +23683,21 @@ static void gen_shaders(gen *g)
         gen_shader_text(o, name, sh->wgsl);
         sb_put(o, "#endif\n#ifdef TIDE_SPIRV\n");
         snprintf(name, sizeof name, "tide_shader_%d_spirv", s);
-        const size_t spirv_words = gen_shader_spirv(o, name, sh);
+        const size_t spirv_words = gen_shader_spirv(o, name, sh, sh->wgsl);
         sb_put(o, "#endif\n");
+        // Its vertex stage for listed runs (tide_draw_mesh_shaded_list), each backend's
+        size_t listed_words = 0;
+        if (sh->listed) {
+            snprintf(name, sizeof name, "tide_shader_%d_listed_vertex", s);
+            gen_shader_text(o, name, sh->glsl_listed_vertex);
+            sb_put(o, "#ifdef __wasm__\n");
+            snprintf(name, sizeof name, "tide_shader_%d_listed_wgsl", s);
+            gen_shader_text(o, name, sh->wgsl_listed);
+            sb_put(o, "#endif\n#ifdef TIDE_SPIRV\n");
+            snprintf(name, sizeof name, "tide_shader_%d_listed_spirv", s);
+            listed_words = gen_shader_spirv(o, name, sh, sh->wgsl_listed);
+            sb_put(o, "#endif\n");
+        }
 
         const int numbers[] = {sh->dims, sh->vertex->fields.count, sh->instance_floats, sh->instance_ints,
                                sh->uniform_floats, sh->uniform_ints, sh->textures.count};
@@ -23731,6 +23750,12 @@ static void gen_shaders(gen *g)
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
         if (sh->blit) sb_put(o, "    .blit = true,\n");
         if (sh->frag && sh->frag->cutout) sb_put(o, "    .cutout = true,\n"); // Its alpha is its coverage
+        if (sh->listed) {
+            sb_printf(o, "    .glsl_listed_vertex = tide_shader_%d_listed_vertex,\n#ifdef __wasm__\n"
+                         "    .wgsl_listed = tide_shader_%d_listed_wgsl,\n#endif\n#ifdef TIDE_SPIRV\n"
+                         "    .spirv_listed = tide_shader_%d_listed_spirv,\n    .spirv_listed_words = %d,\n#endif\n",
+                      s, s, s, (int)listed_words);
+        }
         sb_put(o, "};\n\n");
 
         // A list its code reads goes as a texture of numbers: what writes an element's, floats then ints,
@@ -23759,6 +23784,34 @@ static void gen_shaders(gen *g)
             leaf = 0;
             gen_shader_part(o, "tide_w", element, map && map->is_set ? "tide_e->key" : "(*tide_e)", &f, &i, leaves, &leaf);
             sb_put(o, "    memcpy(tide_out, &tide_w, sizeof tide_w);\n}\n\n");
+        }
+
+        // A listed draw's instance of an item, as the draw below packs it (tide_draw_mesh_shaded_list): its
+        // list's numbers, which the list keeps
+        const char *item_type = sh->instance_type ? type_cname(sh->instance_type) : "tide_float4x4";
+        if (sh->listed) {
+            sb_printf(o, "static void tide_shader_%d_listed(const void *tide_in, int32_t *tide_out)\n{\n"
+                         "    const %s *tide_item = tide_in;\n", s, item_type);
+            gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
+            if (sh->instance_type && !sh->instance_transform)
+                sb_put(o, "    const tide_float4x4 tide_transform = tide_identity_f4x4();\n");
+            for (int v = 0; v < sh->values.count; v++) {
+                const shader_value *value = &sh->values.items[v];
+                if (!value->per_instance) continue;
+                int f = value->float_at, i = value->int_at;
+                if (!value->source) { // The transform: the item's, or the identity
+                    sb access = {0};
+                    if (!sh->instance_type) sb_put(&access, "*tide_item");
+                    else if (sh->instance_transform) sb_printf(&access, "tide_item->%s", field_cname(sh->instance_transform));
+                    else sb_put(&access, "tide_transform");
+                    gen_shader_value(o, "tide_instance", (type){TY_FLOAT4X4, NULL}, access.data, &f, &i);
+                    continue;
+                }
+                sb access = {0};
+                sb_printf(&access, "tide_item->%s", field_cname(value->field));
+                gen_shader_value(o, "tide_instance", value->field->type, access.data, &f, &i);
+            }
+            sb_put(o, "    memcpy(tide_out, &tide_instance, sizeof tide_instance);\n}\n\n");
         }
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
@@ -23973,6 +24026,13 @@ static void gen_shaders(gen *g)
         sb sampling = {0};
         if (blended <= UINT32_MAX) sb_printf(&sampling, "0x%xu%s", (unsigned)blended, carried.data ? carried.data : "");
         else sb_printf(&sampling, "0x%llxull%s", (unsigned long long)blended, carried.data ? carried.data : "");
+        if (sh->listed && instance) {
+            // A list that stays as it is keeps its instances, and only the places of those drawn go each frame
+            const unsigned layout = (unsigned)(id ^ id >> 32) | 0x80000000u;
+            sb_printf(o, "    if (tide_draw_mesh_shaded_list(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, tide_items, "
+                         "sizeof(%s), tide_shader_%d_listed, 0x%xu, %s, tide_textures, %s)) return;\n",
+                      s, item_type, s, layout, uniforms ? "&tide_uniforms" : "NULL", sampling.data);
+        }
         if (sh->instanced && instance) {
             if (!sh->skinned) {
                 sb_put(o, "    const uint64_t tide_bytes = (uint64_t)(uint32_t)tide_count * sizeof tide_instance;\n"
