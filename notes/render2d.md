@@ -130,9 +130,21 @@ Uninstrumented Vulkan measurements on the RTX 4080 SUPER host (2026-11-02):
 `tide_render2d_pixels --profile --frames 120`, 20 warm-up frames, 1280x720,
 two sprites, no analytic lights/shadows or bloom, GI grid 256x144, 3 cascades,
 probe spacing 4, distance 5. Two runs with GI measured CPU recording means
-0.006113/0.006300ms, GPU means 0.179058/0.188389ms, and 64,379,188 GPU bytes.
-Two `--no-gi` runs measured CPU means 0.004434/0.004641ms, GPU means
-0.083239/0.083330ms, and 51,615,028 GPU bytes. Each collected 120 GPU samples;
-GI maximums were 0.799712/0.800672ms. Timing excludes readback and presentation
+0.008186/0.008033 ms, GPU means 0.176697/0.173933 ms, and 64,379,188 GPU bytes.
+Two `--no-gi` runs measured CPU means 0.007155/0.005363 ms, GPU means
+0.083867/0.083578 ms, and 51,615,028 GPU bytes. Each collected 120 GPU samples;
+GI maximums were 0.839488/0.515168 ms. Timing excludes readback and presentation
 waiting. These measure a small pipeline's overhead, not large-scene or mobile
 performance. A representative many-sprite game still needs its own measurements.
+
+The full garden at 1280x720, with normal maps, two shadowed point lights, GI 128
+and bloom, also ran for 120 bounded release frames. Its inspected frame 110
+stats snapshot reported 78 draw calls, 0.20 ms GPU, 0.16 ms CPU render and 96 MB
+VRAM. This is a host-stats snapshot, not a repeated benchmark distribution.
+
+Integration merged origin/dev through 622f6c8d8 without conflicts. Incoming
+compiler/shared-binding and draw/mesh-residency changes required rebuilding the
+dependent package/example targets. All 3 native and 4 web CTests pass again,
+as do the rebuilt docs and selected WebGL/WebGPU example smoke checks. The
+release measurements above use this merged code, df661d217. No engine,
+platform or compiler edits were needed for Render2D.

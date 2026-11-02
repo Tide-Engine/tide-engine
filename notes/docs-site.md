@@ -14,6 +14,8 @@ captures verify the toggles; narrow and wide captures were visually inspected.
 The Node 24.22.1 production docs build and selected source/rendering checks pass
 on WebGL and WebGPU, with the existing allowed unstaged-example 404s. Rendering
 contracts, backend tests, measured costs and limitations are in render2d.md.
+After merging dev's compiler and draw-resource changes, the native/web example
+rebuilds, docs build and both selected browser smoke checks pass again.
 
 ## Newton removal (2026-10-31)
 
