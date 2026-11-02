@@ -37,6 +37,27 @@ local worker void NoResult(int count)
     for (var i = 0; i < count; i++) { }
 }
 
+local worker bool CaptureLists()
+{
+    mut List<int> heights = [];
+    heights.Resize(4096);
+    for (var i = 0; i < heights.count; i++) heights[i] = i + 7;
+    List<List<int>> nested = [[11, 13]];
+    mut List<int> vertices = [];
+    vertices.Resize(heights.count);
+    parallel (var k in vertices)
+    {
+        mut int sum = 0;
+        for (var n = 0; n < 512; n++) sum += heights[k] + nested[0][k % 2];
+        vertices[k] = sum;
+    }
+    heights[0] = 100;
+    for (var i = 0; i < vertices.count; i++)
+        if (vertices[i] != (i + 7 + 11 + (i % 2) * 2) * 512) return false;
+    parallel (var k in vertices) vertices[k] = heights[k] + nested[0][k % 2];
+    return vertices[0] == 111 && vertices[4095] == 4115 && nested[0][0] == 11;
+}
+
 async void Work(mut Results results)
 {
     results.result = await Echo(results.source);
@@ -46,6 +67,7 @@ async void Work(mut Results results)
     var failure = await MayFail("") ?? "failed";
     var success = await MayFail("value") ?? "bad";
     await NoResult(2);
+    var captured = await CaptureLists();
     results.calls = 0;
     var ordered = await Pair(Next(results), Next(results));
     var orderedOnce = results.calls == 2;
@@ -61,7 +83,7 @@ async void Work(mut Results results)
         && results.message == "a!"
         && results.names[0] == 8
         && (results.optional ?? "") == "a!"
-        && failure == "failed"
+        && failure == "failed" && captured
         && success == "value okay"
         && ordered == 12 && orderedOnce && named == 21 && results.calls == 2 && nested == 75;
     results.done = true;

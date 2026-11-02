@@ -14103,9 +14103,12 @@ static void gen_parallel_call(gen *g, const stmt *s)
             const char *place = local_cname(g, l->name);
             if (s->value->kind == E_NAME && s->value->bind == BIND_LOCAL && s->value->local == l) continue;
             const char *copy = made_up(g, "worker_capture");
-            line(g, o, "%s %s = %s;", c_type(l->type), copy, place);
-            gen_worker_snapshot(g, l->type, copy, 0);
-            gen_worker_own(g, l->type, copy, "TIDE_IN_LOCAL");
+            const bool wrapped = typed_list_local(g, l);
+            line(g, o, "%s %s = %s;", wrapped ? typed_list_cname(l->type) : c_type(l->type), copy, place);
+            sb storage = {0};
+            sb_printf(&storage, "%s%s", copy, wrapped ? ".list" : "");
+            gen_worker_snapshot(g, l->type, storage.data, 0);
+            gen_worker_own(g, l->type, storage.data, "TIDE_IN_LOCAL");
             for (int k = 0; k < caps.count; k++) if (strcmp(caps.items[k].name, place) == 0) caps.items[k].name = copy;
         }
     }
@@ -24158,7 +24161,10 @@ static void order_arrays(program *prog)
 
 bool codegen(program *prog, const codegen_options *opts)
 {
-    lane_memo.count = 0; // What code writes of its parameters, this program's (lane_writes_codegen.inc)
+    // Both memo tables borrow this compilation's arena, including their backing
+    // arrays. A watcher resets that arena before compiling the next program.
+    memset(&lane_memo, 0, sizeof lane_memo);
+    memset(&read_memo, 0, sizeof read_memo);
     if (opts->strip_unused_assets) program_strip_unused_assets(prog);
     order_arrays(prog);
     // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was

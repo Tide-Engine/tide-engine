@@ -1,5 +1,36 @@
 # Hot reloading
 
+## Repeated compiler generations keep no arena-backed lane cache (2026-11-02)
+
+The mount-and-rifle web-watch corruption report reproduced in the native
+compiler without a browser: compiling its 66 game sources plus Rooms repeatedly
+in one process crashed on the third generation under Windows ASan. A small
+component, spawned entity and mutating helper reproduced a heap-use-after-free
+on the second generation, in `code_writes` in `lane_writes_codegen.inc`.
+
+`lane_memo` kept its arena-backed array and capacity while codegen reset only
+its count. The watcher's preceding `arena_reset` freed that array; later
+generations wrote through the stale pointer, potentially corrupting unrelated
+compiler objects when the allocator reused its memory. The analogous view
+helper `read_memo` also retained its array, entries and declaration pointers.
+`codegen` now zeros both complete vectors at entry. Memoization still works
+within each generation; generated contracts, scheduling, match results and
+the watcher's last-successful-build behavior are unchanged.
+
+`tidec_recompile` exercises eighteen in-process generations with arena resets:
+two valid programs alternate which component fields their helpers read/write,
+and each pair is followed by a missing-field failure. Math.Min and Draw.Text
+remain in the generated paths. Each successful program must reproduce its
+exact original C; each failed generation must preserve the last successful C.
+This tests the shared compiler used by native and web watchers, without an
+installed CLI, browser, or timing-sensitive filesystem saves.
+
+Validation: Windows ASan recompile regression and the four native wide_lanes /
+view_reads runtime and code-generation checks pass. The same real-game probe
+passes five complete generations after the fix. The game checkout and pin
+were not changed. This isolates a concrete memory-corruption cause; the actual
+long-running web-server session from the original report was not replayed.
+
 ## Aligned defaults for packed local rows (2026-10-31)
 
 Run 41206262777's Linux UBSan failure in tide_platform_migrate is a real

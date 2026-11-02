@@ -1,5 +1,32 @@
 # Language features, as tidec builds them
 
+## Worker parallel captures with debugger list wrappers (2026-11-02)
+
+`gen_parallel_call` preserves a captured list local's `tide_local_list<N>`
+wrapper when visualizers are enabled. The capture context expects that wrapper;
+the snapshot and ownership walkers instead receive its `.list` storage. Without
+visualizers the temporary remains a plain `tide_list`. The previous initializer
+mixed those two C types and failed when a worker's parallel pass read another
+local list (mount-and-rifle's terrain height/vertex passes).
+
+This changes no Tide semantics, runtime call, ownership policy or scheduling.
+Captures still fully materialize before entering the parallel pass and live in
+the worker's existing private heap. Nested list snapshots use the same recursive
+walkers, and only the outer debugger wrapper needs unwrapping.
+
+`worker_values` now runs two parallel passes over 4,096 entries, reading a local
+integer list and a nested integer list, checking every first-pass result and
+source updates observed by the second pass. The existing host runs with no jobs
+provider and with the native shared pool. A separate native
+`tidec_e2e_worker_values_visualizers` target always enables wrappers, independently
+of the build's visualizer setting, so the regression remains covered in CI.
+
+Validation: Windows ASan builds and all four focused tests pass (`local_workers`,
+`worker_values`, `worker_values_visualizers`, `worker_grids`), covering wrapped
+and plain list locals. The three ordinary fixtures also pass on web-release
+under WASI with Node 24.22.1. Browser worker scheduling and other native platforms
+were not exercised in this scoped fix; existing runtime scheduling is unchanged.
+
 ## Mesh<V>.Decode (2026-11-02)
 
 Owner-approved (assets-and-files.md, The static mesh reader in the engine):
