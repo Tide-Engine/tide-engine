@@ -1,0 +1,20 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/sanitize
+    Start 2806: bench_globalillumination
+1/6 Test #2806: bench_globalillumination ....................   Passed    1.98 sec
+    Start 2807: bench_globalillumination_opengl
+2/6 Test #2807: bench_globalillumination_opengl .............   Passed    0.73 sec
+    Start 2808: bench_globalillumination_atrium
+3/6 Test #2808: bench_globalillumination_atrium .............   Passed   36.97 sec
+    Start 2809: bench_globalillumination_atrium_opengl
+4/6 Test #2809: bench_globalillumination_atrium_opengl ......   Passed    3.50 sec
+    Start 2810: bench_globalillumination_courtyard
+5/6 Test #2810: bench_globalillumination_courtyard ..........   Passed   25.41 sec
+    Start 2811: bench_globalillumination_courtyard_opengl
+6/6 Test #2811: bench_globalillumination_courtyard_opengl ...   Passed    2.51 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Label Time Summary:
+gpu    =  71.10 sec*proc (6 tests)
+
+Total Test time (real) =  71.22 sec

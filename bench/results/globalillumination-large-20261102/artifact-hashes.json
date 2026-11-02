@@ -1,0 +1,317 @@
+[
+  {
+    "path": ".gitattributes",
+    "bytes": 30,
+    "sha256": "f06202a408fef9b9ea69bb6b1cb8160dbb0378c5bb67a444d510d231813824c8"
+  },
+  {
+    "path": "capture-large.ps1",
+    "bytes": 1482,
+    "sha256": "135ed0f1709572d4bdbc76451d197354274a191f39171d7147f102c00e38baee"
+  },
+  {
+    "path": "captures/atrium-hero-2048.jsonl",
+    "bytes": 1050,
+    "sha256": "e551b81fd41e52af0252e26aef924dfa0726547b42f1f17cf96bdce37c206476"
+  },
+  {
+    "path": "captures/atrium-hero-2048.log",
+    "bytes": 1365,
+    "sha256": "de21c5b026faeb46121f46e0b7e47b7503639abb9b6bd8fa1a29bc430cfeb901"
+  },
+  {
+    "path": "captures/atrium-hero-2048.png",
+    "bytes": 296018,
+    "sha256": "3f72be29a74a5355f3bcf938b8fe486837d12062e67bb8b47743f71391609c9e"
+  },
+  {
+    "path": "captures/atrium-hero-512.jsonl",
+    "bytes": 1044,
+    "sha256": "726e78c7ca3ace50e5bd6463d194b45d2e601a8127d920aa9148f2ac287f8612"
+  },
+  {
+    "path": "captures/atrium-hero-512.log",
+    "bytes": 1358,
+    "sha256": "182d0ba60af88a3c7e32e0bef69b3d2e65bbc45e166471763b5b9046db9e72b5"
+  },
+  {
+    "path": "captures/atrium-hero-512.png",
+    "bytes": 285190,
+    "sha256": "d2f02ccdefaf55caaa6a1c258cd3ea291121ef38da61c4c4124eefdac34784ff"
+  },
+  {
+    "path": "captures/atrium-hero-off.jsonl",
+    "bytes": 1020,
+    "sha256": "85b1f003e9d3d90b9efc63a0f65be4f315497aee8511344b1e05e8a3ced06660"
+  },
+  {
+    "path": "captures/atrium-hero-off.log",
+    "bytes": 1334,
+    "sha256": "1cc30b5f587107185682aa09836d3acdb12d9a23a55c4ee97e2059be61fb591e"
+  },
+  {
+    "path": "captures/atrium-hero-off.png",
+    "bytes": 153563,
+    "sha256": "6dc6af047ee8c6960860642f071932980218871431b3252145e49819c8d19cb2"
+  },
+  {
+    "path": "captures/atrium-hero-probes.jsonl",
+    "bytes": 1051,
+    "sha256": "8549d6f6c85257c6625a7995476ba5af5ae60047fd0aa73b3c1b4a4011499504"
+  },
+  {
+    "path": "captures/atrium-hero-probes.log",
+    "bytes": 1368,
+    "sha256": "a52678a25709b76320c4e6376015202ecab3ac97bc87cd58739c47cf84e1f8db"
+  },
+  {
+    "path": "captures/atrium-hero-probes.png",
+    "bytes": 326996,
+    "sha256": "e4d90a6df07846fc1c49c291f8120777c2ccf05a2c6d0569db409caa01c1484b"
+  },
+  {
+    "path": "captures/atrium-overview-2048.jsonl",
+    "bytes": 1049,
+    "sha256": "cf19c7d1eabc0fd4257bb67f7118d06ea6589378e49d06124664e5b48e3649c1"
+  },
+  {
+    "path": "captures/atrium-overview-2048.log",
+    "bytes": 1368,
+    "sha256": "f0bc0e1fb6b8b4a1abbadaf035f7b146e6ac5443dd3e0bf3218b9d9936d6e79f"
+  },
+  {
+    "path": "captures/atrium-overview-2048.png",
+    "bytes": 103653,
+    "sha256": "4e2bc3f8b91a7da92f67b2ddcaef7dea599e4114eb2128121c6897b2d5f36484"
+  },
+  {
+    "path": "captures/atrium-overview-512.jsonl",
+    "bytes": 1043,
+    "sha256": "d0a2c10f6edb28719879e476094a91f0e3deec53710dad91a2822dd77c10899c"
+  },
+  {
+    "path": "captures/atrium-overview-512.log",
+    "bytes": 1361,
+    "sha256": "82d8a1344f49b400fdee7532809197b49b7e6e27a91765f08a9a28dd3839e5b2"
+  },
+  {
+    "path": "captures/atrium-overview-512.png",
+    "bytes": 100623,
+    "sha256": "c6e9d691063aca676fe915ad891fe364d091fcef36036fe5fbea9cf56511dacc"
+  },
+  {
+    "path": "captures/atrium-overview-off.jsonl",
+    "bytes": 1019,
+    "sha256": "d505ce4ecf4df0df2e66405fd22bdfba4a35f1db4398081aa71b9c3d33b77c03"
+  },
+  {
+    "path": "captures/atrium-overview-off.log",
+    "bytes": 1337,
+    "sha256": "a2dc3871daa81a32df1084f08b7aa2220e1df4852c0f3f44da559be34b84da3a"
+  },
+  {
+    "path": "captures/atrium-overview-off.png",
+    "bytes": 54455,
+    "sha256": "34351d94b508ee908ccae0b25a3f58cf89bcbe45025a5c02a574bb66ddb1831f"
+  },
+  {
+    "path": "captures/atrium-overview-probes.jsonl",
+    "bytes": 1049,
+    "sha256": "2ae5aac19edba2b26cab90c38eb93a4a922bfb8ecb42c876d17ab6c53a5065b3"
+  },
+  {
+    "path": "captures/atrium-overview-probes.log",
+    "bytes": 1370,
+    "sha256": "9e986dc08e4d84cf84f5a45a9d7ebb80ed599995b65b8c1edec7640ede38c2f4"
+  },
+  {
+    "path": "captures/atrium-overview-probes.png",
+    "bytes": 121654,
+    "sha256": "ee8b52beb29a53871de668d7f527b6095c41a7eb26cd9a2a41778703fd275dec"
+  },
+  {
+    "path": "captures/courtyard-hero-2048.jsonl",
+    "bytes": 1056,
+    "sha256": "5305127f1a717f4badaeb3e07a364227ad80dc5a2892049ddfe08d4498bc23aa"
+  },
+  {
+    "path": "captures/courtyard-hero-2048.log",
+    "bytes": 1377,
+    "sha256": "badd1c678f418d1cf30426b5451eff74541e27150c39b07312b07224d48cc174"
+  },
+  {
+    "path": "captures/courtyard-hero-2048.png",
+    "bytes": 93872,
+    "sha256": "ff7cbc474043d0a60608f10f36251a4c40d953e3acb9009735f44ddb7e07de9f"
+  },
+  {
+    "path": "captures/courtyard-hero-512.jsonl",
+    "bytes": 1048,
+    "sha256": "2268d78ac564ee2774125ad0f9af0cd277b3f16484c8446dd530f8eb2ada8f16"
+  },
+  {
+    "path": "captures/courtyard-hero-512.log",
+    "bytes": 1368,
+    "sha256": "e141a0b3f672f1f6d5d9194075c2a256ebf56e77445fdd4c5cba756b401868b6"
+  },
+  {
+    "path": "captures/courtyard-hero-512.png",
+    "bytes": 135477,
+    "sha256": "ef2e3080841978ae86295b5f5ad1acfb73f3ea366ced79da9c35ef5271344468"
+  },
+  {
+    "path": "captures/courtyard-hero-off.jsonl",
+    "bytes": 1023,
+    "sha256": "b98fe86ed67be5d73e75071621424be984bc52d6648add6b9024cd4a99a0750d"
+  },
+  {
+    "path": "captures/courtyard-hero-off.log",
+    "bytes": 1343,
+    "sha256": "fe5f0fbbba1720f2a50ee0617829dd27e6d28e12f28d79fd81956782739cdc8e"
+  },
+  {
+    "path": "captures/courtyard-hero-off.png",
+    "bytes": 64305,
+    "sha256": "da01b2b958567473a25286be7bcdb2b6440165c8be76af5848bba2df488aef0e"
+  },
+  {
+    "path": "captures/courtyard-hero-probes.jsonl",
+    "bytes": 1053,
+    "sha256": "c7385eb10f86ca1fa7c8c8560020474d66ac9c4eeb799eddd52491f293591264"
+  },
+  {
+    "path": "captures/courtyard-hero-probes.log",
+    "bytes": 1376,
+    "sha256": "b4eccc1c4a66663471a378cb4c8bcce3a83f7f196e98769d81a7c9215bb969ae"
+  },
+  {
+    "path": "captures/courtyard-hero-probes.png",
+    "bytes": 99716,
+    "sha256": "488b11200d9b915cd8c94cdd207234c2de24dab58039507ad2ebda6b1e293495"
+  },
+  {
+    "path": "captures/courtyard-overview-2048.jsonl",
+    "bytes": 1054,
+    "sha256": "16c83e361e8c20cfe9030a4ee82af9cb8a1d1aa004010f084165082177798def"
+  },
+  {
+    "path": "captures/courtyard-overview-2048.log",
+    "bytes": 1379,
+    "sha256": "605fb1d0598f65bd36fa66f9a45d5995aaaf6f6cd569ee74bb109c58ded0f207"
+  },
+  {
+    "path": "captures/courtyard-overview-2048.png",
+    "bytes": 102349,
+    "sha256": "ecb69a116efbc292bc8e339831101b0c6651ccf4927145eea0134a0acf79ad48"
+  },
+  {
+    "path": "captures/courtyard-overview-512.jsonl",
+    "bytes": 1048,
+    "sha256": "3617767895613bbe49d215ced47b17366771fee96e3f191e81dc3581ea0cc315"
+  },
+  {
+    "path": "captures/courtyard-overview-512.log",
+    "bytes": 1372,
+    "sha256": "c1753c5d38f38b1afe5032c93f52fc080754fbcc3a37e84e3b517866ca007449"
+  },
+  {
+    "path": "captures/courtyard-overview-512.png",
+    "bytes": 104964,
+    "sha256": "b9ca9e4f85032edf3a546f7e43d939ee1cab656c8edf7760b822003092c1abff"
+  },
+  {
+    "path": "captures/courtyard-overview-off.jsonl",
+    "bytes": 1022,
+    "sha256": "77ed84a55f28a7aebcda48231b5b21450898051c3ef04bc31857dd1819f2f8a4"
+  },
+  {
+    "path": "captures/courtyard-overview-off.log",
+    "bytes": 1346,
+    "sha256": "b0a0e38e79b86f2477f39285ce7601f64d709bc8c27dd62aff0fc13a3a36ca35"
+  },
+  {
+    "path": "captures/courtyard-overview-off.png",
+    "bytes": 61248,
+    "sha256": "bb3e7e97427e9feed8a73fbb664e0ec6bceefa0d63a17808043e35d164316051"
+  },
+  {
+    "path": "captures/courtyard-overview-probes.jsonl",
+    "bytes": 1054,
+    "sha256": "c02083ed4ad6b28fb294aa45d2c0f1d40bcc50b5c16997fa9fa66cfd6d517f9f"
+  },
+  {
+    "path": "captures/courtyard-overview-probes.log",
+    "bytes": 1381,
+    "sha256": "cfaf059da66ab777097c89ae037968d22bc6227c9776bb77ef060328765b99f8"
+  },
+  {
+    "path": "captures/courtyard-overview-probes.png",
+    "bytes": 120287,
+    "sha256": "4e225e31b9e5d5d19157bf0589e361d320c618bcc92f526501025694f465d5c3"
+  },
+  {
+    "path": "gallery.html",
+    "bytes": 6063,
+    "sha256": "88a5470a407a0dec91898616b360a8b0bbc2239840c4b40374913cc870641bc1"
+  },
+  {
+    "path": "gate-short.ps1",
+    "bytes": 1544,
+    "sha256": "83919b2b673d006d2aa3a3b4b56e91ecb0fdd703576708985e6d1ecbeaa19538"
+  },
+  {
+    "path": "measurement-gate.log",
+    "bytes": 423,
+    "sha256": "af96044a1437328f7a414298f46a117fc8e1e085ae0321f8d93f31e1eb87766e"
+  },
+  {
+    "path": "metadata.json",
+    "bytes": 958,
+    "sha256": "2626fe96312667f8b16e9e834813537a57e0d800a635815dd0e05a22f2c343c3"
+  },
+  {
+    "path": "README.md",
+    "bytes": 6014,
+    "sha256": "fdfc71a505ee4b941a6ac5055dd461c778b1da6e809faf8424280ed306734d90"
+  },
+  {
+    "path": "run-large.ps1",
+    "bytes": 16384,
+    "sha256": "c2e369ab29c288d8695d0bad0d391ec414a8b22a4ca76abc94ba7ff31e111ea5"
+  },
+  {
+    "path": "summarize-large.py",
+    "bytes": 12102,
+    "sha256": "78f9e4be786858fdbb7c505f138f43138a0067ad27d00b835f804bc0d81a11b5"
+  },
+  {
+    "path": "validation/captures-final.log",
+    "bytes": 488,
+    "sha256": "7643ee54bb92365630ffd4f8651cbbaea2a951d9c49447742645ee40940a9d87"
+  },
+  {
+    "path": "validation/native-tests.log",
+    "bytes": 1036,
+    "sha256": "92202b515771e97a8e389026c7455da1931630f4f1e13f4f16da6b4db61f0c2b"
+  },
+  {
+    "path": "validation/release-build.log",
+    "bytes": 471,
+    "sha256": "760703e86fa202b56643ccb500fb563b3c83a2d13c899c09b00ae678bc635979"
+  },
+  {
+    "path": "validation/sanitize-build.log",
+    "bytes": 838,
+    "sha256": "42413bec5fcc01ca720f0d25cde61cd60b3c5f2223886aabe45379b4540db380"
+  },
+  {
+    "path": "validation/web-build.log",
+    "bytes": 891,
+    "sha256": "805ea80885eef8c6e865b3c14749b534e05cad12fb57c26bf1081d5c19876a3e"
+  },
+  {
+    "path": "validation/web-tests.log",
+    "bytes": 772,
+    "sha256": "fc894c3d3581e91e8c66178f4c9c08fc7283d523c3cb10c00716d928ff585c6b"
+  }
+]

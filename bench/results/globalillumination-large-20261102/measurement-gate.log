@@ -1,0 +1,6 @@
+Shared gate released/closed at 2026-11-02T01:47:41.6818639+00:00
+Exception: C:\Users\blenm\.t3\worktrees\PurrEngine\t3-0f6a1f0b\build\gi-large\gate-short.ps1:17
+Line |
+  17 |  … s -gt 90) { throw 'Quiet measurements not started: builds/tests remai …
+     |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Quiet measurements not started: builds/tests remained active for 90 seconds

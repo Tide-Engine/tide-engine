@@ -1,0 +1,16 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-debug
+    Start 2689: bench_globalillumination
+1/4 Test #2689: bench_globalillumination ....................   Passed   85.72 sec
+    Start 2690: bench_globalillumination_webgpu
+2/4 Test #2690: bench_globalillumination_webgpu .............   Passed   42.90 sec
+    Start 2691: bench_globalillumination_atrium_webgpu
+3/4 Test #2691: bench_globalillumination_atrium_webgpu ......   Passed  100.14 sec
+    Start 2692: bench_globalillumination_courtyard_webgpu
+4/4 Test #2692: bench_globalillumination_courtyard_webgpu ...   Passed   80.89 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Label Time Summary:
+webgpu    = 5374.31 sec*proc (3 tests)
+
+Total Test time (real) = 309.79 sec

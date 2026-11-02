@@ -42,6 +42,16 @@ WebGPU scenes. The architectural mesh generator's byte/topology checks pass.
 Optimized native captures also pass each scene's original brightness/count/hash
 oracles. Other native OSes/mobile and large-scene WebGL are unmeasured here.
 
+[The larger-scene evidence report](../bench/results/globalillumination-large-20261102/README.md)
+retains sixteen matched off/on/probe captures and exact active counts. A higher
+cap still meets the independent block limit and does not guarantee better light
+at every receiver; remote hero-view geometry can lie outside the 48-unit field.
+These examples expose remaining dark regions and reconstruction seams. A bounded
+90-second quiet-window attempt launched no measurement child while other builds
+continued. Its shared gate closed at 01:47:41.681 UTC; capture timing fields are
+uncontrolled and excluded from performance claims. No new large-scene frame-time
+claim or dev merge is made.
+
 ## Adaptive coverage and regional updates (2026-11-02)
 
 The owner approved replacing the world-sized uniform lattice after inspecting

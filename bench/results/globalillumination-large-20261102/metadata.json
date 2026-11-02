@@ -1,0 +1,22 @@
+{
+  "source_sha": "a5bb2b83c71033942df3ef7a7556655d35930eb9",
+  "binary_sha256_after_captures": "f9b6b7e797f2dcdce6ffe0d02295d8aa08037a30a82c02213caaa41a2c30681a",
+  "backend": "vulkan",
+  "viewport": [
+    960,
+    720
+  ],
+  "capture_processes": 16,
+  "frames_per_capture": 1,
+  "warmup": 1,
+  "capture_timing_status": "uncontrolled; all timing fields excluded from performance claims",
+  "controlled_measurement_status": "not_started",
+  "measured_processes": 0,
+  "measured_gpu_samples": 0,
+  "quiet_attempt": "90-second guard saw continuing builds/tests; no measurement child launched",
+  "gate_released_utc": "2026-11-02T01:47:41.6818639+00:00",
+  "tide_hidden": "1",
+  "generated_utc": "2026-11-02T01:49:26.733177+00:00",
+  "graphics": "NVIDIA GeForce RTX 4080 SUPER, 617.42",
+  "note": "No build changed this checkout during the capture series. Binary hash recorded after the series; timings are not controlled measurements."
+}

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Larger GI scenes</title>
+<style>
+#large-gi .controls{display:flex;gap:16px;flex-wrap:wrap}
+#large-gi .controls label{display:flex;flex-direction:column;gap:6px;flex:1;min-width:140px}
+#large-gi figure{margin:18px 0 0}
+#large-gi img{display:block;width:100%;height:auto}
+#large-gi figcaption{margin-top:8px;color:var(--muted-foreground)}
+#large-gi h3{margin:0 0 8px;font-weight:500}
+</style></head><body><main id="large-gi">
+<div class="controls">
+<label for="large-view">Camera<select class="form-select" id="large-view"><option value="overview" selected>Whole scene</option><option value="hero">Inside the scene</option></select></label>
+<label for="large-mode">Lighting<select class="form-select" id="large-mode"><option value="off">GI off</option><option value="512">GI · 512 probe cap</option><option value="2048" selected>GI · 2,048 probe cap</option><option value="probes">Actual probes · 2,048 cap</option></select></label>
+</div>
+<figure><h3>Atrium · 48 × 72 × 18 units · 315 meshes</h3><img id="large-atrium" src="captures/atrium-overview-2048.png" alt="Actual renderer capture of the large atrium"><figcaption id="caption-atrium" aria-live="polite"></figcaption></figure>
+<figure><h3>Courtyard · 160 × 120 units · 476 meshes</h3><img id="large-courtyard" src="captures/courtyard-overview-2048.png" alt="Actual renderer capture of the large courtyard"><figcaption id="caption-courtyard" aria-live="polite"></figcaption></figure>
+<div hidden><img id="asset-atrium-hero-off" src="captures/atrium-hero-off.png" alt="">
+<img id="asset-atrium-hero-512" src="captures/atrium-hero-512.png" alt="">
+<img id="asset-atrium-hero-2048" src="captures/atrium-hero-2048.png" alt="">
+<img id="asset-atrium-hero-probes" src="captures/atrium-hero-probes.png" alt="">
+<img id="asset-atrium-overview-off" src="captures/atrium-overview-off.png" alt="">
+<img id="asset-atrium-overview-512" src="captures/atrium-overview-512.png" alt="">
+<img id="asset-atrium-overview-2048" src="captures/atrium-overview-2048.png" alt="">
+<img id="asset-atrium-overview-probes" src="captures/atrium-overview-probes.png" alt="">
+<img id="asset-courtyard-hero-off" src="captures/courtyard-hero-off.png" alt="">
+<img id="asset-courtyard-hero-512" src="captures/courtyard-hero-512.png" alt="">
+<img id="asset-courtyard-hero-2048" src="captures/courtyard-hero-2048.png" alt="">
+<img id="asset-courtyard-hero-probes" src="captures/courtyard-hero-probes.png" alt="">
+<img id="asset-courtyard-overview-off" src="captures/courtyard-overview-off.png" alt="">
+<img id="asset-courtyard-overview-512" src="captures/courtyard-overview-512.png" alt="">
+<img id="asset-courtyard-overview-2048" src="captures/courtyard-overview-2048.png" alt="">
+<img id="asset-courtyard-overview-probes" src="captures/courtyard-overview-probes.png" alt=""></div>
+<script type="application/json" id="large-capture-data">{"atrium-hero-off": {"probes": 0, "active_blocks": 0, "primary_spacing": 0}, "atrium-hero-512": {"probes": 464, "active_blocks": 46, "primary_spacing": 12}, "atrium-hero-2048": {"probes": 1221, "active_blocks": 123, "primary_spacing": 6}, "atrium-hero-probes": {"probes": 1221, "active_blocks": 123, "primary_spacing": 6}, "atrium-overview-off": {"probes": 0, "active_blocks": 0, "primary_spacing": 0}, "atrium-overview-512": {"probes": 483, "active_blocks": 64, "primary_spacing": 6}, "atrium-overview-2048": {"probes": 1009, "active_blocks": 128, "primary_spacing": 6}, "atrium-overview-probes": {"probes": 1009, "active_blocks": 128, "primary_spacing": 6}, "courtyard-hero-off": {"probes": 0, "active_blocks": 0, "primary_spacing": 0}, "courtyard-hero-512": {"probes": 511, "active_blocks": 60, "primary_spacing": 12}, "courtyard-hero-2048": {"probes": 1202, "active_blocks": 128, "primary_spacing": 6}, "courtyard-hero-probes": {"probes": 1202, "active_blocks": 128, "primary_spacing": 6}, "courtyard-overview-off": {"probes": 0, "active_blocks": 0, "primary_spacing": 0}, "courtyard-overview-512": {"probes": 512, "active_blocks": 63, "primary_spacing": 12}, "courtyard-overview-2048": {"probes": 1050, "active_blocks": 127, "primary_spacing": 12}, "courtyard-overview-probes": {"probes": 1050, "active_blocks": 127, "primary_spacing": 12}}</script>
+</main><script>
+(()=>{
+const root=document.getElementById('large-gi'),view=root.querySelector('#large-view'),mode=root.querySelector('#large-mode');
+const rows=JSON.parse(root.querySelector('#large-capture-data').textContent);
+function show(){for(const scene of ['atrium','courtyard']){
+ const key=scene+'-'+view.value+'-'+mode.value,row=rows[key];
+ root.querySelector('#large-'+scene).src=root.querySelector('#asset-'+key).src;
+ let caption=mode.value==='off'?'GI off · same direct lights and exposure.':row.probes.toLocaleString()+' active probes · '+row.active_blocks+' blocks · shaded-wall spacing '+row.primary_spacing+' units.';
+ if(mode.value!=='off')caption+=' Residency '+(view.value==='overview'?(scene==='atrium'?200:350):48)+' units.';
+ if(mode.value==='probes')caption+=' Markers enlarged for visibility; positions unchanged.';
+ root.querySelector('#caption-'+scene).textContent=caption;
+ root.querySelector('#large-'+scene).alt=scene+' '+view.options[view.selectedIndex].text+', '+mode.options[mode.selectedIndex].text;
+}}
+function changed(){show();window.openai?.setWidgetState?.({modelContent:{view:view.value,lighting:mode.value},privateContent:null}).catch(()=>{});}
+function restore(state){if(state?.modelContent){const s=state.modelContent;if(['hero','overview'].includes(s.view))view.value=s.view;if(['off','512','2048','probes'].includes(s.lighting))mode.value=s.lighting;}show();}
+view.addEventListener('change',changed);mode.addEventListener('change',changed);
+window.addEventListener('openai:set_globals',event=>restore(event.detail?.globals?.widgetState));
+restore(window.openai?.widgetState);
+})();
+</script></body></html>

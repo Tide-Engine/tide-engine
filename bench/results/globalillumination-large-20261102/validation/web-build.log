@@ -1,0 +1,16 @@
+[0/2] Re-checking globbed directories...
+[1/2] Re-running CMake...
+-- Configuring done (3.3s)
+-- Generating done (1.5s)
+-- Build files have been written to: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-0f6a1f0b/build/web-debug
+[0/4] Re-checking globbed directories...
+[1/11] Performing build step for 'tidec_host'
+[0/2] Re-checking globbed directories...
+ninja: no work to do.
+[2/11] No install step for 'tidec_host'
+[3/11] Completed 'tidec_host'
+[4/11] tidec bench_globalillumination
+[5/11] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game_pack.c.obj
+[6/11] Building C object bench/CMakeFiles/bench_globalillumination.dir/globalillumination/main.c.obj
+[7/11] Building C object bench/CMakeFiles/bench_globalillumination.dir/tide/bench_globalillumination/game.c.obj
+[8/11] Linking C executable bin\bench_globalillumination.wasm
