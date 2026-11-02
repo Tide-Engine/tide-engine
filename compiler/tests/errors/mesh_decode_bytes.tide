@@ -1,0 +1,3 @@
+// expect: 'Decode' argument 1 is List<byte>, not string
+scene Main { }
+Mesh<Vertex3> Read(string data) { return Mesh<Vertex3>.Decode(data)!; }

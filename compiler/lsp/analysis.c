@@ -986,7 +986,7 @@ static void walk_value(const expr *e)
             o.decl = e->type_alias ? e->type_alias : e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
+        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->call == CALL_GUI
@@ -2664,6 +2664,14 @@ static const method_form skinned_mesh_calls[] = {
      BLEND_SHAPED_DOC},
 };
 
+// Mesh<V>.Decode, the type's own: a static mesh read from a file's bytes.
+static const method_form mesh_calls[] = {
+    {"Decode", "Decode(List<byte> bytes) -> Mesh<V> fails IOError",
+     "Reads a static mesh from a file's bytes (a .glb, a .gltf with its buffers inside it, or an .obj) as an asset of the file reads: "
+     "the same vertices, by their fields' names, on every machine, so match code can decode. Data that isn't a mesh, a file past a "
+     "limit and an FBX (read at build time only) fail with IOError.InvalidData. External resources are never fetched."},
+};
+
 static const method_form blend_shape_catalog_calls[] = {
     {"TryGetByName", "TryGetByName(string name, out BlendShape result) -> bool", "Looks up a blend shape by its exact original name. Returns false and assigns default for missing, empty or unnamed names."},
     {"TryGetAt", "TryGetAt(int index, out BlendShape result) -> bool", "Reads a blend shape in the model's order, counting from 0: the order Shaped's weights are in. Returns false and assigns default for an index outside the catalog."},
@@ -2693,6 +2701,7 @@ static const method_form *methods_of(const type t, size_t *count)
         default: break;
         }
         if (forms) return forms;
+        if (t.decl->asset_ref_geometry) { *count = sizeof mesh_calls / sizeof mesh_calls[0]; return mesh_calls; }
     }
     switch (t.kind) {
     case TY_LIST: forms = list_calls; *count = sizeof list_calls / sizeof list_calls[0]; break;
@@ -2751,7 +2760,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
-                : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
+                : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl->asset_ref_geometry || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2762,6 +2771,11 @@ static void format_method(const method_form *form, const type t, sb *out)
         if (t.decl && t.decl->skin_kind == SKIN_MESH && strncmp(p, "SkinnedMesh<V, Contract>", 24) == 0) {
             sb_put(out, type_name(t));
             p += 23;
+            continue;
+        }
+        if (t.decl && t.decl->asset_ref_geometry && strncmp(p, "Mesh<V>", 7) == 0) {
+            sb_put(out, type_name(t));
+            p += 6;
             continue;
         }
         const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
@@ -7376,10 +7390,11 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     if (dot >= 3 && DOC->toks[dot - 1].kind == T_GT) {
         int open = dot - 2;
         while (open >= 1 && (DOC->toks[open].kind == T_IDENT || DOC->toks[open].kind == T_DOT || DOC->toks[open].kind == T_COMMA)) open--;
-        if (open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh")) {
+        const bool skinned = open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh");
+        if (skinned || (open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "Mesh"))) {
             const scope sc = scope_at(at);
             if (!is_shader(sc.decl)) {
-                const method_form *form = &skinned_mesh_calls[0];
+                const method_form *form = skinned ? &skinned_mesh_calls[0] : &mesh_calls[0];
                 item(c, form->name, CK_METHOD, form->form, form->doc, "Decode($1)");
             }
             return;
@@ -11895,7 +11910,8 @@ static int call_param_names(const expr *call, str *names, const int max)
             builtin_signatures(call->object->name, call->name, collect_label, &list);
         }
         break;
-    case CALL_SKINNED: {
+    case CALL_SKINNED:
+    case CALL_MESH_DECODE: {
         size_t forms_count;
         const method_form *forms = methods_of(call->object->type, &forms_count);
         for (size_t i = 0; i < forms_count; i++) {

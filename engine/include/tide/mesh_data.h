@@ -23,6 +23,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct tide_skinned_data_view; // tide/skinned_data.h
+
 // ---------------------------------------------------------------------------
 // Limits of Mesh<V>.Decode: what bytes can ask of a decode. Bytes can come
 // from anywhere (a fetched URL, a player's file), and Decode runs in match
@@ -63,6 +65,10 @@ typedef struct tide_mesh_limits {
     // transform made, and the NaN a normal then is): Decode's output is match
     // state, where NaN's bits aren't the same on every machine.
     bool finite;
+    // Said on stderr before why, for a file a limit refused ("tide:
+    // Mesh.Decode refused a mesh"), so a refusal is known for what it is on
+    // the machine that refused it; NULL for none (tidec says it as a diagnostic).
+    const char *report;
 } tide_mesh_limits;
 
 // Mesh<V>.Decode's limits, the numbers above.
@@ -113,6 +119,31 @@ bool tide_mesh_data_with_tangents(const tide_mesh_data *source, const tide_mesh_
                                   char why[256], char note[256]);
 
 void tide_mesh_data_free(tide_mesh_data *m);
+
+// Whether every number of the mesh is one a float holds.
+bool tide_mesh_data_finite(const tide_mesh_data *m);
+
+// ---------------------------------------------------------------------------
+// A Mesh with bones: a static Mesh<V> whose vertex has 'joints' or 'weights'
+// is read as a skinned model is (tide/skinned_data.h), for its skin, at
+// build time and by Decode alike (docs/spec.md, Models).
+
+// A skinned model's geometry as a mesh: its vertices as the model keeps them,
+// in their geometry's own space (its bind space), its hash the model bytes'.
+// False, `out` untouched, for bytes that aren't a model.
+bool tide_mesh_data_of_model(const uint8_t *model, uint32_t size, tide_mesh_data *out);
+
+// `m`'s vertices (the model's own geometry) at rest: each where its bones'
+// rest pose puts it, in the skeleton's space, as a SkinnedMesh of the file
+// draws at rest, its normal turned the same way, written into `position` and
+// `normal` (3 floats a vertex each). A vertex no bone moves stays where it
+// is. False, writing nothing, for bytes that aren't a model of m's vertices.
+bool tide_mesh_data_rest(const uint8_t *model, uint32_t size, const tide_mesh_data *m, float *position, float *normal);
+
+// A vertex's four heaviest bones, the heaviest first (a tie keeps the
+// model's order), as the skeleton numbers them, and their weights, which sum
+// to 1. A vertex no bone moves has no weight at all, and bone 0.
+void tide_mesh_data_bones(const struct tide_skinned_data_view *view, uint32_t vertex, int32_t bone[4], float weight[4]);
 
 // A decimal number as a float, the same bits on every machine: `s` to `end`,
 // all of it. False for text that isn't one. What no float holds is 0.

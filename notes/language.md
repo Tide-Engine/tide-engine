@@ -1,5 +1,52 @@
 # Language features, as tidec builds them
 
+## Mesh<V>.Decode (2026-11-02)
+
+Owner-approved (assets-and-files.md, The static mesh reader in the engine):
+`Mesh<V>.Decode(List<byte> bytes)` gives `Mesh<V> fails IOError`, the same
+geometry value `Mesh(vertices, indices)` makes. Rules are Provisional in
+docs/spec.md, Decoding a mesh.
+
+- **Parsing.** `Mesh<...>` followed by `.` after its `>` (`type_then_dot`,
+  token lookahead as `at_type_argument`) is read as `SkinnedMesh<...>` is: an
+  `E_NAME` with `type_arg_ref`. Nothing else named `Mesh` changes.
+- **Checking** (`check_mesh_decode`, from `check_method` after
+  `check_skinned_static`): the receiver is `Mesh<V>` as written
+  (`resolve_mesh`, PLACE_LOCAL) or an alias of the geometry Mesh, which
+  `alias_receiver` has already replaced by the builtin type and left in
+  `receiver->type_alias`. Only `Decode` (other names: "has the static method
+  Decode(bytes)", with a note naming the constructor); refused in frag/vert
+  (`gpu_code`, as `check_new_mesh` and skinned ops are); `mesh_vertex_ok`
+  checks the vertex; `skinned_arguments` the one `List<byte>`. Sets
+  `CALL_MESH_DECODE`, `type_decl` = the Mesh decl, `decl.mesh_decoded`,
+  `program.mesh_decodes`, `uses_text`.
+- **Codegen.** `gen_mesh_decode` (beside `tide_mesh_make_<ref>`, for each
+  decoded Mesh decl) writes `tide_mesh_decode_<ref>(tide_list)`: flatten,
+  `tide_mesh_data_decode(..., TIDE_MESH_ANY, &tide_mesh_decode_limits, ...)`,
+  `tide_mesh_data_with_tangents` for a `float4 tangent` (as `pack_mesh`'s
+  variant), or for `joints`/`weights` the skinned decoder then
+  `tide_mesh_data_of_model`/`_rest`/`_finite` and `_bones` per vertex (as
+  `pack_mesh` with `rest`); scratch lists filled by `mesh_fills`, defaults by
+  `gen_value`; `id = tide_mesh_key(...)`. The call site is
+  `tide_mesh_decode_<ref>(bytes)`. Games that decode include
+  `tide/mesh_data.h` and `tide/skinned_data.h`; others generate what they did.
+- **Identity.** `collect_asset_dependencies` seeds each decoded Mesh's vertex
+  into the default closure, as SkinnedMesh's Decode results are.
+- **Editors.** `mesh_calls` (`Decode`) is the geometry Mesh's in
+  `methods_of`; completion after `Mesh<...>.`; hover and signature help
+  through `CALL_MESH_DECODE` beside `CALL_SKINNED`; `format_method` names
+  the Mesh type and substitutes `Mesh<V>`. As for SkinnedMesh, a value's
+  completion lists `Decode` too.
+
+Tests: `tidec_e2e_mesh_decode` (GLB, embedded glTF and an alias's decode,
+OBJ into a vertex with a default and a float4 tangent, a mesh with bones,
+each equal to its asset field by field; refusals of text and no bytes; `is`
+unwrapping; a list of asset and decoded meshes; key equality; snapshot, hash,
+pack and unpack; a world hash pinned, the same on native and web; a local
+decode and the match's drawn as one GPU mesh), five `mesh_decode_*`
+diagnostics, `lsp_mesh_decode_completes_hovers_and_checks`, and
+`tests/test_mesh_decode.c` for the reader.
+
 ## Meshes the game makes: Mesh(vertices, indices) (2026-11-02)
 
 Owner-approved design (one type, `Asset<Mesh<V>>` split back out, match state

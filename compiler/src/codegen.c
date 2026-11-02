@@ -4436,6 +4436,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             if (!reads) sb_printf(o, ", %s", place_where(g, e->object)); // Where the map is
             sb_put(o, ")");
+        } else if (e->call == CALL_MESH_DECODE) { // Mesh<V>.Decode(bytes): a mesh of the file's, in the scratch area
+            sb_printf(o, "tide_mesh_decode_%s(", type_cname(e->type_decl));
+            gen_as(g, o, e->args.items[0], e->args.items[0]->type);
+            sb_put(o, ")");
         } else if (e->call == CALL_GRID && str_eq_c(e->name, "Decode")) { // cells.Decode(bytes): the PNG's pixels
             sb_put(o, "tide_checked_grid_decode(&(");
             gen_expr(g, o, e->object);
@@ -8566,6 +8570,7 @@ static void gen_header(gen *g)
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
               "#include \"tide/jobs.h\"\n#include \"tide/worker.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
     if (prog->decodes) sb_put(o, "#include \"tide/png.h\"\n"); // grid.Decode: only in a game that calls it
+    if (prog->mesh_decodes) sb_put(o, "#include \"tide/mesh_data.h\"\n#include \"tide/skinned_data.h\"\n"); // Mesh<V>.Decode
     if (prog->uses_resident) sb_put(o, "#include \"tide/resident.h\"\n"); // A Resident field: only in a game that has one
     sb_put(o, "\n");
     if (prog->random->named) sb_put(o, "#include \"tide/random.h\"\n\n"); // Random, in the games that have one
@@ -19596,6 +19601,11 @@ static void collect_asset_dependencies(gen *g)
         if (r->fields.count == 2 && t.kind == TY_STRUCT && t.decl->skin_kind == SKIN_MESH)
             dependency_vertex(&w, t.decl->skin_vertex.decl);
     }
+    // ...and so does a static Mesh<V>.Decode, whose vertices are match state where match code decodes
+    for (int i = 0; i < g->prog->asset_refs.count; i++) {
+        const decl *ref = g->prog->asset_refs.items[i];
+        if (ref->asset_ref_geometry && ref->mesh_decoded) dependency_vertex(&w, ref->asset_ref_of->fields.items[0].type.decl);
+    }
     if (w.assets.count > 1) qsort(w.assets.items, (size_t)w.assets.count, sizeof *w.assets.items, dependency_order);
     for (int i = 0; i < w.assets.count; i++) {
         const decl *d = w.assets.items[i];
@@ -19707,6 +19717,101 @@ static void gen_asset_fingerprint_check(gen *g, const asset_dependency *assets, 
               defaults ? "skinned vertex-default dependencies" : "skinned assets");
 }
 
+// Mesh<V>.Decode(bytes) (check_mesh_decode): the engine's reader (tide/mesh_data.h) within Decode's limits, the
+// vertices filled by their fields' names as an asset's are (mesh_fills, pack_mesh), every other field its default,
+// and the mesh's id what's in its lists (tide_mesh_key), as Mesh(vertices, indices) makes one. A vertex with
+// 'joints' or 'weights' is a Mesh with bones: read as a skinned model is (a .glb), at rest, with its bones. The
+// arithmetic is the build's own, so a file decoded gives the vertices its asset has, on every machine.
+static void gen_mesh_decode(gen *g, const decl *ref)
+{
+    sb *o = &g->c;
+    const decl *result = NULL;
+    for (int i = 0; i < g->prog->results.count && !result; i++) {
+        const decl *r = g->prog->results.items[i];
+        if (r->fields.count == 2 && r->fields.items[0].type.kind == TY_STRUCT && r->fields.items[0].type.decl == ref
+            && r->fields.items[1].type.kind == TY_ENUM && r->fields.items[1].type.decl == g->prog->io_error) result = r;
+    }
+    if (!result) return;
+    const decl *vertex = ref->asset_ref_of->fields.items[0].type.decl;
+    bool bones = false, tangent4 = false;
+    for (int f = 0; f < vertex->fields.count; f++) {
+        const field *field = &vertex->fields.items[f];
+        const int fill = mesh_fills(field);
+        bones |= fill == FILL_JOINTS || fill == FILL_WEIGHTS;
+        tangent4 |= fill == FILL_TANGENT && field->type.kind == TY_FLOAT4;
+    }
+    const char *result_c = c_type((type){TY_FAILABLE, (decl *)result});
+    sb_printf(o, "\nTIDE_HELPER %s tide_mesh_decode_%s(const tide_list input)\n{\n"
+                 "    %s result = {.error = IOError_InvalidData};\n"
+                 "    bool copied = false;\n"
+                 "    void *raw = tide_list_flatten(input, 1u, false, &copied);\n"
+                 "    const size_t size = (size_t)tide_list_count(input);\n"
+                 "    char why[256], note[256];\n"
+                 "    tide_mesh_data m;\n",
+              result_c, type_cname(ref), result_c);
+    if (bones) {
+        // As the build reads one (asset_files.c's skin_geometry, codegen's rest_mesh and fill_bones)
+        sb_put(o, "    uint8_t *model = NULL;\n    uint32_t model_size = 0;\n"
+                  "    const bool ok = tide_skinned_data_decode(raw, size, true, NULL, NULL, &model, &model_size, why, note);\n"
+                  "    tide_list_unflatten(input, raw, 1u, false, copied);\n"
+                  "    if (!ok) return result;\n"
+                  "    tide_skinned_data_view view;\n"
+                  "    if (!tide_skinned_data_open(model, model_size, &view) || !tide_mesh_data_of_model(model, model_size, &m)) {\n"
+                  "        tide_skinned_data_free(model);\n        return result;\n    }\n"
+                  "    {\n"
+                  "        float *position = tide_alloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));\n"
+                  "        float *normal = tide_alloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));\n"
+                  "        if (tide_mesh_data_rest(model, model_size, &m, position, normal)) {\n"
+                  "            free(m.position);\n            free(m.normal);\n"
+                  "            m.position = position;\n            m.normal = normal;\n"
+                  "        } else {\n            free(position);\n            free(normal);\n        }\n    }\n"
+                  "    if (!tide_mesh_data_finite(&m)) {\n"
+                  "        tide_mesh_data_free(&m);\n        tide_skinned_data_free(model);\n        return result;\n    }\n");
+    } else {
+        sb_put(o, "    const bool ok = tide_mesh_data_decode(raw, size, TIDE_MESH_ANY, &tide_mesh_decode_limits, NULL, NULL, &m, why, note, NULL);\n"
+                  "    tide_list_unflatten(input, raw, 1u, false, copied);\n"
+                  "    if (!ok) return result;\n");
+        if (tangent4) { // A float4 tangent: missing ones made, as an asset's are (mesh_file_with_tangents)
+            sb_put(o, "    {\n        tide_mesh_data sided;\n"
+                      "        const bool made = tide_mesh_data_with_tangents(&m, &tide_mesh_decode_limits, &sided, why, note);\n"
+                      "        tide_mesh_data_free(&m);\n"
+                      "        if (!made) return result;\n"
+                      "        m = sided;\n    }\n");
+        }
+    }
+    sb_printf(o, "    tide_list_resize(&result.value.vertices, (int32_t)m.vertices, sizeof(%s), TIDE_IN_SCRATCH);\n"
+                 "    tide_list_resize(&result.value.indices, (int32_t)m.indices, sizeof(int32_t), TIDE_IN_SCRATCH);\n"
+                 "    const %s defaults = ",
+              type_cname(vertex), type_cname(vertex));
+    gen_value(g, o, vertex, NULL, 0);
+    sb_printf(o, ";\n    for (uint32_t i = 0; i < m.vertices; i++) {\n"
+                 "        %s *to = tide_list_at_mut(result.value.vertices, (int32_t)i, sizeof *to);\n"
+                 "        *to = defaults;\n",
+              type_cname(vertex));
+    if (bones) sb_put(o, "        int32_t bone[4];\n        float weight[4];\n        tide_mesh_data_bones(&view, i, bone, weight);\n");
+    for (int f = 0; f < vertex->fields.count; f++) {
+        const field *field = &vertex->fields.items[f];
+        const char *name = field_cname(field);
+        switch (mesh_fills(field)) {
+        case FILL_POSITION: sb_printf(o, "        memcpy(&to->%s, m.position + 3u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_NORMAL: sb_printf(o, "        memcpy(&to->%s, m.normal + 3u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_UV: sb_printf(o, "        memcpy(&to->%s, m.uv + 2u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_UV2: sb_printf(o, "        memcpy(&to->%s, m.uv2 + 2u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_COLOR: sb_printf(o, "        memcpy(&to->%s, m.color + 4u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_TANGENT: sb_printf(o, "        memcpy(&to->%s, m.tangent + 4u * (size_t)i, sizeof to->%s);\n", name, name); break;
+        case FILL_JOINTS: sb_printf(o, "        memcpy(&to->%s, bone, sizeof to->%s);\n", name, name); break;
+        case FILL_WEIGHTS: sb_printf(o, "        memcpy(&to->%s, weight, sizeof to->%s);\n", name, name); break;
+        default: break;
+        }
+    }
+    sb_printf(o, "    }\n"
+                 "    for (uint32_t i = 0; i < m.indices; i++) *(int32_t *)tide_list_at_mut(result.value.indices, (int32_t)i, sizeof(int32_t)) = (int32_t)m.index[i];\n"
+                 "    tide_mesh_data_free(&m);\n%s"
+                 "    result.value.id = (int64_t)tide_mesh_key(result.value.vertices, (uint32_t)sizeof(%s), result.value.indices);\n"
+                 "    result.ok = true;\n    result.error = (IOError)0;\n    return result;\n}\n",
+              bones ? "    tide_skinned_data_free(model);\n" : "", type_cname(vertex));
+}
+
 static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
@@ -19749,6 +19854,7 @@ static void gen_assets(gen *g)
                          "    return m;\n}\n",
                       type_cname(ref), type_cname(ref), type_cname(ref), c_type(vertex), c_type(vertex));
         }
+        if (ref->asset_ref_geometry && ref->mesh_decoded) gen_mesh_decode(g, ref);
         sb_printf(o, "\nTIDE_HELPER %s tide_resolve_%s(const %s ref)\n{\n", c_type(value), type_cname(ref), type_cname(ref));
         if (ref->asset_ref_geometry) sb_put(o, "    if (ref.id < 0) return (tide_mesh_lists){ref.vertices, ref.indices}; // The game's own\n");
         sb_put(o, "    switch (ref.id) {\n");
@@ -20025,40 +20131,13 @@ static void fill_bones(const asset_match *item, uint8_t *bytes, const int stride
     tide_skinned_data_view view;
     if (!item->skinned || !tide_skinned_data_open(item->skinned, item->skinned_size, &view)) return;
     for (uint32_t v = 0; v < vertices; v++) {
-        tide_skinned_vertex_data vertex;
-        if (!tide_skinned_data_vertex(&view, v, &vertex)) continue;
-        int32_t bone[4] = {0, 0, 0, 0};
-        float weight[4] = {0, 0, 0, 0};
-        for (uint32_t i = 0; i < vertex.influences; i++) {
-            tide_skinned_influence_data influence;
-            tide_skinned_palette_data palette;
-            if (!tide_skinned_data_influence(&view, vertex.first_influence + i, &influence)
-                || !tide_skinned_data_palette(&view, influence.palette, &palette) || !(influence.weight > 0.0f)) continue;
-            int slot = 4;
-            while (slot > 0 && weight[slot - 1] < influence.weight) slot--; // Heaviest first; a tie keeps the order
-            if (slot == 4) continue;
-            for (int k = 3; k > slot; k--) bone[k] = bone[k - 1], weight[k] = weight[k - 1];
-            bone[slot] = (int32_t)palette.node;
-            weight[slot] = influence.weight;
-        }
-        const float sum = weight[0] + weight[1] + weight[2] + weight[3];
-        for (int k = 0; k < 4 && sum > 0.0f; k++) weight[k] /= sum;
+        int32_t bone[4];
+        float weight[4];
+        tide_mesh_data_bones(&view, v, bone, weight);
         memcpy(bytes + (size_t)v * (size_t)stride + (size_t)at, joints ? (const void *)bone : (const void *)weight, 16u);
     }
 }
 
-// Column-major 4x4s: a times b.
-static void mat_mul(const float a[16], const float b[16], float out[16])
-{
-    float r[16];
-    for (int c = 0; c < 4; c++) {
-        for (int row = 0; row < 4; row++) {
-            r[c * 4 + row] = a[0 * 4 + row] * b[c * 4 + 0] + a[1 * 4 + row] * b[c * 4 + 1] + a[2 * 4 + row] * b[c * 4 + 2]
-                           + a[3 * 4 + row] * b[c * 4 + 3];
-        }
-    }
-    memcpy(out, r, sizeof r);
-}
 
 // A Mesh with bones is the model at rest (docs/spec.md, Models): each vertex where its bones' rest pose puts it,
 // in the skeleton's space, as a SkinnedMesh of the file draws at rest, so a pose's bones' model matrices against
@@ -20066,58 +20145,17 @@ static void mat_mul(const float a[16], const float b[16], float out[16])
 // False, leaving `rested` alone, for bytes that aren't a model of that many vertices.
 static bool rest_mesh(const asset_match *item, const mesh_file *m, mesh_file *rested)
 {
-    tide_skinned_data_view view;
-    if (!item->skinned || !tide_skinned_data_open(item->skinned, item->skinned_size, &view) || view.vertices != m->vertices) return false;
-    float(*model)[16] = calloc(view.nodes ? view.nodes : 1u, sizeof *model);
-    if (!model) abort();
-    for (uint32_t n = 0; n < view.nodes; n++) { // Parents come first
-        tide_skinned_node_data node;
-        float local[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        if (tide_skinned_data_node(&view, n, &node)) {
-            const float x = node.rotation[0], y = node.rotation[1], z = node.rotation[2], w = node.rotation[3];
-            const float r[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w),
-                                2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w),
-                                2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)};
-            for (int c = 0; c < 3; c++) {
-                for (int row = 0; row < 3; row++) local[c * 4 + row] = r[c * 3 + row] * node.scale[c];
-            }
-            local[12] = node.position[0], local[13] = node.position[1], local[14] = node.position[2];
-        }
-        if (n > 0 && node.parent >= 0 && (uint32_t)node.parent < n) mat_mul(model[node.parent], local, model[n]);
-        else memcpy(model[n], local, sizeof local);
+    float *position = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
+    float *normal = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
+    if (!position || !normal) abort();
+    if (!tide_mesh_data_rest(item->skinned, item->skinned_size, m, position, normal)) {
+        free(position);
+        free(normal);
+        return false;
     }
     *rested = *m;
-    rested->position = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
-    rested->normal = malloc(sizeof(float) * 3u * (m->vertices ? m->vertices : 1u));
-    if (!rested->position || !rested->normal) abort();
-    for (uint32_t v = 0; v < m->vertices; v++) {
-        const float *p = m->position + (size_t)v * 3u, *nrm = m->normal + (size_t)v * 3u;
-        float at[3] = {0, 0, 0}, turned[3] = {0, 0, 0}, weights = 0.0f;
-        tide_skinned_vertex_data vertex;
-        for (uint32_t i = 0; tide_skinned_data_vertex(&view, v, &vertex) && i < vertex.influences; i++) {
-            tide_skinned_influence_data influence;
-            tide_skinned_palette_data palette;
-            if (!tide_skinned_data_influence(&view, vertex.first_influence + i, &influence)
-                || !tide_skinned_data_palette(&view, influence.palette, &palette) || palette.node >= view.nodes
-                || !(influence.weight > 0.0f)) continue;
-            float skin[16];
-            mat_mul(model[palette.node], palette.inverse_bind, skin);
-            for (int row = 0; row < 3; row++) {
-                at[row] += influence.weight * (skin[row] * p[0] + skin[4 + row] * p[1] + skin[8 + row] * p[2] + skin[12 + row]);
-                turned[row] += influence.weight * (skin[row] * nrm[0] + skin[4 + row] * nrm[1] + skin[8 + row] * nrm[2]);
-            }
-            weights += influence.weight;
-        }
-        if (!(weights > 0.0f)) { // No bone moves it: where it is
-            memcpy(at, p, sizeof at), memcpy(turned, nrm, sizeof turned), weights = 1.0f;
-        }
-        const float length = sqrtf(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]);
-        for (int row = 0; row < 3; row++) {
-            rested->position[(size_t)v * 3u + row] = at[row] / weights;
-            rested->normal[(size_t)v * 3u + row] = length > 0.0f ? turned[row] / length : nrm[row];
-        }
-    }
-    free(model);
+    rested->position = position;
+    rested->normal = normal;
     // Another mesh than the file's own, to the pack and to the levels' cache
     static const char kind[] = "tide mesh with bones, at rest";
     tide_sha256 h;

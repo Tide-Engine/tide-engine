@@ -632,6 +632,7 @@ typedef struct decl {
     skinned_kind skin_kind;
     struct decl *asset_ref_of; // Asset<T>: named static/skinned model identity, resolved without ownership on .Value
     bool asset_ref_geometry;   // ...Mesh<V> itself: the identity, or (id < 0) geometry the game made, in two hidden lists
+    bool mesh_decoded;         // ...and Mesh<V>.Decode makes one: its adapter goes in the generated C
     bool task_handle; // Task<T>/LocalTask<T>: shared operation identity, not an owned result
     bool task_local;
     type task_value; // The complete result, including optional/failure wrapping
@@ -997,6 +998,7 @@ typedef enum builtin_call {
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_NEW_MESH,  // Mesh(vertices, indices): a static mesh of the game's own lists, copied
+    CALL_MESH_DECODE, // Mesh<V>.Decode(bytes): a static mesh read from a file's bytes; type_decl is the Mesh<V>
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
     CALL_DERIVATIVE, // this.Ddx(v), this.Ddy(v) and this.Fwidth(v), in a frag: how fast v changes across a pixel; `name` says which
     CALL_COVER,     // this.Cutout(alpha) and this.Coverage(share), in a frag: how much of the pixel it covers; `name` says which
@@ -1551,6 +1553,7 @@ typedef struct program {
     bool from_bytes;     // string.FromBytes(bytes) is called: its adapter goes in the generated C
     type from_bytes_result; // ...and what it gives: string?
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
+    bool mesh_decodes;   // Mesh<V>.Decode(bytes) is called: tide/mesh_data.h goes in the generated C
     type decode_result;  // ...and what it gives: void fails IOError
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
     decl *placed;        // The built-in record a vert's `this` is: its vertex as the engine would place it

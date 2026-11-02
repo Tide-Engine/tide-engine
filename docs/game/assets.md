@@ -25,7 +25,7 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 | `string` | Any UTF-8 text file | Text |
 | `List<byte>` | Any file | Its original bytes |
 
-These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
+These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, runtime [`Mesh<V>.Decode`](#meshes) reads GLB, a glTF with its buffers inside it and OBJ, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
 
 WebP, TIFF, animated images, SVG, HDR/EXR and GPU texture containers such as DDS/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
 
@@ -325,6 +325,27 @@ system Build(mut Terrain terrain)
 - **Equality compares contents:** two meshes made of the same lists are `==`, and a made mesh is never an asset's or `default`, even with no triangles.
 - **Levels of detail** are the draw's to ask for, `lod:`, as for any mesh your game makes (below).
 - **Not there:** a made `SkinnedMesh<V>`; and a 2D mesh, which draws from its two lists, `Draw.Mesh(vertices, indices)`.
+
+**A mesh read while the game runs is a `Mesh<V>` too.** `Mesh<V>.Decode(bytes)` reads a model from a `List<byte>`, from [`await Web.Fetch(url)`](./files.md), `File.ReadAllBytes(path)` or a player's upload, and gives a `Mesh<V> fails IOError`. It reads the file as an `asset Mesh<V>` of it does: the same vertices, filled by your vertex struct's field names, every other field its default, a `float4 tangent` made where the file has none. It's the same bits on every machine, so match code can decode too, and the mesh then lives as a mesh your game makes does (above).
+
+```csharp
+using Model = Mesh<Vertex3>;
+
+singleton Arena { Model statue; PlayerID host; string message; }
+
+command SetStatue { List<byte> model; }
+
+command(SetStatue value, PlayerID sender) Apply(mut Arena arena)
+{
+    if (sender != arena.host) return;
+    if (Model.Decode(value.model) is Model statue) arena.statue = statue;
+    else arena.message = "That isn't a model";
+}
+```
+
+- **Formats:** a `.glb`, a `.gltf` whose buffers are inside it (data URIs), and an `.obj`, told apart by their first bytes, as the bytes have no name. A `.gltf` that names buffer files, and an FBX, which Tide reads at build time only, are `IOError.InvalidData`, as is anything else that isn't a mesh.
+- **A vertex with `joints` or `weights`** is a [Mesh with bones](./animation.md), read from a `.glb` as its asset is: at rest, each corner with its four heaviest bones.
+- **Limits:** a file of more than 512 MiB, 1,048,576 vertices, 6,291,456 triangle corners, 4,194,304 JSON values or 67,108,864 numbers read (an `.obj`'s vertex, normal and uv lines count) is `InvalidData` before anything is made for it, and so is a mesh whose numbers a node's transform takes past what a float holds. Each machine that refused one says why on its log, naming the limit: `tide: Mesh.Decode refused a mesh: it has 2,000,000 vertices in a part, more than the 1,048,576 Mesh.Decode takes (TIDE_MESH_DECODE_MAX_VERTICES)`.
 
 Collections follow ordinary value-copy and mutation rules. Copying an immutable asset collection can share its ID storage until a write. Geometry stays in the asset pack. Singular IDs follow the qualified declaration name; glob-element IDs also include the written file key, so changing a glob's order keeps retained selections stable. A removed or unknown ID resolves to empty geometry. Renaming a declaration or file key changes that identity.
 

@@ -7897,6 +7897,61 @@ static type check_window_target(checker *c, expr *e)
 static bool mesh_vertex_ok(const decl *vertex, loc at);
 #include "skinned_ops.inc"
 
+// Mesh<V>.Decode(bytes): a static Mesh<V> of a file's bytes (a .glb, a .gltf whose buffers are inside it, or an .obj;
+// tide/mesh_data.h), read as an asset of the file is, so the same vertices, on every machine: pure, so match code
+// decodes too. It fails with IOError.InvalidData. The receiver is `Mesh<V>` as written, or an alias of one.
+static type check_mesh_decode(checker *c, expr *e, bool *handled)
+{
+    *handled = false;
+    expr *receiver = e->object;
+    if (!receiver || receiver->kind != E_NAME) return T_ERR;
+    type mesh = T_ERR;
+    if (receiver->type_arg_ref && str_eq_c(receiver->type_arg_ref->name, "Mesh") && receiver->type_arg_ref->args.count == 1) {
+        *handled = true;
+        mesh = resolve_mesh(c, receiver->type_arg_ref, PLACE_LOCAL, receiver->at);
+    } else if (receiver->type_alias || (!receiver->type_arg_ref && !find_local(c, receiver->name) && !find_param(c, receiver->name)
+               && !field_in_scope(c, receiver->name))) {
+        // An alias: alias_receiver has already put the type it names in its place, and kept the alias
+        decl *alias = receiver->type_alias ? receiver->type_alias : authored_alias(c, receiver->name, receiver->at);
+        if (!alias) return T_ERR;
+        const type t = resolve_alias_type(c, alias);
+        if (t.kind != TY_STRUCT || !t.decl->asset_ref_geometry) return T_ERR;
+        *handled = true;
+        mesh = t;
+    } else return T_ERR;
+    if (mesh.kind == TY_ERROR) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if (!str_eq_c(e->name, "Decode")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "%s has the static method Decode(bytes), not '" STR_FMT "'", type_name(mesh), STR_ARG(e->name));
+        diag_note("a Mesh is made from lists with 'Mesh(vertices, indices)'");
+        return T_ERR;
+    }
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Mesh is decoded in CPU code, and drawn: 'Draw.Mesh(%s.Decode(bytes)!, transform)'", type_name(mesh));
+        return T_ERR;
+    }
+    const decl *vertex = mesh.decl->asset_ref_of->fields.items[0].type.decl;
+    if (!mesh_vertex_ok(vertex, e->at)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1, -1)) return T_ERR;
+    receiver->type = mesh;
+    receiver->type_decl = mesh.decl;
+    receiver->bind = BIND_TYPE;
+    e->call = CALL_MESH_DECODE;
+    e->type_decl = mesh.decl;
+    mesh.decl->mesh_decoded = true;
+    c->prog->mesh_decodes = true;
+    c->prog->uses_text = true; // Its lists are made in the scratch area, which code clears after it runs
+    return result_of(c->prog, mesh, (type){TY_ENUM, c->prog->io_error}, false);
+}
+
 static decl *named_enum(const checker *c, const expr *e);
 // Sample's filter and wrap have fixed enum types even though this call's
 // shader binding is checked separately from the ordinary signature table.
@@ -8285,6 +8340,9 @@ static type check_method(checker *c, expr *e)
     bool static_skin_handled = false;
     const type static_skin = check_skinned_static(c, e, &static_skin_handled);
     if (static_skin_handled) return static_skin;
+    bool mesh_decode_handled = false;
+    const type mesh_decoded = check_mesh_decode(c, e, &mesh_decode_handled);
+    if (mesh_decode_handled) return mesh_decoded;
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
         if (!world && str_eq_c(e->object->name, "world") && !field_in_scope(c, e->object->name)
