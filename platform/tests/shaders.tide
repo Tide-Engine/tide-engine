@@ -4610,6 +4610,9 @@ view ImageMeasurements(Art art, mut ImageSizes sizes)
 // numbers, the same way round, on every backend.
 local singleton Cuts
 {
+    RenderTarget hdrOpaque;
+    RenderTarget hdrClear;
+    RenderTarget hdrMultiple;
     RenderTarget smooth;  // 64 pixels by 64 whatever the display, 4 samples
     RenderTarget sharp;   // ...and one
     RenderTarget shared;  // ...4 samples, for the share
@@ -4644,6 +4647,32 @@ frag Share(Vertex vertex, out Color color)
     this.Coverage(0.75);
 }
 
+frag HdrCoverage(Vertex vertex, out Color color)
+{
+    color = Color(4, 0.5, 0.25);
+    this.Coverage(0.75);
+}
+
+// Multiple outputs must retain their authored alpha on the unchanged path.
+frag HdrMultipleCoverage(Vertex vertex, out Color color, out Color other)
+{
+    color = Color(4, 0.5, 0.25);
+    other = Color(0.5, 0.25, 0.125, 0.25);
+    this.Coverage(0.75);
+}
+
+frag InspectCoverage(Vertex vertex, out Color color, Texture source)
+{
+    var value = source.Sample(vertex.uv, Filter.Point);
+    color = Color(value.r / 4, value.a, value.g);
+}
+
+frag InspectOtherCoverage(Vertex vertex, out Color color, Texture source)
+{
+    var value = source.Sample(vertex.uv, Filter.Point);
+    color = Color(value.r, value.a, value.g);
+}
+
 // A pixel across in pixels, a pixel down in the uv's 64ths, and a 64th across in halves: 1, 1 and 0.5
 frag Slopes(Vertex vertex, out Color color)
 {
@@ -4663,6 +4692,9 @@ view Cutouts(Art art, mut Cuts cuts)
     if (!cuts.made)
     {
         cuts.made = true;
+        cuts.hdrOpaque = RenderTarget(64, 64, 1, Format.Rgba16f, samples: 4);
+        cuts.hdrClear = RenderTarget(64, 64, 1, Format.Rgba16f, samples: 4);
+        cuts.hdrMultiple = RenderTarget(64, 64, 1, Format.Rgba16f, Format.Rgba16f, samples: 4);
         cuts.smooth = RenderTarget(64, 64, 1, samples: 4);
         cuts.sharp = RenderTarget(64, 64, 1);
         cuts.shared = RenderTarget(64, 64, 1, samples: 4);
@@ -4690,6 +4722,15 @@ view Cutouts(Art art, mut Cuts cuts)
     cuts.probe.Clear(Color.black);
     cuts.probe.SetScreen();
     cuts.probe.Mesh(cuts.sheet, art.faces, Slopes);
+    cuts.hdrOpaque.Clear(Color.black);
+    cuts.hdrOpaque.SetScreen();
+    cuts.hdrOpaque.Mesh(cuts.sheet, art.faces, HdrCoverage);
+    cuts.hdrClear.Clear(Color(0, 0, 0, 0));
+    cuts.hdrClear.SetScreen();
+    cuts.hdrClear.Mesh(cuts.sheet, art.faces, HdrCoverage);
+    cuts.hdrMultiple.Clear(Color(0, 0, 0, 0));
+    cuts.hdrMultiple.SetScreen();
+    cuts.hdrMultiple.Mesh(cuts.sheet, art.faces, HdrMultipleCoverage);
     // From 10 in front of the card, a box 2 by 2 with no perspective: the card fills it
     cuts.depth.Clear(Color.white);
     cuts.depth.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(2, 2, 0.1, 30));
@@ -4723,6 +4764,18 @@ view Cutouts(Art art, mut Cuts cuts)
     Draw.Transform(float2(192, 64))
     {
         Draw.Mesh(cuts.sheet, art.faces, cuts.probe.color, Filter.Point);
+    }
+    Draw.Transform(float2(0, 128))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.hdrOpaque.color, InspectCoverage);
+    }
+    Draw.Transform(float2(64, 128))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.hdrClear.color, InspectCoverage);
+    }
+    Draw.Transform(float2(128, 128))
+    {
+        Draw.Mesh(cuts.sheet, art.faces, cuts.hdrMultiple.colors[1], InspectOtherCoverage);
     }
 }
 

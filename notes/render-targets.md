@@ -1,5 +1,39 @@
 # Render targets and cubemaps
 
+## Native single-output cutout alpha (2026-11-02)
+
+The Mount & Rifle pale-rim report exposed coverage stored twice: a covered
+sample had opaque RGB but fractional alpha, then resolve averaged both and
+sampling divided RGB by that undersized alpha. Desktop OpenGL now enables
+`GL_SAMPLE_ALPHA_TO_ONE` with alpha-to-coverage for single-output shaders,
+resetting it at every pass and when another pipeline is used. Vulkan requests
+the optional `alphaToOne` feature only where supported and enables it on the
+same pipelines. Hardware coverage selection and shader RGB are unchanged;
+the selected samples store alpha one. No generated-C/runtime API changed.
+
+This correction is deliberately limited. Alpha-to-one also replaces secondary
+outputs' alpha (observed on both local backends), so multi-output shaders retain
+the old path rather than corrupting their other outputs. WebGL/OpenGL ES lack
+this desktop state; WebGPU and Vulkan devices without `alphaToOne` retain the
+old path too. Those cases still need separate coverage and color outputs or a
+different implementation. Premultiplying RGB by coverage again is not a fix:
+it would attenuate color twice. The game checkout and pin were not changed.
+
+`platform/tests/shaders` pass 24 now draws HDR coverage into opaque and
+transparent four-sample targets, resolves and samples their color and alpha,
+and checks a multi-output control's secondary alpha. The corrected native
+Vulkan and OpenGL ASan CTests pass, including repeated and prewarmed checks.
+Disabling only alpha-to-one makes precisely the new HDR checks fail on both:
+opaque probe `EBCF76FF` instead of `BFFF60FF`, transparent `FF8FAAFF` instead
+of `FFBF7FFF`; the secondary-output control stays `7F3040FF`. Unsupported
+backends explicitly report that the stored-alpha correction is unavailable;
+their existing coverage tests are retained. Other GPU vendors, macOS and
+Android hardware have not been exercised.
+
+The web-release shader fixture also builds and passes on WebGL, ANGLE D3D11
+and WebGPU (31.05/45.59/29.51 s), validating the retained fallback and new
+probe shaders, not claiming the stored-alpha defect fixed on those backends.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform

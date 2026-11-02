@@ -965,6 +965,9 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     glDisable(GL_CULL_FACE); // Either side of a triangle draws, until a pipeline says otherwise (gl_use)
     glDisable(GL_STENCIL_TEST); // ...and no stencil test
     glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE); // ...and no alpha is coverage
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    glDisable(GL_SAMPLE_ALPHA_TO_ONE);
+#endif
     pass_stencil = 0;
     glEnable(GL_SCISSOR_TEST);
     glScissor(0, 0, width, height);
@@ -1088,6 +1091,14 @@ static void gl_use(const tide_gpu_id pipeline)
     // A cut-out's alpha is the share of a pixel's samples it draws into (a pass on a target of one has none)
     if (current->desc.alpha_to_coverage) glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     else glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    // Coverage selects the samples; each selected sample is opaque. Keeping
+    // the coverage alpha in it would brighten a resolved texture when sampled.
+    // Alpha-to-one also replaces secondary outputs' alpha. Keep their
+    // authored alpha until the multi-output coverage path can separate it.
+    if (current->desc.alpha_to_coverage && current->desc.outputs <= 1u) glEnable(GL_SAMPLE_ALPHA_TO_ONE);
+    else glDisable(GL_SAMPLE_ALPHA_TO_ONE);
+#endif
     set_stencil(current);
 }
 

@@ -214,6 +214,7 @@ static struct {
     VkPhysicalDeviceProperties properties;
     VkPhysicalDeviceMemoryProperties memory;
     bool compression;   // BC1 and BC3
+    bool alpha_to_one;  // Coverage alpha becomes opaque after selecting samples
     bool depth_linear;  // A depth is compared blended between its pixels
     VkFormat window_format; // The window's, which every color image of 4 bytes a pixel has too
     VkFormat depth_format;
@@ -1858,7 +1859,8 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
     // A cut-out's alpha is the share of a pixel's samples it draws into, where there are several
     const VkBool32 coverage = desc->alpha_to_coverage && samples > 1u ? VK_TRUE : VK_FALSE;
     const VkPipelineMultisampleStateCreateInfo multisample = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, NULL, 0,
-                                                              (VkSampleCountFlagBits)samples, VK_FALSE, 0.0f, NULL, coverage, VK_FALSE};
+                                                              (VkSampleCountFlagBits)samples, VK_FALSE, 0.0f, NULL, coverage,
+                                                              coverage && vk.alpha_to_one && desc->outputs <= 1u ? VK_TRUE : VK_FALSE};
     static const VkCompareOp tests[] = {VK_COMPARE_OP_ALWAYS, VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL,
                                         VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL,
                                         VK_COMPARE_OP_GREATER_OR_EQUAL}; // By tide_gpu_stencil_test
@@ -2559,6 +2561,8 @@ static bool create_device(const bool say)
     want.features.robustBufferAccess = has.features.robustBufferAccess;
     want.features.textureCompressionBC = has.features.textureCompressionBC;
     vk.compression = has.features.textureCompressionBC;
+    want.features.alphaToOne = has.features.alphaToOne;
+    vk.alpha_to_one = has.features.alphaToOne;
     const float priority = 1.0f;
     const VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, NULL, 0, vk.family, 1, &priority};
     const VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &want, 0, 1, &queue, 0, NULL, enabled_count, enabled, NULL};
@@ -2792,6 +2796,11 @@ void tide_gpu_vk_close(void)
 bool tide_gpu_vk_timestamps(void)
 {
     return vk.device && vk.timestamp_ns > 0.0;
+}
+
+bool tide_gpu_vk_alpha_to_one(void)
+{
+    return vk.device && vk.alpha_to_one;
 }
 
 // The device there is: another once a lost one is made again.

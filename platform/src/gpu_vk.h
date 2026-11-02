@@ -50,6 +50,8 @@ void tide_gpu_vk_surface_changed(void);
 // Whether the device times what it draws (timestamps on its queue): a test's
 // question, as tide_platform_gpu_ms says nothing of whether one can come.
 bool tide_gpu_vk_timestamps(void);
+// For tests: whether covered samples can store opaque alpha independently.
+bool tide_gpu_vk_alpha_to_one(void);
 // For tests: the device is lost once the frame being drawn is shown, as it is
 // when a driver starts over. Everything made on it goes, and the next epoch
 // makes the device again (tide_gpu.epoch, which the renderer asks each frame).

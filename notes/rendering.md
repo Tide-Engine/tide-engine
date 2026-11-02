@@ -1,5 +1,14 @@
 # The platform layer and the renderer
 
+## Native cutout stored alpha (2026-11-02)
+
+Desktop OpenGL and Vulkan with the optional `alphaToOne` feature now store
+opaque alpha after hardware coverage selection for single-output cutout
+pipelines. State resets and capability gating are in the backends; shader
+generation is unchanged. The HDR resolve/resample regression, the secondary
+output control and unresolved MRT/web cases are recorded in
+`notes/render-targets.md`, Native single-output cutout alpha.
+
 ## The device's own memory (2026-11-02)
 
 `tide_gpu.device_memory` (`gpu.h`, optional) is the bytes of memory a discrete GPU has of its own: Vulkan's

@@ -17,6 +17,9 @@
 #include "game.h"
 #include "tide/platform.h"
 #include "window.h" // The backend, for whether it draws into floats
+#if !defined(__wasm__) && !defined(__ANDROID__)
+extern bool tide_gpu_vk_alpha_to_one(void);
+#endif
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
@@ -939,14 +942,15 @@ static void run_cut_checks(const char *when)
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
     tide_gui_end(&gui, &list);
     local.Art.targetPass = 0;
-    tide_float2 points[COUNT + 4];
-    uint32_t got[COUNT + 4];
+    tide_float2 points[COUNT + 7];
+    uint32_t got[COUNT + 7];
     for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
     // The depth target's left and right quarters: one side of the card is cut, whichever way its camera sees it
     points[COUNT] = tide_f2(128 + 16.5f, 32.5f);
     points[COUNT + 1] = tide_f2(128 + 48.5f, 32.5f);
     for (int i = 0; i < 2; i++) points[COUNT + 2 + i] = tide_f2(192 + 32.5f, slopes[i].y + 0.5f);
-    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT + 4, got);
+    for (int i = 0; i < 3; i++) points[COUNT + 4 + i] = tide_f2(32.5f + 64.0f * (float)i, 160.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT + 7, got);
     for (int i = 0; i < COUNT; i++) {
         const float red = (float)(got[i] >> 24) / 255.0f;
         const bool ok = red >= wanted[i].low && red <= wanted[i].high && (got[i] >> 8 & 0xFFFFu) == 0;
@@ -971,6 +975,26 @@ static void run_cut_checks(const char *when)
         printf("%s: %s%s (0x%08X, expected 0xFFFF80FF)\n", fine ? "ok" : "FAIL", slopes[i].what, when, (unsigned)c);
         if (!fine) failures++;
     }
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    const bool opaque_samples = strcmp(tide_platform_renderer(), "OpenGL 3.3") == 0 || tide_gpu_vk_alpha_to_one();
+    if (opaque_samples && tide_window_gpu()->float_targets()) {
+        const uint32_t opaque = got[COUNT + 4], clear = got[COUNT + 5], other = got[COUNT + 6];
+        const int coverage = (int)(clear >> 16 & 255u);
+        const int opaque_red = (int)(opaque >> 24), opaque_blue = (int)(opaque >> 8 & 255u);
+        const int other_alpha = (int)(other >> 16 & 255u);
+        const bool fine = coverage >= 128 && coverage <= 242
+            && abs(opaque_red - coverage) <= 3 && (opaque >> 16 & 255u) >= 252u
+            && abs(2 * opaque_blue - coverage) <= 4
+            && (clear >> 24) >= 252u && abs((int)(clear >> 8 & 255u) - 128) <= 3
+            && abs((int)(other >> 24) - 128) <= 3 && abs((int)(other >> 8 & 255u) - 64) <= 3
+            && abs(4 * other_alpha - coverage) <= 6;
+        printf("%s: HDR cut-out resolve preserves opaque/transparent alpha and resampled color, leaving the second output's alpha alone%s (0x%08X, 0x%08X, 0x%08X)\n",
+               fine ? "ok" : "FAIL", when, (unsigned)opaque, (unsigned)clear, (unsigned)other);
+        if (!fine) failures++;
+    } else printf("cut-out stored-alpha check unavailable on this device%s\n", when);
+#else
+    printf("cut-out stored-alpha correction remains unavailable on this backend%s\n", when);
+#endif
 }
 
 // Textures that are numbers (`Raws` in shaders.tide): [Raw] ones are
