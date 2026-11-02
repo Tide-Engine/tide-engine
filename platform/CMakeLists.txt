@@ -551,8 +551,9 @@ if(NOT TIDE_ANDROID)
     target_link_libraries(tide_platform_shaders PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_shaders SHELL web/test_shell.html)
-        # Its WebGPU passes take CI's macOS runner 65-90 seconds, and longer beside other tests
-        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders WEBGPU EXPECT "renderer: WebGPU" D3D11
+        # Keep diagnostics for this long WebGL fixture and close Chrome gracefully.
+        # Its WebGPU passes take CI's macOS runner 65-90 seconds, and longer beside other tests.
+        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders SERVED WEBGPU EXPECT "renderer: WebGPU" D3D11
             SECONDS 240)
     else()
         add_test(NAME tide_platform_shaders COMMAND tide_platform_shaders)

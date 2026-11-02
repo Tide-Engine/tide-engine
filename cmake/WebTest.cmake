@@ -1,4 +1,4 @@
-# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [WEBGPU [EXPECT <text>] [SECONDS <n>]] [D3D11])
+# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [SERVED] [WEBGPU [EXPECT <text>] [SECONDS <n>]] [D3D11])
 #
 # Web builds: adds a test that opens <target>'s page in headless Chrome or Edge
 # and passes if the page exits with 0. It draws with WebGL 2 (backend=webgl in
@@ -7,6 +7,10 @@
 # <pre id="log"> and the exit code into <body data-exit>, and set
 # Tide.checkGL so mistakes in drawing fail it, as platform/web/test_shell.html
 # does. The test is skipped if no browser is found.
+# SERVED runs the WebGL test in real time through the existing served runner,
+# with streamed output and graceful browser shutdown. Its nominal result budget
+# is 120 seconds, with another 50 for the runner's existing diagnostics/cleanup.
+# D3D11 stays a file-page run; SECONDS remains the WebGPU result deadline.
 #
 # With WEBGPU, it also adds <name>_webgpu, labelled webgpu: the same page
 # drawing with WebGPU (backend=webgpu, which fails rather than falls back to
@@ -43,7 +47,7 @@ if(NOT TIDE_WEB_TEST_PROCESSORS GREATER 0)
 endif()
 
 function(tide_add_web_test name)
-    cmake_parse_arguments(ARG "WEBGPU;D3D11" "TARGET;QUERY;EXPECT;SECONDS" "" ${ARGN})
+    cmake_parse_arguments(ARG "WEBGPU;D3D11;SERVED" "TARGET;QUERY;EXPECT;SECONDS" "" ${ARGN})
     set(page "$<TARGET_FILE_DIR:${ARG_TARGET}>/${ARG_TARGET}.html")
     set(query "backend=webgl")
     set(webgpu_query "backend=webgpu")
@@ -51,14 +55,21 @@ function(tide_add_web_test name)
         set(query "${ARG_QUERY}&${query}")
         set(webgpu_query "${ARG_QUERY}&${webgpu_query}")
     endif()
-    add_test(NAME ${name}
-        COMMAND "${CMAKE_COMMAND}"
-            "-DNODE=${TIDE_NODE}"
-            "-DBROWSER=${TIDE_BROWSER}"
-            "-DPAGE=${page}"
-            "-DQUERY=${query}"
-            "-DPROFILE=${CMAKE_CURRENT_BINARY_DIR}/${name}-browser"
-            -P "${PROJECT_SOURCE_DIR}/cmake/run_web_test.cmake")
+    if(ARG_SERVED)
+        add_test(NAME ${name}
+            COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}" "${page}"
+                "${CMAKE_CURRENT_BINARY_DIR}/${name}-browser" "${query}" --seconds 120)
+        set_tests_properties(${name} PROPERTIES TIMEOUT 170)
+    else()
+        add_test(NAME ${name}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DNODE=${TIDE_NODE}"
+                "-DBROWSER=${TIDE_BROWSER}"
+                "-DPAGE=${page}"
+                "-DQUERY=${query}"
+                "-DPROFILE=${CMAKE_CURRENT_BINARY_DIR}/${name}-browser"
+                -P "${PROJECT_SOURCE_DIR}/cmake/run_web_test.cmake")
+    endif()
     set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:"
         PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     if(ARG_D3D11 AND CMAKE_HOST_WIN32)

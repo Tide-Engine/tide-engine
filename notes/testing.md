@@ -1,5 +1,43 @@
 # Test infrastructure
 
+## Shader WebGL runner diagnostics (2026-11-03)
+
+The macOS WebGL shader fixture reached the file runner's 120-second guard in
+runs 41527109289 and 41539750446, without a dumped DOM or any of its assertions.
+The intervening run 41535944061 passed at 120.03 seconds. That duration alone
+does not prove expensive shader work: the old runner accepts a successful DOM
+even when the browser subsequently reaches the cleanup timeout. Its dump wrapper
+only signals the main Chrome process after receiving the DOM. The logs cannot
+distinguish a busy shader callback from delayed DOM output or browser shutdown.
+
+Only tide_platform_shaders opts into tide_add_web_test's SERVED WebGL path.
+It reuses run_web_served_test.mjs with the same SwiftShader backend and a
+nominal 120-second result budget. The existing runner records page/crash/network
+diagnostics and closes Chrome through Browser.close; its outer CTest guard is
+170 seconds, allowing the same 50 seconds for diagnostics/cleanup as the
+WebGPU tests. Shader work and assertions are unchanged. D3D11 remains a file
+page, and WebGPU retains its nominal 240-second result budget. The shared
+runner can accept a result arriving during timeout diagnostics; this change
+retains that existing grace instead of adding a different deadline policy.
+SECONDS continues to configure WebGPU only; no other fixture opts into SERVED.
+
+Serving also enables cross-origin isolation/shared WASM memory and uses real
+time instead of virtual time. The fixture's tick/frame calls are explicit, so
+its shader checks remain the same, but this is a different browser scheduling
+path. Its synchronous callback can delay the shell's HTTP log posts until it
+yields; timeout diagnostics can identify an unresponsive page, but do not
+guarantee a per-shader trace. Hosted macOS execution must establish whether the
+failure is resolved; local success alone cannot establish its original cause.
+
+Local validation with Node 24.22.1 and Chrome 156.0.8078.79: the web-debug
+shader target builds, and all three shader CTests pass (served WebGL 29.91 s,
+file-page D3D11 46.01 s, WebGPU 27.80 s). A scratch page returning failure 7
+is rejected with exit 1 and a timestamped account. Comparing CTest JSON before
+and after confirms exactly one registration changed among 2,874 tests; the
+other 2,873 commands/properties, including D3D11 and WebGPU, are identical.
+No native/runtime/compiler code changed; no permanent harness fixture or
+workflow dispatch was added. The whitespace diff passes.
+
 ## Cache cleanup tests (2026-10-30)
 
 .github/cache-cleanup.test.mjs checks bounded compiler-cache retention with fake
