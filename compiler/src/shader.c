@@ -2816,15 +2816,15 @@ static void ex_placed(emit *em)
         return;
     }
     const bool flat = position->type.kind != TY_FLOAT3; // A 2D mesh: its camera has its transform in it
-    sb_printf(em->o, "(%stide_camera * ", em->l == WGSL ? "tide_block." : "");
+    if (flat) sb_printf(em->o, "(%stide_camera * ", em->l == WGSL ? "tide_block." : "");
+    else sb_put(em->o, "tide_project(");
     if (!flat) {
-        sb_put(em->o, "(");
         put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
-        sb_put(em->o, " * ");
+        sb_put(em->o, ", ");
     }
     sb_printf(em->o, is_pointer(em, vertex) ? "%s((*%s).%s, " : "%s(%s.%s, ", float_ty(em, 4), local_name(vertex->name),
               field_name(position));
-    sb_put(em->o, flat ? "0.0, 1.0))" : "1.0)))");
+    sb_put(em->o, flat ? "0.0, 1.0))" : "1.0))");
 }
 
 static void ex_texture_size(emit *em, const expr *e);
@@ -5891,9 +5891,21 @@ static void put_uniforms(const shader *sh, const lang l, sb *o)
     const bool wgsl = l == WGSL;
     sb_put(o, wgsl ? "struct tide_uniforms {\n    tide_camera: mat4x4f,\n    tide_screen: vec4f,\n    tide_tint: vec4f,\n"
                    : "layout(std140) uniform uniforms {\n    mat4 tide_camera;\n    vec4 tide_screen;\n    vec4 tide_tint;\n");
+    if (sh->dims == 3) sb_put(o, wgsl ? "    tide_origin: vec4f,\n" : "    vec4 tide_origin;\n");
     for (int i = 0; i < packs(sh->uniform_floats); i++) sb_printf(o, wgsl ? "    tide_u%d: vec4f,\n" : "    vec4 tide_u%d;\n", i);
     for (int i = 0; i < packs(sh->uniform_ints); i++) sb_printf(o, wgsl ? "    tide_v%d: vec4i,\n" : "    ivec4 tide_v%d;\n", i);
     sb_put(o, wgsl ? "}\n@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;\n" : "};\n");
+    if (sh->dims == 3) {
+        // Rebase the model before applying local geometry, rather than rounding a large
+        // world position and subtracting afterward. Its homogeneous row stays unchanged.
+        sb_put(o, wgsl ? "fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {\n"
+                       : "vec4 tide_project(mat4 model, vec4 vertex) {\n");
+        sb_put(o, wgsl ? "    let relative = mat4x4f(\n" : "    mat4 relative = mat4(\n");
+        for (int i = 0; i < 4; i++)
+            sb_printf(o, "        model[%d] - %stide_origin * model[%d].w%s\n", i, wgsl ? "tide_block." : "", i,
+                      i == 3 ? ");" : ",");
+        sb_printf(o, "    return %stide_camera * (relative * vertex);\n}\n", wgsl ? "tide_block." : "");
+    }
     for (int i = 0; i < sh->textures.count; i++) {
         const shader_read read = sh->textures.items[i].read;
         if (read == READ_DATA) { // A list's numbers, with all of their bits, read through no sampler
@@ -6171,7 +6183,7 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
         sb_put(o, ");\n");
     }
     const char *position = field_name(field_called(v, "position"));
-    if (placed && !sh->frag_world) {
+    if ((placed || sh->dims == 3) && !sh->frag_world) {
         // Nothing reads where the engine would have put it
     } else if (sh->dims == 3) {
         sb_printf(o, wgsl ? "    let tide_place = " : "    vec4 tide_place = ");
@@ -6181,12 +6193,17 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
         sb_printf(o, wgsl ? "    let tide_place = %s(tide_vertex.%s, 0.0, 1.0);\n" : "    vec4 tide_place = %s(tide_vertex.%s, 0.0, 1.0);\n",
                   f4, position);
     }
+    if (!placed && sh->dims == 3) {
+        sb_put(o, wgsl ? "    let tide_projected = tide_project(" : "    vec4 tide_projected = tide_project(");
+        put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
+        sb_printf(o, ", %s(tide_vertex.%s, 1.0));\n", f4, position);
+    }
     if (wgsl) { // The camera's clip space is OpenGL's: depth from -1
         sb_printf(o, "    let tide_clip = %s;\n    var out: tide_corner;\n"
                      "    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);\n",
-                  placed ? "tide_moved" : "tide_block.tide_camera * tide_place");
+                  placed ? "tide_moved" : sh->dims == 3 ? "tide_projected" : "tide_block.tide_camera * tide_place");
     } else {
-        sb_put(o, placed ? "    gl_Position = tide_moved;\n" : "    gl_Position = tide_camera * tide_place;\n");
+        sb_put(o, placed ? "    gl_Position = tide_moved;\n" : sh->dims == 3 ? "    gl_Position = tide_projected;\n" : "    gl_Position = tide_camera * tide_place;\n");
     }
     for (int i = 0; i < v->fields.count; i++) {
         if (sh->frag_fields[i]) sb_printf(o, "    %stide_s%d = tide_vertex.%s;\n", out, i, field_name(&v->fields.items[i]));
@@ -6913,11 +6930,12 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         if (sh->frag_normals) diag_note("three of them are what its 'Normal' turns the mesh's normals into the world by");
         return NULL;
     }
-    if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES
+    const int uniform_limit = sh->dims == 3 ? 3968 : 3984; // TIDE_SHADER_UNIFORM_[3D_]BYTES
+    if (uniform_bytes > uniform_limit) {
         sb from = {0};
         list_bound(sh, &from, false);
-        diag_error(call->at, "this draw reads %d bytes of singletons%s (%s), and a draw's hold 3984", uniform_bytes,
-                   sh->values_type ? " and of the values it gives" : "", from.data ? from.data : "");
+        diag_error(call->at, "this draw reads %d bytes of singletons%s (%s), and a draw's hold %d", uniform_bytes,
+                   sh->values_type ? " and of the values it gives" : "", from.data ? from.data : "", uniform_limit);
         diag_note("read fewer of their fields in the frag and the vert: only what they read is sent");
         return NULL;
     }

@@ -3,9 +3,18 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
     ivec4 tide_v0;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 uniform sampler2D pixels0;
 layout(location = 0) in vec3 tide_a0;
 layout(location = 1) in vec3 tide_a1;
@@ -48,7 +57,8 @@ void main() {
     tt_BoxVertex tide_vertex = tt_BoxVertex(tide_a0, tide_a1, tide_a2);
     ts_Wave(tide_vertex);
     vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
+    vec4 tide_projected = tide_project(mat4(tide_n0, tide_n1, tide_n2, tide_n3), vec4(tide_vertex.m_position, 1.0));
+    gl_Position = tide_projected;
     tide_s1 = tide_vertex.m_normal;
     tide_s2 = tide_vertex.m_uv;
     tide_world = tide_place.xyz;
@@ -61,9 +71,18 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
     ivec4 tide_v0;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 uniform sampler2D pixels0;
 in vec3 tide_s1;
 in vec2 tide_s2;
@@ -143,10 +162,19 @@ struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
     tide_u0: vec4f,
     tide_v0: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
 @group(0) @binding(2) var sampler0: sampler;
 var<private> tide_n0: vec4f;
@@ -255,7 +283,8 @@ fn ts_Shade(t_vertex: tt_BoxVertex, t_color: ptr<function, vec4f>) {
     var tide_vertex: tt_BoxVertex = tt_BoxVertex(tide_a0, tide_a1, tide_a2);
     ts_Wave(&tide_vertex);
     let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     out.tide_s1 = tide_vertex.m_normal;

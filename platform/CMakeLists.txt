@@ -623,6 +623,18 @@ if(NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_float_bits)
         tide_gpu_test(tide_platform_float_bits_opengl OPENGL)
     endif()
+    # Distant cameras preserve depth, world-space materials and explicit clip placement.
+    tide_add_game(tide_platform_camera_precision SOURCES tests/camera_precision.tide NAME game HOST tests/camera_precision.c)
+    target_link_libraries(tide_platform_camera_precision PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_camera_precision SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_camera_precision TARGET tide_platform_camera_precision WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_platform_camera_precision COMMAND tide_platform_camera_precision)
+        add_test(NAME tide_platform_camera_precision_opengl COMMAND tide_platform_camera_precision)
+        tide_gpu_test(tide_platform_camera_precision)
+        tide_gpu_test(tide_platform_camera_precision_opengl OPENGL)
+    endif()
     # Variable influence streams, deterministic pose samples, generated skin stage and matching shadow draws.
     tide_add_game(tide_platform_skinned SOURCES tests/skinned.tide NAME game HOST tests/skinned.c)
     target_link_libraries(tide_platform_skinned PRIVATE tide_platform)
@@ -843,6 +855,26 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
 endif()
 
 if(TIDE_WEB)
+    # Real saved host state crosses three fresh instances, even with the same WASM bytes.
+    tide_add_game(tide_platform_reload_revision SOURCES tests/reload_revision.tide NAME game LAYOUT
+        HOST tests/reload_revision.c)
+    target_include_directories(tide_platform_reload_revision PRIVATE web)
+    target_link_libraries(tide_platform_reload_revision PRIVATE tide_platform)
+    add_custom_command(TARGET tide_platform_reload_revision POST_BUILD
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload_revision_page.mjs"
+            "$<TARGET_FILE:tide_platform_reload_revision>" "${CMAKE_CURRENT_SOURCE_DIR}/web/test_shell.html"
+            "${CMAKE_CURRENT_SOURCE_DIR}/web/tide.js"
+            "$<TARGET_FILE_DIR:tide_platform_reload_revision>/tide_platform_reload_revision.html"
+        VERBATIM)
+    set_property(TARGET tide_platform_reload_revision APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload_revision_page.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/test_shell.html" "${CMAKE_CURRENT_SOURCE_DIR}/web/tide.js")
+    add_test(NAME tide_platform_reload_revision
+        COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
+            "$<TARGET_FILE_DIR:tide_platform_reload_revision>/tide_platform_reload_revision.html"
+            "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload_revision-browser" "backend=webgl")
+    set_tests_properties(tide_platform_reload_revision PROPERTIES TIMEOUT 150
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS} SKIP_REGULAR_EXPRESSION "SKIPPED:")
     # Keys by physical position on the web, where the typed character would be wrong.
     add_executable(tide_platform_web_io tests/web_io.c)
     target_link_libraries(tide_platform_web_io PRIVATE tide_platform)

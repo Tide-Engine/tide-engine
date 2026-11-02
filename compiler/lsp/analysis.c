@@ -6875,6 +6875,7 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_MESH && str_eq_c(member, "indices")) return list_type((type){TY_INT, NULL});
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "color")) return (type){TY_TEXTURE, NULL};
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "depth")) return (type){TY_DEPTH_TEXTURE, NULL};
+    if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
     if (t.kind == TY_CUBEMAP && str_eq_c(member, "faces")) return t; // Of which an index is a RenderTarget
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
@@ -7118,6 +7119,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         // Ordinary visible fields still follow, such as geometry and local TRS.
     }
     if (t.kind == TY_RENDER_TARGET) {
+        if (!gpu) item(c, "contentRevision", CK_PROPERTY, "long",
+            "Read-only content identity shared by aliases. Save it after baking and rebake when it changes after resize, reload or device loss. Drawing and clearing do not change it; invalid targets and the window give zero.", NULL);
         item(c, "color", CK_PROPERTY, "Texture",
              "The target's GPU color image, without CPU readback: its first, where it holds several.", NULL);
         if (!gpu) {

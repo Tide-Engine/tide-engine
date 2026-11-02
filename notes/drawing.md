@@ -1,5 +1,37 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Camera-relative placement (2026-11-02)
+
+The distant-camera gap keeps each recorded camera's original transform,
+projection and combined world-to-clip matrix, plus its origin and a relative
+projection. Built-in cameras remove view translation before multiplying the
+projection. Invertible affine custom cameras invert their untranslated transform
+before projection; singular, nonfinite and projective custom transforms keep the
+combined matrix with origin zero. Camera deduplication compares the original
+parts and relative data as well as the combined matrix.
+
+CAMERA_3D commands retain a bounded 1-based cameras_3d reference alongside their
+original matrix slot. Append copies that complete record, preserving precision
+and readable original parts after the source list is freed. Handwritten commands
+without a valid data reference retain the combined-matrix fallback. All hosts and
+game libraries rebuild for the camera record layout change; no generated runtime
+entry point or simulation state changes.
+
+GPU placement rebases the model columns before multiplying local geometry, so
+small local offsets are not first rounded into a large world position. The
+homogeneous row is retained, including projective instance transforms. The
+shader's world position remains the ordinary world-space model product, and
+explicit clip outputs remain authoritative. CPU WorldToClip, coordinate/ray
+queries and culling keep their original combined-matrix arithmetic; their
+rounding need not match the more precise GPU path. No depth format, near/far
+policy, floating origin in simulation, or guarantee for coplanar surfaces changes.
+
+Two new runtime tests check translation-independent relative matrices, affine
+scale/shear/mirror cameras, unchanged original matrices, projective fallback,
+owned append records and invalid data-slot fallback. The four draw_camera tests
+pass Windows ASan. GPU regressions and integration validation: rendering.md.
+
+
 ## Instance lists kept on the GPU (2026-11-02)
 
 Task: a `Draw.Instanced(mesh, list, ...)` whose list didn't change still had

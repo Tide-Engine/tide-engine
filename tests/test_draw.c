@@ -320,6 +320,61 @@ static tide_render_target_state *foreign_state(void)
     return s;
 }
 
+static tide_target_content revision_content;
+static tide_target_content revision_resolve(tide_target_size size)
+{
+    (void)size;
+    return revision_content;
+}
+
+TIDE_TEST(draw_target_content_revision_tracks_discard_not_drawing)
+{
+    tide_render_target target = tide_render_target_make(12, 9);
+    const tide_render_target alias = target;
+    const int64_t made = tide_render_target_content_revision(target);
+    TIDE_CHECK(made > 0 && tide_render_target_content_revision(alias) == made);
+    revision_content = (tide_target_content){.device = 1, .pixels = {12, 9}};
+    const tide_target_content_scope previous = tide_render_target_content_resolver((tide_target_content_scope){.resolve = revision_resolve});
+    TIDE_CHECK(tide_render_target_content_revision(target) == made);
+    tide_render_target_content_observe(target.id, (tide_target_content){.device = 1, .pixels = {24, 9}}, 0);
+    tide_render_target_content_observe(target.id, revision_content, 0);
+    const int64_t replaced_twice = tide_render_target_content_revision(target);
+    TIDE_CHECK(replaced_twice > made);
+    tide_draw_list d = {0};
+    tide_draw_render_target(&d, target);
+    tide_draw_clear(&d, TIDE_COLOR_RED);
+    TIDE_CHECK(tide_render_target_content_revision(target) == replaced_twice);
+    revision_content.pixels.x = 24;
+    const int64_t resized = tide_render_target_content_revision(alias);
+    TIDE_CHECK(resized > made && tide_render_target_content_revision(target) == resized);
+    revision_content.device = 0;
+    const int64_t lost = tide_render_target_content_revision(target);
+    TIDE_CHECK(lost > resized && tide_render_target_content_revision(alias) == lost);
+    revision_content.device = 2;
+    const int64_t restored = tide_render_target_content_revision(target);
+    TIDE_CHECK(restored > lost);
+    tide_render_target_content_resolver((tide_target_content_scope){.resolve = revision_resolve, .epoch = 1});
+    const int64_t forgotten = tide_render_target_content_revision(target);
+    TIDE_CHECK(forgotten > restored);
+    tide_render_target_resize(target, 18, 11);
+    const int64_t explicit_size = tide_render_target_content_revision(alias);
+    TIDE_CHECK(explicit_size > forgotten);
+    const uint64_t saved = tide_render_target_revision_highwater();
+    tide_render_target_revision_resume(saved + 100);
+    const tide_render_target reborn = tide_render_target_recreate(target);
+    TIDE_CHECK(tide_render_target_content_revision(reborn) > (int64_t)(saved + 100));
+    TIDE_CHECK(tide_render_target_content_revision(tide_render_target_recreate(alias))
+        == tide_render_target_content_revision(reborn));
+    tide_render_targets_recreated();
+    tide_render_target_dispose(target);
+    TIDE_CHECK(tide_render_target_content_revision(alias) == 0);
+    TIDE_CHECK(tide_render_target_content_revision((tide_render_target){0}) == 0);
+    TIDE_CHECK(tide_render_target_content_revision((tide_render_target){.id = TIDE_RENDER_WINDOW}) == 0);
+    tide_render_target_content_resolver(previous);
+    tide_draw_free(&d);
+    tide_render_targets_free();
+}
+
 TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
 {
     // Another library's registry is a different variable pointing to shared

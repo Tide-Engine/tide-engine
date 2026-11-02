@@ -1305,6 +1305,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_run_draw.diagnostics = tide_run_reporting ? &tide_run_report.draw : NULL;
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
     tide_run_draw.target_pixels = tide_platform_target_pixels;
+    tide_run_draw.target_content = tide_platform_target_content;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
     if (tide_run_view_camera) {
         tide_draw_set_camera_matrices(&tide_run_draw, tide_run_view_camera_transform, tide_run_view_camera_projection);

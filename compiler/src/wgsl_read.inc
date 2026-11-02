@@ -292,11 +292,11 @@ static expr *parse_expr(translation *x);
 
 static expr **parse_args(translation *x, int *count)
 {
-    expr *items[64];
+    expr *items[WGSL_ARGUMENTS_MOST];
     int n = 0;
     expect(x, P_LPAREN, "'('");
     while (!is_punct(x, P_RPAREN)) {
-        if (n == 64) fail(x, peek(x)->line, peek(x)->col, "too many arguments");
+        if (n >= WGSL_ARGUMENTS_MOST) fail(x, peek(x)->line, peek(x)->col, "too many arguments");
         items[n++] = parse_expr(x);
         if (!accept(x, P_COMMA)) break;
     }
@@ -794,10 +794,10 @@ static void parse_module(translation *x)
             sdecl *s = grab(&x->a, sizeof(sdecl));
             s->name = name->at, s->len = name->len;
             expect(x, P_LBRACE, "'{'");
-            member items[128];
+            member items[WGSL_MEMBERS_MOST];
             int n = 0;
             while (!is_punct(x, P_RBRACE)) {
-                if (n == 128) fail(x, t->line, t->col, "too many members");
+                if (n >= WGSL_MEMBERS_MOST) fail(x, t->line, t->col, "too many members");
                 member *m = &items[n++];
                 m->at = parse_attrs(x);
                 token *mname = expect_name(x, "a member's name");

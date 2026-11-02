@@ -131,9 +131,18 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
     ivec4 tide_v0;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 layout(location = 0) in vec3 tide_a0;
 layout(location = 1) in vec2 tide_a1;
 layout(location = 2) in vec4 tide_n0;
@@ -155,8 +164,8 @@ void ts_Raise(inout tt_Corner t_corner) {
 void main() {
     tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
     ts_Raise(tide_vertex);
-    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
+    vec4 tide_projected = tide_project(mat4(tide_n0, tide_n1, tide_n2, tide_n3), vec4(tide_vertex.m_position, 1.0));
+    gl_Position = tide_projected;
     tide_s1 = tide_vertex.m_uv;
 }
 
@@ -165,9 +174,18 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
     ivec4 tide_v0;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 in vec2 tide_s1;
 out vec4 tide_pixel;
 struct tt_Corner {
@@ -192,10 +210,19 @@ struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
     tide_u0: vec4f,
     tide_v0: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -228,8 +255,8 @@ fn ts_Paint(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     tide_n3 = tide_in3;
     var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1);
     ts_Raise(&tide_vertex);
-    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     out.tide_s1 = tide_vertex.m_uv;
@@ -252,9 +279,18 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
     vec4 tide_u1;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 layout(location = 0) in vec3 tide_a0;
 layout(location = 1) in vec2 tide_a1;
 layout(location = 2) in vec4 tide_n0;
@@ -269,8 +305,8 @@ struct tt_Corner {
 };
 void main() {
     tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
-    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
+    vec4 tide_projected = tide_project(mat4(tide_n0, tide_n1, tide_n2, tide_n3), vec4(tide_vertex.m_position, 1.0));
+    gl_Position = tide_projected;
     tide_f0 = vec4(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);
 }
 
@@ -279,9 +315,18 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
     vec4 tide_u1;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 flat in vec4 tide_f0;
 out vec4 tide_pixel;
 struct tt_Corner {
@@ -306,10 +351,19 @@ struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
     tide_u0: vec4f,
     tide_u1: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -337,8 +391,8 @@ fn ts_Glow(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     tide_n3 = tide_in3;
     tide_n4 = tide_in4;
     var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1);
-    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     out.tide_f0 = vec4f(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);

@@ -262,7 +262,7 @@ static uint32_t spv_laid(translation *x, const int t)
         INS(&x->decorations, OP_DECORATE, id, DEC_ARRAY_STRIDE, ty.n ? size / (uint32_t)ty.n : 16u);
     } else {
         const sdecl *s = ty.s;
-        uint32_t members[128];
+        uint32_t members[WGSL_MEMBERS_MOST];
         for (int i = 0; i < s->count; i++) members[i] = spv_laid(x, s->member_types[i]);
         id = new_id(x);
         put(&x->globals_words, OP_TYPE_STRUCT | (uint32_t)(s->count + 2) << 16);
@@ -328,7 +328,7 @@ static uint32_t spv_type(translation *x, const int t)
     }
     case K_STRUCT: {
         const sdecl *s = ty.s;
-        uint32_t members[128];
+        uint32_t members[WGSL_MEMBERS_MOST];
         for (int i = 0; i < s->count; i++) members[i] = spv_type(x, s->member_types[i]);
         id = new_id(x);
         put(&x->globals_words, OP_TYPE_STRUCT | (uint32_t)(s->count + 2) << 16);
@@ -599,8 +599,8 @@ static uint32_t unlaid(translation *x, const int t, const uint32_t id)
     const type ty = *T(x, t);
     if (ty.kind != K_STRUCT && ty.kind != K_ARRAY) return id;
     const int count = ty.kind == K_STRUCT ? ty.s->count : ty.n;
-    uint32_t parts[128];
-    if (count > 128) fail(x, 0, 0, "a uniform block's array is too long to read whole");
+    uint32_t parts[WGSL_MEMBERS_MOST];
+    if (count > WGSL_MEMBERS_MOST) fail(x, 0, 0, "a uniform block's array is too long to read whole");
     for (int i = 0; i < count; i++) {
         const int part = ty.kind == K_STRUCT ? ty.s->member_types[i] : ty.elem;
         const uint32_t laid = new_id(x);
@@ -2190,7 +2190,7 @@ static void emit_function(translation *x, fdecl *f)
             const param *p = &f->params[i];
             if (T(x, t)->kind == K_STRUCT && p->at.location < 0 && p->at.builtin < 0) {
                 const sdecl *sd = T(x, t)->s;
-                uint32_t parts[128];
+                uint32_t parts[WGSL_MEMBERS_MOST];
                 for (int m = 0; m < sd->count; m++) {
                     const uint32_t var = interface_var(x, SC_INPUT, sd->member_types[m], sd->members[m].at, fragment);
                     parts[m] = EMIT(x, OP_LOAD, sd->member_types[m], var);

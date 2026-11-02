@@ -10,10 +10,18 @@ local singleton Buffers
     RenderTarget screen;
     RenderTarget half;
     int frames;
+    long madeRevision;
+    long orderedRevision;
+    long grownRevision;
+    long drawnRevision;
+    long aliasRevision;
+    long disposedRevision;
 }
 local event Release { Surface surface; }
 
 void Grow(RenderTarget target) { target.Resize(32, 24); }
+int GrowAndZero(RenderTarget target) { Grow(target); return 0; }
+long Keep(long revision, int marker) { return revision + marker; }
 void Finish(RenderTarget target) { target.Dispose(); }
 
 // A third of the window, whatever it is: the factor is any number
@@ -35,7 +43,12 @@ view Lifecycle(mut Buffers buffers)
         buffers.surface.target = made;
         buffers.surface.image = made.color;
         buffers.alias = made;
-        Grow(buffers.alias);
+        buffers.madeRevision = made.contentRevision;
+        buffers.orderedRevision = Keep(made.contentRevision, GrowAndZero(buffers.alias));
+        buffers.grownRevision = made.contentRevision;
+        made.Clear(Color.black);
+        buffers.drawnRevision = made.contentRevision;
+        buffers.aliasRevision = buffers.alias.contentRevision;
         // Exactly these pixels, on any display: 1 of them a unit
         buffers.exact = RenderTarget(320, 180, 1);
         // Logical pixels, like the window's: any number, at the display's scale
@@ -52,4 +65,5 @@ view Lifecycle(mut Buffers buffers)
         buffers.half.Resize(8, 8);
     }
     buffers.frames += 1;
+    buffers.disposedRevision = buffers.surface.target.contentRevision;
 }

@@ -1004,9 +1004,9 @@ static void primitives(void)
 // A pixel in the color its corners hand it, finished as every shader of a
 // game's is (see tide_shader): times the draw's tint, and where the draw
 // multiplies what's there, towards white as it clears.
-#define GLSL_TINT_FRAGMENT                                                                                             \
+#define GLSL_TINT_FRAGMENT_WITH(own)                                                                                   \
     "in vec4 tint;\n"                                                                                                  \
-    GLSL_UNIFORMS("")                                                                                                  \
+    GLSL_UNIFORMS(own)                                                                                                  \
     "out vec4 pixel;\n"                                                                                                \
     "void main() {\n"                                                                                                  \
     "    vec4 c = tint * tide_tint;\n"                                                                                 \
@@ -1014,6 +1014,7 @@ static void primitives(void)
     "    if (tide_screen.w > 0.0) c.rgb = c.rgb + (1.0 - c.a);\n"                                                \
     "    pixel = c;\n"                                                                                                 \
     "}\n"
+#define GLSL_TINT_FRAGMENT GLSL_TINT_FRAGMENT_WITH("")
 #define WGSL_TINT_CORNER                                                                                               \
     "struct Corner {\n"                                                                                                \
     "    @builtin(position) position: vec4f,\n"                                                                        \
@@ -1048,18 +1049,22 @@ static const tide_shader lit_shader = {
                    "layout(location = 4) in vec4 model2;\n"
                    "layout(location = 5) in vec4 model3;\n"
                    "layout(location = 6) in vec4 color;\n"
-                   GLSL_UNIFORMS("")
+                   GLSL_UNIFORMS("vec4 origin; ")
                    "out vec4 tint;\n"
                    "void main() {\n"
                    "    tint = vec4(color.rgb * -normal.z, color.a);\n"
-                   "    gl_Position = tide_camera * (mat4(model0, model1, model2, model3) * vec4(position, 1.0));\n"
+                   "    mat4 relative = mat4(model0 - origin * model0.w, model1 - origin * model1.w,\n"
+                   "                         model2 - origin * model2.w, model3 - origin * model3.w);\n"
+                   "    gl_Position = tide_camera * (relative * vec4(position, 1.0));\n"
                    "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
-    .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
+    .glsl_fragment = GLSL_TINT_FRAGMENT_WITH("vec4 origin; "),
+    .wgsl = WGSL(WGSL_UNIFORMS("origin: vec4f, ") WGSL_TINT_CORNER
         "@vertex fn vertex(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) model0: vec4f,\n"
         "                  @location(3) model1: vec4f, @location(4) model2: vec4f, @location(5) model3: vec4f,\n"
         "                  @location(6) color: vec4f) -> Corner {\n"
-        "    let p = u.tide_camera * (mat4x4f(model0, model1, model2, model3) * vec4f(position, 1.0));\n"
+        "    let relative = mat4x4f(model0 - u.origin * model0.w, model1 - u.origin * model1.w,\n"
+        "                          model2 - u.origin * model2.w, model3 - u.origin * model3.w);\n"
+        "    let p = u.tide_camera * (relative * vec4f(position, 1.0));\n"
         "    var out: Corner;\n"
         "    out.tint = vec4f(color.rgb * -normal.z, color.a);\n"
         "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n" // The camera's clip space is OpenGL's

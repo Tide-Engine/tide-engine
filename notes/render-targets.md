@@ -1,5 +1,58 @@
 # Render targets and cubemaps
 
+Full combined native/web suite results: `notes/rendering.md`, Gap integration validation.
+
+## Cached images detect discarded contents (2026-11-02)
+
+Owner-approved per-target invalidation query: `target.contentRevision`, a
+read-only local `long`, gives a positive token shared by aliases, or zero for
+default/disposed/borrowed targets and the window. Cache the token with a baked
+image and rebake when it differs. Clear and normal drawing do not change it.
+
+`tide_render_target_state` holds the token and last observed device, physical
+extent and draw epoch. The value passed through local state remains 24 bytes.
+Create, explicit resize and recreation allocate a token from a checked positive
+64-bit counter; native adoption invalidates the adopted target conservatively.
+The standard host supplies live metadata through `draw.target_content`; generated
+frame entry installs/restores its thread-local scope, including draw epoch.
+The query observes device loss/recovery and automatic physical resizing before
+the first drawing submission. Renderer target/cube allocations use the same
+observer, so size changes away and back between queries cannot hide a discard.
+The first observation after creation/explicit resize initializes metadata without
+a second invalidation. Hosts providing their own frames should supply both the
+target-content callback and draw epoch; absent a callback, explicit lifetime
+operations and renderer observations still work.
+
+Web saved host state carries the revision counter high-water and restores it
+before generated resource rebinding. Reused WASM addresses and per-module counter
+resets cannot reproduce a cached token. Its host-state magic changed, so reload
+from a build with the previous host header starts afresh; subsequent reloads keep
+local state and invalidate targets. Saved game/world formats are unchanged.
+
+Compiler checking keeps metadata reads ordered and forbids assignment, GPU and
+parallel-step reads; the shared shader-preparation optimization excludes such
+queries because the host callback may have effects. Editor completion and type
+hover expose `long`. Tests cover aliases, clear stability, explicit/automatic
+resize, resize-away/back without queries, device generation and draw epoch,
+high-water restoration and rebind; the WebGPU target test checks the first
+post-device-loss query before rendering. Native ASan and web-release lifecycle,
+sample/rebind and three diagnostic CTests pass, along with the focused runtime
+revision test on native/WASI and native LSP completion/hover. Target GPU tests
+pass on Vulkan, OpenGL, WebGL and WebGPU, including allocation-away/back and
+pre-render device-recovery queries. The authored expression-order regression
+reads the revision before a later argument resizes the alias, on native/WASI.
+
+Embedded frames use the recording backend's current epoch and target limit,
+even before the first render, including the time-travel frame path. Its physical
+extent agrees with actual recording allocations; the native ASan embed regression
+checks reset before rendering, and no extra invalidation during the next render.
+The real web reload fixture replaces the same WASM module three times through
+the production page and host save/resume path. `tide_platform_reload_revision`
+passes on headless WebGL: each fresh instance retains the cached long and bake
+counter, sees a different positive revision, rebakes once, and preserves the
+target alias. This tests saved-header high-water transfer across actual WASM
+counter resets, not a mock of the reload exports.
+
 ## Native single-output cutout alpha (2026-11-02)
 
 The Mount & Rifle pale-rim report exposed coverage stored twice: a covered

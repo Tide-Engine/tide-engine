@@ -1,5 +1,37 @@
 # Code the GPU runs: frags and verts
 
+## Camera-relative 3D projection (2026-11-02)
+
+Generated 3D shaders add tide_origin after the existing camera/screen/tint
+uniforms. The private tide_project helper subtracts origin times each model
+column's w before multiplying the current local vertex and relative camera.
+Both default placement and this.clip use that helper; a user vert's edits are
+read at the existing point, after skinning. Explicit out-float4 placement bypasses
+it, while frag this.world and Instance.transform keep world-space values. The
+same writer supplies ordinary, listed and skinned vertex variants, GLSL/WGSL
+and translated SPIR-V/HLSL. Unused world-position products are omitted when no
+frag reads them. 2D source and uniform headers are unchanged.
+
+Owner-approved capacity: reserve 16 additional engine bytes for 3D, reducing
+its game payload from 3984 to 3968 bytes while retaining the 255-float4 total
+required by existing Android portability coverage. 2D stays 3984. The renderer
+checks the same dimension-specific bound. uniform_limits pins accepted 249-vec4
+2D and 248-vec4 3D payloads; gpu_limit_uniforms_3d_origin refuses the next 3D
+vec4, and the earlier limit diagnostic now names 3968. All affected 3D shader
+goldens were regenerated with their sibling package inputs. GPU regression and
+integration validation are recorded in rendering.md.
+
+The accepted-capacity fixture exposed an older translator mismatch: the shared
+WGSL reader allowed only 128 struct members and 64 constructor arguments, despite
+the existing 2D payload requiring 252 members and 249 array arguments. Bounded
+member/argument scratch now holds 256, with matching checked SPIR-V member/whole
+uniform-array buffers and HLSL argument buffers. Function parameter and GPU
+interface limits are unchanged. Both maximum-capacity programs pass spirv-val
+and HLSL vertex/fragment compilation with /WX on all three configured API
+defines. All 51 shader golden/limit diagnostics pass; place/skinned and renderer
+SPIR-V/HLSL checks also pass.
+
+
 ## Explicit Texture gradients (2026-11-02)
 
 The scoped foliage API completion adds

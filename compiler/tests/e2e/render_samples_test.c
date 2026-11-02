@@ -104,6 +104,7 @@ TIDE_TEST(render_samples_are_said_where_a_target_is_made_and_kept_in_its_id)
 
     // Another build of the game, in the same memory: every reference is the target it was
     const tide_render_target first = stage->four, wide = stage->wide, several = stage->several;
+    const int64_t previous_revision = tide_render_target_content_revision(first);
     tide_local_rebind_resources(&local, true);
     TIDE_CHECK(local.Stage.four.id == first.id && local.Stage.smooth.target.id == first.id);
     TIDE_CHECK(local.Stage.deep.target.id == first.id && local.Stage.pass.into.id == wide.id);
@@ -120,6 +121,9 @@ TIDE_TEST(render_samples_are_said_where_a_target_is_made_and_kept_in_its_id)
     tide_local_rebind_resources(&restored, false);
     const Stage *again = &restored.Stage;
     TIDE_REQUIRE(tide_render_target_managed(again->four.id) && again->four.id != first.id);
+    TIDE_CHECK(tide_render_target_content_revision(again->four) > previous_revision);
+    TIDE_CHECK(tide_render_target_content_revision(again->smooth.target)
+        == tide_render_target_content_revision(again->four));
     TIDE_CHECK(holds(again->plain.id, 1, C, 1) && holds(again->one.id, 1, C, 1));
     TIDE_CHECK(holds(again->four.id, 1, C, 4) && again->four.size.width == 64.0f);
     TIDE_CHECK(holds(again->exact.id, 1, C, 2) && again->exact.size.scale == 1.0f);

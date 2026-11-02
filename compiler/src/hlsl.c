@@ -670,14 +670,14 @@ static int unary(translation *x, const expr *e, hs *o)
 
 // The arguments of a call, each into a string, and their types.
 typedef struct args {
-    char *text[64];
-    int t[64];
+    char *text[WGSL_ARGUMENTS_MOST];
+    int t[WGSL_ARGUMENTS_MOST];
     int n;
 } args;
 
 static void eval_args(translation *x, const expr *e, args *a)
 {
-    if (e->nargs > 64) fail(x, e->line, e->col, "too many arguments");
+    if (e->nargs > WGSL_ARGUMENTS_MOST) fail(x, e->line, e->col, "too many arguments");
     a->n = e->nargs;
     for (int i = 0; i < e->nargs; i++) a->t[i] = ex_text(x, e->args[i], &a->text[i]);
 }

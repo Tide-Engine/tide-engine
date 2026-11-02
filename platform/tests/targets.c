@@ -230,22 +230,26 @@ static const tide_shader caster_shader = {
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex3, color)}},
     .instance_floats = 4,
     .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 origin; };\n"
         "layout(location=0) in vec3 position;\n"
         "layout(location=3) in vec4 m0;\n"
         "layout(location=4) in vec4 m1;\n"
         "layout(location=5) in vec4 m2;\n"
         "layout(location=6) in vec4 m3;\n"
-        "void main() { gl_Position = camera * (mat4(m0, m1, m2, m3) * vec4(position, 1)); }\n",
+        "void main() {\n"
+        "  mat4 relative = mat4(m0 - origin * m0.w, m1 - origin * m1.w, m2 - origin * m2.w, m3 - origin * m3.w);\n"
+        "  gl_Position = camera * (relative * vec4(position, 1));\n"
+        "}\n",
     .glsl_fragment =
         "out vec4 color;\n"
         "void main() { if (gl_FragCoord.x > 2.0) discard; color = vec4(1); }\n",
     .wgsl =
-        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
+        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, origin: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "@vertex fn vertex(@location(0) position: vec3f, @location(3) m0: vec4f, @location(4) m1: vec4f,\n"
         "                  @location(5) m2: vec4f, @location(6) m3: vec4f) -> @builtin(position) vec4f {\n"
-        "  let clip = u.camera * (mat4x4f(m0, m1, m2, m3) * vec4f(position, 1));\n"
+        "  let relative = mat4x4f(m0 - u.origin * m0.w, m1 - u.origin * m1.w, m2 - u.origin * m2.w, m3 - u.origin * m3.w);\n"
+        "  let clip = u.camera * (relative * vec4f(position, 1));\n"
         "  return vec4f(clip.xy, (clip.z + clip.w) * 0.5, clip.w);\n"
         "}\n"
         "@fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {\n"
@@ -880,6 +884,8 @@ static void check_scales_and_window(void)
         }
     }
 
+    const int64_t half_revision = tide_render_target_content_revision(half);
+    const int64_t exact_revision = tide_render_target_content_revision(exact);
     // ...and the exact one is those 4 by 6 pixels on a display of any scale: never filled again
     for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
         const float scale = scales[i];
@@ -972,6 +978,11 @@ static void check_scales_and_window(void)
     blit_target(half, 0);
     read_window(wide, high, 1.0f);
     expect_all(0xff0000ffu, "a target that follows the window refuses Resize");
+    if (tide_render_target_content_revision(half) == half_revision
+        || tide_render_target_content_revision(exact) != exact_revision) {
+        fprintf(stderr, "content revisions must track resized images even when no query ran between size changes\n");
+        failures++;
+    }
 
     tide_draw_forget(&render_list);
     tide_render_targets_free();
@@ -3184,7 +3195,18 @@ static int frame(void *user, const float seconds)
     (void)user, (void)seconds;
 #ifdef __wasm__
     static int lost;
+    static tide_render_target revision_target;
+    static int64_t revision_before_loss;
     if (lost == 1 && !tide_web_eval("Tide.gpuDevices() > 1")) return TIDE_KEEP_RUNNING;
+    if (lost == 1) {
+        const tide_target_content_scope previous = tide_render_target_content_resolver(
+            (tide_target_content_scope){.resolve = tide_platform_target_content});
+        if (tide_render_target_content_revision(revision_target) == revision_before_loss) {
+            fprintf(stderr, "target content revision missed device loss before drawing\n");
+            return 1;
+        }
+        tide_render_target_content_resolver(previous);
+    }
 #endif
     printf("renderer: %s\n", tide_platform_renderer());
     check_targets();
@@ -3238,6 +3260,11 @@ static int frame(void *user, const float seconds)
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
+        revision_target = tide_render_target_make(4, 4);
+        const tide_target_content_scope previous = tide_render_target_content_resolver(
+            (tide_target_content_scope){.resolve = tide_platform_target_content});
+        revision_before_loss = tide_render_target_content_revision(revision_target);
+        tide_render_target_content_resolver(previous);
         tide_web_eval("Tide.loseDevice()");
         lost = 1;
         return TIDE_KEEP_RUNNING;

@@ -1,5 +1,51 @@
 # The platform layer and the renderer
 
+## Gap integration validation (2026-11-02)
+
+Camera-origin uniforms and target content revisions were validated together after
+integration: all 2,873 web-release CTests passed; native Windows ASan passed
+2,905/2,906 non-GPU tests initially, then the sole Chrome room-hosting timeout
+passed on its isolated retry without a code change. All 80 native GPU-labeled
+tests passed (2,986 native tests covered in total). The docs production build
+passed. External prototypes were excluded from these full engine suites.
+Other OS/Android and an actual Unity editor run remain CI/host coverage, not
+local claims. Target revision/reload specifics are in render-targets.md.
+
+## Distant cameras retain local geometry precision (2026-11-02)
+
+The renderer carries recorded camera-data references through destination state
+and draw steps, fitting the stored relative projection and uploading the camera
+origin. Built-in mesh uniforms grow from 96 to 112 bytes. Generated-shader
+headers stay 96 bytes in 2D and are 112 in 3D, with matching pipeline sizes and
+payload offsets. Both built-in and generated vertex placement rebase model
+columns before multiplying their local vertex. The two handwritten 3D test
+shaders follow that same contract; 2D capacity fixtures are unchanged.
+
+Unity's scene-view override supplies only an already-combined matrix and keeps
+origin zero. The ordinary embedded draw path receives the corrected camera
+records. Source review confirms gpu_record records explicit uniform sizes and
+bytes, and TideRender copies/aligned-uploads those bytes without fixed header
+offsets; regenerated shader identity carries the new layout. No recorded packet
+shape or embed ABI number changes. Unity itself was not run.
+
+The dedicated camera_precision fixture uses eye (3000,200,3000), near .04 and
+far 80000, with a tilted plane intersecting an instanced box near distance 140,
+five yaw angles and 81 interior probes. It compares translated/origin cameras,
+default projection/this.clip/authored explicit clip, built-in mesh placement,
+world-space material and Instance.transform sentinels, and appended/direct
+lists. Native Vulkan and OpenGL pass. A temporary control setting camera_data
+to zero restores the old combined matrix and fails both APIs: five sampled
+pixels change which surface occludes the other, and amplified depth differs;
+authored explicit clips stay invariant. Restoring camera data passes again.
+The final fixture additionally covers built-in FOV cameras and passes all five
+backend checks: native Vulkan/OpenGL (about .55s each), WebGL2 (1.49s), ANGLE
+D3D11 (1.34s) and WebGPU (1.07s). Existing shader pixel checks pass across those
+backends too. The explicit reference uses the inverse of the untranslated camera
+transform, matching the custom camera's matrix arithmetic; using a conjugate
+instead differed at two intersection pixels on WebGL from ordinary rounding.
+No tolerance was relaxed. Broad suite results are recorded with integration.
+
+
 ## Native cutout stored alpha (2026-11-02)
 
 Desktop OpenGL and Vulkan with the optional `alphaToOne` feature now store

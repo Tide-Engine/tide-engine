@@ -1,0 +1,24 @@
+// The complete portable payload remains 249 float4s in 2D and is 248 in 3D,
+// which reserves one float4 for its camera origin.
+scene Main { }
+singleton FlatValues { float4[249] entries; }
+singleton WorldValues { float4[248] entries; }
+local singleton Models
+{
+    List<Vertex> flat;
+    List<Vertex3> world;
+    List<int> indices;
+}
+frag Flat(Vertex vertex, FlatValues values, out Color color)
+{
+    color = Color.white * values.entries[int(vertex.uv.x)].x;
+}
+frag World(Vertex3 vertex, WorldValues values, out Color color)
+{
+    color = Color.white * values.entries[int(vertex.uv.x)].x;
+}
+view Show(Models models)
+{
+    Draw.Mesh(models.flat, models.indices, Flat);
+    Draw.Mesh(models.world, models.indices, float4x4.identity, World);
+}

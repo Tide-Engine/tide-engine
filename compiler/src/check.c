@@ -9866,9 +9866,18 @@ static type check_member(checker *c, expr *e)
             e->target_colors = true;
             return obj; // What check_index makes a Texture of
         }
+        if (str_eq_c(e->member, "contentRevision")) {
+            c->prog->uses_texture_size = true;
+            decl *code = reading_code(c);
+            if (code) {
+                code->calls_c = true;
+                code->reads_texture_size = true;
+            }
+            return (type){TY_LONG, NULL};
+        }
         if (str_eq_c(e->member, "valid")) return T_BOOL_; // Made and not disposed, or the window
         if (str_eq_c(e->member, "size")) return (type){TY_FLOAT2, NULL}; // In logical pixels
-        diag_error(e->at, "a RenderTarget has 'color', 'colors', 'depth', 'size' and 'valid', not '" STR_FMT "'", STR_ARG(e->member));
+        diag_error(e->at, "a RenderTarget has 'color', 'colors', 'depth', 'size', 'valid' and 'contentRevision', not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
 
@@ -12094,6 +12103,11 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                 : "a Texture's size is read-only: resize its RenderTarget or change its source grid instead");
             return false;
         }
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_RENDER_TARGET
+            && str_eq_c(part->member, "contentRevision")) {
+            diag_error(target->at, "a render target's contentRevision is read-only; save it in a local field to detect discarded pixels");
+            return false;
+        }
         // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
         const expr *of_target = part->kind == E_INDEX ? part->object : part;
         if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP && of_target->target_colors) {
@@ -12550,6 +12564,8 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     if (!e) return true;
     if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
         && str_eq_c(e->member, "size")) return false;
+    if (e->kind == E_MEMBER && e->object->type.kind == TY_RENDER_TARGET
+        && str_eq_c(e->member, "contentRevision")) return false;
     if (e->io_operation || e->storage_flush || e->web_fetch) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
@@ -12755,6 +12771,8 @@ static void check_step_expr(checker *c, const expr *e)
     const char *what = e->io_operation ? "access the filesystem" : NULL;
     if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
         && str_eq_c(e->member, "size")) what = "read frame image metadata";
+    if (e->kind == E_MEMBER && e->object->type.kind == TY_RENDER_TARGET
+        && str_eq_c(e->member, "contentRevision")) what = "read frame image metadata";
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "add, remove or destroy"; break;
@@ -20917,7 +20935,7 @@ static void check_render_resource_calls(const checker *c)
         }
         if (site->parallel && site->to->reads_texture_size) {
             diag_error(site->call->at, "'" STR_FMT "' reads frame image metadata, so it can't run in a parallel loop", STR_ARG(site->to->name));
-            diag_note("read Texture.size before the loop and pass its int2 value to the step");
+            diag_note("read Texture.size or RenderTarget.contentRevision before the loop and pass the value to the step");
         }
         if (!site->to->render_resources || site->from->kind == DECL_FUNCTION || site->from->kind == DECL_METHOD
             || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;

@@ -49,6 +49,8 @@ static bool shader_prep_param(const param *p)
 static void shader_prep_expr(shader_prep_walk *w, const expr *e)
 {
     if (!e || !w->safe) return;
+    if (e->kind == E_MEMBER && e->object->type.kind == TY_RENDER_TARGET
+        && str_eq_c(e->member, "contentRevision")) { w->safe = false; return; }
     if (e->resource_operation || e->io_operation || e->web_fetch || e->storage_flush || e->task_start_value
         || e->kind == E_AWAIT || e->kind == E_LIST || e->kind == E_INTERP) { w->safe = false; return; }
     switch (e->call) {

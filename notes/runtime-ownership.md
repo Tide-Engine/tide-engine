@@ -1,5 +1,30 @@
 # Runtime written by Claude for now
 
+## Camera-relative drawing boundary (2026-11-02)
+
+Within the existing drawing maintenance exception, camera records gain relative
+projection/origin data and recorded camera commands retain a bounded reference
+to those records. Existing draw functions and generated call signatures stay the
+same. Hosts and game libraries rebuild for the C layout change. Generated 3D
+shader uniform blocks add the owner-approved camera-origin float4, with 3968
+remaining game bytes; 2D stays unchanged. No match state, snapshot, hash, camera
+query API or recorded Unity packet shape changes. Contracts and validation are
+in drawing.md, shaders.md and rendering.md.
+
+
+## Render-target content revisions (2026-11-02)
+
+The owner approved a per-target content invalidation query and its runtime
+boundary. Generated code calls `tide_render_target_content_revision` and installs
+the host metadata scope with `tide_render_target_content_resolver`; both are in
+draw.h/draw.c under the existing drawing exception. The renderer calls
+`tide_render_target_content_observe` on allocation; web reload carries
+`tide_render_target_revision_highwater` through its host header and calls
+`tide_render_target_revision_resume` before rebinding. The shared managed state
+and C draw-list structures grow; the Tide RenderTarget value stays 24 bytes.
+No match state or simulation operation uses the counter. Contracts and tests:
+render-targets.md, Cached images detect discarded contents.
+
 ## Instance lists kept on the GPU (2026-11-02)
 
 Within the drawing maintenance exception, as an internal performance change the task authorized (no Tide or draw

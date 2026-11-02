@@ -35,7 +35,7 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
 // (tide_world_pack, tide_local_pack), its GUI, and a sharded match's every
 // shard as a checkpoint (tide_session_save_shards), each 8-aligned. What the
 // host keeps of its own goes too: whether the stats' drawer is open.
-#define SAVED_MAGIC 0x53525550u // "PURS"
+#define SAVED_MAGIC 0x53525551u // Versioned host state, including target revision high-water.
 
 typedef struct saved {
     uint32_t size; // Of it all, first, for the page
@@ -50,6 +50,7 @@ typedef struct saved {
     uint64_t cookie;              // ...whose player comes back with this
     uint32_t stats_open; // The stats' drawer is, as the player left it
     uint32_t pad;
+    uint64_t render_revision;
 } saved;
 
 static uint32_t align8(const uint32_t n)
@@ -89,6 +90,7 @@ __attribute__((export_name("tide_reload_save"))) uint32_t tide_reload_save(void)
     const int32_t player = tide_player_index(status.client.player);
     saved h = {0};
     h.magic = SAVED_MAGIC;
+    h.render_revision = tide_render_target_revision_highwater();
     h.hash = game->game->hash;
     if (world && player >= 0) tide_players_add(&h.players, (uint32_t)player);
     h.layout = align8(sizeof h);
@@ -211,6 +213,7 @@ static bool resume(void)
         return false;
     }
 
+    tide_render_target_revision_resume(h.render_revision);
     if (game->rebind_resources) game->rebind_resources(local, false);
     tide_run_local = local;
     tide_run_start = calloc(1, game->game->start_size);

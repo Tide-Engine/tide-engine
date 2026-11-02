@@ -892,6 +892,7 @@ typedef struct draw_step {
     uint32_t mesh;    // STEP_MESH_3D: 1 + its mesh's place in the list's
     uint32_t camera;  // ...and 1 + its camera's matrix's place in the list's, or 0 for the first camera:
                       // a STEP_SHADED's too, for a 3D shader
+    uint32_t camera_data; // 1 + cameras_3d slot, retaining relative placement and the camera origin
     uint32_t fit;     // ...which is for a square screen (see TIDE_DRAW_CAMERA_3D)
     uint32_t smooth;  // STEP_SHAPES: for a run with smooth shapes, 1 + where its shapes' extras start; else 0
     uint32_t solid;   // ...or for one whose smooth shapes are all solid ones, 1 + where their radii start (see
@@ -934,7 +935,7 @@ static uint64_t draw_vertices; // Submitted vertices, including every index and 
 // passes recorded by different views. The clip is advanced during playback.
 typedef struct frame_target {
     camera through, world;
-    uint32_t camera_3d, fit;
+    uint32_t camera_3d, camera_data, fit;
     bool mirrored; // Its 3D camera mirrors what it sees, so triangles reach the GPU wound the other way
     uint32_t stencil; // What its commands do with its stencil, as the last one turned into steps found it
     draw_step clipping;
@@ -2009,6 +2010,7 @@ typedef struct mesh_3d_uniforms {
     tide_float4x4 camera;
     float tint[4];
     float fix[4];
+    tide_float4 origin;
 } mesh_3d_uniforms;
 
 // What the uniforms of a shader of the game's start with (see tide_shader),
@@ -2022,11 +2024,18 @@ typedef struct shaded_uniforms {
     float tint[4];
 } shaded_uniforms;
 
+static uint32_t shaded_header_size(const tide_shader *shader)
+{
+    return (uint32_t)sizeof(shaded_uniforms) + (shader->dims == 3 ? 16u : 0u);
+}
+
 // A float4 short of the block, too: Android's emulator links a shader whose
 // block is 255 float4s and refuses one of 256, which it counts as its
 // vertex shader's uniform vectors
 _Static_assert(sizeof(shaded_uniforms) + TIDE_SHADER_UNIFORM_BYTES <= TIDE_GPU_MAX_UNIFORMS - 16u,
                "a shader's uniforms fit a pipeline's block");
+_Static_assert(sizeof(shaded_uniforms) + 16u + TIDE_SHADER_UNIFORM_3D_BYTES <= TIDE_GPU_MAX_UNIFORMS - 16u,
+               "a 3D shader's origin and uniforms fit a pipeline's block");
 _Static_assert(TIDE_SHADER_ATTRIBUTES <= TIDE_GPU_MAX_ATTRIBUTES && TIDE_SHADER_TEXTURES <= TIDE_GPU_MAX_TEXTURES,
                "a shader's attributes and textures fit a pipeline's");
 
@@ -2433,6 +2442,7 @@ static gpu_cube *cube_for(const uint64_t id, const tide_target_size size, const 
     if (c->texture) free_texture(c->texture);
     c->size = width;
     c->version = version;
+    tide_render_target_content_observe(id, (tide_target_content){.device = gpu->epoch(), .pixels = {width, width}}, target_epoch);
     c->texture = made_cube(tide_render_target_format(id) == TIDE_TARGET_RGBA16F ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES,
                            width, NULL);
     c->drawn++;
@@ -2473,6 +2483,7 @@ static gpu_target *target_for(const uint64_t id, const tide_target_size size, co
         if (g->target) free_target(g->target);
         g->width = width, g->height = height;
         g->version = version;
+        tide_render_target_content_observe(id, (tide_target_content){.device = gpu->epoch(), .pixels = {width, height}}, target_epoch);
         // What it holds is its id's to say: the same for as long as it's this target
         g->target = made_target(gpu_target_format(id), width, height);
         g->drawn++;
@@ -3388,7 +3399,7 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
         .spirv_words = shader->spirv_words,
         .slots = {{shader->vertex_size, false}, {instance_size, true}},
         .slot_count = instance_size ? 2u : 1u,
-        .uniform_size = (uint32_t)sizeof(shaded_uniforms) + tide_shader_uniform_size(shader),
+        .uniform_size = shaded_header_size(shader) + tide_shader_uniform_size(shader),
         .texture_count = shader->texture_count,
         .blend = blends[blend],
         .depth = deep ? gpu_depths[depth] : TIDE_GPU_DEPTH_NONE,
@@ -3471,7 +3482,8 @@ static bool shader_fits(const tide_shader *shader)
     const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
     const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
     if (shader->attribute_count + instance_fields > TIDE_SHADER_ATTRIBUTES
-        || shader->texture_count > TIDE_SHADER_TEXTURES || uniform_fields * 16u > TIDE_SHADER_UNIFORM_BYTES) {
+        || shader->texture_count > TIDE_SHADER_TEXTURES ||
+        uniform_fields * 16u > (shader->dims == 3 ? TIDE_SHADER_UNIFORM_3D_BYTES : TIDE_SHADER_UNIFORM_BYTES)) {
         return false;
     }
     for (uint32_t i = 0; i < shader->attribute_count; i++) {
@@ -4322,11 +4334,17 @@ static bool window_3d_step(const tide_draw_list *list, const draw_step *s)
     return s->kind == STEP_SHADED && list->runs[s->first].shader && list->runs[s->first].shader->dims == 3;
 }
 
-static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_step *s)
+static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_step *s, tide_float4 *origin)
 {
+    *origin = tide_f4(0, 0, 0, 0);
     if (view_only_3d) return view_world_to_clip;
-    const tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
+    tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
+    if (s->camera_data && s->camera_data <= list->camera_3d_count) {
+        const tide_draw_camera_3d_data *camera = &list->cameras_3d[s->camera_data - 1u];
+        world_to_clip = camera->relative;
+        *origin = camera->origin;
+    }
     return !s->camera || s->fit ? tide_draw_camera_fit(world_to_clip, draw_width, draw_height) : world_to_clip;
 }
 
@@ -4359,8 +4377,10 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
     const gpu_mesh *g = &gpu_meshes[run->mesh - 1u];
     const tide_float2 scale = pixel_scale();
     const uint32_t own = tide_shader_uniform_size(shader);
+    const uint32_t header = shaded_header_size(shader);
+    tide_float4 origin = {0};
     block.engine.camera = s->kind == STEP_BLIT ? tide_identity_f4x4() :
-                          shader->dims == 3 ? camera_3d_to_clip(list, s) : camera_to_clip(&s->through);
+                          shader->dims == 3 ? camera_3d_to_clip(list, s, &origin) : camera_to_clip(&s->through);
     if (run->moved && shader->dims != 3 && s->kind != STEP_BLIT) { // Its mesh goes through its transform first
         tide_float4x4 moved = tide_identity_f4x4();
         moved.c0.x = run->transform.x.x, moved.c0.y = run->transform.x.y;
@@ -4374,9 +4394,10 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
                            : s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f;
     block.engine.tint[0] = run->tint.r, block.engine.tint[1] = run->tint.g;
     block.engine.tint[2] = run->tint.b, block.engine.tint[3] = run->tint.a;
-    if (own) memcpy(block.bytes + sizeof(shaded_uniforms), list->uniforms + run->uniforms, own);
+    if (shader->dims == 3) memcpy(block.bytes + sizeof(shaded_uniforms), &origin, sizeof origin);
+    if (own) memcpy(block.bytes + header, list->uniforms + run->uniforms, own);
     use_pipeline(s);
-    gpu->uniforms(&block, sizeof(shaded_uniforms) + own);
+    gpu->uniforms(&block, header + own);
     for (uint32_t i = 0; i < shader->texture_count; i++) {
         gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)),
                     gpu_filter(tide_sampling_filter(run->sampling, i)), gpu_wrap(tide_sampling_wrap(run->sampling, i)));
@@ -4396,7 +4417,9 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
 static uint64_t draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
 {
     const gpu_mesh *g = &gpu_meshes[s->mesh - 1u];
-    const mesh_3d_uniforms uniforms = {.camera = camera_3d_to_clip(list, s),
+    tide_float4 origin;
+    const tide_float4x4 camera = camera_3d_to_clip(list, s, &origin);
+    const mesh_3d_uniforms uniforms = {.camera = camera, .origin = origin,
                                        .tint = {s->tint.r, s->tint.g, s->tint.b, s->tint.a},
                                        .fix = {s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f}};
     use_pipeline(s);
@@ -4658,11 +4681,13 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case TIDE_DRAW_CAMERA_3D:
             if (c->camera.matrix >= list->matrix_count) { // TIDE_DRAW_FIRST_CAMERA
                 f->camera_3d = 0;
+                f->camera_data = 0;
                 f->fit = 1;
                 f->mirrored = false;
                 break;
             }
             f->camera_3d = c->camera.matrix + 1u;
+            f->camera_data = c->camera.data <= list->camera_3d_count ? c->camera.data : 0;
             f->fit = c->camera.fit;
             f->mirrored = c->camera.mirrored != 0;
             break;
@@ -4679,6 +4704,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             s->wrap = c->mesh3.wrap;
             s->mesh = c->mesh3.mesh;
             s->camera = f->camera_3d;
+            s->camera_data = f->camera_data;
             s->fit = f->fit;
             s->tint = c->color;
             break;
@@ -4692,6 +4718,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             s->cull = gpu_cull(c->cull, f->mirrored);
             s->first = c->shaded.run;
             s->camera = f->camera_3d;
+            s->camera_data = f->camera_data;
             s->fit = f->fit;
             s->through = *cam;
             break;
@@ -4994,17 +5021,26 @@ tide_float2 tide_platform_screen_scale(void)
     return window_scale();
 }
 
+tide_target_content tide_platform_target_content(const tide_target_size size)
+{
+    const tide_gpu *device = embedded ? &tide_gpu_record : tide_window_gpu();
+    return (tide_target_content){.device = device ? device->epoch() : 0,
+                                .pixels = tide_platform_target_pixels(size)};
+}
+
 tide_int2 tide_platform_target_pixels(const tide_target_size size)
 {
     const draw_root window = {.width = (float)screen_width, .height = (float)screen_height,
                               .pixel_width = pixel_width, .pixel_height = pixel_height};
-    const tide_gpu *gpu = tide_window_gpu();
+    const tide_gpu *gpu = embedded ? &tide_gpu_record : tide_window_gpu();
     static uint32_t seen_epoch;
+    static const tide_gpu *seen_device;
     const uint32_t epoch = gpu ? gpu->epoch() : 0;
     if (!epoch) return tide_i2(0, 0);
-    if (!target_most || epoch != seen_epoch) {
+    if (!target_most || epoch != seen_epoch || gpu != seen_device) {
         target_most = gpu->target_limit();
         seen_epoch = epoch;
+        seen_device = gpu;
     }
     float width, height;
     int wide, high;

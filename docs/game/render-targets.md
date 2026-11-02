@@ -33,6 +33,26 @@ Otherwise a target's color, depth and stencil persist across frames until cleare
 
 ## Post-processing
 
+For an image baked only when needed, keep its `contentRevision` in local state.
+This read-only `long` changes when its pixels are discarded by resizing, hot
+reload or device loss, including automatic window/display changes. Copies of
+the target share the revision. Ordinary drawing and clearing leave it unchanged.
+An invalid or disposed target and `Draw.window` return zero.
+
+```csharp
+if (!cache.card.valid) cache.card = RenderTarget(200, 300);
+var revision = cache.card.contentRevision;
+if (cache.bakedRevision != revision)
+{
+    cache.card.Clear(Color.black);
+    // Draw the cached image here.
+    cache.bakedRevision = revision;
+}
+```
+
+Store `bakedRevision` as a `long` alongside the target. Compare for equality;
+the revision is an invalidation token, not a count of drawing operations.
+
 ```csharp
 local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }

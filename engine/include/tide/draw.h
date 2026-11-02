@@ -198,6 +198,7 @@ typedef struct tide_draw_command {
                              // TIDE_DRAW_FIRST_CAMERA: the one each frame starts with
             uint32_t fit;    // 1: it's for a square screen, and renderers divide x by the screen's width over its height
             uint32_t mirrored; // 1: it shows the world mirrored, so triangles reach the screen wound the other way
+            uint32_t data;     // 1 + cameras_3d slot, or 0 when only the combined matrix is known
         } camera;
         struct {              // TIDE_DRAW_MESH_3D
             uint32_t mesh;    // 1 + its place in tide_draw_list.meshes, or 0 for none (see tide_draw_forget)
@@ -529,6 +530,16 @@ typedef struct tide_target_size {
 
 // The physical image size for a target under the host's current window and device.
 typedef tide_int2 (*tide_target_pixels_fn)(tide_target_size size);
+typedef struct tide_target_content {
+    uint64_t device;
+    tide_int2 pixels;
+} tide_target_content;
+typedef tide_target_content (*tide_target_content_fn)(tide_target_size size);
+typedef struct tide_target_content_scope {
+    tide_target_content_fn resolve;
+    uint32_t epoch;
+} tide_target_content_scope;
+tide_target_content_scope tide_render_target_content_resolver(tide_target_content_scope scope);
 
 // Whether there's an image of that size: a window to follow, or a width and a
 // height above 0 at a scale that isn't under it. Never for a NaN.
@@ -586,6 +597,10 @@ typedef struct tide_render_target_state {
     tide_target_size size;
     uint64_t version;
     uint64_t reload_id; // Temporary opaque identity while restoring another address space.
+    int64_t content_revision;
+    tide_target_content content;
+    uint32_t content_epoch;
+    bool content_seen;
     void *memory;       // What it was allocated in, to free: the state is on a boundary inside it
     bool alive;
     bool cube; // A cube's: six images of its size, a face each (TIDE_RENDER_CUBE)
@@ -730,6 +745,12 @@ typedef struct tide_render_target {
     uint64_t id;
     tide_target_size size;
 } tide_render_target;
+
+// Positive identity of the target's current contents; ordinary drawing does not change it.
+int64_t tide_render_target_content_revision(tide_render_target target);
+void tide_render_target_content_observe(uint64_t id, tide_target_content content, uint32_t epoch);
+uint64_t tide_render_target_revision_highwater(void);
+void tide_render_target_revision_resume(uint64_t previous);
 
 // target.size: its size in logical pixels, in a window of `window_size`: the
 // window's, a target that follows it, or the size it was made or resized to.
@@ -1160,6 +1181,10 @@ typedef struct tide_draw_camera_3d_data {
     // Its parts, which the matrix is made of: where the camera is in the world (it looks along its +z),
     // and what takes what it sees to clip space, looking down -z, for a square screen when `fit` says so
     tide_float4x4 transform, projection;
+    // GPU placement subtracts origin before this projection, avoiding cancellation in the combined matrix.
+    // The original matrix and parts remain available for world-space queries.
+    tide_float4x4 relative;
+    tide_float4 origin;
     uint32_t fit;      // 1: it's for a square screen (see TIDE_DRAW_CAMERA_3D)
     uint32_t mirrored; // 1: it shows the world mirrored, as a looking glass does
 } tide_draw_camera_3d_data;
@@ -1368,6 +1393,8 @@ typedef enum tide_shader_read {
 // own: with those, 255 float4s, as OpenGL ES drivers that count a block's
 // members among a shader's uniform vectors take 256 at most.
 #define TIDE_SHADER_UNIFORM_BYTES 3984u
+// 3D shaders also carry a float4 camera origin, leaving the same portable total.
+#define TIDE_SHADER_UNIFORM_3D_BYTES 3968u
 
 // A vertex shader and a fragment shader, in each language a renderer takes,
 // and what they read:
@@ -1380,14 +1407,16 @@ typedef enum tide_shader_read {
 //   column by column.
 // - Uniforms for each draw, one block. The engine's own come first:
 //   `tide_camera`, a matrix from the mesh's space to clip space as OpenGL has
-//   it (the world through the 3D camera for a 3D shader; for a 2D one, the
+//   it (camera-relative world through the 3D camera for a 3D shader; for a 2D one, the
 //   units the draw is in, through the 2D camera or the screen, and the
 //   transform the draw is in), then `tide_screen`, a float4: the target's
 //   pixels in a logical one across and down, the target's height in its own
 //   pixels, and 1 where the draw multiplies what's there (TIDE_BLEND_MULTIPLY:
 //   its color goes to white as its alpha goes to 0) or 0, or for a cut-out
 //   (`cutout`), -1 where its target has one sample; then `tide_tint`,
-//   a float4 the pixel's color is multiplied by (see tide_draw_set_tint).
+//   a float4 the pixel's color is multiplied by (see tide_draw_set_tint). A 3D
+//   shader then has `tide_origin`, a float4 camera origin with w zero. Its model
+//   columns subtract origin times their w before applying local geometry.
 //   After them, `uniform_floats` float4s and `uniform_ints` int4s of the
 //   game's.
 // - `texture_count` textures: `pixels0`, `pixels1`... each read as
@@ -1594,6 +1623,7 @@ typedef struct tide_draw_list {
     tide_float2 screen;
     tide_float2 screen_scale; // Frame-host physical pixels per logical pixel, independently on x/y; zero means 1
     tide_target_pixels_fn target_pixels; // Borrowed frame metadata; no GPU readback
+    tide_target_content_fn target_content; // Current device and physical extent, before views run
     uint32_t leveled;  // Whether the frame drew a level: its runs may want gathering (tide_draw_gather_levels)
     uint8_t *level_room; // Where the instances of a draw are sorted by their levels
     uint32_t level_room_capacity;

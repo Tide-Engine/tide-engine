@@ -421,6 +421,7 @@ static void show_frame(const void *world, const uint32_t tick, const uint32_t pl
     tide_draw_reset(&tide_run_draw);
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size());
     tide_run_draw.target_pixels = tide_platform_target_pixels;
+    tide_run_draw.target_content = tide_platform_target_content;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
     if (tide_run_view_camera) {
         tide_draw_set_camera_matrices(&tide_run_draw, tide_run_view_camera_transform, tide_run_view_camera_projection);

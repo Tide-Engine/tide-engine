@@ -642,7 +642,7 @@ static const char mesh_3d_glsl_vertex[] =
     "layout(location = 4) in vec4 model1;\n"
     "layout(location = 5) in vec4 model2;\n"
     "layout(location = 6) in vec4 model3;\n"
-    "layout(std140) uniform uniforms { mat4 camera; vec4 run_tint; vec4 fix; };\n" // The camera: from the world to clip space
+    "layout(std140) uniform uniforms { mat4 camera; vec4 run_tint; vec4 fix; vec4 origin; };\n"
     "out vec2 at;\n"
     "out vec4 tint;\n"
     "out float white;\n"
@@ -650,11 +650,13 @@ static const char mesh_3d_glsl_vertex[] =
     "    at = uv;\n"
     "    tint = color * run_tint;\n"
     "    white = fix.x;\n"
-    "    gl_Position = camera * (mat4(model0, model1, model2, model3) * vec4(position, 1.0));\n"
+    "    mat4 relative = mat4(model0 - origin * model0.w, model1 - origin * model1.w,\n"
+    "                         model2 - origin * model2.w, model3 - origin * model3.w);\n"
+    "    gl_Position = camera * (relative * vec4(position, 1.0));\n"
     "}\n";
 
 static const char *const mesh_3d_wgsl = WGSL(
-    "struct Uniforms { camera: mat4x4f, tint: vec4f, fix: vec4f }\n"
+    "struct Uniforms { camera: mat4x4f, tint: vec4f, fix: vec4f, origin: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
     "@group(0) @binding(2) var how0: sampler;\n"
@@ -668,7 +670,9 @@ static const char *const mesh_3d_wgsl = WGSL(
     "@vertex fn vertex(@location(0) position: vec3f, @location(1) uv: vec2f, @location(2) color: vec4f,\n"
     "                  @location(3) model0: vec4f, @location(4) model1: vec4f, @location(5) model2: vec4f,\n"
     "                  @location(6) model3: vec4f) -> Corner {\n"
-    "    let p = u.camera * (mat4x4f(model0, model1, model2, model3) * vec4f(position, 1.0));\n"
+    "    let relative = mat4x4f(model0 - u.origin * model0.w, model1 - u.origin * model1.w,\n"
+    "                          model2 - u.origin * model2.w, model3 - u.origin * model3.w);\n"
+    "    let p = u.camera * (relative * vec4f(position, 1.0));\n"
     "    var out: Corner;\n"
     "    out.at = uv;\n"
     "    out.tint = color * u.tint;\n"

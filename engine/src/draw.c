@@ -21,6 +21,50 @@ static uint32_t mesh_hash(uint32_t space, uint64_t id, uint64_t other, uint64_t 
 static void reindex_textures(tide_draw_list *d);
 
 static tide_render_target_state *render_targets;
+static uint64_t render_revision;
+static _Thread_local tide_target_content_scope target_content_scope;
+
+static int64_t next_render_revision(void)
+{
+    if (render_revision == INT64_MAX) abort();
+    return (int64_t)++render_revision;
+}
+
+uint64_t tide_render_target_revision_highwater(void) { return render_revision; }
+
+void tide_render_target_revision_resume(const uint64_t previous)
+{
+    if (previous > INT64_MAX) abort();
+    if (previous > render_revision) render_revision = previous;
+}
+
+tide_target_content_scope tide_render_target_content_resolver(const tide_target_content_scope scope)
+{
+    const tide_target_content_scope previous = target_content_scope;
+    target_content_scope = scope;
+    return previous;
+}
+
+void tide_render_target_content_observe(const uint64_t id, const tide_target_content now, const uint32_t epoch)
+{
+    tide_render_target_state *s = tide_render_target_state_of(id);
+    if (!s || !s->alive) return;
+    if (s->content_seen && (now.device != s->content.device || s->content_epoch != epoch
+        || now.pixels.x != s->content.pixels.x || now.pixels.y != s->content.pixels.y))
+        s->content_revision = next_render_revision();
+    s->content = now;
+    s->content_seen = true;
+    s->content_epoch = epoch;
+}
+
+int64_t tide_render_target_content_revision(const tide_render_target target)
+{
+    tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (!s || !s->alive) return 0;
+    if (target_content_scope.resolve)
+        tide_render_target_content_observe(target.id, target_content_scope.resolve(s->size), target_content_scope.epoch);
+    return s->content_revision;
+}
 
 _Static_assert(TIDE_TARGET_COLORS * 3 == TIDE_RENDER_IMAGE_SHIFT && TIDE_TARGET_RGBA16F + 1 <= 7
                && TIDE_TARGET_COLORS - 1 <= (int)(TIDE_RENDER_IMAGE >> TIDE_RENDER_IMAGE_SHIFT),
@@ -107,6 +151,7 @@ static tide_render_target make_target_sampled(const tide_target_size size, const
     tide_render_target_state *s = (tide_render_target_state *)(((uintptr_t)memory + (uintptr_t)TIDE_RENDER_BITS)
                                                                & ~(uintptr_t)TIDE_RENDER_BITS);
     *s = (tide_render_target_state){.next = render_targets, .owner = &render_targets, .size = size, .version = 1,
+                                    .content_revision = next_render_revision(),
                                     .memory = memory, .alive = tide_target_size_valid(size),
                                     .holds = (uint16_t)(holds_of(formats) | sampled)};
     render_targets = s;
@@ -255,6 +300,8 @@ void tide_render_target_resize(const tide_render_target target, const float widt
     }
     s->size = size;
     s->version++;
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
 }
 
 void tide_render_target_dispose(const tide_render_target target)
@@ -294,6 +341,8 @@ void tide_cubemap_resize(const tide_cubemap_ref cube, const float size)
     }
     s->size = sized;
     s->version++;
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
 }
 
 void tide_cubemap_dispose(const tide_cubemap_ref cube)
@@ -313,6 +362,9 @@ void tide_render_target_adopt(const tide_render_target target)
 {
     tide_render_target_state *s = tide_render_target_state_of(target.id);
     if (!s || s->owner == &render_targets) return;
+    tide_render_target_revision_resume((uint64_t)s->content_revision);
+    s->content_revision = next_render_revision();
+    s->content_seen = false;
     tide_render_target_state **at = s->owner;
     while (*at && *at != s) at = &(*at)->next;
     if (*at) *at = s->next;
@@ -768,6 +820,7 @@ static __attribute__((noinline)) void settle(tide_draw_list *d)
         c->camera.matrix = matrix;
         c->camera.fit = fit;
         c->camera.mirrored = mirrored;
+        c->camera.data = p->camera_3d;
         p->played_3d = p->camera_3d;
     }
     if (p->clip != p->played_clip) {
@@ -2440,7 +2493,9 @@ static void camera_3d(tide_draw_list *d, const tide_draw_camera_3d_data camera)
     for (int i = 0; i < 2; i++) {
         if (!known[i]) continue;
         const tide_draw_camera_3d_data *c = &d->cameras_3d[known[i] - 1u];
-        if (c->fit == (uint32_t)fit && c->mirrored == (uint32_t)mirrored && same_matrix(&c->matrix, &world_to_clip)) {
+        if (c->fit == (uint32_t)fit && c->mirrored == (uint32_t)mirrored && same_matrix(&c->matrix, &world_to_clip) &&
+            same_matrix(&c->transform, &camera.transform) && same_matrix(&c->projection, &camera.projection) &&
+            same_matrix(&c->relative, &camera.relative) && memcmp(&c->origin, &camera.origin, sizeof c->origin) == 0) {
             p->camera_3d = known[i];
             refresh(d);
             return;
@@ -2458,7 +2513,7 @@ static tide_draw_camera_3d_data camera_of_matrix(const tide_float4x4 world_to_cl
 {
     tide_float4x4 projection = world_to_clip;
     projection.c2 = tide_neg_f4(projection.c2);
-    return (tide_draw_camera_3d_data){.matrix = world_to_clip, .transform = tide_identity_f4x4(),
+    return (tide_draw_camera_3d_data){.matrix = world_to_clip, .relative = world_to_clip, .transform = tide_identity_f4x4(),
                                       .projection = projection, .fit = fit, .mirrored = mirrored};
 }
 
@@ -2476,8 +2531,12 @@ static tide_draw_camera_3d_data perspective_camera(const tide_float3 position, c
                                       {0.0f, f, 0.0f, 0.0f},
                                       {0.0f, 0.0f, -1.0f, -1.0f},
                                       {0.0f, 0.0f, -2.0f * near_z, 0.0f}};
+    tide_float4x4 untranslated = view;
+    untranslated.c3 = tide_f4(0, 0, 0, 1);
     return (tide_draw_camera_3d_data){
         .matrix = tide_mul_f4x4(projection, turn_z(view)),
+        .relative = tide_mul_f4x4(projection, turn_z(untranslated)),
+        .origin = tide_f4(position.x, position.y, position.z, 0),
         .transform = tide_trs_f4x4(position, tide_normalize_q(rotation), tide_f3(1.0f, 1.0f, 1.0f)),
         .projection = projection,
         .fit = 1,
@@ -2522,8 +2581,23 @@ void tide_draw_set_camera_matrices(tide_draw_list *d, const tide_float4x4 transf
     // (a camera placed by a matrix that mirrors, a projection upside down, or the identity's, which
     // looks back along z), and a triangle's front is still its front there
     const bool mirrored = mirrors(&transform) != (tide_determinant_f4x4(projection) > 0.0f);
-    camera_3d(d, (tide_draw_camera_3d_data){.matrix = tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))),
-                                            .transform = transform, .projection = projection, .mirrored = mirrored});
+    tide_draw_camera_3d_data camera = {.matrix = tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))),
+                                     .transform = transform, .projection = projection, .mirrored = mirrored};
+    camera.relative = camera.matrix;
+    // Projective camera transforms keep the original homogeneous mapping. For an affine
+    // transform, removing translation before inversion preserves its small coefficients.
+    if (transform.c0.w == 0 && transform.c1.w == 0 && transform.c2.w == 0 && transform.c3.w == 1) {
+        tide_float4x4 untranslated = transform;
+        untranslated.c3 = tide_f4(0, 0, 0, 1);
+        const tide_float4x4 inverse = tide_inverse_f4x4(untranslated);
+        const float determinant = tide_determinant_f4x4(untranslated);
+        if (determinant != 0 && tide_is_finite_f(determinant) &&
+            tide_is_finite_f(transform.c3.x) && tide_is_finite_f(transform.c3.y) && tide_is_finite_f(transform.c3.z)) {
+            camera.relative = tide_mul_f4x4(projection, turn_z(inverse));
+            camera.origin = tide_f4(transform.c3.x, transform.c3.y, transform.c3.z, 0);
+        }
+    }
+    camera_3d(d, camera);
 }
 
 uint32_t tide_draw_push_camera_3d(tide_draw_list *d, const tide_float3 position, const tide_quaternion rotation,
@@ -4123,6 +4197,9 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             refresh(d);
         } else if (c->kind == TIDE_DRAW_CAMERA_3D) {
             if (c->camera.matrix == TIDE_DRAW_FIRST_CAMERA) tide_draw_unset_camera_3d(d);
+            else if (c->camera.data && c->camera.data <= from->camera_3d_count) {
+                camera_3d(d, from->cameras_3d[c->camera.data - 1u]);
+            }
             else if (c->camera.matrix < from->matrix_count) {
                 camera_3d(d, camera_of_matrix(from->matrices[c->camera.matrix], c->camera.fit != 0, c->camera.mirrored != 0));
             }

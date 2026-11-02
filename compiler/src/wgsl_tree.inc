@@ -3,6 +3,10 @@
 // `struct translation`, whose first fields wgsl_read.inc reads, then
 // includes that.
 
+// Generated portable uniform blocks can have 252 members, and their packed
+// arrays can construct 249 elements. Keep bounded translator scratch large enough.
+enum { WGSL_MEMBERS_MOST = 256, WGSL_ARGUMENTS_MOST = 256 };
+
 // ---------------------------------------------------------------------------
 // Memory
 

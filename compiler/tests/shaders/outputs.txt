@@ -3,7 +3,16 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 layout(location = 0) in vec3 tide_a0;
 layout(location = 1) in vec3 tide_a1;
 layout(location = 2) in vec4 tide_a2;
@@ -20,8 +29,8 @@ struct tt_Corner {
 };
 void main() {
     tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2);
-    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
+    vec4 tide_projected = tide_project(mat4(tide_n0, tide_n1, tide_n2, tide_n3), vec4(tide_vertex.m_position, 1.0));
+    gl_Position = tide_projected;
     tide_s1 = tide_vertex.m_normal;
     tide_s2 = tide_vertex.m_color;
 }
@@ -31,7 +40,16 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 in vec3 tide_s1;
 in vec4 tide_s2;
 layout(location = 0) out vec4 tide_pixel;
@@ -69,8 +87,17 @@ struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -102,8 +129,8 @@ fn ts_Fill(t_corner: tt_Corner, t_albedo: ptr<function, vec4f>, t_normal: ptr<fu
     tide_n2 = tide_in2;
     tide_n3 = tide_in3;
     var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1, tide_a2);
-    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     out.tide_s1 = tide_vertex.m_normal;
@@ -137,8 +164,17 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 layout(location = 0) in vec3 tide_a0;
 layout(location = 1) in vec3 tide_a1;
 layout(location = 2) in vec4 tide_a2;
@@ -165,8 +201,8 @@ void main() {
     tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2);
     tt_FromLamp tide_handed0 = tt_FromLamp(vec3(0.0));
     ts_Place(tide_vertex, tide_handed0);
-    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
-    gl_Position = tide_camera * tide_place;
+    vec4 tide_projected = tide_project(mat4(tide_n0, tide_n1, tide_n2, tide_n3), vec4(tide_vertex.m_position, 1.0));
+    gl_Position = tide_projected;
     tide_s1 = tide_vertex.m_normal;
     tide_s2 = tide_vertex.m_color;
     tide_h0_0 = tide_handed0.m_place;
@@ -177,8 +213,17 @@ layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
     vec4 tide_tint;
+    vec4 tide_origin;
     vec4 tide_u0;
 };
+vec4 tide_project(mat4 model, vec4 vertex) {
+    mat4 relative = mat4(
+        model[0] - tide_origin * model[0].w,
+        model[1] - tide_origin * model[1].w,
+        model[2] - tide_origin * model[2].w,
+        model[3] - tide_origin * model[3].w);
+    return tide_camera * (relative * vertex);
+}
 in vec3 tide_s1;
 in vec4 tide_s2;
 in vec3 tide_h0_0;
@@ -226,9 +271,18 @@ struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
     tide_tint: vec4f,
+    tide_origin: vec4f,
     tide_u0: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -271,8 +325,8 @@ fn ts_Deep(t_corner: tt_Corner, t_albedo: ptr<function, vec4f>, t_lamp: tt_FromL
     var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1, tide_a2);
     var tide_handed0: tt_FromLamp = tt_FromLamp(vec3f());
     ts_Place(&tide_vertex, &tide_handed0);
-    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
-    let tide_clip = tide_block.tide_camera * tide_place;
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
     var out: tide_corner;
     out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
     out.tide_s1 = tide_vertex.m_normal;

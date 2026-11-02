@@ -4449,6 +4449,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_LONG) {
+            sb_put(o, "tide_render_target_content_revision(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_FLOAT2) { // target.size
             sb_put(o, "tide_render_target_logical(");
             gen_expr(g, o, e->object);
@@ -6510,7 +6516,8 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         }
         const int had = out->items.count;
         collect_ordered(e->object, out, later);
-        if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
+        if (((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size"))
+            || (e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "contentRevision"))) {
             const ordered_item item = {e, false, false};
             vec_push(out->items, item);
         }
@@ -7429,6 +7436,7 @@ static void gen_container(gen *g, const expr *e)
     if (e->gui & GUI_DRAW) {
         line(g, o, "tide_ui->list.screen_scale = tide_draw->screen_scale;");
         line(g, o, "tide_ui->list.target_pixels = tide_draw->target_pixels;");
+        line(g, o, "tide_ui->list.target_content = tide_draw->target_content;");
         line(g, o, "tide_draw_list *const tide_draw = &tide_ui->list;");
         line(g, o, "(void)tide_draw;");
     }
@@ -21051,6 +21059,7 @@ static void gen_api(gen *g)
     }
     if (prog->seed_local) sb_put(o, "    local->tide_match_seed = w ? w->Time.seed : 0;\n");
     if (prog->uses_texture_size) sb_put(o, "    tide_target_pixels_fn tide_previous_pixels = tide_texture_target_pixels(draw->target_pixels);\n");
+    if (prog->uses_texture_size) sb_put(o, "    tide_target_content_scope tide_previous_content = tide_render_target_content_resolver((tide_target_content_scope){draw->target_content, draw->epoch});\n");
     // What the frame's draws send for code the GPU runs that rolls or reads the seed: one roll of this
     // machine's generator, which every draw of the frame has (so they still join), and the drawn world's seed
     if (shaders_roll(prog, false)) sb_put(o, "    tide_gpu_rolled = tide_random_next(&local->tide_dice);\n");
@@ -21114,6 +21123,7 @@ static void gen_api(gen *g)
     if (prog->task_slots[1]) sb_put(o, "    tide_task_local_collect(local);\n");
     if (prog->sound->named) sb_put(o, "    tide_local_sounds(local);\n");
     if (prog->uses_texture_size) sb_put(o, "    tide_texture_target_pixels(tide_previous_pixels);\n");
+    if (prog->uses_texture_size) sb_put(o, "    tide_render_target_content_resolver(tide_previous_content);\n");
     if (sharded(g)) {
         sb_put(o, "    tide_view_more_count = 0u; // ...which were this frame's alone\n    tide_view_home = (tide_view_worlds){0};\n"
                   "    tide_view_drop_grids();\n");

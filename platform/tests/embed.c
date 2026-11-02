@@ -7,10 +7,12 @@
 
 #include "game.h"
 #include "tide/embed.h"
+#include "tide/platform.h"
 #include "tide/run.h"
 #include "tide/voice.h"
 #include "tide_test.h"
 #include "gpu.h"
+#include "embedded.h"
 #if !defined(__wasm__)
 #include "shaders_spirv.h"
 #endif
@@ -539,6 +541,35 @@ static uint64_t fnv(const uint32_t *words, const uint32_t count)
 // target, which asks to be cleared as a window's first pass does, pipelines named by their SPIR-V's hash (what
 // tide unity names the shaders it writes by), the text's atlas, buffers and draws. The next frame makes nothing
 // again, and after a reset everything is made again, numbered from 1.
+TIDE_TEST(embed_render_target_revision_sees_reset_before_render)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 1, NULL);
+    const tide_render_target target = tide_render_target_make(12, 9);
+    const tide_target_content_scope previous = tide_render_target_content_resolver(
+        (tide_target_content_scope){.resolve = tide_platform_target_content});
+    const tide_target_content metadata = tide_platform_target_content(target.size);
+    TIDE_CHECK(metadata.device != 0 && metadata.pixels.x == 24 && metadata.pixels.y == 18);
+    const int64_t before = tide_render_target_content_revision(target);
+    tide_draw_list draw = {0};
+    tide_draw_render_target(&draw, target);
+    tide_draw_clear(&draw, TIDE_COLOR_RED);
+    uint32_t size = 0;
+    tide_platform_embed_render(&draw, &size);
+    TIDE_CHECK(size > 0 && tide_render_target_content_revision(target) == before);
+    tide_embed_render_reset(e);
+    const int64_t reset = tide_render_target_content_revision(target);
+    TIDE_CHECK(reset != before);
+    tide_platform_embed_render(&draw, &size);
+    TIDE_CHECK(tide_render_target_content_revision(target) == reset);
+    tide_render_target_content_resolver(previous);
+    tide_draw_free(&draw);
+    tide_render_target_dispose(target);
+    tide_embed_destroy(e);
+}
+
 TIDE_TEST(embed_render)
 {
     char *argv[] = {program};

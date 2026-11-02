@@ -6109,7 +6109,11 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     const char *members = complete(program);
     TIDE_CHECK(offers(members, "color") && offers(members, "Clear") && offers(members, "Mesh"));
     TIDE_CHECK(offers(members, "Resize") && offers(members, "Dispose"));
+    TIDE_CHECK(offers(members, "contentRevision"));
     TIDE_CHECK(!offers(members, "list") && !offers(members, "Blit"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers) { var revision = buffers.scene.contentRe$vision; }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "long"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.window.$ }\n"), "Camera"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.$ }\n"), "Blit"));
     TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, out Color color, $"), "Texture"));
