@@ -1,3 +1,4 @@
 // expect: is too large for double
+// expect: use a smaller magnitude or exponent; the largest finite double is about 1.7976931348623157e308d
 singleton Data { double value = 1e309d; }
 scene Main { }

@@ -936,7 +936,7 @@ static void show_compiles(const build *b, compiles *list, int *shown)
             *to = '\0';
             fputs(job->said, stderr);
         }
-        if (job->code == -1) fprintf(stderr, "tide: couldn't start %s\n", b->compiler);
+        if (job->code == -1) fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", b->compiler);
         else if (job->code > 0 && job->cpp) explain_cpp_compile(job->said ? job->said : "");
         if (job->code != 0) {
             *shown = list->count; // Nothing after it has a turn
@@ -1485,7 +1485,7 @@ static bool find_libraries_in(const build *b, const char *folder, c_side *out)
         const char *path = libraries.items[i];
         const lib_info info = lib_identify_file(path);
         if (info.platform == LIB_UNKNOWN) {
-            fprintf(stderr, "tide: left out %s: tide can't tell which platform it was built for\n", path);
+            fprintf(stderr, "tide: left out %s: tide can't tell which platform it was built for; supply a library built for the selected target\n", path);
             continue;
         }
         // Linux's and Android's are both ELF (see libraries.h): if the link
@@ -1771,7 +1771,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     free(ld_flag);
     free(imports_flag);
     free(natvis);
-    if (code == -1) fprintf(stderr, "tide: couldn't start %s\n", b->compiler);
+    if (code == -1) fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", b->compiler);
     return code == 0;
 }
 
@@ -3028,7 +3028,7 @@ static bool build_embed_host(run *r)
         }
         const int code = sys_run(a.items, NULL, false);
         if (code > 0) explain_link(&r->b, a.items);
-        if (code == -1) fprintf(stderr, "tide: couldn't start %s\n", r->b.compiler);
+        if (code == -1) fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", r->b.compiler);
         ok = ok && code == 0;
     }
     if (ok && !sys_rename(linked, library)) {
@@ -3935,7 +3935,7 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     free(abi_dir);
     free(platform_lib);
     free(exports);
-    if (code == -1) fprintf(stderr, "tide: couldn't start %s\n", b->compiler);
+    if (code == -1) fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", b->compiler);
     // What the link may have lacked: a library that doesn't say it's Android's
     for (int i = 0; code > 0 && i < c->unsure.count; i++) {
         const char *path = c->unsure.items[i];

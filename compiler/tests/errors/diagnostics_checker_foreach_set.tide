@@ -1,0 +1,4 @@
+// expect: 'value' is a read-only copy of a foreach element
+// expect: change the source set with Add or Remove instead of assigning its foreach variable
+void Use(Set<int> values) { foreach (var value in values) value = 2; }
+scene Main;

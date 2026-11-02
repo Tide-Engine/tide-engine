@@ -1,4 +1,5 @@
 // expect: property 'amount' has no getter
+// expect: this property can only be assigned; add a 'get { return ...; }' accessor to read it
 struct Gauge { int stored; int amount { set { stored = value; } } }
 scene Main;
 system Tick() { var g = Gauge {}; _ = g.amount; }

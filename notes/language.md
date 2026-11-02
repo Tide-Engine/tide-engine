@@ -1,5 +1,58 @@
 # Language features, as tidec builds them
 
+## Actionable compiler diagnostics (2026-11-02)
+
+The owner requested a pass over Tide's error messages for clear explanations
+and useful fixes or workarounds. The compiler changes are diagnostic-only:
+accepted syntax, checking rules, exit codes, code generation and runtime contracts
+are unchanged. Existing messages that already explain the fix remain concise.
+
+- Lexer messages explain how to close an unfinished comment, save invalid text
+  and character literals as UTF-8, and replace non-ASCII names. Invalid numeric
+  literals describe the digits and suffixes allowed for their base. Literal
+  overflow notes give a representable range or suggest a suitable alternative.
+- Parser messages distinguish an inferred local that needs an initializer from
+  an explicitly typed local that can be assigned later. Repeated Sample,
+  Sanitize and Predict methods say to combine their logic into one method.
+  Grid3's missing-cell-type example now correctly uses Grid3, formerly Grid2,
+  and its grid-default workaround supplies all three dimensions.
+- The tidec driver identifies unknown, incomplete and repeated options before
+  its usage text, and distinguishes missing inputs/output from a depfile used
+  with an inspection mode. Source, response-list, overlay and depfile failures
+  include path/permission or disk-space recovery guidance.
+- Checker examples now use mutable locals when copying, changing and replacing
+  indexed values. Mut/out and pose diagnostics cover indexed destinations
+  without calling every container a list; out-field and optional-field fixes
+  describe valid writable destinations. Foreach guidance distinguishes map,
+  set, text, list and array sources. Missing accessor, texture-constructor and
+  unsupported grid-copy messages explain an available path forward.
+- Await diagnostics cover started handles, synchronous calls and callback
+  limitations without suggesting async Action functions or workers. Void
+  failable calls no longer receive the invalid `?? fallback` suggestion:
+  their errors are handled with `is` or `!`, or propagated by a suitable
+  `fails` declaration. These are wording corrections to existing rules.
+
+Regression coverage: existing literal, encoding, duplicate-input and local
+fixtures pin the added guidance. Four diagnostics_frontend_* fixtures cover
+an unfinished comment, Grid3's example and duplicate Sample/Sanitize methods.
+tidec_diagnostics_frontend_cli checks 13 driver invocation/file failures with
+their existing exit codes and rejects sanitizer reports. Six new
+diagnostics_checker_* fixtures pin void-try, await-in-Action and foreach
+map/set/text guidance, and 24 existing checker fixtures pin revised messages.
+The language basics page explains how to read the error and its notes and
+correct common literals.
+The compiler's notes/suggestions continue through the existing common sink to
+editors; no new diagnostic API or editor-specific duplicate is introduced.
+
+Validation: the warning-free Windows ASan tool build and all 2,203 selected
+compiler error/warning, lexer, driver, CLI and language-server CTests pass.
+The docs production build passes. A positive compiler probe also accepts the
+copy/change/writeback and optional-field out/mut workarounds. These diagnostics
+run in native host tools for every game target; no web runtime or generated-C
+behavior changed, so no separate web runtime suite was needed. This pass does
+not claim every game-specific error has one universal fix; shader/runtime
+boundaries and import format decisions remain unchanged.
+
 ## Shared shader preparation inside read-only view runs (2026-11-02)
 
 The forest's opaque pass already joins trees into a handful of GPU runs, but

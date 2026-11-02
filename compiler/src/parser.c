@@ -447,6 +447,10 @@ static expr *parse_primary(parser *p)
             const uint64_t d = (uint64_t)(ch <= '9' ? ch - '0' : (ch | 0x20) - 'a' + 10);
             if (v > (limit - d) / (uint64_t)base) {
                 diag_error(t->at, "integer '" STR_FMT "' is too large for long", STR_ARG(t->text));
+                if (base == 10)
+                    diag_note("decimal integers go up to 9223372036854775807; use a smaller value, or a d-suffixed double if exact integer precision isn't needed");
+                else
+                    diag_note("hexadecimal and binary integers hold at most 64 bits; use a smaller value or split the bits across several values");
                 longjmp(p->fail, 1);
             }
             v = v * (uint64_t)base + d;
@@ -471,6 +475,7 @@ static expr *parse_primary(parser *p)
             digits[count] = '\0';
             if (!isfinite(strtod(digits, NULL))) {
                 diag_error(t->at, "double literal '" STR_FMT "' is too large for double", STR_ARG(t->text));
+                diag_note("use a smaller magnitude or exponent; the largest finite double is about 1.7976931348623157e308d");
                 longjmp(p->fail, 1);
             }
         }
@@ -487,6 +492,7 @@ static expr *parse_primary(parser *p)
             const float degrees = strtof(digits, NULL);
             if (!isfinite(degrees)) {
                 diag_error(t->at, "degree literal '" STR_FMT "' is too large for float", STR_ARG(t->text));
+                diag_note("use a smaller angle, such as an equivalent angle within one full turn; deg literals are 32-bit floats");
                 longjmp(p->fail, 1);
             }
             e->is_degrees = true;
@@ -1272,6 +1278,8 @@ static stmt *parse_var(parser *p)
     }
     if (!at(p, T_ASSIGN)) {
         diag_error(name->at, "local variable '" STR_FMT "' needs an initial value", STR_ARG(s->name));
+        diag_note("initialize it with 'var " STR_FMT " = ...;', or write its type for assignment later, like 'int " STR_FMT ";'",
+                  STR_ARG(s->name), STR_ARG(s->name));
         longjmp(p->fail, 1);
     }
     advance(p);
@@ -1608,7 +1616,7 @@ static void parse_sample(parser *p, decl *d, const token *name)
         longjmp(p->fail, 1);
     }
     if (d->body) {
-        diag_error(name->at, "an input has one Sample");
+        diag_error(name->at, "an input has one Sample; combine the sampling logic into a single Sample() method");
         longjmp(p->fail, 1);
     }
     if (str_eq_c(name->text, "sample")) {
@@ -1641,7 +1649,7 @@ static void parse_sanitize(parser *p, decl *d, const token *name)
         longjmp(p->fail, 1);
     }
     if (d->sanitize) {
-        diag_error(name->at, "an input has one Sanitize");
+        diag_error(name->at, "an input has one Sanitize; combine the validation logic into a single Sanitize() method");
         longjmp(p->fail, 1);
     }
     if (name->text.ptr[0] == 's') diag_error(name->at, "methods use PascalCase: 'Sanitize()'");
@@ -1659,7 +1667,7 @@ static void parse_predict(parser *p, decl *d, const token *name)
         longjmp(p->fail, 1);
     }
     if (d->predict) {
-        diag_error(name->at, "an input has one Predict");
+        diag_error(name->at, "an input has one Predict; combine the prediction logic into a single Predict() method");
         longjmp(p->fail, 1);
     }
     if (name->text.ptr[0] == 'p') diag_error(name->at, "methods use PascalCase: 'Predict()'");

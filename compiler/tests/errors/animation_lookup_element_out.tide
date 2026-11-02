@@ -1,2 +1,2 @@
-// expect: a list's element is a copy, so 'TryGetAt' can't make it
+// expect: an indexed element can't be an 'out' argument to 'TryGetAt'
 bool Read(AnimationCatalog clips, mut List<Animation> results) { return clips.TryGetAt(0, out results[0]); }

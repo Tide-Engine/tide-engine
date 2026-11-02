@@ -352,8 +352,8 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
         decl called = {0};
         called.name = e->name;
         if (through_element(e->object)) {
-            diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(e->name));
-            diag_note("take the pose out, change it, and put it back");
+            diag_error(e->at, "an indexed pose is a copy, so '" STR_FMT "' can't change it in place", STR_ARG(e->name));
+            diag_note("copy the pose into a 'mut var', change that local, then assign it back to the indexed destination");
             return T_ERR;
         }
         if (!check_writable(c, e->object, &called, NULL)) return T_ERR;

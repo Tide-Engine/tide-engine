@@ -1,5 +1,5 @@
-// expect: a list's element is a copy, so what it holds can't be changed where it is
-// expect: take it out, change it, and put it back
+// expect: an indexed element is a copy, so what it holds can't be changed in place
+// expect: take it out, change it, and put it back: 'mut var e = items[i]; e.parts.Add(x); items[i] = e;'
 struct Bag { List<int> parts; }
 component Shelf { List<Bag> bags; }
 scene Main { }
