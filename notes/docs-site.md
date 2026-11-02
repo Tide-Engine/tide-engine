@@ -1,5 +1,19 @@
 # The docs site
 
+## Code-oriented particle package guide (2026-11-02)
+
+The package overview and sidebar include Particles, with a guide covering
+code-defined emission/movement, local ownership, capacity and timing,
+instanced 2D/3D drawing, custom shaders and explicit render targets. Its
+source-shown smoke/sparks example uses the ordinary pure-Tide package map,
+local state, pointer bursts and compact controls above the host stats corner.
+The example builder links a package target only when the package has C sources;
+a pure-Tide package's same-named test executable is not a library dependency.
+No site infrastructure, language or engine rendering behavior changed.
+Package contracts and focused validation are recorded in `notes/particles.md`.
+The production docs build passes on Node 24.22.1, with the existing allowed
+404 diagnostics for unstaged playable pages in this checkout.
+
 ## Newton removal (2026-10-31)
 
 Owner retired the slow experimental Newton package. Its public page and

@@ -1,0 +1,255 @@
+// Instanced quads for code-authored effects. The game keeps a Renderer in
+// local state, advances its emitters explicitly and draws them in its pass.
+namespace Particles;
+
+struct Quad2D
+{
+    float2 position;
+    float2 uv;
+}
+
+struct Quad3D
+{
+    float3 position;
+    float2 uv;
+}
+
+// Only current drawing values cross to the GPU. Lifetime, velocity, custom
+// state and the CPU-only sorting key are not vertex attributes.
+struct RenderParticle
+{
+    float3 position;
+    float2 size;
+    Color color;
+    float rotation;
+    double depth;
+}
+
+struct Plane2D
+{
+    // +1 in world coordinates, -1 in top-left screen coordinates.
+    float up = 1;
+}
+
+struct BillboardAxes
+{
+    float3 right = float3(1, 0, 0);
+    float3 up = float3(0, 1, 0);
+}
+
+struct Renderer
+{
+    List<Quad2D> quad2D;
+    List<Quad3D> quad3D;
+    List<int> indices;
+    List<RenderParticle> instances;
+
+    mut void Prepare2D()
+    {
+        if (quad2D.count != 4)
+            quad2D = [Quad2D { position = float2(-0.5, 0.5), uv = float2(0, 0) },
+                      Quad2D { position = float2(0.5, 0.5), uv = float2(1, 0) },
+                      Quad2D { position = float2(0.5, -0.5), uv = float2(1, 1) },
+                      Quad2D { position = float2(-0.5, -0.5), uv = float2(0, 1) }];
+        if (indices.count != 6) indices = [0, 1, 2, 0, 2, 3];
+    }
+
+    mut void Prepare3D()
+    {
+        if (quad3D.count != 4)
+            quad3D = [Quad3D { position = float3(-0.5, 0.5, 0), uv = float2(0, 0) },
+                      Quad3D { position = float3(0.5, 0.5, 0), uv = float2(1, 0) },
+                      Quad3D { position = float3(0.5, -0.5, 0), uv = float2(1, 1) },
+                      Quad3D { position = float3(-0.5, -0.5, 0), uv = float2(0, 1) }];
+        if (indices.count != 6) indices = [0, 1, 2, 0, 2, 3];
+    }
+
+    mut void Prepare(List<Particle> particles, float3 eye = float3(0), float3 forward = float3(0))
+    {
+        instances.Clear();
+        int count = Math.Min(particles.count, MAX_PARTICLES);
+        for (var i = 0; i < count; i++)
+        {
+            var particle = particles[i];
+            if (!Alive(particle)) continue;
+            float2 size = Size(particle);
+            Color color = Tint(particle);
+            if (!Finite(size) || !Finite(color) || size.x <= 0 || size.y <= 0 || color.a <= 0) continue;
+            // Widen before subtracting: finite float centers at opposite
+            // extremes still have a finite, correctly ordered key.
+            double depth = (double(particle.position.x) - double(eye.x)) * double(forward.x)
+                         + (double(particle.position.y) - double(eye.y)) * double(forward.y)
+                         + (double(particle.position.z) - double(eye.z)) * double(forward.z);
+            instances.Add(RenderParticle { position = particle.position, size = size,
+                                           color = color, rotation = particle.rotation, depth = depth });
+        }
+    }
+}
+
+float2 Turn(float2 point, float angle)
+{
+    float c = Math.Cos(angle);
+    float s = Math.Sin(angle);
+    return float2(point.x * c - point.y * s, point.x * s + point.y * c);
+}
+
+float SoftAlpha(float2 uv)
+{
+    float2 point = uv * 2 - float2(1);
+    float inside = Math.Saturate(1 - Math.Dot(point, point));
+    return inside * inside;
+}
+
+vert Place2D(mut Quad2D vertex, RenderParticle particle, Plane2D plane)
+{
+    mut float2 point = vertex.position * particle.size;
+    point.y *= plane.up;
+    vertex.position = particle.position.xy + Turn(point, particle.rotation);
+}
+
+vert Place3D(mut Quad3D vertex, RenderParticle particle, BillboardAxes axes)
+{
+    float2 point = Turn(vertex.position.xy * particle.size, particle.rotation);
+    vertex.position = particle.position + axes.right * point.x + axes.up * point.y;
+}
+
+frag Soft2D(Quad2D vertex, out Color color, RenderParticle particle)
+{
+    float alpha = SoftAlpha(vertex.uv) * particle.color.a;
+    if (alpha <= 0) this.Discard();
+    color = Color(particle.color.r, particle.color.g, particle.color.b, alpha);
+}
+
+frag Soft3D(Quad3D vertex, out Color color, RenderParticle particle)
+{
+    float alpha = SoftAlpha(vertex.uv) * particle.color.a;
+    if (alpha <= 0) this.Discard();
+    color = Color(particle.color.r, particle.color.g, particle.color.b, alpha);
+}
+
+frag Textured2D(Quad2D vertex, out Color color, RenderParticle particle, Texture texture)
+{
+    color = texture.Sample(vertex.uv) * particle.color;
+    if (color.a <= 0) this.Discard();
+}
+
+frag Textured3D(Quad3D vertex, out Color color, RenderParticle particle, Texture texture)
+{
+    color = texture.Sample(vertex.uv) * particle.color;
+    if (color.a <= 0) this.Discard();
+}
+
+// Recording takes mutable renderer storage only to prepare its retained quad.
+// The draw list captures its own bytes before another draw reuses instances.
+void Record2D(RenderTarget target, mut Renderer renderer, Blend blend)
+{
+    if (renderer.instances.count == 0) return;
+    renderer.Prepare2D();
+    var camera = target.WorldToScreenMatrix();
+    var plane = Plane2D { up = camera.c1.y > 0 ? -1 : 1 };
+    target.Blend(blend)
+    {
+        target.Instanced(renderer.quad2D, renderer.indices, renderer.instances, Place2D, Soft2D, plane);
+    }
+}
+
+void Record2D(RenderTarget target, mut Renderer renderer, Texture texture, Blend blend)
+{
+    if (renderer.instances.count == 0) return;
+    renderer.Prepare2D();
+    var camera = target.WorldToScreenMatrix();
+    var plane = Plane2D { up = camera.c1.y > 0 ? -1 : 1 };
+    target.Blend(blend)
+    {
+        target.Instanced(renderer.quad2D, renderer.indices, renderer.instances, texture, Place2D, Textured2D, plane);
+    }
+}
+
+void Record3D(RenderTarget target, mut Renderer renderer, quaternion cameraRotation, Blend blend, bool sort)
+{
+    if (renderer.instances.count == 0) return;
+    renderer.Prepare3D();
+    if (sort) renderer.instances.Sort(a, b) { return a.depth > b.depth; }
+    var rotation = Math.Normalize(cameraRotation);
+    var axes = BillboardAxes { right = Math.Rotate(rotation, float3(1, 0, 0)),
+                               up = Math.Rotate(rotation, float3(0, 1, 0)) };
+    target.Blend(blend), target.Depth(Depth.Read), target.Cull(Cull.None)
+    {
+        target.Instanced(renderer.quad3D, renderer.indices, renderer.instances, Place3D, Soft3D, axes);
+    }
+}
+
+void Record3D(RenderTarget target, mut Renderer renderer, quaternion cameraRotation, Texture texture, Blend blend, bool sort)
+{
+    if (renderer.instances.count == 0) return;
+    renderer.Prepare3D();
+    if (sort) renderer.instances.Sort(a, b) { return a.depth > b.depth; }
+    var rotation = Math.Normalize(cameraRotation);
+    var axes = BillboardAxes { right = Math.Rotate(rotation, float3(1, 0, 0)),
+                               up = Math.Rotate(rotation, float3(0, 1, 0)) };
+    target.Blend(blend), target.Depth(Depth.Read), target.Cull(Cull.None)
+    {
+        target.Instanced(renderer.quad3D, renderer.indices, renderer.instances, texture, Place3D, Textured3D, axes);
+    }
+}
+
+// 2D follows the destination's camera or screen coordinates and preserves
+// list order. Texture uv (0, 0) is the top-left corner in both coordinate modes.
+void DrawSprites(mut Renderer renderer, List<Particle> particles, Blend blend = Blend.Alpha)
+{
+    renderer.Prepare(particles);
+    Record2D(Draw.window, renderer, blend);
+}
+
+void DrawSprites(mut Renderer renderer, List<Particle> particles, Texture texture, Blend blend = Blend.Alpha)
+{
+    renderer.Prepare(particles);
+    Record2D(Draw.window, renderer, texture, blend);
+}
+
+void DrawSprites(RenderTarget target, mut Renderer renderer, List<Particle> particles, Blend blend = Blend.Alpha)
+{
+    renderer.Prepare(particles);
+    Record2D(target, renderer, blend);
+}
+
+void DrawSprites(RenderTarget target, mut Renderer renderer, List<Particle> particles, Texture texture, Blend blend = Blend.Alpha)
+{
+    renderer.Prepare(particles);
+    Record2D(target, renderer, texture, blend);
+}
+
+// Centers are world positions. Supply the same eye and rotation as the
+// destination's camera. Sorting is stable, far-to-near within this call only;
+// additive effects can pass sort: false. No depth is written by billboards.
+void DrawBillboards(mut Renderer renderer, List<Particle> particles, float3 eye, quaternion cameraRotation,
+            Blend blend = Blend.Alpha, bool sort = true)
+{
+    float3 forward = Math.Rotate(Math.Normalize(cameraRotation), float3(0, 0, 1));
+    renderer.Prepare(particles, Finite(eye) ? eye : float3(0), forward);
+    Record3D(Draw.window, renderer, cameraRotation, blend, sort);
+}
+
+void DrawBillboards(mut Renderer renderer, List<Particle> particles, float3 eye, quaternion cameraRotation,
+            Texture texture, Blend blend = Blend.Alpha, bool sort = true)
+{
+    float3 forward = Math.Rotate(Math.Normalize(cameraRotation), float3(0, 0, 1));
+    renderer.Prepare(particles, Finite(eye) ? eye : float3(0), forward);
+    Record3D(Draw.window, renderer, cameraRotation, texture, blend, sort);
+}
+
+void DrawBillboards(RenderTarget target, mut Renderer renderer, List<Particle> particles, float3 eye, quaternion cameraRotation,
+            Blend blend = Blend.Alpha, bool sort = true)
+{
+    float3 forward = Math.Rotate(Math.Normalize(cameraRotation), float3(0, 0, 1));
+    renderer.Prepare(particles, Finite(eye) ? eye : float3(0), forward);
+    Record3D(target, renderer, cameraRotation, blend, sort);
+}
+
+void DrawBillboards(RenderTarget target, mut Renderer renderer, List<Particle> particles, float3 eye, quaternion cameraRotation,
+            Texture texture, Blend blend = Blend.Alpha, bool sort = true)
+{
+    float3 forward = Math.Rotate(Math.Normalize(cameraRotation), float3(0, 0, 1));
+    renderer.Prepare(particles, Finite(eye) ? eye : float3(0), forward);
+    Record3D(target, renderer, cameraRotation, texture, blend, sort);
+}

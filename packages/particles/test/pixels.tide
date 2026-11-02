@@ -1,0 +1,124 @@
+scene Main;
+singleton PixelSentinel { int value = 47; }
+
+local singleton PixelProbe
+{
+    int scenario;
+    bool useTarget;
+    bool world2D;
+    bool rotated;
+    bool sort = true;
+    bool tied;
+    Particles.Renderer renderer;
+    List<Particles.Particle> particles;
+    RenderTarget target;
+    [Filter(Filter.Point)] Grid2<Color> pattern = Grid2(2, 2);
+    [Filter(Filter.Point)] Grid2<Color> white = Grid2(1, 1);
+}
+
+frag CopyPixels(Vertex vertex, out Color color, Texture texture)
+{
+    color = texture.Sample(vertex.uv);
+}
+
+void Sprites(mut PixelProbe probe, RenderTarget target, bool textured)
+{
+    if (probe.useTarget)
+    {
+        if (textured) Particles.DrawSprites(target, probe.renderer, probe.particles, probe.pattern);
+        else Particles.DrawSprites(target, probe.renderer, probe.particles);
+    }
+    else
+    {
+        if (textured) Particles.DrawSprites(probe.renderer, probe.particles, probe.pattern);
+        else Particles.DrawSprites(probe.renderer, probe.particles);
+    }
+}
+
+void Billboards(mut PixelProbe probe, RenderTarget target, quaternion rotation, bool patterned, bool soft)
+{
+    Texture texture = patterned ? probe.pattern : probe.white;
+    if (probe.useTarget)
+    {
+        if (soft) Particles.DrawBillboards(target, probe.renderer, probe.particles, float3(0), rotation, sort: probe.sort);
+        else Particles.DrawBillboards(target, probe.renderer, probe.particles, float3(0), rotation, texture, sort: probe.sort);
+    }
+    else
+    {
+        if (soft) Particles.DrawBillboards(probe.renderer, probe.particles, float3(0), rotation, sort: probe.sort);
+        else Particles.DrawBillboards(probe.renderer, probe.particles, float3(0), rotation, texture, sort: probe.sort);
+    }
+}
+
+view DrawParticlePixels(mut PixelProbe probe)
+{
+    Draw.Clear(Color.black);
+    if (probe.useTarget && !probe.target.valid) probe.target = RenderTarget.Window();
+    var target = probe.useTarget ? probe.target : Draw.window;
+    target.Clear(Color.black);
+    probe.pattern[0, 0] = Color.red;
+    probe.pattern[1, 0] = Color.green;
+    probe.pattern[0, 1] = Color.blue;
+    probe.pattern[1, 1] = Color.white;
+    probe.white[0, 0] = Color.white;
+    probe.particles.Clear();
+    if (probe.scenario <= 2 || probe.scenario == 6 || probe.scenario == 7)
+    {
+        if (probe.world2D) target.SetCamera(float2(0), 2);
+        else target.SetScreen();
+        if (probe.scenario == 0)
+        {
+            probe.particles.Add(Particles.Particle { position = float3(64.5, 64.5, 0), size = float2(32), color = Color.red });
+            Sprites(probe, target, false);
+        }
+        else if (probe.scenario == 6)
+        {
+            probe.particles.Add(Particles.Particle { position = float3(32.5, 64.5, 0), size = float2(24), color = Color.red });
+            Sprites(probe, target, false);
+            probe.particles[0] = Particles.Particle { position = float3(96.5, 64.5, 0), size = float2(24), color = Color.blue };
+            Sprites(probe, target, false);
+        }
+        else if (probe.scenario == 7)
+        {
+            for (var i = 0; i < 257; i++)
+                probe.particles.Add(Particles.Particle { position = float3(64.5, 64.5, 0), size = float2(16), color = Color(1, 1, 1, 0.01) });
+            Sprites(probe, target, false);
+        }
+        else
+        {
+            probe.particles.Add(Particles.Particle {
+                position = probe.world2D ? float3(0) : float3(64, 64, 0),
+                size = probe.world2D ? float2(2, 1) : float2(64, 32),
+                rotation = probe.rotated ? 90deg : 0
+            });
+            Sprites(probe, target, true);
+        }
+    }
+    else
+    {
+        var rotation = probe.rotated ? quaternion.Euler(0, 90deg, 0) : quaternion.identity;
+        float3 forward = probe.rotated ? float3(1, 0, 0) : float3(0, 0, 1);
+        target.SetCamera(float3(0), rotation, 90);
+        if (probe.scenario == 3)
+        {
+            probe.particles.Add(Particles.Particle { position = forward * 4, size = float2(2, 1) });
+            Billboards(probe, target, rotation, true, false);
+        }
+        else if (probe.scenario == 4)
+        {
+            // Near first: sorting reverses these unless their depths tie.
+            probe.particles.Add(Particles.Particle { position = forward * 3, size = float2(3), color = Color(0, 0, 1, 0.5) });
+            probe.particles.Add(Particles.Particle { position = forward * (probe.tied ? 3 : 5), size = float2(3), color = Color(1, 0, 0, 0.5) });
+            Billboards(probe, target, rotation, false, false);
+        }
+        else if (probe.scenario == 5)
+        {
+            target.Cube(forward * 3, float3(1), Color.green);
+            probe.particles.Add(Particles.Particle { position = forward * 4, size = float2(3), color = Color.red });
+            Billboards(probe, target, rotation, false, true);
+        }
+        // This ordinary opaque draw witnesses settings restored after particles.
+        target.Cube(float3(50, 50, 50), float3(1), Color.white);
+    }
+    if (probe.useTarget) Draw.Blit(probe.target.color, Draw.window, CopyPixels);
+}

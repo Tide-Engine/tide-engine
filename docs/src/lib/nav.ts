@@ -78,6 +78,7 @@ export const sidebar: Group[] = [
             { text: 'Render3D', link: '/packages/render3d' },
             { text: 'Corner Culling', link: '/packages/cornerculling' },
             { text: 'Geometry', link: '/packages/geometry' },
+            { text: 'Particles', link: '/packages/particles' },
             { text: 'Box2D', link: '/packages/box2d' },
             { text: 'Box3D', link: '/packages/box3d' },
             { text: 'Rooms', link: '/packages/rooms' },

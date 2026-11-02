@@ -615,3 +615,26 @@ tide_add_game(tide_geometry SOURCES geometry/test/game.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" geometry/test/game_test.c)
 target_include_directories(tide_geometry PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_geometry COMMAND tide_geometry)
+
+# Code-authored local particles: bounded CPU state and instanced rendering.
+tide_add_game(tide_particles SOURCES particles/test/game.tide NAME game
+    PACKAGES Particles particles/particles.tide particles/draw.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" particles/test/game_test.c)
+target_include_directories(tide_particles PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_particles COMMAND tide_particles)
+
+if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_particles_pixels SOURCES particles/test/pixels.tide NAME game
+        PACKAGES Particles particles/particles.tide particles/draw.tide HOST particles/test/pixels.c)
+    target_link_libraries(tide_particles_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_particles_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_particles_pixels TARGET tide_particles_pixels
+            WEBGPU EXPECT "ok: particle sprites" D3D11)
+    else()
+        add_test(NAME tide_particles_pixels COMMAND tide_particles_pixels)
+        add_test(NAME tide_particles_pixels_opengl COMMAND tide_particles_pixels)
+        tide_gpu_test(tide_particles_pixels)
+        tide_gpu_test(tide_particles_pixels_opengl OPENGL)
+    endif()
+endif()
