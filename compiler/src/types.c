@@ -58,7 +58,7 @@ static const generic_form generic_forms[] = {
      "',' between the map's key and value types, like 'Map<int, string>'", "'>' after the map's value type"},
     {"Set", 1, {GENERIC_KEY}, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
     {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
-    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid3<int>'"}, NULL, "'>' after the grid's cell type"},
     {"Mesh", 1, {GENERIC_VERTEX}, {"the mesh's vertex type, like 'Mesh<Vertex3>'"}, NULL, "'>' after the mesh's vertex type"},
     {"SkinnedMesh", 2, {GENERIC_VERTEX, GENERIC_ELEMENT},
      {"the mesh's vertex type, like 'SkinnedMesh<Vertex3>'", "an optional animation and bone contract struct"},

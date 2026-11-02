@@ -1057,3 +1057,33 @@ The owner explicitly approved the internal tick-completion hook before generated
 ## T? fields (2026-10-11)
 
 Generated code calls no new runtime function for fields declared `T?`, and no engine header or structure changed: what a field is kept as, its conversion to and from the `T?` code reads, its text and list ownership, its packing and its JSON are generated, over `tide_text_view`, `tide_text_temp`, `tide_text_release`, the generated list and map helpers and the `tide_json_*` and `tide_bits_*` functions there were (`notes/language.md`, T? fields).
+
+## Approved profiler source boundary (2026-11-02)
+
+As part of the owner's approved agent-facing profiling work, generated systems and
+views now call `tide_profile_sources` in the existing agent-maintained profiling
+runtime. Its `tide_profile_source` carries the full diagnostic name and optional
+file/line/column. Timing rows own copies, retaining the existing 48-byte panel
+label separately; changed names or locations reset measurements, count changes
+release old sources, and free releases every owned string. Clearing totals retains
+source metadata and lifetime measurement counters. This keeps a host's retained
+profile valid after a game library unloads.
+
+Generated views also borrow their static source entry through
+`tide_draw_list.profile_source` while drawing diagnostics are attached, restoring
+the caller's pointer before local changes/tasks. Draw diagnostics own any source
+they retain. This boundary adds no match data or changes to hashes, snapshots,
+ordering or gameplay. The profile/draw structure changes require hosts and game
+libraries to rebuild together. Source registration does no clock reads; ordinary
+unmeasured execution remains clock-free. Runtime ownership/lifetime tests are in
+`tests/test_profile.c`; compiler fixtures and the stripping contract are recorded
+in `notes/language.md`. Coordinated validation is in `notes/standard-host.md`.
+
+The same exception covers host-owned `tide/profile_report.h` and
+`tide/draw_profile.h` collectors. No generated call reaches the report writer.
+Profile tables and rows carry replacement revisions so capture baselines can
+recognize reset counters. `tide_headless_desc.finished` is an optional host
+finalization callback, called before GPU shutdown and multiplayer process joining;
+it propagates report write failure as an exit status. The existing
+`tide_platform_players_file` helper is declared publicly for consistent report
+suffixes. These remain presentation/diagnostic data outside world storage.

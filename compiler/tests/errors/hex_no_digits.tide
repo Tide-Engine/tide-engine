@@ -1,4 +1,5 @@
 // expect: '0x' needs digits after it
+// expect: write hexadecimal digits after 0x, like 0x1F, or binary digits after 0b, like 0b1010
 scene Main { }
 
 event(Spawned) Setup(with Main)

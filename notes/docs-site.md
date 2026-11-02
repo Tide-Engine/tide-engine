@@ -1,5 +1,60 @@
 # The docs site
 
+## Profile captures and agent guidance (2026-11-02)
+
+The CLI and Debug views pages document native desktop JSON captures independent
+of panels, bounded runs, warmup, per-player reports, actual CPU work and source-
+attributed draw diagnostics. Debug views distinguishes draw recording from GPU
+submission and frustum-only timing, and explains a controlled scoped-culling
+comparison without treating low rejection as proof of redundant work. The AI
+guide, compact overview, starter AGENTS.md and portable skill link that workflow.
+The Debug views reference describes schema/version checks, build metadata,
+source declarations versus helper attribution, aggregate worker categories,
+CPU phase/source-row denominators, asynchronous GPU availability, empty
+captures, 4,096-sample percentile estimates and independent source/draw caps.
+Its Python example ranks views and inclusive mesh recording without treating
+camera ordinals as stable named passes or low rejection as proof of waste.
+Markdown/LLM/skill exports continue to derive from these same sources; no export
+format, route, navigation, browser behavior or dependency changes. Runtime and
+CLI contracts/tests belong in standard-host.md and cli-and-packages.md.
+Validation: Node 24.22.1 `npm ci` and `npm run build` passed (logs
+`build/profile-docs-install.log` and `build/profile-docs-build.log`), with the
+existing allowed unstaged example/game 404s. Windows ASan CLI dispatch, help and
+hidden-run checks and the generated stripped-metadata regression pass. Final
+native/web profiler integration results are recorded in notes/standard-host.md;
+no new onboarding trial or performance result is claimed by the prose change.
+
+## Code-oriented particle package guide (2026-11-02)
+
+The package overview and sidebar include Particles, with a guide covering
+code-defined emission/movement, local ownership, capacity and timing,
+instanced 2D/3D drawing, custom shaders and explicit render targets. Its
+source-shown smoke/sparks example uses the ordinary pure-Tide package map,
+local state, pointer bursts and compact controls above the host stats corner.
+The example builder links a package target only when the package has C sources;
+a pure-Tide package's same-named test executable is not a library dependency.
+No site infrastructure, language or engine rendering behavior changed.
+Package contracts and focused validation are recorded in `notes/particles.md`.
+The production docs build passes on Node 24.22.1, with the existing allowed
+404 diagnostics for unstaged playable pages in this checkout.
+
+## Render2D package example (2026-11-02)
+
+The new package guide and sidebar/overview entry link an interactive lantern
+garden. The ordinary docs-example build selects the render2d package, with
+analytic color/normal/alpha PNGs and their standard-library generator beside
+the source. Raised copper plates, cutout foliage and two shadowed point lights
+demonstrate elevation, normal maps, GI and bloom with independent controls.
+The camera and compact controls fit both 376x400 embeds and 960x540 windows.
+
+Native and web-release examples compile without warnings. Scripted native
+captures verify the toggles; narrow and wide captures were visually inspected.
+The Node 24.22.1 production docs build and selected source/rendering checks pass
+on WebGL and WebGPU, with the existing allowed unstaged-example 404s. Rendering
+contracts, backend tests, measured costs and limitations are in render2d.md.
+After merging dev's compiler and draw-resource changes, the native/web example
+rebuilds, docs build and both selected browser smoke checks pass again.
+
 ## Newton removal (2026-10-31)
 
 Owner retired the slow experimental Newton package. Its public page and

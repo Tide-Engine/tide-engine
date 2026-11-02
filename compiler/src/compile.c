@@ -120,7 +120,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
             memcpy(text, given, src->len + 1);
         } else text = read_file(inputs[i].path, &src->len);
         if (!text) {
-            fprintf(stderr, "tidec: can't read %s\n", inputs[i].path);
+            fprintf(stderr, "tidec: can't read source file '%s'; check that it exists and is readable\n", inputs[i].path);
             return false;
         }
         src->text = text;
@@ -134,7 +134,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (!parse_file(prog, src, toks, false)) return false;
     }
     if (opts->editor_source && !overlay_found) {
-        fprintf(stderr, "tide: source overlay is not in the selected project: %s\n", opts->editor_source);
+        fprintf(stderr, "tide: source overlay is not in the selected project: %s; select the project containing this file or add it to the compiler inputs\n", opts->editor_source);
         return false;
     }
     if (web) {

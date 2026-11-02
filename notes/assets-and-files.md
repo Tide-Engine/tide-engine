@@ -161,9 +161,29 @@ allocations, every result's indices under its vertices and numbers finite.
 `tidec_mesh_files`, `tidec_asset_files` and `tidec_fbx_files` pass unchanged,
 with their pinned limit messages.
 
-Not built yet: the language surface (waiting on the runtime Mesh value), FBX
-at runtime (the owner's call on putting ufbx in the runtime), LOD levels for
-decoded meshes.
+### Step 2: the language surface (2026-11-02)
+
+Built once the `Mesh(vertices, indices)` value landed (notes/language.md,
+Meshes the game makes). The owner: wait for that thread, leave FBX for now.
+Language contracts are in notes/language.md, Mesh<V>.Decode; what the engine
+side gained:
+
+- **Meshes with bones decode too.** A vertex with `joints` or `weights` is
+  imported at build time through the skinned decoder, posed at rest, with its
+  four heaviest bones. Those three steps (`skin_geometry` in asset_files.c,
+  `rest_mesh` and `fill_bones` in codegen.c) moved into the engine as
+  `tide_mesh_data_of_model`, `tide_mesh_data_rest` and `tide_mesh_data_bones`,
+  verbatim (one guard added: a node the getter can't read no longer reads its
+  uninitialized parent), so Decode's bits are the asset's. tidec calls them;
+  pack bytes are unchanged (asset_meshes, mesh_bones, lod, baked_poses pins).
+- `tide_mesh_data_finite`, which Decode's bones path checks after resting.
+- `tide_mesh_limits.report`: a limit's refusal printed on stderr by the
+  engine, as the PNG and skinned decoders do ("tide: Mesh.Decode refused a
+  mesh: it ..."); tidec's limits have none, as it says a diagnostic.
+
+LOD for decoded meshes needs nothing: `lod:` on the draw works for any made
+mesh (notes/language.md, `lod:` on mesh draws). Still not built: FBX at
+runtime (the owner: leave it for now).
 
 ## Baked poses for crowds (2026-10-31)
 

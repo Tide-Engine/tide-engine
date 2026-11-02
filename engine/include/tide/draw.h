@@ -1471,6 +1471,9 @@ typedef struct tide_draw_run {
 // zeroed list is ready to use, and it grows as it needs, with no limit but
 // memory: running out ends the program, as it does for worlds.
 typedef struct tide_draw_list {
+    struct tide_draw_diagnostics *diagnostics; // Optional host-owned CPU recording capture (tide/draw_profile.h).
+    const struct tide_profile_source *profile_source; // Borrowed only while the current view records.
+    struct tide_draw_diagnostic *profile_active; // Private active mesh/batch scope, never owned by the list.
     tide_draw_command *commands; // `count` of them, with room for `capacity`
     uint32_t count;
     uint32_t capacity;

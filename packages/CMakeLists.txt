@@ -9,6 +9,31 @@
 # and not what tidec says of each wait.
 set(TIDE_PACKAGE_ORDER "${CMAKE_CURRENT_BINARY_DIR}/expect_order.cmake")
 
+# Height-aware sprite rendering and surface radiance cascades are an optional,
+# independent Tide package. Its tests exercise the same package source set.
+file(GLOB render2d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/render2d/*.tide")
+tide_add_game(tide_render2d_pipeline SOURCES render2d/test/pipeline.tide NAME game
+    PACKAGES Render2D ${render2d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render2d/test/pipeline_test.c)
+target_include_directories(tide_render2d_pipeline PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render2d_pipeline COMMAND tide_render2d_pipeline)
+
+if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render2d_pixels SOURCES render2d/test/pipeline.tide NAME game
+        PACKAGES Render2D ${render2d_sources} HOST render2d/test/pixels.c)
+    target_link_libraries(tide_render2d_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_render2d_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render2d_pixels TARGET tide_render2d_pixels WEBGPU D3D11
+            EXPECT "ok: Render2D height, normals, lights, cutout shadows and radiance cascades")
+    else()
+        add_test(NAME tide_render2d_pixels COMMAND tide_render2d_pixels)
+        add_test(NAME tide_render2d_pixels_opengl COMMAND tide_render2d_pixels)
+        tide_gpu_test(tide_render2d_pixels)
+        tide_gpu_test(tide_render2d_pixels_opengl OPENGL)
+    endif()
+endif()
+
 # CPU visibility certificates. The package is ordinary Tide, with no engine
 # runtime, renderer, platform or physics dependency.
 tide_add_game(tide_cornerculling SOURCES cornerculling/test/game.tide cornerculling/test/example.tide NAME game
@@ -642,3 +667,26 @@ tide_add_game(tide_geometry SOURCES geometry/test/game.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" geometry/test/game_test.c)
 target_include_directories(tide_geometry PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_geometry COMMAND tide_geometry)
+
+# Code-authored local particles: bounded CPU state and instanced rendering.
+tide_add_game(tide_particles SOURCES particles/test/game.tide NAME game
+    PACKAGES Particles particles/particles.tide particles/draw.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" particles/test/game_test.c)
+target_include_directories(tide_particles PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_particles COMMAND tide_particles)
+
+if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_particles_pixels SOURCES particles/test/pixels.tide NAME game
+        PACKAGES Particles particles/particles.tide particles/draw.tide HOST particles/test/pixels.c)
+    target_link_libraries(tide_particles_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_particles_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_particles_pixels TARGET tide_particles_pixels
+            WEBGPU EXPECT "ok: particle sprites" D3D11)
+    else()
+        add_test(NAME tide_particles_pixels COMMAND tide_particles_pixels)
+        add_test(NAME tide_particles_pixels_opengl COMMAND tide_particles_pixels)
+        tide_gpu_test(tide_particles_pixels)
+        tide_gpu_test(tide_particles_pixels_opengl OPENGL)
+    endif()
+endif()

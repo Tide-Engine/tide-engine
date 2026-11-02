@@ -60,6 +60,45 @@ TIDE_TEST(profile_starts_over_for_another_build)
     tide_profile_free(&p);
 }
 
+TIDE_TEST(profile_sources_own_full_names_and_locations_across_reload)
+{
+    tide_profile p = {0};
+    char name[] = "A.Name.That.Goes.On.For.Longer.Than.A.Profile.Keeps.Names.First";
+    char file[] = "packages/grass/grass.tide";
+    tide_profile_source source = {name, file, 120u, 6u};
+    tide_profile_sources(&p.views, 1, &source);
+    tide_profile_time *time = &p.views.items[0];
+    TIDE_CHECK(time->source.name != name && time->source.file != file);
+    TIDE_CHECK(strcmp(time->source.name, name) == 0 && strcmp(time->source.file, file) == 0);
+    TIDE_CHECK(time->source.line == 120u && time->source.column == 6u && time->measurements == 0);
+    tide_profile_add(&p.views, 0, name, 0, MS);
+    tide_profile_sources(&p.views, 1, &source);
+    TIDE_CHECK(time->measurements == 1 && time->total == 1.0);
+    name[0] = 'B';
+    file[0] = 'P';
+    TIDE_CHECK(time->source.name[0] == 'A' && time->source.file[0] == 'p');
+    tide_profile_clear(&p);
+    TIDE_CHECK(time->measurements == 1 && time->source.line == 120u);
+
+    // A different full name with the same panel label is a different row.
+    const char *other = "A.Name.That.Goes.On.For.Longer.Than.A.Profile.Keeps.Names.Second";
+    tide_profile_add(&p.views, 0, other, 0, 2 * MS);
+    TIDE_CHECK(time->measurements == 1 && time->total == 2.0);
+    TIDE_CHECK(strcmp(time->source.name, other) == 0 && time->source.file == NULL);
+    source = (tide_profile_source){other, "grass.tide", 40u, 6u};
+    tide_profile_sources(&p.views, 1, &source);
+    tide_profile_add(&p.views, 0, other, 0, MS);
+    source = time->source; // An unchanged row may be registered from its owned data.
+    source.line++;
+    tide_profile_sources(&p.views, 1, &source);
+    TIDE_CHECK(time->measurements == 0 && time->source.line == 41u);
+    TIDE_CHECK(strcmp(time->source.file, "grass.tide") == 0);
+    tide_profile_count(&p.views, 0);
+    tide_profile_count(&p.views, 2);
+    TIDE_CHECK(p.views.items[0].source.name == NULL && p.views.items[1].source.file == NULL);
+    tide_profile_free(&p);
+}
+
 // ---------------------------------------------------------------------------
 // A tick's systems fill the profile its jobs have, on one thread too
 

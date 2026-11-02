@@ -215,6 +215,7 @@ tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/t
 tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(mesh_values)
+tide_e2e_test(mesh_decode) # Mesh<V>.Decode: a file's bytes in match code, the vertices its asset has
 tide_e2e_test(mesh_runtime) # Mesh(vertices, indices): static meshes a game makes, values beside assets', drawn by their key
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
@@ -572,6 +573,12 @@ endforeach()
 # Error tests: each errors/<name>.tide must fail to compile, and tidec's output
 # must contain the text on the file's first line, written as `// expect: <text>`.
 # A folder errors/<name>/ is one program of several files.
+add_test(NAME tidec_diagnostics_frontend_cli
+    COMMAND "${CMAKE_COMMAND}"
+        "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/diagnostics_frontend_cli"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics_frontend_cli.cmake")
+
 file(GLOB TIDE_ERROR_TESTS CONFIGURE_DEPENDS LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/errors/*")
 foreach(source IN LISTS TIDE_ERROR_TESTS)
     if(NOT IS_DIRECTORY "${source}" AND NOT source MATCHES "\\.tide$")

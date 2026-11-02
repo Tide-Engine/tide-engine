@@ -1,5 +1,105 @@
 # Language features, as tidec builds them
 
+## Mesh<V>.Decode (2026-11-02)
+
+Owner-approved (assets-and-files.md, The static mesh reader in the engine):
+`Mesh<V>.Decode(List<byte> bytes)` gives `Mesh<V> fails IOError`, the same
+geometry value `Mesh(vertices, indices)` makes. Rules are Provisional in
+docs/spec.md, Decoding a mesh.
+
+- **Parsing.** `Mesh<...>` followed by `.` after its `>` (`type_then_dot`,
+  token lookahead as `at_type_argument`) is read as `SkinnedMesh<...>` is: an
+  `E_NAME` with `type_arg_ref`. Nothing else named `Mesh` changes.
+- **Checking** (`check_mesh_decode`, from `check_method` after
+  `check_skinned_static`): the receiver is `Mesh<V>` as written
+  (`resolve_mesh`, PLACE_LOCAL) or an alias of the geometry Mesh, which
+  `alias_receiver` has already replaced by the builtin type and left in
+  `receiver->type_alias`. Only `Decode` (other names: "has the static method
+  Decode(bytes)", with a note naming the constructor); refused in frag/vert
+  (`gpu_code`, as `check_new_mesh` and skinned ops are); `mesh_vertex_ok`
+  checks the vertex; `skinned_arguments` the one `List<byte>`. Sets
+  `CALL_MESH_DECODE`, `type_decl` = the Mesh decl, `decl.mesh_decoded`,
+  `program.mesh_decodes`, `uses_text`.
+- **Codegen.** `gen_mesh_decode` (beside `tide_mesh_make_<ref>`, for each
+  decoded Mesh decl) writes `tide_mesh_decode_<ref>(tide_list)`: flatten,
+  `tide_mesh_data_decode(..., TIDE_MESH_ANY, &tide_mesh_decode_limits, ...)`,
+  `tide_mesh_data_with_tangents` for a `float4 tangent` (as `pack_mesh`'s
+  variant), or for `joints`/`weights` the skinned decoder then
+  `tide_mesh_data_of_model`/`_rest`/`_finite` and `_bones` per vertex (as
+  `pack_mesh` with `rest`); scratch lists filled by `mesh_fills`, defaults by
+  `gen_value`; `id = tide_mesh_key(...)`. The call site is
+  `tide_mesh_decode_<ref>(bytes)`. Games that decode include
+  `tide/mesh_data.h` and `tide/skinned_data.h`; others generate what they did.
+- **Identity.** `collect_asset_dependencies` seeds each decoded Mesh's vertex
+  into the default closure, as SkinnedMesh's Decode results are.
+- **Editors.** `mesh_calls` (`Decode`) is the geometry Mesh's in
+  `methods_of`; completion after `Mesh<...>.`; hover and signature help
+  through `CALL_MESH_DECODE` beside `CALL_SKINNED`; `format_method` names
+  the Mesh type and substitutes `Mesh<V>`. As for SkinnedMesh, a value's
+  completion lists `Decode` too.
+
+Tests: `tidec_e2e_mesh_decode` (GLB, embedded glTF and an alias's decode,
+OBJ into a vertex with a default and a float4 tangent, a mesh with bones,
+each equal to its asset field by field; refusals of text and no bytes; `is`
+unwrapping; a list of asset and decoded meshes; key equality; snapshot, hash,
+pack and unpack; a world hash pinned, the same on native and web; a local
+decode and the match's drawn as one GPU mesh), five `mesh_decode_*`
+diagnostics, `lsp_mesh_decode_completes_hovers_and_checks`, and
+`tests/test_mesh_decode.c` for the reader.
+
+## Actionable compiler diagnostics (2026-11-02)
+
+The owner requested a pass over Tide's error messages for clear explanations
+and useful fixes or workarounds. The compiler changes are diagnostic-only:
+accepted syntax, checking rules, exit codes, code generation and runtime contracts
+are unchanged. Existing messages that already explain the fix remain concise.
+
+- Lexer messages explain how to close an unfinished comment, save invalid text
+  and character literals as UTF-8, and replace non-ASCII names. Invalid numeric
+  literals describe the digits and suffixes allowed for their base. Literal
+  overflow notes give a representable range or suggest a suitable alternative.
+- Parser messages distinguish an inferred local that needs an initializer from
+  an explicitly typed local that can be assigned later. Repeated Sample,
+  Sanitize and Predict methods say to combine their logic into one method.
+  Grid3's missing-cell-type example now correctly uses Grid3, formerly Grid2,
+  and its grid-default workaround supplies all three dimensions.
+- The tidec driver identifies unknown, incomplete and repeated options before
+  its usage text, and distinguishes missing inputs/output from a depfile used
+  with an inspection mode. Source, response-list, overlay and depfile failures
+  include path/permission or disk-space recovery guidance.
+- Checker examples now use mutable locals when copying, changing and replacing
+  indexed values. Mut/out and pose diagnostics cover indexed destinations
+  without calling every container a list; out-field and optional-field fixes
+  describe valid writable destinations. Foreach guidance distinguishes map,
+  set, text, list and array sources. Missing accessor, texture-constructor and
+  unsupported grid-copy messages explain an available path forward.
+- Await diagnostics cover started handles, synchronous calls and callback
+  limitations without suggesting async Action functions or workers. Void
+  failable calls no longer receive the invalid `?? fallback` suggestion:
+  their errors are handled with `is` or `!`, or propagated by a suitable
+  `fails` declaration. These are wording corrections to existing rules.
+
+Regression coverage: existing literal, encoding, duplicate-input and local
+fixtures pin the added guidance. Four diagnostics_frontend_* fixtures cover
+an unfinished comment, Grid3's example and duplicate Sample/Sanitize methods.
+tidec_diagnostics_frontend_cli checks 13 driver invocation/file failures with
+their existing exit codes and rejects sanitizer reports. Six new
+diagnostics_checker_* fixtures pin void-try, await-in-Action and foreach
+map/set/text guidance, and 24 existing checker fixtures pin revised messages.
+The language basics page explains how to read the error and its notes and
+correct common literals.
+The compiler's notes/suggestions continue through the existing common sink to
+editors; no new diagnostic API or editor-specific duplicate is introduced.
+
+Validation: the warning-free Windows ASan tool build and all 2,203 selected
+compiler error/warning, lexer, driver, CLI and language-server CTests pass.
+The docs production build passes. A positive compiler probe also accepts the
+copy/change/writeback and optional-field out/mut workarounds. These diagnostics
+run in native host tools for every game target; no web runtime or generated-C
+behavior changed, so no separate web runtime suite was needed. This pass does
+not claim every game-specific error has one universal fix; shader/runtime
+boundaries and import format decisions remain unchanged.
+
 ## Shared shader preparation inside read-only view runs (2026-11-02)
 
 The forest's opaque pass already joins trees into a handful of GPU runs, but
@@ -4269,3 +4369,31 @@ checks. Docs production build, 230 grammar checks, 24 VS Code tests/build and
 JetBrains plugin build plus 7 headless adapter/platform tests pass. No CI, other
 operating systems, Android or sanitizers were run; opted-in JCEF/client integration
 was not run. Source/whitespace review passes.
+
+## Profiling source attribution (2026-11-02)
+
+The owner approved useful agent-facing profiling, including engine costs attributed
+to the views that request them. Generated ticks register a static
+`tide_profile_source` table with `tide_profile_sources` before scheduler dispatch;
+generated frames register the corresponding table for every view, including
+package views. Entries preserve the complete qualified/overloaded diagnostic name
+and the declaration's source file, line and column. Distribution name stripping
+keeps the existing numbered system/view identity and omits the file and location;
+the private `.names` map remains the way to resolve stripped identities.
+
+While drawing diagnostics are attached, each generated view sets
+`draw->profile_source` to its static entry, including all of that view's entities
+and additional shard worlds. The prior pointer is restored before local command
+application and local tasks, so those operations do not inherit the last view's
+attribution. The pointer is borrowed only during the call; retained diagnostics
+copy its strings. No per-entity source timer or simulation state was added.
+Unmeasured execution still reads no profiling clock. A build with no systems or
+views clears the corresponding old timing rows when given a profile.
+
+`compiler/tests/e2e/profile*` checks declaration locations, a qualified name longer
+than the panel label, view attribution/restoration, measured/unmeasured world hash
+equivalence and unchanged draw counts. The release diagnostic-name fixture checks
+normal source metadata and stripped identities without locations. Runtime copying,
+same-prefix name changes, source relocation and count changes are covered by
+`tests/test_profile.c`. Validation is recorded with the coordinated profiler work
+in `notes/standard-host.md`.

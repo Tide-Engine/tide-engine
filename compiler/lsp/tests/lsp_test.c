@@ -12372,6 +12372,22 @@ TIDE_TEST(lsp_skinned_blend_shapes_complete_hover_and_help)
     TIDE_CHECK(offers(completion, "Decode") && !offers(completion, "Shaped"));
 }
 
+TIDE_TEST(lsp_mesh_decode_completes_hovers_and_checks)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    var model = Mesh<Vertex3>.$\n}\n");
+    TIDE_CHECK(offers(completion, "Decode") && has(completion, "Decode(List<byte> bytes)"));
+    open_document("scene Main { }\nsingleton Art { List<byte> bytes; Mesh<Vertex3> model; }\n"
+                  "system Read(mut Art art) { art.model = Mesh<Vertex3>.Dec$ode(art.bytes)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Mesh<Vertex3>.Decode(List<byte> bytes)") && has(hover, "fails IOError") && has(hover, ".obj"));
+    open_document("scene Main { }\nusing Model = Mesh<Vertex3>;\nsingleton Art { List<byte> bytes; Model model; }\n"
+                  "system Read(mut Art art) { art.model = Model.Decode($art.bytes)!; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Decode(List<byte> bytes)"));
+}
+
 TIDE_TEST(lsp_humanoid_retargeting_completion_and_calibration_help)
 {
     start();

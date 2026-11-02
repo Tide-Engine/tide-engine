@@ -680,8 +680,14 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # as tide_platform_draw does. What a run refuses before it opens anything,
     # a flag or a script's line that's wrong, needs none.
     tide_add_game(tide_platform_capture SOURCES tests/capture.tide)
+    tide_add_game(tide_platform_profile SOURCES tests/profile.tide VISUALIZERS)
     tide_add_game(tide_platform_data_directory SOURCES tests/data_directory.tide)
     if(TIDE_NODE)
+        add_test(NAME tide_platform_profile
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/profile.mjs" $<TARGET_FILE:tide_platform_profile>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_profile-run")
+        set_tests_properties(tide_platform_profile PROPERTIES TIMEOUT 180)
+        tide_gpu_test(tide_platform_profile)
         add_test(NAME tide_platform_data_directory
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_directory.mjs" $<TARGET_FILE:tide_platform_data_directory>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_data_directory-run")

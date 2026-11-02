@@ -23,11 +23,15 @@ system Move(mut Body body, Time time)
 // Once a frame.
 view Backdrop(Time time)
 {
+    CheckProfileView(0);
     Draw.SetCamera(float2(time.tick, 0), 10);
 }
 
 // Once for each body.
 view Bodies(Body body)
 {
+    CheckProfileView(1);
     Draw.Circle(body.position, 1, Color.white);
 }
+
+extern void CheckProfileView(int index);

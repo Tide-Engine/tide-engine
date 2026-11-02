@@ -11,10 +11,12 @@ Tide is a language of its own. Its basics are the familiar kind, braces and semi
 - Types, systems and methods use PascalCase: `Transform`, `MovePlayer`, `Spawn(...)`.
 - Fields, parameters and locals use camelCase: `trs.position`, not `trs.Position`. So do public properties, even static ones: `Color.red`, `quaternion.identity`.
 - True constants use FULL_CASE: `Math.PI`, `Math.TAU`.
-- Names are ASCII. Other characters go in comments and text. Names starting with `tide_` are the engine's, for the C it generates.
+- Names are ASCII. Other characters go in comments, text and character literals. Save source files as UTF-8. Names starting with `tide_` are the engine's, for the C it generates.
 - Braces go on lines of their own, and so does an `else` after a block. A block that fits on one line can stay there: `scene Main { }`, `if (dead) { return; }`.
 
 The editors' formatter lays code out this way (see [Editors](../tools/editors.md)).
+
+Compiler diagnostics name the source file, line and column. Start with the first error and read its following notes: they can show the required syntax, a supported alternative or the declaration involved. For an invalid number, check its base, digit separators and suffix; for an out-of-range literal, use the range or alternative the note describes. A `var` declaration needs a value to infer its type; write an explicit type when assigning it later.
 
 ## Types
 

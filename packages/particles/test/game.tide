@@ -1,0 +1,71 @@
+// Exercise the package through ordinary local game code. The C host supplies
+// values and checks independent landmarks, ownership and bounded behavior.
+scene Main;
+singleton MatchSentinel { int value = 91; }
+
+local singleton ParticleProbe
+{
+    Particles.Emitter emitter;
+    Particles.Particle input;
+    int operation;
+    int count;
+    int result;
+    float dt;
+    float rate;
+    float drag;
+    float3 acceleration;
+    float3 origin;
+    float sampledAge;
+    float2 sampledSize;
+    Color sampledTint;
+}
+
+void SeedParticle(mut Particles.Particle particle, mut Random random, float3 origin)
+{
+    float x = random.NextFloat(-2, 2);
+    float y = random.NextFloat(1, 3);
+    float z = random.NextFloat(-1, 1);
+    particle.position = origin;
+    particle.velocity = float3(x, y, z);
+    particle.lifetime = 10;
+    particle.custom = float4(x, y, z, 7);
+}
+
+Func<mut Particles.Particle, mut Random, void> SpawnAt(float3 origin)
+{
+    return (mut Particles.Particle particle, mut Random random) => SeedParticle(particle, random, origin);
+}
+
+void InvalidParticle(mut Particles.Particle particle, mut Random random)
+{
+    particle.lifetime = -random.NextFloat() - 1;
+}
+
+void CustomMotion(mut Particles.Particle particle, float dt)
+{
+    particle.position.x += particle.custom.x * dt;
+    particle.custom.y += 1;
+}
+
+void InvalidMotion(mut Particles.Particle particle, float dt)
+{
+    particle.lifetime = -dt;
+}
+
+view ProbeParticles(mut ParticleProbe probe)
+{
+    if (probe.operation == 1) probe.result = Particles.Add(probe.emitter, probe.input) ? 1 : 0;
+    if (probe.operation == 2) probe.result = Particles.Burst(probe.emitter, probe.count, SpawnAt(probe.origin));
+    if (probe.operation == 3) probe.result = Particles.Emit(probe.emitter, probe.rate, probe.dt, SpawnAt(probe.origin));
+    if (probe.operation == 4) Particles.Update(probe.emitter, probe.dt, probe.acceleration, probe.drag);
+    if (probe.operation == 5) Particles.Update(probe.emitter, probe.dt, CustomMotion);
+    if (probe.operation == 6) Particles.Clear(probe.emitter);
+    if (probe.operation == 7)
+    {
+        probe.sampledAge = Particles.Age(probe.input);
+        probe.sampledSize = Particles.Size(probe.input);
+        probe.sampledTint = Particles.Tint(probe.input);
+    }
+    if (probe.operation == 8) Particles.Update(probe.emitter, probe.dt, InvalidMotion);
+    if (probe.operation == 9) probe.result = Particles.Burst(probe.emitter, probe.count, InvalidParticle);
+}

@@ -700,31 +700,8 @@ static bool sides_same(const read_file *f)
 // pack writer takes. Skinning keeps these vertices in geometry-local space.
 static mesh_file skin_geometry(const uint8_t *bytes, const uint32_t size)
 {
-    tide_skinned_data_view view;
-    if (!tide_skinned_data_open(bytes, size, &view)) abort();
-    mesh_file m = {0};
-    m.vertices = view.vertices;
-    m.indices = view.indices;
-    m.position = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
-    m.normal = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
-    m.uv = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
-    m.uv2 = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
-    m.color = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
-    m.tangent = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
-    m.index = malloc(sizeof(uint32_t) * (m.indices ? m.indices : 1u));
-    if (!m.position || !m.normal || !m.uv || !m.uv2 || !m.color || !m.tangent || !m.index) abort();
-    for (uint32_t i = 0; i < m.vertices; i++) {
-        tide_skinned_vertex_data v;
-        if (!tide_skinned_data_vertex(&view, i, &v)) abort();
-        memcpy(m.position + 3u * i, v.position, sizeof v.position);
-        memcpy(m.normal + 3u * i, v.normal, sizeof v.normal);
-        memcpy(m.uv + 2u * i, v.uv, sizeof v.uv);
-        memcpy(m.uv2 + 2u * i, v.uv2, sizeof v.uv2);
-        memcpy(m.color + 4u * i, v.color, sizeof v.color);
-        memcpy(m.tangent + 4u * i, v.tangent, sizeof v.tangent);
-    }
-    for (uint32_t i = 0; i < m.indices; i++) if (!tide_skinned_data_index(&view, i, m.index + i)) abort();
-    tide_sha256_of(bytes, size, m.hash);
+    mesh_file m;
+    if (!tide_mesh_data_of_model(bytes, size, &m)) abort(); // The decoder's own bytes, validated
     return m;
 }
 

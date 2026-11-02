@@ -1,0 +1,2 @@
+// expect: unterminated comment; add '*/' to close this '/*'
+/* this comment has no end

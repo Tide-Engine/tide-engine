@@ -1,0 +1,4 @@
+// expect: a mesh file's 'normal' is a float3, and 'Odd.normal' is int
+struct Odd { float3 position; int normal; }
+scene Main { }
+Mesh<Odd> Read(List<byte> data) { return Mesh<Odd>.Decode(data)!; }
