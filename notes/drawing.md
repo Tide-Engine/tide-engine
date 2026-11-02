@@ -1,5 +1,50 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Agent profiling of mesh recording (2026-11-02)
+
+The owner approved structured profiling and evidence for unnecessary culling.
+`tide/draw_profile.h` supplies host-owned `tide_draw_diagnostics`, attached by
+`tide_draw_list.diagnostics`. Generated views lend `profile_source` only while
+they record; rows copy the full source name, path, line and column. The draw
+list borrows the collector, preserves it on reset and never frees it. Reset
+clears the transient source and active row. The host clears/frees the collector.
+All hosts, libraries and games rebuild for the draw-list layout change.
+
+Rows separate source/destination/camera: target 0 is the window, other targets
+use their recorded identities. `camera_slot` is the one-based order of distinct
+camera settings first used by that source/destination each frame. It stays the
+same when a camera moves and recording order stays the same; conditional camera
+order changes can regroup it. It is not a semantic camera name or a GPU pass ID.
+
+One measured interval surrounds each ordinary or shaded 3D instance/batch call
+after mesh acquisition. `mesh_recording_ns` includes bounds lookup/build,
+frustum tests, LOD selection and instance emission, not isolated culling time,
+geometry capture, shader-data capture, GPU uploads or execution. Bulk instance
+loops read no clocks; one batch increments `calls` once. The diagnostic lookup
+itself precedes the timer; the enclosing view time includes that overhead too.
+Disabled collection reads no clocks and allocates no diagnostic storage.
+
+Counters are candidates, tested, rejected, untestable, bypassed and submitted.
+`tested` means valid bounds/camera/affine transform reached plane tests;
+`rejected` is its subset. Unknown bounds, unavailable cameras and invalid or
+projective transforms remain conservatively drawn and count as `untestable`.
+An explicit frustum opt-out counts as `bypassed`. `submitted` counts instances
+retained in CPU draw commands, not actual GPU draws or vertices. Bounds-cache
+hits/builds and frustum-plane rebuilds expose repeated preparation. Append
+copies already filtered commands without testing or counting them again.
+
+The collector retains at most `TIDE_DRAW_PROFILE_ROWS` (1,024) identities and
+`TIDE_DRAW_PROFILE_SOURCE_BYTES` (1 MiB) of copied names. It drops new rows on
+either limit, counting dropped calls/candidates; existing rows continue to
+collect. Names are never truncated into colliding identities. All profile state
+is outside simulation memory and affects no recording or culling decision.
+
+`tests/test_draw_profile.c` covers exact single/stored/bulk/shaded culling
+counts, conservative fallbacks, opt-outs, unchanged command/matrix bytes,
+camera motion/order, separate targets and views, owned long source strings,
+reset/clear/free, disabled collection, append, and both limits. Native ASan and
+WASM validation passes in the full suites recorded in standard-host.md.
+
 ## Drawing a mesh at a given version (2026-11-02)
 
 `tide_draw_mesh_key(d, lists, key)` (tide/mesh.h, owner-approved) tells the

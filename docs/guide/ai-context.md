@@ -139,6 +139,25 @@ Script times are frames, and lines go in frame order; key actions use `down`/`up
 
 For numerical behavior, supplement pictures with `Debug.Log` of state changes or `Debug.Assert` of invariants. A multiplayer money transfer can assert that balances never go negative and that the pool plus all balances stays constant; a collector can log cell and score after each move. With several players, a client runs a tick again after a wrong guess about another player's input, and logs in it print again: include `time.tick` in the line. Check the actual log as well as the captures. A failed or unclear image inspection is not evidence of a replication bug.
 
+For performance work, capture a representative scripted run in an optimized
+build:
+
+```sh
+tide run --release --script play.txt --frames 360 --profile profile.json --profile-warmup 60
+```
+
+This native desktop report is written when the run ends, independently of the
+panels; it measures frames after warmup and
+includes source locations and engine draw counters. Read actual CPU work and
+GPU availability, not the hidden run's fixed-step FPS. Follow expensive views
+into their draw diagnostics: many frustum tests with few rejections are a
+candidate for investigation, not proof that culling is redundant. Compare one
+change at a time using the same script, seed, resolution, saves and build mode,
+and inspect captures and relevant simulation checks before claiming an
+improvement. CPU, concurrent worker and asynchronous GPU intervals overlap.
+See [Profile captures](../tools/debug-views.md#profile-captures) for the report's
+measurement meanings and limits.
+
 Fix diagnostics using the current compiler and relevant reference rather than guessing APIs. Report the builds, behavior checks and platforms actually tested. If a tool or backend is unavailable, say which check remains unverified.
 
 ## References on demand

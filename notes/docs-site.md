@@ -1,5 +1,29 @@
 # The docs site
 
+## Profile captures and agent guidance (2026-11-02)
+
+The CLI and Debug views pages document native desktop JSON captures independent
+of panels, bounded runs, warmup, per-player reports, actual CPU work and source-
+attributed draw diagnostics. Debug views distinguishes draw recording from GPU
+submission and frustum-only timing, and explains a controlled scoped-culling
+comparison without treating low rejection as proof of redundant work. The AI
+guide, compact overview, starter AGENTS.md and portable skill link that workflow.
+The Debug views reference describes schema/version checks, build metadata,
+source declarations versus helper attribution, aggregate worker categories,
+CPU phase/source-row denominators, asynchronous GPU availability, empty
+captures, 4,096-sample percentile estimates and independent source/draw caps.
+Its Python example ranks views and inclusive mesh recording without treating
+camera ordinals as stable named passes or low rejection as proof of waste.
+Markdown/LLM/skill exports continue to derive from these same sources; no export
+format, route, navigation, browser behavior or dependency changes. Runtime and
+CLI contracts/tests belong in standard-host.md and cli-and-packages.md.
+Validation: Node 24.22.1 `npm ci` and `npm run build` passed (logs
+`build/profile-docs-install.log` and `build/profile-docs-build.log`), with the
+existing allowed unstaged example/game 404s. Windows ASan CLI dispatch, help and
+hidden-run checks and the generated stripped-metadata regression pass. Final
+native/web profiler integration results are recorded in notes/standard-host.md;
+no new onboarding trial or performance result is claimed by the prose change.
+
 ## Code-oriented particle package guide (2026-11-02)
 
 The package overview and sidebar include Particles, with a guide covering

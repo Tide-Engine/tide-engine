@@ -223,8 +223,8 @@ static int command_main(const int argc, char **argv)
     build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
     // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, a
-    // network made worse, and a run with no window. Each once is 43 arguments, and --latency, --jitter and --loss
-    // can say several players' too
+    // network made worse, profiling, and a run with no window. There is room for every option once, and
+    // --latency, --jitter and --loss can say several players' too
     const char *game_args[128] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
@@ -233,6 +233,7 @@ static int command_main(const int argc, char **argv)
     bool sized = false;
     bool data_directory = false;
     bool server_args = false;
+    bool profile = false, profile_warmup = false, profile_bounded = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
@@ -284,6 +285,28 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
             data_directory = true;
+        } else if (run && strcmp(a, "--profile") == 0) {
+            if (left < 1 || !argv[i + 1][0] || argv[i + 1][0] == '-' || profile) {
+                fputs("tide: --profile takes one nonempty report path, like `--profile profile.json`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = path_absolute(argv[++i]);
+            profile = true;
+        } else if (run && strcmp(a, "--profile-warmup") == 0) {
+            const char *number = left >= 1 ? argv[i + 1] : "";
+            const char *c = number;
+            uint64_t value = 0;
+            for (; *c >= '0' && *c <= '9' && value <= 1000000000u; c++) value = value * 10u + (uint64_t)(*c - '0');
+            if (profile_warmup || c == number || *c || value > 1000000000u) {
+                fputs("tide: --profile-warmup takes one whole number from 0 to 1000000000, like `--profile-warmup 60`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+            profile_warmup = true;
         } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--record") == 0 ||
                            strcmp(a, "--script") == 0 || strcmp(a, "--microphone") == 0 || strcmp(a, "--interactive") == 0)) {
             if (left < 1) {
@@ -301,6 +324,7 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
             headless = true;
+            if (strcmp(a, "--script") == 0 || strcmp(a, "--interactive") == 0) profile_bounded = true;
         } else if (run && (strcmp(a, "--frames") == 0 || strcmp(a, "--scale") == 0)) {
             if (left < 1) {
                 fprintf(stderr, "tide: %s takes a number, like `%s`\n", a, a[2] == 'f' ? "--frames 300" : "--scale 2");
@@ -309,7 +333,7 @@ static int command_main(const int argc, char **argv)
             }
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
-            if (a[2] == 'f') headless = true;
+            if (a[2] == 'f') headless = profile_bounded = true;
         } else if (run && (strcmp(a, "--latency") == 0 || strcmp(a, "--jitter") == 0 || strcmp(a, "--loss") == 0)) {
             // The game says what's wrong with a value: a player's (2:120) needs its --players
             if (left < 1) {
@@ -479,6 +503,21 @@ static int command_main(const int argc, char **argv)
     }
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once; use only --web or --android\n");
+        free(defines);
+        return 2;
+    }
+    if (profile_warmup && !profile) {
+        fputs("tide: --profile-warmup requires --profile <report.json>\n", stderr);
+        free(defines);
+        return 2;
+    }
+    if (profile && (opts.web || opts.android)) {
+        fputs("tide: --profile captures a native desktop run, not --web or --android\n", stderr);
+        free(defines);
+        return 2;
+    }
+    if (profile && !profile_bounded) {
+        fputs("tide: --profile needs --frames <n>, --script <file> or --interactive <replay.txt> to end the capture\n", stderr);
         free(defines);
         return 2;
     }

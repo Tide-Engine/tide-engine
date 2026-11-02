@@ -415,6 +415,7 @@ _Noreturn static void finish(int code)
     // A recording the run ended in the middle of is written out
     const bool run_written = record_end(&run_recording), script_written = tide_platform_record_stop();
     if ((!run_written || !script_written) && code == 0) code = 1;
+    if (headless_run.finished) code = headless_run.finished(code);
     code = tide_platform_players_finish(code); // A run of several players ends as one
     tide_platform_gpu_timing(false);
     write_used_keys(); // How the game's shaders were drawn, for its next run to make them as it starts

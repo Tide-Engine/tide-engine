@@ -224,6 +224,14 @@ static const argument_help arguments[] = {
      "A click or F8 toggles it, as with the game's stats setting.", RUN | BUILD},
     {"--debug-views", "--debug-views", "Enable the profiler (F7)",
      "F7 shows where frame and tick time go, as with the debugViews setting.", RUN | BUILD},
+    {"--profile", "--profile <file.json>", "Write a structured profiling report",
+     "Measures independently of the profiler and stats panels. Native desktop\n"
+     "only; combine with --frames, --script or --interactive, and use --release\n"
+     "for performance work. The path is relative to where tide was invoked.\n"
+     "The report includes CPU work, source locations and draw culling counters.", RUN},
+    {"--profile-warmup", "--profile-warmup <n>", "Skip the first n frames of a profile capture",
+     "Requires --profile. A whole number from 0 to 1000000000; default 0.\n"
+     "Warmup frames still run normally and count toward --frames.", RUN},
     {"-o", "-o <path>", "Select the built program's output path",
      "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
     {"--once", "--once", "Build once and end",

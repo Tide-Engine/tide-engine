@@ -1,5 +1,32 @@
 # `tide`, packages and the package
 
+## Agent-readable profile captures (2026-11-02)
+
+The owner's approved profiling work adds run-only `--profile <file.json>` and
+`--profile-warmup <n>`. The CLI makes the report path absolute from its invoking
+directory and forwards both arguments to the ordinary standalone host. Profiling
+does not select a window/headless mode by itself: the run must also have
+`--frames`, `--script` or `--interactive`, and keeps their one-shot build/run
+behavior. Web, Android and dedicated servers are refused before building.
+Warmup is one decimal integer from 0 through 1,000,000,000, defaults to zero,
+and requires a report path. Duplicate profile/warmup options, empty/option-like
+paths, malformed numbers and missing values fail with corrective diagnostics.
+
+The shared help catalog, CLI reference and agent materials describe optimized
+repeatable captures, actual callback CPU work rather than fixed-step FPS, and
+source/counter evidence before changing culling. Report lifecycle, multiplayer
+suffixes, measurement meanings and runtime contracts are in standard-host.md.
+No usage-data field or build mode changes.
+
+Regression coverage: run_exit_test.c checks all three bounded dispatch routes,
+argument/path forwarding, warmup boundaries and early invalid/unsupported
+refusals; hidden_test.cmake checks real CLI refusals without installed engine
+sources; help_test.cmake checks topic discovery, scope and limits. Validation:
+Windows ASan `tide_cli_run_exit`, `tide_cli_help` and `tide_cli_hidden` pass,
+as does the generated stripped-metadata regression. The docs production build
+passed on Node 24.22.1 (build/profile-docs-build.log). Final native/web profiler
+integration results are recorded in notes/standard-host.md.
+
 ## Actionable CLI diagnostics (2026-11-02)
 
 The diagnostic wording pass keeps accepted arguments, exit codes, build modes,

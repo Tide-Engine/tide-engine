@@ -17,4 +17,23 @@ Implement a small compilable step, build with `tide build`, and fix diagnostics 
 
 Validate the requested behavior, not just compilation. Before native runs set `TIDE_HIDDEN=1` in your own shell and bound them with `--frames` or a script that quits, for example `tide run --frames 120 --capture smoke.png`. Inspect the resulting image; use documented input scripts for interaction. Supplement numerical gameplay checks with state-change logs or assertions, and distinguish unclear image inspection from evidence that the game failed. `--players` runs separate game processes with a simulated network; it does not test real transports. Build with `tide build --web` when web is a target, and distinguish a web build from actual browser testing. Automated Chrome/Edge launches require `--mute-audio` and bounded execution.
 
+For performance tasks, first reproduce the situation with a saved input script.
+Capture an optimized native desktop run with
+`tide run --release --script play.txt --frames 360 --profile profile.json --profile-warmup 60`.
+Read https://tide-engine.dev/tools/debug-views.md for the current report schema
+and timing meanings. Inspect actual CPU work, all system/view rows and their
+source locations, GPU availability/sample counts, and engine draw diagnostics.
+Check the schema version, measured frames, build metadata and dropped-row
+counters. Source locations identify declarations; worker categories aggregate
+across jobs, and inclusive helper/engine time belongs to the caller.
+Hidden-run FPS is fixed simulation timing; overlapping CPU/worker/GPU intervals
+must not be added. Connect costs to work counts: expensive mesh recording with
+few frustum rejections suggests inspecting prior selection, not automatically
+disabling culling. Check the relevant camera, destination and shadow behavior.
+Form one hypothesis, change one thing and compare the same script, warmup, seed,
+resolution, saves, player count and optimized build mode. Inspect images and
+relevant simulation values/hashes, repeat alternating runs when noise matters,
+and report observer overhead and unavailable coverage. Profiling a game does
+not itself authorize changing engine code or gameplay/visual requirements.
+
 Report the concrete changes and checks that ran, plus any tool, backend or behavior that remains unverified. Do not claim an unobserved gameplay or networking result.
