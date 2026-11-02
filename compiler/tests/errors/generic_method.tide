@@ -1,0 +1,3 @@
+// expect: a method can't have type parameters of its own yet
+scene Main { }
+struct Bag { int n; int Same<T>(T a) { return n; } }

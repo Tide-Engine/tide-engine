@@ -1411,23 +1411,50 @@ Built 2026-10-11. Beyond the two calls and that a struct's fields are an object'
 ### Decided
 
 - Generics are a proper part of Tide, in three steps (the owner, 2026-10-06: "we clearly need generics and I don't like making them just an engine thing that you can't touch"): a type is read as a tree, containers nest by one rule (both built: see Lists, and `AGENTS.md`, Language), and games declare generic structs and functions of their own, below.
+- **Generic functions, with type arguments inferred, and `has`** (the owner, 2026-11-02, approving Claude's recommendations for the Geometry package: generic functions and C#'s inference at least; a compile-time field test; a bundled package): a function takes type parameters in `<>` after its name, a call gives them in `<>` or leaves them to its arguments, and `T has float3 normal` is a constant that says whether type `T` has that field, so generic code writes the fields a type has.
+
+```csharp
+T Max<T>(T a, T b)
+{
+    return a > b ? a : b;
+}
+
+V Corner<V>(float3 position, float3 normal)
+{
+    mut var v = V { };
+    v.position = position;
+    if (V has float3 normal) v.normal = normal;
+    return v;
+}
+
+int bigger = Max(3, 7);              // T is int
+float half = Max<float>(2, 1.5);     // T written: the int converts to it
+var corner = Corner<Vertex3>(p, n);  // Vertex3 has no normal: that line isn't there for it
+```
+
+### Provisional
+
+Built 2026-11-02 on that; each point beyond it is Claude's pick, from the 2026-10-06 proposal (Open, below) unless it says otherwise.
+
+- **Declaring.** `T Max<T>(T a, T b) { ... }`, at a namespace's level, with any number of parameters, each a name. A type parameter shadows nothing: a name a type already has is an error at the declaration. Not virtual or override, async or a worker, nor a method of a struct (those are errors that say so).
+- **Using.** `Max<float>(a, b)`, as many types in `<>` as it has parameters, or `Max(a, b)` with them inferred. A type argument is a value, what a list's element can be: not a component, singleton, input, event, grid, World, Devices, Action or a `T?` (an error that names the parameter).
+- **Inference**, as C#'s: each argument whose parameter's type mentions a parameter gives it, `T` against the argument's type and `List<T>`, `Set<T>`, `Map<K, V>`, `Grid2<T>`, `T[N]` and `T?` against their parts. Two arguments that give a parameter different types are an error, which says to write it in `<>` (no widening picks between `int` and `float`); a parameter no argument gives is an error that says to write the `<>`. A list literal, a lambda, `null` and `default` give nothing. The return type takes no part.
+- **Overloads.** A generic and plain functions can share a name, and so can generics with different parameters. Each generic takes part as its instantiation, and a plain function wins where both take the arguments, as in C#. A call with `<>` picks only among the generics.
+- **Instantiation.** Each set of type arguments is one function, checked as the generic's code with the parameters bound and generated once, however many calls make it: `Max<int>` is `tide_function_Max_int` in generated C (the generic's name, then its type arguments', and its parameters' types where generics share the name). An instantiation is made when a call picks it, so a generic nothing calls is parsed but not checked. Errors in an instantiation's code are said where the generic's code is, with a note at the call that made it ("in 'Max<Pair>', which this call instantiates"), through a chain of them. Instantiations one inside another stop at 8, with an error.
+- **`has`.** `T has <type> <name>`: whether type `T` (a type parameter, or any type) has a field of that name and exactly that type. It's a constant `bool`. An `if` whose condition is `has` tests alone, with `!`, `&&` and `||`, keeps only the side that runs, which alone is checked, so the other side can name fields `T` hasn't got. Anywhere else it's a plain constant.
+- **A generic as a value** (`Func<int, int, int> f = Max;`) is an error that says to call it in a lambda: which instantiation a name means isn't said by the name.
 
 ### Open
 
-A proposal for the third step (Claude, 2026-10-06), for the owner to approve before it's built. Each point is a pick unless it says otherwise.
+What's left of the proposal for the third step (Claude, 2026-10-06), for the owner to approve before it's built. Each point is a pick unless it says otherwise.
 
-- **Declaring.** A struct, a function or a method takes type parameters in `<>` after its name, as C#'s do:
+- **Generic structs and methods.** A struct or a method takes type parameters in `<>` after its name, as C#'s do:
 
 ```csharp
 struct Pair<T>
 {
     T a;
     T b;
-}
-
-T Max<T>(T a, T b)
-{
-    return a > b ? a : b;
 }
 
 struct Stack<T>
@@ -1446,16 +1473,14 @@ struct Stack<T>
 }
 ```
 
-  A method of a generic struct uses its struct's parameters, and can have parameters of its own, `U Map<U>(...)`. Not components, singletons, events, commands, inputs, scenes, systems, views or handlers: what the engine stores by name and schedules is concrete (a `component Slot<T>` would be an archetype for each instantiation, and a system over it a system for each: left for when a game asks). Not enums. A type parameter is a name; it shadows nothing, so a `T` that's also a type of the game's is an error at the declaration.
-- **Using.** `Pair<int> p;`, `Stack<Entity> enemies;`, `Max<float>(a, b)`, or `Max(a, b)` with the type arguments inferred (below). A type argument is what a list's element can be, the same rule in the same table (`GENERIC_ELEMENT`): built-in types, text, enums, structs (generic ones instantiated, `Pair<Pair<int>>`), lists, maps and sets. Not grids, ECS data, `Action`, `Devices`, `World`, nor a `T?`. A generic struct holds what a struct holds, so no grid.
-- **Monomorphization.** Each instantiation is a declaration of its own, as `List<int>` is one today: `Pair<int>` and `Pair<float>` are two structs in generated C, each checked once with its arguments bound, and two instantiations with the same arguments are one declaration, found by them. Its C name is the generic's with the arguments' C names after it, `Pair_int`, `Pair_List_Entity`, `tide_function_Max_float` (a name that reads in a debugger, over a number like `tide_list3`), and tools show it as written, `Pair<int>`, `Max<float>`: the schedule, the profiler, hovers. The game's layout has an instantiation as a struct of its name, so hot reloading carries a world over field by field as for any struct, and renaming a type parameter changes nothing.
-- **No constraints in v1.** A generic body uses a `T` for anything, and what the `T` doesn't support is found at the instantiation: `Max<Pair<int>>` is an error at `a > b` in `Max`, with a note at the instantiation that led there ("instantiated as `Max<Pair<int>>` here", through a chain of them where one generic instantiates another), as Tide's errors say what and where. What doesn't depend on `T` (names, syntax, the shape of calls, what a `T` is passed to as a plain value) is checked once with the parameters unbound, so an error that's the generic's own is found with no instantiation at all. Constraints (`where T : ...`) can come later, as a check at the declaration; Tide has nothing to constrain with yet but the built-in rules (`==`, `<`, hashable), which would be the first.
-- **Inference**, as C#'s: a call with no `<>` takes each type argument from the arguments whose parameters mention it, `T` against the argument's type and `List<T>` or `Pair<T, U>` against its parts; two arguments that give the same `T` have to give it exactly (`Max(1, 2.5)` is an error that says to write `Max<float>(1, 2.5)`: no widening picks between `int` and `float`); a `T` no argument gives is an error that says to write the `<>`; the return type takes no part. Defaults and named arguments go as for any call. A generic and a non-generic function can share a name: the non-generic wins where it fits, as in C#, and two generics that differ in how many type parameters they take are two overloads. A generic can't be `virtual` or overridden in v1, which keeps `override` matching by name and parameters alone.
-- **The GPU.** A generic function a frag or a vert reaches is instantiated like any function and written per instantiation, with its C name; a generic struct as a vertex or an instance struct is instantiated the same way. What the GPU refuses of a type (text, lists, entities) it refuses of a type argument, where it's used.
+  A method of a generic struct uses its struct's parameters, and can have parameters of its own, `U Map<U>(...)`. Not components, singletons, events, commands, inputs, scenes, systems, views or handlers: what the engine stores by name and schedules is concrete (a `component Slot<T>` would be an archetype for each instantiation, and a system over it a system for each: left for when a game asks). Not enums. `Pair<int>` and `Pair<float>` are two structs in generated C, `Pair_int`, and the game's layout has an instantiation as a struct of its name, so hot reloading carries a world over field by field as for any struct.
+- **Checking a generic with no instantiation.** What doesn't depend on `T` (names, syntax, the shape of calls) checked once with the parameters unbound, so an error that's the generic's own is found with no call of it. Built: none of it; an uncalled generic is parsed only.
+- **Constraints** (`where T : ...`) later, as a check at the declaration; Tide has nothing to constrain with yet but the built-in rules (`==`, `<`, hashable), which would be the first.
+- **The GPU.** A generic function a frag or a vert reaches is instantiated like any function and written per instantiation, with its C name; a generic struct as a vertex or an instance struct is instantiated the same way. What the GPU refuses of a type it refuses of a type argument, where it's used. Not tested yet.
+- **A generic as a `Func` value**, instantiated from the Func's types.
 - **Text** shows an instantiation's value with its written name: `Pair<int> { a = 1, b = 2 }`.
-- **Editors** (tidels): hover on a generic shows its declaration with `T`, on an instantiation the arguments bound; go to definition goes to the generic from any instantiation; rename renames the generic and every instantiation; completion offers `<` after a generic's name with its parameters as placeholders, as `Map<$1, $2>` is offered; the formatter keeps `Pair<int>` tight as it keeps `List<int>`; the grammar colors a type parameter as a type.
-- **Recursion.** `Pair<Pair<int>>` is fine, and `struct Node<T> { List<Node<T>> kids; }` too, as lists nest. `struct Node<T> { Node<T> next; }` isn't, as no struct holds itself. An instantiation that instantiates forever (`Grow<T>` calling `Grow<Pair<T>>`) stops at 8 levels, with an error that shows the chain.
-- **Tests and docs** that come with it: `compiler/tests/e2e/generics` (structs, functions, methods, inference, nested instantiations, instantiations that are one declaration, hot reloading's layout, the GPU), `compiler/tests/errors/generic_*.tide` one per diagnostic, `compiler/tests/shaders/generics`, `lsp_generics`, the grammar's probe, and `docs/language/generics.md` with a live example.
+- **Editors** (tidels): hover on a generic shows its declaration with `T`, on an instantiation the arguments bound; go to definition goes to the generic from any instantiation; rename renames the generic and every instantiation; completion offers `<` after a generic's name with its parameters as placeholders; the grammar colors a type parameter as a type. Built: none of it beyond what any function has.
+- **Recursion of types.** `Pair<Pair<int>>` is fine, and `struct Node<T> { List<Node<T>> kids; }` too, as lists nest. `struct Node<T> { Node<T> next; }` isn't, as no struct holds itself.
 
 ## Arrays
 

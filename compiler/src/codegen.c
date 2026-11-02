@@ -3920,6 +3920,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             gen_float_literal(o, e->text);
         }
         break;
+    case E_HAS: // The checker made it a bool
     case E_BOOL:
         sb_put(o, e->bool_value ? "true" : "false");
         break;
@@ -5929,7 +5930,7 @@ static bool settled(const expr *e)
     if (e->bind == BIND_CONST || e->bind == BIND_ASSET || e->type.kind == TY_RECORD || e->type.kind == TY_DRAW_LIST) return true;
     if (e->type.kind == TY_WORLD || e->type.kind == TY_QUERY) return false; // Passed-on reads can observe another call's writes.
     switch (e->kind) {
-    case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
+    case E_INT: case E_FLOAT: case E_BOOL: case E_HAS: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
     case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
     case E_STEP:
     case E_SWITCH:

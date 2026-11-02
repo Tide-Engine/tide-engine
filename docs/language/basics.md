@@ -45,7 +45,7 @@ The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI
 
 Everything is a value: assigning copies it, and nothing is shared, text and lists included. That's what keeps the whole world plain data, which the engine copies to take snapshots.
 
-The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what they hold. Containers can nest, such as `Map<string, List<int>>`. Declaring your own generic types or functions isn't supported yet; a struct or function names the concrete types it uses.
+The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what they hold. Containers can nest, such as `Map<string, List<int>>`. Functions can be [generic](./generics.md) too, `T Max<T>(T a, T b)`; structs can't be yet, so a struct names the concrete types it uses.
 
 Give a concrete type another name with a [type alias](./namespaces.md#type-aliases), declared at namespace scope: `using Points = List<float3>;`. `Points` is the same type as `List<float3>`, with the same behavior and restrictions. Aliases don't declare type parameters of their own.
 
