@@ -3569,6 +3569,10 @@ static bool drawn(const tide_shader *shader)
 
 static tide_gpu_id warm_key(const tide_shader *shader, const used_key *key)
 {
+    // ...and its listed pipeline, which its draws of a list go through (tide_draw_run.listed)
+    if (!key->blit && shader->glsl_listed_vertex) {
+        warm_ask(listed_pipeline_for(shader, key->blend, key->depth, key->cull, key->into, key->state));
+    }
     return pipeline_for(shader, key->blit, key->blend, key->depth, key->cull, key->into, key->state);
 }
 

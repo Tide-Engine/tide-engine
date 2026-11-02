@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Instance lists kept on the GPU (2026-11-02)
+
+Within the drawing maintenance exception, as an internal performance change the task authorized (no Tide or draw
+API change, the same pixels): generated `Draw.Instanced` adapters of listable shaders call the new
+`tide_draw_mesh_shaded_list` (`tide/mesh.h`) with a generated `tide_shader_N_listed` words function and a layout
+number. They return early when it draws; when it says false, they pack instances as before. `tide/draw.h` gained
+`tide_draw_shaded_listed`, `tide_draw_run_instance`, `tide_draw_run_unlist`, `tide_draw_run_stride`,
+`tide_draw_run.listed`, the listed vertex stage fields of `tide_shader`, and the private `tide_draw_list.listed`.
+Hosts, libraries and games rebuild together for the layout changes. The owner should confirm the new generated
+call. Contracts: drawing.md, Instance lists kept on the GPU.
+
 ## Loop views of lists (2026-11-02)
 
 Owner-approved ("im ok with redesigning things, if it doesnt touch language and is a net position = do it"): generated loops index lists through `tide_list_loop` (`tide/list.h`, new) with `tide_list_loop_chunk` and `tide_list_loop_own` (`engine/src/list.c`, new), agent-maintained as the generated-C side of list access. No existing runtime function, layout, snapshot or hash rule changed; `tide_list_cache` and its fill functions are as they were. Contracts, measurements and tests: `notes/ecs.md`, Loop views.

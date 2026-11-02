@@ -62,3 +62,8 @@ typedef struct tide_draw_listed {
     tide_draw_listed_page pages[TIDE_DRAW_LISTED_PAGES];
     tide_draw_listed_entry entries[TIDE_DRAW_LISTED_SLOTS];
 } tide_draw_listed;
+
+// `count` instances' bytes, `packs` 16-byte packs each, put in the frame's own room of the page that's texture
+// `slot` (tide_draw_mesh_shaded_list's), where it has room without growing (so no page pixels move): the pixel
+// they start at, a multiple of `packs`, or UINT32_MAX.
+uint32_t tide_draw_listed_put(tide_draw_list *d, uint32_t slot, const uint8_t *bytes, uint32_t count, uint32_t packs);

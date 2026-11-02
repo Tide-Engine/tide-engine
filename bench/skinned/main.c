@@ -459,7 +459,9 @@ static int frame(void *user, const float seconds)
     const uint64_t uploaded = tide_platform_gpu_written() - before_upload;
     if ((mode == 4 || mode == 5) && frame_at >= warmup_frames && warmup_frames > 0
         && (uploaded != 0 || tide_platform_draw_calls() != 2u)) {
-        fprintf(stderr, "skinned: GPU clip lost warmed residency or instancing\n"); return 1;
+        fprintf(stderr, "skinned: GPU clip lost warmed residency or instancing (%llu bytes uploaded, %u draw calls)\n",
+                (unsigned long long)uploaded, tide_platform_draw_calls());
+        return 1;
     }
     if (!tide_platform_draw_calls()) { fprintf(stderr, "skinned: the renderer submitted no draws\n"); return 1; }
 #ifndef __wasm__

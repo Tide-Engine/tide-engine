@@ -3028,6 +3028,43 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
             r->count += count;
             return;
         }
+        // A listed run and one of bytes that would be one run otherwise (a list's instances and a mesh drawn
+        // alone through one shader) are one still: the bytes go into the frame's own room of the page, as places
+        if (r->listed != run.listed && r->shader && shader->dims == 3 && instance_size && r->count <= UINT32_MAX - count
+            && (r->shader == shader || (shader->id && r->shader->id == shader->id)) && r->mesh == mesh
+            && r->sampling == sampling && memcmp(r->textures, run.textures, texture_count * sizeof *run.textures) == 0
+            && same_color(r->tint, run.tint) && r->moved == run.moved
+            && (!run.moved || memcmp(&r->transform, &run.transform, sizeof run.transform) == 0)
+            && (uniform_size == 0 || memcmp(d->uniforms + r->uniforms, uniforms, uniform_size) == 0)) {
+            const uint32_t packs = instance_size / 16u;
+            if (r->listed && r->first + (uint64_t)r->count * sizeof(uint32_t) == run.first) {
+                const uint32_t start = tide_draw_listed_put(d, r->textures[texture_count], to, count, packs);
+                if (start != UINT32_MAX) { // Its bytes are the page's now, and the run's are their places
+                    for (uint32_t i = 0; i < count; i++) {
+                        const uint32_t place = start / packs + i;
+                        memcpy(to + (size_t)i * sizeof place, &place, sizeof place);
+                    }
+                    d->instance_used = run.first + count * (uint32_t)sizeof(uint32_t);
+                    r->count += count;
+                    return;
+                }
+            } else if (run.listed && r->first + (uint64_t)r->count * instance_size == run.first) {
+                uint8_t *before = d->instances + r->first;
+                const uint32_t start = tide_draw_listed_put(d, listed, before, r->count, packs);
+                if (start != UINT32_MAX) { // The run before's bytes are the page's now: places, then these
+                    for (uint32_t i = 0; i < r->count; i++) {
+                        const uint32_t place = start / packs + i;
+                        memcpy(before + (size_t)i * sizeof place, &place, sizeof place);
+                    }
+                    memmove(before + (size_t)r->count * sizeof(uint32_t), to, (size_t)count * sizeof(uint32_t));
+                    r->listed = 1;
+                    r->textures[texture_count] = listed;
+                    r->count += count;
+                    d->instance_used = r->first + r->count * (uint32_t)sizeof(uint32_t);
+                    return;
+                }
+            }
+        }
     }
     run.uniforms = d->uniform_used;
     d->uniforms = grow(d->uniforms, d->uniform_used, &d->uniform_capacity, uniform_size, 1, 1024u);
@@ -3872,14 +3909,68 @@ static bool level_follows(const tide_draw_list *d, const tide_draw_command *c, c
     const tide_draw_mesh_data *m = &d->meshes[b->mesh - 1u];
     const uint32_t uniform_size = tide_shader_uniform_size(a->shader);
     const uint32_t texture_count = a->shader->texture_count < TIDE_SHADER_TEXTURES ? a->shader->texture_count : TIDE_SHADER_TEXTURES;
-    const uint32_t compared = texture_count + (a->listed && texture_count < TIDE_SHADER_TEXTURES ? 1u : 0u);
+    // Listed runs and runs of bytes may follow each other (tide_draw_gather_levels makes them all listed); two
+    // listed ones are of one page
+    const uint32_t compared = texture_count + (a->listed && b->listed && texture_count < TIDE_SHADER_TEXTURES ? 1u : 0u);
     return (m->base ? m->base : b->mesh) == family
         && (a->shader == b->shader || (a->shader->id && a->shader->id == b->shader->id)) && a->sampling == b->sampling
-        && a->listed == b->listed && a->first + (uint64_t)a->count * tide_draw_run_stride(a) == b->first
+        && a->first + (uint64_t)a->count * tide_draw_run_stride(a) == b->first
         && memcmp(a->textures, b->textures, compared * sizeof *a->textures) == 0 && same_color(a->tint, b->tint) && a->moved == b->moved
         && (!a->moved || memcmp(&a->transform, &b->transform, sizeof a->transform) == 0)
         && (uniform_size == 0 || a->uniforms == b->uniforms
             || memcmp(d->uniforms + a->uniforms, d->uniforms + b->uniforms, uniform_size) == 0);
+}
+
+// The shaded commands from `i` to `end` (runs one after another: level_follows) all as their runs were where
+// none or all are listed; else all listed, in one page, each run's instances places from the first run's on.
+// False where they can't be (two pages, no room in the page): they're left as they are.
+static bool gather_listed(const tide_draw_list *list, const uint32_t i, const uint32_t end)
+{
+    tide_draw_list *d = (tide_draw_list *)(uintptr_t)list; // What the renderer prepares is the list it has
+    uint32_t page = 0, bytes = 0;
+    for (uint32_t k = i; k < end; k++) {
+        const tide_draw_run *r = &d->runs[d->commands[k].shaded.run];
+        const uint32_t t = r->shader->texture_count;
+        if (!r->listed) {
+            bytes++;
+            continue;
+        }
+        if (page && r->textures[t] != page) return false;
+        page = r->textures[t];
+    }
+    if (!page || !bytes) return true;
+    const tide_draw_run *head = &d->runs[d->commands[i].shaded.run];
+    const uint32_t size = tide_shader_instance_size(head->shader), packs = size / 16u, first = head->first;
+    // Each run's places, in order: those of bytes put in the page first, before any is moved
+    uint32_t total = 0;
+    for (uint32_t k = i; k < end; k++) total += d->runs[d->commands[k].shaded.run].count;
+    uint32_t *places = tide_alloc((size_t)total * sizeof *places);
+    uint32_t n = 0;
+    for (uint32_t k = i; k < end; k++) {
+        const tide_draw_run *r = &d->runs[d->commands[k].shaded.run];
+        if (r->listed) {
+            memcpy(places + n, d->instances + r->first, (size_t)r->count * sizeof *places);
+        } else {
+            const uint32_t start = tide_draw_listed_put(d, page, d->instances + r->first, r->count, packs);
+            if (start == UINT32_MAX) {
+                free(places);
+                return false;
+            }
+            for (uint32_t m = 0; m < r->count; m++) places[n + m] = start / packs + m;
+        }
+        n += r->count;
+    }
+    memcpy(d->instances + first, places, (size_t)total * sizeof *places);
+    free(places);
+    uint32_t at = first;
+    for (uint32_t k = i; k < end; k++) {
+        tide_draw_run *r = &d->runs[d->commands[k].shaded.run];
+        r->first = at;
+        r->listed = 1;
+        r->textures[r->shader->texture_count] = page;
+        at += r->count * (uint32_t)sizeof(uint32_t);
+    }
+    return true;
 }
 
 void tide_draw_gather_levels(const tide_draw_list *d)
@@ -3928,6 +4019,11 @@ void tide_draw_gather_levels(const tide_draw_list *d)
             total += count;
         }
         if (sorted) {
+            i = end;
+            continue;
+        }
+        // Listed runs among runs of bytes: all of them listed, the bytes in the frame's own room of their page
+        if (shaded && !gather_listed(d, i, end)) {
             i = end;
             continue;
         }

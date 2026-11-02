@@ -1044,7 +1044,12 @@ static tide_draw_listed_entry *listed_steady(tide_draw_list *d, const tide_list 
     e->seen = frame;
     if (e->wait && frame - e->wait < (uint32_t)LISTED_WAIT) return NULL; // Changed again and again: not asked yet
     const uint64_t version = list_version(items, item_size);
-    if (e->since != UINT32_MAX && e->version == version) {
+    if (e->since == UINT32_MAX) { // First seen: kept from now, as most lists stay as they are (as if seen before)
+        e->version = version;
+        e->since = frame - 1u;
+        return e;
+    }
+    if (e->version == version) {
         e->changes = 0;
         e->wait = 0;
         return e->since != frame ? e : NULL;
@@ -1082,9 +1087,13 @@ static uint32_t listed_page(tide_draw_list *d, const uint32_t p, const uint32_t 
         page->end = 0;
         page->transient_frame = 0;
     }
+    // With room past what's asked, for the runs of bytes put among them (tide_draw_listed_put)
     uint32_t want = page->rows ? page->rows : (uint32_t)TIDE_DRAW_LISTED_FIRST_ROWS;
-    while (want < rows) want *= 2u;
-    if (want > (uint32_t)TIDE_DRAW_LISTED_ROWS) return 0;
+    if (want < rows) {
+        const uint32_t asked = rows + rows / 4u + 4u;
+        while (want < asked && want < (uint32_t)TIDE_DRAW_LISTED_ROWS) want *= 2u;
+    }
+    if (want < rows || want > (uint32_t)TIDE_DRAW_LISTED_ROWS) return 0;
     const uint32_t had = page->rows;
     if (write || want != had) page->version++;
     uint8_t *pixels;
@@ -1266,43 +1275,39 @@ static void listed_pack(tide_draw_list *d)
     }
 }
 
-// The page slot of a list's numbers for this frame alone, from pixel *start: for a list that changed, or one made
-// along the way, so its runs are runs of the same page as the others' (they join them as they did their bytes). 0
-// where there's no room.
-static uint32_t listed_transient(tide_draw_list *d, const tide_list items, const uint32_t item_size,
-                                 tide_list_words_fn *write, const uint32_t count, const uint32_t packs,
-                                 uint32_t *start)
+uint32_t tide_draw_listed_put(tide_draw_list *d, const uint32_t slot, const uint8_t *bytes, const uint32_t count,
+                              const uint32_t packs)
 {
-    if (!d->listed) d->listed = tide_alloc_zeroed(1, sizeof *d->listed);
-    tide_draw_listed *t = d->listed;
-    const uint64_t most = (uint64_t)TIDE_DRAW_LISTED_ROWS * TIDE_LIST_DATA_ACROSS;
+    if (!d->listed || !slot || slot > d->texture_count || !count || !packs) return UINT32_MAX;
+    const tide_draw_texture *t = &d->textures[slot - 1u];
+    if (t->space != TIDE_PIXELS_LIST) return UINT32_MAX;
+    tide_draw_listed *l = d->listed;
     for (uint32_t p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) {
-        tide_draw_listed_page *page = &t->pages[p];
-        // After the lists it keeps, and after the frame's own before it (a page made now has neither)
-        const bool kept = listed_page_kept(d, page), going = kept && page->transient_frame == d->frame + 1u;
-        const uint32_t after = !kept ? 0u : going && page->transient_end > page->end ? page->transient_end : page->end;
+        tide_draw_listed_page *page = &l->pages[p];
+        if (t->id != listed_page_id(p) || !listed_page_kept(d, page)) continue;
+        const bool going = page->transient_frame == d->frame + 1u;
+        const uint32_t after = going && page->transient_end > page->end ? page->transient_end : page->end;
         const uint64_t at = (after + (uint64_t)packs - 1u) / packs * packs;
-        if (at + (uint64_t)count * packs > most) continue;
+        if (at + (uint64_t)count * packs > (uint64_t)page->rows * TIDE_LIST_DATA_ACROSS) return UINT32_MAX;
         const uint32_t end = (uint32_t)at + count * packs;
-        const uint32_t rows = (end + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS;
-        const uint32_t slot = listed_page(d, p, rows, true);
-        if (!slot) continue;
-        if (!going) { // The frame's first
+        if (listed_page(d, p, page->rows, true) != slot) return UINT32_MAX;
+        if (!going) {
             page->transient_frame = d->frame + 1u;
             page->transient_start = (uint32_t)at;
         }
         page->transient_end = end;
-        uint8_t *to = d->textures[slot - 1u].pixels + (size_t)at * 16u;
-        bool copied;
-        const uint8_t *flat = tide_list_flatten(items, item_size, false, &copied);
-        for (uint32_t i = 0; i < count; i++) write(flat + (size_t)i * item_size, (int32_t *)(void *)(to + (size_t)i * packs * 16u));
-        tide_list_unflatten(items, (void *)(uintptr_t)flat, item_size, false, copied);
+        memcpy(d->textures[slot - 1u].pixels + (size_t)at * 16u, bytes, (size_t)count * packs * 16u);
         const uint32_t top = (uint32_t)at / (uint32_t)TIDE_LIST_DATA_ACROSS;
-        tide_draw_texture_changed(d, slot, 0, (int32_t)top, TIDE_LIST_DATA_ACROSS, (int32_t)(rows - top));
-        *start = (uint32_t)at;
-        return slot;
+        const uint32_t rows = (end + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS;
+        if (rows == top + 1u) { // Within a row: those pixels alone
+            tide_draw_texture_changed(d, slot, (int32_t)(at % TIDE_LIST_DATA_ACROSS), (int32_t)top,
+                                      (int32_t)(end - (uint32_t)at), 1);
+        } else {
+            tide_draw_texture_changed(d, slot, 0, (int32_t)top, TIDE_LIST_DATA_ACROSS, (int32_t)(rows - top));
+        }
+        return (uint32_t)at;
     }
-    return 0;
+    return UINT32_MAX;
 }
 
 bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
@@ -1319,13 +1324,14 @@ bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, co
         || (uint64_t)count * packs > (uint64_t)TIDE_DRAW_LISTED_ROWS * TIDE_LIST_DATA_ACROSS) return false;
     if (!d->listed) d->listed = tide_alloc_zeroed(1, sizeof *d->listed);
     listed_pack(d);
-    // A world's list that was as it is the frame before keeps its numbers; any other's are the frame's own
-    const bool kept = items.at && tide_handle_where(items.at) != TIDE_IN_SCRATCH && tide_heap_read(tide_handle_where(items.at));
-    tide_draw_listed_entry *e = kept ? listed_steady(d, items, item_size, layout) : NULL;
-    uint32_t slot = e ? listed_numbers(d, e, items, item_size, write, (uint32_t)count, packs) : 0u, start = 0;
-    if (slot) start = e->start;
-    else slot = listed_transient(d, items, item_size, write, (uint32_t)count, packs, &start);
+    // A world's list that stays as it is keeps its numbers; any other draws its bytes, as ever (where its runs
+    // meet listed ones of the same shader and mesh, they're put in the page: tide_draw_listed_put)
+    if (!items.at || tide_handle_where(items.at) == TIDE_IN_SCRATCH || !tide_heap_read(tide_handle_where(items.at)))
+        return false;
+    tide_draw_listed_entry *e = listed_steady(d, items, item_size, layout);
+    const uint32_t slot = e ? listed_numbers(d, e, items, item_size, write, (uint32_t)count, packs) : 0u;
     if (!slot) return false;
+    const uint32_t start = e->start;
     const uint32_t first = start / packs;
     const uint32_t mesh = shaded_mesh(d, shader, vertices, indices, (uint32_t)count);
     if (mesh) tide_draw_shaded_listed(d, shader, mesh, slot, first, (uint32_t)count, uniforms, textures, sampling);

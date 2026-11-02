@@ -1,65 +1,129 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
-## Instance lists kept on the GPU (2026-11-02, design)
+## Instance lists kept on the GPU (2026-11-02)
 
 Task: a `Draw.Instanced(mesh, list, ...)` whose list didn't change still had
 every candidate converted by generated code into scratch, each visible run
 copied into `tide_draw_list.instances`, and those bytes uploaded whole every
 frame (mount-and-rifle: about 42,000 instances, 4 MB a frame). Internal: no
-Tide or draw API change, the same pixels. The design reuses what a shader's
-`list[i]` already has: `tide_draw_list_data` keeps a heap list's converted
-words as a draw-list texture slot at the list's version (its pages' hashes),
-rewrites only changed chunks, and the renderer keeps the texture by
-identity/version, partial updates, device epochs and pruning included.
+Tide or draw API change, the same runs and pixels. Claude's design, under the
+task's authorization for internal choices.
 
-- **What's cached, keyed by what.** The instance packing itself
-  (`tide_shader_instance_size` bytes, float packs then int packs: what the
-  instance attributes read) becomes the list's data texture, one 16-byte
-  pixel a pack, through a generated `tide_list_words_fn` that writes what the
-  instance loop wrote. Key: the list handle, element size and a layout number
-  from the shader's instance layout (`numbers_id` / `numbers_kind`), at
-  `list_version`. Only draws whose per-instance values all come from the item
-  (or are constant, the identity for a list without `transform`) qualify; a
-  3D `Draw.Transform`, a skinned draw, a scratch list, a list past
-  `TIDE_LIST_DATA_MOST`, and a shader with all twelve textures used keep the
-  copying path.
-- **What goes each frame.** A run from such a list is *listed*
-  (`tide_draw_run.listed`): its `tide_draw_list.instances` bytes are `uint32_t`
-  places in the list, and the texture is the run's `textures[texture_count]`,
-  so prune, forget, append and the renderer's data-texture protection treat it
-  as any other run texture. Culling, levels of detail and mirroring read each
-  instance's transform from the texture's CPU copy, as they read the scratch
-  copy before, and produce the same runs in the same order; only survivors'
-  indices are written (4 bytes, where an instance was 64 to 256). Runs merge
-  as before (adjacent indices, the same texture).
-- **The GPU side.** tidec writes a second vertex stage for eligible
-  instanced shaders (`tide_shader.glsl_listed_vertex`, `wgsl_listed`,
-  `spirv_listed`): one int instance attribute in place of the packs, which it
-  loads from the texture (`texelFetch` / `textureLoad`, bits to floats), into
-  the same private values; the fragment stage is shared. The renderer draws a
-  listed run with that pipeline (its own key) and the index stream. Where it
-  can't (no listed sources, the Unity recorder, a backend refusing the
-  pipeline), it gathers the instance bytes from the texture's copy through the
-  indices into its instance buffer and draws the ordinary pipeline, so every
-  consumer still sees ordinary instances. `tide_draw_append` gathers too.
-- **When a list is listed.** A list is drawn listed in a frame whose version
-  equals the one seen the frame before (`tide_draw_list.listed`, a small table
-  by list handle and layout that keeps no pointer), so a list rebuilt every
-  frame stays on the copying path and never uploads its culled instances.
-  After four changes in a row its version isn't asked for 16 frames. The
-  table is frame state, cleared by `tide_draw_forget` and freed with the list.
-- **Invalidation.** List mutation: a new version (page hashes), the next frame
-  rewrites the texture's changed chunks. Hot reload: the table and slots hold
-  no shader or function pointer past a frame (a new build's shader has another
-  layout number when its instance layout changed). Lost devices and
-  render-target recreation: the texture is the renderer's like any other data
-  texture (made again at a new epoch from the list's copy).
-- **Memory bounds.** One texture per drawn list and layout, the size of the
-  converted list, alive while drawn each frame (a texture not drawn in a frame
-  goes at reset, as shader data does); at most `TIDE_LIST_DATA_MOST` pixels
-  each. The table is bounded (`TIDE_DRAW_LISTED_MOST` entries, oldest out).
-- **The CPU cull** (`bounds_visible`) is unchanged and runs per candidate, as
-  before; another task is speeding it up.
+- **What's kept, keyed by what.** An item's instance (the packing the
+  instance attributes read: float packs then int packs,
+  `tide_shader_instance_size` bytes) is written by a generated
+  `tide_shader_N_listed` `tide_list_words_fn`, the instance loop's body. The
+  draw list keeps these in a *region* of a *page*: a TIDE_PIXELS_LIST
+  TIDE_TEXELS_INTS texture of 1024-pixel rows, one 16-byte pixel a pack, that
+  many lists share (`tide_draw_listed`, `engine/src/list_data_cache.h`; the
+  code is in `engine/src/mesh.c`). An entry is keyed by list handle, item size
+  and layout (tidec's number from the shader's id, top bit set), and holds the
+  list's `list_version` and its region. It keeps no pointer.
+- **Why pages and not a texture a list.** A first version gave each list its
+  own texture (`tide_draw_list_data`). Runs of different lists then couldn't
+  merge, where their copied bytes had been one run: the route's draw calls went
+  from 312 to 646 a frame and render got slower. Pages make one texture of
+  them, so adjacent runs merge as before.
+- **When a list keeps its numbers.** A world's list keeps them from the
+  first frame it's drawn (`listed_steady`). Its region is written once and
+  then sends nothing while the list's version stays the same. A frame whose
+  list changed, a scratch list, and a list whose version changed four frames
+  in a row (not asked again for 16) draw their bytes as before. Then only the
+  visible ones are sent and nothing goes through a texture. A third version
+  wrote changed and scratch lists into a one-frame region of the page instead.
+  That sent all of a rebuilt list each frame as a texture upload, which
+  `bench_skinned_baked`'s warmed-residency check caught (16 KB a frame).
+- **Runs still join where listed and copied meet.** A copied run next to a
+  listed one of the same shader, mesh, textures, uniforms and settings would
+  otherwise be a run of its own. The route showed about 18 more draw calls a
+  frame before this. `tidec_e2e_instancing` and `tidec_e2e_lod` pin a mesh
+  drawn alone and a list's instances as one run. So `shaded_instances` puts
+  the copied run's bytes into the frame's own room of the listed run's page
+  (`tide_draw_listed_put`) and records them as places. That works either way:
+  copied after listed, or the run before turned listed. `tide_draw_gather_levels`
+  does the same for a level group that mixes them (`gather_listed`). A put
+  needs room in the page as it is, so no page pixels move under the pointers
+  culling holds. Pages grow with a quarter more room than asked for this. With
+  no room, the runs stay apart: the draws are the same, in the same order.
+- **What goes each frame.** A listed run (`tide_draw_run.listed`) has
+  `uint32_t` places (`region start / packs + i`) in `tide_draw_list.instances`,
+  and its page as `textures[texture_count]`, so pruning, forgetting and the
+  renderer's data-texture protection treat it as any run texture. Culling (the
+  quick four-at-a-time test from origin/dev), levels of detail and mirroring
+  read each transform from the page's CPU copy, in the order they read the
+  scratch copy. They make the same runs; only survivors' places are written.
+  Level sorting now sorts places on both paths and gathers bytes once
+  (`shaded_from`), where it copied instances twice.
+- **The GPU side.** tidec writes a second vertex stage for eligible shaders
+  (`shader.listed`: instanced, 3D, not skinned, every per-instance value the
+  item's or the identity transform, fewer than 12 textures). Its fields are
+  `tide_shader.glsl_listed_vertex`, `wgsl_listed` and `spirv_listed`. They
+  hold one int instance attribute where the packs were, and load each pack
+  with `texelFetch` / `textureLoad` and a bitcast into the same private values.
+  The fragment stage is shared. The renderer makes it as its own pipeline
+  (`listed_pipeline_for`, id `listed_id`). Where there's none (the Unity
+  recorder, or a background pipeline not ready yet), `upload_shaded` gathers
+  the instances' bytes from the page into the instance buffer after the list's
+  (`draw_step.instances_at`) and draws the ordinary pipeline.
+  `tide_draw_append` gathers. `tide_draw_run_instance` gives any run's
+  instance bytes, and `tide_draw_run_unlist` turns a run back to bytes;
+  Render3D's `SortTransparent` unlists its span first.
+- **Invalidation.** List mutation gives a new version. That frame the list
+  draws its bytes; the next, its region is rewritten in place where it fits
+  and only those rows are sent (`tide_draw_texture_changed`, the exact pixels
+  for a put within one row). Since versions are page hashes, a list sharing a
+  heap page with one that changed counts as changed too. Hot reload: entries
+  hold numbers only, and a changed instance layout is another shader id and
+  layout. A page not drawn in a frame is let go at reset, as any texture; its
+  generation (`made`) changes and its lists are written again.
+  `tide_draw_forget` clears the table. Lost devices and render-target
+  recreation: the page is an ordinary data texture, made again from the list's
+  copy. Prewarming makes each shader's listed pipeline beside its ordinary one
+  (`warm_key`), since `tide_platform_shaders` checks that nothing is made after
+  prewarming.
+- **Memory bounds.** At most `TIDE_DRAW_LISTED_PAGES` (4) pages of
+  `TIDE_DRAW_LISTED_ROWS` (2,048) rows, 32 MiB each, on the CPU and the GPU.
+  A page grows by doubling from 16 rows, in place (its pixels kept). The table
+  holds `TIDE_DRAW_LISTED_MOST` (4,096) lists; when full, those not drawn this
+  frame or the last go. A region not drawn this frame or the last is free. At
+  a frame's first listed draw, before any run names a place, a page whose span
+  exceeds its live regions by half plus 65,536 pixels is packed down
+  (`listed_pack`: memmove in its copy, the moved rows sent). A list bigger than
+  a page, or with no room left, draws as before. On the route one page is
+  enough (the one-frame-region version peaked at about 1.35M of its 2M pixels).
+- **Pixels.** The game's captures aren't bit-stable run to run in either
+  build: background terrain builds land in other frames. Between the baseline's
+  own runs, `perf-ground` and `perf-horizon` differ by about 1,360 pixels (up
+  to 14 levels), the rest by up to 17. In the final dev-vs-after pairs below,
+  16 of the 18 after-captures equal a baseline capture or are within 21 pixels
+  of one at 1 level. One run's `perf-ground` / `perf-horizon` are 707 / 727
+  pixels (max 10 levels) from the nearest baseline, in the same scattered
+  pattern. Draw calls are 431.7–432.0 a frame in both builds.
+- **Measured** (mount-and-rifle at 355677f, route `tools/performance-route.txt`,
+  release, hidden, 1280×720, frames 201–3220, Vulkan, RTX 4080 SUPER, driver
+  617.42). Three alternating pairs; "before" is origin/dev at 9abc3c4bc, built
+  the same way, which includes the quick frustum test. Means of `cpu_phases`,
+  before → after, per pair:
+  - Views: 3.43 / 3.58 / 3.57 → 2.88 / 2.94 / 2.88 ms (medians 3.57 → 2.88,
+    −19%; p50 3.37 → 2.48).
+  - Render: 0.89 / 0.94 / 0.92 → 0.71 / 0.71 / 0.68 ms (medians 0.92 → 0.71).
+  - GPU: 2.85 / 2.80 / 2.91 → 2.60 / 2.79 / 2.84 ms (medians 2.85 → 2.79).
+  - Match, unchanged code, as a control: 0.51 / 0.53 / 0.53 → 0.48 / 0.50 /
+    0.49 ms.
+  - DrawFlora's `mesh_recording_ms`: 0.70 → 0.63 ms a frame.
+  - Against this checkout's dev before the merge (without the quick frustum
+    test), the same route and game went views 5.29 → 3.37 ms and render
+    1.14 → 0.91 ms, both changes together.
+  - Earlier, on game 223f932 and with this change alone, the stack sampler
+    (14 s, main thread) showed `memcpy` self 9.95% → 4.07%, `memcmp` 5.0% →
+    2.7%, and the generated Groundcover / Clumps / TreeCards conversion loops
+    3.96 / 2.11 / 1.65% → under 0.5%.
+- **Not done.** On the web, a listed pipeline made in the background gathers
+  bytes until it's ready. Lists sharing a heap page with data written every
+  frame copy every frame, as before. Two shaders reading the same fields of
+  one list keep two regions. A 3D `Draw.Transform` around an instanced draw
+  copies, as before. Android, macOS, Linux, other GPUs and the web's own
+  timings are unmeasured.
 
 The new generated call is `tide_draw_mesh_shaded_list` (`tide/mesh.h`),
 within the drawing maintenance exception (notes/runtime-ownership.md).

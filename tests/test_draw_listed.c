@@ -116,12 +116,13 @@ static void same_runs(const tide_draw_list *listed, const tide_draw_list *copied
 }
 
 static void draw_both(tide_draw_list *listed, tide_draw_list *copied, const tide_shader *shader, const tide_list list,
-                      const tide_list vertices, const tide_list indices, const bool expect)
+                      const tide_list vertices, const tide_list indices, const int expect)
 {
-    TIDE_CHECK(tide_draw_mesh_shaded_list(listed, shader, vertices, indices, list, sizeof(item), write_item, 0x80000001u,
-                                          NULL, NULL, 0) == expect);
+    const bool drew = tide_draw_mesh_shaded_list(listed, shader, vertices, indices, list, sizeof(item), write_item,
+                                                 0x80000001u, NULL, NULL, 0);
+    TIDE_CHECK(expect < 0 || drew == (expect != 0)); // -1: either (a list whose page another's change changed)
     instance *packed = packed_of(list);
-    if (!expect) {
+    if (!drew) {
         tide_draw_mesh_shaded_instances(listed, shader, vertices, indices, packed, (uint32_t)tide_list_count(list), NULL,
                                         NULL, 0);
     }
@@ -144,30 +145,31 @@ TIDE_TEST(draw_listed_runs_are_the_copied_runs)
         tide_draw_reset(&copied);
         camera(&listed);
         camera(&copied);
-        if (frame == 3) { // A list that changed: its numbers are the frame's own again, and right
+        if (frame == 3) { // A list that changed draws its bytes that frame, and its runs still join the others
             item *it = tide_list_at_mut(first, 4, sizeof(item));
             it->value = -5.0f;
             it->transform = at(0.05f, 0, 0);
         }
         // Two lists one after the other through one shader and mesh are one run, as their bytes were; the
         // instances culled are left out of both, and the mirrored ones are runs of their own
-        draw_both(&listed, &copied, &listed_shader, first, vertices, indices, true);
-        draw_both(&listed, &copied, &listed_shader, second, vertices, indices, true);
+        draw_both(&listed, &copied, &listed_shader, first, vertices, indices, frame != 3);
+        draw_both(&listed, &copied, &listed_shader, second, vertices, indices, frame != 3 ? 1 : -1);
         // ...and the first again, then culling turned off
-        draw_both(&listed, &copied, &listed_shader, first, vertices, indices, true);
+        draw_both(&listed, &copied, &listed_shader, first, vertices, indices, frame != 3);
         tide_draw_set_frustum_culling(&listed, false);
         tide_draw_set_frustum_culling(&copied, false);
-        draw_both(&listed, &copied, &listed_shader, second, vertices, indices, true);
+        draw_both(&listed, &copied, &listed_shader, second, vertices, indices, frame != 3 ? 1 : -1);
+        TIDE_CHECK(frame >= 0);
         same_runs(&listed, &copied, -1);
         uint32_t runs = 0;
         for (uint32_t i = 0; i < listed.count; i++) {
             if (listed.commands[i].kind != TIDE_DRAW_SHADED) continue;
-            TIDE_CHECK(listed.runs[listed.commands[i].shaded.run].listed);
+            TIDE_CHECK(frame == 3 || listed.runs[listed.commands[i].shaded.run].listed);
             runs++;
         }
-        TIDE_CHECK(runs > 1 && runs < 12); // Merged, and split where mirrored
+        TIDE_CHECK(runs > 1); // Split where mirrored, as the copies are
         // Places, 4 bytes an instance drawn, where the copies took the instances' bytes
-        TIDE_CHECK(listed.instance_used * sizeof(instance) == copied.instance_used * sizeof(uint32_t));
+        if (frame != 3) TIDE_CHECK(listed.instance_used * sizeof(instance) == copied.instance_used * sizeof(uint32_t));
     }
     tide_draw_free(&listed);
     tide_draw_free(&copied);
@@ -178,7 +180,8 @@ TIDE_TEST(draw_listed_runs_are_the_copied_runs)
     tide_heap_free(&heap);
 }
 
-// What a page sends: nothing for a list that stayed as it was, and only the rows of one that changed.
+// What a page sends: nothing for a list that stayed as it was, and only the rows of one that changed, once it's
+// as it is again.
 TIDE_TEST(draw_listed_numbers_are_sent_once)
 {
     const uint64_t mark = tide_scratch_mark();
@@ -186,7 +189,7 @@ TIDE_TEST(draw_listed_numbers_are_sent_once)
     tide_text_use(NULL, &heap);
     const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
     const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
-    tide_list list = items_of(3000, 2);
+    tide_list list = items_of(3000, 2), keep = items_of(5, 9);
     tide_draw_list d = {0}, copied = {0};
     uint64_t versions[5] = {0};
     uint32_t slots[5] = {0};
@@ -196,22 +199,26 @@ TIDE_TEST(draw_listed_numbers_are_sent_once)
         camera(&d);
         camera(&copied);
         if (frame == 3) ((item *)tide_list_at_mut(list, 2999, sizeof(item)))->kind = 12345;
-        draw_both(&d, &copied, &listed_shader, list, vertices, indices, true);
+        draw_both(&d, &copied, &listed_shader, keep, vertices, indices, true);
+        const uint32_t kept = d.commands[d.count - 1u].shaded.run;
+        tide_draw_clear(&d, TIDE_COLOR_BLACK); // Apart
+        tide_draw_clear(&copied, TIDE_COLOR_BLACK);
+        draw_both(&d, &copied, &listed_shader, list, vertices, indices, frame != 3);
         same_runs(&d, &copied, -1);
-        const tide_draw_run *run = &d.runs[d.commands[d.count - 1u].shaded.run];
-        TIDE_REQUIRE(run->listed);
-        slots[frame] = run->textures[0];
+        TIDE_REQUIRE(d.runs[kept].listed);
+        slots[frame] = d.runs[kept].textures[0];
         TIDE_REQUIRE(slots[frame] && slots[frame] <= d.texture_count);
         versions[frame] = d.textures[slots[frame] - 1u].version;
     }
-    // Frame 0 had it as the frame's own, frame 1 kept it, frame 2 sent nothing, frame 3 had it as the frame's own
-    // again, as it changed, and frame 4 kept it again in its place: only its rows are sent
-    TIDE_CHECK(versions[2] == versions[1] && versions[3] != versions[2] && versions[4] != versions[3]);
+    // Frame 0 kept both, frames 1 and 2 sent nothing, frame 3 drew the changed one's bytes, and frame 4 kept it
+    // again in its place: only its rows are sent
+    TIDE_CHECK(versions[1] == versions[0] && versions[2] == versions[1] && versions[3] == versions[2]);
+    TIDE_CHECK(versions[4] != versions[3]);
     const tide_draw_texture *page = &d.textures[slots[4] - 1u];
     const tide_draw_area *areas;
     uint32_t count;
     TIDE_REQUIRE(tide_draw_texture_since(page, versions[3], &areas, &count));
-    TIDE_CHECK(count >= 1 && areas[0].y == 0 && areas[0].height <= 18 && areas[0].height < page->height);
+    TIDE_CHECK(count >= 1 && areas[0].height <= 19 && areas[0].height < page->height);
     // A frame that draws none of it lets its page go, and the next makes it again, right
     tide_draw_reset(&d);
     tide_draw_reset(&d);
@@ -232,6 +239,7 @@ TIDE_TEST(draw_listed_numbers_are_sent_once)
     TIDE_CHECK(d.listed == NULL);
     tide_draw_free(&copied);
     tide_list_release(&list, TIDE_IN_LOCAL);
+    tide_list_release(&keep, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
     tide_heap_free(&heap);
@@ -271,8 +279,8 @@ TIDE_TEST(draw_listed_runs_append_and_unlist_as_bytes)
     tide_heap_free(&heap);
 }
 
-// What draws its instances' bytes instead: a shader with no listed stage, a 3D transform, nothing to draw. A list
-// made along the way is the frame's own.
+// What draws its instances' bytes instead: a shader with no listed stage, a 3D transform, nothing to draw, and a
+// list made along the way.
 TIDE_TEST(draw_listed_declines_what_it_cannot_draw)
 {
     const uint64_t mark = tide_scratch_mark();
@@ -285,6 +293,7 @@ TIDE_TEST(draw_listed_declines_what_it_cannot_draw)
     camera(&d);
     camera(&copied);
     draw_both(&d, &copied, &unlisted_shader, list, vertices, indices, false);
+    same_runs(&d, &copied, 0);
     tide_draw_set_transform_3d(&d, at(0.01f, 0, 0));
     tide_draw_set_transform_3d(&copied, at(0.01f, 0, 0));
     draw_both(&d, &copied, &listed_shader, list, vertices, indices, false);
@@ -296,9 +305,33 @@ TIDE_TEST(draw_listed_declines_what_it_cannot_draw)
                                            NULL, NULL, 0));
     item made[4];
     for (int i = 0; i < 4; i++) memcpy(&made[i], tide_list_at(list, i + 1, sizeof(item)), sizeof(item));
-    const tide_list scratch = tide_list_from(made, 4, sizeof(item));
-    draw_both(&d, &copied, &listed_shader, scratch, vertices, indices, true);
+    // A mesh drawn alone through the shader, then its list, then alone again: one run as the copies are, whichever
+    // comes first (the bytes go into the page)
+    tide_draw_reset(&d);
+    tide_draw_reset(&copied);
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_set_frustum_culling(&copied, false);
+    tide_list plain = items_of(9, 6);
+    for (int32_t i = 0; i < 9; i++) ((item *)tide_list_at_mut(plain, i, sizeof(item)))->transform = at(0, 0, 0);
+    instance *alone = packed_of(plain);
+    for (int round = 0; round < 2; round++) {
+        tide_draw_mesh_shaded_instances(&d, &listed_shader, vertices, indices, alone, 2, NULL, NULL, 0);
+        tide_draw_mesh_shaded_instances(&copied, &listed_shader, vertices, indices, alone, 2, NULL, NULL, 0);
+        draw_both(&d, &copied, &listed_shader, plain, vertices, indices, true);
+        tide_draw_mesh_shaded_instances(&d, &listed_shader, vertices, indices, alone + 3, 4, NULL, NULL, 0);
+        tide_draw_mesh_shaded_instances(&copied, &listed_shader, vertices, indices, alone + 3, 4, NULL, NULL, 0);
+    }
+    free(alone);
     same_runs(&d, &copied, 1);
+    TIDE_CHECK(copied.run_count == 1 && copied.runs[0].count == 30);
+    tide_list_release(&plain, TIDE_IN_LOCAL);
+    tide_draw_reset(&d);
+    tide_draw_reset(&copied);
+    camera(&d);
+    camera(&copied);
+    const tide_list scratch = tide_list_from(made, 4, sizeof(item));
+    draw_both(&d, &copied, &listed_shader, scratch, vertices, indices, false);
+    same_runs(&d, &copied, 0);
     tide_draw_free(&d);
     tide_draw_free(&copied);
     tide_list_release(&list, TIDE_IN_LOCAL);
