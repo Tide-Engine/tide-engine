@@ -1548,6 +1548,7 @@ typedef struct tide_draw_list {
     // multiplier, or 0 for none, and the fields they weigh
     float lod_want;
     tide_mesh_lod_layout lod_layout;
+    uint64_t lod_model; // ...and a skinned model's bytes (a tide_list's handle), whose bones are weighed too (tide_draw_want_bones)
     // The window's size in logical pixels, supplied before recording (tide_draw_screen_size).
     // With none, window frustum culling and automatic LOD selection are skipped.
     tide_float2 screen;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // The levels of detail of a mesh (docs/spec.md, Levels of detail): simpler
@@ -73,3 +74,21 @@ typedef struct tide_mesh_lod {
 void tide_mesh_lod_make(const tide_mesh_lod_source *source, tide_mesh_lod *out);
 
 void tide_mesh_lod_free(tide_mesh_lod *lod);
+
+// How a skinned mesh's vertices follow their bones, for its levels (tide_mesh_lod_source.apart, with
+// tide_mesh_lod_bones_apart and this as its user): each vertex's influences, a palette and a weight each.
+typedef struct tide_mesh_lod_bones {
+    uint32_t vertices;
+    uint32_t *first, *count;
+    uint32_t *palette;
+    float *weight;
+} tide_mesh_lod_bones;
+
+// The bones' weights of a skinned model's `vertices` vertices, from its canonical bytes (tide/skinned_data.h):
+// false, with none, for bytes that aren't a model of that many, or no room, and the levels are then made as a
+// mesh that follows no bones.
+bool tide_mesh_lod_bones_of(const uint8_t *model, size_t size, uint32_t vertices, tide_mesh_lod_bones *out);
+void tide_mesh_lod_bones_free(tide_mesh_lod_bones *bones);
+// How differently two vertices follow their bones: 0 for the same weights on the same bones, 1 for bones that
+// share nothing.
+float tide_mesh_lod_bones_apart(void *user, uint32_t from, uint32_t to);

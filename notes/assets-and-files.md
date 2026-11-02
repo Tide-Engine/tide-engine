@@ -29,24 +29,40 @@ detail, Decided and Provisional; users' page: `docs/game/assets.md`, Levels of d
   `tide_draw_free` stops, helps and waits (`tide_draw_lod_free`).
 - **The checker** (`check_mesh_draw`): a last argument named `lod` is taken off before the arguments are matched
   by kind (`expr.mesh_lod`, and `mesh_lod_vertex` once the vertex is known); any other name on a mesh draw's
-  argument is an error naming `lod:`; `lod:` on a 2D mesh, on `Draw.SkinnedMesh` or of a non-number type is an
-  error. Codegen (`gen_expr`, `gen_lod_layout`) writes the comma expression and the vertex's
-  `tide_mesh_lod_layout` (1 + `offsetof` of `position`, `normal`, `uv`, `uv2`, `color`, `tangent` with matching
-  names and types). A game without `lod:` generates the C it did.
+  argument is an error naming `lod:`; `lod:` on a 2D mesh or of a non-number type is an error. Codegen
+  (`gen_expr`, `gen_lod_layout`) writes the comma expression and the vertex's `tide_mesh_lod_layout` (1 +
+  `offsetof` of `position`, `normal`, `uv`, `uv2`, `color`, `tangent` with matching names and types), and for a
+  model with bones `tide_draw_want_bones(tide_draw, (model).data)`. A game without `lod:` generates the C it did.
+- **Models with bones** (same day, the follow-up): tidec's `bone_weights_of`/`bones_apart` moved into the engine
+  beside the maker (`tide_mesh_lod_bones_of`, `_apart`, `_free`; allocation failure gives no bones instead of
+  aborting), and tidec's `mesh_levels` calls them, so asset levels are the same bytes. `tide_draw_want_bones`
+  (`tide/mesh.h`) borrows the model's canonical bytes for the draw (`tide_draw_list.lod_model`, cleared with the
+  want and at reset); `tide_draw_lod_request` flattens them, reads the influences of the slot's vertex count (a
+  model that isn't one of that many weighs none), hashes them into the key and hands them to the job, whose
+  `make_levels` passes `tide_mesh_lod_bones_apart`. So `SkinnedMesh<V>.Decode` models, with no declaration to
+  mark, get the levels their file's `[LOD]` gets.
 - **Tests:** `tidec_e2e_lod_generated` (`e2e/lod_generated.tide`, `_test.c`, with a background the test runs by
   hand): levels bit for bit `tide_mesh_lod_make`'s for the list's copy, the far draw at a level and the near one
   (around the camera) whole, the same lists without `lod:` whole, gathering order; instances of a game's vertex
   through a frag with multiplier 2; 800 triangles never asking; kept levels given in the frame a mesh comes back
   and for a scratch mesh, superseded lists stopping (only two given to the background at once, the stopped ones
   keeping nothing), a NaN multiplier being 1; NaN positions with indices under 0 and past the vertices; a list
-  freed with jobs queued (freeing helps them through). Four diagnostics: `draw_mesh_lod_2d`, `_text`,
-  `_skinned`, `_misspelled`. Native ASan (Windows) and WASI pass, with `tidec_e2e_lod`, `tidec_mesh_lod`,
-  `tidec_asset_files` and the engine's draw (98), skinned (74) and frustum tests.
-- **Not exercised:** the real platform pool's threads (the e2e's background runs on the test's thread), GPU
-  pixels of a picked generated level (the pick and the renderer's level path are the assets', already covered by
-  `levels_of_detail` in `platform/tests/draw.c`), and timings of a real game's generated meshes.
-- **Gaps:** `mesh.WithLOD()`; levels for `SkinnedMesh<V>.Decode` models (would need the bones weighed, as
-  `bones_apart` does at build time); the language server offers no completion for `lod:`.
+  freed with jobs queued (freeing helps them through); a skinned asset and a model decoded from the same file's
+  bytes, each drawn with `lod:` beside the file marked `[LOD]`: levels bit for bit the build's, and other than
+  the same mesh's weighed without bones. `jobs_levels_of_detail_are_made_on_background_threads`
+  (`platform/tests/jobs.c`): the platform pool's own threads make them while frames go on (87 ms, 781 frames of
+  a bare loop, Windows ASan), bit for bit the maker's, and a list freed while another is being made waits.
+  Three diagnostics: `draw_mesh_lod_2d`, `_text`, `_misspelled`. `lsp_generated_levels_of_detail`: completion
+  offers `lod:` after a mesh draw's lists (Mesh, Instanced, SkinnedMesh) and once only, signature help shows it
+  last on 3D forms and follows it, not on 2D ones. Native ASan (Windows) and WASI pass, with `tidec_e2e_lod`,
+  `tidec_mesh_lod`, `tidec_asset_files`, the language server's suite and the engine's draw (98), skinned (74) and
+  frustum tests.
+- **Not exercised:** GPU pixels of a picked generated level (the pick and the renderer's level path are the
+  assets', already covered by `levels_of_detail` in `platform/tests/draw.c`), and timings of a real game's
+  generated meshes.
+- **Gaps:** `mesh.WithLOD()`, which waits for the runtime `Mesh<V>` value (the `Mesh<V>.Decode` reader landed
+  the same day with its language surface held for the same reason); a decoded static mesh drawn with `lod:` will
+  get levels through the same path once it's a value a draw takes.
 
 ## The static mesh reader in the engine, for Mesh<V>.Decode (2026-11-02)
 

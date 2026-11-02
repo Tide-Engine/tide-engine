@@ -25,7 +25,9 @@ detail for meshes a game makes):
   `make_levels` of whichever engine copy called `tide_draw_prepare`, which is the host's, so unloading a game's
   library on a reload can't unload a job's code. `tide_draw_free` stops them all, then helps the provider
   (`help`) and yields until each submitted one is done, as `tide_workers_free` does.
-- Layout: `tide_draw_list` gained `lod_builds`, `lod_want` and `lod_layout`, `tide_draw_mesh_data` `lod_key` and
+- **A model's bones** (`tide_draw_want_bones`) are a borrowed list handle on the list (`lod_model`), read only by
+  the request inside that draw, cleared with the want and at reset; the job owns the weights it read.
+- Layout: `tide_draw_list` gained `lod_builds`, `lod_want`, `lod_layout` and `lod_model`, `tide_draw_mesh_data` `lod_key` and
   `lod_want`; hosts, libraries and games rebuild together.
 
 ## Repeated flat numeric-list captures (2026-11-02)

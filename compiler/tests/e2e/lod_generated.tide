@@ -10,6 +10,10 @@ struct Corner
     float2 uv;
 }
 
+asset SkinnedMesh<Corner> arm = "assets/lod/arm.glb";          // A model of 2,048 triangles with bones...
+[LOD] asset SkinnedMesh<Corner> leveledArm = "assets/lod/arm.glb"; // ...and the same file's levels, made as the game is built
+asset List<byte> armBytes = "assets/lod/arm.glb";                // ...and its bytes, a model decoded while the game runs
+
 local singleton Art
 {
     List<Vertex3> hills;      // A bumpy square of 40 by 40 cells: 3,200 triangles
@@ -24,6 +28,8 @@ local singleton Art
     int frame;
     float multiplier;
     float zero;
+    SkinnedMesh<Corner> decoded;
+    bool opened;
 }
 
 frag Shade(Corner corner, out Color color)
@@ -125,6 +131,19 @@ view Show(mut Art art)
             mut List<int> madeIndices = [];
             Hills(made, madeLit, madeIndices, 40, 0.5);
             Draw.Mesh(made, madeIndices, At(900), lod: art.zero / art.zero);
+            break;
+        case 7: // A model with bones, asking: its bones are weighed, as the same file's [LOD] weighs them
+            Draw.SkinnedMesh(arm, At(900), lod: 1);
+            Draw.SkinnedMesh(leveledArm, At(900));
+            break;
+        case 8: // A model decoded while the game runs, with no declaration to mark: its bones weighed the same
+            if (!art.opened)
+            {
+                art.decoded = SkinnedMesh<Corner>.Decode(armBytes)!;
+                art.opened = true;
+            }
+            Draw.SkinnedMesh(art.decoded, At(900), lod: 1);
+            Draw.SkinnedMesh(leveledArm, At(900));
             break;
         case 6: // Nothing drawn
             break;

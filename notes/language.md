@@ -4,13 +4,16 @@
 
 `check_mesh_draw` takes a last argument named `lod` off `args` (with its name and place) before peeling verts,
 frags and values, and checks it once the vertex's dimensions are known: a float or int (`check_expr_want` with
-float), refused on a 2D vertex and on `Draw.SkinnedMesh`, kept as `expr.mesh_lod` with `mesh_lod_vertex`. Any
+float), refused on a 2D vertex, kept as `expr.mesh_lod` with `mesh_lod_vertex`. Any
 other name written on a mesh draw's argument is an error naming `lod:` (it formerly fell through to the overload
 mismatch). `gen_expr` writes a call with `mesh_lod` as `(tide_draw_want_levels(tide_draw, (float)(m), layout),
 <the call>, tide_draw_want_levels(tide_draw, 0.0f, NULL))`, the call generated from a copy without `mesh_lod`.
 The multiplier is evaluated after hoisted operands, which keeps written order, as it's written last. Works for
 lists, `Mesh<V>` values (whose arguments are rewritten after the peel), instances, shaders and targets (the list
-is `tide_draw` for every destination). Feature notes: assets-and-files.md, Levels of detail for meshes a game makes.
+is `tide_draw` for every destination) and models with bones, where `tide_draw_want_bones(tide_draw, (model).data)`
+follows the want, the model being the operand the skinned adapter already reads (`e->skin_mesh`). The language
+server offers `lod:` in completion after a mesh draw's lists and shows it last in 3D forms' signature help
+(`MESH_LOD`). Feature notes: assets-and-files.md, Levels of detail for meshes a game makes.
 
 ## Non-drawing views of shader components (2026-11-01)
 

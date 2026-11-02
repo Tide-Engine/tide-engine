@@ -6979,11 +6979,6 @@ static type check_mesh_draw(checker *c, expr *e)
             diag_note("'lod: 1' for the destination's own tolerance (Draw.LODPixels), 'lod: 2' for twice it");
             return T_ERR;
         }
-        if (skinned) {
-            diag_error(lod_at, "%s draws a model's own levels of detail: 'lod:' is for meshes a game makes", draw_name);
-            diag_note("mark the model's asset '[LOD]' for levels made as the game is built");
-            return T_ERR;
-        }
         if (dims != 3) {
             diag_error(lod_at, "levels of detail are for 3D meshes, and '" STR_FMT "' is a 2D mesh's vertex",
                        STR_ARG(vertex->name));
