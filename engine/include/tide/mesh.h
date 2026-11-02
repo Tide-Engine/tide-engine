@@ -75,6 +75,20 @@ static inline bool tide_texture_grid(const tide_texture_ref texture, tide_grid *
 void tide_draw_mesh_lists(tide_draw_list *d, tide_list vertices, tide_list indices);
 void tide_draw_mesh_texture(tide_draw_list *d, tide_list vertices, tide_list indices, tide_texture_ref texture);
 
+// A static Mesh<V> the game made, Mesh(vertices, indices): what its two lists
+// hold, as a number with its top bit set, which no asset's id has (they're
+// positive), and the same on every machine. It's worked out once, as the
+// mesh is made; the lists are its own after, which nothing writes.
+uint64_t tide_mesh_key(tide_list vertices, uint32_t vertex_size, tide_list indices);
+
+// Tells the draw that comes next of `lists` that they hold what `key` says
+// (tide_mesh_key): that draw takes the key as their version, with no list
+// read, and every copy of the mesh is one mesh on the GPU. The first draw of
+// two lists after it clears it, whichever lists it draws, and so does a key
+// of 0 (generated code gives one after the draw). A key with its top bit
+// clear is none.
+void tide_draw_mesh_key(tide_draw_list *d, tide_mesh_lists lists, uint64_t key);
+
 // The same in 3D, with lists of `Vertex3` and a transform: Tide's
 // Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]]). The lists are
 // a mesh the draw list keeps (see tide_draw_mesh_slot): a list that doesn't

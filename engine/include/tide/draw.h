@@ -1532,6 +1532,9 @@ typedef struct tide_draw_list {
     // it again and again. Still that mesh's while the place has the same one, as only tide_draw_mesh_slot makes
     // places, one a mesh (a free place's is TIDE_MESH_NONE, which nobody asks for)
     uint32_t mesh_last;
+    // What the next draw of a mesh's two lists is told they hold (tide_draw_mesh_key): the lists' handles and
+    // their key, which a draw of those two lists takes as their version, and any draw clears. No key: 0
+    uint64_t mesh_key_vertices, mesh_key_indices, mesh_key;
     tide_draw_run *runs;          // The TIDE_DRAW_SHADED commands' runs
     uint32_t run_count;
     uint32_t run_capacity;

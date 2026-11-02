@@ -360,6 +360,9 @@ bool type_assignable(const type to, const type from)
         const int from_side = from.decl->task_origin ? from.decl->task_origin->task_side : from.decl->task_local ? TASK_LOCAL : TASK_MATCH;
         return to_side == TASK_EITHER || from_side == TASK_EITHER || to_side == from_side;
     }
+    // An Asset<Mesh<V>> is a Mesh<V>: the same identity, with no geometry of its own
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->asset_ref_geometry && from.decl->asset_ref_of
+        && !from.decl->asset_ref_geometry && from.decl->asset_ref_of == to.decl->asset_ref_of) return true;
     if (to.kind == TY_COMPONENT && from.kind == TY_COMPONENT
         && (to.decl->placement_of ? to.decl->placement_of : to.decl)
             == (from.decl->placement_of ? from.decl->placement_of : from.decl)) return true;

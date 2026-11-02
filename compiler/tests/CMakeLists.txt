@@ -215,6 +215,7 @@ tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/t
 tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(mesh_values)
+tide_e2e_test(mesh_runtime) # Mesh(vertices, indices): static meshes a game makes, values beside assets', drawn by their key
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(lod_generated) # Levels of detail for meshes a game makes (`lod:`), made in the background and kept by contents

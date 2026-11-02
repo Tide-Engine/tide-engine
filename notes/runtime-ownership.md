@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## Mesh keys for meshes the game makes (2026-11-02)
+
+Owner-approved ("go with your recommendations", including a runtime entry
+point that draws a mesh at a given version): generated code calls two new
+functions in `tide/mesh.h`, implemented in `engine/src/mesh.c`.
+`tide_mesh_key(vertices, vertex_size, indices)` is called once as
+`Mesh(vertices, indices)` makes a mesh; its result is simulation state (a
+`Mesh<V>`'s id), so it's a fixed definition, the same on every platform.
+`tide_draw_mesh_key(d, lists, key)` is called around each draw of a `Mesh<V>`
+value. `tide_draw_list` gained `mesh_key_vertices`, `mesh_key_indices` and
+`mesh_key`: hosts, libraries and generated games rebuild together. Contracts
+in drawing.md, Drawing a mesh at a given version.
+
 ## Levels for meshes a game makes (2026-11-02)
 
 Owner-approved (the proposal's recommendations, `lod:` on mesh draws). Within the existing drawing maintenance
@@ -383,7 +396,6 @@ contracts: ecs.md, Pure row updates before conditional destruction.
 is build-time support tidec calls for `[BlendShapes]`; generated code calls
 nothing new. Contracts and tests: assets-and-files.md.
 
-
 ## Lenient separate-rig binding (2026-10-27)
 
 Owner-decided (docs/spec.md, Separate-file binding): `tide_skinned_sample_into`
@@ -391,7 +403,6 @@ and `tide_skinned_pose_into` skip required source nodes the target lacks;
 present nodes keep the strict parent rule. No signature, generated call,
 canonical byte or world byte changes. Contracts and tests:
 assets-and-files.md, Clips skip nodes the model lacks.
-
 
 ## Blend shapes (2026-10-27)
 
@@ -406,7 +417,6 @@ them only in programs that name `blendShapes`, `Shaped` or `BlendShape`; no
 existing function, struct, draw entry point or shader changes, and models
 without shapes keep their version 1 bytes. Contracts and tests:
 assets-and-files.md, Blend shapes.
-
 
 ## Prehashed asset lookup (2026-10-27)
 
@@ -829,7 +839,6 @@ separate-rig pose binding, scratch reset and shaded-draw recording interfaces.
 Runtime implementation and ownership stay as recorded below. Pose values are
 captured before return and compatible items batch through existing palette
 pages. Compiler fixtures and platform pixels are recorded in `notes/drawing.md`.
-
 
 Recorded containers (2026-10-19) introduce no runtime API, struct or function
 contract. Compiler-private read analysis and self-contained journal tails reuse

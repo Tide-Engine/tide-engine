@@ -1,5 +1,15 @@
 # Assets and local files
 
+## Meshes the game makes beside assets' (2026-11-02)
+
+`Mesh<V>` is now 24 bytes: an asset's id, or a made mesh's content key (negative)
+and its own two lists; `Asset<Mesh<V>>` is the 8-byte id alone and converts to
+it. Glob `#mesh-values` metadata rows grew to that layout (built with the
+skinned list/map builders, then overwritten); pack kinds and geometry are
+unchanged, and unknown ids still resolve empty. Server pruning is unaffected:
+made ids never reach the resolver switch. Compiler contracts and tests are in
+language.md, Meshes the game makes.
+
 ## Levels of detail for meshes a game makes (2026-11-02)
 
 The owner took the proposal whole ("go with you recommendations"): opt-in on the draw (`lod: multiplier`, last,
@@ -645,7 +655,6 @@ values keep stable IDs. mesh_values covers snapshots, packing, async retention,
 unknown IDs and reordered replacement packs on Windows ASan and WASI; import,
 LOD, weighted-mesh and typed-reference regressions pass too.
 
-
 ## Humanoid pose retargeting (2026-10-30)
 
 The owner approved a standalone runtime path, without a tide-motion dependency:
@@ -976,7 +985,6 @@ without the fix) and `skinned_linear_rotation_between_opposite_signs_takes_the_s
 (a glTF clip q to -q samples q throughout). No existing expectation or pinned
 hash changed.
 
-
 ## Choosing which blend shapes an asset imports (2026-10-27)
 
 The owner chose an asset attribute (verbatim in docs/spec.md): Sidekick heads
@@ -1012,7 +1020,6 @@ defaults and Shaped, plus a pack scan finding exactly one version 1 model
 `lsp_levels_of_detail` checks completion, hover, misuse and the misspelling
 suggestion.
 
-
 ## Clips skip nodes the model lacks (2026-10-27)
 
 The owner chose lenient separate-rig binding for modular characters (verbatim
@@ -1043,7 +1050,6 @@ elbow refused by both routes with the pose unchanged; another rig and a
 duplicate name refused). `skinned_separate_poses_bind_procedural_edits_...`
 now expects an edited node the model lacks to bind and move nothing (it
 formerly expected refusal). All 60 skinned runtime tests pass.
-
 
 ## Blend shapes: imported and baked on the CPU (2026-10-27)
 
@@ -1162,7 +1168,6 @@ for shapes; FBX in-between shapes and Blender's per-vertex offset weights
 aren't read; flat-shaded parts' generated normals don't follow shapes;
 normals aren't renormalized after baking; Synty's own files were not
 imported here (licensed; the owner's tool will be the first real use).
-
 
 ## Prehashed release asset loading (2026-10-27)
 
@@ -1581,7 +1586,6 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
 - Static/skinned glTF and editor metadata share required-extension validation in `tide/internal/gltf_extensions.h`: only required KHR_mesh_quantization is supported. Required Draco/EXT or KHR meshopt compression gives export guidance; optional compression may use valid core fallback buffers/accessors. Static attribute widths, nonfinite data, invalid modes/missing POSITION, invalid negative child indices and GLB headers/chunk bounds are checked rather than silently accepted. Malformed `.glb` paths select GLB diagnostics, including original URL suffixes. Failed OBJ/DAE/other skinned source formats give glTF2/FBX export guidance; recognized-content feature errors survive misleading suffixes.
 - USD/Collada/Alembic/STL/PLY/Blender project imports, WebP/TIFF/SVG/animated images, HDR/EXR assets, DDS/KTX GPU compression and AIFF/Opus/AAC audio remain unbuilt. Embedded model materials/textures still aren't imported. Existing static versus skinned feature distinctions above still apply.
 - Validation: importer unit and compiler diagnostic fixtures, native/web asset pack round trips and language-server completion/diagnostic regressions cover the added formats and unchanged raw bytes. Final suite results are recorded after validation below.
-
 
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 

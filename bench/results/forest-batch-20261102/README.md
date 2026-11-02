@@ -90,6 +90,17 @@ is pinned in [validation-residency.json](validation-residency.json),
 [shader-equivalence-residency.json](shader-equivalence-residency.json).
 No further forest implementation changes or paired timings were needed.
 
+The next concurrent compiler update, runtime static Mesh values at 06c392e71,
+retains constructor operands in ordinary arguments and takes the conservative
+shared-preparation fallback. Its mesh/import/LOD/ordering/shared-binding and
+forest overlap checks pass 14 native ASan and 15 web-release tests. Rebuilt
+release shader blocks/layouts and three captures again match the baseline,
+including pixels, submitted work and world hashes. Evidence is pinned in
+[validation-meshvalue.json](validation-meshvalue.json),
+[pixel-equivalence-meshvalue.json](pixel-equivalence-meshvalue.json) and
+[shader-equivalence-meshvalue.json](shader-equivalence-meshvalue.json).
+This merge needs no further forest implementation change or paired timing.
+
 ## Initial elapsed-timing cohort
 
 Windows; operator-supplied Ryzen 9 7900X / RTX 4080 SUPER, driver 617.42; Clang
