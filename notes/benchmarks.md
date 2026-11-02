@@ -1,5 +1,20 @@
 # Benchmarks
 
+## Renderer overhead investigation (2026-11-02)
+
+The Render3D runner now waits up to five seconds for exclusive access before
+hashing artifacts: PowerShell's redirected writer can outlive process exit.
+Length and digest come from the same read handle; persistent locks still fail.
+After two retained failed attempts, six processes complete with 24 rows and
+2,400 GPU samples, exact package/direct pixels and work counts. Scene recording
+dominates the CPU cost at 10,000 cubes; warmed texture uploads are zero and
+submission remains much smaller. This does not isolate a recording bottleneck.
+
+A renderer non-aliasing annotation probe across 180 draw rows on Vulkan/OpenGL
+shows no reliable gain and is reverted. No renderer speedup is claimed. Raw
+attempts, identities, limitations and results are in
+[the renderer report](../bench/results/renderer-20261102/README.md).
+
 ## Quiet forest comparison and foliage-first submission (2026-11-02)
 
 After GI released the shared host, the unchanged foliage binary completed the

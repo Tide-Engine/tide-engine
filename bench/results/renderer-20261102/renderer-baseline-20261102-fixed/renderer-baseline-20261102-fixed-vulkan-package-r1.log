@@ -1,0 +1,10 @@
+renderer: Vulkan; fixed 1920x1080; isolated static frames; CPU/GPU overlap; readback is not FPS
+equivalent: 1000 meshes + receiver, unshadowed, 9 lights, 0 shadow views, 4 calls, digest d52a87775c596522
+package, unshadowed, 1000 meshes: record 0.2600, submit 0.0358 ms, GPU 1.7568 ms (100/100 samples)
+equivalent: 1000 meshes + receiver, mixed, 4 lights, 8 shadow views, 12 calls, digest 3f1961e9ed859f03
+package, mixed, 1000 meshes: record 0.3701, submit 0.0602 ms, GPU 1.2545 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, unshadowed, 9 lights, 0 shadow views, 4 calls, digest 3ee5837e75f7b721
+package, unshadowed, 10000 meshes: record 2.6782, submit 0.1177 ms, GPU 2.7324 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, mixed, 4 lights, 8 shadow views, 12 calls, digest 67d070a58860689a
+package, mixed, 10000 meshes: record 4.2717, submit 0.3656 ms, GPU 2.0744 ms (100/100 samples)
+tide: captured C:\Users\blenm\.t3\worktrees\PurrEngine\t3-8c449f69\build\render3d-measurements\renderer-baseline-20261102-fixed\renderer-baseline-20261102-fixed-vulkan-package-r1-final.png, 1920 by 1080 pixels

@@ -1,0 +1,10 @@
+renderer: Vulkan; fixed 1920x1080; isolated static frames; CPU/GPU overlap; readback is not FPS
+equivalent: 1000 meshes + receiver, unshadowed, 9 lights, 0 shadow views, 4 calls, digest 3eb46777bfa95600
+cached_direct, unshadowed, 1000 meshes: record 0.0098, submit 0.0411 ms, GPU 1.7530 ms (100/100 samples)
+equivalent: 1000 meshes + receiver, mixed, 4 lights, 8 shadow views, 12 calls, digest 31b78c27ae7a7a32
+cached_direct, mixed, 1000 meshes: record 0.0392, submit 0.0675 ms, GPU 1.2545 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, unshadowed, 9 lights, 0 shadow views, 4 calls, digest a490ec8b0e3fc155
+cached_direct, unshadowed, 10000 meshes: record 0.0842, submit 0.1265 ms, GPU 2.7394 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, mixed, 4 lights, 8 shadow views, 12 calls, digest e913c8b501e1e74b
+cached_direct, mixed, 10000 meshes: record 0.3256, submit 0.3701 ms, GPU 2.0855 ms (100/100 samples)
+tide: captured C:\Users\blenm\.t3\worktrees\PurrEngine\t3-8c449f69\build\render3d-measurements\renderer-baseline-20261102\renderer-baseline-20261102-vulkan-cached_direct-r2-final.png, 1920 by 1080 pixels
