@@ -1,3 +1,3 @@
-// expect: text must be UTF-8, and this isn't
+// expect: text contains invalid UTF-8; save this file with UTF-8 encoding
 scene Main { }
 view V() { Draw.Text("ÿ", float2(0, 0), 10, Color.white); }

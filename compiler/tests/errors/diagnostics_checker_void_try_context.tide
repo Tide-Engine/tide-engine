@@ -1,0 +1,6 @@
+// expect: 'try' passes the error to the caller, and a system has none
+// expect: handle its error here with 'is Error why', or write 'call()!;' to continue if it fails
+enum Error { Failed }
+void Save() fails Error { fail Error.Failed; }
+system Tick() { try Save(); }
+scene Main;

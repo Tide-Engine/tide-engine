@@ -525,6 +525,7 @@ void tide_draw_reset(tide_draw_list *d)
     // Every setting is back where a frame starts
     d->place = d->window = (tide_draw_place){0};
     d->frustum_ready = false;
+    d->mesh_key = d->mesh_key_vertices = d->mesh_key_indices = 0;
     d->unsettled = d->altered = 0;
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
     d->bold = NULL;

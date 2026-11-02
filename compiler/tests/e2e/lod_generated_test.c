@@ -309,3 +309,27 @@ TIDE_TEST(lod_generated_decoded_models_weigh_their_bones_too)
 {
     skinned_levels_are_the_builds(8);
 }
+
+TIDE_TEST(lod_generated_skinned_operands_precede_mutating_lod)
+{
+    start();
+    local.Art.multiplier = -1.0f;
+    const uint64_t hash = tide_world_hash(&world);
+    frame(9);
+    TIDE_CHECK(local.Art.multiplier == 2.0f && local.Art.lodMutations == 1);
+    TIDE_CHECK(local.Art.observedLodOperand == -1.0f);
+    unsigned instances = 0;
+    for (uint32_t r = 0; r < draw.run_count; r++) {
+        const tide_draw_run *run = &draw.runs[r];
+        TIDE_REQUIRE(run->shader && run->shader->instance_floats >= 4);
+        const uint32_t stride = tide_shader_instance_size(run->shader);
+        for (uint32_t i = 0; i < run->count; i++) {
+            tide_float4x4 transform;
+            memcpy(&transform, draw.instances + run->first + i * stride, sizeof transform);
+            TIDE_CHECK(transform.c3.x == -1.0f && transform.c3.z == 900.0f);
+            instances++;
+        }
+    }
+    TIDE_CHECK(instances == 1 && tide_world_hash(&world) == hash);
+    finish();
+}

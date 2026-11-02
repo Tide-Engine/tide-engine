@@ -1,4 +1,4 @@
-// expect: a grid can't be copied: every chunk would be
+// expect: a grid can't be copied; initialize a new grid or copy its cells explicitly
 singleton Field { Grid2<int> cells; Grid2<int> other; }
 system Copy(mut Field field)
 {

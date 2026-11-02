@@ -1,0 +1,271 @@
+scene Main;
+component PrepRow { int index; int unread = 99; }
+event(Spawned) BuildPrepRows(with Main)
+{
+    for (var i = 0; i < 3; i++) Spawn(PrepRow { index = i });
+}
+
+local singleton PrepGeometry
+{
+    List<Vertex3> vertices = [Vertex3 {}, Vertex3 { position = float3(1, 0, 0) },
+                             Vertex3 { position = float3(0, 1, 0) }];
+    List<int> indices = [0, 1, 2];
+}
+local singleton PrepSources
+{
+    int scenario;
+    int round;
+    float value;
+    Grid2<Color> grid = Grid2(1, 1);
+    Texture color;
+    [Raw] Texture raw;
+    Texture managed;
+}
+
+extern void ChangePrepSource(int value);
+void ForwardPrepSource(int value) { ChangePrepSource(value); }
+
+frag PrepScalar(Vertex3 vertex, out Color color, PrepSources source)
+{
+    color = Color(source.value, 0, 0);
+}
+frag PrepGrid(Vertex3 vertex, out Color color, PrepSources source)
+{
+    color = source.grid.Sample(vertex.uv, Filter.Point);
+}
+frag PrepColor(Vertex3 vertex, out Color color, PrepSources source)
+{
+    color = source.color.Sample(vertex.uv, Filter.Point);
+}
+frag PrepRaw(Vertex3 vertex, out Color color, PrepSources source)
+{
+    color = source.raw.Sample(vertex.uv, Filter.Point);
+}
+frag PrepManagedSize(Vertex3 vertex, out Color color, PrepSources source)
+{
+    color = Color(float(source.managed.size.x), 0, 0);
+}
+struct PrepData { List<int> numbers; }
+frag PrepNumbers(Vertex3 vertex, out Color color, PrepData data)
+{
+    color = Color(float(data.numbers[0]), 0, 0);
+}
+
+void PaintPrepScalar(PrepGeometry geometry, PrepSources source)
+{
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepScalar);
+}
+
+// The externally changed singleton is syntactically read-only. Both levels of
+// calls must prevent sharing its first captured uniform across entity rows.
+view PrepTransitiveExtern(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 1) return;
+    ForwardPrepSource(source.round * 1000 + 100 + row.index);
+    PaintPrepScalar(geometry, source);
+}
+
+// A fresh scratch value at each row's reused mark has a different payload even
+// when its descriptor repeats. There are no mutations or extern calls here.
+view PrepScratchReuse(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 2) return;
+    List<int> numbers = [source.round * 1000 + 200 + row.index];
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepNumbers, PrepData { numbers = numbers });
+}
+
+// A local copied list can be written despite every ECS access being read-only.
+view PrepLocalListMutation(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 3) return;
+    mut List<int> numbers = [source.round * 1000 + 300 + row.index * 2];
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepNumbers, PrepData { numbers = numbers });
+    numbers[0] += 1;
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepNumbers, PrepData { numbers = numbers });
+}
+
+view PrepGridMutation(PrepRow row, PrepGeometry geometry, mut PrepSources source)
+{
+    if (source.scenario != 4) return;
+    source.grid[0, 0] = Color(float(row.index + 1) * 0.25, 0.5, 0.75, 1);
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepGrid);
+}
+
+void AssignPrepValue(mut float destination, float value) { destination = value; }
+view PrepCallableMutation(PrepRow row, PrepGeometry geometry, mut PrepSources source)
+{
+    if (source.scenario != 5) return;
+    Func<mut float, float, void> assign = AssignPrepValue;
+    assign(source.value, float(source.round * 1000 + 500 + row.index));
+    PaintPrepScalar(geometry, source);
+}
+
+void WithPrepAction(Action content) { content(); }
+view PrepActionMutation(PrepRow row, PrepGeometry geometry, mut PrepSources source)
+{
+    if (source.scenario != 6) return;
+    WithPrepAction()
+    {
+        source.value = float(source.round * 1000 + 600 + row.index);
+        PaintPrepScalar(geometry, source);
+    }
+}
+
+void AssignPrepSource(mut PrepSources source, int value) { source.value = float(value); }
+void ForwardPrepMutable(mut PrepSources source, int value) { AssignPrepSource(source, value); }
+view PrepMutableHelper(PrepRow row, PrepGeometry geometry, mut PrepSources source)
+{
+    if (source.scenario != 7) return;
+    ForwardPrepMutable(source, source.round * 1000 + 700 + row.index);
+    PaintPrepScalar(geometry, source);
+}
+
+struct PrepHiddenEffect
+{
+    int value;
+    int operator +(PrepHiddenEffect a, int b)
+    {
+        ChangePrepSource(a.value + b);
+        return 0;
+    }
+    int observed
+    {
+        get { ChangePrepSource(value); return 0; }
+    }
+}
+view PrepOperatorEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 8) return;
+    var hidden = PrepHiddenEffect { value = source.round * 1000 + 800 };
+    _ = hidden + row.index;
+    PaintPrepScalar(geometry, source);
+}
+view PrepPropertyEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 9) return;
+    var hidden = PrepHiddenEffect { value = source.round * 1000 + 900 + row.index };
+    _ = hidden.observed;
+    PaintPrepScalar(geometry, source);
+}
+
+// Both Texture descriptors below name one grid, but raw/color conversion uses
+// one runtime texture identity with distinct versions and writer kinds. Return
+// to the color shader after the raw shader has replaced the slot in between.
+view PrepRawColorAlias(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 10) return;
+    _ = row;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepRaw);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+// The descriptor and count stay identical while trusted C changes the backing
+// grid. A descriptor-keyed shared preparation cache would retain the first
+// row's pixels unless the transitive extern disqualifies this whole view.
+view PrepExternGridMutation(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 11) return;
+    ForwardPrepSource(row.index);
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+struct PrepDefaultEffect
+{
+    int trigger = PrepHiddenEffect { value = 2 } + 0;
+}
+view PrepDefaultOperatorEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 12) return;
+    _ = row;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    var implicit = PrepDefaultEffect {};
+    _ = implicit.trigger;
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+const int PrepConstantEffect = PrepHiddenEffect { value = 2 } + 0;
+view PrepConstantOperatorEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 13) return;
+    _ = row;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    _ = PrepConstantEffect;
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+// Managed target dimensions are supplied by the host. Its callback may change
+// a stable source grid, so reuse must stop before invoking that callback.
+view PrepManagedSizeEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 14) return;
+    _ = row;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    _ = source.managed.size;
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+// A frag's Texture.size resolves the same host metadata in its generated CPU
+// adapter, so it must apply the same barrier as an authored CPU size read.
+view PrepManagedShaderSizeEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 15) return;
+    _ = row;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepManagedSize);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+// Text measurement invokes another trusted host callback without a mutable
+// Tide argument. That callback can change the same persistent grid as well.
+view PrepTextMeasureEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 16) return;
+    _ = row;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    _ = Draw.MeasureText("prep", 10);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+extern float ChangePrepLodSource(int value);
+float ForwardPrepLodSource(int value) { return ChangePrepLodSource(value); }
+
+// The checker peels lod: away from args into mesh_lod. Its retained AST must
+// still disqualify this region when evaluating the multiplier changes a source.
+view PrepLodArgumentEffect(PrepRow row, PrepGeometry geometry, PrepSources source)
+{
+    if (source.scenario != 17) return;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor,
+              lod: ForwardPrepLodSource(row.index + 1));
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, PrepColor);
+}
+
+float MutatePrepLod(mut PrepSources source)
+{
+    source.value = 2;
+    source.grid[0, 0] = Color(0.75, 0.5, 0.75, 1);
+    return 1;
+}
+
+// The transform is written before lod:. The helper's declared Tide mutation
+// must not change the transform already read for this draw.
+view PrepLodArgumentOrder(with PrepRow, PrepGeometry geometry, mut PrepSources source)
+{
+    if (source.scenario != 18) return;
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.Translate(float3(source.value, 0, 0)),
+              PrepColor, lod: MutatePrepLod(source));
+}

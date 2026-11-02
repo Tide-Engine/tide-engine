@@ -1,0 +1,375 @@
+namespace Render2D;
+
+// Surface radiance cascades: a single diffuse bounce from the visible sheets.
+// Sources are two-sided diffuse radiance plus emission. Hidden/offscreen sheets
+// and features smaller than the GI surface grid are outside this representation.
+local singleton GlobalIllumination
+{
+    bool enabled = true;
+    int resolution = 256;       // Long axis of the screen-space surface grid.
+    int probeSpacing = 4;       // Surface-grid cells, not window pixels.
+    int cascades = 3;
+    float distance = 8;         // World-space ray length.
+    float intensity = 1;
+    float thickness = 0.01;     // Self-hit bias and layer interpolation tolerance.
+
+    int2 activeResolution;
+    int2 activeProbes;
+    int activeCascades;
+    float2 viewSize;
+    RenderTarget surface;
+    RenderTarget atlasA;
+    RenderTarget atlasB;
+    RenderTarget coefficients;
+    RenderTarget result;
+    Texture positions;
+    Texture radiance;
+    Texture upper;
+    Texture constantLight;
+    Texture lightX;
+    Texture lightY;
+    Texture lightZ;
+}
+
+struct CascadeStep
+{
+    int level;
+    int2 probes;
+    int directionSize;
+    float start;
+    float end;
+    bool hasUpper;
+}
+
+float3 OctaDirection(float2 uv)
+{
+    float2 p = uv * 2 - float2(1);
+    mut float3 v = float3(p.x, p.y, 1 - Math.Abs(p.x) - Math.Abs(p.y));
+    if (v.z < 0)
+        v = float3((1 - Math.Abs(p.y)) * (p.x < 0 ? -1 : 1),
+                   (1 - Math.Abs(p.x)) * (p.y < 0 ? -1 : 1), v.z);
+    return v / Math.Max(Math.Length(v), 0.000001);
+}
+
+float OctaWeight(float3 direction)
+{
+    float sum = Math.Abs(direction.x) + Math.Abs(direction.y) + Math.Abs(direction.z);
+    return sum * sum * sum;
+}
+
+float CascadeIntervalStart(int level, int count, float distance)
+{
+    int safeCount = Math.Clamp(count, 1, 4);
+    int safeLevel = Math.Clamp(level, 0, safeCount);
+    return Math.Clamp(distance, 0, 1000) * float((1 << safeLevel) - 1)
+         / float((1 << safeCount) - 1);
+}
+
+float CascadeIntervalEnd(int level, int count, float distance)
+{
+    return CascadeIntervalStart(Math.Clamp(level, 0, 3) + 1, count, distance);
+}
+
+float4 MergeIntervals(float4 near, float4 far)
+{
+    float pass = Math.Clamp(near.w, 0, 1);
+    return float4(near.xyz + pass * far.xyz, pass * Math.Clamp(far.w, 0, 1));
+}
+
+float2 GIToUV(float2 position, float2 viewSize)
+{
+    return float2(0.5) + position / viewSize * float2(1, -1);
+}
+
+float2 GIFromUV(float2 uv, float2 viewSize)
+{
+    return (uv - float2(0.5)) * viewSize * float2(1, -1);
+}
+
+// Every visited cell is a thin horizontal patch at its sampled height. Solving
+// the ray/plane intersection inside that cell's DDA interval does not invent
+// vertical walls at height discontinuities or fill the space below a card.
+// The grid is bounded to 256 per axis, so 514 visits cover every possible ray.
+float4 TraceSurface(Texture positions, Texture radiance, float2 viewSize,
+                    float3 origin, float3 direction, float start, float end, float bias)
+{
+    if (Math.Abs(direction.z) < 0.000001 || end <= start)
+        return float4(0, 0, 0, 1);
+    int2 size = positions.size;
+    float2 pixelOrigin = GIToUV(origin.xy, viewSize) * float2(size);
+    float2 velocity = direction.xy / viewSize * float2(size) * float2(1, -1);
+    mut float enter = Math.Max(start, Math.Max(bias, 0.00001));
+    float2 first = pixelOrigin + velocity * enter;
+    mut int2 cell = int2(Math.Floor(first));
+    int2 step = int2(velocity.x < 0 ? -1 : 1, velocity.y < 0 ? -1 : 1);
+    float2 magnitude = Math.Max(Math.Abs(velocity), float2(0.000001));
+    float2 safeVelocity = magnitude * float2(step);
+    float2 delta = 1.0 / magnitude;
+    mut float nextX = Math.Abs(velocity.x) > 0.000001
+        ? (float(cell.x + (step.x > 0 ? 1 : 0)) - pixelOrigin.x) / safeVelocity.x : 1000000;
+    mut float nextY = Math.Abs(velocity.y) > 0.000001
+        ? (float(cell.y + (step.y > 0 ? 1 : 0)) - pixelOrigin.y) / safeVelocity.y : 1000000;
+    float planeDenominator = Math.Max(Math.Abs(direction.z), 0.000001) * (direction.z < 0 ? -1 : 1);
+    for (var visit = 0; visit < 514; visit++)
+    {
+        if (cell.x < 0 || cell.y < 0 || cell.x >= size.x || cell.y >= size.y || enter >= end)
+            return float4(0, 0, 0, 1);
+        float leave = Math.Min(Math.Min(nextX, nextY), end);
+        float2 uv = (float2(cell) + float2(0.5)) / float2(size);
+        Color surface = positions.Sample(uv, Filter.Point, Wrap.Clamp);
+        float hit = (surface.b - origin.z) / planeDenominator;
+        if (surface.a > 0 && hit >= enter && hit < leave)
+        {
+            Color incoming = radiance.Sample(uv, Filter.Point, Wrap.Clamp);
+            return float4(Math.Max(float3(incoming.r, incoming.g, incoming.b), float3(0)), 0);
+        }
+        if (leave >= end) return float4(0, 0, 0, 1);
+        bool moveX = nextX <= nextY;
+        bool moveY = nextY <= nextX;
+        enter = Math.Min(nextX, nextY);
+        if (moveX) { cell.x += step.x; nextX += delta.x; }
+        if (moveY) { cell.y += step.y; nextY += delta.y; }
+    }
+    // Only reachable for malformed dimensions, outside the owned grid contract.
+    return float4(0);
+}
+
+float4 ReadInterval(Texture atlas, int2 probe, int2 direction, int directionSize)
+{
+    float2 uv = (float2(probe * directionSize + direction) + float2(0.5)) / float2(atlas.size);
+    Color value = atlas.Sample(uv, Filter.Point, Wrap.Clamp);
+    // Alpha is offset by one: Tide premultiplies outputs, and zero alpha would
+    // otherwise erase the radiance of precisely the opaque hits we need.
+    return float4(value.r, value.g, value.b, Math.Clamp(value.a - 1, 0, 1));
+}
+
+float4 InterpolateCascade(Texture atlas, Texture positions, float2 viewSize,
+                          int2 probes, int directionSize, float3 origin,
+                          float2 directionUV, float thickness)
+{
+    float2 coordinate = GIToUV(origin.xy, viewSize) * float2(probes) - float2(0.5);
+    int2 lower = int2(Math.Floor(coordinate));
+    float2 part = coordinate - float2(lower);
+    float2 angular = directionUV * float(directionSize) - float2(0.5);
+    int2 angularLower = int2(Math.Floor(angular));
+    float2 angularPart = angular - float2(angularLower);
+    mut float4 sum = float4(0);
+    mut float weight = 0;
+    for (var y = 0; y < 2; y++)
+    for (var x = 0; x < 2; x++)
+    {
+        int2 probe = Math.Clamp(lower + int2(x, y), int2(0), probes - int2(1));
+        float2 uv = (float2(probe) + float2(0.5)) / float2(probes);
+        Color surface = positions.Sample(uv, Filter.Point, Wrap.Clamp);
+        if (surface.a <= 0 || Math.Abs(surface.b - origin.z) > Math.Max(thickness * 2, 0.002)) continue;
+        float spatialWeight = (x == 0 ? 1 - part.x : part.x) * (y == 0 ? 1 - part.y : part.y);
+        for (var dy = 0; dy < 2; dy++)
+        for (var dx = 0; dx < 2; dx++)
+        {
+            int2 direction = Math.Clamp(angularLower + int2(dx, dy), int2(0), int2(directionSize - 1));
+            float angularWeight = (dx == 0 ? 1 - angularPart.x : angularPart.x)
+                                * (dy == 0 ? 1 - angularPart.y : angularPart.y);
+            sum += ReadInterval(atlas, probe, direction, directionSize) * (spatialWeight * angularWeight);
+        }
+        weight += spatialWeight;
+    }
+    return weight > 0.000001 ? sum / weight : float4(0, 0, 0, 1);
+}
+
+frag CaptureGISurface(Vertex vertex, out Color position, out Color radiance,
+                      Texture source, Renderer renderer, GlobalIllumination gi)
+{
+    Color surface = renderer.positions.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    float2 xy = GIFromUV(vertex.uv, gi.viewSize);
+    position = Color(xy.x, xy.y, surface.b, surface.a > 0 ? 1 : 0);
+    Color light = source.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    radiance = Color(light.r, light.g, light.b);
+}
+
+frag BuildCascade(Vertex vertex, out Color color, Texture source,
+                  GlobalIllumination gi, CascadeStep step)
+{
+    int2 atlasPixel = int2(Math.Floor(vertex.uv * float2(step.probes * step.directionSize)));
+    int2 probe = atlasPixel / step.directionSize;
+    int2 angular = atlasPixel - probe * step.directionSize;
+    float2 probeUV = (float2(probe) + float2(0.5)) / float2(step.probes);
+    Color surface = source.Sample(probeUV, Filter.Point, Wrap.Clamp);
+    float2 xy = GIFromUV(probeUV, gi.viewSize);
+    float3 origin = float3(xy, surface.b);
+    float2 directionUV = (float2(angular) + float2(0.5)) / float(step.directionSize);
+    float3 direction = OctaDirection(directionUV);
+    mut float4 interval = float4(0, 0, 0, 1);
+    if (surface.a > 0)
+    {
+        interval = TraceSurface(source, gi.radiance, gi.viewSize, origin, direction,
+                                step.start, step.end, Math.Clamp(gi.thickness, 0.0001, 1));
+        if (step.hasUpper && interval.w > 0)
+        {
+            float4 upper = InterpolateCascade(gi.upper, source, gi.viewSize,
+                step.probes / 2, step.directionSize * 2, origin, directionUV,
+                Math.Clamp(gi.thickness, 0.0001, 1));
+            interval = MergeIntervals(interval, upper);
+        }
+    }
+    color = Color(interval.x, interval.y, interval.z, 1 + interval.w);
+}
+
+// First-order RGB spherical harmonics retain incoming direction for normal maps.
+// The diffuse convolution is c0 + 2 * dot(c1, normal); negative lobes clamp to zero.
+frag CollapseCascades(Vertex vertex, out Color constantLight, out Color lightX,
+                      out Color lightY, out Color lightZ, Texture source,
+                      GlobalIllumination gi)
+{
+    int2 probe = Math.Min(int2(vertex.uv * float2(gi.activeProbes)), gi.activeProbes - int2(1));
+    mut float3 sum = float3(0);
+    mut float3 xSum = float3(0);
+    mut float3 ySum = float3(0);
+    mut float3 zSum = float3(0);
+    mut float weight = 0;
+    for (var y = 0; y < 4; y++)
+    for (var x = 0; x < 4; x++)
+    {
+        float3 direction = OctaDirection((float2(x, y) + float2(0.5)) / 4);
+        float angularWeight = OctaWeight(direction);
+        float3 incoming = ReadInterval(source, probe, int2(x, y), 4).xyz * angularWeight;
+        sum += incoming;
+        xSum += incoming * direction.x;
+        ySum += incoming * direction.y;
+        zSum += incoming * direction.z;
+        weight += angularWeight;
+    }
+    constantLight = Color(sum.x / weight, sum.y / weight, sum.z / weight);
+    lightX = Color(xSum.x / weight, xSum.y / weight, xSum.z / weight);
+    lightY = Color(ySum.x / weight, ySum.y / weight, ySum.z / weight);
+    lightZ = Color(zSum.x / weight, zSum.y / weight, zSum.z / weight);
+}
+
+float3 Coefficient(Texture image, float2 uv)
+{
+    Color value = image.Sample(uv, Filter.Point, Wrap.Clamp);
+    return float3(value.r, value.g, value.b);
+}
+
+frag ResolveIndirect(Vertex vertex, out Color color, Texture source,
+                     Renderer renderer, GlobalIllumination gi)
+{
+    Color direct = source.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    Color surface = renderer.positions.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    Color packedNormal = renderer.normals.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    Color material = renderer.albedo.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    float3 normal = Math.Normalize(float3(packedNormal.r, packedNormal.g, packedNormal.b));
+    float2 coordinate = vertex.uv * float2(gi.activeProbes) - float2(0.5);
+    int2 lower = int2(Math.Floor(coordinate));
+    float2 part = coordinate - float2(lower);
+    float layerTolerance = Math.Max(Math.Clamp(gi.thickness, 0.0001, 1) * 2, 0.002);
+    mut float3 incoming = float3(0);
+    mut float weight = 0;
+    if (surface.a > 0)
+    {
+        for (var y = 0; y < 2; y++)
+        for (var x = 0; x < 2; x++)
+        {
+            int2 probe = Math.Clamp(lower + int2(x, y), int2(0), gi.activeProbes - int2(1));
+            float2 uv = (float2(probe) + float2(0.5)) / float2(gi.activeProbes);
+            Color other = gi.positions.Sample(uv, Filter.Point, Wrap.Clamp);
+            if (other.a <= 0 || Math.Abs(other.b - surface.b) > layerTolerance) continue;
+            float share = (x == 0 ? 1 - part.x : part.x) * (y == 0 ? 1 - part.y : part.y);
+            float3 light = Coefficient(gi.constantLight, uv)
+                + 2 * (Coefficient(gi.lightX, uv) * normal.x
+                     + Coefficient(gi.lightY, uv) * normal.y
+                     + Coefficient(gi.lightZ, uv) * normal.z);
+            incoming += Math.Max(light, float3(0)) * share;
+            weight += share;
+        }
+    }
+    float metallic = Math.Clamp(packedNormal.a - 1, 0, 1);
+    float3 albedo = Math.Clamp(float3(material.r, material.g, material.b), float3(0), float3(1));
+    float3 bounce = weight > 0.000001 ? incoming / weight : float3(0);
+    mut float3 combined = float3(direct.r, direct.g, direct.b)
+        + albedo * (1 - metallic) * bounce * Math.Clamp(gi.intensity, 0, 4);
+    combined = Math.Clamp(combined, float3(0), float3(65504));
+    color = Color(combined.x, combined.y, combined.z, direct.a);
+}
+
+void DisposeGI(mut GlobalIllumination gi)
+{
+    gi.surface.Dispose();
+    gi.atlasA.Dispose();
+    gi.atlasB.Dispose();
+    gi.coefficients.Dispose();
+    gi.result.Dispose();
+    gi.surface = default;
+    gi.atlasA = default;
+    gi.atlasB = default;
+    gi.coefficients = default;
+    gi.result = default;
+    gi.positions = default;
+    gi.radiance = default;
+    gi.upper = default;
+    gi.constantLight = default;
+    gi.lightX = default;
+    gi.lightY = default;
+    gi.lightZ = default;
+    gi.activeResolution = int2(0);
+    gi.activeProbes = int2(0);
+    gi.activeCascades = 0;
+}
+
+[Stage(Stages.Indirect)]
+view Indirect(mut Renderer renderer, mut GlobalIllumination gi)
+{
+    if (!renderer.enabled || !renderer.ready || !gi.enabled || gi.intensity <= 0 || gi.distance <= 0)
+    {
+        DisposeGI(gi);
+        return;
+    }
+    int2 pixels = Math.Max(renderer.positions.size, int2(1));
+    int longAxis = Math.Clamp(gi.resolution, 32, 256);
+    float scale = float(longAxis) / float(Math.Max(pixels.x, pixels.y));
+    int2 resolution = Math.Max(int2(Math.Ceil(float2(pixels) * scale)), int2(1));
+    int count = Math.Clamp(gi.cascades, 1, 4);
+    int divisor = 1 << (count - 1);
+    int spacing = Math.Clamp(gi.probeSpacing, 1, 16);
+    mut int2 probes = (resolution + int2(spacing - 1)) / spacing;
+    probes = ((probes + int2(divisor - 1)) / divisor) * divisor;
+    if (gi.activeResolution.x != resolution.x || gi.activeResolution.y != resolution.y
+        || gi.activeProbes.x != probes.x || gi.activeProbes.y != probes.y)
+    {
+        DisposeGI(gi);
+    }
+    if (!gi.surface.valid)
+    {
+        gi.surface = RenderTarget(resolution.x, resolution.y, 1, Format.Rgba16f, Format.Rgba16f);
+        gi.atlasA = RenderTarget(probes.x * 4, probes.y * 4, 1, Format.Rgba16f);
+        gi.atlasB = RenderTarget(probes.x * 4, probes.y * 4, 1, Format.Rgba16f);
+        gi.coefficients = RenderTarget(probes.x, probes.y, 1,
+            Format.Rgba16f, Format.Rgba16f, Format.Rgba16f, Format.Rgba16f);
+        gi.result = RenderTarget.Window(Format.Rgba16f);
+    }
+    gi.activeResolution = resolution;
+    gi.activeProbes = probes;
+    gi.activeCascades = count;
+    gi.viewSize = renderer.viewSize;
+    Draw.Blit(renderer.direct, gi.surface, CaptureGISurface);
+    gi.positions = gi.surface.color;
+    gi.radiance = gi.surface.colors[1];
+    gi.upper = gi.radiance; // A valid distinct source even in the outermost pass.
+    for (var level = count - 1; level >= 0; level--)
+    {
+        int factor = 1 << level;
+        RenderTarget destination = level % 2 == 0 ? gi.atlasA : gi.atlasB;
+        Draw.Blit(gi.positions, destination, BuildCascade, CascadeStep {
+            level = level, probes = probes / factor, directionSize = 4 * factor,
+            start = CascadeIntervalStart(level, count, gi.distance),
+            end = CascadeIntervalEnd(level, count, gi.distance), hasUpper = level + 1 < count
+        });
+        gi.upper = destination.color;
+    }
+    Draw.Blit(gi.upper, gi.coefficients, CollapseCascades);
+    gi.constantLight = gi.coefficients.color;
+    gi.lightX = gi.coefficients.colors[1];
+    gi.lightY = gi.coefficients.colors[2];
+    gi.lightZ = gi.coefficients.colors[3];
+    Draw.Blit(renderer.output, gi.result, ResolveIndirect);
+    renderer.output = gi.result.color;
+}

@@ -86,7 +86,7 @@ contains("${out}" "--max-connections <n>")
 contains("${out}" "--shard-width <units>")
 excludes("${out}" "--nightly")
 
-foreach(argument folder source package editor file.tprefab --release --distribution -O0 -O1 -O2 -O3 --web --android --define --title --scene --stats --debug-views -o
+foreach(argument folder source package editor file.tprefab --release --distribution -O0 -O1 -O2 -O3 --web --android --define --title --scene --stats --debug-views --assets -o
         --no-open --host --join --connect --server --strip-server-assets --anonymous --port --max-matches --max-connections
         --udp-only --shards --shard-width --shard-most --shard-journal --capture --capture-audio --microphone --frames --script
         --scale --size --profile --profile-warmup
@@ -161,6 +161,35 @@ help(2 help run --frames extra)
 contains("${err}" "help takes")
 help(2 nonsense --help)
 contains("${err}" "unknown help topic")
+
+# Missing values are usage errors for known options, with a valid invocation
+# and a help topic. No project or complete installation should be required.
+foreach(command build run unity schedule shaders)
+    foreach(option --title --assets)
+        help(2 "${command}" "${option}")
+        contains("${err}" "${option} needs a value, like `${option} ")
+        contains("${err}" "tide help ${option}")
+        excludes("${err}" "doesn't take")
+    endforeach()
+endforeach()
+foreach(command build unity)
+    help(2 "${command}" -o)
+    contains("${err}" "-o needs a value, like `-o output/game`")
+endforeach()
+foreach(option --join --connect --port --max-matches --max-connections --shards --shard-width --shard-most)
+    help(2 run "${option}")
+    contains("${err}" "${option} needs a value, like `${option} ")
+    contains("${err}" "tide help ${option}")
+endforeach()
+help(2 upgrade --version)
+contains("${err}" "--version takes the release to install")
+contains("${err}" "tide upgrade --version 0.5.0")
+help(2 run -o)
+contains("${err}" "run doesn't take '-o'; see `tide help run`")
+help(2 build --join)
+contains("${err}" "build doesn't take '--join'; see `tide help build`")
+help(2 build --define TIDE_EXAMPLE)
+contains("${err}" "TIDE_ and PACKAGE_ prefixes are reserved by Tide; choose a different symbol")
 
 # cc is advertised only in packages with embedded Clang.
 string(FIND "${overview}" "\n  cc " cc)

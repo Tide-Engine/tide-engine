@@ -123,7 +123,7 @@ static int command_main(const int argc, char **argv)
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--update") == 0) only_updates = true; // Used by tide upgrade
             else {
-                fprintf(stderr, "tide: editors doesn't take '%s'\n", argv[i]);
+                fprintf(stderr, "tide: editors doesn't take '%s'; see `tide help editors`\n", argv[i]);
                 return 2;
             }
         }
@@ -193,7 +193,9 @@ static int command_main(const int argc, char **argv)
             else if (strcmp(argv[i], "--stable") == 0) channel = "stable";
             else if (strcmp(argv[i], "--version") == 0 && i + 1 < argc) exact = argv[++i];
             else {
-                fprintf(stderr, "tide: upgrade doesn't take '%s'\n", argv[i]);
+                if (strcmp(argv[i], "--version") == 0)
+                    fputs("tide: --version takes the release to install, like `tide upgrade --version 0.5.0`\n", stderr);
+                else fprintf(stderr, "tide: upgrade doesn't take '%s'; see `tide help upgrade`\n", argv[i]);
                 return 2;
             }
         }
@@ -276,7 +278,7 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--data-dir") == 0) {
             if (left < 1 || !argv[i + 1][0] || argv[i + 1][0] == '-') {
-                fprintf(stderr, "tide: --data-dir takes a nonempty save directory, like `--data-dir test-saves`\n");
+                fprintf(stderr, "tide: --data-dir takes a nonempty save directory, like `--data-dir test-saves`; use ./-name for a folder starting with '-'\n");
                 free(defines);
                 return 2;
             }
@@ -397,7 +399,7 @@ static int command_main(const int argc, char **argv)
             if (!lex_symbol_ok(name)) {
                 fprintf(stderr, "tide: --define takes a symbol for the game's #if lines, like `--define FAST`%s\n",
                         strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
-                            ? ": symbols that start with TIDE_ and PACKAGE_ are tide's to say"
+                            ? ": TIDE_ and PACKAGE_ prefixes are reserved by Tide; choose a different symbol"
                             : "");
                 free(defines);
                 return 2;
@@ -433,7 +435,23 @@ static int command_main(const int argc, char **argv)
         else if ((unity || build || run || schedule) && strcmp(a, "--assets") == 0 && i + 1 < argc) opts.unity_assets = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {
-            fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
+            // Recognized options with no value used to look like unknown options.
+            const char *example = NULL;
+            if (!left) {
+                if (strcmp(a, "--title") == 0) example = "--title \"My Game\"";
+                else if (strcmp(a, "--assets") == 0) example = "--assets Assets";
+                else if ((build || unity) && strcmp(a, "-o") == 0) example = "-o output/game";
+                else if (run && strcmp(a, "--join") == 0) example = "--join K7QF2M";
+                else if (run && strcmp(a, "--connect") == 0) example = "--connect 127.0.0.1:7777";
+                else if (run && strcmp(a, "--port") == 0) example = "--port 7777";
+                else if (run && strcmp(a, "--max-matches") == 0) example = "--max-matches 64";
+                else if (run && strcmp(a, "--max-connections") == 0) example = "--max-connections 256";
+                else if (run && strcmp(a, "--shards") == 0) example = "--shards 4";
+                else if (run && strcmp(a, "--shard-width") == 0) example = "--shard-width 100";
+                else if (run && strcmp(a, "--shard-most") == 0) example = "--shard-most 1000";
+            }
+            if (example) fprintf(stderr, "tide: %s needs a value, like `%s`; see `tide help %s`\n", a, example, a);
+            else fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
             free(defines);
             return 2;
         }
@@ -468,7 +486,7 @@ static int command_main(const int argc, char **argv)
             if (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
                 || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0 || strcmp(a, "--shards") == 0
                 || strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0 || strcmp(a, "--shard-journal") == 0) { i++; continue; }
-            fprintf(stderr, "tide: --server does not take %s\n", a);
+            fprintf(stderr, "tide: --server does not take %s; remove it or omit --server to run a player\n", a);
             free(defines);
             return 2;
         }
@@ -484,7 +502,7 @@ static int command_main(const int argc, char **argv)
         return 2;
     }
     if (opts.web && opts.android) {
-        fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
+        fprintf(stderr, "tide: a build is for the web or for Android, not both at once; use only --web or --android\n");
         free(defines);
         return 2;
     }

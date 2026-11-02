@@ -30,6 +30,8 @@ local singleton Art
     float zero;
     SkinnedMesh<Corner> decoded;
     bool opened;
+    float observedLodOperand;
+    int lodMutations;
 }
 
 frag Shade(Corner corner, out Color color)
@@ -40,6 +42,19 @@ frag Shade(Corner corner, out Color color)
 float4x4 At(float z)
 {
     return float4x4.Translate(float3(0, 0, z));
+}
+
+float MutateSkinnedLod(mut Art art)
+{
+    art.multiplier = 2;
+    art.lodMutations++;
+    return 1;
+}
+
+float CaptureSkinnedLod(float earlier, float multiplier, mut Art art)
+{
+    art.observedLodOperand = earlier;
+    return multiplier;
 }
 
 float Height(float x, float y, float lift)
@@ -144,6 +159,10 @@ view Show(mut Art art)
             }
             Draw.SkinnedMesh(art.decoded, At(900), lod: 1);
             Draw.SkinnedMesh(leveledArm, At(900));
+            break;
+        case 9: // Model/transform operands precede the retained lod:, including that expression's own operands
+            Draw.SkinnedMesh(arm, float4x4.Translate(float3(art.multiplier, 0, 900)),
+                lod: CaptureSkinnedLod(art.multiplier, MutateSkinnedLod(art), art));
             break;
         case 6: // Nothing drawn
             break;

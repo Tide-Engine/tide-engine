@@ -1,0 +1,104 @@
+using Particles;
+
+settings { title = "Particles: effects written in code"; }
+
+local scene Main;
+
+local singleton Effects
+{
+    Emitter sparks;
+    Emitter smoke;
+    Particles.Renderer renderer;
+    float rate = 70;
+    bool flowing = true;
+}
+
+// An effect is a function: this one chooses the newborn spark's values.
+void Spark(mut Particle particle, mut Random random)
+{
+    float2 direction = random.NextFloat2Direction();
+    float speed = random.NextFloat(0.8, 2.5);
+    particle.position = float3(0, 0.15, 0);
+    particle.velocity = float3(direction * speed + float2(0, 1.7), 0);
+    particle.lifetime = random.NextFloat(0.55, 1.15);
+    particle.size = float2(0.07, 0.11);
+    particle.color = Color(0.98, 0.75, 0.14);
+    particle.endColor = Color(0.98, 0.3, 0.08, 0);
+    particle.rotation = random.NextFloat(Math.TAU);
+    particle.angularVelocity = random.NextFloat(-5, 5);
+}
+
+void Puff(mut Particle particle, mut Random random)
+{
+    float x = random.NextFloat(-0.18, 0.18);
+    float rise = random.NextFloat(0.6, 0.9);
+    particle.position = float3(x, 0.2, 0);
+    particle.velocity = float3(x * 0.4, rise, 0);
+    particle.lifetime = random.NextFloat(1.5, 2.3);
+    particle.size = float2(0.35);
+    particle.endSize = float2(1.1);
+    particle.color = Color(0.18, 0.83, 0.75, 0.38);
+    particle.endColor = Color(0.3, 0.45, 0.5, 0);
+    particle.custom.x = random.NextFloat(Math.TAU);
+}
+
+// Custom movement uses ordinary code too. The package manages age and expiry.
+void Drift(mut Particle particle, float dt)
+{
+    Particles.Integrate(particle, dt, acceleration: float3(0, 0.2, 0), drag: 0.2);
+    particle.position.x += Math.Sin(particle.age * 4 + particle.custom.x) * dt * 0.18;
+}
+
+void SparkAt(mut Particle particle, mut Random random, float3 position)
+{
+    Spark(particle, random);
+    particle.position = position;
+}
+
+void BurstAt(mut Emitter emitter, float3 position)
+{
+    Particles.Burst(emitter, 70,
+        (mut Particle particle, mut Random random) => SparkAt(particle, random, position));
+}
+
+view Show(mut Effects effects, Devices devices)
+{
+    float dt = Math.Min(Frame.dt, 0.05);
+    Particles.Update(effects.sparks, dt, acceleration: float3(0, -4, 0), drag: 0.5);
+    Particles.Update(effects.smoke, dt, Drift);
+    if (effects.flowing)
+    {
+        Particles.Emit(effects.sparks, effects.rate, dt, Spark);
+        Particles.Emit(effects.smoke, effects.rate * 0.25, dt, Puff);
+    }
+
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0.75), 2.7);
+    float panelTop = Screen.height - 140;
+    float2 pointer = Screen.Flip(devices.pointer.position);
+    if (devices.pointer.press.down && pointer.y > 64 && pointer.y < panelTop)
+        BurstAt(effects.sparks, float3(Draw.ScreenToWorld(pointer), 0));
+
+    Particles.DrawSprites(effects.renderer, effects.smoke.particles);
+    Particles.DrawSprites(effects.renderer, effects.sparks.particles, Blend.Add);
+
+    Draw.SetScreen();
+    Draw.Text($"{effects.sparks.particles.count + effects.smoke.particles.count} particles", float2(16, 14), 18, Color.white);
+    Draw.Text("Click above the controls for a burst", float2(16, 40), 13, Color(0.64, 0.64, 0.68));
+    GUI.SetTheme(GUITheme { radius = 6 });
+    // Keep the host's stats corner clear below the controls.
+    GUILayout.Area(Rect(12, panelTop, Screen.width - 24, 88))
+    {
+        GUILayout.Slider("Rate", effects.rate, 0, 200);
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button(effects.flowing ? "Stop flow" : "Start flow")) effects.flowing = !effects.flowing;
+            if (GUILayout.Button("Burst")) BurstAt(effects.sparks, float3(0, 0.15, 0));
+            if (GUILayout.Button("Clear"))
+            {
+                Particles.Clear(effects.sparks);
+                Particles.Clear(effects.smoke);
+            }
+        }
+    }
+}

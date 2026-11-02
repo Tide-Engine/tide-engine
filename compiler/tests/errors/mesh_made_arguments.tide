@@ -1,0 +1,4 @@
+// expect: Mesh takes its vertices and its indices: 'Mesh(vertices, indices)'
+singleton Shapes { Mesh<Vertex3> made; List<Vertex3> corners; }
+scene Main;
+system Make(mut Shapes shapes) { shapes.made = Mesh(shapes.corners); }

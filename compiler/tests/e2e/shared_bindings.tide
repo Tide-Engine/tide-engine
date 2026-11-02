@@ -1,0 +1,41 @@
+scene Main;
+component BindingItem { int variant; float tint; local Texture image; }
+event(Spawned) MakeBindings(with Main)
+{
+    for (var i = 0; i < 6; i++) Spawn(BindingItem { variant = i % 2, tint = float(i) * 0.125 });
+}
+
+local singleton BindingGeometry
+{
+    List<Vertex3> vertices = [Vertex3 {}, Vertex3 { position = float3(1, 0, 0) },
+                             Vertex3 { position = float3(0, 1, 0) }];
+    List<int> indices = [0, 1, 2];
+}
+local singleton BindingSources
+{
+    List<int> numbers = [7, 11];
+    Texture first;
+    Texture second;
+    float gain = 0.5;
+}
+frag SharedBinding(Vertex3 vertex, out Color color, BindingItem item, BindingSources source)
+{
+    color = item.image.Sample(vertex.uv, Filter.Point) * (source.gain + item.tint + float(source.numbers[0]) * 0.01);
+}
+
+void BindingHelper(BindingGeometry geometry, BindingSources source, BindingItem item)
+{
+    Draw.SetFrustumCulling(false);
+    Draw.Mesh(geometry.vertices, geometry.indices, float4x4.identity, SharedBinding);
+}
+
+view BindSharedItems(mut BindingItem item, BindingSources source)
+{
+    item.image = item.variant == 0 ? source.first : source.second;
+}
+
+[After(BindSharedItems)]
+view SharedBindings(BindingItem item, BindingGeometry geometry, BindingSources source)
+{
+    BindingHelper(geometry, source, item);
+}

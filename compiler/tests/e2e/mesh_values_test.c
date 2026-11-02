@@ -5,8 +5,8 @@
 #include "tide_test.h"
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
-_Static_assert(sizeof(((Saved *)0)->single) == 8, "a mesh value is one ID");
-_Static_assert(sizeof(((Saved *)0)->pair) == 16, "arrays contain only IDs");
+_Static_assert(sizeof(((Saved *)0)->single) == 24, "a mesh value is an ID and the two lists of a mesh the game made");
+_Static_assert(sizeof(((Saved *)0)->pair) == 48, "arrays contain the values");
 TIDE_TEST(mesh_collections_keep_ids_across_snapshots_packing_and_reload)
 {
     tide_world world = {0}, snapshot = {0}, restored = {0};
@@ -32,12 +32,12 @@ TIDE_TEST(mesh_collections_keep_ids_across_snapshots_packing_and_reload)
     tide_pack_header header;
     memcpy(&header, replacement, sizeof header);
     const uint64_t offsets[] = {geometry->offset, ids->offset};
-    // Their two elements swapped: a mesh's two lists, and an ID
-    const size_t element[] = {sizeof(tide_mesh_lists), sizeof(int64_t)};
+    // Their two elements swapped: a mesh's two lists, and a Mesh<V> value (an ID, and no lists)
+    const size_t element[] = {sizeof(tide_mesh_lists), sizeof(int64_t) + 2u * sizeof(tide_list)};
     for (unsigned i = 0; i < 2; i++) {
         const size_t at = (size_t)header.region_at + offsets[i] + sizeof(tide_block);
         TIDE_REQUIRE(at + 2u * element[i] <= tide_game_pack_size);
-        uint8_t held[sizeof(tide_mesh_lists)];
+        uint8_t held[sizeof(int64_t) + 2u * sizeof(tide_list)];
         memcpy(held, replacement + at, element[i]);
         memcpy(replacement + at, replacement + at + element[i], element[i]);
         memcpy(replacement + at + element[i], held, element[i]);

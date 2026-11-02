@@ -58,7 +58,7 @@ static const generic_form generic_forms[] = {
      "',' between the map's key and value types, like 'Map<int, string>'", "'>' after the map's value type"},
     {"Set", 1, {GENERIC_KEY}, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
     {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
-    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid3<int>'"}, NULL, "'>' after the grid's cell type"},
     {"Mesh", 1, {GENERIC_VERTEX}, {"the mesh's vertex type, like 'Mesh<Vertex3>'"}, NULL, "'>' after the mesh's vertex type"},
     {"SkinnedMesh", 2, {GENERIC_VERTEX, GENERIC_ELEMENT},
      {"the mesh's vertex type, like 'SkinnedMesh<Vertex3>'", "an optional animation and bone contract struct"},
@@ -360,6 +360,9 @@ bool type_assignable(const type to, const type from)
         const int from_side = from.decl->task_origin ? from.decl->task_origin->task_side : from.decl->task_local ? TASK_LOCAL : TASK_MATCH;
         return to_side == TASK_EITHER || from_side == TASK_EITHER || to_side == from_side;
     }
+    // An Asset<Mesh<V>> is a Mesh<V>: the same identity, with no geometry of its own
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->asset_ref_geometry && from.decl->asset_ref_of
+        && !from.decl->asset_ref_geometry && from.decl->asset_ref_of == to.decl->asset_ref_of) return true;
     if (to.kind == TY_COMPONENT && from.kind == TY_COMPONENT
         && (to.decl->placement_of ? to.decl->placement_of : to.decl)
             == (from.decl->placement_of ? from.decl->placement_of : from.decl)) return true;

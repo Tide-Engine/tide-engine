@@ -1,4 +1,4 @@
-// expect: a list's element is a copy, so 'NextInt' can't step it
+// expect: an indexed Random is a copy, so 'NextInt' can't update its state in place
 singleton Deck { List<Random> dice; int top; }
 scene Main { }
 system Shuffle(mut Deck deck)

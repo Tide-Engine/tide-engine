@@ -1,0 +1,233 @@
+namespace Render2D;
+
+struct Surface
+{
+    float3 albedo = float3(1);
+    float3 normal = float3(0, 0, 1);
+    float roughness = 0.5;
+    float metallic;
+    float specular = 1;
+}
+
+struct DirectLight { float3 diffuse; float3 specular; }
+
+// GGX/Smith/Schlick direct lighting; preserve diffuse separately for GI.
+DirectLight EvaluateDirect(Surface surface, float3 viewDirection, float3 lightDirection,
+                          float3 radiance, float visibility)
+{
+    float3 n = Math.Normalize(surface.normal);
+    float3 v = Math.Normalize(viewDirection);
+    float3 l = Math.Normalize(lightDirection);
+    float noL = Math.Saturate(Math.Dot(n, l));
+    float noV = Math.Saturate(Math.Dot(n, v));
+    if (noL <= 0 || noV <= 0) return default;
+    float3 h = Math.Normalize(v + l);
+    float noH = Math.Saturate(Math.Dot(n, h));
+    float voH = Math.Saturate(Math.Dot(v, h));
+    float roughness = Math.Clamp(surface.roughness, 0.05, 1);
+    float metallic = Math.Saturate(surface.metallic);
+    float3 albedo = Math.Clamp(surface.albedo, float3(0), float3(1));
+    float alpha = roughness * roughness;
+    float a2 = alpha * alpha;
+    float noH2 = noH * noH;
+    float denominator = (1 - noH2) + a2 * noH2;
+    float distribution = a2 / (Math.PI * denominator * denominator);
+    float ggxV = noL * Math.Sqrt(noV * noV * (1 - a2) + a2);
+    float ggxL = noV * Math.Sqrt(noL * noL * (1 - a2) + a2);
+    float smith = 0.5 / Math.Max(ggxV + ggxL, 1e-12);
+    float3 f0 = Math.Lerp(float3(0.04), albedo, metallic);
+    float remaining = 1 - voH;
+    float square = remaining * remaining;
+    float3 fresnel = (f0 + (float3(1) - f0) * (square * square * remaining)) * Math.Saturate(surface.specular);
+    float3 incoming = Math.Clamp(radiance, float3(0), float3(65504)) * (noL * Math.Saturate(visibility));
+    return DirectLight {
+        diffuse = (float3(1) - fresnel) * (1 - metallic) * albedo * incoming / Math.PI,
+        specular = distribution * smith * fresnel * incoming
+    };
+}
+
+float PointAttenuation(float distance, float range)
+{
+    if (range <= 0) return 0;
+    float d = Math.Max(distance, 0);
+    if (d >= range) return 0;
+    float ratio = d / range;
+    float square = ratio * ratio;
+    float window = Math.Saturate(1 - square * square);
+    if (d > 1e19) return (window * window / d) / d;
+    return window * window / Math.Max(d * d, 0.0001);
+}
+
+float SpotAttenuation(float cosine, float innerCosine, float outerCosine)
+{
+    float outer = Math.Saturate(outerCosine);
+    float inner = Math.Clamp(innerCosine, outer, 1);
+    float angle = Math.Clamp(cosine, -1, 1);
+    if (inner <= outer) return angle >= outer ? 1 : 0;
+    float t = Math.Saturate((angle - outer) / (inner - outer));
+    return t * t * (3 - 2 * t);
+}
+
+float SrgbToLinear(float value)
+{
+    float channel = Math.Max(value, 0);
+    if (channel <= 0.04045) return channel / 12.92;
+    return Math.Pow((channel + 0.055) / 1.055, 2.4);
+}
+
+float3 SrgbToLinear(float3 value)
+{ return float3(SrgbToLinear(value.x), SrgbToLinear(value.y), SrgbToLinear(value.z)); }
+
+float LinearToSrgb(float value)
+{
+    float channel = Math.Max(value, 0);
+    if (channel <= 0.0031308) return 12.92 * channel;
+    return 1.055 * Math.Pow(channel, 1 / 2.4) - 0.055;
+}
+
+float3 LinearToSrgb(float3 value)
+{ return float3(LinearToSrgb(value.x), LinearToSrgb(value.y), LinearToSrgb(value.z)); }
+
+float3 Tonemap(float3 radiance, float exposure)
+{
+    float3 exposed = Math.Clamp(radiance, float3(0), float3(65504)) * Math.Clamp(exposure, 0, 1e6);
+    return exposed / (float3(1) + exposed);
+}
+
+// Normal maps use +R toward sprite-right and +G toward sprite-up. Correcting
+// the determinant preserves that frame under mirrored or sheared transforms.
+float3 SpriteNormal(float3 geometric, float3 planeY, float3 planeZ,
+                    float handedness, float3 sample, float scale)
+{
+    float3 n = Math.Normalize(geometric);
+    mut float3 t = Math.Normalize(Math.Cross(planeY, planeZ) * handedness);
+    t = Math.Normalize(t - n * Math.Dot(n, t));
+    float3 b = Math.Normalize(Math.Cross(n, t)) * handedness;
+    float3 decoded = sample * 2 - float3(1);
+    float3 tangent = Math.Normalize(float3(decoded.xy * scale, decoded.z));
+    float3 mapped = Math.Normalize(t * tangent.x + b * tangent.y + n * tangent.z);
+    return Math.LengthSq(mapped) >= 0.5 ? mapped : n;
+}
+
+frag Geometry(SpriteVertex vertex, out Color albedo, out Color normal,
+              out Color position, out Color emission, Instance instance,
+              Material material, MaterialMaps maps, Renderer renderer)
+{
+    float2 uv = SpriteUV(vertex.uv, maps.uvPart);
+    Color sampled = material.baseMap.Sample(uv);
+    if (material.mode == SurfaceMode.Cutout && sampled.a * material.baseColor.a < Math.Clamp(material.alphaCutoff, 0, 1))
+        this.Discard();
+    float3 paint = SrgbToLinear(float3(sampled.r, sampled.g, sampled.b))
+        * SrgbToLinear(float3(material.baseColor.r, material.baseColor.g, material.baseColor.b));
+    mut float3 n = instance.Normal(float3(0, 0, 1));
+    if (maps.normal)
+    {
+        Color sampledNormal = material.normalMap.Sample(uv);
+        n = SpriteNormal(n, instance.Normal(float3(0, 1, 0)), instance.Normal(float3(0, 0, 1)),
+            maps.handedness, float3(sampledNormal.r, sampledNormal.g, sampledNormal.b), material.normalScale);
+    }
+    mut float3 emitted = Math.Max(material.emission, float3(0));
+    if (maps.emission)
+    {
+        Color map = material.emissionMap.Sample(uv);
+        emitted *= SrgbToLinear(float3(map.r, map.g, map.b));
+    }
+    // Targets store premultiplied RGBA and Sample returns straight RGB. Bias
+    // scalar metadata above zero so a zero scalar cannot erase the RGB payload.
+    albedo = Color(Math.Clamp(paint, float3(0), float3(1)), 1 + Math.Clamp(material.roughness, 0.05, 1));
+    normal = Color(n, 1 + Math.Saturate(material.metallic));
+    float3 relative = float3(this.world.xy - renderer.camera.position, this.world.z);
+    position = Color(Math.Clamp(relative, float3(-32752), float3(32752)), material.receiveShadows ? 1 : 2);
+    emission = Color(Math.Clamp(emitted, float3(0), float3(32752)), 1 + Math.Saturate(material.specular));
+}
+
+int PointFace(float3 direction)
+{
+    float3 absolute = Math.Abs(direction);
+    if (absolute.x >= absolute.y && absolute.x >= absolute.z) return direction.x >= 0 ? 0 : 1;
+    if (absolute.y >= absolute.z) return direction.y >= 0 ? 2 : 3;
+    return direction.z >= 0 ? 4 : 5;
+}
+
+struct ShadowKernel { float2 offset; float2 weight; }
+
+ShadowKernel ShadowAxis(float coordinate)
+{
+    float base = Math.Floor(coordinate);
+    float phase = coordinate - base;
+    float2 weight = float2(3 - 2 * phase, 1 + 2 * phase);
+    return ShadowKernel { offset = float2(base - 1 + (2 - phase) / weight.x,
+        base + 1 + phase / weight.y), weight = weight };
+}
+
+float ShadowVisibility(DepthTexture atlas, ShadowView shadow, float3 world, float bias, float texel, bool pointFace)
+{
+    float4 projected = Math.Mul(shadow.worldToClip, float4(world, 1));
+    if (projected.w <= 0) return 1;
+    float3 position = projected.xyz / projected.w;
+    if (position.z < -1 || position.z > 1) return 1;
+    if (!pointFace && (position.x < -1 || position.x > 1 || position.y < -1 || position.y > 1)) return 1;
+    float2 uv = shadow.uvRect.xy + float2(position.x * 0.5 + 0.5, 0.5 - position.y * 0.5) * shadow.uvRect.zw;
+    float depth = position.z * 0.5 + 0.5 - bias;
+    float2 minimum = shadow.uvRect.xy + float2(texel * 0.5);
+    float2 maximum = shadow.uvRect.xy + shadow.uvRect.zw - float2(texel * 0.5);
+    ShadowKernel x = ShadowAxis(uv.x / texel - 0.5);
+    ShadowKernel y = ShadowAxis(uv.y / texel - 0.5);
+    float2 u = (x.offset + float2(0.5)) * texel;
+    float2 v = (y.offset + float2(0.5)) * texel;
+    return (atlas.Compare(Math.Clamp(float2(u.x, v.x), minimum, maximum), depth) * x.weight.x * y.weight.x
+          + atlas.Compare(Math.Clamp(float2(u.y, v.x), minimum, maximum), depth) * x.weight.y * y.weight.x
+          + atlas.Compare(Math.Clamp(float2(u.x, v.y), minimum, maximum), depth) * x.weight.x * y.weight.y
+          + atlas.Compare(Math.Clamp(float2(u.y, v.y), minimum, maximum), depth) * x.weight.y * y.weight.y) * (1.0 / 16);
+}
+
+frag Lighting(Vertex vertex, out Color color, out Color bounced, Texture source, Renderer renderer)
+{
+    Color place = renderer.positions.Sample(vertex.uv, Filter.Point);
+    if (place.a < 0.5)
+    {
+        color = Color(SrgbToLinear(float3(renderer.background.r, renderer.background.g, renderer.background.b)), 1);
+        bounced = Color.black;
+        return;
+    }
+    Color paint = source.Sample(vertex.uv, Filter.Point);
+    Color normal = renderer.normals.Sample(vertex.uv, Filter.Point);
+    Color emission = renderer.emissions.Sample(vertex.uv, Filter.Point);
+    // Orthographic XY comes from the exact pixel center; only elevation needs
+    // stored geometry. This avoids half-float XY quantization in moving lights.
+    float2 worldXY = renderer.camera.position + (vertex.uv - float2(0.5)) * renderer.viewSize * float2(1, -1);
+    float3 world = float3(worldXY, place.b);
+    Surface surface = Surface { albedo = float3(paint.r, paint.g, paint.b), normal = float3(normal.r, normal.g, normal.b),
+        roughness = paint.a - 1, metallic = normal.a - 1, specular = emission.a - 1 };
+    float3 ambient = surface.albedo * (1 - Math.Saturate(surface.metallic))
+        * Math.Max(renderer.ambientIrradiance, float3(0)) / Math.PI;
+    mut float3 diffuse = float3(emission.r, emission.g, emission.b) + ambient;
+    mut float3 specular = float3(0);
+    foreach (var light in renderer.lights)
+    {
+        float3 delta = light.position - world;
+        float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(delta);
+        mut float attenuation = 1;
+        if (light.kind != LightKind.Directional)
+        {
+            attenuation = PointAttenuation(Math.Length(delta), light.range);
+            if (light.kind == LightKind.Spot)
+                attenuation *= SpotAttenuation(Math.Dot(light.direction, -toward), light.innerCosine, light.outerCosine);
+        }
+        if (attenuation <= 0) continue;
+        mut float visibility = 1;
+        if (renderer.shadows && place.a < 1.5 && light.shadowIndex >= 0)
+        {
+            int face = light.kind == LightKind.Point ? PointFace(world - light.position) : 0;
+            float facing = Math.Saturate(Math.Dot(surface.normal, toward));
+            float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
+            visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], world,
+                bias, renderer.shadowTexel, light.kind == LightKind.Point);
+        }
+        DirectLight result = EvaluateDirect(surface, float3(0, 0, 1), toward, light.intensity * attenuation, visibility);
+        diffuse += result.diffuse;
+        specular += result.specular;
+    }
+    color = Color(Math.Clamp(diffuse + specular, float3(0), float3(65504)), 1);
+    bounced = Color(Math.Clamp(diffuse, float3(0), float3(65504)), 1);
+}

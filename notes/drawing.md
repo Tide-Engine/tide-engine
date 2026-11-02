@@ -45,6 +45,23 @@ camera motion/order, separate targets and views, owned long source strings,
 reset/clear/free, disabled collection, append, and both limits. Native ASan and
 WASM validation passes in the full suites recorded in standard-host.md.
 
+## Drawing a mesh at a given version (2026-11-02)
+
+`tide_draw_mesh_key(d, lists, key)` (tide/mesh.h, owner-approved) tells the
+next draw of exactly those two list handles that `key` is their version.
+`take_mesh_key` runs first in `mesh3_slot`, `tide_draw_mesh_shaded_instances`
+and the 2D `mesh_lists`, before any early return, and always clears the hint;
+other handles get no key. Keyed meshes use the slot id `MESH_KEYED`
+(UINT64_MAX, no handle's) for both lists, so every copy of a made mesh is one
+GPU mesh, with no list read. Generated code sets the key right before a
+`Mesh<V>` draw and clears it after; `tide_draw_reset` clears it too. Keys
+without bit 63 are none, so assets' ids keep the list-version path (and their
+pack versions and LOD). `tide_mesh_key(vertices, size, indices)` hashes counts,
+vertex size and both lists' bytes (`tide_hash_more`, flattened chunks) and sets
+bit 63. The draw-list layout gained three words: hosts, libraries and games
+rebuild together. Tests: `mesh_runtime` (one run, one mesh across copies and
+frames; a mismatched hint is ignored and cleared).
+
 ## Levels for meshes a game makes (2026-11-02)
 
 What the draw list relies on (the feature, its tests and the simplifier's move: assets-and-files.md, Levels of
@@ -498,7 +515,6 @@ standard host sets `tide_draw_list.screen_scale` before the generated frame from
 reads as 1. The metadata is local, needs no GPU allocation/readback and survives
 ordinary draw reset like other host metadata. All hosts/game libraries rebuild
 for the C layout change. Tests and validation are in `notes/language.md`.
-
 
 ## Explicit skinned instances (2026-10-20)
 

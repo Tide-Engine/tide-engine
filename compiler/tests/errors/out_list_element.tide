@@ -1,5 +1,5 @@
-// expect: a list's element is a copy, so 'TryHalf' can't make it
-// expect: make a variable, and put it in: 'TryHalf(..., out var e); items[i] = e;'
+// expect: an indexed element can't be an 'out' argument to 'TryHalf'
+// expect: receive the result in 'out var value', then assign value to the indexed destination after the call
 scene Main { }
 struct Cell { int half; }
 singleton Tally { List<Cell> cells; }

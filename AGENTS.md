@@ -182,8 +182,10 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
 | `packages/render3d/`, default PBR, light components, shadows and HDR presentation | `notes/render3d.md` |
+| `packages/render2d/`, elevated sprites, normal maps, shadows and surface Radiance Cascades | `notes/render2d.md` |
 | `packages/cornerculling/`, conservative CPU box occlusion and candidate caches | `notes/corner-culling.md` |
 | `packages/geometry/`, mesh building over a game's vertex structs | `notes/geometry-package.md` |
+| `packages/particles/`, code-defined local effects and instanced particle drawing | `notes/particles.md` |
 | `packages/box3d/`, resident state | `notes/box3d.md` |
 | `packages/rooms/` | `notes/rooms-package.md` |
 | `packages/lobby/`, the client of the relay's lobbies and its menu | `notes/lobby-package.md` |

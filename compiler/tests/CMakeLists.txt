@@ -53,6 +53,15 @@ add_test(NAME tidec_wide_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_wide_lanes/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/wide_lanes_codegen.cmake")
 tide_e2e_test(view_reads) # Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied
+tide_e2e_test(shared_bindings)
+tide_e2e_test(shared_bindings_fallback)
+set(TIDE_SHARED_BINDINGS_DIR "${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_shared_bindings")
+add_executable(tidec_shared_bindings_private e2e/shared_bindings_private.c
+    "${TIDE_SHARED_BINDINGS_DIR}/game_pack.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+add_dependencies(tidec_shared_bindings_private tidec_e2e_shared_bindings)
+target_include_directories(tidec_shared_bindings_private PRIVATE "${TIDE_SHARED_BINDINGS_DIR}" "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tidec_shared_bindings_private PRIVATE tide tide_font_bold)
+add_test(NAME tidec_shared_bindings_private COMMAND tidec_shared_bindings_private)
 add_test(NAME tidec_view_reads_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_view_reads/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/view_reads_codegen.cmake")
@@ -206,6 +215,7 @@ tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/t
 tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(mesh_values)
+tide_e2e_test(mesh_runtime) # Mesh(vertices, indices): static meshes a game makes, values beside assets', drawn by their key
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(lod_generated) # Levels of detail for meshes a game makes (`lod:`), made in the background and kept by contents
@@ -562,6 +572,12 @@ endforeach()
 # Error tests: each errors/<name>.tide must fail to compile, and tidec's output
 # must contain the text on the file's first line, written as `// expect: <text>`.
 # A folder errors/<name>/ is one program of several files.
+add_test(NAME tidec_diagnostics_frontend_cli
+    COMMAND "${CMAKE_COMMAND}"
+        "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/diagnostics_frontend_cli"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics_frontend_cli.cmake")
+
 file(GLOB TIDE_ERROR_TESTS CONFIGURE_DEPENDS LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/errors/*")
 foreach(source IN LISTS TIDE_ERROR_TESTS)
     if(NOT IS_DIRECTORY "${source}" AND NOT source MATCHES "\\.tide$")

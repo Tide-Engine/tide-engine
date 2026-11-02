@@ -1,0 +1,48 @@
+{
+  "feature_commit": "6c7700a5ff07bf364cf6d12d5cf838c9ef74b16d",
+  "prior_integration_commit": "04f0ff7df",
+  "incoming_dev": "70db4a9f5",
+  "scope": "Latest dev generic functions and skinned/model LOD overlap. Include retained LOD operand in the skinned written-operand early-return path. Regression checks nested mutating LOD argument ordering and earlier transform capture. Native Windows ASan and web-release checks include shared bindings, generics, generated/imported LOD, geometry, mesh/runtime, skinned platform and forest smoke plus relevant diagnostics.",
+  "checks": {
+    "native": {
+      "passed": 26,
+      "failed": 0,
+      "seconds": 15.84,
+      "full_log": "build/forest-batch/validation/test-native-finaldev.log",
+      "sha256": "56449a379d5beb7c15689debfb1bb9ff8201c03c2615676e3243fa589dc5d4a0"
+    },
+    "web": {
+      "passed": 26,
+      "failed": 0,
+      "seconds": 19.94,
+      "full_log": "build/forest-batch/validation/test-web-finaldev.log",
+      "sha256": "a08f55369aebfba1956c2ec3ae2a0ffbd04669f2bebf785067e19c6396d261dd"
+    }
+  },
+  "build_logs": {
+    "build-native-finaldev.log": {
+      "path": "build/forest-batch/validation/build-native-finaldev.log",
+      "sha256": "06507ea11179bd5e7c335683ec8f79358aa306dc64fde42db3a16b2de1b5ae43"
+    },
+    "build-web-finaldev.log": {
+      "path": "build/forest-batch/validation/build-web-finaldev.log",
+      "sha256": "bf8b3fd63d3f55408a063321adb49bdde605abcb02c99d99849196778b059674"
+    },
+    "build-release-finaldev.log": {
+      "path": "build/forest-batch/validation/build-release-finaldev.log",
+      "sha256": "3f83e7c1a5a0c105e9f287fd389a6f2d10db1e584d11762875e35b8d1326e56d"
+    }
+  },
+  "binary_relative_path": "build/forest-batch/final-dev/bench_forest.exe",
+  "binary_sha256": "c07f5a5e911b3fb9ed50a524a9f8aba6486dd52b5561c0066c48249f40b72117",
+  "generated_c_sha256": "797cf0948ce57c4e49f8391116517494354d22a49105269a0c47560c9313f07f",
+  "compiler_sources": {
+    "compiler/src/codegen.c": "b8e2b2d9e96125b974c554cca2e9d67d04570a580f1db8b1fbd6b4f6171bccb8",
+    "compiler/src/shader_prep_codegen.inc": "5f992fef49aad1f42d104f722f18b277ca6fcc3cd9af04ffc83c65160992bc85"
+  },
+  "shader_equivalence": "shader-equivalence-finaldev.json",
+  "pixel_equivalence": "pixel-equivalence-finaldev.json",
+  "captures": "Three finite Vulkan correctness captures under the shared mutex; no idle-CPU requirement or timing claims. Baseline RGBA hashes, work and world match.",
+  "timing_cohort": "Original pre-merge frozen candidate retained; no new paired timings.",
+  "manual_ci_dispatched": false
+}

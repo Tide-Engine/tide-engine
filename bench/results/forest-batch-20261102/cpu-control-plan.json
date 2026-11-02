@@ -1,0 +1,18 @@
+{
+  "purpose": "Supplement the retained noisy main 18-process wall-time comparison with whole-process CPU consumption; do not replace or exclude any earlier result.",
+  "cases": [{"trees":100000,"camera":"wide"},{"trees":100000,"camera":"ground"}],
+  "round_orders": [["before","after"],["after","before"],["before","after"]],
+  "processes": 12,
+  "warmup": 20,
+  "frames": 100,
+  "width": 1920,
+  "height": 1080,
+  "renderer": "Vulkan",
+  "quality": "Unchanged default shadows, wind, distance representations, camera and timestep.",
+  "process_cpu_scope": "Bench executable process CPU time over its entire lifetime, including setup, hashing, frame recording, backend, driver threads charged to the process and teardown; excludes child processes and CPU charged elsewhere. Not per-view CPU time.",
+  "elapsed_scopes": "OS ExitTime minus StartTime, and observer stopwatch from Process.Start through WaitForExit; reported separately from native per-frame wall intervals.",
+  "snapshots": "Win32_Processor CurrentClockSpeed/MaxClockSpeed at run start/end are coarse OS-reported MHz, not actual per-core clocks. Recognized competing build/test/benchmark processes (name, PID, start time; no command lines) at start/end and once per WaitForExit(1000) interval, excluding the owned child. Monitor work belongs to the observer and is present for both variants; no per-frame monitor.",
+  "per_process_guard": "Wait for five seconds without recognized contenders before every predeclared process; retain wait duration and contenders observed while waiting. One outer shared mutex, no nested mutex.",
+  "exclusions": "None. Retain every completed process and adverse or contended pair, without retry. After each run, wait quiet before the next predeclared process. Execution/invariant failure stops further launches and retains the partial attempt.",
+  "mechanism_check": "One separately saved frozen-baseline --quick diagnostic validates retained process handle, post-exit total/user/kernel CPU time and independent redirected streams before actual control pairs."
+}
