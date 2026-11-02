@@ -1,5 +1,40 @@
 # The platform layer and the renderer
 
+## Match updates during desktop Vulkan frame waits (2026-11-03)
+
+The desktop's `tide_gpu_vk_present_updating` polls the next frame slot's fence
+after submission and presentation. If it is still pending, the platform may
+run the host's match-only callback between timed waits. The callback receives
+elapsed time since the render frame began and returns its next update delay
+from that point; platform.c subtracts time spent in the callback. Waits follow
+that deadline, bounded to 1–100 ms, and finish early when the fence signals.
+A ready fence invokes no callback. A disabled callback uses the ordinary
+indefinite wait.
+
+`tide_platform_update_while_waiting` is optional and active only after the
+frame callback returns `TIDE_KEEP_RUNNING`, during presentation. It must not
+poll input/events, render, reload, or change GPU/window resources. Desktop
+GLFW supplies it; Android retains `tide_gpu_vk_present` without an updater,
+and OpenGL/web are unchanged. Headless runs never call the host updater, so
+their made-up time and scripted frame boundaries remain unchanged.
+
+Two frame slots remain in flight. Fence completion still precedes garbage
+collection and command-pool, descriptor-pool and upload-ring reuse, in the
+same order. No work is queued farther ahead. This services networking during
+the measured end-present fence bottleneck; it does not reduce GPU workload.
+Swapchain acquisition, `vkQueuePresentKHR`, resize/device-idle, readback and
+mid-frame flushes can still block and never invoke this callback.
+
+The private `tide_gpu_vk_wait_for_test` hook intercepts only end-present fence
+waits and supplies the real wait function; even a claimed success is checked
+against the real fence before resources are reused. Native GPU fixtures
+`tide_platform_gpu_wait` and `_headless` force pending waits and cover deadline
+subtraction/bounds, ready fences, absent/withdrawn callbacks, exclusion during
+drawing/acquisition/readback, simulated device loss, pixels after frame-slot
+reuse, and headless exclusion. Both fixtures pass with Windows ASan and
+Vulkan validation, as does the complete 2,989-test native suite. Coordinated
+web validation and real-game measurements are recorded in netcode.md.
+
 ## Gap integration validation (2026-11-02)
 
 Camera-origin uniforms and target content revisions were validated together after

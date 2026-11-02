@@ -1,5 +1,27 @@
 # Language features, as tidec builds them
 
+## Correction age between rendered frames (2026-11-03)
+
+Generated games with corrected fields expose `tide_local_age_views(local,
+seconds)` through the host's optional `age_views` callback. It performs the
+existing correction decay without changing `Frame.dt` or local random state.
+The host ages existing errors before each session update, including updates
+while waiting for the GPU; newly received errors therefore start at that update.
+`tide_local_frame_time` still sets the full rendered-frame duration and reseeds
+local randomness exactly once per frame, without also aging corrections. No
+Tide syntax, match state, interpolation or correction decay arithmetic changes.
+
+Direct generated-C callers in editor previews, the demo, example/package test
+hosts, compiler/safety tests and benchmarks call both phases where needed.
+Their previous frame duration, RNG and correction-aging behavior is preserved.
+Unity travel preview's zero-second frame-time
+call needs no age call because zero aging is a no-op. The correction fixture
+checks two update intervals with a fresh error between them, unchanged random
+state and frame duration during aging, and one full frame duration/random seed
+at the next draw. Existing half-life and Transform checks use the age function.
+Native/web validation is recorded with the host's GPU-wait update changes in
+`notes/standard-host.md`.
+
 ## Worker parallel captures with debugger list wrappers (2026-11-02)
 
 `gen_parallel_call` preserves a captured list local's `tide_local_list<N>`

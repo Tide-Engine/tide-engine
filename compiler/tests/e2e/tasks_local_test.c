@@ -12,6 +12,9 @@ static void frames(const tide_world *w, const int n, const float seconds)
 {
     for (int i = 0; i < n; i++) {
         tide_local_frame_time(&local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+        tide_local_age_views(&local, seconds);
+#endif
         tide_draw_reset(&draw);
         tide_frame(w, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     }

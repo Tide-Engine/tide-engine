@@ -155,6 +155,9 @@ TIDE_TEST(box2d_views_glide_through_a_correction)
     TIDE_CHECK(near(local.Seen.position.x, drawn.position.x) && near(local.Seen.angle, drawn.angle));
     // ...and halfway there 75 ms later
     tide_local_frame_time(&local, 0.075f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 0.075f);
+#endif
     tide_draw_reset(&draw);
     tide_frame(&b, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     printf(", then at %g and %g\n", (double)local.Seen.position.x, (double)local.Seen.angle);

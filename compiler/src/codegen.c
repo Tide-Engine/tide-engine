@@ -9308,7 +9308,10 @@ static void gen_header(gen *g)
     sb_put(o, "void tide_local_rebind_resources(tide_local *local, bool same_memory);\n\n");
     sb_put(o, "// The local state's tide_world_free, tide_world_pack and tide_world_unpack.\n");
     sb_put(o, "void tide_local_free(tide_local *local);\n");
-    if (program_corrects(prog)) sb_put(o, "void tide_local_correct(tide_local *local, const tide_view_correction *correction);\n");
+    if (program_corrects(prog)) sb_put(o, "void tide_local_correct(tide_local *local, const tide_view_correction *correction);\n"
+                                          "// Age existing visual errors before each session update, including updates between frames.\n"
+                                          "// This changes neither Frame.dt nor local randomness.\n"
+                                          "void tide_local_age_views(tide_local *local, float seconds);\n");
     sb_put(o, "uint32_t tide_local_pack(const tide_local *local, uint8_t *out, uint32_t capacity);\n");
     sb_put(o, "bool tide_local_unpack(tide_local *local, const uint8_t *data, uint32_t size);\n\n");
     sb_put(o, "// Runs every view once, in declaration order, adding their Draw calls to `draw`\n");
@@ -11192,7 +11195,7 @@ static void gen_correction_state(gen *g)
         const decl *d = prog->singletons.items[i];
         if (decl_corrects(d)) sb_printf(o, "    memset(&l->tide_correction_%s, 0, sizeof l->tide_correction_%s);\n", type_cname(d), type_cname(d));
     }
-    sb_put(o, "}\n\nstatic void tide_corrections_decay(tide_local *l, float seconds)\n{\n"
+    sb_put(o, "}\n\nvoid tide_local_age_views(tide_local *l, float seconds)\n{\n"
               "    if (!(seconds > 0.0f) || !tide_is_finite_f(seconds)) return;\n"
               "    const float keep = tide_exp_f(-seconds * (0.6931471805599453f / 0.075f));\n");
     for (int side = 0; side < 2; side++) {
@@ -21136,7 +21139,6 @@ static void gen_api(gen *g)
     }
     sb_put(o, "    tide_event_log_clear(events);\n}\n\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds)\n{\n");
-    if (program_corrects(prog)) sb_put(o, "    tide_corrections_decay(local, seconds);\n");
     if (prog->rolls_local) {
         // What local code rolls with takes in each frame's length: the same every run where frames are
         // made up (a run with no window), and no two runs alike where they're measured

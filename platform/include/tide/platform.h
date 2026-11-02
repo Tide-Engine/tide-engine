@@ -188,6 +188,14 @@ _Noreturn void tide_platform_run(tide_frame_fn frame, void *user);
 // 60th of a second. Frames others see come at the display's pace.
 void tide_platform_next_frame(double seconds);
 
+// Optional match-only work while desktop Vulkan waits for a frame's GPU
+// resources. Called on the frame thread, after the frame function returned;
+// elapsed is seconds since that frame began. Return seconds from that point
+// until the next update is due. Never poll input, draw, reload or change GPU
+// or window resources here. NULL disables it. Headless runs and other backends
+// never call it.
+void tide_platform_update_while_waiting(double (*update)(void *user, double elapsed), void *user);
+
 // Updates the devices with the input since the previous frame. Call once per
 // frame, before sampling input. The characters typed are only the ones since
 // this call's previous one.

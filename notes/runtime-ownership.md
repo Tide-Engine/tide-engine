@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Presentation correction clock boundary (2026-11-03)
+
+The generated host table adds optional `age_views(local, seconds)`, implemented
+by generated `tide_local_age_views` and called by the host before session
+updates. This separates existing correction decay from the once-per-rendered-
+frame `frame_time` callback so GPU-wait updates neither reseed local randomness
+nor shorten `Frame.dt`. It adds no runtime function called by generated code,
+Tide language feature or match-state/storage change. Hosts and generated game
+libraries rebuild together for the table layout change. Details and validation
+are in `notes/language.md` and `notes/standard-host.md`.
+
 ## Camera-relative drawing boundary (2026-11-02)
 
 Within the existing drawing maintenance exception, camera records gain relative

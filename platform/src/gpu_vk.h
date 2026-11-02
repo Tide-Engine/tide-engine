@@ -38,6 +38,15 @@ typedef struct tide_vk_window {
 bool tide_gpu_vk_open(const tide_vk_window *window, bool say);
 // The frame's work goes to the GPU, and what it drew into the window shows.
 void tide_gpu_vk_present(void);
+// Desktop's presentation may update a match while the next frame's fence is
+// pending. The callback returns seconds until its next update, or negative
+// for an ordinary indefinite wait. It must not touch GPU/window resources.
+// Acquisition, readback and mid-frame flushes never call it.
+void tide_gpu_vk_present_updating(double (*update)(void));
+// For tests: intercept only the end-present fence wait. `wait` calls the
+// device for that fence; a claimed success is checked on the device before
+// any frame resource is reused. NULL restores ordinary waits.
+void tide_gpu_vk_wait_for_test(VkResult (*hook)(uint64_t timeout, VkResult (*wait)(uint64_t timeout)));
 // Waits for the GPU and lets everything go, before the window goes.
 void tide_gpu_vk_close(void);
 // The window's surface went or another came (Android's activity takes its

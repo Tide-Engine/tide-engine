@@ -91,7 +91,7 @@ TIDE_TEST(transform_default_corrections_preserve_position_rotation_and_hashes)
     // World queries retain the existing stored-state contract.
     TIDE_CHECK(c.local.Observed.property.x == 10 && c.local.Observed.stored.x == 7);
     TIDE_CHECK(c.local.tide_corrections_Transform.rows.count == 2);
-    tide_local_frame_time(&c.local, 0.075f);
+    tide_local_age_views(&c.local, 0.075f);
     presentation_frame(&c, NULL, 1);
     TIDE_CHECK(tide_abs_f(c.local.Observed.root.x - 7) < 0.00002f);
     TIDE_CHECK(tide_abs_f(c.local.Observed.child.x - 1.5f) < 0.00002f);

@@ -29,6 +29,9 @@ static tide_player_id player(const int index)
 static void frame(const tide_world *w)
 {
     tide_local_frame_time(&local, DT);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, DT);
+#endif
     tide_draw_reset(&draw);
     tide_audio_reset(&audio);
     tide_local_audio(&local, &audio);
@@ -74,6 +77,9 @@ static uint32_t asked(void)
 static void finger(const tide_touch_phase phase, const float x, const float y)
 {
     tide_local_frame_time(&local, DT);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, DT);
+#endif
     tide_draw_reset(&draw);
     tide_audio_reset(&audio);
     tide_local_audio(&local, &audio);

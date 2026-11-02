@@ -1,5 +1,59 @@
 # Netcode: sessions, prediction, commands
 
+## Service the match while desktop presentation waits (2026-11-03)
+
+The owner prioritized networking after the focus measurements below. Desktop
+Vulkan's end-present frame fence now waits to the next match deadline and calls
+the standard host's match-only update between waits. The GPU still owns its
+unfinished resources, and the existing two-frame queue limit remains. Rendering
+details and remaining blocking points are in rendering.md; clock, local event,
+input and correction-aging contracts are in standard-host.md.
+
+This changes host scheduling, not the session protocol, world data, prediction
+policy, tick hashes or Tide language. Fresh local input is still polled at the
+rendered frame rate; remote input and session traffic can progress during this
+specific wait. GPU execution/scheduling time and the background FPS difference
+are separate from the networking improvement.
+
+Windows ASan validation passes all 2,989 native CTests, including the forced
+GPU waits, real host/session fixture, generated correction/RNG regression,
+reload/embed, input, rendering and networking coverage. The browser fixture
+uses an explicit exit after the shared test runner: returning from main alone
+leaves Tide's asynchronous page alive. Its three assertions passed on the first
+web run, and its completion wrapper now passes the browser runner too; the
+updated fixture also passes again natively. Logs are in build/focus-probe.
+The complete web-debug run passes the other 2,873 tests, including WebGL,
+WebGPU and D3D11. With that fixture's recheck, all 2,874 web tests pass. No
+test assertions were loosened, deterministic hashes changed, or extra CI
+dispatched. Other desktop operating systems and Android remain CI coverage.
+
+An optimized Mount & Rifle comparison used the same checkout-built executable
+with the update hook disabled/enabled, seed 42, two direct-UDP peers, a 60 Hz
+client, scripted E to request on-foot play and 60-second bounded muted runs.
+The scratch end-present fence hook held completion for 100 ms on each host
+frame from roughly seconds 12–59, while still requiring the actual GPU fence
+to complete before resource reuse. This is injected presentation delay, not a
+measurement of 100 ms of GPU work. The steady 15–58-second interval verified
+host=1/remote peers=1 and client=0/connected for every sample in both runs.
+
+Host gaps between session updates fell from mean 109.58 ms / p95 111.39 ms /
+max 112.62 ms to 13.33 / 18.20 / 19.36 ms. It serviced 2,818 updates inside
+waits in that interval. Host drawing stayed slow (9.13 vs 9.46 FPS), as intended;
+the client's rate remained 59.54 vs 59.52 FPS. Neither peer accumulated late
+inputs during either measured interval. These are update-cadence measurements,
+not end-to-end button/display latency or an Internet benchmark. Final logs,
+instrumented build scripts and network-summary.json are in build/focus-probe;
+the four valid stall-before/network and stall-after/network processes exited 0.
+
+The intended new foreground/background comparison was inconclusive: neither
+window ever reported foreground, and the UI screenshot showed desktop wallpaper.
+The desktop-state cause was not established, so those runs are excluded. An old
+solo-play Escape step also canceled a client's lobby join in an initial trial;
+the final script omits it and checks peer roles throughout. The earlier measured
+focus bottleneck below motivated the patch; no new focus-FPS improvement is
+claimed, nor any driver-policy change. New local input still waits for the next
+normal device poll, and the other blocking GPU boundaries remain unchanged.
+
 ## Background rendering delays the next session update (2026-11-02)
 
 The owner's Mount & Rifle focus report was reproduced with two independent

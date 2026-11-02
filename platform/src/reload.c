@@ -249,6 +249,7 @@ _Noreturn void tide_host_run_web(const tide_run_desc *desc, const tide_host_game
     tide_run_open(desc);
     tide_run_load_assets();
     if (!resume()) tide_run_begin();
+    tide_platform_update_while_waiting(tide_run_wait_update, NULL);
     tide_platform_run(tide_run_frame, NULL);
 }
 
@@ -295,6 +296,7 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
     tide_run_open(desc);
     check_pack(); // The pack tide wrote with the first build, where the game has assets
     tide_run_begin();
+    tide_platform_update_while_waiting(tide_run_wait_update, NULL);
     tide_platform_run(reload_frame, NULL);
 }
 

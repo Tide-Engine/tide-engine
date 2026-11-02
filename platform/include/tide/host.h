@@ -129,6 +129,10 @@ typedef struct tide_host_game {
     // Every shader the game's draws can go through, and NULL after them (tidec's tide_game_shaders), whose pipelines
     // the host has the renderer make before anything draws with them (tide_platform_prewarm). Optional for C hosts.
     const tide_shader *const *shaders;
+    // Optional: age existing presentation corrections before a session update.
+    // Separate from frame_time so updates between draws neither change Frame.dt
+    // nor reseed local randomness. Seconds cover only time since the last update.
+    void (*age_views)(void *local, float seconds);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -228,6 +232,9 @@ static uint32_t tide_run_shards;
 static double tide_run_shard_width;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
+// Rendered frames' summed seconds. A GPU wait can service the match ahead of
+// this clock; the next frame includes that wait and must not count it twice.
+static double tide_run_frame_now;
 // --latency, --jitter and --loss: this machine's way to a match it joins, as
 // the command line says for everyone or for this player of several
 static tide_net_conditions tide_run_conditions;
@@ -1171,6 +1178,31 @@ static inline void tide_run_send_commands(void)
     }
 }
 
+// Only between complete frames: no views, GPU calls, reload, session requests
+// or local event handlers run here. The last polled devices keep held input;
+// sampling consumes their edges once, as it does in an ordinary frame.
+static inline double tide_run_wait_update(void *user, const double elapsed)
+{
+    (void)user;
+    tide_session *s = tide_run_session;
+    if (!s) return 1.0 / 60.0;
+    const double at = tide_run_frame_now + elapsed;
+    if (at > tide_run_now && tide_is_finite_d(at)) {
+        const uint64_t began = tide_run_timing || tide_run_profiling ? tide_time_now_ns() : 0;
+        const float seconds = (float)(at - tide_run_now);
+        tide_run_now = at;
+        if (tide_run_game->age_views) tide_run_game->age_views(tide_run_local, seconds);
+        tide_network_match_update(&tide_run_network, tide_run_registered());
+        tide_session_update(s, tide_run_now);
+        if (began) {
+            const uint64_t work = tide_time_now_ns() - began;
+            if (tide_run_timing) tide_run_stats_work += work;
+            if (tide_run_profiling) tide_run_profiler.part_ms[TIDE_FRAME_MATCH] += (double)work * 1e-6;
+        }
+    }
+    return tide_session_until_tick(s);
+}
+
 static inline int tide_run_frame(void *user, const float seconds)
 {
     (void)user;
@@ -1209,7 +1241,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profile *measured = timing || tide_run_profiling || tide_run_reporting ? &tide_run_profiler.profile : NULL;
     tide_platform_jobs_profile(measured);
     tide_run_alone.profile = measured;
-    tide_run_now += seconds;
+    tide_run_frame_now += seconds;
+    const float update_seconds = tide_run_frame_now > tide_run_now ? (float)(tide_run_frame_now - tide_run_now) : 0.0f;
+    if (tide_run_frame_now > tide_run_now) tide_run_now = tide_run_frame_now;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
     if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_INPUT);
     // A script's leave and rejoin, in a run of several players, as the frame's poll had them
@@ -1222,6 +1256,7 @@ static inline int tide_run_frame(void *user, const float seconds)
 
     tide_session *s = tide_run_session;
     // Existing visual errors age before this update adds fresh corrections.
+    if (game->age_views) game->age_views(tide_run_local, update_seconds);
     game->frame_time(tide_run_local, seconds);
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
@@ -1478,5 +1513,6 @@ _Noreturn static inline void tide_host_run(const tide_run_desc *desc, const tide
     tide_run_open(desc);
     tide_run_load_assets();
     tide_run_begin();
+    tide_platform_update_while_waiting(tide_run_wait_update, NULL);
     tide_platform_run(tide_run_frame, NULL);
 }

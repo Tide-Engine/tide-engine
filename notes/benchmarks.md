@@ -1,5 +1,17 @@
 # Benchmarks
 
+## Separate correction aging calls (2026-11-03)
+
+The correction and native lag harnesses follow the generated-host timing split:
+`tide_local_age_views` ages presentation errors, while `tide_local_frame_time`
+sets rendered-frame time and local randomness. The native lag harness ages
+before updating its session. The correction benchmark's timed decay interval
+still includes both frame setup and correction aging, preserving the previous
+workload and phase boundaries; its half-life check calls aging directly. Saved
+measurements are unchanged, and this migration makes no performance claim.
+Validation accompanies the compiler/host timing change in
+`notes/standard-host.md`.
+
 ## Renderer overhead investigation (2026-11-02)
 
 Follow-up sampling and a generated-C-only inlining experiment identify a

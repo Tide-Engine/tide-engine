@@ -1063,7 +1063,50 @@ static bool acquire(void)
     return false;
 }
 
+static VkResult (*wait_hook)(uint64_t timeout, VkResult (*wait)(uint64_t timeout));
+
+void tide_gpu_vk_wait_for_test(VkResult (*hook)(uint64_t timeout, VkResult (*wait)(uint64_t timeout)))
+{
+    wait_hook = hook;
+}
+
+static VkResult wait_device_frame(const uint64_t timeout)
+{
+    return vkWaitForFences(vk.device, 1, &vk.frames[vk.frame].fence, VK_TRUE, timeout);
+}
+
+static VkResult wait_frame_for(const uint64_t timeout)
+{
+    if (!wait_hook) return wait_device_frame(timeout);
+    const VkResult result = wait_hook(timeout, wait_device_frame);
+    return result == VK_SUCCESS ? wait_device_frame(0) : result;
+}
+
+static VkResult wait_frame(double (*update)(void))
+{
+    if (!update) return wait_frame_for(UINT64_MAX);
+    VkResult result = wait_frame_for(0);
+    while (result == VK_TIMEOUT) {
+        double seconds = update();
+        uint64_t timeout = UINT64_MAX;
+        if (!(seconds < 0.0)) {
+            // Follow the host's next tick, bounded even for an invalid or
+            // overdue deadline. The fence wakes us early when it completes.
+            if (!(seconds >= 0.001)) seconds = 0.001;
+            if (seconds > 0.1) seconds = 0.1;
+            timeout = (uint64_t)(seconds * 1e9);
+        }
+        result = wait_frame_for(timeout);
+    }
+    return result;
+}
+
 void tide_gpu_vk_present(void)
+{
+    tide_gpu_vk_present_updating(NULL);
+}
+
+void tide_gpu_vk_present_updating(double (*update)(void))
 {
     if (!vk.open || !vk.device) return;
     if (vk.lost) {
@@ -1111,7 +1154,7 @@ void tide_gpu_vk_present(void)
     vk.frame = (vk.frame + 1u) % FRAMES;
     f = &vk.frames[vk.frame];
     if (f->fenced) {
-        const VkResult result = vkWaitForFences(vk.device, 1, &f->fence, VK_TRUE, UINT64_MAX);
+        const VkResult result = wait_frame(update);
         if (result != VK_SUCCESS) {
             lose(result);
             return;

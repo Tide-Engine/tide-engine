@@ -285,6 +285,19 @@ if(NOT TIDE_WEB)
     set_tests_properties(tide_platform_embed PROPERTIES TIMEOUT 60)
 endif()
 
+# The standard host services a match during a GPU wait without another view or input poll.
+tide_add_game(tide_platform_host_wait SOURCES tests/host_wait.tide NAME game
+    HOST tests/host_wait.c tests/host_wait_main.c)
+target_include_directories(tide_platform_host_wait PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_host_wait PRIVATE tide_platform)
+if(TIDE_WEB)
+    tide_web_page(tide_platform_host_wait SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_host_wait TARGET tide_platform_host_wait EXPECT "3/3 passed")
+else()
+    add_test(NAME tide_platform_host_wait COMMAND tide_platform_host_wait)
+    set_tests_properties(tide_platform_host_wait PROPERTIES TIMEOUT 60)
+endif()
+
 # Time travel inside another program (tide/embed.h) and the timeline under it (tide/timeline.h): pausing,
 # stepping, showing kept ticks again, recording and replaying bit for bit, and going on from a tick shown
 tide_add_game(tide_platform_travel SOURCES tests/travel.tide NAME game EMBED
@@ -817,6 +830,18 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     set_tests_properties(tide_platform_swapchain PROPERTIES TIMEOUT 120)
     tide_gpu_test(tide_platform_swapchain)
     set_property(TEST tide_platform_swapchain APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan)
+
+    # Match work between completed render callbacks while a Vulkan frame's
+    # fence is pending, with deterministic forced waits in a hidden window.
+    add_executable(tide_platform_gpu_wait tests/gpu_wait.c)
+    target_include_directories(tide_platform_gpu_wait PRIVATE src third_party)
+    target_link_libraries(tide_platform_gpu_wait PRIVATE tide_platform)
+    add_test(NAME tide_platform_gpu_wait COMMAND tide_platform_gpu_wait)
+    add_test(NAME tide_platform_gpu_wait_headless COMMAND tide_platform_gpu_wait --headless)
+    set_tests_properties(tide_platform_gpu_wait tide_platform_gpu_wait_headless PROPERTIES TIMEOUT 120)
+    tide_gpu_test(tide_platform_gpu_wait)
+    tide_gpu_test(tide_platform_gpu_wait_headless)
+    set_property(TEST tide_platform_gpu_wait tide_platform_gpu_wait_headless APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan)
 
     # Vulkan's pipelines kept across runs, in the game's temporary cache folder,
     # and every way the file it reads can be wrong (tests/pipeline_cache.c)

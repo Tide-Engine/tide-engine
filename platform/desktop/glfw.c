@@ -397,7 +397,7 @@ void tide_window_size(int *width, int *height)
 
 void tide_window_present(void)
 {
-    if (vulkan) tide_gpu_vk_present();
+    if (vulkan) tide_gpu_vk_present_updating(tide_window_update_while_waiting);
     else glfwSwapBuffers(window);
     glfwPollEvents();
 }

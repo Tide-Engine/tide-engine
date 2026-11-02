@@ -118,6 +118,9 @@ TIDE_TEST(gpu_rolls_send_the_frames_number_and_the_seed)
     // A frame's length goes into the generator (tide_local_frame_time), so its numbers follow it too
     local.tide_dice.state = 1234;
     tide_local_frame_time(&local, DT);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, DT);
+#endif
     TIDE_CHECK(local.tide_dice.state != 1234);
     const int64_t stirred = local.tide_dice.state;
     frame(&world);

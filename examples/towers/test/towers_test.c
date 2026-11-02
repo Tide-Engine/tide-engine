@@ -797,6 +797,9 @@ static tide_devices devices;
 static void frame(const tide_world *w)
 {
     tide_local_frame_time(&local, 1.0f / 60.0f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 1.0f / 60.0f);
+#endif
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
     tide_frame(w, NULL, 1.0f, w, NULL, 1.0f, &local, &draw, &gui);

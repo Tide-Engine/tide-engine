@@ -44,6 +44,11 @@ void tide_window_pixel_size(int *width, int *height);
 // happened since the last call: the calls below read the devices as of then.
 void tide_window_present(void);
 
+// From platform.c, for desktop Vulkan's end-of-frame fence wait only: runs
+// the host's match-only callback and returns seconds until its next update.
+// Negative means no callback is active. This never pumps window events.
+double tide_window_update_while_waiting(void);
+
 // Waits up to `seconds` for the system to say something, while the window is
 // unseen and has no display's pace to wait for.
 void tide_window_wait(double seconds);

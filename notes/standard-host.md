@@ -1,5 +1,41 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Match updates during desktop Vulkan presentation waits (2026-11-03)
+
+The standard and native reload hosts register `tide_run_wait_update` through
+`tide_platform_update_while_waiting`. Only the next-frame Vulkan fence wait
+after a complete frame calls it. It advances the custom network and session
+on the same thread, returning the next tick deadline. No view, event handler,
+audio submission, reload, migration request or GPU work runs from this hook.
+Queued local events and session connection events remain for the next frame;
+only rendered views call `tide_session_mark_presented`.
+
+`tide_run_frame_now` sums rendered frame seconds; `tide_run_now` is the latest
+serviced time, including elapsed time inside a wait. The next render frame
+already includes that elapsed time, so it advances only the remaining interval.
+Neither a repeated wait callback nor a rounded-short frame moves time backward.
+`frame_time` still receives the full frame interval once. Optional `age_views`
+ages existing visual corrections before each session update, so a new correction
+does not age for time before its arrival. Generated-host details and the manual
+host migration are recorded in language.md and runtime-ownership.md.
+
+Input polling remains once per rendered frame. Wait updates use the last polled
+device state, with sample consumption preserving held input and preventing a
+second use of an edge or mouse delta. This improves receipt/simulation of remote
+input while a local GPU is busy; it does not raise local device polling or view
+rates. Extra polling would need separate accumulation of view-facing motion,
+wheel, text and GUI claims. Hidden fixed-time runs, embeds, web, Android and
+OpenGL retain their existing scheduling. The profile capture path is headless
+and therefore has no between-frame updates to account for.
+The live F8 CPU total and F7 Match total include measured wait-update work
+without adding rendered frames; GPU sleeping time remains outside CPU work.
+
+`tide_platform_host_wait` exercises synthetic elapsed waits through the real
+generated game and host without a GPU: continuing ticks, consumed input edges,
+ordered once-only events, clocks, full Frame.dt, presentation stamps and errors
+arriving partway through a wait. GPU boundary/resource tests are in rendering.md.
+Validation and real-game measurements are recorded in netcode.md.
+
 ## Profiler fixture Release build (2026-11-02)
 
 Run 41405770153 failed compiling tide_platform_profile on MinGW Release:

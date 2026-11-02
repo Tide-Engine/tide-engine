@@ -74,6 +74,9 @@ static uint64_t opened;    // When the window opened (tide_time_now_ns)
 static double frame_start; // When the frame running, or the last one, started (now())
 static double frame_due;   // When the next one comes while nobody sees the window
 static bool due_asked;     // ...as the frame function asked (tide_platform_next_frame)
+static double (*waiting_update)(void *user, double elapsed);
+static void *waiting_user;
+static bool between_frames;
 
 // The window's size as of the frame's start, in logical pixels, and in the
 // pixels it renders.
@@ -435,6 +438,23 @@ void tide_platform_next_frame(const double seconds)
     due_asked = true;
 }
 
+void tide_platform_update_while_waiting(double (*update)(void *user, double elapsed), void *user)
+{
+    waiting_update = update;
+    waiting_user = user;
+}
+
+double tide_window_update_while_waiting(void)
+{
+    if (!between_frames || headless || !waiting_update) return -1.0;
+    const double began = now();
+    const double delay = waiting_update(waiting_user, began - frame_start);
+    const double seconds = delay - (now() - began);
+    // A late update, or an invalid deadline from a custom host, must still
+    // wait rather than spinning while the GPU owns the frame's resources.
+    return seconds > 0.0 ? seconds : 0.0;
+}
+
 static int step(void)
 {
     const double start = now();
@@ -451,7 +471,9 @@ static int step(void)
     if (headless && code == TIDE_KEEP_RUNNING) code = headless_drawn();
     // In a run of several players: what this one sent in the frame goes, and what the others sent comes
     if (headless && code == TIDE_KEEP_RUNNING) code = tide_platform_players_step(headless_frame);
+    between_frames = code == TIDE_KEEP_RUNNING;
     tide_window_present(); // Also takes the system's input
+    between_frames = false;
 #ifndef __wasm__
     // A window nobody sees (minimized, or an app in the background) has no
     // display's pace to wait for: the next frame comes when the frame function

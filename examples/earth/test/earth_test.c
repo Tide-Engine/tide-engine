@@ -30,6 +30,9 @@ static void draw_world(const tide_world *w, const tide_player_id who)
     }
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, who, 0, true, false, "");
     tide_local_frame_time(&local, 1.0f / 60.0f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, 1.0f / 60.0f);
+#endif
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(640, 480), NULL);
     tide_frame(w, NULL, 1, w, NULL, 1, &local, &draw, &gui);

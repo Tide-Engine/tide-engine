@@ -86,6 +86,9 @@ static int play_frame(const float seconds)
     tide_platform_poll(&devices);
     now += seconds;
     tide_local_frame_time(&local, seconds);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    tide_local_age_views(&local, seconds);
+#endif
     const tide_view_worlds view = update();
     const tide_world *match = view.current;
     render(view);

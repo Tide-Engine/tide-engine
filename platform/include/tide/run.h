@@ -120,6 +120,11 @@ static inline void tide_run_frame_time(void *local, const float seconds)
 }
 
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
+static inline void tide_run_local_age_views(void *local, const float seconds)
+{
+    tide_local_age_views(local, seconds);
+}
+
 static inline void tide_run_local_correct(void *local, const tide_view_correction *correction)
 {
     tide_local_correct(local, correction);
@@ -262,6 +267,7 @@ static const tide_host_game tide_host_game_api = {
     .rebind_resources = tide_run_rebind_resources,
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
     .correct_views = tide_run_local_correct,
+    .age_views = tide_run_local_age_views,
 #endif
     .network = tide_network_get,
     .voice = tide_voice_get,

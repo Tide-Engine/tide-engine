@@ -141,7 +141,7 @@ static void verify(uint32_t count, uint32_t changed)
     if (BENCH_TRANSFORM || strcmp(BENCH_MODE, "both") == 0)
         require(near(local.Observed.rotation.y, a.rotation.y), "rotation continuity");
     else require(near(local.Observed.rotation.y, b.rotation.y), "ordinary rotation");
-    tide_local_frame_time(&local, 0.075f);
+    tide_local_age_views(&local, 0.075f);
     frame(1);
     require(near(local.Observed.position.x, (a.position.x + b.position.x) * 0.5f), "75 ms position half life");
 #else
@@ -188,6 +188,9 @@ static void run(uint32_t count, uint32_t changed, const char *scenario, bool qui
                 if (strcmp(scenario, "steady") != 0) { correct(side, 1u - side); side = 1u - side; }
                 const uint64_t t1 = tide_time_now_ns();
                 tide_local_frame_time(&local, 1.0f / 60.0f);
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+                tide_local_age_views(&local, 1.0f / 60.0f);
+#endif
                 const uint64_t t2 = tide_time_now_ns();
                 frame(side);
                 const uint64_t t3 = tide_time_now_ns();
