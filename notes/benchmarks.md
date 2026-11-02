@@ -1,5 +1,37 @@
 # Benchmarks
 
+## Shared shader binding preparation (2026-11-02)
+
+The compiler reuses compatible completed numeric-list/texture bindings within a
+proven read-only view invocation, preserving per-instance capture and fallback
+for effects/host callbacks. Contracts and sixteen fallback scenarios are in
+language.md.
+
+Frozen release/Vulkan runs on the Ryzen 9 7900X / RTX 4080 SUPER retain all 18
+processes and 1,800 measured frames/completed GPU queries: three alternating
+pairs per case, 1920x1080, 20 warmup/100 measured frames, identical quality.
+Canopy consistently observes 9–15% lower elapsed recording. Large-count spread,
+ground's second-pair regression and GPU/readback variation prevent a dependable
+100k-tree speedup claim.
+
+The shared mutex/five-second initial quiet guard did not monitor the cohort.
+Surviving cmake/ninja lifetimes overlap later runs; frame-level load and causality
+were not measured. This is not an isolated CPU-work comparison. Clocks and
+desktop activity remained uncontrolled; no GPU/FPS claim is made or overlapping
+intervals added.
+
+World hashes, counts, submitted work and zero warmed uploads match. Three
+1920x1080 RGBA captures have zero changed pixels; 28 GLSL, 14 WGSL, 14 SPIR-V and
+14 shader metadata/layout blocks are byte-identical.
+
+Full Windows ASan/web-release suites pass 2,911/2,797 tests, plus three final
+focused checks each. The optional whole-process CPU control never started;
+only its owned queued gate was stopped after approximately 21 minutes. Its
+unexecuted plan supplies no CPU-consumption result.
+
+[All pairs, identities, fidelity/validation evidence and control status](../bench/results/forest-batch-20261102/README.md)
+remain recorded without exclusions or replacement runs.
+
 ## Forest submission preparation (2026-11-02)
 
 The owner requested optimizing the forest without reducing visual fidelity.

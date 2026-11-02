@@ -1,0 +1,59 @@
+{
+  "status": "not_executed",
+  "reason": "Initial quiet guard did not launch the separate quick mechanism check by coordinator cutoff; cancelled only owned queued gate.",
+  "queued_gate_process_id": 44820,
+  "verified_parent_process_id": 17812,
+  "queued_at_utc": "2026-11-02T01:04:21.1241520Z",
+  "cancelled_at_utc": "2026-11-02T01:25:27.4197155Z",
+  "queued_wall_wait_ms": 1266295.5635,
+  "recognized_processes_at_cancellation": [
+    {
+      "name": "clang",
+      "id": 38944,
+      "start_utc": "2026-11-02T01:23:59.8260267Z"
+    },
+    {
+      "name": "clang",
+      "id": 45548,
+      "start_utc": "2026-11-02T01:24:05.6064545Z"
+    },
+    {
+      "name": "clang",
+      "id": 52544,
+      "start_utc": "2026-11-02T01:20:27.6847093Z"
+    },
+    {
+      "name": "cmake",
+      "id": 33384,
+      "start_utc": "2026-11-02T01:17:08.8412594Z"
+    },
+    {
+      "name": "cmake",
+      "id": 47460,
+      "start_utc": "2026-11-02T01:20:16.3747553Z"
+    },
+    {
+      "name": "ctest",
+      "id": 13632,
+      "start_utc": "2026-11-02T01:24:52.2178384Z"
+    },
+    {
+      "name": "ninja",
+      "id": 22104,
+      "start_utc": "2026-11-02T01:17:08.8580218Z"
+    },
+    {
+      "name": "ninja",
+      "id": 32304,
+      "start_utc": "2026-11-02T01:20:16.3895334Z"
+    }
+  ],
+  "mechanism_processes_started": 0,
+  "control_processes_started": 0,
+  "control_results_excluded": 0,
+  "unrelated_processes_stopped": 0,
+  "original_18_process_cohort_unchanged": true,
+  "plan_sha256": "1bfa4ec07aecba9dea5d9d8965d64efafdbc4e7db5dd6a3c452e799b64315db4",
+  "runner_sha256": "f95e6d3362e4c703e4c07be50c82565312974922a92b57e3a7c85511cb76c01d",
+  "interpretation": "No new CPU-consumption or magnitude claim. Build process lifetimes overlapping original cohort do not establish frame-level activity or causality."
+}

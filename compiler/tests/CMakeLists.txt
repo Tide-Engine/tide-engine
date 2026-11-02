@@ -53,6 +53,15 @@ add_test(NAME tidec_wide_lanes_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_wide_lanes/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/wide_lanes_codegen.cmake")
 tide_e2e_test(view_reads) # Views copy and blend only the lanes they read; helpers read other singletons' lists uncopied
+tide_e2e_test(shared_bindings)
+tide_e2e_test(shared_bindings_fallback)
+set(TIDE_SHARED_BINDINGS_DIR "${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_shared_bindings")
+add_executable(tidec_shared_bindings_private e2e/shared_bindings_private.c
+    "${TIDE_SHARED_BINDINGS_DIR}/game_pack.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+add_dependencies(tidec_shared_bindings_private tidec_e2e_shared_bindings)
+target_include_directories(tidec_shared_bindings_private PRIVATE "${TIDE_SHARED_BINDINGS_DIR}" "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tidec_shared_bindings_private PRIVATE tide tide_font_bold)
+add_test(NAME tidec_shared_bindings_private COMMAND tidec_shared_bindings_private)
 add_test(NAME tidec_view_reads_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_view_reads/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/view_reads_codegen.cmake")

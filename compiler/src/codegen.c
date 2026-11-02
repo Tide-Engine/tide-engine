@@ -185,6 +185,9 @@ typedef struct gen {
     sb shader_names; // Private per-stage identifier maps, never emitted into game code.
     bool heard_heap;
     bool list_caches;      // The function being generated has tide_lc, a run cache for each list it indexes (declare_list_caches)
+    bool **shader_prep_views; // Proven read-only drawing regions, by view and reachable shader.
+    bool *shader_prep_shaders;
+    bool shader_prep_active;
     VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
     size_t lc_patch;       // ...and where the array's size goes in `lc_sb`, once the body says how many (close_list_caches)
     sb *lc_sb;
@@ -4066,7 +4069,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             break;
         }
         if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
-            sb_put(o, "tide_texture_size(");
+            sb_put(o, g->shader_prep_active ? "tide_shader_prep_size(" : "tide_texture_size(");
             if (e->object->type.kind == TY_DEPTH_TEXTURE)
                 sb_put(o, "(tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (");
             gen_expr(g, o, e->object);
@@ -18842,6 +18845,8 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
     sb_printf(o, "tide_fallback:\n    tide_task_%s_slow(tide_world_v, tide_task, tide_pieces);\n}\n\n", name);
 }
 
+#include "shader_prep_codegen.inc"
+
 static void gen_system_run(gen *g, const decl *sys)
 {
     if (sys->extern_system) {
@@ -18914,6 +18919,7 @@ static void gen_system_run(gen *g, const decl *sys)
                   name, sys->takes_verified ? "const tide_world *tide_verified, const tide_world *tide_vprev, float tide_valpha, " : "");
         if (reads_match(sys)) sb_put(o, "    if (!tide_w) return; // It reads the match, and there's none.\n");
         if (sys->takes_verified) sb_put(o, "    if (!tide_verified) return; // ...nor a world the server confirmed\n");
+        gen_shader_prep_enter(g, sys, view_number);
         // The devices it reads keep what it claimed last frame, and its claims are its own
         sb_printf(o, "    tide_gui_view(tide_ui, %du);\n", view_number + 1);
         // What it reads of the match, between last tick and this one. The
@@ -19077,6 +19083,7 @@ static void gen_system_run(gen *g, const decl *sys)
     if (queries) sb_put(o, "    tide_scratch_reset(tide_qmark);\n");
     if (fresh_mark) sb_put(o, "    tide_scratch_reset(tide_fresh_mark);\n");
     if (confirmed_mark) sb_put(o, "    tide_scratch_reset(tide_confirmed_mark);\n");
+    if (view) gen_shader_prep_leave(g, view_number);
     sb_put(o, "}\n\n");
     if (fast_task) gen_system_cached_task(g, sys, rows);
     if (!view && system_settles(sys) && settles_fields(sys)) gen_system_settle(g, sys);
@@ -23181,6 +23188,8 @@ static void gen_shaders(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     if (prog->shaders.count == 0) return;
+    gen_shader_prep_plan(g);
+    gen_shader_prep_types(g);
     sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
     if (shaders_roll(prog, false)) {
         sb_put(o, "// What the generators of frags and verts that roll with Random are made of this frame: a number tide_frame\n"
@@ -23366,6 +23375,7 @@ static void gen_shaders(gen *g)
             gen_shader_value(o, to, value->field->type, access.data, &f, &i);
         }
         sb_printf(o, "    uint32_t tide_textures[%d] = {0};\n", sh->textures.count ? sh->textures.count : 1);
+        gen_shader_prep_begin(g, sh);
         if (sh->skinned && !sh->instanced) gen_shader_skin(o, sh);
         for (int t = 0; t < sh->sizes.count; t++) {
             const shader_texture *texture = &sh->sizes.items[t];
@@ -23389,9 +23399,10 @@ static void gen_shaders(gen *g)
                 sb_printf(&converted, "(tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (%s).target}", from.data);
                 from = converted;
             }
-            sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"
+            sb_printf(o, "    const tide_int2 tide_size%d = %s(%s);\n"
                          "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n",
-                      t, from.data, texture->count_at, t, texture->count_at + 1, t);
+                      t, g->shader_prep_active ? "tide_shader_prep_size" : "tide_texture_size", from.data,
+                      texture->count_at, t, texture->count_at + 1, t);
         }
         // What's read as the Texture it's given says: that texture's filter's and wrap's bits, for the draw's own
         // (a shader with no frag) all of it, and for a Sample what it leaves unsaid of a Texture that's no asset's
@@ -23503,6 +23514,7 @@ static void gen_shaders(gen *g)
                 sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, tide_%sb%d->%s, &%s);\n", t,
                           field_is_raw(texture->field) ? "_raw" : "", texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
         }
+        gen_shader_prep_end(g, sh);
         sb sampling = {0};
         if (blended <= UINT32_MAX) sb_printf(&sampling, "0x%xu%s", (unsigned)blended, carried.data ? carried.data : "");
         else sb_printf(&sampling, "0x%llxull%s", (unsigned long long)blended, carried.data ? carried.data : "");

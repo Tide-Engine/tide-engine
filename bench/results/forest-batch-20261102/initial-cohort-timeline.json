@@ -1,0 +1,163 @@
+{
+  "observed_utc": "2026-11-02T01:07:50.0552748Z",
+  "source": "Post-batch recognized process snapshot; log filesystem timestamps bound process output lifetimes and do not identify exact measured-frame intervals.",
+  "processes": [
+    {
+      "ProcessName": "clang",
+      "Id": 7532,
+      "StartUtc": "2026-11-02T01:06:13.3464485Z"
+    },
+    {
+      "ProcessName": "clang",
+      "Id": 13948,
+      "StartUtc": "2026-11-02T01:05:03.9903059Z"
+    },
+    {
+      "ProcessName": "clang",
+      "Id": 16496,
+      "StartUtc": "2026-11-02T01:06:20.0719847Z"
+    },
+    {
+      "ProcessName": "clang",
+      "Id": 20820,
+      "StartUtc": "2026-11-02T01:01:47.2354261Z"
+    },
+    {
+      "ProcessName": "clang",
+      "Id": 44132,
+      "StartUtc": "2026-11-02T01:05:10.0896663Z"
+    },
+    {
+      "ProcessName": "clang",
+      "Id": 49248,
+      "StartUtc": "2026-11-02T01:01:42.1610584Z"
+    },
+    {
+      "ProcessName": "cmake",
+      "Id": 24168,
+      "StartUtc": "2026-11-02T00:58:55.660134Z"
+    },
+    {
+      "ProcessName": "cmake",
+      "Id": 34476,
+      "StartUtc": "2026-11-02T00:50:21.0446907Z"
+    },
+    {
+      "ProcessName": "cmake",
+      "Id": 50636,
+      "StartUtc": "2026-11-02T00:56:52.2371152Z"
+    },
+    {
+      "ProcessName": "ninja",
+      "Id": 10328,
+      "StartUtc": "2026-11-02T00:56:52.2532998Z"
+    },
+    {
+      "ProcessName": "ninja",
+      "Id": 48896,
+      "StartUtc": "2026-11-02T00:50:21.0597453Z"
+    },
+    {
+      "ProcessName": "ninja",
+      "Id": 51212,
+      "StartUtc": "2026-11-02T00:58:55.7010379Z"
+    },
+    {
+      "ProcessName": "tidec_e2e_lod_generated",
+      "Id": 48600,
+      "StartUtc": "2026-11-02T01:02:37.5017675Z"
+    }
+  ],
+  "process_logs": [
+    {
+      "file": "after-r1-10000-canopy.log",
+      "created_utc": "2026-11-02T00:49:06.3547419Z",
+      "modified_utc": "2026-11-02T00:49:11.3020781Z"
+    },
+    {
+      "file": "after-r1-100000-ground.log",
+      "created_utc": "2026-11-02T00:49:59.7041000Z",
+      "modified_utc": "2026-11-02T00:50:11.6941392Z"
+    },
+    {
+      "file": "after-r1-100000-wide.log",
+      "created_utc": "2026-11-02T00:49:31.0560361Z",
+      "modified_utc": "2026-11-02T00:49:45.9142016Z"
+    },
+    {
+      "file": "after-r2-10000-canopy.log",
+      "created_utc": "2026-11-02T00:50:11.7072673Z",
+      "modified_utc": "2026-11-02T00:50:15.0310779Z"
+    },
+    {
+      "file": "after-r2-100000-ground.log",
+      "created_utc": "2026-11-02T00:51:25.5481865Z",
+      "modified_utc": "2026-11-02T00:52:44.9158428Z"
+    },
+    {
+      "file": "after-r2-100000-wide.log",
+      "created_utc": "2026-11-02T00:50:18.7834455Z",
+      "modified_utc": "2026-11-02T00:50:39.4139850Z"
+    },
+    {
+      "file": "after-r3-10000-canopy.log",
+      "created_utc": "2026-11-02T00:53:21.0124610Z",
+      "modified_utc": "2026-11-02T00:53:29.7059338Z"
+    },
+    {
+      "file": "after-r3-100000-ground.log",
+      "created_utc": "2026-11-02T00:55:32.9823694Z",
+      "modified_utc": "2026-11-02T00:55:49.0088177Z"
+    },
+    {
+      "file": "after-r3-100000-wide.log",
+      "created_utc": "2026-11-02T00:54:53.5882548Z",
+      "modified_utc": "2026-11-02T00:55:12.3036201Z"
+    },
+    {
+      "file": "before-r1-10000-canopy.log",
+      "created_utc": "2026-11-02T00:49:00.7532529Z",
+      "modified_utc": "2026-11-02T00:49:06.2875997Z"
+    },
+    {
+      "file": "before-r1-100000-ground.log",
+      "created_utc": "2026-11-02T00:49:45.9333700Z",
+      "modified_utc": "2026-11-02T00:49:59.6890784Z"
+    },
+    {
+      "file": "before-r1-100000-wide.log",
+      "created_utc": "2026-11-02T00:49:11.3262664Z",
+      "modified_utc": "2026-11-02T00:49:31.0331748Z"
+    },
+    {
+      "file": "before-r2-10000-canopy.log",
+      "created_utc": "2026-11-02T00:50:15.0424217Z",
+      "modified_utc": "2026-11-02T00:50:18.7721021Z"
+    },
+    {
+      "file": "before-r2-100000-ground.log",
+      "created_utc": "2026-11-02T00:52:44.9391977Z",
+      "modified_utc": "2026-11-02T00:53:13.5314954Z"
+    },
+    {
+      "file": "before-r2-100000-wide.log",
+      "created_utc": "2026-11-02T00:50:39.4333798Z",
+      "modified_utc": "2026-11-02T00:51:25.3750700Z"
+    },
+    {
+      "file": "before-r3-10000-canopy.log",
+      "created_utc": "2026-11-02T00:53:13.5551259Z",
+      "modified_utc": "2026-11-02T00:53:20.9800107Z"
+    },
+    {
+      "file": "before-r3-100000-ground.log",
+      "created_utc": "2026-11-02T00:55:12.3242315Z",
+      "modified_utc": "2026-11-02T00:55:32.9663143Z"
+    },
+    {
+      "file": "before-r3-100000-wide.log",
+      "created_utc": "2026-11-02T00:53:30.2631639Z",
+      "modified_utc": "2026-11-02T00:54:53.5740537Z"
+    }
+  ]
+}

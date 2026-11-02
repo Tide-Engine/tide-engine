@@ -1,5 +1,66 @@
 # Language features, as tidec builds them
 
+## Shared shader preparation inside read-only view runs (2026-11-02)
+
+The forest's opaque pass already joins trees into a handful of GPU runs, but
+each generated shade wrapper still resolves the same textures and numeric
+lists and completes the same shared uniform packet for every tree. The compiler
+now reuses that completed preparation inside a proven read-only view invocation.
+Shader code, resource conversion routines, draw order, geometry, per-instance
+packing, runtime interfaces and match state are unchanged.
+
+`shader_prep_codegen.inc` recursively checks the authored body and synchronous
+helper/operator/property graph, expanded constants, omitted/default initializers and the runner's
+fresh attached defaults. Mutable parameters/queries, container writes or
+construction, CPU callable/Action execution, externs, tasks/workers, GUI/audio,
+world writes, Query parameters, resource operations and custom interpolation retain the original
+path. World.Get is excluded because its implicit interpolation is outside that
+graph; Has and the ordinary transform helpers remain supported. GPU callback
+values do not execute their bodies on the CPU. Read-only Texture.size calls
+keep their original evaluation and ordering. Both authored metadata reads and
+generated shader-size captures use a private adapter: a nonzero target identity
+disables reuse before the host target-pixel callback, for the rest of the scope.
+Pack/grid/empty texture metadata keeps reuse. Genuine extern calls still exclude
+the region even though metadata reads also use the existing calls_c summary.
+CPU builtins are limited to the arithmetic Math/quaternion/matrix owners.
+Debug.Log, other host builtins and Draw.MeasureText's host font callback retain
+the original path.
+
+Each eligible runner owns two lazy entries per reachable supported shader,
+allocated in scratch before any row/query/default mark. A private TLS scope is
+saved, installed and restored; ineligible runners mask inherited scopes during
+reentrant frames. Entries keep copied packets and numeric identities, never
+borrowed source storage. Keys compare zero-initialized semantic source fields,
+active heap/pack identities, heap high-water marks, selected draw-list identity,
+frame/epoch and the exact initially packed uniform bytes, including GPU seed
+and frame-random words. Count words start at their ordinary zero value, then
+the completed conversion counts are retained with the finished uniforms.
+Pending heap releases and non-pack scratch handles force the original path.
+
+Hits also validate each resolved slot's identity, version, space, format,
+dimensions, frame/epoch and writer kind. This is necessary because sampling one
+grid through color and Raw Texture fields overwrites the same slot. Sampling
+bits are still computed normally. Supported sources initially are numeric List,
+Texture (including persistent/packed grid references) and DepthTexture. Direct
+Grid, Map/Set, Cubemap, texture-size shader metadata, instanced, skinned and blit
+wrappers retain their existing path. A wrapper called outside an eligible
+scope performs only the private scope lookup/branch before its original work.
+
+The new `shared_bindings` fixture checks six distinct instance tints, A/B/A/B/A/B
+resource choices, shared uniforms and numeric-list counts/data, source edits
+between frames and unchanged match hashes. Its private target includes generated
+C and counts the actual conversion calls: two list and two texture conversions
+for six draws on every invocation, plus exact restoration of an outer scope.
+`shared_bindings_fallback` checks transitive C effects, scratch reuse, list/grid
+mutation, mutable helper/callable/Action effects, operators/properties, implicit
+defaults, expanded constants, both managed-size metadata paths, text-measure
+callbacks and color/Raw slot aliasing in sixteen scenarios, using captured
+packets and actual texture bytes. All 2,911 native sanitizer and 2,797 web-release
+CTests pass. After the final narrow text-measure exclusion, all three focused
+fixtures pass again on native and web. Forest shader/image equivalence and
+measurement scopes are recorded with the final optimization run in render3d.md
+and bench/results/forest-batch-20261102/README.md.
+
 ## Non-drawing views of shader components (2026-11-01)
 
 The forest stress scene exposed an overly broad partial-lane fallback: a

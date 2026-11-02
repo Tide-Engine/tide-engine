@@ -1,5 +1,44 @@
 # Render3D package
 
+## Shared binding preparation without shader changes (2026-11-02)
+
+The owner approved preparing shared material/resource bindings once after the
+first forest optimization. Exact package-level grouping would need equality for
+arbitrary texture and callback bindings and another material sampling wrapper.
+Instead, the compiler now reuses completed bindings inside a proven read-only
+view invocation. The existing Lit shader, derivative sampling, per-instance
+material packet, order, culling and automatic GPU instancing remain intact.
+
+The forest DrawMesh runner activates two entries for each of its two reachable
+shade wrappers. Exact uniform/resource keys and captured slot witnesses decide
+reuse. Scratch sources, pending heap releases, mutable or unsupported code retain
+the general path. Managed texture-size host callbacks disable reuse before the
+callback; other host callbacks and implicit effects disqualify the view. There
+is no public API, runtime entry point, engine layout or match-state change.
+Compiler contracts and the conservative exclusions are in language.md.
+
+All 2,911 native Windows ASan and 2,797 web-release CTests pass. The final narrow
+Draw.MeasureText exclusion and sixteen-scenario fallback fixture additionally
+pass three focused CTests on each platform. The private positive fixture counts
+two list and two texture conversions for six A/B/A/B/A/B draws, checks every
+instance tint, edits source data between frames and verifies scope restoration.
+
+Frozen baseline/candidate forest programs have byte-identical 28 GLSL, 14 WGSL,
+14 SPIR-V and 14 shader metadata/layout blocks. Three 1920x1080 same-timestep
+captures (10k canopy, 100k wide and ground) match every decoded RGBA pixel.
+Meshes, placement, distance tiers, wind, lighting and shadows are unchanged.
+All 18 elapsed-timing processes retain matching work/hashes, zero warmed texture
+uploads and 1,800 completed GPU queries. Timing variability, including an adverse
+ground-view pair, is retained rather than hidden by a single speedup aggregate.
+Recognized build-process lifetimes overlap later runs. A supplemental CPU-time
+control could not start after 21.1 minutes behind the quiet guard; its own queued
+gate was cancelled without launching a child. No reliable 100k speedup is claimed.
+
+[Full measurements, scopes, identities and validation](../bench/results/forest-batch-20261102/README.md).
+Other native OSes/mobile/Unity and hardware-web performance were not run locally.
+Per-entity gathering, transforms and instance packing remain; this is not a
+retained scene cache, new foliage representation or a claim of playable 100k trees.
+
 ## Forest preparation cost without quality changes (2026-11-02)
 
 The owner requested optimizing the foliage stress scene while preserving visual
