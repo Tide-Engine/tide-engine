@@ -1,5 +1,75 @@
 # Assets and local files
 
+## The static mesh reader in the engine, for Mesh<V>.Decode (2026-11-02)
+
+Design approved by the owner the same day: `Mesh<V>.Decode(List<byte> bytes)`
+giving `Mesh<V> fails IOError` (InvalidData), as `SkinnedMesh<V>.Decode` is
+spelled, pure, in match and local code, refused on the GPU; formats "the more
+the better" (GLB, a .gltf with its buffers inside it, OBJ; FBX's cost is
+brought to the owner separately, as it would put ufbx in the runtime); a new
+runtime function (agent-maintained, notes/runtime-ownership.md); and this
+order: the reader moves first, with no language change, and the language
+surface follows once the `Mesh<V>(vertices, indices)` thread settles what a
+runtime Mesh value is. Decode's result is that value: it decodes into scratch
+`List<V>` and `List<int>` (fields filled by `mesh_fills`, the importer's
+names, the rest from the struct's default, the default closure seeded into
+game identity as `SkinnedMesh.Decode` does) and builds the Mesh from them. If
+that thread chooses a separate type for runtime meshes, Decode is that type's
+method with the same signature; only the generated wrapper changes.
+
+What's built (step 1):
+
+- **The reader is the engine's** (`tide/mesh_data.h`, `engine/src/mesh_decode.c`):
+  `compiler/src/mesh_files.c`'s glTF/OBJ code moved whole. tidec's
+  `mesh_files.c` is now the file-name and FBX front (glTF magic, then
+  `fbx_file_is` and its converter, then the extension) over
+  `tide_mesh_data_decode` with an explicit `tide_mesh_format`, so every
+  build-time import reads as before and `mesh_file` is `tide_mesh_data`.
+  Allocation is `tide_alloc_zeroed`/`tide_realloc` (old sizes tracked), as the
+  skinned decoder's, so a wasm worker can decode.
+- **Limits are the caller's** (`tide_mesh_limits`: bytes, JSON values,
+  vertices, indices, reads, each define's prefix and who holds them).
+  `tide_mesh_decode_limits` is Decode's: SkinnedMesh.Decode's numbers
+  (512 MiB, 4,194,304 JSON values, 1,048,576 vertices, 6,291,456 corners,
+  67,108,864 numbers read), one `#define` each in `tide/mesh_data.h`. tidec
+  passes `compiler/src/mesh_files.h`'s, and its messages are what they were
+  ("... one Mesh holds (TIDE_MESH_MAX_VERTICES)"); Decode's say "Mesh.Decode
+  takes (TIDE_MESH_DECODE_MAX_VERTICES)". `*past_limit` says a limit refused,
+  for the runtime's stderr line. The shared glTF readers' `VERTICES_MOST` and
+  friends read the reader's limits through the `gltf *g` in reach. Limits are
+  held under 2^30 so room doubling stays within a uint32 and arrays within a
+  32-bit size_t at Decode's numbers.
+- **New refusals, found moving it to wasm32:** an OBJ's v/vn/vt numbers now
+  count against the read limit (a v line six: its color is kept, white when
+  unwritten), where only a 2^30-number list cap stood, whose `room * 4` wraps a
+  32-bit size_t; and a face with more corners than the indices limit allows
+  triangles is refused before it's kept (its corner array grew with the line).
+  Neither changes a file the build read before short of gigabytes.
+- **Format by bytes** (`TIDE_MESH_ANY`, Decode's): GLB magic, then `{` after an
+  optional byte order mark and spaces (the mark is skipped for the JSON), else
+  OBJ. An FBX's signature (binary or `; FBX ` ASCII) is refused saying it's
+  read at build time only; a .gltf naming a buffer file has no side callback
+  and is refused; bytes with no triangles are refused as before.
+- **Finite output** (`tide_mesh_limits.finite`, Decode's only): a mesh with a
+  number no float holds (a node transform overflowing to infinity, then NaN
+  normals) is refused, as Decode's result is match state. Build-time imports
+  keep their rule (the tangent generator's overflow regression depends on it).
+
+Tests: `tests/test_mesh_decode.c` (native ASan and WASI): one triangle as GLB,
+embedded .gltf, .gltf behind a byte order mark and spaces, and OBJ, all the
+same hash and the same as GLB named; refusals (buffer file, FBX binary and
+ASCII, text, no bytes, JSON that's no glTF, an overflowing transform, which a
+build's limits still read); each limit by small limits and Decode's own
+vertices and corners by their names, with `past_limit` set only for limits;
+every cut length and four spoilings of every byte of all three from exact
+allocations, every result's indices under its vertices and numbers finite.
+`tidec_mesh_files`, `tidec_asset_files` and `tidec_fbx_files` pass unchanged,
+with their pinned limit messages.
+
+Not built yet: the language surface (waiting on the runtime Mesh value), FBX
+at runtime (the owner's call on putting ufbx in the runtime), LOD levels for
+decoded meshes.
+
 ## Baked poses for crowds (2026-10-31)
 
 Asked for from bannerlord-duel (the owner: "would it make sense to put this
