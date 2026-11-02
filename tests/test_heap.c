@@ -188,11 +188,18 @@ static bool all(const uint8_t *bytes, const uint32_t count, const uint8_t value)
 TIDE_TEST(pages_let_go_are_handed_out_again)
 {
     tide_pages_free();
-    tide_page *first = tide_page_new(4096);
+    // A new page of a size kept spare is one let go of, zeroed
+    tide_page *spare = tide_page_new(4096);
+    memset(tide_page_data(spare), 0xCD, 4096);
+    tide_page_release(spare, 1);
+    tide_page *fresh = tide_page_new(4096);
+    TIDE_CHECK(fresh == spare && fresh->refs == 1 && fresh->size == 4096 && fresh->hashed == UINT32_MAX);
+    TIDE_CHECK(all(tide_page_data(fresh), 4096, 0));
+
+    tide_page *first = fresh;
+    tide_page *from = tide_page_new(4096);
     memset(tide_page_data(first), 0xAB, 4096);
     tide_page_release(first, 1);
-
-    tide_page *from = tide_page_new(4096);
     memset(tide_page_data(from), 0x11, 4096);
     tide_page *copy = tide_page_copy(from, 1, 100);
     TIDE_CHECK(copy == first);

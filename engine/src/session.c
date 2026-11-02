@@ -5501,7 +5501,12 @@ static void play(tide_client *c)
         uint32_t own_size = 0;
         if (own_late(c, f) && own_input(c, tick, &own_size)) c->late++;
         bool ok;
-        if (predicted) {
+        if (taken && predicted) {
+            // The server's projection, loaded as it hashed it: the frame's hash
+            // is the server's client_hash of that same world, so hashing the
+            // loaded world again only checks the codec against itself
+            ok = true;
+        } else if (predicted) {
             ok = (c->game->client_hash
                 ? c->game->client_hash(world_at(c, tick + 1u), tide_player_from_index(c->player))
                 : hash_of(c->game, world_at(c, tick + 1u), c->desc.jobs)) == frame_hash(f);

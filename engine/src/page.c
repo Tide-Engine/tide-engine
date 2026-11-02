@@ -254,9 +254,18 @@ void tide_pages_free(void)
     }
 }
 
+// A new page is zeros. One of the sizes kept spare is one let go of, zeroed (still in the caches, and no page
+// faults: a world loaded again every tick, as a lone player's projection is, takes as many as it let go of); any
+// other size is the system's, which zeroes it as it's first touched.
 tide_page *tide_page_new(const uint32_t size)
 {
-    tide_page *p = tide_alloc_zeroed(1, sizeof(tide_page) + size);
+    tide_page *p;
+    if (spare_size(size) == SPARE_SIZES) {
+        p = tide_alloc_zeroed(1, sizeof(tide_page) + size);
+    } else {
+        p = tide_page_take(size);
+        memset(p, 0, sizeof(tide_page) + size);
+    }
     p->refs = 1;
     p->size = size;
     p->hashed = UINT32_MAX;
