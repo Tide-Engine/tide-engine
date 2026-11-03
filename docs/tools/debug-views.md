@@ -69,6 +69,7 @@ The `semantics` object repeats the measurement definitions in the file itself.
 | `ticks` | Tick count and accumulated systems interval and following changes/events/tasks interval. This includes ticks run again for prediction; it is not just the number of newly advanced ticks. |
 | `systems`, `views`, `workers` | Rows with `calls`, active `frames`, `total_ms`, `mean_call_ms`, `mean_frame_ms` and `max_frame_ms`. `mean_frame_ms` divides by **all measured frames**, including those where the row did not run. These rows have no per-source percentile distribution. |
 | `gpu` | `available` means at least one timing sample arrived. Inspect `timing.samples`; `frame_aligned` is false. Pending or unsupported results are absent, and CPU and GPU intervals overlap. |
+| `gpu_passes` | GPU pass timing rows, target/order/pixel size, shader membership and submitted work for completed samples. Check `pending`, `unmeasured` and `dropped_observations` for missing coverage; see below. |
 | `render_work` | Total renderer draw calls and vertices across the measured frames. These are separate from instances retained in draw commands. |
 | `draw_diagnostics` | Mesh recording time and work counts, grouped by source, destination `target` and `camera_slot`; see below. |
 | `limits` | Dropped timing observations, draw calls and draw candidates. Nonzero values mean the affected source tables are incomplete. |
@@ -105,6 +106,59 @@ for row in sorted(report["draw_diagnostics"], key=lambda row: row["mesh_recordin
     print(row["source"], row["target"], row["camera_slot"],
           row["mesh_recording_ms"], "ms", row["tested"], "tested", row["rejected"], "rejected")
 ```
+
+### Finding expensive GPU passes
+
+The same `--profile` capture includes `gpu_passes.rows` on Vulkan and desktop
+OpenGL. Each row identifies a render target (`target` zero is the window), a
+one-based `pass` in render order, physical `width`/`height`, and the distinct
+`shaders` used, separated by newlines. Shader labels retain the game's named
+shader combinations; built-in drawing has labels such as `Builtin mesh 3D`.
+Shipping builds can have opaque labels, as with other diagnostic names.
+
+A pass ends when the renderer changes targets or needs work outside a pass,
+such as generating mipmaps. Returning to the same target produces another pass.
+Conditional pass order changes the grouping; changes in shader membership or
+pixel size produce separate rows. These are renderer passes, not named game
+features or CPU views. A pass can contain several shaders and views: its GPU
+time belongs to the whole pass, with no individual shader or view cost inferred.
+Use the shader names to locate the drawing code, then compare a controlled
+change in the same scripted scenario.
+
+```python
+passes = report["gpu_passes"]
+print("GPU coverage:", {key: passes[key] for key in ("pending", "unmeasured", "dropped_observations")})
+for row in sorted(passes["rows"], key=lambda row: row["timing"]["mean_ms"], reverse=True)[:10]:
+    print(row["target"], "pass", row["pass"], row["shaders"].splitlines(),
+          row["timing"]["samples"], "samples", row["timing"]["mean_ms"], "ms mean",
+          row["timing"]["p95_ms"], "ms p95", row["timing"]["max_ms"], "ms max")
+```
+
+`timing` uses the same distribution fields and 4,096-sample percentile limit
+as other timings. `draw_calls` and `vertices` count submitted work **only for
+that row's completed samples**, rather than every measured CPU frame.
+`pending` counts accepted pass queries still outstanding at export; `unmeasured`
+counts skipped, unsupported, invalid or cancelled passes, including passes
+whose shader labels exceeded the capture budget. `dropped_observations` counts
+completed samples whose row could not fit. Missing samples never become zero
+milliseconds. Short runs may end before any pass results arrive.
+
+Detailed queries and metadata are enabled only during capture. Results are read
+asynchronously with no forced GPU wait. Storage holds at most 1,024 pending
+passes, 4,096 label bytes per pending pass, 1,024 report rows and 1 MiB of report
+labels. Full queues skip timing while rendering continues. Compare captures
+with the same profiling enabled; timestamps themselves have a cost.
+
+Keep the existing `gpu.timing` as the frame's GPU total. Pass intervals can
+overlap, and uploads, mipmaps and other work outside render passes are not
+separate rows, so adding rows does not reproduce that total. CPU view timing
+measures recording and cannot substitute for GPU execution time.
+
+The backend collector also supports WebGPU when timestamp queries are available;
+custom C hosts can attach it through `tide_platform_gpu_profile` and poll
+`tide_platform_gpu_profile_read`. JSON `--profile` export remains native desktop
+only. WebGL 2 and OpenGL ES 3 do not provide these timers. The F7 panel and stats
+continue to show their existing aggregate measurements.
 
 ### Finding unnecessary drawing work
 

@@ -53,7 +53,9 @@ Set `TIDE_HIDDEN=1` in the agent's shell before native runs. Use a script that
 reaches the situation being investigated; interactive play can record it first.
 Keep the same seed, resolution, player count and saves for comparisons. The
 report is written when the run ends and identifies measured frames, CPU work,
-system/view source locations, available GPU samples and engine draw counters.
+system/view source locations, GPU totals and per-pass timings with shader membership,
+and engine draw counters. For GPU optimization, rank `gpu_passes.rows` and inspect
+its coverage counters before changing rendering work.
 It measures actual work rather than treating the hidden run's fixed simulation
 step as a frame-time result. Capture is currently native desktop only.
 Check the schema version, measured-frame count, build metadata and dropped-row

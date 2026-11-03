@@ -33,11 +33,16 @@ view AllVisible(Controls controls)
     }
 }
 
+frag ProfileTint(Vertex3 vertex, out Color color)
+{
+    color = vertex.color;
+}
+
 view AlreadyVisible()
 {
     Draw.Cull(Cull.None)
     {
-        Draw.FrustumCulling(false) { Draw.Mesh(card, Place(0)); }
+        Draw.FrustumCulling(false) { Draw.Mesh(card, Place(0), ProfileTint); }
     }
 }
 

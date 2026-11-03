@@ -1,5 +1,17 @@
 # The docs site
 
+## GPU pass capture guidance (2026-11-03)
+
+Debug views now documents the additive gpu_passes report object, target/order/
+size and shader membership, completed-sample work counts, percentile ranking,
+coverage/storage limits and platform availability. The AI guide, compact context
+and starter AGENTS.md point agents to that breakdown during GPU optimization.
+Mixed passes have no fabricated per-shader/view attribution; CPU recording and
+frame GPU total keep their meanings. Runtime tests are in standard-host.md and
+rendering.md. The Node 24.22.1 production docs build passes with the usual
+allowed unstaged playable-page 404 diagnostics. No browser UI or route changes.
+
+
 ## Profile captures and agent guidance (2026-11-02)
 
 The CLI and Debug views pages document native desktop JSON captures independent

@@ -22,7 +22,16 @@ typedef struct report_row {
     double before_ms, total_ms, max_frame_ms;
 } report_row;
 
+typedef struct gpu_row {
+    tide_gpu_pass_sample identity;
+    distribution timing;
+    uint64_t draw_calls, vertices;
+} gpu_row;
+
 typedef struct report_state {
+    gpu_row *gpu_rows[TIDE_GPU_PROFILE_ROWS];
+    uint32_t gpu_count, gpu_name_bytes;
+    uint64_t gpu_unmeasured, gpu_dropped;
     distribution metrics[METRICS];
     report_row *rows;
     uint32_t *index;
@@ -187,6 +196,38 @@ void tide_profile_report_gpu(tide_profile_report *r, const double ms)
     sample(&state(r)->metrics[GPU], ms);
 }
 
+void tide_profile_report_gpu_pass(void *report, const tide_gpu_pass_sample *pass)
+{
+    report_state *s = state(report);
+    if (!(pass->ms >= 0.0) || !isfinite(pass->ms)) { s->gpu_unmeasured++; return; }
+    const char *names = pass->shaders ? pass->shaders : "";
+    gpu_row *row = NULL;
+    for (uint32_t i = 0; i < s->gpu_count; i++) {
+        gpu_row *r = s->gpu_rows[i];
+        if (r->identity.target == pass->target && r->identity.pass == pass->pass &&
+            r->identity.width == pass->width && r->identity.height == pass->height &&
+            equal_text(r->identity.shaders, names)) { row = r; break; }
+    }
+    if (!row) {
+        const size_t bytes = strlen(names) + 1;
+        if (s->gpu_count == TIDE_GPU_PROFILE_ROWS || bytes > TIDE_PROFILE_REPORT_SOURCE_BYTES - s->gpu_name_bytes) {
+            s->gpu_dropped++;
+            return;
+        }
+        row = tide_alloc(sizeof *row);
+        memset(row, 0, sizeof *row);
+        row->identity = *pass;
+        char *copy = tide_alloc(bytes);
+        memcpy(copy, names, bytes);
+        row->identity.shaders = copy;
+        s->gpu_rows[s->gpu_count++] = row;
+        s->gpu_name_bytes += (uint32_t)bytes;
+    }
+    sample(&row->timing, pass->ms);
+    row->draw_calls += pass->draw_calls;
+    row->vertices += pass->vertices;
+}
+
 static void string(FILE *f, const char *s)
 {
     if (!s) { fputs("null", f); return; }
@@ -269,6 +310,21 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
     fputs("},\n\"gpu\":{\"available\":", out);
     fputs(s->metrics[GPU].count ? "true" : "false", out);
     fputs(",\"frame_aligned\":false,\"timing\":", out); distribution_json(out, &s->metrics[GPU]); fputs("},\n", out);
+    fprintf(out, "\"gpu_passes\":{\"pending\":%u,\"unmeasured\":%llu,\"dropped_observations\":%llu,\"rows\":[",
+            (unsigned)info->gpu_pending_passes, (unsigned long long)s->gpu_unmeasured, (unsigned long long)s->gpu_dropped);
+    for (uint32_t i = 0; i < s->gpu_count; i++) {
+        const gpu_row *row = s->gpu_rows[i];
+        if (i) fputc(',', out);
+        fprintf(out, "{\"target\":\"%016llx\",\"pass\":%u,\"width\":%u,\"height\":%u,\"shaders\":",
+                (unsigned long long)row->identity.target, (unsigned)row->identity.pass,
+                (unsigned)row->identity.width, (unsigned)row->identity.height);
+        string(out, row->identity.shaders);
+        fprintf(out, ",\"draw_calls\":%llu,\"vertices\":%llu,\"timing\":",
+                (unsigned long long)row->draw_calls, (unsigned long long)row->vertices);
+        distribution_json(out, &row->timing);
+        fputc('}', out);
+    }
+    fputs("]},\n", out);
     fprintf(out, "\"ticks\":{\"count\":%llu,\"systems_ms\":%.9g,\"changes_events_tasks_ms\":%.9g},\n",
             (unsigned long long)s->ticks, s->systems_ms, s->changes_ms);
     for (uint32_t g = 0; g < GROUPS; g++) {
@@ -308,6 +364,7 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
           "\"workers\":\"Completed-job queue, compute and copy intervals; may overlap frames.\","
           "\"mesh_recording\":\"Inclusive bounds, frustum testing, LOD and instance recording after mesh acquisition; contained in the caller view, not isolated culling or GPU time.\","
           "\"camera_slot\":\"Per-source, per-target camera encounter order each frame; conditional reordering changes its meaning. Target zero is the window, not a GPU pass ID.\","
+          "\"gpu_passes\":\"Whole render-pass intervals grouped by target, encounter order, pixel size and shader membership. Mixed shaders have no individual cost attribution. Passes may overlap and omit work outside passes; do not sum as frame time. Conditional order changes identity.\","
           "\"gpu\":\"Asynchronous results from measured work; unavailable or pending samples are absent, never zero. CPU and GPU overlap.\","
           "\"quantiles\":\"Exact nearest-rank quantiles through 4096 samples, then deterministic reservoir estimates; totals, means and maxima cover all observations.\"}\n}\n", out);
     return !ferror(out);
@@ -317,6 +374,10 @@ void tide_profile_report_free(tide_profile_report *r)
 {
     report_state *s = r->state;
     if (s) {
+        for (uint32_t i = 0; i < s->gpu_count; i++) {
+            free((void *)s->gpu_rows[i]->identity.shaders);
+            free(s->gpu_rows[i]);
+        }
         for (uint32_t i = 0; i < s->count; i++) free((void *)s->rows[i].source.name);
         free(s->rows);
         free(s->index);

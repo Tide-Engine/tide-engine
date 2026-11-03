@@ -1880,9 +1880,13 @@
     // targets count too, with no pass limit and no CPU gaps between them.
     const TIME_PASSES = 64, TIME_STRIDE = 256; // Query resolves need a 256-byte offset
     let timeSlots = [], timeActive = null, timePass = null;
+    let passResults = [], passReserved = 0, passGeneration = 0;
     let timeGeneration = 0, timeOrder = 0, timeResultOrder = 0, timeResult = -1;
     function gpuTimeReset() {
         timeGeneration++;
+        passGeneration++;
+        passResults = [];
+        passReserved = 0;
         timeActive = timePass = null;
         timeResult = -1;
         timeOrder = timeResultOrder = 0;
@@ -1904,6 +1908,8 @@
         if (!slot) return;
         slot.busy = true;
         slot.passes = 0;
+        slot.tokens = [];
+        slot.token = 0;
         timeActive = slot;
     }
     function gpuTimeEnd() {
@@ -1928,15 +1934,26 @@
         device.queue.submit([copy.finish()]);
         const generation = timeGeneration, order = ++timeOrder;
         const count = slot.passes, readback = slot.readback;
+        const tokens = slot.tokens.slice(), passGen = passGeneration;
         readback.mapAsync(GPUMapMode.READ, 0, bytes).then(() => {
             if (generation !== timeGeneration) return;
             try {
                 const values = new BigUint64Array(readback.getMappedRange(0, bytes));
+                for (let i = 0; i < count; i++) {
+                    if (values[i * TIME_STRIDE / 8 + 1] < values[i * TIME_STRIDE / 8]) {
+                        if (passGen === passGeneration) for (const token of tokens) {
+                            if (token) passResults.push({ token, ms: NaN });
+                        }
+                        return;
+                    }
+                }
                 let total = 0n;
                 for (let i = 0; i < count; i++) {
                     const begin = values[i * TIME_STRIDE / 8], end = values[i * TIME_STRIDE / 8 + 1];
-                    if (end < begin) return; // A counter reset invalidates the whole sample
                     total += end - begin;
+                    if (passGen === passGeneration && tokens[i]) {
+                        passResults.push({ token: tokens[i], ms: Number(end - begin) / 1000000 });
+                    }
                 }
                 // Promises can settle out of order: keep the newest completed frame.
                 if (order > timeResultOrder) {
@@ -1947,7 +1964,12 @@
                 readback.unmap();
                 slot.busy = false;
             }
-        }, () => { slot.busy = false; }); // A reset or device loss cancelled it
+        }, () => {
+            if (generation === timeGeneration && passGen === passGeneration) {
+                for (const token of tokens) if (token) passResults.push({ token, ms: NaN });
+            }
+            slot.busy = false;
+        }); // A reset or device loss cancelled it
     }
     // What the next draw draws with: its pipeline, and each texture it samples, by its slot
     const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), sampled: new Array(MAX_TEXTURES).fill(0),
@@ -1981,6 +2003,29 @@
     Object.assign(platform, {
         // Which device the program draws with, counted from 1: another once one was lost, and 0 while there's none
         gpu_epoch: () => device && layouts ? devices : 0,
+        gpu_pass_time_begin(token) {
+            if (!timeActive || passReserved === 1024 || timeActive.token) return false;
+            timeActive.token = token;
+            passReserved++;
+            return true;
+        },
+        gpu_pass_time_end() {},
+        gpu_pass_time_read(ptr) {
+            if (!passResults.length) return -1;
+            const result = passResults.shift();
+            new DataView(memory.buffer).setUint32(ptr, result.token, true);
+            passReserved--;
+            return result.ms;
+        },
+        gpu_pass_time_reset() {
+            passGeneration++;
+            passResults = [];
+            passReserved = 0;
+            if (timeActive) {
+                timeActive.token = 0;
+                timeActive.tokens.fill(0);
+            }
+        },
         gpu_time_begin: gpuTimeBegin,
         gpu_time_end: gpuTimeEnd,
         gpu_time_read() {
@@ -2349,6 +2394,10 @@
                     stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 },
             };
             timePass = timeActive;
+            if (timePass) {
+                timePass.tokens[timePass.passes] = timePass.token;
+                timePass.token = 0;
+            }
             if (timePass) descriptor.timestampWrites = { querySet: timePass.query,
                 beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 };
             pass = commands.beginRenderPass(descriptor);

@@ -64,8 +64,23 @@ function checkReport(r, total, warmup, bypass = false) {
     assert.equal(r.gpu.frame_aligned, false);
     assert.equal(r.gpu.available, r.gpu.timing.samples > 0);
     if (!r.gpu.available) assert.equal(r.gpu.timing.mean_ms, null);
+    assert.ok(Number.isInteger(r.gpu_passes.pending) && r.gpu_passes.pending >= 0);
+    assert.equal(r.gpu_passes.dropped_observations, 0);
+    for (const pass of r.gpu_passes.rows) {
+        assert.equal(pass.target, '0000000000000000');
+        assert.equal(pass.width, 320);
+        assert.equal(pass.height, 240);
+        assert.ok(pass.pass >= 1);
+        assert.ok(pass.shaders.includes('Builtin mesh 3D'));
+        assert.ok(pass.shaders.includes('ProfileTint'), 'generated shader labels survive asynchronous attribution');
+        assert.ok(pass.timing.samples > 0 && pass.timing.samples <= measured);
+        assert.ok(pass.draw_calls >= pass.timing.samples && pass.vertices > 0);
+        for (const key of ['mean_ms', 'p95_ms', 'max_ms']) assert.ok(Number.isFinite(pass.timing[key]));
+    }
+    if (r.gpu.available && measured > 2) assert.ok(r.gpu_passes.rows.length > 0);
     assert.deepEqual(r.limits, { dropped_timing_observations: 0, dropped_draw_calls: 0, dropped_draw_candidates: 0 });
     if (!measured) {
+        assert.deepEqual(r.gpu_passes.rows, []);
         assert.deepEqual(r.views, []);
         assert.deepEqual(r.systems, []);
         assert.deepEqual(r.draw_diagnostics, []);

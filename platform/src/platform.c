@@ -90,6 +90,31 @@ static const tide_gpu *gpu;
 // and another for another game, as the backend was last told.
 static char *gpu_cache_folder;
 static bool gpu_timing;
+static tide_gpu_pass_collect gpu_pass_collect;
+static void *gpu_pass_user;
+static struct {
+    tide_gpu_pass_sample sample;
+    char *names;
+    uint32_t used;
+    bool pending, incomplete;
+} gpu_passes[TIDE_GPU_PROFILE_PENDING];
+static uint32_t gpu_pass_active; // 1 + pending slot, 0 when this pass isn't timed.
+static uint64_t gpu_profile_frame;
+static uint32_t gpu_profile_pass;
+static bool gpu_profile_drawing;
+
+static void gpu_pass_reset(void)
+{
+    for (uint32_t i = 0; i < TIDE_GPU_PROFILE_PENDING; i++) {
+        if (gpu_passes[i].pending && gpu_pass_collect) {
+            gpu_passes[i].sample.ms = -1.0;
+            gpu_pass_collect(gpu_pass_user, &gpu_passes[i].sample);
+        }
+        free(gpu_passes[i].names);
+        memset(&gpu_passes[i], 0, sizeof gpu_passes[i]);
+    }
+    gpu_pass_active = 0;
+}
 
 // The last frames' lengths, for tide_platform_fps.
 static float frame_seconds[32];
@@ -1891,9 +1916,70 @@ static uint32_t stencil_pipeline_count, stencil_pipeline_capacity;
 // The number the pass's stencil tests compare with, as the backend has it: 0 as a pass begins.
 static uint32_t pass_stencil;
 
+// Keep owned labels until a delayed query completes, including across reloads.
+static void profile_pass_begin(void)
+{
+    if (!gpu_pass_collect || !gpu_profile_drawing) return;
+    const frame_target *f = &frame_targets[draw_target];
+    tide_gpu_pass_sample sample = {.target = f->id, .frame = gpu_profile_frame, .pass = ++gpu_profile_pass,
+        .width = (uint32_t)f->pixel_width, .height = (uint32_t)f->pixel_height, .ms = -1.0};
+    uint32_t at = 0;
+    while (at < TIDE_GPU_PROFILE_PENDING && gpu_passes[at].pending) at++;
+    if (at == TIDE_GPU_PROFILE_PENDING || !gpu->pass_time_begin || !gpu->pass_time_begin(at + 1)) {
+        gpu_pass_collect(gpu_pass_user, &sample);
+        return;
+    }
+    gpu_passes[at].sample = sample;
+    gpu_passes[at].pending = true;
+    gpu_passes[at].names = tide_alloc(TIDE_GPU_PROFILE_NAME_BYTES);
+    gpu_passes[at].names[0] = 0;
+    gpu_passes[at].used = 0;
+    gpu_passes[at].incomplete = false;
+    gpu_pass_active = at + 1;
+}
+
+static void profile_pass_draw(const tide_draw_list *list, const draw_step *s, const uint32_t calls, const uint64_t vertices)
+{
+    if (!gpu_pass_active || !calls) return;
+    const uint32_t at = gpu_pass_active - 1;
+    gpu_passes[at].sample.draw_calls += calls;
+    gpu_passes[at].sample.vertices += vertices;
+    const char *name = s->kind == STEP_SHADED || s->kind == STEP_BLIT ? list->runs[s->first].shader->name
+        : s->kind == STEP_MESH_3D ? "Builtin mesh 3D" : s->kind == STEP_MESH ? "Builtin mesh 2D"
+        : s->kind == STEP_CLEAR ? "Builtin clear" : s->kind == STEP_SHAPES ? "Builtin shapes" : "Builtin text";
+    if (!name) name = "Unnamed shader";
+    const size_t bytes = strlen(name);
+    const char *p = gpu_passes[at].names;
+    while (*p) {
+        const char *end = strchr(p, '\n');
+        const size_t n = end ? (size_t)(end - p) : strlen(p);
+        if (n == bytes && !memcmp(p, name, n)) return;
+        p += n + (end ? 1 : 0);
+    }
+    const uint32_t used = gpu_passes[at].used;
+    if (bytes + 1u + (used ? 1u : 0u) > TIDE_GPU_PROFILE_NAME_BYTES - used) {
+        gpu_passes[at].incomplete = true;
+        return;
+    }
+    char *out = gpu_passes[at].names + used;
+    if (used) *out++ = '\n';
+    memcpy(out, name, bytes + 1);
+    gpu_passes[at].used += (uint32_t)bytes + (used ? 1u : 0u);
+}
+
+static void end_pass(void)
+{
+    gpu->end();
+    if (gpu_pass_active) {
+        gpu->pass_time_end();
+        gpu_pass_active = 0;
+    }
+}
+
 // A pass a list's steps draw in.
 static void begin_pass(const tide_gpu_id target, const bool clear)
 {
+    profile_pass_begin();
     gpu->begin(target, clear);
     pass_stencil = 0;
 }
@@ -2790,6 +2876,8 @@ static bool gpu_ready(void)
     const uint32_t epoch = gpu->epoch();
     if (epoch == 0 || epoch == gpu_epoch) return epoch != 0;
     if (gpu->time_reset) gpu->time_reset();
+    if (gpu->pass_time_reset) gpu->pass_time_reset();
+    gpu_pass_reset();
     free(gpu_state.target_pixels);
     free(gpu_state.frame_pixels);
     memset(&gpu_state, 0, sizeof gpu_state);
@@ -4798,6 +4886,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // Start after the CPU expanded the list and prepared/uploaded resources.
     // Otherwise a desktop GPU waiting for that work would time the CPU too.
     // Texture uploads requested by shaded draws still occur inside the query.
+    gpu_profile_drawing = !over && gpu_pass_collect;
+    if (gpu_profile_drawing) { gpu_profile_frame++; gpu_profile_pass = 0; }
     if (timed && gpu->time_begin) gpu->time_begin();
     // A pass begins at the first step that draws in it, so steps that only
     // move to another target cost none: a pass costs the backends that have
@@ -4811,7 +4901,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
         if (s->target != draw_target) {
-            if (pass_active) gpu->end();
+            if (pass_active) end_pass();
             pass_active = false;
             select_target(s->target);
             frame_target *f = &frame_targets[draw_target];
@@ -4842,12 +4932,12 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             continue;
         }
         if (prepare_source_targets(list, s, true)) {
-            if (pass_active) gpu->end();
+            if (pass_active) end_pass();
             pass_active = false;
             prepare_source_targets(list, s, false);
         }
         if (prepare_step_mipmaps(list, s, true)) { // Made outside a pass, as a backend draws them
-            if (pass_active) gpu->end();
+            if (pass_active) end_pass();
             pass_active = false;
             prepare_step_mipmaps(list, s, false);
         }
@@ -4857,6 +4947,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             pass_active = true;
             clip(&frame_targets[draw_target].clipping);
         }
+        const uint32_t before_calls = calls;
+        const uint64_t before_vertices = vertices;
         switch (s->kind) {
         case STEP_TARGET:
         case STEP_STENCIL:
@@ -4932,13 +5024,16 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             calls++;
             break;
         }
+        profile_pass_draw(list, s, calls - before_calls, vertices - before_vertices);
     }
-    if (pass_active) gpu->end();
+    if (pass_active) end_pass();
     if (!cleared) { // Nothing drew in the frame's target
+        select_target(0);
         begin_pass(target, true);
-        gpu->end();
+        end_pass();
     }
     if (timed && gpu->time_end) gpu->time_end();
+    gpu_profile_drawing = false;
     draw_width = draw_height = 0.0f;
     draw_pixel_width = draw_pixel_height = 0;
     scaled = false;
@@ -5015,11 +5110,48 @@ void tide_platform_embed_render_reset(void)
     tide_gpu_record_reset();
 }
 
+void tide_platform_gpu_profile(tide_gpu_pass_collect collect, void *user)
+{
+    if (gpu_pass_collect == collect && gpu_pass_user == user) return;
+    if (gpu && gpu->epoch() && gpu->pass_time_reset) gpu->pass_time_reset();
+    gpu_pass_reset();
+    gpu_pass_collect = collect;
+    gpu_pass_user = user;
+}
+
+uint32_t tide_platform_gpu_profile_pending(void)
+{
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < TIDE_GPU_PROFILE_PENDING; i++) if (gpu_passes[i].pending) count++;
+    return count;
+}
+
+void tide_platform_gpu_profile_read(void)
+{
+    if (!gpu_pass_collect || !gpu || !gpu_ready() || !gpu->pass_time_read) return;
+    for (uint32_t i = 0; i < TIDE_GPU_PROFILE_PENDING; i++) {
+        uint32_t token = 0;
+        const double ms = gpu->pass_time_read(&token);
+        if (ms < 0.0) break;
+        if (!token || token > TIDE_GPU_PROFILE_PENDING || !gpu_passes[token - 1].pending) continue;
+        const uint32_t at = token - 1;
+        gpu_passes[at].sample.ms = gpu_passes[at].incomplete ? -1.0 : ms;
+        gpu_passes[at].sample.shaders = gpu_passes[at].names;
+        gpu_pass_collect(gpu_pass_user, &gpu_passes[at].sample);
+        free(gpu_passes[at].names);
+        memset(&gpu_passes[at], 0, sizeof gpu_passes[at]);
+    }
+}
+
 void tide_platform_gpu_timing(const bool enabled)
 {
     if (gpu_timing == enabled) return;
     gpu_timing = enabled;
-    if (!enabled && gpu && gpu->epoch() && gpu->time_reset) gpu->time_reset();
+    if (!enabled && gpu && gpu->epoch()) {
+        if (gpu->time_reset) gpu->time_reset();
+        if (gpu->pass_time_reset) gpu->pass_time_reset();
+        gpu_pass_reset();
+    }
 }
 
 double tide_platform_gpu_ms(void)

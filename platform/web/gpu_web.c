@@ -7,6 +7,10 @@
 #include "tide_web.h"
 
 TIDE_WEB_IMPORT(gpu_epoch) uint32_t tide_web_gpu_epoch(void);
+TIDE_WEB_IMPORT(gpu_pass_time_begin) bool tide_web_gpu_pass_time_begin(uint32_t token);
+TIDE_WEB_IMPORT(gpu_pass_time_end) void tide_web_gpu_pass_time_end(void);
+TIDE_WEB_IMPORT(gpu_pass_time_read) double tide_web_gpu_pass_time_read(uint32_t *token);
+TIDE_WEB_IMPORT(gpu_pass_time_reset) void tide_web_gpu_pass_time_reset(void);
 TIDE_WEB_IMPORT(gpu_time_begin) void tide_web_gpu_time_begin(void);
 TIDE_WEB_IMPORT(gpu_time_end) void tide_web_gpu_time_end(void);
 TIDE_WEB_IMPORT(gpu_time_read) double tide_web_gpu_time_read(void);
@@ -97,6 +101,10 @@ static tide_gpu_id web_texture_blocks(const int width, const int height, const t
 const tide_gpu tide_gpu_webgpu = {
     .name = "WebGPU",
     .epoch = tide_web_gpu_epoch,
+    .pass_time_begin = tide_web_gpu_pass_time_begin,
+    .pass_time_end = tide_web_gpu_pass_time_end,
+    .pass_time_read = tide_web_gpu_pass_time_read,
+    .pass_time_reset = tide_web_gpu_pass_time_reset,
     .time_begin = tide_web_gpu_time_begin,
     .time_end = tide_web_gpu_time_end,
     .time_read = tide_web_gpu_time_read,

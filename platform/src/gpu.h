@@ -306,6 +306,14 @@ typedef struct tide_gpu {
     double (*time_read)(void);
     void (*time_reset)(void);
 
+    // Optional independent pass queries. Begin, before a render pass, reserves
+    // a token only on success; end is after it. Read never waits and returns
+    // the original token, including when completions arrive out of order.
+    bool (*pass_time_begin)(uint32_t token);
+    void (*pass_time_end)(void);
+    double (*pass_time_read)(uint32_t *token);
+    void (*pass_time_reset)(void);
+
     // A buffer of `size` bytes, holding `data` if it's given. Sizes, and what's
     // written, are multiples of 4 bytes.
     tide_gpu_id (*buffer)(tide_gpu_buffer_kind kind, size_t size, const void *data);

@@ -22,6 +22,7 @@
 //   of is destroyed once the GPU is done with the frame that let it go.
 
 #include "gpu_vk.h"
+#include "tide/gpu_profile.h"
 
 #include "files.h"
 
@@ -280,6 +281,11 @@ static struct {
     uint8_t sampled[TIDE_GPU_MAX_TEXTURES];
 
     // Timing
+    VkQueryPool pass_queries;
+    uint32_t pass_first, pass_count, pass_sent;
+    uint32_t pass_tokens[TIDE_GPU_PROFILE_PENDING];
+    uint64_t pass_serial[TIDE_GPU_PROFILE_PENDING];
+    bool pass_active;
     VkQueryPool queries;
     uint32_t query_first, query_count; // Pairs written and not yet read, in a ring of them
     uint32_t query_sent;               // ...of which the first this many went to the GPU, to be read once they're there
@@ -832,6 +838,9 @@ static void flush(void)
         vk.submitted++;
         for (uint32_t i = vk.query_sent; i < vk.query_count; i++) vk.query_serial[(vk.query_first + i) % TIME_PAIRS] = vk.submitted;
         vk.query_sent = vk.query_count;
+        for (uint32_t i = vk.pass_sent; i < vk.pass_count; i++)
+            vk.pass_serial[(vk.pass_first + i) % TIDE_GPU_PROFILE_PENDING] = vk.submitted;
+        vk.pass_sent = vk.pass_count;
         // ...and waited for, with what the frames before it sent: a fence a submission signals waits for everything
         // submitted before it too
         if (result == VK_SUCCESS) result = vkWaitForFences(vk.device, 1, &vk.flushed, VK_TRUE, UINT64_MAX);
@@ -1135,6 +1144,9 @@ void tide_gpu_vk_present_updating(double (*update)(void))
         f->serial = vk.submitted;
         for (uint32_t i = vk.query_sent; i < vk.query_count; i++) vk.query_serial[(vk.query_first + i) % TIME_PAIRS] = vk.submitted;
         vk.query_sent = vk.query_count;
+        for (uint32_t i = vk.pass_sent; i < vk.pass_count; i++)
+            vk.pass_serial[(vk.pass_first + i) % TIDE_GPU_PROFILE_PENDING] = vk.submitted;
+        vk.pass_sent = vk.pass_count;
         if (result != VK_SUCCESS) {
             lose(result);
             vk.acquired = false;
@@ -2022,6 +2034,11 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
     // What's recorded outside passes since the last one goes before it, and what's uploaded during it, after that
     close_outside();
     vk.pass = command_buffer();
+    if (vk.pass_active) {
+        const uint32_t at = (vk.pass_first + vk.pass_count) % TIDE_GPU_PROFILE_PENDING;
+        vkCmdResetQueryPool(vk.pass, vk.pass_queries, 2 * at, 2);
+        vkCmdWriteTimestamp(vk.pass, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.pass_queries, 2 * at);
+    }
     barrier_pass(vk.pass);
     vk.pass_pending = vk.pending_count;
     queue_up(vk.pass);
@@ -2110,6 +2127,11 @@ static void vk_end(void)
     if (!vk.pass_target) {
         turn(vk.pass, vk.images[vk.image], vk.window_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
              VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
+    if (vk.pass_active) {
+        const uint32_t at = (vk.pass_first + vk.pass_count) % TIDE_GPU_PROFILE_PENDING;
+        vkCmdWriteTimestamp(vk.pass, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, vk.pass_queries, 2 * at + 1);
+        vk.pass_count++;
     }
     // What's recorded outside passes next goes on after it, in the same command buffer
     vk.outside = vk.pass;
@@ -2243,6 +2265,51 @@ static void vk_draw_indexed(const uint32_t count, const uint32_t instances)
 
 // ---------------------------------------------------------------------------
 // Timing: timestamps around the game's drawing, read when they're there
+
+static bool vk_pass_time_begin(const uint32_t token)
+{
+    if (vk.lost || !vk.timestamp_ns || vk.pass_active || vk.pass_count == TIDE_GPU_PROFILE_PENDING) return false;
+    if (!vk.pass_queries) {
+        const VkQueryPoolCreateInfo info = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, NULL, 0,
+                                           VK_QUERY_TYPE_TIMESTAMP, 2 * TIDE_GPU_PROFILE_PENDING, 0};
+        if (vkCreateQueryPool(vk.device, &info, NULL, &vk.pass_queries) != VK_SUCCESS) return false;
+    }
+    const uint32_t at = (vk.pass_first + vk.pass_count) % TIDE_GPU_PROFILE_PENDING;
+    vk.pass_tokens[at] = token;
+    vk.pass_active = true;
+    return true;
+}
+
+static void vk_pass_time_end(void)
+{
+    vk.pass_active = false;
+}
+
+static double vk_pass_time_read(uint32_t *token)
+{
+    if (vk.lost || !vk.pass_sent || vk.pass_serial[vk.pass_first] > vk.completed) return -1.0;
+    uint64_t results[4];
+    const uint32_t at = vk.pass_first;
+    const VkResult result = vkGetQueryPoolResults(vk.device, vk.pass_queries, 2 * at, 2, sizeof results, results,
+        2 * sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+    if ((result != VK_SUCCESS && result != VK_NOT_READY) || !results[1] || !results[3]) return -1.0;
+    *token = vk.pass_tokens[at];
+    vk.pass_first = (at + 1) % TIDE_GPU_PROFILE_PENDING;
+    vk.pass_count--;
+    vk.pass_sent--;
+    return (double)((results[2] - results[0]) & vk.timestamp_mask) * vk.timestamp_ns / 1000000.0;
+}
+
+static void vk_pass_time_reset(void)
+{
+    if (vk.pass_queries) {
+        flush();
+        vkDestroyQueryPool(vk.device, vk.pass_queries, NULL);
+    }
+    vk.pass_queries = VK_NULL_HANDLE;
+    vk.pass_first = vk.pass_count = vk.pass_sent = 0;
+    vk.pass_active = false;
+}
 
 static void vk_time_begin(void)
 {
@@ -2493,7 +2560,11 @@ static void destroy_device(void)
     if (readback.buffer) vkDestroyBuffer(vk.device, readback.buffer, NULL);
     give_back(&readback.memory);
     readback.buffer = VK_NULL_HANDLE, readback.memory = (vk_alloc){0}, readback.size = 0;
+    if (vk.pass_queries) vkDestroyQueryPool(vk.device, vk.pass_queries, NULL);
     if (vk.queries) vkDestroyQueryPool(vk.device, vk.queries, NULL);
+    vk.pass_queries = VK_NULL_HANDLE;
+    vk.pass_first = vk.pass_count = vk.pass_sent = 0;
+    vk.pass_active = false;
     vk.queries = VK_NULL_HANDLE, vk.query_first = vk.query_count = vk.query_sent = 0, vk.query_active = false;
     vk.made_width = vk.made_height = 0;
     forget_swapchain();
@@ -2866,6 +2937,10 @@ const tide_gpu tide_gpu_vulkan = {
     .epoch = vk_epoch,
     .pipeline_cache = vk_pipeline_cache,
     .device_memory = vk_device_memory,
+    .pass_time_begin = vk_pass_time_begin,
+    .pass_time_end = vk_pass_time_end,
+    .pass_time_read = vk_pass_time_read,
+    .pass_time_reset = vk_pass_time_reset,
     .time_begin = vk_time_begin,
     .time_end = vk_time_end,
     .time_read = vk_time_read,

@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "tide/draw_profile.h"
+#include "tide/gpu_profile.h"
 #include "tide/profiler.h"
 
 // A bounded, host-owned capture. Timing is wall-clock CPU work within the
@@ -27,6 +28,7 @@ typedef struct tide_profile_report_info {
     uint32_t width, height;
     float scale_x, scale_y;
     bool optimized, sanitized;
+    uint32_t gpu_pending_passes;
     int exit_code;
 } tide_profile_report_info;
 
@@ -38,5 +40,7 @@ void tide_profile_report_end(tide_profile_report *r, const tide_profile *p, uint
 // Asynchronous GPU results have no source-frame identity. They are a separate
 // distribution, never paired with or added to a CPU frame.
 void tide_profile_report_gpu(tide_profile_report *r, double ms);
+// Matches tide_gpu_pass_collect; negative/nonfinite samples count as unmeasured.
+void tide_profile_report_gpu_pass(void *report, const tide_gpu_pass_sample *sample);
 bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const tide_profile_report_info *info);
 void tide_profile_report_free(tide_profile_report *r);

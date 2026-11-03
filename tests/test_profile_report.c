@@ -429,3 +429,58 @@ TIDE_TEST(profile_report_serializes_draw_only_diagnostics_and_drop_counts)
     tide_profile_report_free(&report);
     TIDE_CHECK(!report.state && !report.draw.rows);
 }
+
+TIDE_TEST(profile_report_gpu_passes_own_identity_and_separate_work)
+{
+    tide_profile_report report = {0};
+    char names[] = "Terrain and Shade\nSky";
+    tide_gpu_pass_sample p = {.target = 7, .pass = 2, .width = 1024, .height = 512,
+        .draw_calls = 3, .vertices = 90, .shaders = names, .ms = 2};
+    tide_profile_report_gpu_pass(&report, &p);
+    p.ms = 4;
+    tide_profile_report_gpu_pass(&report, &p);
+    p.target = 8;
+    tide_profile_report_gpu_pass(&report, &p);
+    p.target = 7; p.pass = 3;
+    tide_profile_report_gpu_pass(&report, &p);
+    p.ms = -1;
+    tide_profile_report_gpu_pass(&report, &p);
+    p.ms = NAN;
+    tide_profile_report_gpu_pass(&report, &p);
+    memset(names, 'x', sizeof names - 1);
+    char *text = written(&report, &(tide_profile_report_info){.gpu_pending_passes = 5});
+    TIDE_REQUIRE(text);
+    const tide_json j = report_json(text), passes = field(j, "gpu_passes"), rows = field(passes, "rows");
+    TIDE_CHECK(array_count(rows) == 3);
+    TIDE_CHECK(number(field(passes, "pending")) == 5 && number(field(passes, "unmeasured")) == 2);
+    const tide_json row = item(rows, 0), time = field(row, "timing");
+    TIDE_CHECK(text_is(field(row, "shaders"), "Terrain and Shade\nSky"));
+    TIDE_CHECK(text_is(field(row, "target"), "0000000000000007"));
+    TIDE_CHECK(number(field(row, "pass")) == 2 && number(field(row, "width")) == 1024);
+    TIDE_CHECK(number(field(row, "draw_calls")) == 6 && number(field(row, "vertices")) == 180);
+    TIDE_CHECK(number(field(time, "samples")) == 2 && number(field(time, "mean_ms")) == 3);
+    TIDE_CHECK(number(field(time, "p95_ms")) == 4 && number(field(time, "max_ms")) == 4);
+    TIDE_CHECK(number(field(field(field(j, "gpu"), "timing"), "samples")) == 0);
+    free(text);
+    tide_profile_report_free(&report);
+}
+
+TIDE_TEST(profile_report_gpu_pass_limit_keeps_existing_rows)
+{
+    tide_profile_report report = {0};
+    tide_gpu_pass_sample p = {.shaders = "Shader", .ms = 1};
+    for (uint32_t i = 0; i <= TIDE_GPU_PROFILE_ROWS; i++) {
+        p.pass = i;
+        tide_profile_report_gpu_pass(&report, &p);
+    }
+    p.pass = 0;
+    tide_profile_report_gpu_pass(&report, &p);
+    char *text = written(&report, &(tide_profile_report_info){0});
+    TIDE_REQUIRE(text);
+    const tide_json passes = field(report_json(text), "gpu_passes"), rows = field(passes, "rows");
+    TIDE_CHECK(array_count(rows) == TIDE_GPU_PROFILE_ROWS);
+    TIDE_CHECK(number(field(passes, "dropped_observations")) == 1);
+    TIDE_CHECK(number(field(field(item(rows, 0), "timing"), "samples")) == 2);
+    free(text);
+    tide_profile_report_free(&report);
+}
