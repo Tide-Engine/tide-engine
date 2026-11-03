@@ -77,6 +77,17 @@ if(NOT WIN32)
 endif()
 add_test(NAME tide_cli_fetch COMMAND tide_cli_fetch_tests)
 
+# Queue writes and detached sender claims must not lose an event between
+# fopen and fwrite, or hold a local queue lock across the HTTP request.
+add_executable(tide_cli_telemetry_queue_tests tests/telemetry_queue_test.c sys.c)
+target_include_directories(tide_cli_telemetry_queue_tests PRIVATE . ../lsp
+    "${PROJECT_SOURCE_DIR}/platform/src/rtc" "${PROJECT_SOURCE_DIR}/engine/include")
+target_link_libraries(tide_cli_telemetry_queue_tests PRIVATE tide_flags)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_telemetry_queue_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME tide_cli_telemetry_queue COMMAND tide_cli_telemetry_queue_tests)
+
 # Help must be available without a project, installation or side effects.
 add_test(NAME tide_cli_help
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>"

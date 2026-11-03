@@ -1,5 +1,36 @@
 # `tide`, packages and the package
 
+## Telemetry queue claim race (2026-11-03)
+
+Run 41557439497's Linux release telemetry fixture timed out waiting for the two
+back-to-back commands' events. Unlike its other cases, this case starts the
+second recorder before waiting for the first sender. Inspection found the
+shared queue's append/cap and rename/read operations had no synchronization.
+A controlled POSIX interleaving reproduces data loss: the sender renames,
+reads and deletes the queue after the next writer opens it but before fwrite;
+that writer appends to the unlinked file. Only one of two events arrives and
+no queue remains. This establishes a real race consistent with the CI failure;
+the old hosted log did not record the remaining queue/event count.
+
+telemetry.c now uses the existing process-file lock for append/capping and
+claiming/recovering a batch. It releases the lock before creating the HTTP body
+file or running curl, so a network wait cannot block a command's queue write.
+Local contention has a 100 ms clock budget with 1 ms sleeps; a busy/unwritable
+queue remains best-effort, like other local I/O failures. A failed HTTP batch
+whose requeue fails keeps its sending file for a later sender's stale-file
+recovery. No usage-data field, opt-out rule, endpoint or language behavior changes.
+
+tide_cli_telemetry_queue uses actual file operations/locks with a controlled
+fopen interleaving, HTTP stub and clock. It checks lossless claim versus append,
+append during HTTP without lock waiting, bounded contention and recovery, and
+retaining/recovering an offline batch when requeue is blocked. The original
+implementation fails the POSIX interleaving (one event instead of two); the
+corrected one preserves both. Windows Clang 23.1.2 ASan builds pass, and the
+new fixture plus the original five-case local-HTTP integration pass 2/2 CTests
+(5.73 s, Node 24.22.1). The queue fixture also passes a strict C17 WSL Clang
+ASan/UBSan build on the POSIX filesystem. No WASM runtime code changed; hosted
+Linux/macOS/MinGW integration follows the next normal push.
+
 ## Agent-readable profile captures (2026-11-02)
 
 The owner's approved profiling work adds run-only `--profile <file.json>` and

@@ -356,16 +356,40 @@ static void cap_queue(const char *dir, const char *queue)
     free(text);
 }
 
-static void append_queue(const char *dir, const char *text, const size_t n)
+// Writers must finish before a sender renames and reads the queue. In
+// particular, POSIX permits moving an open file: an append after the sender
+// read it would otherwise go into an unlinked file and disappear. Hold this
+// only for local file work, never while sending over the network. Usage data
+// must not hold a command indefinitely if another process is stuck.
+static sys_lock *lock_queue(const char *dir)
 {
+    char *path = path_join(dir, "queue.lock");
+    const int64_t until = sys_now_ms() + 100;
+    sys_lock *lock;
+    for (;;) {
+        lock = sys_lock_file(path);
+        if (lock || sys_now_ms() >= until) break;
+        sys_sleep_ms(1);
+    }
+    free(path);
+    return lock;
+}
+
+static bool append_queue(const char *dir, const char *text, const size_t n)
+{
+    sys_lock *lock = lock_queue(dir);
+    if (!lock) return false;
     char *queue = path_join(dir, "queue");
     FILE *f = fopen(queue, "ab");
+    bool written = false;
     if (f) {
-        fwrite(text, 1, n, f);
-        fclose(f);
+        written = fwrite(text, 1, n, f) == n;
+        if (fclose(f) != 0) written = false;
         cap_queue(dir, queue);
     }
     free(queue);
+    sys_unlock(lock);
+    return written;
 }
 
 // A sender that is still running, by the file it took the queue into.
@@ -471,6 +495,8 @@ static void take_file(taken *t, const char *path)
 // refused it, -1 when it couldn't be sent: it's queued again then.
 static int send_queued(const char *dir, const char *queue, const bool with_stale)
 {
+    sys_lock *lock = lock_queue(dir);
+    if (!lock) return 0;
     char name[48];
     snprintf(name, sizeof name, "sending-%u", (unsigned)sys_pid());
     char *sending = path_join(dir, name);
@@ -489,6 +515,7 @@ static int send_queued(const char *dir, const char *queue, const bool with_stale
     if (!l.count) {
         free(t.text);
         free(sending);
+        sys_unlock(lock);
         return 0;
     }
     // What's being sent stays in this sender's file until it's done.
@@ -509,6 +536,7 @@ static int send_queued(const char *dir, const char *queue, const bool with_stale
     }
     len += (size_t)snprintf(body + len, 4, "]}");
     sys_write_file(sending, events, events_len);
+    sys_unlock(lock);
     snprintf(name, sizeof name, "body-%u.json", (unsigned)sys_pid());
     char *body_path = path_join(dir, name);
     char *data = malloc(strlen(body_path) + 2);
@@ -536,8 +564,9 @@ static int send_queued(const char *dir, const char *queue, const bool with_stale
     // wouldn't change: done. Otherwise (offline, a timeout) they wait for the
     // next command's sender, at the end of the queue, which keeps its newest.
     const bool done = code == 0 || code == 22;
-    if (!done) append_queue(dir, events, events_len);
-    sys_remove(sending);
+    // If the local queue is busy or unwritable, leave this batch for stale
+    // sender recovery instead of deleting the only remaining copy.
+    if (done || append_queue(dir, events, events_len)) sys_remove(sending);
     free(data);
     free(body_path);
     free(events);
