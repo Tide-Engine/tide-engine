@@ -1,5 +1,52 @@
 # Test infrastructure
 
+## Batched served-test output (2026-11-03)
+
+Run 41550970088's macOS shader diagnostics establish a result-delivery failure:
+the page records successful program exit at 118598 ms, but the first HTTP log
+arrives at runner time 120.455 seconds, and the log queue is still draining at
+123.670 seconds when the runner gives up. test_shell.html had queued one serial
+POST per printed line during the synchronous shader callback. The result waited
+behind all of those request/response round trips, although the assertions passed.
+
+The test shell now has one asynchronous sender. It coalesces queued lines into
+a newline-separated log body, consumes its response completely, then sends any
+lines accumulated while that request was in flight. Queued results follow the
+logs. Console/DOM output and ordering remain unchanged; the served runner's
+existing substring check for an expected line also works within a batch. A
+failed fetch or response-body read still preserves later output and changes
+the result to the recorded send failure. File pages make no requests. Browser
+flags, shader work/assertions and runtime code are unchanged.
+
+tide_web_test_shell runs the actual shell script under Node with controlled
+fetch responses. Its seven checks cover a 5000-line burst in one log request,
+exact text/order (including Unicode, embedded newlines and HTML-like text),
+arrivals during response-body backpressure before the pending result, fetch
+and response-body failures, abort, file-page output, and a result without any
+printed lines. The previous shell fails the burst/coalescing checks.
+
+The successful shader page completed at 118.598 seconds on its own clock,
+close to the nominal 120-second WebGL budget; another successful hosted run
+took 114.26 seconds. This is a correctness fixture on software rendering, not a performance
+threshold. SERVED now honors an explicit SECONDS while retaining 120 by default,
+so only the shader WebGL test gains its already-declared 240-second software
+budget, matching its WebGPU sibling, with a 290-second outer guard. Other
+registrations keep their budgets. The batching fixes the observed delivery
+backlog; the budget change separately allows slower hosted execution. Neither
+changes shader work, assertions or the shared runner's diagnostic-grace policy.
+
+Local validation: all seven Node regressions pass, and the previous shell fails
+the burst/coalescing cases. A real served page prints 5000 lines in exact order,
+matches EXPECT against the final line within the batch, and delivers success
+in 0.964 seconds. The shader WebGL, D3D11/file and WebGPU CTests pass in 27.38,
+42.99 and 24.76 seconds, respectively; these runs still used the stricter initial
+WebGL budget. Rendered CTest metadata confirms the later budget change affects
+only tide_platform_shaders. An isolated registration check confirms served
+defaults of 120/170 seconds and explicit 240/290 (result/outer guard), while
+WebGPU's unspecified 100/150 and D3D11's 150-second guard remain unchanged.
+Validation uses Node 24.22.1 and muted Chrome 156.0.8078.79. The whitespace diff
+passes. Hosted macOS confirmation remains the next normal push's coverage.
+
 ## File-browser early-exit diagnostics (2026-11-03)
 
 Run 41547870181's bench_forest_d3d11 failed in 0.88 seconds with no page
@@ -36,15 +83,15 @@ only signals the main Chrome process after receiving the DOM. The logs cannot
 distinguish a busy shader callback from delayed DOM output or browser shutdown.
 
 Only tide_platform_shaders opts into tide_add_web_test's SERVED WebGL path.
-It reuses run_web_served_test.mjs with the same SwiftShader backend and a
-nominal 120-second result budget. The existing runner records page/crash/network
-diagnostics and closes Chrome through Browser.close; its outer CTest guard is
-170 seconds, allowing the same 50 seconds for diagnostics/cleanup as the
-WebGPU tests. Shader work and assertions are unchanged. D3D11 remains a file
-page, and WebGPU retains its nominal 240-second result budget. The shared
+Its initial routing reused run_web_served_test.mjs with the same SwiftShader
+backend and a nominal 120-second result budget, plus 50 seconds for diagnostics/
+cleanup. The batching follow-up above gives it the explicit 240-second budget.
+The existing runner records page/crash/network diagnostics and closes Chrome
+through Browser.close. Shader work and assertions are unchanged. D3D11 remains
+a file page, and WebGPU retains its nominal 240-second result budget. The shared
 runner can accept a result arriving during timeout diagnostics; this change
 retains that existing grace instead of adding a different deadline policy.
-SECONDS continues to configure WebGPU only; no other fixture opts into SERVED.
+No other fixture opts into SERVED.
 
 Serving also enables cross-origin isolation/shared WASM memory and uses real
 time instead of virtual time. The fixture's tick/frame calls are explicit, so

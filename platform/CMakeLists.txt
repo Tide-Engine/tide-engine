@@ -151,6 +151,7 @@ install(DIRECTORY include/tide DESTINATION include COMPONENT tide)
 install(FILES web/shell.html DESTINATION web COMPONENT tide)
 if(TIDE_NODE)
     add_test(NAME tide_web_runtime COMMAND "${TIDE_NODE}" --test "${PROJECT_SOURCE_DIR}/cmake/web_runtime.test.mjs")
+    add_test(NAME tide_web_test_shell COMMAND "${TIDE_NODE}" --test "${PROJECT_SOURCE_DIR}/cmake/web_test_shell.test.mjs")
 endif()
 if(TIDE_WEB)
     set(TIDE_PACKAGE_LIBS lib/web)
@@ -552,7 +553,7 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_platform_shaders SHELL web/test_shell.html)
         # Keep diagnostics for this long WebGL fixture and close Chrome gracefully.
-        # Its WebGPU passes take CI's macOS runner 65-90 seconds, and longer beside other tests.
+        # WebGL took 118.6 seconds on macOS; both software backends use the 240-second budget.
         tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders SERVED WEBGPU EXPECT "renderer: WebGPU" D3D11
             SECONDS 240)
     else()

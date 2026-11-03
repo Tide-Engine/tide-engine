@@ -1,4 +1,4 @@
-# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [SERVED] [WEBGPU [EXPECT <text>] [SECONDS <n>]] [D3D11])
+# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [SERVED] [WEBGPU [EXPECT <text>]] [SECONDS <n>] [D3D11])
 #
 # Web builds: adds a test that opens <target>'s page in headless Chrome or Edge
 # and passes if the page exits with 0. It draws with WebGL 2 (backend=webgl in
@@ -9,8 +9,8 @@
 # does. The test is skipped if no browser is found.
 # SERVED runs the WebGL test in real time through the existing served runner,
 # with streamed output and graceful browser shutdown. Its nominal result budget
-# is 120 seconds, with another 50 for the runner's existing diagnostics/cleanup.
-# D3D11 stays a file-page run; SECONDS remains the WebGPU result deadline.
+# is 120 seconds unless SECONDS is given, with another 50 for the runner's
+# existing diagnostics/cleanup. D3D11 stays a file-page run.
 #
 # With WEBGPU, it also adds <name>_webgpu, labelled webgpu: the same page
 # drawing with WebGPU (backend=webgpu, which fails rather than falls back to
@@ -56,10 +56,15 @@ function(tide_add_web_test name)
         set(webgpu_query "${ARG_QUERY}&${webgpu_query}")
     endif()
     if(ARG_SERVED)
+        set(served_seconds 120)
+        if(ARG_SECONDS)
+            set(served_seconds "${ARG_SECONDS}")
+        endif()
+        math(EXPR guard "${served_seconds} + 50")
         add_test(NAME ${name}
             COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}" "${page}"
-                "${CMAKE_CURRENT_BINARY_DIR}/${name}-browser" "${query}" --seconds 120)
-        set_tests_properties(${name} PROPERTIES TIMEOUT 170)
+                "${CMAKE_CURRENT_BINARY_DIR}/${name}-browser" "${query}" --seconds ${served_seconds})
+        set_tests_properties(${name} PROPERTIES TIMEOUT ${guard})
     else()
         add_test(NAME ${name}
             COMMAND "${CMAKE_COMMAND}"
