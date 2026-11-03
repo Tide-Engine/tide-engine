@@ -1,5 +1,14 @@
 # Runtime written by Claude for now
 
+## Build code's constant lists (2026-11-03)
+
+Under the pack maintenance exception, the owner-approved build code (docs/spec.md, Build code) adds one pack
+writer, `tide_pack_values` (tide/pack.h, engine/src/pack.c): a list block of `count` plain elements, the header's
+count and room set to `count`, shared by a content hash the caller makes cover the element size. Only tidec calls
+it, for a constant `List<T>` build code made; generated code loads that block with the existing
+`tide_pack_find` and `tide_pack_handle`, as an asset `List<byte>`. No loader, format version, generated runtime
+call or match state changes. Details: notes/assets-and-files.md, Build code.
+
 ## Presentation correction clock boundary (2026-11-03)
 
 The generated host table adds optional `age_views(local, seconds)`, implemented

@@ -1,5 +1,116 @@
 # Assets and local files
 
+## Build code (2026-11-03)
+
+Assets and constants made by Tide code that runs while the game builds (docs/spec.md, Build code; user page
+docs/game/build-code.md). The owner's decisions are in the spec's Decided; everything below is how it's built, and
+each choice beyond those decisions is Provisional there.
+
+**Front end.** `build` is a declaration word before a function (parser.c's modifier loop; `is_decl_word`). An
+`asset` takes a block after its path or in place of one, and a `const` a block in place of its value (parse_asset,
+parse_const). The checker makes each asset's and constant's code a function of its own, `TideBuild_<name>`, in the
+owner's namespace and in no name table, so nothing can call it by name (build_check.inc, build_function):
+`void TideBuild_hero(mut <editable> hero)`, plus `mut List<MeshLevel> levels` for a mesh. A constant whose value
+calls something that isn't constant (build_calls) gets a body of one assignment. Each owner is in
+`program.build_roots`, with `decl.build_fn`, and its function has `build_owner`. Assets with code and no path have
+no files: `check_asset_decl` skips resolving and `k->asset` stays NULL until the code runs.
+
+- Editable forms (build_editable): the asset's own type for text, bytes, `Grid2<Color>` and `Mesh<V>`;
+  `Grid2<Color>` for a `Texture`; the built-in `ClipData` for a `Clip`. A list or map of a glob's files, a cubemap,
+  a skinned mesh and the animation types are refused with a message naming what can have code.
+- `ClipData { int rate; int channels; List<float> samples; }` and `MeshLevel { List<int> indices; float error; }`
+  are built-in structs made in `add_builtins` but only joined to the program, with their fields resolved, when an
+  asset's code needs them (build_struct_ready), gated in codegen as `Sound` is (builtin_struct_unnamed). As
+  ordinary built-ins they made `List<float>`/`List<int>` in every game, renumbering every game's lists, and shifted
+  the declaration count built-in async helpers are named by (`tide_async_builtin_<name>_<count>`); the codegen
+  diff below caught both.
+- `build` functions may take grids, `mut` or not, and stay CPU code (check_signature); they may take a `mut` Mesh.
+  Other functions keep the existing grid and mesh refusals.
+- `check_build_code` (after `check_workers`) walks each build function's calls (c->calls) and refuses what needs a
+  running game (build_effect: drawing, audio, frame time, I/O, worlds, acts, tasks/async/workers, the match's random
+  numbers or seed, devices, queries, GPU/audio-only code, and extern C), reporting at the owner or the `build` word
+  with a note at the callee. A call site whose callee is a user `build` function and whose caller isn't build code
+  is an error at the call.
+- Built constants: `is_constant` treats a constant build code makes as constant only where assets are
+  (`assets_constant`), so a value naming one becomes build code too and constant-only places refuse it
+  (use_constant's message; a `case` label's note). GPU code reading one is refused. `constant_type(..., built)`
+  admits `List<T>`, and build_constant_type_ok limits it to plain elements. Asset paths still resolve before
+  constants that build code makes are known, so a built `const string` can't be a path.
+- `warn_unused_params` skips the made functions: what they're given is what they make.
+
+**Codegen.** `generating_build` (codegen_options.build_program) makes the game's C into the program that runs
+build code. `cpu_routine` emits `build` functions only there; in the game they're left out. Extern C functions and
+C systems are `{ abort(); }` stubs there, as the program links none of the game's C and build code calls none. Its
+pack has, beside the game's assets, each Texture's pixels as a grid and each Clip's decoded samples
+(build_pack_sources, under `<name>#build`; a clip's entry has its rate in `size` and channels in `extra`). Assets
+with code and no file aren't looked up there. Its main (build_codegen.inc, gen_build_main) loads the pack, makes
+TIDE_IN_MATCH a heap of its own (grids are written only in a world's heap; lists and text live in scratch), and for
+each root in order writes `u32 index` then its value's blobs (u64 size, bytes): one for text, bytes and constants,
+two for images (`int32 w, h`, then `tide_color` cells row by row) and clips (`int32 rate, channels`, then floats),
+three for meshes (vertices as the struct lays them out, `int32` indices, then levels: `float error, int32 n, n
+indices` each). After a root it sets the asset's or constant's global, so later roots read what it made.
+
+In the game: a plain built constant is `static const union { uint8_t bytes[N]; T value; } tide_const_X` with its
+bytes, read as `(tide_const_X.value)`, which C folds; text is a `static const tide_str` over a C string literal; a
+list is a hidden asset (asset_kind ASSET_VALUES), packed by the new `tide_pack_values` (a list block of `count`
+elements, `h->a = h->b = count`, kind TIDE_PACK_BYTES, shared by a hash that covers the element size) and loaded
+as `(tide_list){tide_pack_handle(e)}` (asset_decl_pack_kind). Built assets go through the pack as files do:
+`asset_match.built` meshes pack their vertex bytes directly (built_mesh derives positions/normals/UVs/colors for
+`[LOD]` from the fields a file would fill) and skip the vertex-default pass; their own levels become the
+`tide_mesh_levels` an `[LOD]` mesh has, around an AABB-centred ball of the vertices, multiplier 1. A Texture's
+pixels take the ordinary premultiply/`[Raw]`/compression path; a Clip is a float32 WAV (audio_float_wav).
+Asset dependency walks don't follow a built constant's value, and `game_info.assets_affect_match` is set when a
+game has built constants, so `tide run` rebuilds rather than repacks when their files change.
+
+**Running it** (build_code.c). `build_code_run` keys each root with `program_build_key` (asset_usage.c: the canonical
+graph hash program_simulation_id uses, from the root, so its code, everything it reaches, the files it reads and
+other roots it reads; plus tidec's version and runtime identity) and orders roots so what one reads runs first (a
+cycle is an error). `declaration()` now queues `build_fn` and hashes `built` values, so simulation identity covers
+both. When every key is in the in-process memo or the asset cache (`asset_cache_*`, kind-less keys, in the game's
+`.tide/assets/imports`, or under the output folder for tidec without `--game`), the values are applied
+(apply: validation, then asset values and `decl.built`). Otherwise it runs codegen in build mode into
+`<folder>/.tide/build-code/`, compiles the engine's sources once per compiler, flags and source contents
+(`engine-<hash>/`, up to 8 compiles at once, below normal priority on Windows), compiles and links `build.c` with
+them (`-std=c17 -O1 -fno-fast-math -ffp-contract=off -w`, the include folder and the tools' flags), runs it with a
+ten-minute limit, keeps each whole root it wrote, and asks compile.c to compile the game again from its sources
+(codegen changed the program), which then finds every value. A second miss is an error rather than a loop.
+Processes are started directly (CreateProcessA with Microsoft's quoting, posix_spawnp), output to a log file
+whose last lines become notes.
+
+The tools come from codegen_options: `build_cc` (NULL-terminated command), `build_flags` (compile and link),
+`build_libs` (link only), `build_include`, `build_engine`. tidec's flags are `--build-cc`, `--build-flag`,
+`--build-lib`, `--build-include`, `--build-engine`. `tide_add_game` passes `TIDE_CLANG` (else CMAKE_C_COMPILER), so
+cross builds run it natively, and the engine's folders. The CLI (build.c, generate) passes its compiler (`tide cc`
+with clang built in), the native target and sysroot on Windows (MinGW, with `-nodefaultlibs`, the native libraries
+and the builtins archive), and the installation's `include/` and `src/engine/`, whatever the game's target. The
+language server only checks, so it never runs build code; inspection modes (`--schedule` and the rest) don't
+either.
+
+**Tests.**
+- `tidec_e2e_build_code` (e2e/build_code.tide, build_code_c.c, build_code_test.c): every editable kind from a file
+  and from nothing, a texture's pixels, a clip from code and one from a file, a mesh doubled with a field the code
+  set, its own levels read back through `tide_pack_list_levels`, plain/text/list/struct constants, a constant from
+  an asset's code's value, code reading another root's value, and match code calling the game's own C, which the
+  build program links without.
+- `tidec_error_build_*` (errors/): a runtime call of a build function, rolling, a glob with code, a built constant
+  as a case label, `build` before a struct, a build function calling C, and spawning.
+- `tidec_build_error_*` (build_errors/, expect_error.cmake with BUILD_CC/BUILD_INCLUDE/BUILD_ENGINE): what only
+  running finds: an image with no size, a triangle past the vertices, a NaN sample, errors out of order, and `[LOD]`
+  with the code's own levels.
+- The CLI path was run by hand with a scratch installation (this checkout's `tide.exe`, the engine's headers and
+  sources, the installed MinGW sysroot): `tide build` ran the program through MinGW and linked the game.
+- Codegen diff: all 459 `.sources` games under build/sanitize (the repo's and the prototypes'), generated by the base
+  and the new tidec with `--no-line`, are the same but for the simulation identity (`TIDE_SIMULATION_ID` and the
+  `.simulation` bytes), which the compiler's own sources are part of.
+- Web: `tidec_e2e_build_code` passes under web-debug (its build code run natively by the host tidec).
+- Unchanged suites run: every tidec error and warning test, the diagnostics front end and the language server's
+  (2218), and the CLI's (20).
+
+**Gaps.** No C in build code; no animation, skinned mesh, cubemap or glob code; built constants in GPU code; no
+memory limit; the whole game's C is compiled into the program when any root misses, so a big game pays its compile
+then (later builds hit the cache unless build code's graph changes). Web and Android test runs of the e2e fixture
+are CI's for Android, and Linux and macOS run them in CI.
+
 ## Persistent build-time asset imports (2026-11-03)
 
 Owner requested faster fresh `tide run` launches after progress feedback exposed

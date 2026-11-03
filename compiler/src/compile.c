@@ -7,6 +7,7 @@
 
 #include "builtins.h"
 #include "asset_files.h"
+#include "build_code.h"
 #include "lexer.h"
 
 static char *read_file(const char *path, size_t *len)
@@ -180,6 +181,22 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;
     if (!check(prog)) return false;
+    // What build code makes (build_code.h): found, or made by running it and then found as the game compiles again
+    if (!schedule && !opts->declarations_only && !opts->build_program && prog->build_roots.count) {
+        static int again_depth;
+        bool again = false;
+        if (!build_code_run(prog, opts, &again)) return false;
+        if (again) {
+            if (again_depth) {
+                diag_error(prog->build_roots.items[0]->at, "build code ran, and what it made isn't found: build the game again");
+                return false;
+            }
+            again_depth++;
+            const bool ok = compile_inputs_impl(inputs, count, opts, schedule);
+            again_depth--;
+            return ok;
+        }
+    }
 
     codegen_options named = *opts;
     if (!named.name) named.name = path_stem(inputs[0].path);

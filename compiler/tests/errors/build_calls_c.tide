@@ -1,0 +1,5 @@
+// expect: build function 'Bake' can't call C yet
+extern float Noise(float x);
+build float Bake(float x) { return Noise(x); }
+const float BAKED = Bake(1);
+scene Main { }

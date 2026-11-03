@@ -1,5 +1,13 @@
 # `tide_add_game` and the generated header
 
+## Build code's tools (2026-11-03)
+
+`cmake/Tide.cmake` sets `TIDE_BUILD_CODE_FLAGS` once: `--build-cc` (`TIDE_CLANG`, the toolchain's own clang, else
+`CMAKE_C_COMPILER`, so a cross build's target flags don't reach it), `--build-include` and `--build-engine` (the
+engine's folders). Every `tide_add_game` tidec command passes them, so a game with build code builds in any
+preset; one without it never compiles anything with them. tidec keeps the program and what it made under the
+game's output folder (`.tide/`), as it has no `--game` there. Details: notes/assets-and-files.md, Build code.
+
 ## Retarget baking dependencies (2026-10-30)
 
 `tide_add_game` passes `tidec --depfile <name>.d` and consumes it through

@@ -1,0 +1,13 @@
+// expect: 'LIMIT' is made by build code: its value is the build's, which isn't known while compiling
+int Three() { return 3; }
+const int LIMIT = Three();
+singleton Score { int value; }
+system Pick(mut Score score)
+{
+    switch (score.value)
+    {
+        case LIMIT: score.value = 0; break;
+        default: break;
+    }
+}
+scene Main { }

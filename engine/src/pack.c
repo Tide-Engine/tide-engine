@@ -101,6 +101,20 @@ uint64_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const 
     return at;
 }
 
+uint64_t tide_pack_values(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t element, const uint32_t count)
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_BYTES);
+    if (had) return had->offset;
+    const uint64_t bytes = (uint64_t)element * count;
+    const uint64_t at = block(b, bytes ? bytes : 1u);
+    tide_block *h = header(b, at);
+    h->a = count; // A list's count
+    h->b = count; // ...and its room
+    if (bytes) memcpy(h + 1, data, (size_t)bytes);
+    add_shared(b, content, TIDE_PACK_BYTES, at, bytes, 0);
+    return at;
+}
+
 uint64_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size, uint32_t *chars)
 {
     const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXT);

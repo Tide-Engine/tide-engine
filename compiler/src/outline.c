@@ -294,7 +294,7 @@ void print_outline(const program *prog, sb *out)
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         const char *kind = kind_of(d);
-        if (!kind || d->builtin || !d->unit || !d->unit->src || d->embed_tap || d == prog->startup_create) continue;
+        if (!kind || d->builtin || !d->unit || !d->unit->src || d->embed_tap || d->build_owner || d == prog->startup_create) continue; // An asset's or a constant's code is its own declaration's
         sb_put(out, count++ ? ",\n  {" : "\n  {");
         sb_printf(out, "\"kind\": \"%s\", \"name\": ", kind);
         put_name(out, d);

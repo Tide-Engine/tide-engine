@@ -51,6 +51,16 @@ typedef struct codegen_options {
     // The game's types alone: its systems, views, handlers, functions, frags and verts are left out before checking,
     // so code that doesn't build yet doesn't keep its types from building (tide unity --declarations)
     bool declarations_only;
+    // Build code (build_code.h): how its program is compiled, which a build that has none can't run. The C compiler,
+    // as a command (NULL-terminated: {"clang"}, or {"tide", "cc"}), with flags for every compile and link (a target,
+    // a sysroot) and for the link alone (its libraries), each NULL-terminated or NULL; and where the engine's
+    // headers and sources are, which the program is built with
+    const char *const *build_cc;
+    const char *const *build_flags;
+    const char *const *build_libs;
+    const char *build_include;
+    const char *build_engine;
+    bool build_program; // Instead of the game, the program that runs its build code, its main and all (build_code.c)
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

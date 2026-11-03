@@ -218,6 +218,7 @@ tide_e2e_test(asset_defaults) # A field's default that names an asset: the match
 tide_e2e_test(mesh_values)
 tide_e2e_test(mesh_decode) # Mesh<V>.Decode: a file's bytes in match code, the vertices its asset has
 tide_e2e_test(mesh_runtime) # Mesh(vertices, indices): static meshes a game makes, values beside assets', drawn by their key
+tide_e2e_test(build_code SOURCES e2e/build_code.tide e2e/build_code_c.c) # Assets and constants build code makes, read by match code and the pack
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(lod_generated) # Levels of detail for meshes a game makes (`lod:`), made in the background and kept by contents
@@ -606,6 +607,22 @@ foreach(source IN LISTS TIDE_ERROR_TESTS)
             "-DTIDEC=${TIDEC_PATH}"
             "-DSOURCE=${source}"
             "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/errors"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_error.cmake")
+endforeach()
+
+# Build code's errors that only running it finds (docs/spec.md, Build code): as the error tests, with the compiler and
+# the engine's sources it's built with. Each has a folder of its own, where its program is kept.
+file(GLOB TIDE_BUILD_ERROR_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/build_errors/*.tide")
+foreach(source IN LISTS TIDE_BUILD_ERROR_TESTS)
+    get_filename_component(name "${source}" NAME_WE)
+    add_test(NAME tidec_build_error_${name}
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTIDEC=${TIDEC_PATH}"
+            "-DSOURCE=${source}"
+            "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/build_errors/${name}"
+            "-DBUILD_CC=${TIDE_BUILD_CC}"
+            "-DBUILD_INCLUDE=${PROJECT_SOURCE_DIR}/engine/include"
+            "-DBUILD_ENGINE=${PROJECT_SOURCE_DIR}/engine/src"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_error.cmake")
 endforeach()
 

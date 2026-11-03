@@ -819,6 +819,14 @@ typedef struct decl {
     bool is_worker;      // `local worker`: owned calculation, awaited by local tasks
     bool uses_workers;   // Awaits a worker, directly or in an awaited task
     loc worker_at;
+    // Build code (docs/spec.md, Build code): a `build` function runs only while the game builds. An asset or a
+    // constant made by code has a function of its own (build_fn), which tidec makes from its body or its value:
+    // `void <name>(mut T <name>)`, T its editable form. Its result (built) is what the game is built with.
+    bool is_build;        // `build`, or a function tidec made for an asset's or a constant's code
+    loc build_at;         // ...the word, or the declaration it was made for
+    struct decl *build_fn;    // An asset or a constant: the function that makes its value, or NULL
+    struct decl *build_owner; // That function: the asset or constant it makes
+    struct build_value *built; // An asset or a constant: what its code made, once it has run (build_code.h)
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
     int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
     int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1
@@ -1642,6 +1650,9 @@ typedef struct program {
     // The engine's settings for the game (builtins.h), from `settings { ... }`
     VEC(decl *) settings;      // Each block written: a game's are one list, a setting set once among them
     VEC(decl *) assets;        // Every asset declaration, in source order: what the pack holds
+    VEC(decl *) build_roots;   // The assets and constants build code makes (decl.build_fn), as the checker found them
+    decl *clip_data;           // ClipData: a Clip as an asset's build code edits it (docs/spec.md, Build code)
+    decl *mesh_level;          // MeshLevel: a level of detail a mesh asset's build code makes
     const char *game_folder;   // Where the game's .tide/ is (tide says; NULL for tidec on its own): asset hashes and fetched URLs are kept there
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set
     float max_rewind;

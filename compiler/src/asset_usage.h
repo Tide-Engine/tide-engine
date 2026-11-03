@@ -13,3 +13,7 @@ void program_strip_server_assets(program *prog);
 // Canonical checked simulation graph; independent of source paths and local code.
 // Returns whether the simulation reads assets (watched edits need regeneration).
 bool program_simulation_id(const program *prog, uint8_t out[32], bool conservative_assets);
+// Build code (build_code.c): the canonical graph of what makes `root`'s value (an asset or a constant build code
+// makes), its code and everything that reads, its files' contents included, hashed: what it made is the same while
+// this is. *reads gets the other assets and constants build code makes that it reads (arena memory), which run first.
+void program_build_key(const program *prog, const decl *root, uint8_t out[32], const decl ***reads, int *read_count);

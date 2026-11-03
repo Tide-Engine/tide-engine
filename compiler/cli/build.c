@@ -2352,7 +2352,38 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     sb outline = {0}, shaders = {0};
     free(b->views);
     b->views = debug_views(b->opts) ? format("%s", gen, NULL) : NULL;
+    // Build code's program (compiler/src/build_code.h) is this machine's, whatever the game's target: built as a
+    // native game's C is, with the engine's sources, and run as the game builds
+    const char *build_cc[3] = {b->compiler, NULL, NULL};
+#ifdef TIDE_EMBEDDED_CLANG
+    build_cc[1] = "cc";
+#endif
+    char *engine_src = path_join(b->root, "src/engine");
+#ifdef _WIN32
+    char *native_sysroot = format("--sysroot=%s/" NATIVE_RUNTIME "/sysroot", b->root, NULL);
+    char *native_builtins = format("%s/" NATIVE_RUNTIME "/libclang_rt.builtins-x86_64.a", b->root, NULL);
+    const char *native_flags[] = {NATIVE_TARGET, native_sysroot, NULL};
+    VEC(const char *) native_link = {0};
+    vec_push(native_link, "-fuse-ld=lld");
+    vec_push(native_link, "-nodefaultlibs");
+    for (int i = 0; native_libs[i]; i++) vec_push(native_link, native_libs[i]);
+    vec_push(native_link, native_builtins);
+    vec_push(native_link, NULL);
+    const char *const *build_libs = native_link.items;
+#else
+    char *native_sysroot = NULL, *native_builtins = NULL;
+    const char *const *native_flags = NULL;
+    VEC(const char *) native_link = {0};
+#ifdef TIDE_EMBEDDED_CLANG
+    vec_push(native_link, "-fuse-ld=lld");
+#endif
+    for (int i = 0; native_libs[i]; i++) vec_push(native_link, native_libs[i]);
+    vec_push(native_link, NULL);
+    const char *const *build_libs = native_link.items;
+#endif
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
+                                     .build_cc = build_cc, .build_flags = native_flags, .build_libs = build_libs,
+                                     .build_include = b->include, .build_engine = engine_src,
                                      .visualizers = b->views != NULL,
                                      .embed = b->opts->unity, .externs = &b->externs,
                                      .outline_to = b->opts->unity ? &outline : NULL,
@@ -2371,6 +2402,9 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
     if (!ok) telemetry_fail(TELEMETRY_ERROR_COMPILE);
     free(editor_text);
+    free(engine_src);
+    free(native_sysroot);
+    free(native_builtins); // native_link is the arena's
     if (ok) {
         free_asset_paths(&b->info);
         b->info = next_info;

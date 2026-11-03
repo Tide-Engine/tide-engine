@@ -1,0 +1,5 @@
+// expect: 'Twice' is a build function: it runs only while the game builds, so only build code calls it
+build float Twice(float x) { return x * 2; }
+singleton Score { float value; }
+system Grow(mut Score score) { score.value = Twice(score.value); }
+scene Main { }

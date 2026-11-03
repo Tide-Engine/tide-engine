@@ -522,6 +522,10 @@ asset string credits = "https://example.com/credits.txt";
 
 What was fetched is kept in the game's `.tide/`, with the server's ETag. Each build asks the server whether the file changed, and builds from what it has when the server can't be reached, so an offline build works once the file was fetched once. A URL that can't be fetched and was never cached is an error.
 
+## Assets made by code
+
+An asset can have code that runs while the game builds, which edits what its file has or makes it from nothing: `asset Texture hero = "art/hero.png" { Outline(hero, Color.black); }`. See [Build code](./build-code.md).
+
 ## What's checked
 
 Anything wrong that can be known as the game is built is an error at the declaration, in the editor as you type and in `tide build` alike:

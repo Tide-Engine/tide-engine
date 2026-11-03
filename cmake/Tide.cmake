@@ -81,6 +81,16 @@ add_library(tide_font_bold STATIC "${TIDE_FONT_BOLD_C}")
 
 set(TIDE_GAMES_MANIFEST "${PROJECT_SOURCE_DIR}/build/tools/games.txt")
 set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
+# Build code (docs/spec.md, Build code): tidec compiles the program that runs a game's build code with the machine's
+# own clang (the one the toolchain found, which a cross build's target flags don't reach) and the engine's sources.
+if(TIDE_CLANG)
+    set(TIDE_BUILD_CC "${TIDE_CLANG}")
+else()
+    set(TIDE_BUILD_CC "${CMAKE_C_COMPILER}")
+endif()
+get_filename_component(_tide_engine_dir "${CMAKE_CURRENT_LIST_DIR}/../engine" ABSOLUTE)
+set(TIDE_BUILD_CODE_FLAGS --build-cc "${TIDE_BUILD_CC}" --build-include "${_tide_engine_dir}/include"
+    --build-engine "${_tide_engine_dir}/src")
 
 # A game's C++ is the language alone, as tide builds it (cpp_flags in
 # compiler/cli/build.c): no standard library, exceptions or RTTI, since tide
@@ -368,6 +378,7 @@ function(tide_add_game target)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" "-DSTRIP_NAMES=${strip_names}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${tidec_out_dir}" --name "${name}" --depfile "${out_depfile}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
+               ${TIDE_BUILD_CODE_FLAGS}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${asset_list}" "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         DEPFILE "${out_depfile}"
         WORKING_DIRECTORY "${tidec_working_dir}"
