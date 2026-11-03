@@ -33,6 +33,45 @@
 
 #define WORK "sys_test_out"
 
+TIDE_TEST(cli_terminal_lines_preserve_boundaries_and_final_partial_line)
+{
+    FILE *input = tmpfile();
+    TIDE_REQUIRE(input != NULL);
+    char long_line[301];
+    memset(long_line, 'a', sizeof long_line - 1);
+    long_line[sizeof long_line - 1] = '\0';
+    fprintf(input, "r\r\n\n%s\ntail", long_line);
+    rewind(input);
+    const int saved = test_dup(test_fileno(stdin));
+    TIDE_REQUIRE(saved >= 0);
+    TIDE_REQUIRE(test_dup2(test_fileno(input), test_fileno(stdin)) >= 0);
+    clearerr(stdin);
+    sys_read_lines();
+    char first[256], rest[46];
+    memset(first, 'a', sizeof first - 1);
+    first[sizeof first - 1] = '\0';
+    memset(rest, 'a', sizeof rest - 1);
+    rest[sizeof rest - 1] = '\0';
+    const char *expected[] = {"r", "", first, rest, "tail"};
+    size_t count = 0;
+    const int64_t deadline = sys_now_ms() + 5000;
+    while (sys_now_ms() < deadline) {
+        char line[256];
+        if (sys_typed_line(line, sizeof line)) {
+            TIDE_CHECK(count < sizeof expected / sizeof expected[0]);
+            if (count < sizeof expected / sizeof expected[0]) TIDE_CHECK(strcmp(line, expected[count]) == 0);
+            count++;
+        } else if (sys_input_ended()) break;
+        else sys_sleep_ms(1);
+    }
+    TIDE_CHECK(sys_input_ended());
+    TIDE_CHECK(count == sizeof expected / sizeof expected[0]);
+    test_dup2(saved, test_fileno(stdin));
+    test_close(saved);
+    clearerr(stdin);
+    fclose(input);
+}
+
 typedef struct activity_probe {
     atomic_int draws;
     int ended;

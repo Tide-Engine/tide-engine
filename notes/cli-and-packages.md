@@ -1,5 +1,26 @@
 # `tide`, packages and the package
 
+## POSIX watched-run shutdown (2026-11-03)
+
+Linux release CI passed 2,809/2,810 tests but hung in the overlap fixture's
+inert-host run after compilation. The detached terminal reader blocked in
+`fgets` with stdin still open; libc exit cleanup waited on its `FILE` lock after
+the host had exited. A small Linux probe using the actual `sys_read_lines`
+reproduced the main thread waiting on a futex and the reader on a pipe.
+
+The POSIX reader now reads stdin's descriptor directly, retries interrupted
+reads and preserves newline/CR trimming, 255-byte chunks, final partial lines
+and the existing atomic handoff/EOF contract. It holds no stdio lock while
+waiting, so process exit does not need terminal input. Windows retains `fgets`.
+No scheduler, host, runtime or watch policy changes. The original seven-case
+overlap fixture, assertions and timeouts remain intact.
+
+Validation: the blocked-stdin Linux probe exits successfully with the fix;
+the new terminal-boundary/EOF unit test passes on Linux and Windows ASan.
+The six focused Windows ASan CLI CTests pass (unit, run_exit, help, packages,
+hidden and build_overlap). Linux/macOS full CLI and package checks remain the
+next ordinary push run's coverage.
+
 ## Overlapping build stages (2026-11-03)
 
 The owner's edit-to-test follow-up overlaps independent engine compilation with
