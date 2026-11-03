@@ -8,6 +8,8 @@ if(NOT TIDE_WEB)
 endif()
 
 file(GLOB browser_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/compiler/src/*.c")
+# Native build-code processes have no browser host; host.c reports that limit.
+list(REMOVE_ITEM browser_sources "${PROJECT_SOURCE_DIR}/compiler/src/build_code.c")
 set(fingerprint "${CMAKE_CURRENT_BINARY_DIR}/pack_fingerprint_source.c")
 add_custom_command(OUTPUT "${fingerprint}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/compiler/src/pack_fingerprint.inc"

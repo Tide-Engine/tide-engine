@@ -38,7 +38,9 @@ This demo edits one `.tide` file with no external assets or packages. The
 engine's normal component, system and view features work here, including
 procedural drawing and shaders. Files named by an `asset` declaration must
 exist in the compiler's virtual filesystem; this page has no file upload or
-package manager. Native-only integrations are unavailable.
+package manager. Native-only integrations are unavailable. [Build code](../game/build-code.md)
+requires the installed tools; use `tide run --web` to build and preview a project
+that makes assets or constants during its build.
 
 [Hot reload](../tools/cli.md#hot-reload) carries fields over by name. New fields
 use their defaults; changing a default does not overwrite an existing field.

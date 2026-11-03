@@ -1,5 +1,24 @@
 # The docs site
 
+## Browser host and native build code (2026-11-03)
+
+Merging the new build-code feature exposed native process headers (`spawn.h`,
+signals/wait) in the browser compiler's source glob. The playground cannot run
+native executables. Its target now substitutes a host implementation of
+`build_code_run` for the native runner: programs without build roots continue
+through the same compiler, while a root gets a source diagnostic explaining the
+browser limit and pointing to `tide build` or `tide run --web`. No native build
+runner or language/checker behavior changes. This follows the existing host
+boundary that refuses native URL-fetch processes; it adds no browser execution
+service. The playground and Build code pages describe the installed-tool path.
+
+The actual merged Clang 23/WASI compiler, demo and staging import checks pass.
+All seven playground integration tests pass, including build-code refusal with
+its source location and actionable note, real texture packs and the existing
+compiler/reload/error-recovery checks. Six focused Windows ASan CLI CTests pass
+after the merge, including all eight overlap scenarios. The production docs
+build passes. Linux/macOS and final package/release validation remain CI gates.
+
 ## Browser compiler asset-cache integration (2026-11-03)
 
 The persistent importer cache exposed two missing pieces in the browser target:

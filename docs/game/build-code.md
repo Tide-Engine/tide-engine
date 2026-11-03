@@ -6,6 +6,9 @@ description: "Make and edit Tide assets and constants with code that runs while 
 
 Build code is Tide code that runs while the game builds. It makes an [asset](./assets.md) or a constant: an image with an outline drawn on it, a table of numbers, a mesh, its levels of detail, a sound. What it made goes into the build as a file's contents do, so every machine has the same value and the game spends no time on it while it runs.
 
+Build code runs through the installed tools, including when building a web game
+with `tide run --web`. The browser playground cannot run its native build program.
+
 ```csharp
 build void Outline(mut Grid2<Color> image, Color color)
 {

@@ -67,6 +67,11 @@ test('unavailable assets report a compile error instead of invoking a native pro
     await assert.rejects(compiler.compile(source + '\nasset Texture Missing("not-here.png");\n'), /not-here\.png/);
 });
 
+test('build code reports the native tool requirement in the browser host', async () => {
+    await assert.rejects(compiler.compile(source + '\nasset string made { made = "built"; }\n'),
+        /game\.tide:\d+:.*build code cannot run in the browser playground.*use tide build or tide run --web/s);
+});
+
 test('texture imports build identical packs in isolated browser filesystems', async () => {
     const png = await readFile(new URL('../../compiler/tests/e2e/assets/run/0.png', import.meta.url));
     const withAsset = new BrowserCompiler(modules, { ...files, 'texture.png': png });
