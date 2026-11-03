@@ -1,5 +1,26 @@
 # The platform layer and the renderer
 
+## GPU timing fixture waits for pass observations (2026-11-03)
+
+macOS web run 41669641001 passed 940/941 tests; `gpu_time_webgpu` missed the
+offscreen-only fallback-clear observation in its second round, despite valid
+normal pass samples. The fixture drew that case on just one frame. WebGPU's
+three busy readbacks may leave a frame untimed, and device loss discards pending
+observations, so normal samples do not imply that one particular probe arrived.
+
+The fixture now alternates ordinary and offscreen-only frames after its initial
+pixel check. Each round waits for all required observations, including two
+offscreen-only samples, or the existing 3,600-frame patience limit. The 60-frame
+minimum, outer deadlines, device-loss/reopen work, exact pass metadata checks,
+overlay exclusion and failing assertions remain. Two samples ensure that a
+single lucky probe cannot satisfy the repeated-case coverage. No renderer or
+backend behavior, timing capability or release gate changes.
+
+Validation: four focused Windows ASan CTests pass (real Vulkan/OpenGL timing,
+native GL mock and WebGPU mock), plus all three web timing CTests (WebGL,
+WebGPU and its deferred-readback mock). Builds are warning-free and browsers
+use the existing muted runners. Actual macOS confirmation remains CI coverage.
+
 ## Mesh geometry attribution (2026-11-03)
 
 Renderer mesh/shader steps retain draw-list contribution chains and collect them
