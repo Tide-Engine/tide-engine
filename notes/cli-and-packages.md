@@ -1,5 +1,26 @@
 # `tide`, packages and the package
 
+## Directory order in overlap diagnostics tests (2026-11-03)
+
+The next CI run passed native Linux/Windows, MinGW and all Linux web shards.
+macOS passed 2,809/2,810 native tests; only the overlap fixture's last case
+failed. It assumed `engine.c` preceded `zlast.c`, while `folder_find` preserves
+raw directory discovery order. macOS discovered `zlast.c` first, so reporting
+its error first was correct. Production scheduling and diagnostic order remain
+unchanged.
+
+The fixture now reads discovery order with `opendirSync` (unlike `readdirSync`,
+which sorts names), makes the second discovered engine source large enough to
+start first, and requires only the earlier source's error to be reported. A
+second case recreates the two files in reversed creation order to exercise both
+enumerations on Linux. Both cases retain the barrier, game-error suppression,
+invalid engine stamp and earlier-unstarted-job checks. No assertion or timeout
+is removed to accommodate macOS.
+
+All eight scenarios pass on Windows ASan and the freshly built Linux CLI under
+WSL with its work directory on the Linux filesystem. Node syntax and diff checks
+pass. Actual APFS enumeration remains the next push's macOS CI coverage.
+
 ## Linux overlap fixture cache path (2026-11-03)
 
 With watched shutdown fixed, Linux CI's host case reached its unchanged-object

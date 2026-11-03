@@ -1,6 +1,6 @@
 // Controlled process barriers prove overlap without speed/timing assertions.
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, opendirSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { delimiter, dirname, join, resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -70,17 +70,38 @@ try {
     const source = `asset string rules = "http://127.0.0.1:${server.address().port}/rules";\nscene Main { }\n`
         + "singleton State { int value; }\nsystem Tick(mut State state) { state.value = rules.length; }\n";
     put(join(installation, "src", "engine", "engine.c"), "// independent engine source\n");
-    for (const name of ["serial", "overlap", "host", "generation-failure", "compile-failure", "package-failure", "engine-order"]) {
+    for (const name of ["serial", "overlap", "host", "generation-failure", "compile-failure", "package-failure", "engine-order", "engine-order-reversed"]) {
         const game = join(root, name), events = join(root, `${name}-events`), gate = join(events, "release");
         mkdirSync(events);
         put(join(game, "game.tide"), source + (name === "generation-failure" ? "system Broken() { Missing(); }\n" : ""));
         if (name === "package-failure") put(join(game, "tide.packages"), "./missing\n");
-        if (name === "engine-order") put(join(installation, "src", "engine", "zlast.c"), "// large source\n".repeat(500));
+        const orderCase = name.startsWith("engine-order");
+        let firstEngine = "engine.c", earlyEngine = "engine.c";
+        if (orderCase) {
+            const folder = join(installation, "src", "engine");
+            if (name === "engine-order-reversed") {
+                rmSync(join(folder, "engine.c"));
+                rmSync(join(folder, "zlast.c"));
+                put(join(folder, "zlast.c"), "// created first\n");
+                put(join(folder, "engine.c"), "// created second\n");
+            } else put(join(folder, "zlast.c"), "// another engine source\n");
+            // folder_find uses raw directory order. readdirSync sorts names;
+            // opendirSync preserves the same enumeration as the compiler.
+            const directory = opendirSync(folder), ordered = [];
+            try {
+                for (let entry; (entry = directory.readSync());) {
+                    if (entry.isFile() && entry.name.endsWith(".c")) ordered.push(entry.name);
+                }
+            } finally { directory.closeSync(); }
+            assert.equal(ordered.length, 2);
+            [firstEngine, earlyEngine] = ordered;
+            put(join(folder, earlyEngine), "// large source\n".repeat(500));
+        }
         active = { events, jobs: name === "serial" ? 1 : 2, requested: false,
-            early: name === "engine-order" ? "zlast.c" : "engine.c" };
+            early: earlyEngine };
         const compiling = run([name === "host" ? "run" : "build", game], {
             TIDE_JOBS: String(active.jobs), TIDE_TEST_BUILD_EVENTS: events, TIDE_TEST_BUILD_GATE: gate,
-            TIDE_TEST_BUILD_FAIL: ["compile-failure", "engine-order"].includes(name) ? "engine.c zlast.c game.c" : "",
+            TIDE_TEST_BUILD_FAIL: name === "compile-failure" || orderCase ? "engine.c zlast.c game.c" : "",
             TIDE_TEST_BUILD_GATE_SOURCE: active.early,
             // Only the inert GUI fixture runs here; it loads no generated code,
             // opens no window/device, and immediately exits. Real games stay hidden.
@@ -110,11 +131,11 @@ try {
             const repaired = await run(["build", game], { TIDE_JOBS: "2", TIDE_TEST_BUILD_EVENTS: events, TIDE_TEST_BUILD_GATE: gate });
             assert.equal(repaired.code, 0, repaired.said);
             assert(existsSync(join(game, ".tide", "native-debug", "engine", "stamp")), "repair completes engine stamp");
-        } else if (["compile-failure", "engine-order"].includes(name)) {
+        } else if (name === "compile-failure" || orderCase) {
             assert.equal(result.code, 1, result.said);
-            assert.match(result.said, /fixture compile error: engine.c/);
+            assert(result.said.includes(`fixture compile error: ${firstEngine}`), result.said);
             assert(!result.said.includes("fixture compile error: game.c"), "diagnostics retain source order");
-            assert(!result.said.includes("fixture compile error: zlast.c"), "earlier unstarted engines still have their turn");
+            if (orderCase) assert(!result.said.includes(`fixture compile error: ${earlyEngine}`), "earlier unstarted engines still have their turn");
             assert(!existsSync(join(game, ".tide", "native-debug", "engine", "stamp")));
         } else if (name === "package-failure") {
             assert.equal(result.code, 1, result.said);
