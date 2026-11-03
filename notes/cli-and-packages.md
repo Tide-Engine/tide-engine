@@ -1,5 +1,51 @@
 # `tide`, packages and the package
 
+## Moving project channels and cache expiry (2026-11-03)
+
+Owner approved `tide = nightly` and `tide = stable`, with `tide pin` accepting
+both. Each occupies one installation under the shared versions cache, separate
+from the main installation and exact releases. At command startup the launcher
+checks the channel, using upgrade's existing release ordering (nightly includes
+a newer stable release), checksum and package validation. First installation
+retains download consent; selecting a channel authorizes subsequent updates.
+Offline/failed downloads reuse a whole installed release and report its exact
+version. An incomplete installation cannot run. Staging is removed after updates;
+no historical nightly installation is created for a channel.
+
+A shared process-file usage lock outside each installation covers the complete
+selected command. Exclusive updates run only while idle; another session can
+share the installed release and defers updating. A directly invoked cached CLI
+holds its own usage lock until exit and recognizes its installation to prevent
+recursive channel dispatch. The -dev and Unity package selection exceptions
+remain. Unity continues to require an exact package-matching compiler; its
+editor holds the same usage lock for selected cached compilers until reload/quit.
+
+Exact cached directories expire after 30 days without use. Startup cleanup checks
+only exact-version directories; top-level links, other folders, the main install,
+channels and active users/installers are skipped. Last-use stamps live outside
+the installations and refresh before and after commands. Legacy caches acquire
+a new 30-day grace period on first observation. Expired pins are downloaded again
+with existing consent. Lock files remain to preserve cross-process lock identity.
+No background service, runtime ABI, telemetry field or game code changes.
+
+Validation: strict warning-free Windows Clang 23.1.2 ASan builds; the seven
+focused CLI CTests and tidels_tests pass (8/8). The final version fixture passes
+after the direct cached/unpinned invocation fix, including real release CLI
+dispatch, nightly/stable pin writes, invalid pin refusal, concurrent channel
+sharing/update deferral, consent, checksum/offline fallback, last-use expiry,
+legacy grace, active exact-version protection and symlink/junction boundaries.
+It exercises both host commands and --web forwarding without running a game.
+Unity 6000.6.0f1 VersionTests passes 12 tests in a scratch Sample under
+TIDE_HIDDEN/batchmode/nographics/noAudio; one existing ABI-5-host test is ignored
+because that unrelated fixture was not supplied. Editor lock exclusion/release
+and last-use refresh pass. Node 24.22.1 docs production build and diff checks
+pass; the docs retain existing allowed unstaged-game-page 404s. Release-dispatch
+checks used an isolated 0.6.0-nightly.999 build; no user toolchain was installed
+or project pin changed. Linux/macOS (including Unity's flock path), embedded
+LLVM packaging and real game execution remain CI/manual coverage. No WASM/runtime
+code changed, so separate web runtime suites are not applicable.
+
+
 ## Steady progress rows and active filenames (2026-11-03)
 
 `line_draw_pair` overwrites both rows and erases only their remaining tails,

@@ -284,3 +284,20 @@ TIDE_TEST(a_locked_file_is_one_process_holders_at_a_time)
     if (beside) sys_unlock(beside);
     sys_remove_tree(WORK);
 }
+
+TIDE_TEST(shared_file_users_exclude_replacement)
+{
+    TIDE_REQUIRE(sys_mkdirs(WORK));
+    sys_lock *a = sys_lock_shared_file(WORK "/shared.use");
+    sys_lock *b = sys_lock_shared_file(WORK "/shared.use");
+    TIDE_REQUIRE(a && b);
+    TIDE_CHECK(sys_lock_file(WORK "/shared.use") == NULL);
+    sys_unlock(a);
+    TIDE_CHECK(sys_lock_file(WORK "/shared.use") == NULL);
+    sys_unlock(b);
+    sys_lock *exclusive = sys_lock_file(WORK "/shared.use");
+    TIDE_REQUIRE(exclusive);
+    TIDE_CHECK(sys_lock_shared_file(WORK "/shared.use") == NULL);
+    sys_unlock(exclusive);
+    sys_remove_tree(WORK);
+}

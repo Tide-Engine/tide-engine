@@ -32,6 +32,7 @@ public class VersionTests
     [TearDown]
     public void Clean()
     {
+        TideVersions.ReleaseUses();
         Environment.SetEnvironmentVariable("TIDE_RELEASES_SITE", savedSite);
         Environment.SetEnvironmentVariable("TIDE_VERSIONS", savedVersions);
         var kept = Path.Combine(TideLibrary.BuildFolder, "version.json");
@@ -258,6 +259,20 @@ public class VersionTests
         Assert.AreEqual(1, Directory.GetDirectories(versions).Length, "no unpacking's folder left");
         // Another beside it doesn't touch it
         Assert.IsTrue(File.Exists(made));
+    }
+
+    [Test]
+    public void ASelectedCompilerIsKeptWhileTheEditorUsesIt()
+    {
+        Publish(Version);
+        Assert.IsNotNull(TideVersions.Install(Version, null, out var error), error);
+        var usage = Path.Combine(versions, $".{Version}.use");
+        Assert.Throws<IOException>(() => { using var exclusive = new FileStream(usage, FileMode.Open, FileAccess.ReadWrite, FileShare.None); });
+        Assert.Greater(long.Parse(File.ReadAllText(Path.Combine(versions, $".{Version}.last-used"))), 0);
+        File.WriteAllText(Path.Combine(versions, $".{Version}.last-used"), "1");
+        TideVersions.ReleaseUses();
+        Assert.Greater(long.Parse(File.ReadAllText(Path.Combine(versions, $".{Version}.last-used"))), 1);
+        using var released = new FileStream(usage, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
     }
 
     [Test]

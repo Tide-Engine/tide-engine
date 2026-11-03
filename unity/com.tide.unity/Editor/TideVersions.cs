@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -25,6 +27,67 @@ namespace Tide.Editor
     // by the session's -tide-command argument, on PATH or installed is its.
     public static class TideVersions
     {
+        static readonly Dictionary<string, FileStream> uses = new Dictionary<string, FileStream>();
+
+        static TideVersions()
+        {
+            AssemblyReloadEvents.beforeAssemblyReload += ReleaseUses;
+            EditorApplication.quitting += ReleaseUses;
+        }
+
+        [DllImport("libc", EntryPoint = "flock", SetLastError = true)]
+        static extern int Flock(int fd, int operation);
+
+        // Same shared usage lock as the CLI. Keep selected compilers throughout
+        // this editor session; a domain reload releases and reacquires them.
+        internal static void ReleaseUses()
+        {
+            lock (uses)
+            {
+                foreach (var use in uses)
+                {
+                    try { Used(use.Key.Substring(0, use.Key.Length - 4) + ".last-used"); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                    finally { use.Value.Dispose(); }
+                }
+                uses.Clear();
+            }
+        }
+
+        static bool Keep(string version)
+        {
+            var path = Path.Combine(Root, $".{version}.use");
+            lock (uses)
+            {
+                if (!uses.ContainsKey(path))
+                {
+                    FileStream file = null;
+                    try
+                    {
+                        Directory.CreateDirectory(Root);
+                        file = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Read, FileShare.Read);
+                        if (Application.platform != RuntimePlatform.WindowsEditor &&
+                            Flock(file.SafeFileHandle.DangerousGetHandle().ToInt32(), 1 | 4) != 0)
+                        {
+                            file.Dispose();
+                            return false;
+                        }
+                        uses.Add(path, file);
+                    }
+                    catch (IOException) { file?.Dispose(); return false; }
+                    catch (UnauthorizedAccessException) { file?.Dispose(); return false; }
+                }
+                try { Used(Path.Combine(Root, $".{version}.last-used")); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                return true;
+            }
+        }
+
+        static void Used(string path) => File.WriteAllText(path,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
+
         static readonly Regex Tag = new Regex(@"^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$");
 
         static string Site => (Environment.GetEnvironmentVariable("TIDE_RELEASES_SITE") ?? "https://tide-engine.dev").TrimEnd('/');
@@ -171,7 +234,7 @@ namespace Tide.Editor
         public static string Executable(string version)
         {
             var side = Path.Combine(Root, version, "bin", ExecutableName);
-            if (File.Exists(side) && IsWhole(Path.Combine(Root, version), version)) return side;
+            if (File.Exists(side) && Keep(version) && IsWhole(Path.Combine(Root, version), version)) return side;
             var main = Path.Combine(Installed, "bin", ExecutableName);
             if (File.Exists(main) && IsWhole(Installed, version)) return main;
             return null;

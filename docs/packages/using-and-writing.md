@@ -52,6 +52,24 @@ To choose another release, use `tide pin 0.5.0-nightly.12`:
 tide = 0.5.0-nightly.12
 ```
 
+To follow a channel automatically, use `tide pin nightly` or `tide pin stable`:
+
+```text
+tide = nightly
+```
+
+Each channel has one shared installation under `TIDE_VERSIONS/nightly` or
+`TIDE_VERSIONS/stable`. Project commands check for the newest release at startup
+and update that installation in place while idle. Nightly follows the same
+release selection as `tide upgrade --nightly` (including a newer stable release).
+An active build or watch session keeps its current compiler; another command
+can share it and defers updating until the installation is idle. Offline, or if
+a download fails, a complete installed version is reused. The command reports
+the exact version selected. The first installation asks for download approval;
+choosing a channel authorizes its subsequent automatic updates. A channel can
+resolve to different versions on different machines or days; use an exact pin
+for reproducible builds.
+
 `run`, `build`, `schedule`, `shaders`, `add`, `update`, `eject`, `fetch` and
 `publish` use that pinned release. If it is missing, Tide asks to download it,
 checks its release checksum, then continues the original command. Declining or
@@ -61,7 +79,12 @@ version; a caller that can forward an answer through stdin can set
 
 Versions stay side by side in `TIDE_VERSIONS`, or by default
 `%LOCALAPPDATA%/Tide/versions` on Windows and `~/.tide/versions` elsewhere.
-Unity uses the same cache, so an installed version is reused offline. Downloading
+Exact installations are removed automatically after 30 days without use, during
+project commands. Active sessions are protected; existing caches get a fresh
+30-day grace period when first observed. Returning to an expired pin asks to
+download it again. The main installation and the two channel installations are
+kept. Unity uses the same cache and protects selected compilers while its editor
+is using them. Downloading
 a project version leaves your main Tide installation and editor plugins as they
 are. `tide upgrade` still updates the invoking installation; `tide version` and
 help describe that installation. `tide pin` only changes the project's pin.
@@ -135,7 +158,8 @@ github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 
 A name is lower-case letters and digits, and it's never a folder: a folder of that name beside the game is still written as a path, `./box2d`. The line has no commit and follows no branch, since the package is the version your `tide` came with: `tide upgrade` updates both, and `tide update` leaves the line alone. So two machines build the same code of it when they have the same version of `tide`. A `tide 0.3` line in the game's `tide.packages` says the oldest one the game builds with.
 
-A `tide = 0.5.0-nightly.12` line pins the one version the game builds with, so everyone working on it, and a build server, build the same: another version refuses to build it, and says how to install the pinned one (`tide upgrade --version 0.5.0-nightly.12`). `tide pin` writes the line for the `tide` you have, or `tide pin <version>` for another. Only a game pins: a package says the oldest version it builds with. A build of `tide`'s own source (its version ends in `-dev`) builds a pinned game anyway, as someone working on `tide` would. In a Unity project, [Tide's package](../tools/cli.md#unity) builds with the version of its own commit, and a pin it doesn't match is an error.
+A game may follow `tide = nightly` or `tide = stable`, as described under
+[Pinning Tide itself](#pinning-tide-itself). An exact `tide = 0.5.0-nightly.12` line pins the one version the game builds with, so everyone working on it, and a build server, build the same: another version refuses to build it, and says how to install the pinned one (`tide upgrade --version 0.5.0-nightly.12`). `tide pin` writes the line for the `tide` you have, or `tide pin <version>` for another. Only a game pins: a package says the oldest version it builds with. A build of `tide`'s own source (its version ends in `-dev`) builds a pinned game anyway, as someone working on `tide` would. In a Unity project, [Tide's package](../tools/cli.md#unity) builds with the version of its own commit, and a pin it doesn't match is an error.
 
 A name no package has is an error that lists the ones there are. They're folders of the installation's `src/packages` folder, each named as its line is, where the editors' go to definition takes you.
 

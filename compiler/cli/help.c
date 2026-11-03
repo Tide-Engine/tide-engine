@@ -80,14 +80,18 @@ static const command_help commands[] = {
      "replaces its tide.packages line with that local path. It stays a package,\n"
      "with the same namespace and dependencies. An existing destination fails.\n\n"
      "Example: tide eject rooms", EJECT},
-    {"pin", "pin [version]", "Build the game with one version of tide",
+    {"pin", "pin [version|nightly|stable]", "Select the game's Tide release or channel",
      "Writes `tide = <version>` in the current game's tide.packages: this tide's\n"
      "version, or the one given. Project commands use that version from the\n"
      "shared TIDE_VERSIONS cache, asking to download it when missing. Other\n"
-     "versions and the main installation stay installed. In a Unity project,\n"
+     "exact pins expire after 30 days without use. nightly and stable each\n"
+     "share one installation, updated when idle at command startup; offline,\n"
+     "the installed release is used. In a Unity project,\n"
      "Tide's package uses the tide of its own commit, and a pin it doesn't\n"
      "match is an error.\n\n"
      "Examples: tide pin\n"
+     "          tide pin nightly\n"
+     "          tide pin stable\n"
      "          tide pin 0.5.0-nightly.12", PIN},
     {"fetch", "fetch [folder]", "Download missing git packages",
      "Downloads the game's missing git packages at their pinned commits.\n"

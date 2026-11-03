@@ -1,5 +1,25 @@
 # Unity as a front end
 
+## Protect cached compilers from expiry (2026-11-03)
+
+The CLI now removes exact cached versions after 30 days without use
+(notes/cli-and-packages.md, Moving project channels and cache expiry). Executable
+selection takes its shared `.VERSION.use` lock outside the installation and
+refreshes `.VERSION.last-used`. File sharing on Windows and flock on POSIX match
+the CLI protocol. The editor retains selected compilers until assembly reload or
+quit; process termination releases the locks after a crash. Selection rechecks
+the complete installation under the lock. Package/commit selection remains exact;
+standalone release channels do not replace Unity's package-selected compiler.
+VersionTests covers lock exclusion/release and stamps as well as existing selection
+and download behavior. Unity 6000.6.0f1 in a scratch Sample passes 12/12 enabled
+VersionTests (one existing ABI-5-host check ignored without its separate fixture),
+under TIDE_HIDDEN/batchmode/nographics/noAudio with automatic game builds disabled.
+It checks selection prevents exclusive access, release permits it, and ending a
+session refreshes last use. Native Windows ASan CLI/version tests also pass;
+Linux/macOS flock interop and interactive editor UI remain untested here.
+No embed ABI, generated C# or runtime behavior changed.
+
+
 ## Embed ABI 9: a pipeline's alpha to coverage (2026-10-31)
 
 `TIDE_EMBED_RENDER_PIPELINE` has one word more, `alpha_to_coverage`, after

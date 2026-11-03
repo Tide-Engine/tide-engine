@@ -86,6 +86,8 @@ bool sys_process_alive(uint32_t pid); // Whether a process with that ID is runni
 // has it. The programs tide starts don't have it.
 typedef struct sys_lock sys_lock;
 sys_lock *sys_lock_file(const char *path);
+// Multiple readers may hold this file; excludes sys_lock_file on the same path.
+sys_lock *sys_lock_shared_file(const char *path);
 void sys_unlock(sys_lock *lock);
 
 // Reads lines typed into the terminal, in the background: sys_typed_line

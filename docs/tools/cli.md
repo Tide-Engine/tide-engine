@@ -975,6 +975,23 @@ A package that's a folder already is left where it is, and a folder already at `
 
 `tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, what its packages need included, and those any `#if` leaves out of this build: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
 
+## Project version channels and cleanup
+
+`tide pin nightly` and `tide pin stable` make this game follow a release channel
+in `tide.packages`. Each uses one shared installation, updated at command startup
+while idle. Builds and watch sessions keep their selected version; updates are
+deferred while another session uses it. Offline, a complete installed channel
+is reused, with its exact version printed. The first download asks for approval;
+subsequent channel updates are automatic. Nightly uses the same release selection
+as `upgrade --nightly`, including a newer stable release.
+
+Exact pins (`tide pin 0.5.0-nightly.12`) retain separate installations. They expire
+after 30 days without use, with cleanup during project commands. Active sessions
+are protected; existing installations get a fresh grace period when first seen.
+An expired pin is downloaded again after approval when next needed. Channel and
+main installations are kept. Unity continues to select its compiler through its
+package version. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
+
 ## upgrade
 
 | Option | What it does |

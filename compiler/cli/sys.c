@@ -1224,23 +1224,27 @@ struct sys_lock {
 #endif
 };
 
-sys_lock *sys_lock_file(const char *path)
+static sys_lock *lock_file(const char *path, const bool shared)
 {
     sys_lock *lock = malloc(sizeof *lock);
     if (!lock) abort();
 #ifdef _WIN32
-    // Shared with nobody, and not inherited
-    lock->file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    // Readers share with readers only; handles are never inherited.
+    lock->file = CreateFileA(path, shared ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
+                            shared ? FILE_SHARE_READ : 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (lock->file != INVALID_HANDLE_VALUE) return lock;
 #else
     // Closed in the programs tide starts, which would otherwise hold it too
     lock->file = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-    if (lock->file >= 0 && flock(lock->file, LOCK_EX | LOCK_NB) == 0) return lock;
+    if (lock->file >= 0 && flock(lock->file, (shared ? LOCK_SH : LOCK_EX) | LOCK_NB) == 0) return lock;
     if (lock->file >= 0) close(lock->file);
 #endif
     free(lock);
     return NULL;
 }
+
+sys_lock *sys_lock_file(const char *path) { return lock_file(path, false); }
+sys_lock *sys_lock_shared_file(const char *path) { return lock_file(path, true); }
 
 void sys_unlock(sys_lock *lock)
 {
