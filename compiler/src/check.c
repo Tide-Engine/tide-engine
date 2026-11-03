@@ -385,7 +385,7 @@ static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
         || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time
-        || d == prog->audience || d == prog->visibility_group;
+        || d == prog->audience || d == prog->visibility_group || d == prog->clip_data || d == prog->mesh_level;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -2397,6 +2397,11 @@ static const type_ref *type_ref_or_text(const type_ref *r, const str text)
 
 static bool fold_int(const expr *e, int64_t *out);
 static bool is_constant(const checker *c, const expr *e);
+static bool build_constant(const checker *c, const decl *k);
+static void build_constant_function(checker *c, decl *k);
+static bool build_constant_type_ok(type t, loc at);
+static void build_asset_function(checker *c, decl *k);
+static void resolve_field_types(const checker *c, const decl *d);
 static type check_constant_expr(checker *c, expr *value, bool typed, type want);
 
 static type array_element(const type t)
@@ -13493,7 +13498,10 @@ static void check_switch(checker *c, stmt *s)
             if (!fold_int(label, &number)) {
                 diag_error(label->at, "a case is an int, a char or one of an enum's members, like 'case %s:'",
                            value.kind == TY_ENUM ? "Page.Title" : value.kind == TY_CHAR ? "'a'" : "3");
-                diag_note("constants work too, and operators on them, like 'case MAX_LEVEL + 1:'");
+                if (label->bind == BIND_CONST && label->constant && label->constant->build_fn)
+                    diag_note("'" STR_FMT "' is made by build code: its value is the build's, which isn't known while compiling",
+                              STR_ARG(label->constant->qualified));
+                else diag_note("constants work too, and operators on them, like 'case MAX_LEVEL + 1:'");
                 continue;
             }
             label->int_value = number; // What codegen writes, unless it's a literal or a member
@@ -14149,8 +14157,12 @@ static bool is_constant(const checker *c, const expr *e)
     case E_DEFAULT:
         return true;
     case E_NAME:
-        return lookup(c->prog, c->unit, e->name, NAME_CONST, &other) != NULL
-            || (c->assets_constant && lookup(c->prog, c->unit, e->name, NAME_ASSET, &other) != NULL);
+        // A constant build code works out is the build's, read as the game runs, as an asset is
+        {
+            const decl *named = lookup(c->prog, c->unit, e->name, NAME_CONST, &other);
+            if (named) return c->assets_constant || !build_constant(c, named);
+        }
+        return c->assets_constant && lookup(c->prog, c->unit, e->name, NAME_ASSET, &other) != NULL;
     case E_UNARY:
         return is_constant(c, e->lhs);
     case E_BINARY:
@@ -14250,7 +14262,7 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
     return t;
 }
 
-static type constant_type(const checker *c, const decl *k)
+static type constant_type(const checker *c, const decl *k, const bool built)
 {
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
     const type_ref *const r = type_ref_or_text(k->return_type_ref, k->return_type_name);
@@ -14258,7 +14270,7 @@ static type constant_type(const checker *c, const decl *k)
         diag_error(at, "a constant can't be an array yet");
         return T_ERR;
     }
-    if (r->args.count > 0 && !str_eq_c(r->name, "Mesh")) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
+    if (r->args.count > 0 && !str_eq_c(r->name, "Mesh") && !(built && str_eq_c(r->name, "List"))) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
         const char *what = str_eq_c(r->name, "List") ? "list" : str_eq_c(r->name, "Map") ? "map" : str_eq_c(r->name, "Set") ? "set" : "grid";
         diag_error(at, "a constant can't be a %s yet", what);
         return T_ERR;
@@ -14269,6 +14281,7 @@ static type constant_type(const checker *c, const decl *k)
         diag_error(at, "a constant can't be an array yet");
         return T_ERR;
     case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
+        if (built && t.kind == TY_LIST) return t; // build_constant_type_ok says what it holds
         diag_error(at, "a constant can't be a %s yet", t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
         return T_ERR;
     case TY_OPTIONAL:
@@ -14323,11 +14336,16 @@ static void check_constant(checker *c, decl *k)
     c->unit = k->unit;
     c->assets_constant = false;
     check_reserved(k->name, k->at);
-    k->return_type = constant_type(c, k);
-    if (!is_constant(c, k->value)) {
+    if (build_constant(c, k)) { // Its value is what build code makes (build_check.inc)
+        k->return_type = constant_type(c, k, true);
+        if (k->return_type.kind != TY_ERROR && build_constant_type_ok(k->return_type, k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at)) {
+            build_constant_function(c, k);
+        }
+    } else if ((void)(k->return_type = constant_type(c, k, false)), !is_constant(c, k->value)) {
         diag_error(k->value->at, "a constant's value must be a constant expression");
         diag_note("use literals, other constants, constructors like float3(...), struct values of constants, Math "
-                  "functions and operators; a constant can't read fields, singletons or Time");
+                  "functions and operators, or a call that build code makes it with; a constant can't read fields, "
+                  "singletons or Time");
         suggest_constant(c, k->value);
     } else {
         const type t = check_constant_expr(c, k->value, true, k->return_type);
@@ -14695,6 +14713,17 @@ static type use_constant(checker *c, expr *e, decl *k)
     if (k->index == 1) {
         diag_error(e->at, "'" STR_FMT "' is worked out from itself", STR_ARG(k->name));
         diag_note("a constant's value can name other constants, but not, through them, its own");
+        return T_ERR;
+    }
+    if (k->build_fn && c->constants_only && !c->assets_constant) {
+        diag_error(e->at, "'" STR_FMT "' is made by build code: its value is the build's, read as the game runs", STR_ARG(k->qualified));
+        diag_note("code and field defaults can read it, as they read an asset; what has to be known while compiling, like a "
+                  "case label, a bound or a setting, can't");
+        return T_ERR;
+    }
+    if (k->build_fn && gpu_code(c)) {
+        diag_error(e->at, "'" STR_FMT "' is made by build code, and GPU code can't read it yet", STR_ARG(k->qualified));
+        diag_note("pass its value to the frag or vert in the draw's values");
         return T_ERR;
     }
     return k->return_type;
@@ -15153,9 +15182,10 @@ static void check_asset_decl(checker *c, decl *k)
         }
     }
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
-    const bool paths = catalog && k->value->kind == E_LIST;
-    const int path_count = paths ? k->value->args.count : 1;
-    if (!path_count) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
+    const bool paths = catalog && k->value && k->value->kind == E_LIST;
+    // `asset Grid2<float> noise { ... }`: no file, only the code that makes it (build_check.inc)
+    const int path_count = !k->value ? 0 : paths ? k->value->args.count : 1;
+    if (!path_count && k->value) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -15223,6 +15253,7 @@ static void check_asset_decl(checker *c, decl *k)
             if (!humanoid_asset_read(&k->asset->items[0], k->value->at, c->prog->game_folder)) k->asset = NULL;
     }
     if (retarget) check_retarget_attribute(c, k, retarget);
+    if (k->body && typed && fills) build_asset_function(c, k);
     k->index = 2;
     vec_push(c->prog->assets, k);
     c->unit = outer;
@@ -16212,7 +16243,12 @@ static void check_signature(checker *c, decl *m)
             p->type.decl = component_placement(c->prog, p->type.decl, p->placement_local, p->type_at);
         } else if (p->placement_local) diag_error(p->placement_at, "local component access belongs on a system, view, handler, query or async parameter; ordinary functions take values");
         if (world) check_world_param(m, p, k);
-        if (p->type.kind == TY_GRID) { // Read-only shader arguments or isolated worker snapshots.
+        if (p->type.kind == TY_GRID && m->is_build) { // Build code's own grids: an image it edits, read and written
+            if (p->default_value) {
+                diag_error(p->name_at, "a grid a function takes has no default: the call names the one it reads");
+                p->type = T_ERR;
+            }
+        } else if (p->type.kind == TY_GRID) { // Read-only shader arguments or isolated worker snapshots.
             if (p->mode == PARAM_MUT) {
                 diag_error(p->type_at, "a function reads the cells of a grid it takes, and never changes them: '" STR_FMT "' can't be '%s'",
                            STR_ARG(p->name), p->is_out ? "out" : "mut");
@@ -16241,7 +16277,7 @@ static void check_signature(checker *c, decl *m)
             if (refused) {
                 diag_error(p->type_at, "%s", refused);
                 p->type = T_ERR;
-            } else if (p->mode == PARAM_MUT) {
+            } else if (p->mode == PARAM_MUT && !m->is_build) { // Build code makes the mesh an asset is
                 diag_error(p->at, "a Mesh is read-only, so '" STR_FMT "' can't be '%s'", STR_ARG(p->name), p->is_out ? "out" : "mut");
                 diag_note("it's the file it names, as the game was built: a function takes one to read it or to draw it");
                 p->mode = PARAM_READ;
@@ -18235,6 +18271,7 @@ static void remove_param_fix(checker *c, const param *p)
 // nothing, so it's worth a warning.
 static void warn_unused_params(checker *c, const decl *sys)
 {
+    if (sys->build_owner) return; // An asset's or a constant's code: what it's given is what it makes, which it may leave
     // A virtual declaration's parameters are what its overrides take too, and an override's are those of
     // what it replaces: neither can drop one it doesn't use. 'mut' is each one's own.
     const bool shared = sys->is_virtual || sys->is_override;
@@ -18944,6 +18981,55 @@ static void add_builtins(program *prog)
         vec_push(effect->fields, knobs);
     }
     prog->effect = effect;
+    // struct ClipData { int rate; int channels; List<float> samples; }: a Clip as an asset's build code edits it,
+    // its samples interleaved (docs/spec.md, Build code): in generated C only when named.
+    decl *clip_data = NEW(decl);
+    clip_data->kind = DECL_STRUCT;
+    clip_data->name = str_from("ClipData");
+    clip_data->builtin = true;
+    {
+        field rate = {0}, channels = {0}, samples_field = {0};
+        rate.name = str_from("rate");
+        rate.type_name = str_from("int");
+        channels.name = str_from("channels");
+        channels.type_name = str_from("int");
+        samples_field.name = str_from("samples");
+        samples_field.type_name = str_from("List<float>");
+        type_ref *element = NEW(type_ref);
+        element->name = element->text = str_from("float");
+        type_ref *r = NEW(type_ref);
+        r->name = str_from("List");
+        r->text = samples_field.type_name;
+        vec_push(r->args, element);
+        samples_field.type_ref = r;
+        vec_push(clip_data->fields, rate);
+        vec_push(clip_data->fields, channels);
+        vec_push(clip_data->fields, samples_field);
+    }
+    prog->clip_data = clip_data;
+    // struct MeshLevel { List<int> indices; float error; }: a level of detail a mesh asset's build code makes, its
+    // triangles of the mesh's own vertices and how far its surface is from the full mesh's, in the mesh's units
+    decl *mesh_level = NEW(decl);
+    mesh_level->kind = DECL_STRUCT;
+    mesh_level->name = str_from("MeshLevel");
+    mesh_level->builtin = true;
+    {
+        field indices = {0}, error = {0};
+        indices.name = str_from("indices");
+        indices.type_name = str_from("List<int>");
+        type_ref *element = NEW(type_ref);
+        element->name = element->text = str_from("int");
+        type_ref *r = NEW(type_ref);
+        r->name = str_from("List");
+        r->text = indices.type_name;
+        vec_push(r->args, element);
+        indices.type_ref = r;
+        error.name = str_from("error");
+        error.type_name = str_from("float");
+        vec_push(mesh_level->fields, indices);
+        vec_push(mesh_level->fields, error);
+    }
+    prog->mesh_level = mesh_level;
     // Trilinear is in generated C only for a game that names it (program.names_trilinear)
     static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
     decl *filter = NEW(decl);
@@ -22518,6 +22604,7 @@ static void check_replaced(checker *c, decl *v)
 }
 
 #include "worker_check.inc"
+#include "build_check.inc"
 
 // A generic function as declared: what its type parameters are named, and
 // what it can be. Its code is checked in each instantiation.
@@ -22864,6 +22951,7 @@ bool check(program *prog)
     warn_dropped_values(&c);
     collect_device_uses(&c);
     check_workers(&c);
+    check_build_code(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     // So does a field something snaps alone, after the rest.
     for (int i = 0; i < prog->decls.count; i++) {

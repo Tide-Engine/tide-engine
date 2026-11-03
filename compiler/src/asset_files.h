@@ -34,6 +34,7 @@ typedef enum asset_kind {
     ASSET_ANIMATIONS, // AnimationCatalog: glTF skeleton/clip data, without typed render geometry
     ASSET_ANIMATION, // Animation: one selected clip from an animation source.
     ASSET_HUMANOID, // HumanoidRig: a checked calibration profile, packed as immutable typed blocks.
+    ASSET_VALUES,   // A constant List<T> build code made: plain elements side by side (build_code.h)
 } asset_kind;
 
 typedef struct asset_match {
@@ -53,6 +54,12 @@ typedef struct asset_match {
     struct humanoid_asset *humanoid;
     const char **sides;   // ...and the files beside a .gltf that it was read with, its buffers': absolute paths
     int side_count;
+    // What build code made (build_code.h), in place of a file's contents: `data` holds a mesh's vertices as the
+    // declaration's struct lays them out (`mesh` has its indices, and what the levels of detail weigh), or a
+    // constant list's elements; `element` bytes each, `count` of them
+    bool built;
+    uint32_t element, count;
+    const struct tide_mesh_levels *levels; // A built mesh's levels of detail, as its code made them, or NULL
 } asset_match;
 
 typedef struct asset_value {

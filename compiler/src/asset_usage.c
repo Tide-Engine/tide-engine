@@ -1,5 +1,6 @@
 #include "asset_usage.h"
 #include "asset_files.h"
+#include "build_code.h"
 #include "version.h"
 #include "types.h"
 #include "tide/sha256.h"
@@ -107,7 +108,7 @@ static void value_type(asset_usage *w, const type t)
 
 static void use_asset(asset_usage *w, const decl *d)
 {
-    if (!d || d->kind != DECL_ASSET) return;
+    if (!d || (d->kind != DECL_ASSET && !(d->kind == DECL_CONST && d->asset))) return;
     insert(&w->used, d);
     // Its vertex type can have defaults that read other assets, including
     // defaults inherited through nested types or evaluated by helpers.
@@ -379,6 +380,9 @@ static void declaration(asset_usage *w, const decl *d)
             if (type_asset_reference_accepts(d, value)) use_asset(w, asset);
         }
     }
+    // What build code made is the value, and the code that made it is what made it so
+    queue(w, USAGE_DECL, d->build_fn);
+    if (w->hash && d->built) tide_sha256_add(w->hash, d->built->hash, sizeof d->built->hash);
     value_type(w, d->return_type);
     value_type(w, d->skin_vertex);
     if (!w->server) queue(w, USAGE_DECL, d->local_part);
@@ -467,7 +471,11 @@ static void expression(asset_usage *w, const expr *e)
         }
     }
     if (e->bind == BIND_ASSET) use_asset(w, e->constant);
-    else if (e->bind == BIND_CONST) queue(w, USAGE_DECL, e->constant);
+    else if (e->bind == BIND_CONST) {
+        // A list build code made is the pack's, as an asset is (build_code.c)
+        if (e->constant && e->constant->build_fn && e->constant->asset) insert(&w->used, e->constant);
+        queue(w, USAGE_DECL, e->constant);
+    }
     queue(w, USAGE_DECL, e->type.decl);
     queue(w, USAGE_DECL, e->type_decl);
     queue(w, USAGE_DECL, e->method);
@@ -653,4 +661,30 @@ bool program_simulation_id(const program *prog, uint8_t out[32], const bool cons
     }
     tide_sha256_end(&hash, out);
     return w.used.count != 0;
+}
+
+void program_build_key(const program *prog, const decl *root, uint8_t out[32], const decl ***reads, int *read_count)
+{
+    tide_sha256 hash;
+    tide_sha256_init(&hash);
+    asset_usage w = {.prog = prog, .hash = &hash};
+    ctext(&w, "Tide build code 1");
+    ctext(&w, tide_version_text());
+    ctext(&w, tide_simulation_runtime());
+    queue(&w, USAGE_DECL, root);
+    VEC(const decl *) found = {0};
+    for (int at = 0; at < w.pending.count; at++) {
+        const usage_node n = w.pending.items[at];
+        number(&w, at + 1);
+        number(&w, n.kind);
+        if (n.kind == USAGE_DECL) {
+            const decl *d = n.value;
+            if (d && d != root && d->build_fn && (d->kind == DECL_ASSET || d->kind == DECL_CONST)) vec_push(found, d);
+            declaration(&w, d);
+        } else if (n.kind == USAGE_EXPR) expression(&w, n.value);
+        else statement(&w, n.value);
+    }
+    tide_sha256_end(&hash, out);
+    *reads = found.items;
+    *read_count = found.count;
 }

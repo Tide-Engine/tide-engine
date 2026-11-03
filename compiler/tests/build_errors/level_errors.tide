@@ -1,0 +1,8 @@
+// expect: level 2 of 'quad' has an error of 0.5: each level's is a positive distance
+struct Corner { float3 position; }
+asset Mesh<Corner> quad = "../e2e/assets/meshes/quad.glb"
+{
+    levels.Add(MeshLevel { indices = [0, 1, 2], error = 1 });
+    levels.Add(MeshLevel { indices = [0, 2, 3], error = 0.5 });
+}
+scene Main { }

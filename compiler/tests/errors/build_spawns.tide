@@ -1,0 +1,8 @@
+// expect: asset 'names' is made by build code, which can't send events, spawn or change entities
+component Thing { int value; }
+asset string names
+{
+    Spawn(Thing { value = 1 });
+    names = "none";
+}
+scene Main { }

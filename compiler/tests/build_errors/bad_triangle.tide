@@ -1,0 +1,7 @@
+// expect: build code left 'quad' with a triangle of vertex 9, and it has 4 vertices
+struct Corner { float3 position; }
+asset Mesh<Corner> quad = "../e2e/assets/meshes/quad.glb"
+{
+    quad = Mesh(quad.vertices, [0, 1, 9]);
+}
+scene Main { }

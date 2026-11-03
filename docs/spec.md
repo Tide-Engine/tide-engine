@@ -1014,7 +1014,7 @@ Implemented, awaiting approval:
 - They go wherever a constant does: field defaults, the bounds of `[Clamp]`, `[Min]` and `[Max]`, settings, and other constants.
 - Changing one under `tide run` reloads the game and keeps the match where it is: constants aren't part of its data layout.
 - A game's own values are constants. `settings` only holds the engine's (see Settings).
-- A constant can be computed by code that runs at build time (agreed 2026-11-03, not built): see Build code.
+- A constant can be computed by code that runs at build time (agreed and built 2026-11-03): see Build code.
 
 ```csharp
 const int MAX_HEALTH = 100;
@@ -1809,7 +1809,7 @@ Picks made to build it, awaiting the owner.
 - **Decoding:** `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is, and fails with `IOError.InvalidData`. It's pure, so it runs in match code, and it runs where it's called, which in a tick is on every machine. **Fetching:** `await Web.Fetch(url)` is a local async operation giving `List<byte>` and failing with `IOError`, like `File.ReadAllBytes`, which is the other way bytes come in at runtime; so loading a player's image is `grid.Decode(File.ReadAllBytes(path))`, and there's no asset handle type beside the plain ones. On the web it's `fetch`, so the server's CORS applies; on desktop it's the HTTPS the relay's connection uses; on Android, Java's.
   - Both are built (2026-10-06), with these picks. `Decode` reads every kind of PNG the specification has (gray, color, a palette, with and without alpha, 1 to 16 bits a sample, interlaced or not) with the engine's own reader (`tide/png.h`); a sample becomes a channel by one division, so the pixels are the same bits on every machine. A side past 16384 pixels, or more than 4096 × 4096 pixels in all (16,777,216, 256 MiB of cells, a quarter of a world's heap), is `InvalidData` before anything is made for it, as is compressed data that inflates to more than 1 MiB past the last row: bytes can come from anywhere, and deflate packs a run of one color about a thousand to one, so a file of a few kilobytes could otherwise end every machine's program or take each minutes (Provisional, 2026-10-26: the owner asked for limits that are clear and easy to change; the numbers are Claude's picks, one `#define` each in `tide/png.h`). A failed decode leaves the grid as it was. A pixel that's clear black is a cell that's zero, which takes no chunk. Rows go into the grid as they're decoded, so nothing the picture's size is made beside it; pictures within the limit that together fill the world's heap end the program as running out of memory does. `Web.Fetch` is a GET that follows up to 5 redirects; `NotFound` is a 404 and every other status outside 200 to 299 is `Failed`, as is a body past 64 MiB (read no further) and a certificate the system doesn't trust; nothing times out, as a browser's `fetch` doesn't. On Android it's the same client as desktop's over the TLS the relay's connection uses there (Java's `SSLEngine`), not `HttpsURLConnection`. A fetch still going when its task ends (a reload, the program's end) is forgotten, and stops.
 - **Finding a moved file:** tide keeps the SHA-256 of every file an `asset` named in `.tide/`; when one is missing, the error says where a file with the same bytes is now in the game's folder (or packages), with a quick fix to the new path, and else lists files of the same name. The language server takes the editor's rename of a file or folder (`workspace/willRenameFiles`) and rewrites every reference to it.
-- **An `asset` is a declaration** of its file's namespace, named like a constant, usable in every kind of code (match, local, GPU, C through a `List<byte>` or a grid as any value is passed), and never `mut`, assigned, or a parameter's default. A path has to be a constant expression; anything else is an error that says why: the dependency tree is static.
+- **An `asset` is a declaration** of its file's namespace, named like a constant, usable in every kind of code (match, local, GPU, C through a `List<byte>` or a grid as any value is passed), and never `mut`, assigned, or a parameter's default. A path has to be a constant expression; anything else is an error that says why: the dependency tree is static. An asset whose code makes it (see Build code) can leave its path out, and its name is that code's to change inside its body.
 
 Picks made as the first slice was built (2026-10-06), awaiting the owner too:
 
@@ -1958,7 +1958,7 @@ Transform; preview materials and lighting are editor choices, not game rendering
 
 ## Build code
 
-Agreed 2026-11-03 and not built yet. The owner proposed processing assets with Tide code as part of the build ("be it tweaking an animation, audio, image, whatever the case might be") and chose the points under Decided. Everything else is Claude's proposal.
+Agreed 2026-11-03 and built the same day. The owner proposed processing assets with Tide code as part of the build ("be it tweaking an animation, audio, image, whatever the case might be"), chose the points under Decided, and asked for it built with every other choice Provisional ("mark any decisions you have to make provisional").
 
 ### Decided
 
@@ -1969,53 +1969,69 @@ Agreed 2026-11-03 and not built yet. The owner proposed processing assets with T
 - **`[LOD]` stays as the shorthand, and a game can write its own levels instead.**
 - **`const` gets the same mechanism**, so a constant can be a table or another value computed at build time.
 
+```csharp
+build void Outline(mut Grid2<Color> image, Color color)
+{
+    for (int y = 0; y < image.size.y; y++)
+    {
+        image[int2(0, y)] = color;
+    }
+}
+
+asset Texture hero = "art/hero.png"
+{
+    Outline(hero, Color.red);
+}
+
+const List<float> CURVE
+{
+    for (int i = 0; i < 64; i++)
+    {
+        CURVE.Add(Math.Sin(i * 0.1));
+    }
+}
+```
+
 ### Provisional
 
-Proposed, awaiting the owner:
+Picks made to build it, awaiting the owner:
 
-- **An asset can have a body**, a block of build code that runs after the file is read. In it, the asset's name is its editable value. An asset with a body and no path starts empty:
-
-  ```csharp
-  asset Texture hero = "art/hero.png"
-  {
-      Outline(mut hero, 2, Color.black);
-      Tint(mut hero, Color.red, 0.1);
-  }
-
-  asset Grid2<float> noise
-  {
-      Noise.Fill(mut noise, 256, 256, seed: 7);
-  }
-
-  build void Outline(mut Grid2<Color> image, int width, Color color)
-  {
-      // ordinary Tide code
-  }
-  ```
-
-- **Each asset type has an editable form in the body.** A `Texture` is its `Grid2<Color>`, turned back into a texture and compressed after the body. A `Mesh<V>` or `SkinnedMesh<V>` is its vertex and index lists. A `Clip` is its sample rate, channel count and `List<float>` samples. The other types keep their own value.
-- **A `const` can have a body too**, or be the result of a call: `const List<float> CURVE = BakeCurve(64);`. This extends constants to the types build code can make, lists included.
-- **What build code can do:** read its parameters, the assets and constants it names, and its own locals. It has no world, no `Devices`, no `Send`, no file access except through assets, and no network, so the dependency tree stays static and a build packs only what's declared. `extern` C is allowed, as C is trusted.
-- **Custom levels of detail:** in a mesh's body, `rock.levels` is the list of levels, and `[LOD]` is shorthand for the built-in call that fills it. A game writes its own:
+- **An asset can have a body**, a block of build code after its path, or in place of one. In the body, the asset's name is its value as the file has it, as a `mut` parameter of the body's: what the body leaves there is the asset. An asset with no path starts empty: `asset Grid2<Color> noise { noise = Grid2(256, 256); ... }`.
+- **A call passes the asset as any `mut` parameter takes its variable**: `Outline(hero, Color.red)`, with no word at the call, as Tide's calls are everywhere (an argument never says `mut`).
+- **What each asset's code edits:**
+  - Text (`string`) and bytes (`List<byte>`): the value itself.
+  - `Grid2<Color>`: the grid, which the code can give a new size (`made = Grid2(4, 2)`). It must have a size on both axes when the code is done, at most what an image's file can be (16384 a side, 4096 by 4096 in all), and every channel must be a number.
+  - `Texture`: its pixels, as a `Grid2<Color>` of the file's colors (straight alpha), which are then made a texture as a file's are: premultiplied, `[Raw]` kept, compressed as any color texture is.
+  - `Mesh<V>`: the mesh, which the code replaces with `Mesh(vertices, indices)` to change it. Its vertices are packed as the code left every field, so a field's default is the code's to keep; its triangles must name vertices the mesh has.
+  - `Clip`: a `ClipData`, a built-in struct of `int rate`, `int channels` (1 or 2) and `List<float> samples`, interleaved: the file's, decoded, as its code starts. It's packed as a 32-bit float WAV, so every sample must be a number.
+  - A list or a map of a glob's files, a `Cubemap`, a `SkinnedMesh<V>` and the animation types can't have code: that's an error naming what can.
+- **A constant's value is build code** when it has a body (`const List<float> CURVE { ... }`) or its value calls a function that isn't a constant's (`const float HALF = Twice(0.25);`). A value of literals, other constants, `Math` and constructors is still worked out while compiling, as before, and a value that reads something no constant can (a field, `Time`) is the error it was. A constant build code makes can be anything a constant can be, and a `List<T>` of plain values too (numbers, vectors, colors, enums and structs of those).
+- **Where a built constant goes:** where a value read as the game runs goes, as an asset does: code and field defaults. Where a value has to be known while compiling (a `case` label, a bound, a setting, an asset's path) it's an error that says the build makes it. GPU code can't read one yet: its value goes to the frag or vert in a draw's values. In generated C a plain constant is its bytes, which C reads as its type while compiling; text is a C string; a list is the pack's, as an asset's list is.
+- **What build code can do** is what a function can, but nothing of a running game: no world (queries, `Spawn`, `Send`), no `Devices`, no drawing, audio or frame time, no files or network beyond the assets it names, no tasks, and not the match's random numbers (`Math.Hash`, or a `Random` it makes with a seed, work). It reads its parameters, assets, constants and what other build code made. Each is an error at the asset, constant or `build` function, with a note at the function that does it. A `build` function called from anything but build code is an error at the call, which a field's default, a system and a view are.
+- **No C in build code yet**: a build function that calls `extern` C is an error. The program that runs build code is built from the game's Tide code alone, with the engine's sources: the game's own C and libraries aren't in it, and its C functions are stubs there that nothing calls.
+- **Code reads what other code made**: an asset's or a constant's code can read another's value, and that one's code runs first. Code that reads, through others, what it makes itself is an error.
+- **Levels of detail of its own:** a mesh asset's code has a second `mut` parameter, `levels`, a `List<MeshLevel>`: a built-in struct of `List<int> indices` (triangles of the mesh's own vertices) and `float error` (how far that level's surface is from the full mesh's, in the mesh's units, as `[LOD]`'s levels say). A draw picks among them as it picks among `[LOD]`'s, with the destination's tolerance, `Draw.LOD` and the rest, around a ball of the mesh's vertices. At most 7, each with triangles, each error positive and never less than the level's before it. `[LOD]` and levels from the code together is an error: `[LOD(n)]`'s tolerance is the code's to put in its errors.
 
   ```csharp
   asset Mesh<Corner> rock = "art/rock.glb"
   {
-      rock.levels.Add(MySimplify(rock, 0.5), error: 0.02);
-      rock.levels.Add(Impostor(rock), error: 0.2);
+      levels.Add(MeshLevel { indices = Simplify(rock, 0.5), error = 0.02 });
   }
   ```
 
-  Each level gives the screen error it was made for, which drives the pick as with `[LOD]`. `[LOD]` together with levels written in the body is an error.
-- **Attributes that describe sampling stay attributes**: `[Filter]` and `[Wrap]` are how the GPU reads a texture each frame, and a custom filter is a `frag`. Attributes that make data each get a built-in build function they're shorthand for, as `[LOD]` does.
-- **How it runs:** tidec generates a C program from the build functions an initializer uses, compiles it with the built-in clang and runs it on the build machine, a web build included. Results are kept in the asset import cache under the hash of the compiled code, the input bytes and the arguments, so under `tide run` editing a source file or a processor re-runs only what depends on it. `build` functions are left out of the shipped program.
-- **Errors in build code** are reported at the declaration that ran it, together with the call that failed. A `fails` function that fails there is a compile error.
+- **Attributes stay attributes**: `[Filter]` and `[Wrap]` are how the GPU reads a texture each frame, and a custom filter is a `frag`; `[Raw]` and `[LOD]` keep their meanings on an asset with code.
+- **How it runs:** tidec generates the program that runs build code from the checked game (its C, every `build` function and each asset's and constant's code, and a main), compiles it with the build's clang and the engine's sources, and runs it on the build machine, for a web or Android build too: what it made is the same bytes for every machine, as it's in the pack and the game's C. `build` functions are left out of the game. `tide build` and `tide run` compile it with tide's own compiler; `tide_add_game` with the machine's clang (`TIDE_CLANG`); tidec on its own takes `--build-cc`, `--build-include` and `--build-engine`, and says it can't run build code without them.
+- **What's made is kept**, by a key of everything that made it: the code, every function, type and constant it reaches, the files it reads (by their contents), other code's values it reads, and tidec's version. A build whose keys are all kept runs nothing, so editing a system, or an asset no build code reads, doesn't run build code. Under `tide run`, saving a file that code reads runs it again; one that a constant's code reads rebuilds the game, as the constant is in its C. What's made is kept in the game's `.tide/` (for `tide_add_game`, its output folder), and the engine's objects for the program beside it.
+- **Build code that runs more than ten minutes** is stopped, and the build fails at the asset or constant it was making. What it says (`Debug.Log`) is said as the game builds.
+- **It doesn't fail otherwise**: `!` gives a type's default in build code as everywhere, and a failable call's value is unwrapped as everywhere.
 
 ### Open
 
-- The editable form of an animation: its tracks, with each track's times and position, rotation and scale values.
-- Which data-making steps become built-in build functions besides `[LOD]`'s, for example a texture's mip chain.
-- Limits on build code's time and memory, so a processor that never finishes stops the build with a message.
+- The editable form of an animation: its tracks, with each track's times and position, rotation and scale values. Then skinned meshes, cubemaps, and lists and maps of a glob's files.
+- C in build code: building the game's own C (and its libraries, for the build machine) into the program.
+- Built constants in GPU code.
+- Which data-making steps become built-in build functions besides `[LOD]`'s, for example a texture's mip chain, so `[LOD]` is shorthand for a call the code could make itself.
+- Limits on build code's time and memory: the ten minutes is a pick, and memory has no limit of its own.
 
 ## Skinned meshes and animation
 
@@ -2317,7 +2333,7 @@ Agreed 2026-10-11 and built the same day. The owner's decisions are under Decide
 - **A game can raise the screen error tolerance for performance** (2026-10-31): `Draw.LODPixels(pixels) { ... }` and `Draw.SetLODPixels(pixels);`, also on render targets. The default remains 1 pixel; higher values allow coarser meshes at the same distance. This adjusts automatic selection among the existing levels.
 - **An asset may multiply that tolerance** (2026-10-31): `[LOD(2)]` allows twice the destination's pixel error. `[LOD]` means multiplier 1. The asset and destination multiply, so `[LOD(2)]` with `shadow.SetLODPixels(4)` allows 8 pixels. A forced level still wins.
 - **Meshes a game makes get levels too** (2026-11-02; the owner took Claude's recommendations: "go with you recommendations"): opt in on the draw, `Draw.Mesh(vertices, indices, transform, lod: 1)` and `Draw.Instanced(..., lod: 2)`, the number the multiplier `[LOD(...)]` takes; the levels are the same code's as an asset's, made in the background while the game runs, never blocking a frame (the mesh draws whole until they're there, and wherever there's no background to make them), and kept by what's in the mesh. Once runtime `Mesh<V>` values exist, `mesh.WithLOD()` and `mesh.WithLOD(multiplier)` are the opt-in on the value, with the same levels.
-- **A game can write its own levels** (2026-11-03, not built): `[LOD]` stays as the shorthand, and an asset's build code can make the levels instead (see Build code).
+- **A game can write its own levels** (2026-11-03, built): `[LOD]` stays as the shorthand, and an asset's build code can make the levels instead (see Build code).
 - **A game can override the pick two ways** (the owner, of a shadow map, whose lamp would pick another level than the one the mesh shows as: "they probably want it to match the visuals the main camera rendered"):
   - **The level itself**, for some draws.
   - **The camera the pick is made through**, for a target, in place of the camera the target draws with.

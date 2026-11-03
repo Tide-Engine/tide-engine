@@ -1,0 +1,189 @@
+// Build code (docs/spec.md, Build code): assets and constants made by code that runs as the game builds. Each kind
+// an asset's code edits (from its file, and from nothing), constants of a plain value, text and a list, build
+// functions and ordinary ones, code that reads what other code made, and match code that reads all of it.
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float shade = 0.25;
+}
+
+struct Pair
+{
+    int count;
+    float scale;
+}
+
+// Runs only as the game builds
+build void Outline(mut Grid2<Color> image, Color color)
+{
+    for (int y = 0; y < image.size.y; y++)
+    {
+        image[int2(0, y)] = color;
+    }
+}
+
+build Pair MakePair(int count)
+{
+    return Pair { count = count, scale = count * 0.5 };
+}
+
+// An ordinary function, which build code and match code both call
+float Twice(float x)
+{
+    return x * 2;
+}
+
+asset Grid2<Color> hero = "assets/hero.png"
+{
+    Outline(hero, Color(1, 0, 0, 1));
+}
+
+asset Texture heroTexture = "assets/hero.png"
+{
+    Outline(heroTexture, Color(0, 0, 1, 1));
+}
+
+asset Grid2<Color> made
+{
+    made = Grid2(4, 2);
+    made[int2(3, 1)] = Color(0, 1, 0, 1);
+}
+
+// Reads what other code made, which runs first
+asset Grid2<Color> fromMade
+{
+    fromMade = Grid2(1, 1);
+    fromMade[int2(0, 0)] = made[int2(3, 1)];
+}
+
+asset string rules = "assets/rules.txt"
+{
+    rules = rules + "!";
+}
+
+asset string greeting
+{
+    greeting = "hello " + NAME;
+}
+
+asset List<byte> table
+{
+    for (int i = 0; i < 5; i++)
+    {
+        table.Add(byte(i * 3));
+    }
+}
+
+asset Mesh<Corner> quad = "assets/meshes/quad.glb"
+{
+    mut List<Corner> vertices = quad.vertices;
+    for (int i = 0; i < vertices.count; i++)
+    {
+        mut Corner c = vertices[i];
+        c.position = c.position * 2;
+        c.shade = 0.5;
+        vertices[i] = c;
+    }
+    quad = Mesh(vertices, quad.indices);
+}
+
+// Levels of detail of its own: a triangle of the quad's vertices, then one of its other three
+asset Mesh<Corner> leveled = "assets/meshes/quad.glb"
+{
+    levels.Add(MeshLevel { indices = [0, 1, 2], error = 0.5 });
+    levels.Add(MeshLevel { indices = [0, 2, 3], error = 2 });
+}
+
+asset Clip tone
+{
+    tone.rate = 8000;
+    tone.channels = 1;
+    for (int i = 0; i < 800; i++)
+    {
+        tone.samples.Add(i % 2 == 0 ? 0.5 : -0.5);
+    }
+}
+
+asset Clip beep = "assets/beep.wav"
+{
+    for (int i = 0; i < beep.samples.count; i++)
+    {
+        beep.samples[i] = 0;
+    }
+}
+
+const string NAME
+{
+    NAME = "tide";
+}
+
+const List<float> CURVE
+{
+    for (int i = 0; i < 8; i++)
+    {
+        CURVE.Add(Twice(i));
+    }
+}
+
+const float HALF = Twice(0.25);
+const Pair PAIR = MakePair(3);
+const int RULES_LENGTH = Length(rules); // A constant's code reads an asset's code's value
+
+build int Length(string text)
+{
+    return text.length;
+}
+
+// C the game has, which match code calls and build code doesn't: the program that runs build code is built without it
+extern float BuildCodeNoise(float x);
+
+singleton Probe
+{
+    float noise;
+    Color heroCorner;
+    Color heroNext;
+    int2 madeSize;
+    Color madeCell;
+    Color fromMadeCell;
+    int rulesLength;
+    string greeting;
+    int tableCount;
+    int tableLast;
+    int quadCount;
+    float3 quadFirst;
+    float quadShade;
+    float curveTwo;
+    int curveCount;
+    float half = HALF;
+    Pair pair;
+    int rulesLengthConstant;
+    string name;
+}
+
+system Read(mut Probe probe)
+{
+    probe.heroCorner = hero[int2(0, 0)];
+    probe.heroNext = hero[int2(1, 2)];
+    probe.madeSize = made.size;
+    probe.madeCell = made[int2(3, 1)];
+    probe.fromMadeCell = fromMade[int2(0, 0)];
+    probe.rulesLength = rules.length;
+    probe.greeting = greeting;
+    probe.tableCount = table.count;
+    probe.tableLast = table[table.count - 1];
+    probe.quadCount = quad.vertices.count;
+    probe.quadFirst = quad.vertices[0].position;
+    probe.quadShade = quad.vertices[0].shade;
+    probe.curveTwo = CURVE[2];
+    probe.curveCount = CURVE.count;
+    probe.pair = PAIR;
+    probe.rulesLengthConstant = RULES_LENGTH;
+    probe.name = NAME;
+    probe.noise = BuildCodeNoise(2);
+}
+
+scene Main
+{
+}

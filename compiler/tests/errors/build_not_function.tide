@@ -1,0 +1,3 @@
+// expect: 'build' goes before a function
+build struct Pair { int a; }
+scene Main { }

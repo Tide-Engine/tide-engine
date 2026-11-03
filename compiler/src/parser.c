@@ -1081,7 +1081,8 @@ static bool is_decl_word(const str text)
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
-        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio") || str_eq_c(text, "worker");
+        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio") || str_eq_c(text, "worker")
+        || str_eq_c(text, "build");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -1992,9 +1993,17 @@ static decl *parse_const(parser *p)
     d->return_type_at = type->name_at;
     d->return_type_qual_at = type->at;
     d->return_type_ref = type;
+    // const List<float> CURVE { ... }: build code makes its value (docs/spec.md, Build code)
+    if (at(p, T_LBRACE)) {
+        d->body_at = name->at;
+        d->body = parse_block(p);
+        d->end = d->body->end;
+        return d;
+    }
     if (!at(p, T_ASSIGN)) {
-        diag_error(peek(p)->at, "a constant needs a value: 'const " STR_FMT " " STR_FMT " = ...;'", STR_ARG(type->text),
-                   STR_ARG(name->text));
+        diag_error(peek(p)->at, "a constant needs a value: 'const " STR_FMT " " STR_FMT " = ...;', or code that makes it: "
+                                "'const " STR_FMT " " STR_FMT " { ... }'", STR_ARG(type->text), STR_ARG(name->text),
+                   STR_ARG(type->text), STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
     advance(p);
@@ -2022,13 +2031,25 @@ static decl *parse_asset(parser *p)
     d->return_type_at = type->name_at;
     d->return_type_qual_at = type->at;
     d->return_type_ref = type;
-    if (!at(p, T_ASSIGN)) {
+    // asset Texture hero = "art/hero.png" { ... }: build code edits what the file has, and with no path it
+    // starts empty (docs/spec.md, Build code)
+    if (!at(p, T_ASSIGN) && !at(p, T_LBRACE)) {
         diag_error(peek(p)->at, "an asset needs its file's path: 'asset " STR_FMT " " STR_FMT " = \"...\";', from the folder this file is in",
                    STR_ARG(type->text), STR_ARG(name->text));
+        diag_note("or code that makes it, with or without a path: 'asset " STR_FMT " " STR_FMT " { ... }'", STR_ARG(type->text),
+                  STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
-    advance(p);
-    d->value = parse_expr(p);
+    if (at(p, T_ASSIGN)) {
+        advance(p);
+        d->value = parse_expr(p);
+    }
+    if (at(p, T_LBRACE)) {
+        d->body_at = name->at;
+        d->body = parse_block(p);
+        d->end = d->body->end;
+        return d;
+    }
     d->end = expect(p, T_SEMI, "';' after the asset's path")->at;
     return d;
 }
@@ -2944,6 +2965,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const token *worker = NULL;
         const token *virtual = NULL;
         const token *override = NULL;
+        const token *build = NULL;
         p.overriding = false;
         for (;;) {
             const tok_kind after = peek_at(&p, 1)->kind;
@@ -2954,6 +2976,8 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 async = advance(&p);
             } else if (!worker && t->kind == T_IDENT && str_eq_c(t->text, "worker") && after == T_IDENT) {
                 worker = advance(&p);
+            } else if (!build && t->kind == T_IDENT && str_eq_c(t->text, "build") && (after == T_IDENT || after == T_MUT)) {
+                build = advance(&p); // build void Outline(...): it runs while the game builds
             } else if (!virtual && t->kind == T_IDENT && str_eq_c(t->text, "virtual") && at_replace_word(&p, false)) {
                 virtual = advance(&p);
             } else if (!override && t->kind == T_IDENT && str_eq_c(t->text, "override") && at_replace_word(&p, false)) {
@@ -3062,6 +3086,18 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 d->worker_at = worker->at;
                 if (!local) diag_error(worker->at, "workers currently require 'local': write 'local worker'");
                 if (async) diag_error(async->at, "a worker runs to completion; drop 'async' and await it from a local async function");
+            }
+        }
+        if (build) {
+            if (d->kind != DECL_FUNCTION || d->is_extern) {
+                diag_error(build->at, "'build' goes before a function, which then runs only while the game builds: "
+                                      "'build void Outline(mut Grid2<Color> image, int width) { ... }'");
+            } else {
+                d->is_build = true;
+                d->build_at = build->at;
+                if (local) diag_error(local->at, "a build function is the build's, not a machine's: drop 'local'");
+                if (async) diag_error(async->at, "a build function runs to completion while the game builds; drop 'async'");
+                if (worker) diag_error(worker->at, "a build function runs while the game builds, not on a worker: drop 'worker'");
             }
         }
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {

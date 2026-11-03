@@ -130,6 +130,12 @@ typedef struct tide_pack_builder {
 // where a list's says its room (tide_pack_string is for text).
 uint64_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size, uint32_t *chars);
 
+// A list's block of `count` elements of `element` bytes each, side by side,
+// shared by `content` (which should cover the element size as well as the
+// bytes): its offset, which a tide_list of those elements reads. What a
+// constant list that build code made is in the pack (tidec's build code).
+uint64_t tide_pack_values(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t element, uint32_t count);
+
 // Text of `size` bytes of UTF-8, with a NUL after them, shared by `content`:
 // its block's offset, which a tide_text reads as any text's (its header says
 // its bytes and its characters), alone or as an element, a key or a value of

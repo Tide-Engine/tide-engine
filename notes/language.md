@@ -1,5 +1,12 @@
 # Language features, as tidec builds them
 
+## Build code (2026-11-03)
+
+`build` functions, asset and constant bodies, built constants and their checks are in notes/assets-and-files.md,
+Build code: parser.c (the `build` word, bodies), build_check.inc (the made functions, `check_build_code`), and the
+changes to `is_constant`, `use_constant`, `check_constant`, `constant_type` and `check_signature`'s grid and mesh
+parameters.
+
 ## Diagnostic mesh asset names (2026-11-03)
 
 Generated frames scope a diagnostic mesh-name callback alongside their existing

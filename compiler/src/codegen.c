@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "build_code.h"
 
 #include "asset_files.h"
 #include "texture_cache.h"
@@ -13,6 +14,8 @@
 #include "tide/pack.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
+#include "tide/vorbis.h"
+#include "tide/wav.h"
 
 #include <stdio.h>
 #include <math.h>
@@ -25,8 +28,13 @@
 
 #include "tide/player.h"  // How many players a game takes without a maxPlayers setting
 
+// The program that runs build code (codegen_options.build_program, build_code.c), rather than the game: build
+// functions are in it, and nowhere else
+static bool generating_build;
+
 static bool cpu_routine(const decl *d)
 {
+    if (d->is_build) return generating_build;
     return !d->gpu_only || (d->worker_cpu && !d->gpu_sampling);
 }
 
@@ -751,6 +759,17 @@ static const char *asset_cname(const decl *d)
     return b.data;
 }
 
+// What reads a constant build code made: in the program that runs build code, a variable it sets; in the game, a
+// value C has while compiling (a plain value's bytes, or text), or the pack's, for a list (gen_build_constants)
+static const char *build_constant_cname(const decl *d)
+{
+    sb b = {0};
+    if (generating_build || d->return_type.kind == TY_STRING) sb_printf(&b, "tide_const_%s", decl_cname(d));
+    else if (d->return_type.kind == TY_LIST) sb_printf(&b, "tide_asset_%s", decl_cname(d));
+    else sb_printf(&b, "(tide_const_%s.value)", decl_cname(d));
+    return b.data;
+}
+
 // Stable across asset-file edits and declaration ordering; zero is no asset.
 // Collisions are rejected before generation rather than aliasing references.
 static uint64_t asset_reference_id(const decl *d)
@@ -1281,7 +1300,8 @@ static bool array_unwritten(const program *prog, const decl *a);
 // The built-in structs that are in generated C only for a game that names them (as the enum Depth is)
 static bool builtin_struct_unnamed(const program *prog, const decl *d)
 {
-    return (d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time
+    return (d == prog->sound || d == prog->samples || d == prog->effect || d == prog->view_time || d == prog->clip_data
+        || d == prog->mesh_level
         || d == prog->audience || d == prog->visibility_group) && !d->named;
 }
 
@@ -4179,6 +4199,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         sb_put(o, e->hoisted); // Already ran, or was read, before the statement (see hoist_ordered)
         return;
     }
+    if (e->bind == BIND_CONST && e->constant->build_fn) { // Made by build code (gen_build_constants)
+        sb_put(o, build_constant_cname(e->constant));
+        return;
+    }
     if (e->bind == BIND_CONST) {
         // A constant is its value, as its own type, wherever it's read: C
         // works it out while compiling, and it's in no header.
@@ -5167,7 +5191,7 @@ static void gen_method(gen *g, const expr *e)
 static bool event_batch_value(const expr *e)
 {
     if (!e) return true;
-    if (e->bind == BIND_CONST) return event_batch_value(e->constant->value);
+    if (e->bind == BIND_CONST) return !e->constant->build_fn && event_batch_value(e->constant->value);
     if (e->kind == E_DEFAULT) {
         switch (e->type.kind) {
         case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT: case TY_STRUCT: case TY_EVENT:
@@ -5229,7 +5253,7 @@ static const expr *batch_event(const decl *sys)
 static bool destroy_row_value(const expr *e)
 {
     if (!e) return true;
-    if (e->bind == BIND_CONST) return destroy_row_value(e->constant->value);
+    if (e->bind == BIND_CONST) return !e->constant->build_fn && destroy_row_value(e->constant->value);
     if (e->method || e->property || e->local_field || e->edge != EDGE_NONE || e->block
         || e->resource_operation || e->io_operation || e->path_operation || e->skin_operation
         || type_has_text(e->type)) return false;
@@ -10127,7 +10151,8 @@ static void gen_text_helpers(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    if (!world_heap(prog, true) && prog->lists.count == 0 && prog->maps.count == 0) return;
+    // The program that runs build code writes grids no world has: an asset's
+    if (!world_heap(prog, true) && prog->lists.count == 0 && prog->maps.count == 0 && !(generating_build && prog->grids.count)) return;
     sb_put(o, "// Text, lists, maps and grids in values: a world's own going in, released going out, never shared.\n\n");
     gen_list_helpers(g, false);
     gen_map_helpers(g, false);
@@ -10165,7 +10190,7 @@ static void gen_text_helpers(gen *g)
         if (!d) continue;
         const bool value_type = d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON
                              || d->kind == DECL_EVENT;
-        if (!value_type || !decl_has_text(d)) continue;
+        if (!value_type || !decl_has_text(d) || builtin_struct_unnamed(prog, d)) continue;
         const char *name = type_cname(d);
         path_list paths = {0};
         text_paths(d, "", &paths);
@@ -13778,7 +13803,7 @@ static bool flat_list_defaults(const type t)
 static bool flat_list_expr(const expr *e)
 {
     if (!e) return true;
-    if (e->bind == BIND_CONST) return flat_list_expr(e->constant->value);
+    if (e->bind == BIND_CONST) return !e->constant->build_fn && flat_list_expr(e->constant->value);
     if ((e->kind == E_LITERAL || e->kind == E_DEFAULT) && !flat_list_defaults(e->type)) return false;
     if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE
         || e->io_operation || e->path_operation || e->storage_flush || e->web_fetch) return false;
@@ -17124,7 +17149,8 @@ static void gen_routines(gen *g)
         if (!externs) sb_put(o, "// C functions (extern)\n\n");
         externs = true;
         gen_routine_signature(g, o, d);
-        sb_printf(o, "; // " STR_FMT "\n", STR_ARG(d->qualified));
+        // The program that runs build code has none of the game's C, and build code calls none of it (build_check.inc)
+        sb_printf(o, "%s // " STR_FMT "\n", generating_build ? " { abort(); }" : ";", STR_ARG(d->qualified));
     }
     if (externs) sb_put(o, "\n");
     // Systems written in C: each takes a run of rows (tide/rows.h), then the
@@ -17142,7 +17168,7 @@ static void gen_routines(gen *g)
             sb_printf(o, ", %s%s *", p->mode == PARAM_MUT ? "" : "const ", type_cname(p->type.decl));
         }
         const str shown = tool_name(d);
-        sb_printf(o, "); // " STR_FMT "\n", STR_ARG(shown));
+        sb_printf(o, ")%s // " STR_FMT "\n", generating_build ? " { abort(); }" : ";", STR_ARG(shown));
     }
     if (systems) sb_put(o, "\n");
     for (int i = 0; i < g->prog->decls.count; i++) {
@@ -19766,6 +19792,12 @@ static uint32_t asset_pack_kind(const type t)
     return TIDE_PACK_LIST;
 }
 
+// A declaration's pack entry kind: its type's, but a constant list build code made, whose elements are a block
+static uint32_t asset_decl_pack_kind(const decl *d)
+{
+    return d->asset_kind == ASSET_VALUES ? TIDE_PACK_BYTES : asset_pack_kind(d->return_type);
+}
+
 static const char *asset_ctype(const type t)
 {
     return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
@@ -19856,7 +19888,7 @@ static void dependency_expr(asset_dependency_walk *w, const expr *e)
     if (e->bind == BIND_ASSET && dependency_visit(w, e->constant)) {
         vec_push(w->assets, e->constant);
         dependency_vertex(w, asset_vertex(e->constant->return_type));
-    } else if (e->bind == BIND_CONST && dependency_visit(w, e->constant)) {
+    } else if (e->bind == BIND_CONST && !e->constant->build_fn && dependency_visit(w, e->constant)) {
         dependency_expr(w, e->constant->value);
     }
     if (e->kind == E_DEFAULT || e->kind == E_DEFAULTED) dependency_defaults(w, e->type);
@@ -20032,7 +20064,7 @@ static void gen_asset_lookup(gen *g, const decl *d, const decl *vertex)
     sb_printf(o, "    e = tide_pack_find%s%s(", vertex ? "_mesh" : "", g->opts->strip_names ? "_id" : "");
     if (g->opts->strip_names) sb_printf(o, "tide_id_%s", asset_cname(d));
     else gen_c_raw_literal(o, d->qualified);
-    sb_printf(o, ", %uu", (unsigned)asset_pack_kind(d->return_type));
+    sb_printf(o, ", %uu", (unsigned)asset_decl_pack_kind(d));
     if (vertex) sb_printf(o, ", 0x%08xu", (unsigned)mesh_layout_number(g, vertex));
     sb_put(o, ");\n");
 }
@@ -20303,6 +20335,7 @@ static void gen_assets(gen *g)
         const decl *d = prog->assets.items[i];
         const decl *vertex = asset_vertex(d->return_type);
         const bool skinned = d->asset_kind == ASSET_SKINNED;
+        if (generating_build && d->build_fn && !d->asset) continue; // Its code makes it, from nothing (gen_build_main)
         if (vertex) { // A Mesh, or a glob's: under its name and its vertices' layout, read where the pack has it
             gen_asset_lookup(g, d, vertex);
             sb_printf(o, "    if (!e) tide_asset_missing(\"" STR_FMT "\");\n", STR_ARG(asset_diagnostic_name(g, d)));
@@ -20385,7 +20418,7 @@ static void gen_assets(gen *g)
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         const decl *vertex = asset_vertex(d->return_type);
-        if (!vertex) continue;
+        if (!vertex || d->build_fn) continue; // Build code gave every field its value
         bool defaults = false;
         for (int k = 0; k < vertex->fields.count; k++) {
             const field *f = &vertex->fields.items[k];
@@ -20518,6 +20551,7 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         return at;
     }
     if (kind == ASSET_CLIP) return tide_pack_clip(b, item->hash, item->data, (uint32_t)item->size); // WAV/Vorbis or imported PCM WAV
+    if (kind == ASSET_VALUES) return tide_pack_values(b, item->hash, item->data, item->element, item->count);
     if (kind == ASSET_GRID) {
         const tide_grid_shape shape = asset_grid_shape(grid);
         return tide_pack_grid(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, item->image.pixels, &shape);
@@ -20622,9 +20656,112 @@ static bool rest_mesh(const asset_match *item, const mesh_file *m, mesh_file *re
     return true;
 }
 
+// What build code made of a mesh (asset_match.built): its vertices as the struct lays them out, as they are, and
+// what the levels of detail weigh, taken from the fields a file would have filled. `m` gets those, malloc'd.
+static uint8_t *built_mesh(const asset_match *item, const decl *vertex, const layout whole, const int *pad, mesh_file *m)
+{
+    const uint32_t n = item->count;
+    *m = item->mesh; // Its indices, which build_code.c put there
+    m->vertices = n;
+    m->position = calloc((size_t)n * 3u + 1u, sizeof(float));
+    m->normal = calloc((size_t)n * 3u + 1u, sizeof(float));
+    m->uv = calloc((size_t)n * 2u + 1u, sizeof(float));
+    m->uv2 = calloc((size_t)n * 2u + 1u, sizeof(float));
+    m->color = calloc((size_t)n * 4u + 1u, sizeof(float));
+    m->tangent = calloc((size_t)n * 4u + 1u, sizeof(float));
+    uint8_t *bytes = malloc((size_t)n * (size_t)whole.size + 1u);
+    if (!m->position || !m->normal || !m->uv || !m->uv2 || !m->color || !m->tangent || !bytes) abort();
+    if (n) memcpy(bytes, item->data, (size_t)n * (size_t)whole.size);
+    for (uint32_t v = 0; v < n; v++) m->color[v * 4u] = m->color[v * 4u + 1u] = m->color[v * 4u + 2u] = m->color[v * 4u + 3u] = 1.0f;
+    m->has_normals = m->has_uvs = m->has_uvs2 = m->has_colors = m->has_tangents = false;
+    int at = 0;
+    for (int i = 0; i < vertex->fields.count; i++) {
+        const field *f = &vertex->fields.items[i];
+        at += pad[i];
+        const int size = type_layout(f->type).size;
+        float *to = NULL;
+        uint32_t each = 0;
+        switch (mesh_fills(f)) {
+        case FILL_POSITION: to = m->position, each = 3u; break;
+        case FILL_NORMAL: to = m->normal, each = 3u, m->has_normals = true; break;
+        case FILL_UV: to = m->uv, each = 2u, m->has_uvs = true; break;
+        case FILL_UV2: to = m->uv2, each = 2u, m->has_uvs2 = true; break;
+        case FILL_COLOR: to = m->color, each = 4u, m->has_colors = true; break;
+        case FILL_TANGENT: to = m->tangent, each = 4u, m->has_tangents = true; break;
+        default: break;
+        }
+        const size_t take = (size_t)size < each * sizeof(float) ? (size_t)size : each * sizeof(float);
+        for (uint32_t v = 0; to && v < n; v++) memcpy(to + (size_t)v * each, bytes + (size_t)v * (size_t)whole.size + (size_t)at, take);
+        at += size;
+    }
+    memcpy(m->hash, item->hash, sizeof m->hash);
+    return bytes;
+}
+
 static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, const float lod, const bool skinned,
                       const bool rest, uint64_t offsets[2])
 {
+    if (item->built) { // Made by build code: its vertices as they are
+        int *pad = arena_alloc(sizeof(int) * (size_t)(vertex->fields.count + 1));
+        const layout whole = decl_layout_padded(vertex, pad);
+        mesh_file m;
+        uint8_t *bytes = built_mesh(item, vertex, whole, pad, &m);
+        bool tangent_sides = false;
+        for (int i = 0; i < vertex->fields.count; i++)
+            tangent_sides |= mesh_fills(&vertex->fields.items[i]) == FILL_TANGENT && vertex->fields.items[i].type.kind == TY_FLOAT4;
+        const char *described = mesh_layout(g, vertex);
+        tide_sha256 s;
+        uint8_t content[32];
+        tide_sha256_init(&s);
+        tide_sha256_add(&s, m.hash, sizeof m.hash);
+        tide_sha256_add(&s, described, strlen(described));
+        tide_mesh_levels levels;
+        uint8_t leveled[32];
+        float multiplier = lod;
+        bool has = lod && m.indices && mesh_levels(g, &m, NULL, 0u, tangent_sides, &levels, leveled);
+        if (item->levels && item->levels->count) { // The code's own, around a ball all of the mesh is in
+            levels = *item->levels;
+            float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
+            for (uint32_t v = 0; v < m.vertices; v++) {
+                for (int k = 0; k < 3; k++) {
+                    const float p = m.position[v * 3u + (uint32_t)k];
+                    if (v == 0 || p < lo[k]) lo[k] = p;
+                    if (v == 0 || p > hi[k]) hi[k] = p;
+                }
+            }
+            float radius = 0.0f;
+            for (int k = 0; k < 3; k++) levels.center[k] = lo[k] * 0.5f + hi[k] * 0.5f;
+            for (uint32_t v = 0; v < m.vertices; v++) {
+                float d2 = 0.0f;
+                for (int k = 0; k < 3; k++) {
+                    const float d = m.position[v * 3u + (uint32_t)k] - levels.center[k];
+                    d2 += d * d;
+                }
+                if (d2 > radius) radius = d2;
+            }
+            levels.radius = sqrtf(radius);
+            tide_sha256 ls;
+            tide_sha256_init(&ls);
+            tide_sha256_add(&ls, "built levels", 12);
+            tide_sha256_add(&ls, levels.error, sizeof levels.error);
+            tide_sha256_add(&ls, levels.first, sizeof levels.first);
+            tide_sha256_add(&ls, levels.indices, sizeof levels.indices);
+            tide_sha256_add(&ls, levels.index, (size_t)levels.index_count * sizeof *levels.index);
+            tide_sha256_end(&ls, leveled);
+            if (!multiplier) multiplier = 1.0f;
+            has = true;
+        }
+        if (has) {
+            tide_sha256_add(&s, leveled, sizeof leveled);
+            levels.multiplier = multiplier;
+            if (multiplier != 1.0f) tide_sha256_add(&s, &multiplier, sizeof multiplier);
+        }
+        tide_sha256_end(&s, content);
+        tide_pack_mesh_levels(b, content, bytes, (uint32_t)whole.size, m.vertices, m.index, m.indices, has ? &levels : NULL, offsets);
+        free(bytes);
+        free(m.position), free(m.normal), free(m.uv), free(m.uv2), free(m.color), free(m.tangent);
+        return;
+    }
     mesh_file rested;
     const bool moved = rest && rest_mesh(item, &item->mesh, &rested);
     const mesh_file *m = moved ? &rested : &item->mesh;
@@ -20693,6 +20830,8 @@ static void note_watched(void *user, const char *path)
 // The pack of the game's assets, as the files `opts` asks for: the file the
 // program loads (`pack`), and the same as a C array (`pack_c`) for a host that
 // embeds it. A game with no assets gets no pack file, and an empty array.
+#include "build_codegen.inc"
+
 static void build_pack(gen *g)
 {
     const program *prog = g->prog;
@@ -20720,7 +20859,7 @@ static void build_pack(gen *g)
         const decl *grid = t.kind == TY_GRID ? t.decl : t.kind == TY_LIST && list_elem(t.decl).kind == TY_GRID ? list_elem(t.decl).decl
                          : t.kind == TY_MAP && t.decl->fields.items[1].type.kind == TY_GRID ? t.decl->fields.items[1].type.decl : NULL;
         const char *qualified = str_to_cstr(d->qualified);
-        const uint32_t kind = asset_pack_kind(t);
+        const uint32_t kind = asset_decl_pack_kind(d);
         const decl *vertex = asset_vertex(t);
         if ((v->kind == ASSET_MESH || v->kind == ASSET_SKINNED) && vertex) {
             // A Mesh with bones (its vertex's 'joints' or 'weights') is read as a skinned model, and packed as a Mesh
@@ -20848,6 +20987,7 @@ static void build_pack(gen *g)
         free(offsets);
         free(keys);
     }
+    if (generating_build) build_pack_sources(g, &b);
     g->pack_bytes = tide_pack_end(&b, &g->pack_size);
 }
 
@@ -24274,6 +24414,9 @@ bool codegen(program *prog, const codegen_options *opts)
         opts->info->bold = prog->names_bold;
         opts->info->microphone = prog->uses_microphone;
         opts->info->assets_affect_match = false;
+        // A constant build code made is in the game's C, so a file its code reads changes the program, not the pack
+        for (int i = 0; i < prog->build_roots.count; i++)
+            opts->info->assets_affect_match |= prog->build_roots.items[i]->kind == DECL_CONST;
         for (int i = 0; i < prog->assets.count; i++)
             opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED
                                            || prog->assets.items[i]->asset_kind == ASSET_ANIMATIONS
@@ -24283,6 +24426,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen g = {0};
     g.prog = prog;
     g.opts = opts;
+    generating_build = opts->build_program;
     const int files = diag_source_count();
     g.paths = arena_alloc(sizeof(char *) * (size_t)(files > 0 ? files : 1));
     sb from = {0};
@@ -24471,6 +24615,7 @@ bool codegen(program *prog, const codegen_options *opts)
         const decl *d = all_assets[i];
         if (!d->server_asset) sb_printf(&g.c, "static %s %s __attribute__((unused));\n", asset_ctype(d->return_type), asset_cname(d));
     }
+    gen_build_constants(&g);
     gen_assets(&g);
     gen_session_helpers(&g);
     gen_io_adapters(&g);
@@ -24551,6 +24696,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_editor_preview(&g);
     if (opts->layout || opts->embed) gen_layout(&g);
     if (opts->embed) gen_embed(&g);
+    if (opts->build_program) gen_build_main(&g);
 
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);

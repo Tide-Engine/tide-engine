@@ -41,6 +41,10 @@ static void usage(void)
             "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
             "  --pack-c       also write the assets' pack as C (<name>_pack.c: tide_game_pack), for a host that embeds it\n"
             "  --depfile <file> write source and transitive asset dependencies for the generated C\n"
+            "  --build-cc <cc>  the C compiler that builds the program running the game's build code (clang);\n"
+            "                   with --build-include <engine/include> and --build-engine <engine/src>, the\n"
+            "                   engine's headers and sources it's built with. --build-flag <f> adds a flag to\n"
+            "                   each compile and link, --build-lib <l> to the link\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
             "                 wait, instead of generating code\n"
             "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
@@ -216,6 +220,11 @@ int main(const int argc, char **argv)
 {
     input_list inputs = {0};
     codegen_options opts = {0};
+    const char **build_cc = calloc(2, sizeof *build_cc);
+    const char **build_flags = calloc((size_t)argc + 1u, sizeof *build_flags);
+    const char **build_libs = calloc((size_t)argc + 1u, sizeof *build_libs);
+    if (!build_cc || !build_flags || !build_libs) return 2;
+    int build_flag_count = 0, build_lib_count = 0;
     opts.line_directives = true;
     bool schedule = false;
     bool pack_c = false;
@@ -250,6 +259,19 @@ int main(const int argc, char **argv)
             opts.visualizers = true;
         } else if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
             opts.game_folder = argv[++i];
+        } else if (strcmp(argv[i], "--build-cc") == 0 && i + 1 < argc) {
+            build_cc[0] = argv[++i];
+            opts.build_cc = build_cc;
+        } else if (strcmp(argv[i], "--build-flag") == 0 && i + 1 < argc) {
+            build_flags[build_flag_count++] = argv[++i];
+            opts.build_flags = build_flags;
+        } else if (strcmp(argv[i], "--build-lib") == 0 && i + 1 < argc) {
+            build_libs[build_lib_count++] = argv[++i];
+            opts.build_libs = build_libs;
+        } else if (strcmp(argv[i], "--build-include") == 0 && i + 1 < argc) {
+            opts.build_include = argv[++i];
+        } else if (strcmp(argv[i], "--build-engine") == 0 && i + 1 < argc) {
+            opts.build_engine = argv[++i];
         } else if (strcmp(argv[i], "--pack-c") == 0) {
             pack_c = true;
         } else if (strcmp(argv[i], "--depfile") == 0 && i + 1 < argc && !depfile) {
@@ -286,7 +308,8 @@ int main(const int argc, char **argv)
             if (!add_define(argv[++i])) return 2;
         } else if (argv[i][0] == '-') {
             static const char *const valued[] = {"-o", "--name", "--scene", "--game", "--depfile", "--editor-prefab",
-                                                "--spirv", "--hlsl", "--package", "--define"};
+                                                "--spirv", "--hlsl", "--package", "--define", "--build-cc",
+                                                "--build-flag", "--build-lib", "--build-include", "--build-engine"};
             bool takes_value = false;
             for (size_t j = 0; j < sizeof valued / sizeof valued[0]; j++) {
                 if (strcmp(argv[i], valued[j]) == 0) takes_value = true;
