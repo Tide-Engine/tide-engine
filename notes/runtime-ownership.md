@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Diagnostic geometry boundary (2026-11-03)
+
+Within the owner's approved mesh profiling extension, generated frames install
+and restore a borrowed mesh-name callback in tide_draw_list. The existing drawing
+maintenance exception covers collector-owned geometry rows, list-owned bounded
+contribution chains and renderer submission counters. No new runtime function
+is called by generated code. Draw-list/mesh structures grow; command size and
+Unity packet layout stay unchanged. Names/sources are copied while recording,
+never borrowed across reload. Contracts: drawing.md and standard-host.md.
+
+
 ## Presentation correction clock boundary (2026-11-03)
 
 The generated host table adds optional `age_views(local, seconds)`, implemented

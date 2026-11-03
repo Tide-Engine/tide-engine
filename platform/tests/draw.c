@@ -21,6 +21,7 @@
 #include <time.h>
 
 #include "tide/gui.h"
+#include "tide/draw_profile.h"
 #include "tide/mesh.h"
 #include "tide/net.h" // tide_hash
 #include "tide/pack.h"
@@ -3740,6 +3741,8 @@ static void lod_scene(void)
 
 static void levels_of_detail(void)
 {
+    tide_draw_diagnostics geometry = {0};
+    list.diagnostics = &geometry;
     static const char *const kinds[2] = {"a 3D mesh", "a 3D mesh through a shader"};
     static const char *const parts[3] = {"its left square", "the top of its right square", "the bottom of its right square"};
     // Which of those each level draws
@@ -3749,6 +3752,7 @@ static void levels_of_detail(void)
     char what[200];
     // Twice: the second frame draws with the buffers the first made
     for (int frame = 0; frame < 2; frame++) {
+        tide_draw_diagnostics_clear(&geometry);
         lod_scene();
         for (int kind = 0; kind < 2; kind++) {
             const float top = 20.0f + 170.0f * (float)kind;
@@ -3766,6 +3770,9 @@ static void levels_of_detail(void)
             }
             check_pixels(checks, LOD_CELLS * 3);
         }
+        uint64_t geometry_vertices = 0;
+        for (uint32_t i = 0; i < geometry.geometry_count; i++) geometry_vertices += geometry.geometry[i].vertices;
+        expect(geometry_vertices == 264, "geometry attribution counts both pixel-check submissions of every LOD instance");
         expect(tide_platform_draw_vertices() == 135,
                "submitted vertices count each instance at its selected LOD, through built-in and custom shaders");
     }
@@ -3775,15 +3782,24 @@ static void levels_of_detail(void)
         tide_draw_clear(&list, background);
         tide_draw_screen_size(&list, screen);
         pixel_camera_3d();
+        tide_draw_diagnostics_clear(&geometry);
         lod_alone(kind != 0, 20.0f);
         tide_platform_read_pixels(&list, &(tide_float2){0, 0}, 1, &(uint32_t){0});
         const uint32_t calls = tide_platform_draw_calls();
         snprintf(what, sizeof what, "%s drawn four times at three levels of detail is three draw calls, and the clear (%u)",
                  kinds[kind], (unsigned)calls);
         expect(calls == 4u, what);
+        uint64_t geometry_vertices = 0, geometry_instances = 0;
+        for (uint32_t i = 0; i < geometry.geometry_count; i++) {
+            geometry_vertices += geometry.geometry[i].vertices;
+            geometry_instances += geometry.geometry[i].instances;
+        }
+        expect(geometry_vertices == 24 && geometry_instances == 4, "LOD regrouping preserves geometry provenance and exact work");
         expect(tide_platform_draw_vertices() == 27,
                "LOD counts submitted indices, including repeats, rather than the mesh's stored corners");
     }
+    list.diagnostics = NULL;
+    tide_draw_diagnostics_free(&geometry);
 }
 
 // What the stats read: geometry submitted in every pass, with overlays left out.

@@ -930,6 +930,10 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
         mesh_levels(d, mesh, indices);
         tide_draw_lod_request(d, mesh);
     }
+    if (d->diagnostics) {
+        d->meshes[mesh - 1u].profile_vertices = vertices.at;
+        d->meshes[mesh - 1u].profile_indices = indices.at;
+    }
     return mesh;
 }
 
@@ -975,6 +979,10 @@ static uint32_t shaded_mesh(tide_draw_list *d, const tide_shader *shader, const 
         tide_list_unflatten(vertices, v, size, false, vertices_copied);
         mesh_levels(d, mesh, indices);
         tide_draw_lod_request(d, mesh);
+    }
+    if (d->diagnostics) {
+        d->meshes[mesh - 1u].profile_vertices = vertices.at;
+        d->meshes[mesh - 1u].profile_indices = indices.at;
     }
     return mesh;
 }

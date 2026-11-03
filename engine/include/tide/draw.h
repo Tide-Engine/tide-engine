@@ -171,6 +171,7 @@ typedef struct tide_draw_command {
     uint8_t depth;  // tide_depth, for one that draws a 3D mesh; 0 for every other
     uint8_t cull;   // tide_cull, for one that draws a 3D mesh, with TIDE_DRAW_MIRRORED where it is; 0 for every other
     union {
+        uint32_t profile_geometry; // Mesh/shaded/blit capture chain; never affects batching.
         uint32_t text;  // TIDE_DRAW_TEXT: offset of the text in tide_draw_list.text
         uint32_t shape; // TIDE_DRAW_SHAPE: the rest of it, its place in tide_draw_list.shapes
     };
@@ -1345,6 +1346,7 @@ typedef struct tide_draw_mesh_data {
     uint32_t bounds_position; // 1 + byte offset of the float3 used for the cached bounds
     // A mesh a game made, drawn with `lod:` (tide_draw_want_levels): the key its levels are kept by, which is what's
     // in it and how it's weighed, and the tolerance multiplier they're picked with once they're made. 0 otherwise
+    uint64_t profile_vertices, profile_indices; // Diagnostic list handles, never dereferenced.
     uint64_t lod_key;
     float lod_want;
 } tide_draw_mesh_data;
@@ -1521,6 +1523,11 @@ static inline uint32_t tide_draw_run_stride(const tide_draw_run *r)
 // zeroed list is ready to use, and it grows as it needs, with no limit but
 // memory: running out ends the program, as it does for worlds.
 typedef struct tide_draw_list {
+    const char *(*profile_mesh_name)(uint64_t vertices, uint64_t indices);
+    struct tide_draw_geometry_link *profile_links;
+    uint32_t profile_link_count, profile_link_capacity;
+    uint64_t profile_revision;
+    bool profile_copying;
     struct tide_draw_diagnostics *diagnostics; // Optional host-owned CPU recording capture (tide/draw_profile.h).
     const struct tide_profile_source *profile_source; // Borrowed only while the current view records.
     struct tide_draw_diagnostic *profile_active; // Private active mesh/batch scope, never owned by the list.

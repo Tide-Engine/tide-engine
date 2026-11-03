@@ -343,6 +343,24 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
         }
         fputs("],\n", out);
     }
+    fputs("\"geometry\":{\"dropped_instances\":", out);
+    fprintf(out, "%llu,\"rows\":[", (unsigned long long)r->draw.dropped_geometry_instances);
+    bool geometry_comma = false;
+    for (uint32_t i = 0; i < r->draw.geometry_count; i++) {
+        const tide_draw_geometry *d = &r->draw.geometry[i];
+        if (!d->instances) continue;
+        if (geometry_comma) fputc(',', out);
+        geometry_comma = true;
+        fputs("{\"source\":", out); source(out, &d->source);
+        fputs(",\"mesh\":", out); string(out, d->mesh);
+        fprintf(out, ",\"identity\":\"%016llx:%016llx:%016llx\",\"target\":\"%016llx\",\"lod\":%u,\"mesh_vertices\":%u,\"mesh_indices\":%u,"
+                     "\"instances\":%llu,\"vertices\":%llu,\"triangles\":%llu}",
+                (unsigned long long)d->identity, (unsigned long long)d->geometry_id, (unsigned long long)d->geometry_other,
+                (unsigned long long)d->target, (unsigned)d->lod,
+                (unsigned)d->mesh_vertices, (unsigned)d->mesh_indices, (unsigned long long)d->instances,
+                (unsigned long long)d->vertices, (unsigned long long)d->triangles);
+    }
+    fputs("]},\n", out);
     fprintf(out, "\"render_work\":{\"draw_calls\":%llu,\"vertices\":%llu},\n\"draw_diagnostics\":[",
             (unsigned long long)s->draw_calls, (unsigned long long)s->vertices);
     for (uint32_t i = 0; i < r->draw.count; i++) {
@@ -364,6 +382,7 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
           "\"workers\":\"Completed-job queue, compute and copy intervals; may overlap frames.\","
           "\"mesh_recording\":\"Inclusive bounds, frustum testing, LOD and instance recording after mesh acquisition; contained in the caller view, not isolated culling or GPU time.\","
           "\"camera_slot\":\"Per-source, per-target camera encounter order each frame; conditional reordering changes its meaning. Target zero is the window, not a GPU pass ID.\","
+          "\"geometry\":\"Actual submitted cached 3D and shader mesh instances, grouped by mesh/version, originating view, destination and selected LOD. Counts repeated passes; vertices are submitted indices, not unique vertices or GPU time.\","
           "\"gpu_passes\":\"Whole render-pass intervals grouped by target, encounter order, pixel size and shader membership. Mixed shaders have no individual cost attribution. Passes may overlap and omit work outside passes; do not sum as frame time. Conditional order changes identity.\","
           "\"gpu\":\"Asynchronous results from measured work; unavailable or pending samples are absent, never zero. CPU and GPU overlap.\","
           "\"quantiles\":\"Exact nearest-rank quantiles through 4096 samples, then deterministic reservoir estimates; totals, means and maxima cover all observations.\"}\n}\n", out);
