@@ -25,7 +25,7 @@ install(TARGETS tide_cli RUNTIME DESTINATION bin COMPONENT tide)
 # zips, and the path of a file that isn't there yet.
 add_executable(tide_cli_tests tests/release_test.c tests/install_test.c tests/libraries_test.c tests/packages_test.c tests/apk_test.c
     tests/unzip_test.c tests/rsa_test.c tests/sys_test.c tests/unity_assets_test.c tests/unity_code_test.c tests/unity_shaders_test.c release.c
-    install.c libraries.c fetch.c sys.c unity_assets.c unity_code.c unity_mapping.c unity_shaders.c unity_yaml.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
+    install.c libraries.c fetch.c line.c sys.c unity_assets.c unity_code.c unity_mapping.c unity_shaders.c unity_yaml.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/unity_names.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_cli_tests PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/platform/src/rtc")
 # A Unity project's Assets, as Unity wrote them, for tide unity --assets

@@ -1,5 +1,25 @@
 # `tide`, packages and the package
 
+## Steady progress rows and active filenames (2026-11-03)
+
+`line_draw_pair` overwrites both rows and erases only their remaining tails,
+then flushes. It no longer clears and flushes a blank display every 100 ms,
+which caused the reported terminal flicker. Final cleanup still clears both
+rows. Width clipping and upgrade's single-line display remain in place.
+C/C++ feedback lists the basenames of currently active jobs in source order,
+clipped to the terminal width, so the last slow source remains visible while
+the batch waits. The caller copies names under the existing feedback lock;
+the drawing thread never reads compiler jobs. Redirected feedback is unchanged.
+
+Validation: warning-free Windows Clang 23.1.2 ASan CLI build; CLI unit,
+packages, build_overlap, upgrade and hidden CTests pass (5/5). The new output
+regression requires no full-row erasure between updates and tail cleanup when
+labels/bars shrink. A real ConPTY build with the controlled compiler shows
+multiple active names, then `engine.c` throughout a two-second barrier, and
+clears before completion. This exercises presentation, not real game execution.
+The production docs build and diff check pass (Node 24.22.1). Other host
+terminals/OSes remain CI/manual coverage; no game or WASM runtime code changed.
+
 ## Directory order in overlap diagnostics tests (2026-11-03)
 
 The next CI run passed native Linux/Windows, MinGW and all Linux web shards.

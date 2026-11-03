@@ -37,7 +37,7 @@
 
 static struct {
     atomic_flag lock;
-    char label[128];
+    char label[1024];
     int completed, total;
     int64_t started;
 } feedback = {.lock = ATOMIC_FLAG_INIT};
@@ -115,10 +115,10 @@ static void build_step(const char *step)
     fflush(stderr);
 }
 
-static void build_progress(const int completed, const int total)
+static void build_progress(const int completed, const int total, const char *files)
 {
     lock_feedback();
-    snprintf(feedback.label, sizeof feedback.label, "Compiling C/C++");
+    snprintf(feedback.label, sizeof feedback.label, "Compiling C/C++%s%s", *files ? ": " : "", files);
     feedback.completed = completed;
     feedback.total = total;
     unlock_feedback();
@@ -1075,7 +1075,7 @@ static bool run_compiles(build *b, compiles *list)
     const bool own_feedback = begin_build_feedback();
     int completed = 0;
     const bool terminal = build_activity != NULL;
-    if (list->count && terminal) build_progress(0, list->count);
+    if (list->count && terminal) build_progress(0, list->count, "");
     else if (list->count) {
         fprintf(stderr, "tide: compiling %d C/C++ files (%d jobs)\n", list->count, b->jobs > 0 ? b->jobs : 1);
         fflush(stderr);
@@ -1091,6 +1091,18 @@ static bool run_compiles(build *b, compiles *list)
     for (;;) {
         start_compiles(list, at_once, &stop);
         show_compiles(b, list, &shown);
+        if (terminal && list->count) {
+            char files[sizeof feedback.label - 32] = "";
+            size_t used = 0;
+            // Source order keeps the label stable as parallel jobs finish.
+            for (int i = 0; i < list->count && used < sizeof files - 1; i++) {
+                const compile_job *active = &list->items[i];
+                if (!active->started || active->done) continue;
+                snprintf(files + used, sizeof files - used, "%s%s", used ? ", " : "", path_base(active->made[0]));
+                used += strlen(files + used);
+            }
+            build_progress(completed, list->count, files);
+        }
         if (list->running_count == 0) break;
         int code = 1;
         char *text = NULL;
@@ -1118,8 +1130,7 @@ static bool run_compiles(build *b, compiles *list)
             b->engine_built = true;
         }
         completed++;
-        if (terminal) build_progress(completed, list->count);
-        else {
+        if (!terminal) {
             fprintf(stderr, "tide: compiled [%d/%d] %s\n", completed, list->count, path_base(job->made[0]));
             fflush(stderr);
         }
