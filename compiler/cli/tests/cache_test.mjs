@@ -912,6 +912,9 @@ async function atOnceTests(tide, root, target) {
     for (const jobs of [1, 0, 3]) {
         const result = await build(jobs);
         check(result.code === 0, `tide build failed with ${jobs || "a processor's worth of"} compiles at once:\n${result.said}`);
+        const total = Number(result.said.match(/tide: compiling (\d+) C\/C\+\+ files/)?.[1]);
+        check(total > 0 && result.said.includes(`tide: compiled [${total}/${total}]`),
+            `cold build did not report all completed files:\n${result.said}`);
         built.push({ jobs, files: contents(cache) });
         clean();
     }
@@ -932,10 +935,12 @@ async function atOnceTests(tide, root, target) {
     const five = alone.said.includes("broken_five"), seventeen = alone.said.includes("broken_seventeen");
     check(five !== seventeen, `one file at a time says one file's errors:\n${alone.said}`);
     clean();
+    // Completion order and the worker count are progress, not compiler diagnostics.
+    const diagnostics = (text) => text.replace(/^tide: (?:compiling \d+ C\/C\+\+ files \(\d+ jobs\)|compiled \[\d+\/\d+\] [^\r\n]*)\r?\n/gm, "");
     for (let round = 0; round < 4; round++) {
         const result = await build(round === 3 ? 2 : 0);
         check(result.code !== 0, "a file that doesn't compile fails the build, whatever runs at once");
-        check(result.said === alone.said, `several compiles at once said something else than one at a time:\n${result.said}\n--- one at a time:\n${alone.said}`);
+        check(diagnostics(result.said) === diagnostics(alone.said), `several compiles at once said something else than one at a time:\n${result.said}\n--- one at a time:\n${alone.said}`);
         if (round < 3) clean();
     }
     console.log(`  two files that don't compile: the errors of ${five ? name(5) : name(17)}.c alone, as one at a time says them`);

@@ -1,5 +1,31 @@
 # `tide`, packages and the package
 
+## Build progress feedback (2026-11-03)
+
+Builds now print flushed, newline-delimited stderr feedback for preparation,
+package resolution, Tide/asset compilation, C/C++ compilation and linking.
+C/C++ batches announce their file/worker counts and each successful completion
+with a completed/total count and basename; empty batches and reused links say
+they are up to date. Native runs announce launch; web/Android standalone builds
+announce packaging, and Android links identify their ABI. Shared build paths
+also give watched rebuilds this feedback. stdout completion messages, diagnostic
+ordering, cache stamps, compiler scheduling and runtime contracts stay unchanged.
+These are real file counts, not an estimated overall percentage or timer.
+
+The package cache fixture checks cold builds reach their reported file total.
+Its parallel failure comparison removes only the worker-count/completion lines,
+whose order naturally varies, retaining exact compiler diagnostic comparison.
+The CLI reference documents stderr progress under redirection.
+
+Validation: warning-free Windows Clang 23.1.2 ASan CLI build; run_exit, help,
+packages and hidden CTests pass (4/4). A scratch installation with the actual
+CLI/front end and a controlled compiler executable exercises cold completion
+counts, warm object reuse, bounded native launch and compilation failure with
+captured output. This is a feedback-path check, not real game compilation or
+GPU execution. Node 24.22.1 syntax check, production docs build and diff checks
+pass. Full installed-package native/web cache tests and Android execution were
+not run; this changes host CLI feedback, not WASM or game runtime behavior.
+
 ## Telemetry queue claim race (2026-11-03)
 
 Run 41557439497's Linux release telemetry fixture timed out waiting for the two

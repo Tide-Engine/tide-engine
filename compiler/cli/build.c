@@ -33,6 +33,13 @@
 #define TIDE_VERSION "0.0.0-dev"
 #endif
 
+// Keep build feedback separate from command/game output, including through pipes.
+static void build_step(const char *step)
+{
+    fprintf(stderr, "tide: %s\n", step);
+    fflush(stderr);
+}
+
 // A growable argv for sys_run, ending with NULL.
 typedef struct args {
     const char **items;
@@ -950,6 +957,11 @@ static void show_compiles(const build *b, compiles *list, int *shown)
 // what's wrong with the first that didn't compile.
 static bool run_compiles(build *b, compiles *list)
 {
+    int completed = 0;
+    if (list->count) {
+        fprintf(stderr, "tide: compiling %d C/C++ files (%d jobs)\n", list->count, b->jobs > 0 ? b->jobs : 1);
+        fflush(stderr);
+    } else build_step("C/C++ objects are up to date");
     sys_process *running[SYS_AT_ONCE];
     int job_of[SYS_AT_ONCE];
     int count = 0;
@@ -1003,6 +1015,8 @@ static bool run_compiles(build *b, compiles *list)
             sys_write_text(list->engine_stamp_path, list->engine_stamp);
             b->engine_built = true;
         }
+        fprintf(stderr, "tide: compiled [%d/%d] %s\n", ++completed, list->count, path_base(job->made[0]));
+        fflush(stderr);
     }
     const bool ok = stop == list->count;
     if (!ok) telemetry_fail(TELEMETRY_ERROR_C);
@@ -1110,6 +1124,7 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
 
 static bool build_setup(build *b, const char *root, const build_options *opts, const bool library)
 {
+    build_step("preparing build");
     if (setup(b, root, opts, library)) return true;
     telemetry_fail(TELEMETRY_ERROR_SETUP);
     return false;
@@ -1760,6 +1775,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
         free(old);
         if (!same) sys_remove(stamp_path); // A link cut short leaves nothing that passes
     }
+    build_step(same ? "linked output is up to date" : "linking");
     const int code = same ? 0 : sys_run(a.items, NULL, false);
     if (code == 0 && stamp_path && !same) sys_write_text(stamp_path, stamp);
     free(stamp_path);
@@ -2123,7 +2139,9 @@ static bool debug_views(const build_options *opts)
 
 static bool generate(build *b, const char *gen, const bool layout)
 {
+    build_step("resolving packages");
     if (!find_packages(b->folder, &b->packages)) return false;
+    build_step("compiling Tide code and assets");
     file_list paths;
     int count = 0;
     compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count, b->opts->editor_source);
@@ -2417,9 +2435,9 @@ static char *build_game(const char *root, const build_options *opts, const char 
         if (!placed) return NULL;
     }
     char *pack = pack_of(gen);
-    if (opts->web && !opts->managed
-        && !make_page(root, b.folder, program, output, pack, args, opts->distribution && !opts->watch, opts->single_file)) {
-        return NULL;
+    if (opts->web && !opts->managed) {
+        build_step("packaging web page");
+        if (!make_page(root, b.folder, program, output, pack, args, opts->distribution && !opts->watch, opts->single_file)) return NULL;
     }
     if (!opts->web || opts->managed) { // Beside the program, as <name>.pack, which tide/run.h loads
         char file[512];
@@ -2804,6 +2822,7 @@ int tide_run_native(const char *root, const build_options *opts, const char *con
         args a = {0};
         arg(&a, program);
         for (int i = 0; game_args[i]; i++) arg(&a, game_args[i]);
+        build_step("starting game");
         code = sys_run(a.items, r.b.folder, false);
         if (code < 0) fprintf(stderr, "tide: couldn't start %s\n", program);
         else if (code > 0) telemetry_fail(TELEMETRY_ERROR_GAME);
@@ -2842,6 +2861,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
     args a = {0};
     arg(&a, program);
     for (int i = 0; game_args[i]; i++) arg(&a, game_args[i]);
+    build_step("starting game");
     sys_process *game = sys_start(a.items, r.b.folder);
     free(a.items);
     if (!game) {
@@ -3880,6 +3900,8 @@ static int android_version_code(void)
 // CPU, and Android's own.
 static bool link_android(const build *b, const file_list *objects, const c_side *c, const char *output)
 {
+    fprintf(stderr, "tide: linking Android %s\n", android_abis[b->abi]);
+    fflush(stderr);
     char *lib_dir = path_join(b->root, "lib/android");
     char *abi_dir = path_join(lib_dir, android_abis[b->abi]);
     char *platform_lib = path_join(abi_dir, "libtide_platform.a");
@@ -4041,6 +4063,7 @@ static char *build_android(const char *root, const build_options *opts, char *pa
                "  Google Play it's your upload key.\n",
                key_path);
     }
+    build_step("packaging Android app");
     if (!apk_write(output, &desc, &key, error, sizeof error)) {
         fprintf(stderr, "tide: %s\n", error);
         return NULL;
