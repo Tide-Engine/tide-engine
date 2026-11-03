@@ -1,5 +1,30 @@
 # Test infrastructure
 
+## All forest browser variants await completion (2026-11-03)
+
+Run 41556106089 repeats the premature DOM completion in ordinary WebGL:
+bench_forest returns a complete 3.36 MB DOM in 1.69 seconds with only the
+startup line and no exit marker. This is the same asynchronous forest frame
+loop as the quick D3D11 case below. Both quick and motion forest queries now
+use the served result barrier on every browser backend, instead of relying on
+a virtual-time DOM snapshot for any variant.
+
+Only three additional registrations change: bench_forest, bench_forest_motion
+and bench_forest_motion_d3d11. Ordinary WebGL now shares the already-declared
+240-second software-render budget with WebGPU, with a 290-second outer guard.
+Both D3D11 variants use a nominal 120-second result budget and 170-second
+outer guard, WARP selection and the Direct3D11 renderer assertion. The six
+variants keep their existing program arguments, scene/check work, CPU
+reservation and result validation. No helper, runtime or game code changes,
+and no retries or other test migrations are introduced.
+
+The web-debug forest target builds, and all six browser cases pass locally:
+quick WebGL/D3D11/WebGPU in 3.53/5.42/4.51 seconds, and motion in
+5.62/8.69/7.89 seconds. Rendered CTest metadata confirms exactly the three
+registrations listed above changed among 2,875 tests. Validation uses Node
+24.22.1 and muted Chrome 156.0.8078.79; the whitespace diff passes. Hosted
+Chrome Headless Shell confirmation remains the next normal push's coverage.
+
 ## Forest D3D11 waits for its result (2026-11-03)
 
 Run 41554207974's bench_forest_d3d11 failure has decisive new diagnostics:
@@ -11,14 +36,15 @@ two measured frames and a completion drain), so a DOM snapshot is not its
 completion signal. This does not establish why Chrome's virtual-time dump
 finished early, nor prove the older empty-output failure had the same cause.
 
-Only bench_forest_d3d11 opts into D3D11_SERVED. The existing served runner now
+Initially only bench_forest_d3d11 opted into D3D11_SERVED. The served runner
 accepts --angle-backend for WebGL, restricted to swiftshader or d3d11-warp;
 its original default backend flags are unchanged. This fixture selects WARP
 and retains expect-angle=Direct3D11, all forest checks and the nominal 120-second
 result budget. It waits for the actual page result and closes Chrome through
 DevTools. The outer CTest guard is 170 seconds for the existing diagnostic/
-cleanup allowance. The motion D3D11 fixture and all other file registrations
-are unchanged; no retry is added. Like other served tests, this page uses real
+cleanup allowance. This initial fix left motion D3D11 and other file
+registrations unchanged; the follow-up above covers all forest variants.
+No retry is added. Like other served tests, this page uses real
 time and cross-origin isolation/shared WASM memory. No forest or runtime code
 changes.
 
@@ -114,7 +140,7 @@ even when the browser subsequently reaches the cleanup timeout. Its dump wrapper
 only signals the main Chrome process after receiving the DOM. The logs cannot
 distinguish a busy shader callback from delayed DOM output or browser shutdown.
 
-Only tide_platform_shaders opts into tide_add_web_test's SERVED WebGL path.
+Initially only tide_platform_shaders used tide_add_web_test's SERVED WebGL path.
 Its initial routing reused run_web_served_test.mjs with the same SwiftShader
 backend and a nominal 120-second result budget, plus 50 seconds for diagnostics/
 cleanup. The batching follow-up above gives it the explicit 240-second budget.
