@@ -90,8 +90,10 @@ jobs:
         run: |
           major=${LLVM_VERSION%%.*}
           codename=$(lsb_release -cs)
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-          echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          curl -fsSL --retry 4 --retry-all-errors --retry-max-time 120 --connect-timeout 15 --max-time 30 \
+            -o "$RUNNER_TEMP/llvm-snapshot.gpg.key" https://apt.llvm.org/llvm-snapshot.gpg.key
+          sudo install -m 644 "$RUNNER_TEMP/llvm-snapshot.gpg.key" /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb https://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
           sudo apt-get install -y clang-$major lld-$major llvm-$major ninja-build ccache
           echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"

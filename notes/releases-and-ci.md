@@ -1,5 +1,36 @@
 # Releases, installing and CI
 
+## LLVM signing-key setup in runs 41652157692 / 41653232593 (2026-11-03)
+
+The owner's requested release follow-up found Linux test/package jobs and Docs
+stopping before compilation at the quiet wget signing-key pipeline (exit 4).
+The missing-ccache end-of-job error is secondary: installation never ran.
+A newer dev merge containing the build-speed work reproduced the same setup
+failure. Other test jobs were superseded by that newer push; no passing engine
+or release result is inferred. The quiet logs do not identify the precise
+network/TLS failure. Local IPv4/IPv6 curl and WSL wget could retrieve the key,
+which does not establish hosted recovery.
+
+Both Linux tool-install steps now fetch the same official HTTPS key with curl,
+visible errors, four bounded retries (including transport errors), a 15-second
+connect limit, 30-second request limit and 120-second retry window. Only a
+successful transfer is installed from RUNNER_TEMP, avoiding a truncated trusted
+key on failed downloads. The apt source now uses HTTPS too. LLVM major/version
+selection, dependency lists, signing trust, platform matrix, tests and publication
+gates are unchanged. Persistent failure still fails setup, with diagnostics.
+
+Validation: YAML structural comparison changes only those two install-step
+command blocks, whose curl/install fragments match. Both Bash blocks parse.
+Under WSL, the exact curl flags retrieve the official armored key; a sandboxed
+install receives its complete bytes. A local HTTP fixture fails twice with 503
+then succeeds, installing only the complete final response; a permanent 503
+stops after five requests, emits its error and never invokes installation.
+All thirteen existing workflow-helper tests and the whitespace check pass.
+No local root trust store or package installation is changed. Actionlint is
+unavailable locally. Actual hosted apt recovery and final publication remain
+the automatically triggered corrective push's coverage; this is not a release
+confirmation. No old workflow was retried or extra workflow dispatched.
+
 ## Web room migration in run 41440963320 (2026-11-02)
 
 Only macOS web shard 1 failed independently: a migration joiner timed out
