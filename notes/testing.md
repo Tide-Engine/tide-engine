@@ -1,5 +1,30 @@
 # Test infrastructure
 
+## File-browser early-exit diagnostics (2026-11-03)
+
+Run 41547870181's bench_forest_d3d11 failed in 0.88 seconds with no page
+result and empty browser stderr. The longer motion case of the same executable
+passed immediately afterward, and the unchanged quick case passed in 9.98
+seconds in run 41539750446. These logs identify neither a forest assertion
+failure nor a timeout; the browser's exit status and raw DOM were not reported.
+
+browser_dump.mjs now reports the child's exit code/signal and output length
+when its streams close without a complete DOM. Intentional termination after
+the closing HTML tag produces no such diagnostic. run_web_test.cmake's existing
+missing/nonzero page-result failure now includes the runner result, DOM length
+and its first 4096 bytes, marking truncation. Launch flags, deadlines, result
+checks and exit statuses are unchanged. This improves evidence on a recurrence;
+it does not claim to fix the unidentified hosted failure.
+
+Controlled scratch-browser cases pass for empty output with exit 0 and 7,
+partial HTML with exit 9, a complete failing page result, a large result-less
+DOM with a bounded excerpt, and a successful complete DOM whose browser is
+terminated by the wrapper. A self-terminating Node child also reports the
+platform-provided status (Windows reports exit 1, signal none). Ordinary
+bench_forest_d3d11 passes in 8.20 seconds with the existing web-debug page,
+Node 24.22.1 and Chrome 156.0.8078.79. The whitespace diff passes; no runtime,
+forest code, permanent fixture, retry or workflow dispatch was added.
+
 ## Shader WebGL runner diagnostics (2026-11-03)
 
 The macOS WebGL shader fixture reached the file runner's 120-second guard in

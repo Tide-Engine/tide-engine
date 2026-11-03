@@ -15,6 +15,10 @@ child.stdout.on('data', chunk => {
     dom += chunk;
     if (dom.includes('</html>')) child.kill();
 });
+child.on('close', (code, signal) => {
+    if (!dom.includes('</html>'))
+        console.error(`The browser ended before a complete DOM (exit=${code ?? 'none'}, signal=${signal ?? 'none'}, stdout=${Buffer.byteLength(dom)} bytes).`);
+});
 child.on('error', error => {
     console.error(`${browser}: ${error.message}`);
     process.exitCode = 1;
