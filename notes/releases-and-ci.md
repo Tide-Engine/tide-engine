@@ -1,5 +1,33 @@
 # Releases, installing and CI
 
+## LLVM CDN fallback in run 41656098141 (2026-11-03)
+
+Docs' hosted HTTPS-resolver response also reports lookup failure; the cached
+answer observed locally below was not available at that runner's resolver.
+The fallback now connects through apt.llvm.org's observed CNAME,
+`dualstack.l2.shared.us-eu.fastly.net`, independently of llvm.org's unavailable
+authority. This is a hostname fallback, not a hardcoded address. curl --connect-to
+preserves the original apt.llvm.org HTTPS URL, SNI, Host and certificate checks.
+Only a successful direct (no proxy or redirect) key response can publish its
+validated IPv4 peer as the single ephemeral runner hosts mapping for apt.
+Normal runner DNS still takes the original path. The public DNS resolver/API
+dependency is removed. If LLVM changes CDN names, this fallback may fail and
+must be revisited; it does not bypass TLS or signatures to keep installing.
+
+Validation: live certificate-verified requests through that exact CDN alias
+return the official signing key and the Noble LLVM 23 signed InRelease index.
+gpgv verifies that index's signature against the downloaded key in a scratch
+keyring. curl's connection semantics are documented at
+https://curl.se/docs/manpage.html#--connect-to .
+The forced-DNS-failure sandbox invokes the real updated helper and installs
+the complete key/mapping without modifying the local trust store or hosts.
+Six updated regressions cover normal DNS, exact CDN connection and single-host
+mapping, failed ordinary downloads, failed fallback TLS, malformed addresses,
+and empty/IPv6 peer addresses. All nineteen workflow-helper tests, Bash/Node
+syntax and whitespace checks pass. No workflow gate or version changed and
+no manual workflow dispatch/retry occurred. Hosted recovery still needs the
+new push-triggered run; no release is claimed yet.
+
 ## LLVM resolver failure in run 41654421794 (2026-11-03)
 
 The diagnostic download correction below exposes the actual hosted failure:
