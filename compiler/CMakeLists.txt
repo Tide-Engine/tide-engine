@@ -25,6 +25,23 @@ set(TIDE_SIMULATION_RUNTIME "${TIDE_SIMULATION_RUNTIME}" PARENT_SCOPE)
 set_source_files_properties(src/version.c PROPERTIES COMPILE_DEFINITIONS
     "TIDE_VERSION=\"${TIDE_VERSION}\";TIDE_SIMULATION_RUNTIME=\"${TIDE_SIMULATION_RUNTIME}\"")
 
+# Private import caches also depend on the vendored decoders/compressor.
+file(GLOB_RECURSE tide_asset_vendors CONFIGURE_DEPENDS LIST_DIRECTORIES false RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "third_party/ufbx/*.c" "third_party/ufbx/*.h" "third_party/dr_libs/*.c" "third_party/dr_libs/*.h"
+    "third_party/stb_image/*.h" "third_party/stb_dxt/*.h")
+list(SORT tide_asset_vendors)
+set(tide_asset_vendor_text "Tide asset cache vendors 1\n")
+foreach(source IN LISTS tide_asset_vendors)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${source}" content)
+    string(REPLACE "\r\n" "\n" content "${content}")
+    string(SHA256 digest "${content}")
+    string(APPEND tide_asset_vendor_text "${source}:${digest}\n")
+endforeach()
+string(SHA256 tide_asset_vendor_hash "${tide_asset_vendor_text}")
+set_source_files_properties(src/asset_cache.c PROPERTIES COMPILE_DEFINITIONS
+    "TIDE_ASSET_CACHE_VENDORS=\"${tide_asset_vendor_hash}\"")
+
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)

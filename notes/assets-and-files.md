@@ -1,5 +1,78 @@
 # Assets and local files
 
+## Persistent build-time asset imports (2026-11-03)
+
+Owner requested faster fresh `tide run` launches after progress feedback exposed
+repeat asset work. `asset_cache.c`, `asset_import_cache.c` and `texture_cache.c`
+keep content-addressed results in `<game>/.tide/assets/imports` for ordinary
+CLI builds/runs and tidec builds with a game folder. No new CLI switch, runtime
+function, pack format, asset semantics or deterministic expectation is introduced.
+
+- Static meshes retain every canonical stream, attribute flag, part count,
+  content hash and per-vertex provenance. A stream whose tuples are bit-identical
+  is stored once and expanded exactly on read; no quantization. Generated tangent
+  variants key the complete canonical representation, including provenance.
+- Full skinned/animation imports and `[Parts]` selections retain canonical bytes.
+  Pattern lists are part of selected-import keys, including profile reference
+  selections. Full canonical validation runs on read. Later clip/shape selection,
+  rig processing and retargeting keep their existing paths/caches.
+- Models retain external-buffer paths and content digests. A hit re-reads/hashes
+  dependencies and rebuilds their watcher/depfile records. A mismatch discards
+  tentative dependencies and reimports. Primary source bytes are still read and
+  hashed, so fresh processes detect same-size/same-time edits too.
+- Audio retains validation results and converted PCM WAV bytes. Converted cache
+  payloads are checked as WAV before use; raw byte assets still use source bytes.
+- Texture preparation retains exact RGBA8 or BC/authored-mip payloads, separately
+  for Raw and compression modes and written filename context (TGA format selection).
+  Code-writing compilations can resolve a draw-only Texture to checked dimensions
+  and an owned prepared payload without decoding float pixels. A newly requested
+  variant decodes its original source lazily. Direct importer/editor callers and
+  inspection-only compilations retain their float-pixel contract. Grid images
+  continue through the exact image decoder; other declarations still discover,
+  lay out and assemble their current pack on each build.
+
+Keys include compiler/runtime source identity, a CMake hash of vendored importers
+and compressors, host scalar byte order, source content and import context.
+Entries include the expected key and a SHA-256 of their payload. Counts, lengths,
+stream masks, indices, texture dimensions/mips and expanded mesh allocation sizes
+are checked. Cache entries over 1 GiB are skipped, not a new import-size refusal.
+Unreadable, incompatible, malformed and unwritable entries are ordinary misses;
+only successful imports are stored. Unique PID/serial temporary names and atomic
+replacement keep concurrent compilers from publishing partial entries. The cache
+is disposable and content-addressed; total-size eviction is not implemented.
+
+Tests: `asset_disk_cache_test.c` checks exact model-stream/provenance round trips,
+every cache-file byte flip and truncation, malformed counts/indices, and direct
+pixel imports after prepared-texture use. `asset_cache_test.mjs` runs real separate
+compiler processes for identical cold/warm C/header/pack bytes, no writes after
+code-only edits, same-size/time external-buffer edits and retained dependencies,
+image edits, newly requested Raw variants against full imports, part selections,
+vertex layouts, glob additions/removals, damaged/truncated/structurally malformed
+entries, a blocked cache directory, concurrent writers, removed sources and TGA
+suffix diagnostics. Existing source-notification and typed-variant tests remain.
+
+Performance, Windows Ryzen 9 7900X / Clang 23.1.2 Release, no sanitizers: three
+fresh-process samples per case, median wall milliseconds for complete tidec
+generation/packing, not game startup. Baseline is this checkout at `6ba206338`.
+A 2048x2048 RGBA8 PNG texture took 90.0 ms before, 99.5 ms to populate the new
+cache and 17.0 ms warm. A 128x128 quad-grid OBJ with generated float4 tangents
+took 71.1 / 97.7 / 41.1 ms respectively. Each new cold/warm pack was byte-identical
+to the baseline (2,796,352 and 5,112,000 bytes). Raw samples and fixture parameters
+are in `asset-cache-20261103.json`. These synthetic cases do not establish a
+speedup for the owner's entire game. First builds pay cache-write cost.
+
+The implementation deliberately caches prepared textures rather than decoded
+float-image dumps: a trial RGBA8 pixel cache made this texture's warm build
+73 ms, versus about 47 ms caching compression alone and 17.0 ms retaining the
+prepared payload before image decode. Plain uncompressed mesh dumps likewise
+regressed the OBJ case; constant-stream storage removes that overhead.
+
+Validation: strict Windows ASan tool builds, the 16 focused importer/cache/asset
+E2E CTests and 23 asset-related language-server checks pass; production docs
+build and Node/diff checks pass. Cold/warm pack parity includes models, selected
+parts, authored DDS mips, raw textures and MP3. No runtime/WASM implementation
+changed; actual browser/Android execution and other host OSes remain CI coverage.
+
 ## Authored RGBA8 DDS mip imports (2026-11-02)
 
 The approved foliage quality pass adds narrow legacy DDS image import: a single

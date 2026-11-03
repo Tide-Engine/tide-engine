@@ -1,6 +1,8 @@
 #include "codegen.h"
 
 #include "asset_files.h"
+#include "texture_cache.h"
+#include "image_files.h"
 #include "humanoid_assets.h"
 #include "asset_usage.h"
 #include "mesh_lod.h"
@@ -20386,7 +20388,7 @@ static uint8_t channel_byte(const float v, const float alpha)
 
 // One item of an asset into the pack: its block's offset.
 static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
-                          const bool compress, uint32_t *extra)
+                          const bool compress, uint32_t *extra, const char *cache_folder)
 {
     *extra = 0;
     if (kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION || kind == ASSET_HUMANOID) {
@@ -20396,7 +20398,43 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         return kind == ASSET_ANIMATIONS ? tide_pack_list(b, &at, 1u) : at;
     }
     if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
-        const size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
+        size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
+        uint8_t content[32], cache[32];
+        memcpy(content, item->hash, sizeof content);
+        if (raw) content[0] ^= 0x52u, content[31] ^= 0x52u;
+        texture_cache_key(cache, item->hash, item->key, raw, compress);
+        size_t cached_size;
+        texture_cache_view view;
+        uint8_t *cached = NULL;
+        bool prepared = false;
+        if (item->prepared_texture && item->prepared_raw == raw && compress)
+            prepared = texture_cache_open(item->prepared_texture, item->prepared_texture_size, &view);
+        if (!prepared) {
+            cached = texture_cache_read(cache_folder, cache, &cached_size, &view);
+            prepared = cached != NULL;
+        }
+        if (prepared) {
+            if (view.blocks.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
+            const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)view.width, (int32_t)view.height,
+                                                        view.rgba, view.blocks);
+            free(cached);
+            return at;
+        }
+        // A newly requested variant may not have been prepared with the old
+        // declaration. Decode its source now, without changing other consumers.
+        asset_match decoded;
+        bool decoded_here = false;
+        if (!item->image.pixels) {
+            decoded = *item;
+            char why[256];
+            if (!image_file_read_mips(item->data, item->size, item->key, &decoded.image, &decoded.image_mips, why)) {
+                diag_error((loc){0}, "'%s' can't be imported as an image: %s", item->key, why);
+                return 0;
+            }
+            item = &decoded;
+            pixels = (size_t)item->image.width * item->image.height;
+            decoded_here = true;
+        }
         uint8_t *rgba = malloc(pixels ? pixels * 4u : 1u);
         if (!rgba) abort();
         for (size_t i = 0; i < pixels; i++) {
@@ -20406,9 +20444,6 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
             rgba[i * 4u + 2u] = channel_byte(c.b, worked), rgba[i * 4u + 3u] = channel_byte(1.0f, c.a);
         }
         // The same file as a color and as numbers is two images: other bytes, told apart by what names them
-        uint8_t content[32];
-        memcpy(content, item->hash, sizeof content);
-        if (raw) content[0] ^= 0x52u, content[31] ^= 0x52u;
         tide_texture_blocks compressed = {0};
         if (item->image_mips.pixels) {
             // Authored mip levels (DDS) retain their alpha coverage and raw
@@ -20430,6 +20465,13 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         if (compressed.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
         const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
                                                     compressed.pixels ? NULL : rgba, compressed);
+        const texture_cache_view prepared_view = {.width = item->image.width, .height = item->image.height,
+            .rgba = rgba, .blocks = compressed};
+        texture_cache_write(cache_folder, cache, &prepared_view);
+        if (decoded_here) {
+            free(decoded.image.pixels);
+            free((void *)(uintptr_t)decoded.image_mips.pixels);
+        }
         free((void *)(uintptr_t)compressed.pixels);
         free(rgba);
         return at;
@@ -20715,7 +20757,7 @@ static void build_pack(gen *g)
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
             uint64_t faces[6];
             uint32_t extra;
-            for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, false, &extra);
+            for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, false, &extra, prog->game_folder);
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
             continue;
         }
@@ -20733,7 +20775,7 @@ static void build_pack(gen *g)
         }
         if (!v->many) {
             uint32_t extra;
-            const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, true, &extra);
+            const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, true, &extra, prog->game_folder);
             tide_pack_name(&b, qualified, kind, at,
                            v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
             continue;
@@ -20743,7 +20785,7 @@ static void build_pack(gen *g)
         if (!offsets || !keys) abort();
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
-            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, true, &extra);
+            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, true, &extra, prog->game_folder);
             if (v->is_map) { // Its key: text, as code reads one
                 uint8_t hash[32];
                 tide_sha256_of(v->items[k].key, strlen(v->items[k].key), hash);
@@ -24469,6 +24511,7 @@ bool codegen(program *prog, const codegen_options *opts)
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);
     if (!opts->server && !g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
+    if (diag_error_count()) { free(g.pack_bytes); return false; }
     const sb c = opts->line_directives ? pin_lines(&g.c, g.c_path) : g.c;
     const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &c) && write_pack(&g)
                     && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);

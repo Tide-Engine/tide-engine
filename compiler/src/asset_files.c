@@ -16,6 +16,8 @@
 #include <string.h>
 
 #include "assets.h"
+#include "asset_import_cache.h"
+#include "texture_cache.h"
 #include "audio_files.h"
 #include "folders.h"
 #include "image_files.h"
@@ -39,6 +41,10 @@ typedef struct read_file {
     uint8_t *data;
     size_t len;
     uint8_t hash[32];
+    uint8_t *prepared_texture;
+    size_t prepared_texture_size;
+    bool prepared_raw;
+    bool prepared_tried;
     bool decoded;          // Tried as an image...
     tide_png_image image;  // ...and what it gave (pixels NULL when neither decodes)
     tide_texture_blocks image_mips;
@@ -76,6 +82,12 @@ static struct {
     read_file *items;
     int count, cap;
 } files;
+static bool use_build_cache;
+
+void asset_files_use_build_cache(const bool enabled)
+{
+    use_build_cache = enabled;
+}
 
 static char *copy_cstr(const char *s)
 {
@@ -117,6 +129,7 @@ static void forget_file(read_file *f)
     free(f->data);
     free(f->sound_data);
     free(f->image.pixels);
+    free(f->prepared_texture);
     free((void *)(uintptr_t)f->image_mips.pixels);
     memset(f, 0, sizeof *f);
 }
@@ -659,11 +672,68 @@ static const uint8_t *read_side(void *user, const char *path, size_t *size)
 
 static tide_skinned_keep_part_fn parts_keep;
 static void *parts_user;
+static uint8_t parts_key[32];
 
-void asset_choose_parts(const tide_skinned_keep_part_fn keep, void *user)
+void asset_choose_parts(const tide_skinned_keep_part_fn keep, void *user, const str *patterns, const int count)
 {
     parts_keep = keep;
     parts_user = user;
+    tide_sha256 h;
+    tide_sha256_init(&h);
+    for (int i = 0; i < count; i++) {
+        const uint32_t length = (uint32_t)patterns[i].len;
+        tide_sha256_add(&h, &length, sizeof length);
+        tide_sha256_add(&h, patterns[i].ptr, length);
+    }
+    tide_sha256_end(&h, parts_key);
+}
+
+static void clear_sides(side_reader *sides)
+{
+    for (int i = 0; i < sides->count; i++) free(sides->sides[i].path);
+    free(sides->sides);
+    sides->sides = NULL;
+    sides->count = 0;
+}
+
+static bool check_cached_side(void *user, const char *path, const uint8_t hash[32])
+{
+    side_reader *sides = user;
+    const read_file *f = read_at(path);
+    if (!f || memcmp(f->hash, hash, 32)) return false;
+    mesh_side *next = realloc(sides->sides, sizeof *next * (size_t)(sides->count + 1));
+    if (!next) return false;
+    sides->sides = next;
+    sides->sides[sides->count++] = (mesh_side){copy_cstr(path), f->size, f->modified};
+    return true;
+}
+
+static void import_cache_key(uint8_t cache[32], const read_file *f, const char *name, const char *kind, const bool parts)
+{
+    tide_sha256 h;
+    uint8_t variant[32];
+    tide_sha256_init(&h);
+    tide_sha256_add(&h, f->path, strlen(f->path) + 1);
+    tide_sha256_add(&h, name, strlen(name) + 1); // Suffix-based format selection, including URLs.
+    if (parts) tide_sha256_add(&h, parts_key, sizeof parts_key);
+    tide_sha256_end(&h, variant);
+    asset_cache_key(cache, kind, f->hash, variant, sizeof variant);
+}
+
+static void write_import_cache(const char *folder, const uint8_t key[32], const side_reader *sides,
+                               const void *bytes, const size_t size)
+{
+    if (!folder) return;
+    asset_cache_dependency *deps = calloc((size_t)sides->count + 1, sizeof *deps);
+    if (!deps) return;
+    bool ok = true;
+    for (int i = 0; i < sides->count && ok; i++) {
+        const read_file *f = read_at(sides->sides[i].path);
+        ok = f != NULL;
+        if (f) { deps[i].path = sides->sides[i].path; memcpy(deps[i].hash, f->hash, 32); }
+    }
+    if (ok) asset_import_cache_write(folder, key, deps, sides->count, bytes, size);
+    free(deps);
 }
 
 bool asset_name_matches(const str pattern, const char *name, const uint32_t length)
@@ -778,7 +848,7 @@ static void say_missing(const char *written, const char *abs, const char *folder
 
 // Reads `path`'s file as an item of `kind`; false, having said why, when it
 // can't be read as one.
-static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at)
+static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at, const char *game_folder)
 {
     read_file *f = read_at(path);
     if (!f) {
@@ -791,6 +861,29 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     item->size = f->len;
     memcpy(item->hash, f->hash, 32);
     if (kind == ASSET_GRID || kind == ASSET_TEXTURE || kind == ASSET_CUBEMAP) {
+        // Draw-only textures can use their prepared payload without decoding
+        // float pixels. Grid consumers still take the ordinary decoder path.
+        if (use_build_cache && kind == ASSET_TEXTURE && !f->decoded) {
+            texture_cache_view view;
+            if (!f->prepared_tried) {
+                f->prepared_tried = true;
+                uint8_t cache[32];
+                texture_cache_key(cache, f->hash, key, false, true);
+                f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+                if (!f->prepared_texture) {
+                    texture_cache_key(cache, f->hash, key, true, true);
+                    f->prepared_texture = texture_cache_read(game_folder, cache, &f->prepared_texture_size, &view);
+                    f->prepared_raw = true;
+                }
+            }
+            if (f->prepared_texture && texture_cache_open(f->prepared_texture, f->prepared_texture_size, &view)) {
+                item->image.width = view.width; item->image.height = view.height;
+                item->prepared_texture = f->prepared_texture;
+                item->prepared_texture_size = f->prepared_texture_size;
+                item->prepared_raw = f->prepared_raw;
+                return true;
+            }
+        }
         if (!f->decoded) {
             f->decoded = true;
             image_file_read_mips(f->data, f->len, key, &f->image, &f->image_mips, f->image_why);
@@ -806,7 +899,31 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     } else if (kind == ASSET_CLIP) {
         if (!f->sound_tried) {
             f->sound_tried = true;
-            f->sound = audio_file_read(f->data, f->len, &f->sound_data, &f->sound_size, f->sound_why);
+            uint8_t cache[32];
+            asset_cache_key(cache, "audio", f->hash, NULL, 0);
+            size_t cached_size;
+            uint8_t *cached = asset_cache_read(game_folder, cache, &cached_size);
+            f->sound = cached && ((cached_size == 1 && cached[0] == 0)
+                || (cached_size > 1 && cached[0] == 1 && audio_file_read(cached + 1, cached_size - 1, NULL, NULL, f->sound_why)));
+            if (f->sound && cached[0] == 1) {
+                f->sound_size = cached_size - 1;
+                memmove(cached, cached + 1, f->sound_size);
+                f->sound_data = cached;
+                cached = NULL;
+            }
+            free(cached);
+            if (!f->sound) {
+                f->sound = audio_file_read(f->data, f->len, &f->sound_data, &f->sound_size, f->sound_why);
+                if (f->sound && game_folder && f->sound_size < ASSET_CACHE_MAX_BYTES) {
+                    uint8_t *encoded = malloc(f->sound_size + 1);
+                    if (encoded) {
+                        encoded[0] = f->sound_data ? 1 : 0;
+                        if (f->sound_size) memcpy(encoded + 1, f->sound_data, f->sound_size);
+                        asset_cache_write(game_folder, cache, encoded, f->sound_size + 1);
+                        free(encoded);
+                    }
+                }
+            }
         }
         if (!f->sound) {
             diag_error(at, "'%s' can't be imported as audio: %s", key, f->sound_why);
@@ -826,11 +943,30 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
         uint32_t size = 0;
         size_t fbx_glb_size = 0;
         char why[256], note[256];
-        const bool is_fbx = fbx_file_is(f->data, f->len, key);
-        bool ok = !is_fbx || fbx_file_to_glb_parts(f->data, f->len, true, parts_keep, parts_user, &fbx_glb, &fbx_glb_size, why, note);
-        // An FBX's parts were chosen as it was converted (its helpers' names are their parents'): its GLB keeps all of it
-        if (ok) ok = tide_skinned_data_decode_parts(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len, read_side, &sides,
-                                                    is_fbx ? NULL : parts_keep, parts_user, &bytes, &size, why, note);
+        uint8_t cache[32];
+        import_cache_key(cache, f, key, "skin-parts", true);
+        size_t cached_size;
+        bytes = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
+        bool ok = bytes && cached_size <= UINT32_MAX && tide_skinned_data_validate(bytes, cached_size);
+        if (ok) size = (uint32_t)cached_size;
+        else {
+            free(bytes); bytes = NULL;
+            clear_sides(&sides);
+            f = read_at(path);
+            if (!f) {
+                clear_sides(&sides);
+                free(folder);
+                diag_error(at, "'%s' can't be read (%s)", written, path);
+                return false;
+            }
+            const bool is_fbx = fbx_file_is(f->data, f->len, key);
+            ok = !is_fbx || fbx_file_to_glb_parts(f->data, f->len, true, parts_keep, parts_user, &fbx_glb, &fbx_glb_size, why, note);
+            // An FBX's parts were chosen as it was converted (its helpers' names are their parents'): its GLB keeps all of it
+            if (ok) ok = tide_skinned_data_decode_parts(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len, read_side, &sides,
+                                                        is_fbx ? NULL : parts_keep, parts_user, &bytes, &size, why, note);
+
+            if (ok) write_import_cache(game_folder, cache, &sides, bytes, size);
+        }
         free(fbx_glb);
         free(folder);
         if (!ok) {
@@ -866,16 +1002,36 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             char why[256], note[256];
             uint8_t *fbx_glb = NULL;
             size_t fbx_glb_size = 0;
-            const bool is_fbx = fbx_file_is(f->data, f->len, key);
-            bool ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
-            if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
-                false, read_side, &sides, &bytes, &size, why, note);
-            if (!ok && !is_fbx && source_extension(key, ".glb") &&
-                (f->len < 4 || memcmp(f->data, "glTF", 4) != 0) &&
-                strstr(why, "JSON")) {
-                snprintf(why, sizeof why, "has an invalid GLB header (expected glTF 2.0)");
-                snprintf(note, sizeof note, "re-export as glTF 2.0 binary (.glb), glTF JSON (.gltf) or FBX (.fbx)");
+            uint8_t cache[32];
+            import_cache_key(cache, f, key, "skin", false);
+            size_t cached_size;
+            bytes = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
+            bool ok = bytes && cached_size <= UINT32_MAX && tide_skinned_data_validate(bytes, cached_size);
+            if (ok) size = (uint32_t)cached_size;
+            else {
+                free(bytes); bytes = NULL;
+                clear_sides(&sides);
+                f = read_at(path);
+                if (!f) {
+                    clear_sides(&sides);
+                    free(folder);
+                    diag_error(at, "'%s' can't be read (%s)", written, path);
+                    return false;
+                }
+                const bool is_fbx = fbx_file_is(f->data, f->len, key);
+                ok = !is_fbx || fbx_file_to_glb(f->data, f->len, true, &fbx_glb, &fbx_glb_size, why, note);
+                if (ok) ok = tide_skinned_data_decode(is_fbx ? fbx_glb : f->data, is_fbx ? fbx_glb_size : f->len,
+                    false, read_side, &sides, &bytes, &size, why, note);
+                if (!ok && !is_fbx && source_extension(key, ".glb") &&
+                    (f->len < 4 || memcmp(f->data, "glTF", 4) != 0) &&
+                    strstr(why, "JSON")) {
+                    snprintf(why, sizeof why, "has an invalid GLB header (expected glTF 2.0)");
+                    snprintf(note, sizeof note, "re-export as glTF 2.0 binary (.glb), glTF JSON (.gltf) or FBX (.fbx)");
+                }
+
+                if (ok) write_import_cache(game_folder, cache, &sides, bytes, size);
             }
+            if (ok) why[0] = note[0] = '\0';
             free(fbx_glb);
             free(folder);
             f = read_at(path);
@@ -918,7 +1074,29 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             mesh_file mesh = {0};
             char why[256], note[256];
             // What it is where its first bytes don't say is its name's to say: as written, as a fetched URL's file has another
-            const bool ok = mesh_file_read(f->data, f->len, key, read_side, &sides, &mesh, why, note);
+            uint8_t cache[32];
+            import_cache_key(cache, f, key, "mesh", false);
+            size_t cached_size;
+            uint8_t *cached = asset_import_cache_read(game_folder, cache, check_cached_side, &sides, &cached_size);
+            bool ok = cached && asset_mesh_cache_decode(cached, cached_size, &mesh);
+            free(cached);
+            if (!ok) {
+                clear_sides(&sides);
+                f = read_at(path);
+                if (!f) {
+                    free(folder);
+                    diag_error(at, "'%s' can't be read (%s)", written, path);
+                    return false;
+                }
+                ok = mesh_file_read(f->data, f->len, key, read_side, &sides, &mesh, why, note);
+                if (ok && game_folder) {
+                    size_t encoded_size;
+                    uint8_t *encoded = asset_mesh_cache_encode(&mesh, &encoded_size);
+                    if (encoded) write_import_cache(game_folder, cache, &sides, encoded, encoded_size);
+                    free(encoded);
+                }
+            }
+            if (ok) why[0] = note[0] = '\0';
             free(folder);
             f = read_at(path); // Where it is now: reading a file beside it may have moved the list
             if (!f) {
@@ -973,7 +1151,27 @@ bool asset_mesh_tangents(asset_value *value, const loc at)
         }
         if (!f->tangent_tried) {
             f->tangent_tried = true;
-            f->tangent_ok = mesh_file_with_tangents(&f->mesh, &f->tangent_mesh, f->tangent_why, f->tangent_note);
+            uint8_t cache[32], source[32];
+            size_t encoded_size = 0, cached_size;
+            uint8_t *encoded = value->cache_folder ? asset_mesh_cache_encode(&f->mesh, &encoded_size) : NULL;
+            uint8_t *cached = NULL;
+            if (encoded) {
+                tide_sha256_of(encoded, encoded_size, source);
+                asset_cache_key(cache, "mesh-tangents", source, NULL, 0);
+                cached = asset_cache_read(value->cache_folder, cache, &cached_size);
+            }
+            f->tangent_ok = cached && asset_mesh_cache_decode(cached, cached_size, &f->tangent_mesh);
+            free(cached);
+            if (!f->tangent_ok) {
+                f->tangent_ok = mesh_file_with_tangents(&f->mesh, &f->tangent_mesh, f->tangent_why, f->tangent_note);
+                if (f->tangent_ok && encoded) {
+                    size_t size;
+                    uint8_t *bytes = asset_mesh_cache_encode(&f->tangent_mesh, &size);
+                    if (bytes) asset_cache_write(value->cache_folder, cache, bytes, size);
+                    free(bytes);
+                }
+            }
+            free(encoded);
         }
         if (!f->tangent_ok) {
             diag_error(at, "'%s' %s", item->key, f->tangent_why);
@@ -1066,9 +1264,9 @@ static bool order_cube(asset_value *v, const char *written, const loc at)
 }
 
 static bool resolve_item(asset_match *item, const char *key, const char *absolute, const asset_kind kind,
-                         const char *written, const loc at, const bool paths_only)
+                         const char *written, const loc at, const bool paths_only, const char *game_folder)
 {
-    if (!paths_only) return read_item(item, key, absolute, kind, written, at);
+    if (!paths_only) return read_item(item, key, absolute, kind, written, at, game_folder);
     item->key = str_to_cstr(str_from(key));
     item->abs = absolute ? str_to_cstr(str_from(absolute)) : NULL;
     return true;
@@ -1078,6 +1276,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
                                       const bool many, const bool is_map, const loc at, const char *game_folder,
                                       const bool paths_only)
 {
+    const char *cache_folder = use_build_cache ? game_folder : NULL;
     char *declaring = declaring_abs(declaring_as_given);
     const char *written = asset_written_path(path);
     if (!*written) {
@@ -1089,6 +1288,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
     free(declaring);
     asset_value *v = NEW(asset_value);
     v->kind = kind;
+    v->cache_folder = cache_folder;
     v->many = many;
     v->is_map = is_map;
     v->paths_only = paths_only;
@@ -1114,7 +1314,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
     if (url && paths_only) {
         v->items = arena_alloc(sizeof(asset_match));
         v->count = 1;
-        resolve_item(&v->items[0], written, NULL, kind, written, at, true);
+        resolve_item(&v->items[0], written, NULL, kind, written, at, true, cache_folder);
     } else if (url) {
         const fetched *f = fetch_url(written, game_folder);
         if (!f->path) {
@@ -1124,7 +1324,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
         } else {
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
-            ok = read_item(&v->items[0], written, f->path, kind, written, at);
+            ok = read_item(&v->items[0], written, f->path, kind, written, at, cache_folder);
         }
     } else if (glob) {
         const size_t prefix_len = fixed_prefix(written);
@@ -1152,7 +1352,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
             v->items = arena_alloc(sizeof(asset_match) * (size_t)w.keys.count);
             v->count = w.keys.count;
             for (int i = 0; i < w.keys.count && ok; i++)
-                ok = resolve_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at, paths_only);
+                ok = resolve_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at, paths_only, cache_folder);
             free(pairs);
             if (ok && kind == ASSET_CUBEMAP) ok = order_cube(v, written, at);
         }
@@ -1166,7 +1366,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
         } else {
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
-            ok = resolve_item(&v->items[0], written, abs, kind, written, at, paths_only);
+            ok = resolve_item(&v->items[0], written, abs, kind, written, at, paths_only, cache_folder);
         }
         free(abs);
     }

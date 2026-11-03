@@ -45,10 +45,14 @@ they have no reliable total. Elapsed time covers the build. The display clears
 before game launch or completion output, and diagnostics appear on clean lines.
 Redirected output uses plain stderr lines with file counts.
 
-Code objects are cached between launches. Asset caching is partial: unchanged
-decoded assets are reused during hot reload in the same `tide run` process;
-downloads and generated mesh LODs also have disk caches. A fresh launch still
-imports ordinary local assets and rebuilds the asset pack.
+Code objects and expensive asset processing are cached between launches.
+Imported models, generated tangents, checked/converted audio and prepared texture
+payloads are kept in `.tide/assets/imports`, alongside the existing download,
+LOD and retarget caches. Code-only edits reuse these results. Changed source
+bytes, external model buffers, import settings or compiler/decoder revisions
+invalidate affected entries. Missing or damaged caches are rebuilt automatically.
+Tide still checks the program and assembles its asset pack; CPU-readable grid
+images still use their exact image decoder.
 
 Pinned build/run/schedule/shader commands select the project version before
 validating its options. Put an explicit game folder before options introduced

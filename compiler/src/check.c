@@ -15202,9 +15202,9 @@ static void check_asset_decl(checker *c, decl *k)
         } else if (!c->prog->asset_metadata_only || (read != ASSET_SKINNED && kind != ASSET_ANIMATIONS
                                                     && kind != ASSET_ANIMATION && kind != ASSET_HUMANOID)) {
             const expr *path = k->asset_paths.items[0];
-            if (k->parts_chosen) asset_choose_parts(part_kept, k);
+            if (k->parts_chosen) asset_choose_parts(part_kept, k, k->part_patterns.items, k->part_patterns.count);
             k->asset = asset_resolve(k->unit->src->path, path->text, read, many, is_map, path->at, c->prog->game_folder);
-            asset_choose_parts(NULL, NULL);
+            asset_choose_parts(NULL, NULL, NULL, 0);
             if (k->asset && read == ASSET_MESH && !c->prog->asset_metadata_only) {
                 const decl *vertex = asset_mesh_vertex(k->return_type);
                 bool tangents = false;

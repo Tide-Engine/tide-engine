@@ -827,11 +827,16 @@ if(TARGET tidec_core)
     target_compile_definitions(tidec_model_metadata_tests PRIVATE MODEL_METADATA_WORK="${CMAKE_CURRENT_BINARY_DIR}/model_metadata")
     target_link_libraries(tidec_model_metadata_tests PRIVATE tide tidec_core)
     add_test(NAME tidec_model_metadata COMMAND tidec_model_metadata_tests)
-    add_executable(tidec_asset_files_tests asset_files_test.c mesh_variants_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    add_executable(tidec_asset_files_tests asset_files_test.c asset_disk_cache_test.c mesh_variants_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_asset_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_asset_files_tests PRIVATE ASSET_FILES_WORK="${CMAKE_CURRENT_BINARY_DIR}/asset_files")
     target_link_libraries(tidec_asset_files_tests PRIVATE tide tidec_core)
     add_test(NAME tidec_asset_files COMMAND tidec_asset_files_tests)
+    if(TIDE_NODE)
+        add_test(NAME tidec_asset_disk_cache
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/asset_cache_test.mjs"
+                "$<TARGET_FILE:tidec>" "${CMAKE_CURRENT_BINARY_DIR}/asset-cache-processes")
+    endif()
     add_executable(tidec_pack_fingerprint_tests pack_fingerprint_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_pack_fingerprint_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_pack_fingerprint_tests PRIVATE

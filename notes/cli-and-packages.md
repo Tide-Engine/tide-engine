@@ -2,6 +2,12 @@
 
 ## Build progress feedback (2026-11-03)
 
+Fresh build/run asset work now has a persistent import/preparation cache as well
+as the existing code-object caches. Contracts, measured cold/warm costs and
+invalidation/corruption/concurrency coverage are in assets-and-files.md,
+Persistent build-time asset imports. The older cache inspection below records
+the gap before that implementation; it is no longer the current status.
+
 Final presentation correction: terminal builds now share one two-row display,
 the current step above one bar. A single activity thread owns drawing throughout
 the initial native/web build, including C compilation and linking; nested source,

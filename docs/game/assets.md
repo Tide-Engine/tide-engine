@@ -12,6 +12,17 @@ custom C retain assets conservatively unless explicitly opting into pruning.
 
 An asset is a file a game is built with: an image, a model, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.
 
+`tide build` and `tide run` reuse expensive imports between launches from
+`.tide/assets/imports`: static/skinned models and animations, generated tangents,
+audio validation/conversion, and prepared texture pixels or mip blocks. Unchanged
+draw-only textures can skip image decoding too. The cache is keyed by source
+contents, external model buffers, import options and compiler/decoder revision;
+editing code alone keeps it useful. Each build still discovers glob matches and
+packs the current declarations and vertex layouts. Grid images keep their exact
+CPU-readable decoder path. Cache files are disposable: missing, incompatible or
+damaged entries fall back to the ordinary import, and an unwritable cache does
+not prevent a build.
+
 ## Supported formats
 
 | Asset | Build-time source formats | What reaches the game |

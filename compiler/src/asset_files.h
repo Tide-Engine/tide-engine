@@ -14,7 +14,9 @@
 // from the declaring file, read, hashed and, for a Grid2<Color>, decoded, so
 // the checker can say what's wrong at the declaration and codegen can pack
 // them. Reads are kept by path, size and time, so a language server that
-// checks a game at every keystroke reads and decodes each file once.
+// checks a game at every keystroke reads and decodes each file once. A project's
+// persistent import cache also reuses model/audio processing across processes;
+// prepared draw-only textures can defer pixels in code-writing compilations.
 
 typedef enum asset_kind {
     ASSET_TEXT,  // string: UTF-8 text
@@ -42,6 +44,9 @@ typedef struct asset_match {
     uint8_t hash[32];     // SHA-256 of the original file bytes
     tide_png_image image; // ASSET_GRID and ASSET_TEXTURE: its pixels
     tide_texture_blocks image_mips; // Optional authored full RGBA8 chain, straight samples; cache-owned.
+    const uint8_t *prepared_texture; // Checked draw-only texture payload; pixels may stay undecoded.
+    size_t prepared_texture_size;
+    bool prepared_raw;
     mesh_file mesh;       // ASSET_MESH: its vertices and triangles, which stay until the file changes, as its bytes do
     const uint8_t *skinned;
     uint32_t skinned_size;
@@ -57,6 +62,7 @@ typedef struct asset_value {
     bool paths_only; // Editor discovery: paths without file reads or full imports.
     asset_match *items;
     int count;
+    const char *cache_folder; // Build-tool import cache; never part of the asset's identity.
 } asset_value;
 
 // Resolves the path written in a declaration: `path` as the source has it
@@ -70,8 +76,9 @@ asset_value *asset_resolve_paths(const char *declaring, str path, asset_kind kin
                                  const char *game_folder);
 // [Parts]: the skinned models asset_resolve reads until this is called again
 // keep only the parts `keep` accepts (tide_skinned_data_decode_parts). Each is
-// read for its declaration, outside the file's own cache. NULL keeps all.
-void asset_choose_parts(tide_skinned_keep_part_fn keep, void *user);
+// read for its declaration, outside the file's own cache. Patterns identify
+// the selection for the persistent cache and must describe keep. NULL keeps all.
+void asset_choose_parts(tide_skinned_keep_part_fn keep, void *user, const str *patterns, int count);
 // A name against a [BlendShapes] or [Parts] pattern: * is any run of
 // characters (none too), everything else itself.
 bool asset_name_matches(str pattern, const char *name, uint32_t length);
@@ -119,3 +126,8 @@ void asset_files_forget(void);
 // static or skinned meshes again even if their size/time is unchanged.
 // Existing values stay valid until the next resolution, as when metadata changes.
 void asset_files_changed(const char *path);
+
+// Code-writing compilations may read/write persistent imports and retain a
+// prepared Texture instead of float pixels. Off for direct importer/editor
+// callers and inspection-only checks.
+void asset_files_use_build_cache(bool enabled);

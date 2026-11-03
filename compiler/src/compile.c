@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "builtins.h"
+#include "asset_files.h"
 #include "lexer.h"
 
 static char *read_file(const char *path, size_t *len)
@@ -86,7 +87,7 @@ static bool add_embed_taps(program *prog)
     return true;
 }
 
-bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
+static bool compile_inputs_impl(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     diag_reset();
     diag_phase(NULL);
@@ -212,5 +213,13 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     const bool ok = codegen(prog, &named);
     diag_phase("generating C");
     if (ok && opts->outline_to) print_outline(prog, opts->outline_to);
+    return ok;
+}
+
+bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
+{
+    asset_files_use_build_cache(schedule == NULL);
+    const bool ok = compile_inputs_impl(inputs, count, opts, schedule);
+    asset_files_use_build_cache(false);
     return ok;
 }

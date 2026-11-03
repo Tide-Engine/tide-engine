@@ -173,9 +173,13 @@ static bool read_profile(asset_match *item, const jnode *root, loc at, const cha
         if (ch == '"') sb_put(&path, "\\");
         sb_putn(&path, &ch, 1);
     }
-    if (part_list) asset_choose_parts(profile_part_kept, &parts);
+    if (part_list) {
+        str *patterns = arena_alloc(sizeof *patterns * part_list->count);
+        for (uint32_t i = 0; i < part_list->count; i++) patterns[i] = str_from(part_list->items[i]->text);
+        asset_choose_parts(profile_part_kept, &parts, patterns, (int)part_list->count);
+    }
     asset_value *resolved = asset_resolve(item->abs, (str){path.data, (int)path.len}, ASSET_ANIMATIONS, false, false, at, game_folder);
-    asset_choose_parts(NULL, NULL);
+    asset_choose_parts(NULL, NULL, NULL, 0);
     if (!resolved || resolved->count != 1) return false;
     const asset_match *model = &resolved->items[0];
     add_dependencies(item, model);
