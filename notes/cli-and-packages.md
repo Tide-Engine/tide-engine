@@ -1,5 +1,24 @@
 # `tide`, packages and the package
 
+## Linux overlap fixture cache path (2026-11-03)
+
+With watched shutdown fixed, Linux CI's host case reached its unchanged-object
+check and exposed a Windows-only fixture path assumption. Native Linux library
+builds intentionally keep `-fPIC` objects in `engine-pic`, separately from a
+standalone build's `engine`; Windows/macOS use `engine`. The fixture now selects
+the existing platform-specific directory for its host case. Object timestamp,
+no-recompile, overlap, failure-recovery and diagnostic-order assertions remain
+unchanged; no production cache code or thresholds changed.
+
+Validation: all seven overlap scenarios pass with this checkout's freshly built
+Clang 23 Linux CLI and controlled compiler under WSL, and on Windows ASan. Linux
+unit, run-exit, help, packages and hidden CTests also pass. The WSL overlap work
+directory uses its Linux filesystem: DrvFS did not deliver a file-watch event
+for the initial gate when the same fixture lived under `/mnt/c`, while the file
+existed and the build completed after gate release. No test workaround is
+shipped for that local filesystem limitation. Node syntax/diff checks pass;
+the next push validates the normal hosted Linux filesystem and remaining gates.
+
 ## POSIX watched-run shutdown (2026-11-03)
 
 Linux release CI passed 2,809/2,810 tests but hung in the overlap fixture's
