@@ -22,7 +22,7 @@ enum { ROUND = 60, PATIENCE = 3600 };
 static tide_draw_list list, overlay, offscreen;
 static tide_render_target target;
 static int pass_samples, seen_passes;
-static bool empty_window_seen;
+static int empty_window_samples;
 static uint32_t window_width, window_height;
 static int failures, frames, samples, rounds, since;
 static bool supported;
@@ -42,7 +42,7 @@ static void collect_pass(void *user, const tide_gpu_pass_sample *sample)
         && sample->shaders;
     const bool empty_window = sample->pass == 2 && sample->target == 0 && sample->draw_calls == 0;
     if (empty_window) {
-        empty_window_seen = true;
+        empty_window_samples++;
         valid = valid && sample->vertices == 0 && sample->shaders[0] == 0;
     } else {
         valid = valid && sample->draw_calls == 2 && sample->vertices == 9
@@ -98,7 +98,9 @@ static int frame(void *user, const float seconds)
         tide_platform_gpu_profile(collect_pass, NULL);
         tide_draw_rect(&overlay, tide_f2(1, 1), tide_f2(1, 1), TIDE_COLOR_BLUE);
     }
-    tide_platform_draw(since == 19 ? &offscreen : &list);
+    // A full asynchronous query ring may leave any one frame unmeasured.
+    // Repeat both kinds of pass until their observations have arrived.
+    tide_platform_draw(since >= 19 && since % 2 == 1 ? &offscreen : &list);
     tide_platform_draw_over(&overlay);
     tide_platform_gpu_profile_read();
     const double ms = tide_platform_gpu_ms();
@@ -120,13 +122,14 @@ static int frame(void *user, const float seconds)
         if (strcmp(tide_platform_renderer(), "Vulkan") == 0) tide_gpu_vk_lose();
 #endif
     }
-    if (since >= ROUND && (!supported || samples > 0 || since >= PATIENCE)) {
+    const bool observed = samples > 0 && pass_samples > 0 && seen_passes == 6 && empty_window_samples >= 2;
+    if (since >= ROUND && (!supported || observed || since >= PATIENCE)) {
         since = 0;
         rounds++;
         check(!supported || samples > 0, "a supported timer produces asynchronous samples");
         check(supported || samples == 0, "an unsupported timer produces no invented sample");
         check(!supported || (pass_samples > 0 && seen_passes == 6), "supported timers return attributed passes, excluding overlays");
-        check(!supported || empty_window_seen, "offscreen-only frames attribute the fallback clear to the window");
+        check(!supported || empty_window_samples >= 2, "offscreen-only frames attribute the fallback clear to the window");
         tide_platform_gpu_profile(NULL, NULL);
         check(tide_platform_gpu_profile_pending() == 0, "closing frees pending pass identities");
         tide_platform_gpu_timing(false);
@@ -139,7 +142,7 @@ static int frame(void *user, const float seconds)
             return failures ? 1 : 0;
         }
         samples = pass_samples = seen_passes = 0;
-        empty_window_seen = false;
+        empty_window_samples = 0;
         tide_platform_gpu_timing(true);
         tide_platform_gpu_profile(collect_pass, NULL);
         check(tide_platform_gpu_ms() < 0.0, "reopening starts with no old samples");
