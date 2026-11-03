@@ -38,10 +38,11 @@ void line_draw_pair(const char *label, const char *bar)
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 1) width = size.ws_col - 1;
 #endif
     if (width < 1) width = 1;
-    line_clear();
-    printf("%.*s\n%.*s", width, label, width, bar);
+    // Overwrite before erasing the tails. Clearing and flushing first leaves
+    // both rows visibly blank between frames on terminals such as ConPTY.
+    printf("\r%s%.*s\x1b[K\n\r%.*s\x1b[K", paired ? "\x1b[1A" : "", width, label, width, bar);
     fflush(stdout);
-    drawn = (int)strlen(bar);
+    drawn = (int)strlen(bar) < width ? (int)strlen(bar) : width;
     paired = true;
 }
 

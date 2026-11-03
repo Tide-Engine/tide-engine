@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "sys.h"
+#include "line.h"
 #include "tide_test.h"
 
 #ifdef _WIN32
@@ -32,6 +33,33 @@
 #endif
 
 #define WORK "sys_test_out"
+
+TIDE_TEST(cli_progress_overwrites_without_blank_frames)
+{
+    FILE *capture = tmpfile();
+    TIDE_REQUIRE(capture != NULL);
+    fflush(stdout);
+    const int saved = test_dup(test_fileno(stdout));
+    TIDE_REQUIRE(saved >= 0);
+    TIDE_REQUIRE(test_dup2(test_fileno(capture), test_fileno(stdout)) >= 0);
+    line_draw_pair("Compiling C/C++: long_filename.c", "[====>] 50% 1/2");
+    line_draw_pair("Linking", "[==>]");
+    const long frames = ftell(capture);
+    line_clear();
+    test_dup2(saved, test_fileno(stdout));
+    test_close(saved);
+    rewind(capture);
+    char output[512] = {0};
+    const size_t n = fread(output, 1, sizeof output - 1, capture);
+    fclose(capture);
+    TIDE_CHECK(frames > 0 && (size_t)frames < n);
+    // Full-row erasure is allowed at completion, never between frames.
+    const char *erase = strstr(output, "\x1b[2K");
+    TIDE_CHECK(erase != NULL && erase >= output + frames);
+    TIDE_CHECK(strstr(output, "long_filename.c") != NULL);
+    TIDE_CHECK(strstr(output, "Linking\x1b[K") != NULL);
+    TIDE_CHECK(strstr(output, "[==>]\x1b[K") != NULL);
+}
 
 TIDE_TEST(cli_terminal_lines_preserve_boundaries_and_final_partial_line)
 {
