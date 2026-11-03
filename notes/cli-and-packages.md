@@ -2,6 +2,22 @@
 
 ## Build progress feedback (2026-11-03)
 
+Owner correction: terminal feedback now follows upgrade's `line_draw`/`line_end`
+style. C/C++ batches redraw a 24-character bar in place with file percentage,
+completed/total, elapsed seconds and latest completed basename. It starts at zero
+and ends at 100 only on success; failures clear it. Diagnostics clear the active
+bar before printing, preserving their ordinary order. Other stages are short
+labels, as before. The bar advances on actual file completions, without polling
+or a time estimate. Redirected output retains the original plain stderr lines.
+The paragraph below describes that retained nonterminal behavior.
+
+Correction validation: Windows ASan CLI rebuild and the same four focused CLI
+CTests pass. A real Windows ConPTY run of the controlled compiler fixture shows
+one bar redrawn at 0%, 50% and 100%; a failing run clears the bar before its
+diagnostic and prints no completed bar. Captured output retains plain lines.
+The production docs build and whitespace checks pass. No game/runtime or
+cross-platform process-wait implementation changed.
+
 Builds now print flushed, newline-delimited stderr feedback for preparation,
 package resolution, Tide/asset compilation, C/C++ compilation and linking.
 C/C++ batches announce their file/worker counts and each successful completion

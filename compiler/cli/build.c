@@ -15,6 +15,7 @@
 #include "folders.h"
 #include "install.h"
 #include "libraries.h"
+#include "line.h"
 #include "packages.h"
 #include "serve.h"
 #include "sys.h"
@@ -33,11 +34,29 @@
 #define TIDE_VERSION "0.0.0-dev"
 #endif
 
-// Keep build feedback separate from command/game output, including through pipes.
+// Like upgrade: terminal feedback reuses a line; redirected feedback stays plain.
 static void build_step(const char *step)
 {
+    if (sys_is_terminal()) {
+        line_draw(step);
+        line_end();
+        return;
+    }
     fprintf(stderr, "tide: %s\n", step);
     fflush(stderr);
+}
+
+static void build_progress(const int completed, const int total, const char *file, const int64_t started)
+{
+    enum { WIDTH = 24 };
+    const int filled = completed * WIDTH / total;
+    char bar[WIDTH + 1];
+    for (int i = 0; i < WIDTH; i++) bar[i] = i < filled ? '=' : i == filled ? '>' : ' ';
+    bar[WIDTH] = '\0';
+    char line[256];
+    snprintf(line, sizeof line, "Compiling   [%s] %3d%%  %d/%d  %.1fs  %.80s", bar,
+             completed * 100 / total, completed, total, (double)(sys_now_ms() - started) / 1000.0, file);
+    line_draw(line);
 }
 
 // A growable argv for sys_run, ending with NULL.
@@ -934,6 +953,7 @@ static void show_compiles(const build *b, compiles *list, int *shown)
     while (*shown < list->count && list->items[*shown].done) {
         compile_job *job = &list->items[*shown];
         if (job->said) {
+            if (sys_is_terminal() && job->said[0]) line_clear();
             // As the compiler would have printed it: a line ends once, and
             // stderr ends each as the system does.
             char *to = job->said;
@@ -943,7 +963,10 @@ static void show_compiles(const build *b, compiles *list, int *shown)
             *to = '\0';
             fputs(job->said, stderr);
         }
-        if (job->code == -1) fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", b->compiler);
+        if (job->code == -1) {
+            if (sys_is_terminal()) line_clear();
+            fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", b->compiler);
+        }
         else if (job->code > 0 && job->cpp) explain_cpp_compile(job->said ? job->said : "");
         if (job->code != 0) {
             *shown = list->count; // Nothing after it has a turn
@@ -958,7 +981,10 @@ static void show_compiles(const build *b, compiles *list, int *shown)
 static bool run_compiles(build *b, compiles *list)
 {
     int completed = 0;
-    if (list->count) {
+    const bool terminal = sys_is_terminal();
+    const int64_t started = sys_now_ms();
+    if (list->count && terminal) build_progress(0, list->count, "C/C++ files", started);
+    else if (list->count) {
         fprintf(stderr, "tide: compiling %d C/C++ files (%d jobs)\n", list->count, b->jobs > 0 ? b->jobs : 1);
         fflush(stderr);
     } else build_step("C/C++ objects are up to date");
@@ -993,6 +1019,7 @@ static bool run_compiles(build *b, compiles *list)
         char *text = NULL;
         const int ended = sys_wait_any(running, count, &code, &text);
         if (ended < 0) {
+            if (terminal) line_clear();
             fprintf(stderr, "tide: the system couldn't wait for the compiler\n");
             for (int i = 0; i < count; i++) sys_kill(running[i]);
             stop = -1;
@@ -1015,10 +1042,18 @@ static bool run_compiles(build *b, compiles *list)
             sys_write_text(list->engine_stamp_path, list->engine_stamp);
             b->engine_built = true;
         }
-        fprintf(stderr, "tide: compiled [%d/%d] %s\n", ++completed, list->count, path_base(job->made[0]));
-        fflush(stderr);
+        completed++;
+        if (terminal) build_progress(completed, list->count, path_base(job->made[0]), started);
+        else {
+            fprintf(stderr, "tide: compiled [%d/%d] %s\n", completed, list->count, path_base(job->made[0]));
+            fflush(stderr);
+        }
     }
     const bool ok = stop == list->count;
+    if (terminal) {
+        if (ok) line_end();
+        else line_clear();
+    }
     if (!ok) telemetry_fail(TELEMETRY_ERROR_C);
     free_compiles(list);
     return ok;

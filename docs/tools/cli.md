@@ -38,10 +38,13 @@ Project build and package commands automatically use the version pinned with
 version cache. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
 Builds report preparation, package resolution, Tide code and asset compilation,
-C/C++ file completion counts, and linking. Cached objects are reported as up to
-date; web and Android builds also report packaging. `tide run` announces when
-it starts the native game. Progress is written to stderr, including when output
-is redirected, so it can be kept separate from command and game output.
+C/C++ compilation, and linking. In a terminal, C/C++ compilation uses the same
+in-place bar style as `tide upgrade`, showing the percentage of files completed,
+completed/total count, elapsed time and latest completed filename. Each batch has
+its own bar; the percentage measures files, not estimated build time. Cached
+objects are reported as up to date; web and Android builds also report packaging.
+`tide run` announces when it starts the native game. Redirected output uses plain
+stderr lines with file counts, without carriage-return animation.
 
 Pinned build/run/schedule/shader commands select the project version before
 validating its options. Put an explicit game folder before options introduced
