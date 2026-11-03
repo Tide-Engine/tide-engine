@@ -5,6 +5,7 @@
 #include "sys.h"
 
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -13,6 +14,7 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <direct.h>
+#include <io.h>
 #include <windows.h>
 #else
 #include <dirent.h>
@@ -392,6 +394,142 @@ bool sys_is_terminal(void)
 #else
     return isatty(STDOUT_FILENO) != 0;
 #endif
+}
+
+struct sys_activity {
+    void (*draw)(void *user, bool done);
+    void *user;
+    atomic_bool stopped;
+    FILE *log;
+    int saved;
+#ifdef _WIN32
+    HANDLE thread;
+    HANDLE wake;
+#else
+    pthread_t thread;
+    pthread_mutex_t mutex;
+    pthread_cond_t wake;
+#endif
+};
+
+#ifdef _WIN32
+#define activity_dup _dup
+#define activity_dup2 _dup2
+#define activity_fileno _fileno
+#define activity_close _close
+static DWORD WINAPI activity_draw(void *user)
+#else
+#define activity_dup dup
+#define activity_dup2 dup2
+#define activity_fileno fileno
+#define activity_close close
+static void *activity_draw(void *user)
+#endif
+{
+    sys_activity *activity = user;
+    while (!atomic_load_explicit(&activity->stopped, memory_order_acquire)) {
+        activity->draw(activity->user, false);
+#ifdef _WIN32
+        if (WaitForSingleObject(activity->wake, 100) != WAIT_TIMEOUT) break;
+#else
+        pthread_mutex_lock(&activity->mutex);
+        if (!atomic_load_explicit(&activity->stopped, memory_order_acquire)) {
+            struct timespec until;
+            clock_gettime(CLOCK_REALTIME, &until);
+            until.tv_nsec += 100000000;
+            if (until.tv_nsec >= 1000000000) { until.tv_sec++; until.tv_nsec -= 1000000000; }
+            pthread_cond_timedwait(&activity->wake, &activity->mutex, &until);
+        }
+        pthread_mutex_unlock(&activity->mutex);
+#endif
+    }
+    return 0;
+}
+
+static int activity_stderr(const int fd)
+{
+    const int result = activity_dup2(fd, activity_fileno(stderr));
+#ifdef _WIN32
+    // CreateProcess uses the Win32 handle, while compiler diagnostics use the CRT.
+    if (result >= 0) {
+        HANDLE handle = (HANDLE)_get_osfhandle(activity_fileno(stderr));
+        SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        SetStdHandle(STD_ERROR_HANDLE, handle);
+    }
+#endif
+    return result;
+}
+
+sys_activity *sys_activity_begin(void (*draw)(void *user, bool done), void *user)
+{
+    sys_activity *activity = calloc(1, sizeof *activity);
+    if (!activity) return NULL;
+    activity->saved = -1;
+    activity->log = tmpfile();
+    if (!activity->log) { free(activity); return NULL; }
+    fflush(stderr);
+    activity->saved = activity_dup(activity_fileno(stderr));
+    if (activity->saved < 0 || activity_stderr(activity_fileno(activity->log)) < 0) {
+        if (activity->saved >= 0) activity_close(activity->saved);
+        fclose(activity->log);
+        free(activity);
+        return NULL;
+    }
+    activity->draw = draw;
+    activity->user = user;
+    atomic_init(&activity->stopped, false);
+#ifdef _WIN32
+    activity->wake = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (activity->wake) activity->thread = CreateThread(NULL, 0, activity_draw, activity, 0, NULL);
+    const bool started = activity->thread != NULL;
+#else
+    const bool mutex_ready = pthread_mutex_init(&activity->mutex, NULL) == 0;
+    const bool wake_ready = mutex_ready && pthread_cond_init(&activity->wake, NULL) == 0;
+    const bool started = wake_ready && pthread_create(&activity->thread, NULL, activity_draw, activity) == 0;
+#endif
+    if (started) return activity;
+#ifdef _WIN32
+    if (activity->wake) CloseHandle(activity->wake);
+#else
+    if (wake_ready) pthread_cond_destroy(&activity->wake);
+    if (mutex_ready) pthread_mutex_destroy(&activity->mutex);
+#endif
+    activity_stderr(activity->saved);
+    activity_close(activity->saved);
+    fclose(activity->log);
+    free(activity);
+    return NULL;
+}
+
+void sys_activity_end(sys_activity *activity)
+{
+    if (!activity) return;
+#ifdef _WIN32
+    atomic_store_explicit(&activity->stopped, true, memory_order_release);
+    SetEvent(activity->wake);
+    WaitForSingleObject(activity->thread, INFINITE);
+    CloseHandle(activity->thread);
+    CloseHandle(activity->wake);
+#else
+    pthread_mutex_lock(&activity->mutex);
+    atomic_store_explicit(&activity->stopped, true, memory_order_release);
+    pthread_cond_signal(&activity->wake);
+    pthread_mutex_unlock(&activity->mutex);
+    pthread_join(activity->thread, NULL);
+    pthread_cond_destroy(&activity->wake);
+    pthread_mutex_destroy(&activity->mutex);
+#endif
+    activity->draw(activity->user, true);
+    fflush(stderr);
+    activity_stderr(activity->saved);
+    activity_close(activity->saved);
+    rewind(activity->log);
+    char bytes[4096];
+    size_t count;
+    while ((count = fread(bytes, 1, sizeof bytes, activity->log)) != 0) fwrite(bytes, 1, count, stderr);
+    fflush(stderr);
+    fclose(activity->log);
+    free(activity);
 }
 
 // ---------------------------------------------------------------------------

@@ -46,6 +46,11 @@ objects are reported as up to date; web and Android builds also report packaging
 `tide run` announces when it starts the native game. Redirected output uses plain
 stderr lines with file counts, without carriage-return animation.
 
+The earlier Tide code and asset step uses an animated activity bar with elapsed
+time while it reads, checks and generates code and imports assets. It has no
+percentage because that work has no reliable total yet. Compiler diagnostics
+wait until this activity bar clears, keeping errors and warnings readable.
+
 Pinned build/run/schedule/shader commands select the project version before
 validating its options. Put an explicit game folder before options introduced
 by a newer version; otherwise an unknown option uses the folder already found,

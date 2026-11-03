@@ -2,6 +2,33 @@
 
 ## Build progress feedback (2026-11-03)
 
+Tide/assets follow-up: the synchronous generation step now runs under a terminal
+activity bar. Its four-character marker bounces every 100 ms with elapsed time,
+including source discovery, external-C identity hashing, checking, code generation
+and asset work. It gives no percentage for this unmeasured stage. The compiler
+stays on its caller thread; only line drawing runs on a joined helper thread.
+An event/condition variable wakes drawing immediately at completion, avoiding
+an extra 100 ms wait on fast or cached builds.
+`sys_activity_begin/end` saves stderr in a temporary file, stops/joins drawing,
+clears the line, restores stderr and replays diagnostics. Diagnostic color
+capability is cached before redirection. Allocation/file/thread startup failure
+falls back to the ordinary stage label; redirected commands create no activity
+thread or diagnostic capture. Package resolution still precedes this activity.
+No compiler, asset, generated-code or runtime interface changes.
+
+The activity regression checks repeated start/stop, animation during synchronous
+work, deferred/replayed diagnostics larger than the replay buffer including ANSI
+text/newlines, stderr restoration and later child-process diagnostics. Windows
+restores the Win32 standard handle and its inheritance as well as the CRT fd.
+Windows ASan CLI builds and
+five selected CLI CTests pass. A real ConPTY run with a local HTTP asset delayed
+1.5 seconds shows continuing animation through the wait, then successful
+generation and the ordinary C compilation bar. A second build reports an actual
+Tide error only after clearing activity. C compilation/linking in this scratch
+installation use a controlled compiler executable, not a real game binary.
+The docs production build and diff check pass. POSIX execution, Android and
+full installed-package native/web integration remain CI coverage.
+
 Owner correction: terminal feedback now follows upgrade's `line_draw`/`line_end`
 style. C/C++ batches redraw a 24-character bar in place with file percentage,
 completed/total, elapsed seconds and latest completed basename. It starts at zero

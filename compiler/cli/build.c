@@ -2172,11 +2172,8 @@ static bool debug_views(const build_options *opts)
     return !opts->web && !opts->android && !opts->managed && !opts->distribution;
 }
 
-static bool generate(build *b, const char *gen, const bool layout)
+static bool generate_sources(build *b, const char *gen, const bool layout)
 {
-    build_step("resolving packages");
-    if (!find_packages(b->folder, &b->packages)) return false;
-    build_step("compiling Tide code and assets");
     file_list paths;
     int count = 0;
     compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count, b->opts->editor_source);
@@ -2326,6 +2323,43 @@ static bool generate(build *b, const char *gen, const bool layout)
     free_files(&b->sources);
     b->sources = paths;
     unity_sources_free(&unity);
+    return ok;
+}
+
+static void generating_activity(void *user, const bool done)
+{
+    if (done) { line_clear(); return; }
+    const int64_t elapsed = sys_now_ms() - *(const int64_t *)user;
+    // Work has no reliable total yet: move a marker, never invent a percentage.
+    enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER };
+    const int frame = (int)((elapsed / 100) % (TRAVEL * 2));
+    const int at = frame <= TRAVEL ? frame : TRAVEL * 2 - frame;
+    char bar[WIDTH + 1];
+    memset(bar, ' ', WIDTH);
+    memcpy(bar + at, "====", MARKER);
+    bar[WIDTH] = '\0';
+    char line[128];
+    snprintf(line, sizeof line, "Tide/assets [%s] Compiling code and assets  %.1fs", bar, (double)elapsed / 1000.0);
+    line_draw(line);
+}
+
+static bool generate(build *b, const char *gen, const bool layout)
+{
+    build_step("resolving packages");
+    if (!find_packages(b->folder, &b->packages)) return false;
+    const int64_t started = sys_now_ms();
+    // Cache the terminal's diagnostic color capability before stderr is captured.
+    if (sys_is_terminal()) (void)diag_colored();
+    sys_activity *activity = sys_is_terminal() ? sys_activity_begin(generating_activity, (void *)&started) : NULL;
+    if (!activity) build_step("compiling Tide code and assets");
+    const bool ok = generate_sources(b, gen, layout);
+    const bool animated = activity != NULL;
+    sys_activity_end(activity);
+    if (animated && ok) {
+        char line[128];
+        snprintf(line, sizeof line, "Tide/assets compiled in %.1fs", (double)(sys_now_ms() - started) / 1000.0);
+        build_step(line);
+    }
     return ok;
 }
 

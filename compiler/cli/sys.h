@@ -124,6 +124,14 @@ int64_t sys_now(void);                 // Seconds since 1970
 int64_t sys_now_ms(void);              // Milliseconds from a fixed point, never going back
 bool sys_is_terminal(void);            // Whether stdout is a terminal, not a file or a pipe
 
+// Draws activity on a helper thread while the caller does synchronous work.
+// stderr is kept in a temporary file and replayed after draw(user, true) clears
+// the display. NULL leaves stderr alone (the caller can use plain feedback).
+// No other stdout/line drawing may run until end; the work stays on its caller.
+typedef struct sys_activity sys_activity;
+sys_activity *sys_activity_begin(void (*draw)(void *user, bool done), void *user);
+void sys_activity_end(sys_activity *activity);
+
 // "a" + "/" + "b".
 char *path_join(const char *a, const char *b);
 // The folder part of a path: "a/b/c" -> "a/b".
