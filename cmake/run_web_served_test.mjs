@@ -1,14 +1,15 @@
 // Serves a web build's test page to headless Chrome or Edge in real time, and
-// passes once the page exits with 0. For tests of WebGPU (see WebTest.cmake):
-// the browser's answer about its GPU doesn't come under the other web tests'
-// virtual time. The page's shell sends what the program prints and how it
+// passes once the page exits with 0. WebGPU needs real time, and selected
+// WebGL tests also wait here for their actual result (see WebTest.cmake).
+// The page's shell sends what the program prints and how it
 // ends back here, as platform/web/test_shell.html does when it's served.
 //
 // The page is cross-origin isolated (the headers below), so the program runs
 // on threads, sharing its memory with them. WebGPU is the browser's software
 // one, so no GPU is needed: SwiftShader, which the flags below turn on.
 //
-//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--routes <module.mjs>]
+//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--routes <module.mjs>] [--angle-backend swiftshader|d3d11-warp]
+// --angle-backend selects the software WebGL backend; it requires backend=webgl.
 //
 // With --routes, the module's default export, `(request, response) => boolean`,
 // answers the requests the page makes beside the test's own (what a program
@@ -33,14 +34,19 @@ import { pathToFileURL } from 'node:url';
 const [browser, pagePath, profile, ...rest] = process.argv.slice(2);
 let expected = null; // A line the program has to print
 let routesPath = null;
+let angleBackend = null;
 let seconds = 100; // How long the page has to give its result
 let query = '';
 for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--expect') expected = rest[++i];
     else if (rest[i] === '--seconds') seconds = Number(rest[++i]);
     else if (rest[i] === '--routes') routesPath = rest[++i];
+    else if (rest[i] === '--angle-backend') angleBackend = rest[++i];
     else query = rest[i];
 }
+const webgl = new URLSearchParams(query).get('backend') === 'webgl';
+if (angleBackend !== null && (!webgl || !['swiftshader', 'd3d11-warp'].includes(angleBackend)))
+    throw new Error('--angle-backend requires backend=webgl and swiftshader or d3d11-warp');
 const routes = routesPath ? (await import(pathToFileURL(resolve(routesPath)).href)).default : null;
 if (!browser || !existsSync(browser)) {
     console.log('SKIPPED: no Chrome or Edge found. Set TIDE_BROWSER to run web tests.');
@@ -104,9 +110,9 @@ const address = `http://127.0.0.1:${server.address().port}/${words.length ? '?' 
 // tests run), Chrome has no WebGPU at all. TIDE_WEBGPU_FLAGS has other flags
 // tried in their place, like "--enable-unsafe-webgpu" alone for this
 // machine's GPU.
-const webgl = new URLSearchParams(query).get('backend') === 'webgl';
-const flags = webgl ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+const flags = webgl ? [`--use-angle=${angleBackend || 'swiftshader'}`]
     : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
+if (webgl && (!angleBackend || angleBackend === 'swiftshader')) flags.push('--enable-unsafe-swiftshader');
 if (!webgl && process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
 if (!webgl && process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
 note(`browser: ${browser}`);

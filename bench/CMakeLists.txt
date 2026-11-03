@@ -149,7 +149,7 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(bench_forest SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(bench_forest TARGET bench_forest QUERY "quick"
-            WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11)
+            WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11_SERVED)
         tide_add_web_test(bench_forest_motion TARGET bench_forest QUERY "motion-smoke"
             WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11)
     else()

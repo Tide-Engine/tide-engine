@@ -1,4 +1,4 @@
-# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [SERVED] [WEBGPU [EXPECT <text>]] [SECONDS <n>] [D3D11])
+# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [SERVED] [WEBGPU [EXPECT <text>]] [SECONDS <n>] [D3D11|D3D11_SERVED])
 #
 # Web builds: adds a test that opens <target>'s page in headless Chrome or Edge
 # and passes if the page exits with 0. It draws with WebGL 2 (backend=webgl in
@@ -22,6 +22,8 @@
 # more.
 # D3D11 adds a Windows-host test through ANGLE's software D3D11/WARP backend,
 # checking its renderer identity as well as the page's existing assertions.
+# D3D11_SERVED uses the same backend/checks but waits for the actual served
+# page result, with a nominal 120-second budget and 50 for diagnostics/cleanup.
 
 # For web builds' tests, and desktop rooms against a browser (platform/tests/rooms.mjs).
 find_program(TIDE_BROWSER
@@ -47,7 +49,7 @@ if(NOT TIDE_WEB_TEST_PROCESSORS GREATER 0)
 endif()
 
 function(tide_add_web_test name)
-    cmake_parse_arguments(ARG "WEBGPU;D3D11;SERVED" "TARGET;QUERY;EXPECT;SECONDS" "" ${ARGN})
+    cmake_parse_arguments(ARG "WEBGPU;D3D11;D3D11_SERVED;SERVED" "TARGET;QUERY;EXPECT;SECONDS" "" ${ARGN})
     set(page "$<TARGET_FILE_DIR:${ARG_TARGET}>/${ARG_TARGET}.html")
     set(query "backend=webgl")
     set(webgpu_query "backend=webgpu")
@@ -77,18 +79,27 @@ function(tide_add_web_test name)
     endif()
     set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:"
         PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
-    if(ARG_D3D11 AND CMAKE_HOST_WIN32)
-        add_test(NAME ${name}_d3d11
-            COMMAND "${CMAKE_COMMAND}"
-                "-DNODE=${TIDE_NODE}"
-                "-DBROWSER=${TIDE_BROWSER}"
-                "-DPAGE=${page}"
-                "-DQUERY=${query}&expect-angle=Direct3D11"
-                "-DANGLE_BACKEND=d3d11-warp"
-                "-DPROFILE=${CMAKE_CURRENT_BINARY_DIR}/${name}_d3d11-browser"
-                -P "${PROJECT_SOURCE_DIR}/cmake/run_web_test.cmake")
+    if((ARG_D3D11 OR ARG_D3D11_SERVED) AND CMAKE_HOST_WIN32)
+        set(d3d11_guard 150)
+        if(ARG_D3D11_SERVED)
+            add_test(NAME ${name}_d3d11
+                COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}" "${page}"
+                    "${CMAKE_CURRENT_BINARY_DIR}/${name}_d3d11-browser" "${query}&expect-angle=Direct3D11"
+                    --angle-backend d3d11-warp --seconds 120)
+            set(d3d11_guard 170)
+        else()
+            add_test(NAME ${name}_d3d11
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DNODE=${TIDE_NODE}"
+                    "-DBROWSER=${TIDE_BROWSER}"
+                    "-DPAGE=${page}"
+                    "-DQUERY=${query}&expect-angle=Direct3D11"
+                    "-DANGLE_BACKEND=d3d11-warp"
+                    "-DPROFILE=${CMAKE_CURRENT_BINARY_DIR}/${name}_d3d11-browser"
+                    -P "${PROJECT_SOURCE_DIR}/cmake/run_web_test.cmake")
+        endif()
         set_tests_properties(${name}_d3d11 PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:"
-            PROCESSORS ${TIDE_WEB_TEST_PROCESSORS} LABELS webgl_d3d11 TIMEOUT 150)
+            PROCESSORS ${TIDE_WEB_TEST_PROCESSORS} LABELS webgl_d3d11 TIMEOUT ${d3d11_guard})
     endif()
     if(ARG_WEBGPU)
         set(expect "")

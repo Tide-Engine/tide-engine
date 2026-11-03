@@ -1,5 +1,37 @@
 # Test infrastructure
 
+## Forest D3D11 waits for its result (2026-11-03)
+
+Run 41554207974's bench_forest_d3d11 failure has decisive new diagnostics:
+after 1.64 seconds Chrome returned a complete 3.36 MB DOM with the forest's
+startup line, but no data-exit marker. The program had started, but the file
+runner treated dump-dom completion as the end of the test and closed Chrome.
+The forest runs its work over hidden-window timer callbacks (one warmup frame,
+two measured frames and a completion drain), so a DOM snapshot is not its
+completion signal. This does not establish why Chrome's virtual-time dump
+finished early, nor prove the older empty-output failure had the same cause.
+
+Only bench_forest_d3d11 opts into D3D11_SERVED. The existing served runner now
+accepts --angle-backend for WebGL, restricted to swiftshader or d3d11-warp;
+its original default backend flags are unchanged. This fixture selects WARP
+and retains expect-angle=Direct3D11, all forest checks and the nominal 120-second
+result budget. It waits for the actual page result and closes Chrome through
+DevTools. The outer CTest guard is 170 seconds for the existing diagnostic/
+cleanup allowance. The motion D3D11 fixture and all other file registrations
+are unchanged; no retry is added. Like other served tests, this page uses real
+time and cross-origin isolation/shared WASM memory. No forest or runtime code
+changes.
+
+Local validation: quick D3D11 passes in 5.39 seconds and the unchanged motion
+D3D11 test in 10.74 seconds. Controlled real-browser cases wait for a delayed
+success, reject exit 7, reject a mismatched renderer expectation, and reject a
+complete page that never supplies a result. The default SwiftShader case still
+passes. Invalid, missing and WebGPU-only angle-backend combinations fail before
+launch. Rendered CTest metadata confirms only bench_forest_d3d11 changed among
+2,875 registrations. Tests use Node 24.22.1 and muted Chrome 156.0.8078.79;
+syntax and whitespace checks pass. Hosted Chrome Headless Shell confirmation
+remains the next normal push's coverage.
+
 ## Batched served-test output (2026-11-03)
 
 Run 41550970088's macOS shader diagnostics establish a result-delivery failure:
