@@ -1,0 +1,1888 @@
+{
+  "date": "2026-11-03",
+  "os": "Windows",
+  "cpu": "AMD Ryzen 9 7900X",
+  "compiler": "Clang 23.1.2",
+  "cli": "CMake RelWithDebInfo, no sanitizers, external clang",
+  "jobs": 24,
+  "method": "five paired samples, alternating before/after order; each starts from the same source and primed cache; cold removes only object/stamp files; complete native debug CLI build including linking; no game launch; identical source folder and install path; generated C/header hashes verified per pair after normalizing expected compiler-revision Simulation IDs; pack bytes verified exactly",
+  "before_commit": "d4d55f5d9",
+  "results": {
+    "duel": {
+      "warm": {
+        "before": {
+          "median_ms": 160.3627000004053,
+          "samples": [
+            {
+              "ms": 176.41050001839176,
+              "events": [
+                [
+                  5.717,
+                  "tide: preparing build"
+                ],
+                [
+                  9.556,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.586,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  68.489,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  69.434,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 159.99019998707809,
+              "events": [
+                [
+                  5.283,
+                  "tide: preparing build"
+                ],
+                [
+                  8.6,
+                  "tide: resolving packages"
+                ],
+                [
+                  8.651,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  58.02,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  58.741,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 160.3627000004053,
+              "events": [
+                [
+                  5.287,
+                  "tide: preparing build"
+                ],
+                [
+                  8.544,
+                  "tide: resolving packages"
+                ],
+                [
+                  8.569,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  58.566,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  59.298,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 160.20869999192655,
+              "events": [
+                [
+                  5.947,
+                  "tide: preparing build"
+                ],
+                [
+                  9.434,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.462,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  57.8,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  58.522,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 166.43899999326095,
+              "events": [
+                [
+                  6.059,
+                  "tide: preparing build"
+                ],
+                [
+                  9.386,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.415,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  60.672,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  61.437,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            }
+          ]
+        },
+        "after": {
+          "median_ms": 167.42310000699945,
+          "samples": [
+            {
+              "ms": 165.1175000006333,
+              "events": [
+                [
+                  5.282,
+                  "tide: preparing build"
+                ],
+                [
+                  8.533,
+                  "tide: resolving packages"
+                ],
+                [
+                  12.741,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  60.968,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  61.764,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 167.42310000699945,
+              "events": [
+                [
+                  5.774,
+                  "tide: preparing build"
+                ],
+                [
+                  9.073,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.551,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  62.809,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  63.684,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 177.46119998628274,
+              "events": [
+                [
+                  5.834,
+                  "tide: preparing build"
+                ],
+                [
+                  9.044,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.298,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  62.553,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  63.291,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 163.52539998479187,
+              "events": [
+                [
+                  5.864,
+                  "tide: preparing build"
+                ],
+                [
+                  9.289,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.612,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  60.293,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  61.047,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 174.82650000602007,
+              "events": [
+                [
+                  5.612,
+                  "tide: preparing build"
+                ],
+                [
+                  9.033,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.307,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  60.869,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  61.632,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            }
+          ]
+        }
+      },
+      "edit": {
+        "before": {
+          "median_ms": 527.4047999992035,
+          "samples": [
+            {
+              "ms": 509.7700000042096,
+              "events": [
+                [
+                  5.338,
+                  "tide: preparing build"
+                ],
+                [
+                  9.48,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.523,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  64.337,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  399.291,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 527.4047999992035,
+              "events": [
+                [
+                  5.873,
+                  "tide: preparing build"
+                ],
+                [
+                  10.238,
+                  "tide: resolving packages"
+                ],
+                [
+                  10.257,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  71.469,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  419.495,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 533.0727999971714,
+              "events": [
+                [
+                  6.374,
+                  "tide: preparing build"
+                ],
+                [
+                  10.93,
+                  "tide: resolving packages"
+                ],
+                [
+                  10.95,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  68.775,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  420.374,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 527.6388999773189,
+              "events": [
+                [
+                  6.06,
+                  "tide: preparing build"
+                ],
+                [
+                  9.685,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.715,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  62.96,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  415.736,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 526.4027999946848,
+              "events": [
+                [
+                  5.917,
+                  "tide: preparing build"
+                ],
+                [
+                  9.535,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.559,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  65.674,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  405.748,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            }
+          ]
+        },
+        "after": {
+          "median_ms": 535.6581999803893,
+          "samples": [
+            {
+              "ms": 511.3283999962732,
+              "events": [
+                [
+                  6.079,
+                  "tide: preparing build"
+                ],
+                [
+                  9.61,
+                  "tide: resolving packages"
+                ],
+                [
+                  14.432,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  64.452,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  402.567,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 504.71849998575635,
+              "events": [
+                [
+                  5.272,
+                  "tide: preparing build"
+                ],
+                [
+                  8.834,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.016,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  60.326,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  396.609,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 566.9970000162721,
+              "events": [
+                [
+                  6.22,
+                  "tide: preparing build"
+                ],
+                [
+                  11.157,
+                  "tide: resolving packages"
+                ],
+                [
+                  15.899,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  70.116,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  449.529,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 546.8958000128623,
+              "events": [
+                [
+                  6.005,
+                  "tide: preparing build"
+                ],
+                [
+                  9.725,
+                  "tide: resolving packages"
+                ],
+                [
+                  15.373,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  68.521,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  428.792,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 535.6581999803893,
+              "events": [
+                [
+                  5.539,
+                  "tide: preparing build"
+                ],
+                [
+                  9.115,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.672,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  62.16,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  421.965,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7a5fe016b3f9679dea6eb3d4f2e4dfcf66b663c317147c9ac585077d7a5fa4e7",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            }
+          ]
+        }
+      },
+      "cold": {
+        "before": {
+          "median_ms": 2147.5026000116486,
+          "samples": [
+            {
+              "ms": 2105.215199990198,
+              "events": [
+                [
+                  5.55,
+                  "tide: preparing build"
+                ],
+                [
+                  9.187,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.205,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  57.265,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  2003.395,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 2081.2380000134,
+              "events": [
+                [
+                  5.534,
+                  "tide: preparing build"
+                ],
+                [
+                  9.297,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.329,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  53.769,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  1978.852,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 2484.4166999973822,
+              "events": [
+                [
+                  6.158,
+                  "tide: preparing build"
+                ],
+                [
+                  9.908,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.925,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  55.718,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  2375.304,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 2180.429700005334,
+              "events": [
+                [
+                  6.4,
+                  "tide: preparing build"
+                ],
+                [
+                  10.484,
+                  "tide: resolving packages"
+                ],
+                [
+                  10.501,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  60.645,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  2076.263,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 2147.5026000116486,
+              "events": [
+                [
+                  5.169,
+                  "tide: preparing build"
+                ],
+                [
+                  9.286,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.315,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  55.98,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  2044.472,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            }
+          ]
+        },
+        "after": {
+          "median_ms": 1822.42040001438,
+          "samples": [
+            {
+              "ms": 1792.4886999826413,
+              "events": [
+                [
+                  9.522,
+                  "tide: preparing build"
+                ],
+                [
+                  13.785,
+                  "tide: resolving packages"
+                ],
+                [
+                  34.978,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  85.577,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  1691.515,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 1822.42040001438,
+              "events": [
+                [
+                  6.603,
+                  "tide: preparing build"
+                ],
+                [
+                  10.318,
+                  "tide: resolving packages"
+                ],
+                [
+                  29.393,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  78.674,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  1722.645,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 1929.9881999904756,
+              "events": [
+                [
+                  18.207,
+                  "tide: preparing build"
+                ],
+                [
+                  21.921,
+                  "tide: resolving packages"
+                ],
+                [
+                  46.617,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  107.162,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  1822.646,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 1923.626299976604,
+              "events": [
+                [
+                  5.804,
+                  "tide: preparing build"
+                ],
+                [
+                  9.584,
+                  "tide: resolving packages"
+                ],
+                [
+                  30.148,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  84.039,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  1821.213,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            },
+            {
+              "ms": 1710.922300000675,
+              "events": [
+                [
+                  5.806,
+                  "tide: preparing build"
+                ],
+                [
+                  9.316,
+                  "tide: resolving packages"
+                ],
+                [
+                  29.269,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  80.583,
+                  "tide: compiling 81 C/C++ files (24 jobs)"
+                ],
+                [
+                  1609.165,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "d13b845e194e6caeed3a6405d6ba690b6442a5d74ffed1d252aecf3c5018e51a",
+                "game.h": "2aa537e95209504d9d94f6719f05ca1a9300f16885bdaeff75d2a040e4c177a0",
+                "main.c": "b1b87aa947958479be7218b5002b73489a6edadf364bccb1fc3699ce34029d00"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "sumo": {
+      "warm": {
+        "before": {
+          "median_ms": 258.4348000236787,
+          "samples": [
+            {
+              "ms": 261.01650000782683,
+              "events": [
+                [
+                  6.082,
+                  "tide: preparing build"
+                ],
+                [
+                  9.714,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.971,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  129.983,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  131.033,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 249.09800000023097,
+              "events": [
+                [
+                  5.572,
+                  "tide: preparing build"
+                ],
+                [
+                  8.836,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.084,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  123.385,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  124.366,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 252.05050001386553,
+              "events": [
+                [
+                  5.538,
+                  "tide: preparing build"
+                ],
+                [
+                  8.87,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.1,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  126.348,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  127.388,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 263.23949999641627,
+              "events": [
+                [
+                  5.822,
+                  "tide: preparing build"
+                ],
+                [
+                  9.576,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.813,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  130.393,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  131.407,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 258.4348000236787,
+              "events": [
+                [
+                  5.572,
+                  "tide: preparing build"
+                ],
+                [
+                  8.888,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.286,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  131.366,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  132.371,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            }
+          ]
+        },
+        "after": {
+          "median_ms": 261.4455000148155,
+          "samples": [
+            {
+              "ms": 261.4455000148155,
+              "events": [
+                [
+                  5.911,
+                  "tide: preparing build"
+                ],
+                [
+                  9.411,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.89,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  123.5,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  124.569,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 250.18100001034327,
+              "events": [
+                [
+                  5.162,
+                  "tide: preparing build"
+                ],
+                [
+                  8.539,
+                  "tide: resolving packages"
+                ],
+                [
+                  12.879,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  123.237,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  124.291,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 268.6487000028137,
+              "events": [
+                [
+                  5.876,
+                  "tide: preparing build"
+                ],
+                [
+                  9.179,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.67,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  137.422,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  138.471,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 267.79650000389665,
+              "events": [
+                [
+                  5.282,
+                  "tide: preparing build"
+                ],
+                [
+                  8.61,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.429,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  127.212,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  128.335,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 258.39649999397807,
+              "events": [
+                [
+                  5.785,
+                  "tide: preparing build"
+                ],
+                [
+                  9.099,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.612,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  127.248,
+                  "tide: C/C++ objects are up to date"
+                ],
+                [
+                  128.306,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            }
+          ]
+        }
+      },
+      "edit": {
+        "before": {
+          "median_ms": 788.5103999869898,
+          "samples": [
+            {
+              "ms": 788.5103999869898,
+              "events": [
+                [
+                  5.675,
+                  "tide: preparing build"
+                ],
+                [
+                  9.218,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.45,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  124.97,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  660.014,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 786.677600000985,
+              "events": [
+                [
+                  5.941,
+                  "tide: preparing build"
+                ],
+                [
+                  9.415,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.641,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  132.918,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  662.098,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 774.388399993768,
+              "events": [
+                [
+                  5.252,
+                  "tide: preparing build"
+                ],
+                [
+                  8.787,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.017,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  128.249,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  648.049,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 829.7908999957144,
+              "events": [
+                [
+                  6.128,
+                  "tide: preparing build"
+                ],
+                [
+                  9.8,
+                  "tide: resolving packages"
+                ],
+                [
+                  10.042,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  131.006,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  698.317,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 824.1433000075631,
+              "events": [
+                [
+                  5.891,
+                  "tide: preparing build"
+                ],
+                [
+                  9.284,
+                  "tide: resolving packages"
+                ],
+                [
+                  9.517,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  131.711,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  683.054,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            }
+          ]
+        },
+        "after": {
+          "median_ms": 797.7784999820869,
+          "samples": [
+            {
+              "ms": 814.7091999999247,
+              "events": [
+                [
+                  5.563,
+                  "tide: preparing build"
+                ],
+                [
+                  9.372,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.883,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  134.676,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  685.342,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 793.7801000080071,
+              "events": [
+                [
+                  5.432,
+                  "tide: preparing build"
+                ],
+                [
+                  8.91,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.519,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  130.546,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  658.378,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 799.5695000281557,
+              "events": [
+                [
+                  5.914,
+                  "tide: preparing build"
+                ],
+                [
+                  9.497,
+                  "tide: resolving packages"
+                ],
+                [
+                  14.124,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  134.645,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  669.774,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 784.225300012622,
+              "events": [
+                [
+                  5.568,
+                  "tide: preparing build"
+                ],
+                [
+                  9.113,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.706,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  131.027,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  656.904,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 797.7784999820869,
+              "events": [
+                [
+                  5.376,
+                  "tide: preparing build"
+                ],
+                [
+                  8.955,
+                  "tide: resolving packages"
+                ],
+                [
+                  13.957,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  127.847,
+                  "tide: compiling 1 C/C++ files (24 jobs)"
+                ],
+                [
+                  666.507,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "370d4ecaa4883c068f37ef163408b027791a425648d9bd3af39eec49bbccb03d",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            }
+          ]
+        }
+      },
+      "cold": {
+        "before": {
+          "median_ms": 2727.678700000979,
+          "samples": [
+            {
+              "ms": 2555.067200009944,
+              "events": [
+                [
+                  6.454,
+                  "tide: preparing build"
+                ],
+                [
+                  10.638,
+                  "tide: resolving packages"
+                ],
+                [
+                  10.921,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  135.33,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2422.371,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 2560.108699981356,
+              "events": [
+                [
+                  7.306,
+                  "tide: preparing build"
+                ],
+                [
+                  12.645,
+                  "tide: resolving packages"
+                ],
+                [
+                  12.932,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  132.009,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2425.283,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 2833.4967000118922,
+              "events": [
+                [
+                  6.565,
+                  "tide: preparing build"
+                ],
+                [
+                  10.283,
+                  "tide: resolving packages"
+                ],
+                [
+                  10.527,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  135.181,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2697.654,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 2788.9704999979585,
+              "events": [
+                [
+                  7.767,
+                  "tide: preparing build"
+                ],
+                [
+                  11.399,
+                  "tide: resolving packages"
+                ],
+                [
+                  11.652,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  130.131,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2647.086,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 2727.678700000979,
+              "events": [
+                [
+                  7.586,
+                  "tide: preparing build"
+                ],
+                [
+                  11.062,
+                  "tide: resolving packages"
+                ],
+                [
+                  11.332,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  128.767,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2578.576,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            }
+          ]
+        },
+        "after": {
+          "median_ms": 2446.1175000178628,
+          "samples": [
+            {
+              "ms": 2311.837600020226,
+              "events": [
+                [
+                  6.38,
+                  "tide: preparing build"
+                ],
+                [
+                  9.942,
+                  "tide: resolving packages"
+                ],
+                [
+                  30.506,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  159.72,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2178.141,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 2263.4559999860357,
+              "events": [
+                [
+                  5.999,
+                  "tide: preparing build"
+                ],
+                [
+                  9.417,
+                  "tide: resolving packages"
+                ],
+                [
+                  41.163,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  160.905,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2114.768,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 3094.690099998843,
+              "events": [
+                [
+                  6.313,
+                  "tide: preparing build"
+                ],
+                [
+                  10.46,
+                  "tide: resolving packages"
+                ],
+                [
+                  34.742,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  185.033,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2949.64,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 2711.7154999868944,
+              "events": [
+                [
+                  6.344,
+                  "tide: preparing build"
+                ],
+                [
+                  10.05,
+                  "tide: resolving packages"
+                ],
+                [
+                  31.434,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  160.092,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2447.654,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            },
+            {
+              "ms": 2446.1175000178628,
+              "events": [
+                [
+                  6.096,
+                  "tide: preparing build"
+                ],
+                [
+                  9.878,
+                  "tide: resolving packages"
+                ],
+                [
+                  31.255,
+                  "tide: compiling Tide code and assets"
+                ],
+                [
+                  154.531,
+                  "tide: compiling 134 C/C++ files (24 jobs)"
+                ],
+                [
+                  2297.581,
+                  "tide: linking"
+                ]
+              ],
+              "generated": {
+                "game.c": "7c5aed88b385e852b070d2c093fefa8a4962f9646ec7208c14dccec427a93b1a",
+                "game.h": "d528f89f47d5e0d095224d7b65a9ef63190845dc68c5b05bd01cb7f1933c6f68",
+                "main.c": "28bf41aa0c86233aa4972918a7c5f7a44761c48256753846f2fbfb9a8569a9d6"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

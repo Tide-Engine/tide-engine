@@ -1,5 +1,81 @@
 # `tide`, packages and the package
 
+## Overlapping build stages (2026-11-03)
+
+The owner's edit-to-test follow-up overlaps independent engine compilation with
+Tide generation/assets. After successful package resolution, `generate` queues
+engine jobs and starts up to four of the largest sources, capped at `jobs - 1`.
+This leaves a CPU for the in-process front end and avoids delaying it on dozens
+of child-process launches. The ordinary C batch adopts those same processes,
+then starts generated/game/package C within the existing TIDE_JOBS budget.
+The front end stays on its caller thread: no concurrent arena, checker or
+importer access. Already-cached engines start no speculative jobs; TIDE_JOBS=1
+keeps generation and C compilation serial. Android still generates once before
+its two ABI builds; its C batches use the shared scheduler without prelaunch.
+
+Within the existing batch, generated game.c keeps first priority, followed by
+engine sources in descending file-size order, then other C in its existing
+order. File size is a cheap scheduling heuristic, not a duration estimate.
+Diagnostics retain the original source order, including earlier jobs still
+unstarted when a later job fails. Successful objects keep their stamps;
+engine completion still requires every engine job. Failed Tide generation
+kills/joins its outstanding compilers, discards their diagnostics and leaves
+the engine stamp invalid. Retrying replaces the previous engine-object list.
+
+The initial native reload host is queued after game/package jobs in that same
+batch instead of compiling after the game library links. Host/library links
+remain serial, with their existing cache stamps and publication rules. Later
+watch builds don't queue the host. The single progress display remains owned
+by the caller; engine prelaunch keeps the Tide/assets activity label until the
+full C batch has a known file count. No runtime API, code-generation semantics,
+pack format, optimization mode or telemetry field changes. The existing source
+revision fingerprint includes build.c, so Simulation IDs change with this
+compiler revision as usual.
+
+Paired measurements (`build-overlap-20261103.json`): Windows Ryzen 9 7900X,
+Clang 23.1.2, optimized unsanitized external-compiler CLI, native default-debug
+games and 24 workers. Five pairs per case alternate baseline/new order at the
+same game/install paths. Each timed run follows an untimed build of the same
+baseline source. Code edits change only an added singleton/system's integer
+assignment; cold cases remove objects/stamps while keeping assets cached.
+Fixtures copy repository Duel/Sumo without C test hosts and package test folders.
+Times cover complete `tide build`, including linking, without game startup:
+
+| Fixture | Unchanged, before / after | Code edit, before / after | Cold code cache, before / after |
+|---|---|---|---|
+| Duel | 160.4 / 167.4 ms | 527.4 / 535.7 ms | 2147.5 / 1822.4 ms |
+| Sumo | 258.4 / 261.4 ms | 788.5 / 797.8 ms | 2727.7 / 2446.1 ms |
+
+The useful measured improvement is cold code builds (15.1% Duel, 10.3% Sumo).
+Warm/no-op and code-edit paths have no demonstrated gain. This does not measure
+the owner's game or claim a native watched-startup speedup. Each pair checks
+identical generated C/headers after normalizing only the expected compiler
+revision Simulation IDs, and exact packs where present. Starting a whole CPU's
+worth of engine processes before entering generation was discarded: process
+launch cost delayed the front end and left the long engine files until later.
+The bounded head start and larger-file priority address that scheduling gap.
+
+`tide_cli_build_overlap` uses a controlled compiler, process/file barriers and a
+local HTTP asset to prove overlap without speed assertions. It covers one-worker
+serialization, two-worker overlap, host batching and unchanged reruns, failed
+generation killing its compiler then recovering, package failure before any C
+starts, game/engine failures and source-order errors when a larger later engine
+source starts first. Its fake linked host is an inert GUI-subsystem fixture on
+Windows: it opens no game, console, window or audio device. The fixture requires
+the external-compiler CLI; embedded-LLVM packages retain their real cache tests.
+
+Validation: warning-free Windows Clang 23.1.2 ASan builds and six focused CLI
+CTests pass (unit, run_exit, help, packages, hidden, build_overlap), including
+the expanded seven-case barrier fixture. The installed native/web cache script
+passes real debug/release/distribution builds, optimization overrides, byte
+parity at one/three/default workers, failure recovery, cache invalidation,
+debug/release web watching, consecutive web runs and a bounded native dedicated
+server. A freshly built native Duel also exits successfully after two hidden
+frames. Production docs build, Node syntax and diff checks pass. Platform
+libraries were built in this checkout. Actual browser execution, real native
+watched library loading, Android, embedded LLVM and other host OSes remain CI
+coverage; no runtime code changed.
+
 ## Build progress feedback (2026-11-03)
 
 Fresh build/run asset work now has a persistent import/preparation cache as well

@@ -54,6 +54,11 @@ invalidate affected entries. Missing or damaged caches are rebuilt automatically
 Tide still checks the program and assembles its asset pack; CPU-readable grid
 images still use their exact image decoder.
 
+Independent engine compilation overlaps Tide and asset processing. Native
+hot-reload hosts compile in the game's C/C++ batch. `TIDE_JOBS` limits simultaneous
+C/C++ compiler processes: it defaults to the processor count, up to 64. Set it to
+`1` for serial compilation. Compiler diagnostics retain their source order.
+
 Pinned build/run/schedule/shader commands select the project version before
 validating its options. Put an explicit game folder before options introduced
 by a newer version; otherwise an unknown option uses the folder already found,
