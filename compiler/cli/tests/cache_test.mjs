@@ -697,7 +697,7 @@ async function nativeRunTest(tide, root) {
     const capture = join(root, "native-run.png");
     const result = await run(tide, ["run", game, "--frames", "3", "--capture", capture, "--size", "32", "32"], root);
     check(result.code === 0, `headless native run failed:\n${result.said}`);
-    check(!result.said.includes("saving a .tide or C file"), "headless native run doesn't start the watcher");
+    check(!result.said.includes("save to reload"), "headless native run doesn't start the watcher");
     check(readFileSync(capture).subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), "native run captures a PNG");
     const cache = join(game, ".tide", "native-debug");
     check(!existsSync(join(game, ".build")), "native run's executable is private to its run");

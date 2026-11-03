@@ -2,6 +2,37 @@
 
 ## Build progress feedback (2026-11-03)
 
+Final presentation correction: terminal builds now share one two-row display,
+the current step above one bar. A single activity thread owns drawing throughout
+the initial native/web build, including C compilation and linking; nested source,
+library and compile steps update its locked status instead of printing lines or
+starting independent displays. Standalone builds, watch rebuilds and repacks
+close their own feedback scope; native/web runs close initial feedback before
+launch/serving. Android closes it around key/bundle stdout messages. The renderer
+clips rows to terminal width so wrapping does not leave extra progress rows.
+Known C batch totals use file percentages; other steps use moving activity, with
+elapsed time covering the build. Completion clears both rows and replays buffered
+diagnostics. Redirected plain output remains available. The native/web watcher
+hint is shorter, with the same reload/restart/stop behavior. `line_draw_pair`
+extends the shared line helper without changing upgrade's single-line display.
+The earlier per-stage terminal output descriptions below are superseded.
+
+Validation of the final display: warning-free Windows ASan CLI build; CLI unit,
+dispatch, help, hidden and package CTests pass (5/5), plus upgrade's regression.
+Real ConPTY runs of the delayed local-HTTP asset fixture and a controlled slow
+C compiler show the same two rows through source work, C compilation and linking,
+then only completion output; the invalid-source case clears both rows before
+its diagnostic. The docs production build, Node syntax check and diff check pass.
+Actual game execution, Android, other native hosts and the full installed web
+cache fixture were not exercised for this presentation change.
+
+Asset-cache inspection for the owner's question: asset_files.c's `read_at` cache
+keeps decoded images/audio/meshes by path/size/mtime in process memory; watch
+rebuilds reuse it, a fresh CLI process does not. Downloads have their URL/ETag
+disk cache and mesh_lod.c persists generated levels under `.tide/assets/lod`.
+codegen.c's build_pack/write_pack still constructs and writes the pack for a
+fresh generation. No general persistent import/pack cache was added here.
+
 Tide/assets follow-up: the synchronous generation step now runs under a terminal
 activity bar. Its four-character marker bounces every 100 ms with elapsed time,
 including source discovery, external-C identity hashing, checking, code generation

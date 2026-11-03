@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,29 +35,93 @@
 #define TIDE_VERSION "0.0.0-dev"
 #endif
 
-// Like upgrade: terminal feedback reuses a line; redirected feedback stays plain.
+static struct {
+    atomic_flag lock;
+    char label[128];
+    int completed, total;
+    int64_t started;
+} feedback = {.lock = ATOMIC_FLAG_INIT};
+static sys_activity *build_activity;
+
+static void lock_feedback(void)
+{
+    while (atomic_flag_test_and_set_explicit(&feedback.lock, memory_order_acquire)) { }
+}
+
+static void unlock_feedback(void)
+{
+    atomic_flag_clear_explicit(&feedback.lock, memory_order_release);
+}
+
+static void draw_build_feedback(void *user, const bool done)
+{
+    (void)user;
+    if (done) { line_clear(); return; }
+    lock_feedback();
+    char label[sizeof feedback.label];
+    memcpy(label, feedback.label, sizeof label);
+    const int completed = feedback.completed, total = feedback.total;
+    const int64_t elapsed = sys_now_ms() - feedback.started;
+    unlock_feedback();
+    enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER };
+    char bar[WIDTH + 1];
+    memset(bar, ' ', WIDTH);
+    if (total) {
+        const int filled = completed * WIDTH / total;
+        for (int i = 0; i < WIDTH; i++) bar[i] = i < filled ? '=' : i == filled ? '>' : ' ';
+    } else {
+        const int frame = (int)((elapsed / 100) % (TRAVEL * 2));
+        const int at = frame <= TRAVEL ? frame : TRAVEL * 2 - frame;
+        memcpy(bar + at, "====", MARKER);
+    }
+    bar[WIDTH] = '\0';
+    char text[96];
+    if (total) snprintf(text, sizeof text, "[%s] %3d%%  %d/%d  %.1fs", bar, completed * 100 / total,
+                        completed, total, (double)elapsed / 1000.0);
+    else snprintf(text, sizeof text, "[%s] %.1fs", bar, (double)elapsed / 1000.0);
+    line_draw_pair(label, text);
+}
+
+// Nested build steps share one display; the scope which starts it ends it.
+static bool begin_build_feedback(void)
+{
+    if (build_activity || !sys_is_terminal()) return false;
+    (void)diag_colored(); // Before stderr capture: preserve terminal diagnostics.
+    snprintf(feedback.label, sizeof feedback.label, "Preparing build");
+    feedback.completed = feedback.total = 0;
+    feedback.started = sys_now_ms();
+    build_activity = sys_activity_begin(draw_build_feedback, NULL);
+    return build_activity != NULL;
+}
+
+static void end_build_feedback(void)
+{
+    sys_activity *activity = build_activity;
+    build_activity = NULL;
+    sys_activity_end(activity);
+}
+
 static void build_step(const char *step)
 {
-    if (sys_is_terminal()) {
-        line_draw(step);
-        line_end();
+    if (build_activity) {
+        lock_feedback();
+        snprintf(feedback.label, sizeof feedback.label, "%s", step);
+        feedback.completed = feedback.total = 0;
+        unlock_feedback();
         return;
     }
+    if (sys_is_terminal()) return;
     fprintf(stderr, "tide: %s\n", step);
     fflush(stderr);
 }
 
-static void build_progress(const int completed, const int total, const char *file, const int64_t started)
+static void build_progress(const int completed, const int total)
 {
-    enum { WIDTH = 24 };
-    const int filled = completed * WIDTH / total;
-    char bar[WIDTH + 1];
-    for (int i = 0; i < WIDTH; i++) bar[i] = i < filled ? '=' : i == filled ? '>' : ' ';
-    bar[WIDTH] = '\0';
-    char line[256];
-    snprintf(line, sizeof line, "Compiling   [%s] %3d%%  %d/%d  %.1fs  %.80s", bar,
-             completed * 100 / total, completed, total, (double)(sys_now_ms() - started) / 1000.0, file);
-    line_draw(line);
+    lock_feedback();
+    snprintf(feedback.label, sizeof feedback.label, "Compiling C/C++");
+    feedback.completed = completed;
+    feedback.total = total;
+    unlock_feedback();
 }
 
 // A growable argv for sys_run, ending with NULL.
@@ -953,7 +1018,6 @@ static void show_compiles(const build *b, compiles *list, int *shown)
     while (*shown < list->count && list->items[*shown].done) {
         compile_job *job = &list->items[*shown];
         if (job->said) {
-            if (sys_is_terminal() && job->said[0]) line_clear();
             // As the compiler would have printed it: a line ends once, and
             // stderr ends each as the system does.
             char *to = job->said;
@@ -964,7 +1028,6 @@ static void show_compiles(const build *b, compiles *list, int *shown)
             fputs(job->said, stderr);
         }
         if (job->code == -1) {
-            if (sys_is_terminal()) line_clear();
             fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", b->compiler);
         }
         else if (job->code > 0 && job->cpp) explain_cpp_compile(job->said ? job->said : "");
@@ -980,10 +1043,10 @@ static void show_compiles(const build *b, compiles *list, int *shown)
 // what's wrong with the first that didn't compile.
 static bool run_compiles(build *b, compiles *list)
 {
+    const bool own_feedback = begin_build_feedback();
     int completed = 0;
-    const bool terminal = sys_is_terminal();
-    const int64_t started = sys_now_ms();
-    if (list->count && terminal) build_progress(0, list->count, "C/C++ files", started);
+    const bool terminal = build_activity != NULL;
+    if (list->count && terminal) build_progress(0, list->count);
     else if (list->count) {
         fprintf(stderr, "tide: compiling %d C/C++ files (%d jobs)\n", list->count, b->jobs > 0 ? b->jobs : 1);
         fflush(stderr);
@@ -1019,7 +1082,6 @@ static bool run_compiles(build *b, compiles *list)
         char *text = NULL;
         const int ended = sys_wait_any(running, count, &code, &text);
         if (ended < 0) {
-            if (terminal) line_clear();
             fprintf(stderr, "tide: the system couldn't wait for the compiler\n");
             for (int i = 0; i < count; i++) sys_kill(running[i]);
             stop = -1;
@@ -1043,17 +1105,14 @@ static bool run_compiles(build *b, compiles *list)
             b->engine_built = true;
         }
         completed++;
-        if (terminal) build_progress(completed, list->count, path_base(job->made[0]), started);
+        if (terminal) build_progress(completed, list->count);
         else {
             fprintf(stderr, "tide: compiled [%d/%d] %s\n", completed, list->count, path_base(job->made[0]));
             fflush(stderr);
         }
     }
     const bool ok = stop == list->count;
-    if (terminal) {
-        if (ok) line_end();
-        else line_clear();
-    }
+    if (own_feedback) end_build_feedback();
     if (!ok) telemetry_fail(TELEMETRY_ERROR_C);
     free_compiles(list);
     return ok;
@@ -2326,40 +2385,14 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     return ok;
 }
 
-static void generating_activity(void *user, const bool done)
-{
-    if (done) { line_clear(); return; }
-    const int64_t elapsed = sys_now_ms() - *(const int64_t *)user;
-    // Work has no reliable total yet: move a marker, never invent a percentage.
-    enum { WIDTH = 24, MARKER = 4, TRAVEL = WIDTH - MARKER };
-    const int frame = (int)((elapsed / 100) % (TRAVEL * 2));
-    const int at = frame <= TRAVEL ? frame : TRAVEL * 2 - frame;
-    char bar[WIDTH + 1];
-    memset(bar, ' ', WIDTH);
-    memcpy(bar + at, "====", MARKER);
-    bar[WIDTH] = '\0';
-    char line[128];
-    snprintf(line, sizeof line, "Tide/assets [%s] Compiling code and assets  %.1fs", bar, (double)elapsed / 1000.0);
-    line_draw(line);
-}
-
 static bool generate(build *b, const char *gen, const bool layout)
 {
+    const bool own_feedback = begin_build_feedback();
     build_step("resolving packages");
-    if (!find_packages(b->folder, &b->packages)) return false;
-    const int64_t started = sys_now_ms();
-    // Cache the terminal's diagnostic color capability before stderr is captured.
-    if (sys_is_terminal()) (void)diag_colored();
-    sys_activity *activity = sys_is_terminal() ? sys_activity_begin(generating_activity, (void *)&started) : NULL;
-    if (!activity) build_step("compiling Tide code and assets");
-    const bool ok = generate_sources(b, gen, layout);
-    const bool animated = activity != NULL;
-    sys_activity_end(activity);
-    if (animated && ok) {
-        char line[128];
-        snprintf(line, sizeof line, "Tide/assets compiled in %.1fs", (double)(sys_now_ms() - started) / 1000.0);
-        build_step(line);
-    }
+    const bool packages = find_packages(b->folder, &b->packages);
+    build_step("compiling Tide code and assets");
+    const bool ok = packages && generate_sources(b, gen, layout);
+    if (own_feedback) end_build_feedback();
     return ok;
 }
 
@@ -2530,7 +2563,10 @@ static char *build_game(const char *root, const build_options *opts, const char 
 
 char *tide_build(const char *root, const build_options *opts)
 {
-    return build_game(root, opts, NULL);
+    const bool own_feedback = begin_build_feedback();
+    char *output = build_game(root, opts, NULL);
+    if (own_feedback) end_build_feedback();
+    return output;
 }
 
 // ---------------------------------------------------------------------------
@@ -2613,7 +2649,7 @@ static char *build_path(const run *r, const uint32_t n, const char *suffix)
 // its watch-<n> folder (open_run), which nothing takes before the run starts
 // the host or serves the page, links in place, and only when the last run
 // there didn't leave the same one. False after saying what's wrong.
-static bool build_library(run *r)
+static bool build_library_work(run *r)
 {
     if (!generate(&r->b, r->gen, true)) return false;
     const char *suffix = r->web ? ".wasm" : LIBRARY_SUFFIX;
@@ -2658,6 +2694,14 @@ static bool build_library(run *r)
     free(linked);
     free(pdb);
     free(library);
+    return ok;
+}
+
+static bool build_library(run *r)
+{
+    const bool own_feedback = begin_build_feedback();
+    const bool ok = build_library_work(r);
+    if (own_feedback) end_build_feedback();
     return ok;
 }
 
@@ -2916,7 +2960,7 @@ static bool typed_restart(void)
     return restart;
 }
 
-int tide_run_reloading(const char *root, const build_options *opts, const char *const *game_args)
+static int run_reloading(const char *root, const build_options *opts, const char *const *game_args)
 {
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;
@@ -2931,6 +2975,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
     arg(&a, program);
     for (int i = 0; game_args[i]; i++) arg(&a, game_args[i]);
     build_step("starting game");
+    end_build_feedback();
     sys_process *game = sys_start(a.items, r.b.folder);
     free(a.items);
     if (!game) {
@@ -2938,7 +2983,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
         return 1;
     }
     int code = 0;
-    printf("tide: saving a .tide or C file reloads the game; Ctrl+R or r and Enter starts it over\n");
+    printf("tide: save to reload; r + Enter to restart; Ctrl+C to stop\n");
     fflush(stdout);
     sys_read_lines();
 
@@ -2978,6 +3023,14 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
     }
     close_run(&r);
     if (code != 0) telemetry_fail(TELEMETRY_ERROR_GAME);
+    return code;
+}
+
+int tide_run_reloading(const char *root, const build_options *opts, const char *const *game_args)
+{
+    begin_build_feedback();
+    const int code = run_reloading(root, opts, game_args);
+    end_build_feedback();
     return code;
 }
 
@@ -3846,7 +3899,7 @@ static void answer_web(void *user, const char *path, serve_reply *reply)
     }
 }
 
-int tide_run_web(const char *root, const build_options *opts, const bool open_page, const char *const *args)
+static int run_web(const char *root, const build_options *opts, const bool open_page, const char *const *args)
 {
     web_run w = {0};
     run *r = &w.r;
@@ -3878,8 +3931,9 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
     }
     char url[64];
     snprintf(url, sizeof url, "http://127.0.0.1:%u/", (unsigned)port);
+    end_build_feedback();
     printf("tide: the game is at %s\n", url); // The VS Code extension reads the address from this line
-    if (opts->watch) printf("tide: saving a .tide or C file reloads it; Ctrl+R or r and Enter starts it over, and Ctrl+C stops\n");
+    if (opts->watch) printf("tide: save to reload; r + Enter to restart; Ctrl+C to stop\n");
     else printf("tide: Ctrl+C stops serving the page\n");
     fflush(stdout);
     if (open_page && !sys_open_in_browser(url)) fprintf(stderr, "tide: couldn't open a browser; open %s in one\n", url);
@@ -3921,6 +3975,14 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
             }
         }
     }
+}
+
+int tide_run_web(const char *root, const build_options *opts, const bool open_page, const char *const *args)
+{
+    begin_build_feedback();
+    const int code = run_web(root, opts, open_page, args);
+    end_build_feedback();
+    return code;
 }
 
 // ---------------------------------------------------------------------------
@@ -3969,8 +4031,9 @@ static int android_version_code(void)
 // CPU, and Android's own.
 static bool link_android(const build *b, const file_list *objects, const c_side *c, const char *output)
 {
-    fprintf(stderr, "tide: linking Android %s\n", android_abis[b->abi]);
-    fflush(stderr);
+    char step[80];
+    snprintf(step, sizeof step, "linking Android %s", android_abis[b->abi]);
+    build_step(step);
     char *lib_dir = path_join(b->root, "lib/android");
     char *abi_dir = path_join(lib_dir, android_abis[b->abi]);
     char *platform_lib = path_join(abi_dir, "libtide_platform.a");
@@ -4045,7 +4108,7 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
 
 // Builds the app, and gives its ID in `package` if it's there. Returns the
 // app's path, or NULL after saying what went wrong.
-static char *build_android(const char *root, const build_options *opts, char *package, const size_t package_size)
+static char *build_android_work(const char *root, const build_options *opts, char *package, const size_t package_size)
 {
     build b = {0};
     if (!build_setup(&b, root, opts, false)) return NULL;
@@ -4127,11 +4190,13 @@ static char *build_android(const char *root, const build_options *opts, char *pa
         return NULL;
     }
     if (made) {
+        end_build_feedback();
         printf("Made the key that signs your Android apps: %s\n"
                "  Keep a copy somewhere safe. An app's updates have to be signed with the key the app was, and on\n"
                "  Google Play it's your upload key.\n",
                key_path);
     }
+    begin_build_feedback();
     build_step("packaging Android app");
     if (!apk_write(output, &desc, &key, error, sizeof error)) {
         fprintf(stderr, "tide: %s\n", error);
@@ -4146,11 +4211,20 @@ static char *build_android(const char *root, const build_options *opts, char *pa
             fprintf(stderr, "tide: %s\n", error);
             return NULL;
         }
+        end_build_feedback();
         printf("Built %s for Google Play\n", bundle);
     }
     for (int abi = 0; abi < ANDROID_ABIS; abi++) free_game_c(&c[abi]);
     free(needed);
     if (package) snprintf(package, package_size, "%s", id);
+    return output;
+}
+
+static char *build_android(const char *root, const build_options *opts, char *package, const size_t package_size)
+{
+    begin_build_feedback();
+    char *output = build_android_work(root, opts, package, package_size);
+    end_build_feedback();
     return output;
 }
 

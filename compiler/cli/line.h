@@ -6,6 +6,9 @@
 // Writes `text` over what's on the cursor's line.
 void line_draw(const char *text);
 
+// A status label above its bar, redrawn in the same two terminal rows.
+void line_draw_pair(const char *label, const char *bar);
+
 // Leaves the line as it is, for the next one.
 void line_end(void);
 

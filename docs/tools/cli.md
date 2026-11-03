@@ -37,19 +37,18 @@ Project build and package commands automatically use the version pinned with
 `tide pin`, asking before downloading a missing release into the shared
 version cache. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
-Builds report preparation, package resolution, Tide code and asset compilation,
-C/C++ compilation, and linking. In a terminal, C/C++ compilation uses the same
-in-place bar style as `tide upgrade`, showing the percentage of files completed,
-completed/total count, elapsed time and latest completed filename. Each batch has
-its own bar; the percentage measures files, not estimated build time. Cached
-objects are reported as up to date; web and Android builds also report packaging.
-`tide run` announces when it starts the native game. Redirected output uses plain
-stderr lines with file counts, without carriage-return animation.
+In a terminal, builds use one progress display: the current compiler step above
+a bar, updated in place through preparation, package resolution, Tide and asset
+compilation, C/C++ compilation, linking and packaging. The bar shows file counts
+and a percentage during C/C++ batches; other steps show moving activity because
+they have no reliable total. Elapsed time covers the build. The display clears
+before game launch or completion output, and diagnostics appear on clean lines.
+Redirected output uses plain stderr lines with file counts.
 
-The earlier Tide code and asset step uses an animated activity bar with elapsed
-time while it reads, checks and generates code and imports assets. It has no
-percentage because that work has no reliable total yet. Compiler diagnostics
-wait until this activity bar clears, keeping errors and warnings readable.
+Code objects are cached between launches. Asset caching is partial: unchanged
+decoded assets are reused during hot reload in the same `tide run` process;
+downloads and generated mesh LODs also have disk caches. A fresh launch still
+imports ordinary local assets and rebuilds the asset pack.
 
 Pinned build/run/schedule/shader commands select the project version before
 validating its options. Put an explicit game folder before options introduced
