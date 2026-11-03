@@ -1014,6 +1014,7 @@ Implemented, awaiting approval:
 - They go wherever a constant does: field defaults, the bounds of `[Clamp]`, `[Min]` and `[Max]`, settings, and other constants.
 - Changing one under `tide run` reloads the game and keeps the match where it is: constants aren't part of its data layout.
 - A game's own values are constants. `settings` only holds the engine's (see Settings).
+- A constant can be computed by code that runs at build time (agreed 2026-11-03, not built): see Build code.
 
 ```csharp
 const int MAX_HEALTH = 100;
@@ -1955,6 +1956,67 @@ identity migration across declaration renames are not implemented. The native
 editor previews static named references and constant aliases at each entity's composed
 Transform; preview materials and lighting are editor choices, not game rendering.
 
+## Build code
+
+Agreed 2026-11-03 and not built yet. The owner proposed processing assets with Tide code as part of the build ("be it tweaking an animation, audio, image, whatever the case might be") and chose the points under Decided. Everything else is Claude's proposal.
+
+### Decided
+
+- **Assets and constants can be made by code that runs at build time.** The result goes into the build as a file's contents do, so every machine has the same value and the game pays nothing for it at runtime.
+- **An `asset` or `const` initializer always runs at build time.** If something in it can't, for example a value known only at runtime, that's a compile error explaining why. It never quietly runs at runtime instead.
+- **Ordinary functions can be called there, and `build` marks a function that only ever runs at build time.** Unmarked functions with no side effects are allowed in build code. A `build` function guarantees build-time evaluation: it can be called only from build code, and its body is checked as build code where it's declared.
+- **Processors edit the asset through a `mut` parameter** rather than returning a new value. Audio and animations get values that code can read and edit, as images and meshes already have.
+- **`[LOD]` stays as the shorthand, and a game can write its own levels instead.**
+- **`const` gets the same mechanism**, so a constant can be a table or another value computed at build time.
+
+### Provisional
+
+Proposed, awaiting the owner:
+
+- **An asset can have a body**, a block of build code that runs after the file is read. In it, the asset's name is its editable value. An asset with a body and no path starts empty:
+
+  ```csharp
+  asset Texture hero = "art/hero.png"
+  {
+      Outline(mut hero, 2, Color.black);
+      Tint(mut hero, Color.red, 0.1);
+  }
+
+  asset Grid2<float> noise
+  {
+      Noise.Fill(mut noise, 256, 256, seed: 7);
+  }
+
+  build void Outline(mut Grid2<Color> image, int width, Color color)
+  {
+      // ordinary Tide code
+  }
+  ```
+
+- **Each asset type has an editable form in the body.** A `Texture` is its `Grid2<Color>`, turned back into a texture and compressed after the body. A `Mesh<V>` or `SkinnedMesh<V>` is its vertex and index lists. A `Clip` is its sample rate, channel count and `List<float>` samples. The other types keep their own value.
+- **A `const` can have a body too**, or be the result of a call: `const List<float> CURVE = BakeCurve(64);`. This extends constants to the types build code can make, lists included.
+- **What build code can do:** read its parameters, the assets and constants it names, and its own locals. It has no world, no `Devices`, no `Send`, no file access except through assets, and no network, so the dependency tree stays static and a build packs only what's declared. `extern` C is allowed, as C is trusted.
+- **Custom levels of detail:** in a mesh's body, `rock.levels` is the list of levels, and `[LOD]` is shorthand for the built-in call that fills it. A game writes its own:
+
+  ```csharp
+  asset Mesh<Corner> rock = "art/rock.glb"
+  {
+      rock.levels.Add(MySimplify(rock, 0.5), error: 0.02);
+      rock.levels.Add(Impostor(rock), error: 0.2);
+  }
+  ```
+
+  Each level gives the screen error it was made for, which drives the pick as with `[LOD]`. `[LOD]` together with levels written in the body is an error.
+- **Attributes that describe sampling stay attributes**: `[Filter]` and `[Wrap]` are how the GPU reads a texture each frame, and a custom filter is a `frag`. Attributes that make data each get a built-in build function they're shorthand for, as `[LOD]` does.
+- **How it runs:** tidec generates a C program from the build functions an initializer uses, compiles it with the built-in clang and runs it on the build machine, a web build included. Results are kept in the asset import cache under the hash of the compiled code, the input bytes and the arguments, so under `tide run` editing a source file or a processor re-runs only what depends on it. `build` functions are left out of the shipped program.
+- **Errors in build code** are reported at the declaration that ran it, together with the call that failed. A `fails` function that fails there is a compile error.
+
+### Open
+
+- The editable form of an animation: its tracks, with each track's times and position, rotation and scale values.
+- Which data-making steps become built-in build functions besides `[LOD]`'s, for example a texture's mip chain.
+- Limits on build code's time and memory, so a processor that never finishes stops the build with a message.
+
 ## Skinned meshes and animation
 
 ### Decided
@@ -2255,6 +2317,7 @@ Agreed 2026-10-11 and built the same day. The owner's decisions are under Decide
 - **A game can raise the screen error tolerance for performance** (2026-10-31): `Draw.LODPixels(pixels) { ... }` and `Draw.SetLODPixels(pixels);`, also on render targets. The default remains 1 pixel; higher values allow coarser meshes at the same distance. This adjusts automatic selection among the existing levels.
 - **An asset may multiply that tolerance** (2026-10-31): `[LOD(2)]` allows twice the destination's pixel error. `[LOD]` means multiplier 1. The asset and destination multiply, so `[LOD(2)]` with `shadow.SetLODPixels(4)` allows 8 pixels. A forced level still wins.
 - **Meshes a game makes get levels too** (2026-11-02; the owner took Claude's recommendations: "go with you recommendations"): opt in on the draw, `Draw.Mesh(vertices, indices, transform, lod: 1)` and `Draw.Instanced(..., lod: 2)`, the number the multiplier `[LOD(...)]` takes; the levels are the same code's as an asset's, made in the background while the game runs, never blocking a frame (the mesh draws whole until they're there, and wherever there's no background to make them), and kept by what's in the mesh. Once runtime `Mesh<V>` values exist, `mesh.WithLOD()` and `mesh.WithLOD(multiplier)` are the opt-in on the value, with the same levels.
+- **A game can write its own levels** (2026-11-03, not built): `[LOD]` stays as the shorthand, and an asset's build code can make the levels instead (see Build code).
 - **A game can override the pick two ways** (the owner, of a shadow map, whose lamp would pick another level than the one the mesh shows as: "they probably want it to match the visuals the main camera rendered"):
   - **The level itself**, for some draws.
   - **The camera the pick is made through**, for a target, in place of the camera the target draws with.
