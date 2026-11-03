@@ -66,3 +66,16 @@ test('changed component layouts compile through the same browser pipeline', asyn
 test('unavailable assets report a compile error instead of invoking a native process', async () => {
     await assert.rejects(compiler.compile(source + '\nasset Texture Missing("not-here.png");\n'), /not-here\.png/);
 });
+
+test('texture imports build identical packs in isolated browser filesystems', async () => {
+    const png = await readFile(new URL('../../compiler/tests/e2e/assets/run/0.png', import.meta.url));
+    const withAsset = new BrowserCompiler(modules, { ...files, 'texture.png': png });
+    const game = source + '\nasset Texture picture = "texture.png";\n';
+    const first = await withAsset.compile(game);
+    const second = await withAsset.compile(game);
+    assert.ok(WebAssembly.validate(first.wasm));
+    assert.equal(first.diagnostics, '');
+    assert.equal(second.diagnostics, '');
+    assert.ok(first.pack.length > png.length);
+    assert.deepEqual(second.pack, first.pack);
+});

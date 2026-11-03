@@ -1,5 +1,24 @@
 # The docs site
 
+## Browser compiler asset-cache integration (2026-11-03)
+
+The persistent importer cache exposed two missing pieces in the browser target:
+its direct compiler-source build lacked the vendor fingerprint that native
+`tidec_core` receives through a source property, and WASI requires explicit
+`getpid` emulation. The compiler CMake directory now exports that same computed
+fingerprint for `tidec_browser`; its build defines `_WASI_EMULATED_GETPID` and
+links `wasi-emulated-getpid`. The placeholder process ID and per-process serial
+serve temporary cache filenames inside each compilation's private virtual
+filesystem. Browser builds still start with a fresh filesystem; this does not
+add persistent browser storage or change native cache behavior.
+
+Validation: the actual Clang 23/WASI `docs_playground` build and staging import
+checks pass. All six `test:playground` integration tests pass, including a new
+real PNG import compiled twice in separate virtual filesystems with identical
+nonempty packs, alongside reload exports, syntax recovery, layout changes,
+missing assets and unsupported-import rejection. The next normal push run
+validates the Linux Docs build and deployment.
+
 ## Geometry capture guidance (2026-11-03)
 
 Debug views documents `geometry.rows`, asset/view attribution, stored versus
