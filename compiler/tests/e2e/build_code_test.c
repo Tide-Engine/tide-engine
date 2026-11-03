@@ -51,6 +51,23 @@ TIDE_TEST(build_code_values_read_as_the_code_left_them)
     tide_world_free(&world);
 }
 
+static bool clip_samples(const char *name, tide_sound *sound);
+
+// A ClipData asset: its file's samples, decoded, as match code reads them
+TIDE_TEST(build_code_clip_data_is_the_files_samples)
+{
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_tick(&world);
+    const Probe *p = &world.Probe;
+    tide_sound beep = {0};
+    TIDE_REQUIRE(clip_samples("beep", &beep)); // Its code silenced them; how many and how fast are the file's
+    TIDE_CHECK(p->beepRate == (int32_t)beep.rate && p->beepChannels == (int32_t)beep.channels);
+    TIDE_CHECK(p->beepSamples == (int32_t)(beep.frames * beep.channels) && p->beepSamples > 0);
+    tide_sound_free(&beep);
+    tide_world_free(&world);
+}
+
 static bool clip_samples(const char *name, tide_sound *sound)
 {
     const tide_pack_entry *e = tide_pack_find(name, TIDE_PACK_CLIP);

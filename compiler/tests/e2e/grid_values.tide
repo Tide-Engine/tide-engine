@@ -1,0 +1,159 @@
+// Grids as values (docs/spec.md, Grids): locals that own a grid, functions that take one `mut` and return one, Copy,
+// and a field that takes what a function made, in match code, local code and a view's helpers alike.
+
+struct Tally
+{
+    int checks;
+    int passed;
+    int firstFailure;
+}
+
+singleton Results
+{
+    Tally tally;
+}
+
+singleton Terrain
+{
+    Grid2<int> heights;
+    Grid2<int> copied = Grid2(4, 4);
+    Grid3<byte> blocks;
+}
+
+local singleton Seen
+{
+    Grid2<int> marks;
+    int total;
+}
+
+scene Main { }
+
+void Expect(mut Tally t, bool ok)
+{
+    t.checks += 1;
+    if (ok) t.passed += 1;
+    else if (t.firstFailure == 0) t.firstFailure = t.checks;
+}
+
+// Made from nothing, cells and all, and returned
+Grid2<int> Ramp(int size)
+{
+    mut Grid2<int> made = Grid2(size, size);
+    for (int y = 0; y < size; y++)
+    {
+        for (int x = 0; x < size; x++)
+        {
+            made[x, y] = x + y * 100;
+        }
+    }
+    return made;
+}
+
+// Changes the caller's grid where it is, whoever keeps it
+void Border(mut Grid2<int> cells, int value)
+{
+    for (int x = 0; x < cells.size.x; x++)
+    {
+        cells[x, 0] = value;
+    }
+}
+
+// Reads a grid it's passed
+int Sum(Grid2<int> cells)
+{
+    mut int total = 0;
+    foreach (var at in cells)
+    {
+        total += cells[at];
+    }
+    return total;
+}
+
+// A copy of what it's given, changed: the caller's stays as it was
+Grid2<int> Doubled(Grid2<int> source)
+{
+    mut Grid2<int> result = source.Copy();
+    foreach (var at in result)
+    {
+        result[at] = result[at] * 2;
+    }
+    return result;
+}
+
+// An open grid, made as it's written, across chunks
+Grid3<byte> Scatter()
+{
+    mut Grid3<byte> made = Grid3();
+    made[-100, 5, 300] = 7;
+    made[1000, -2000, 3] = 9;
+    return made;
+}
+
+Grid2<int> Either(bool first)
+{
+    if (first) return Ramp(2);
+    return Grid2(3, 3);
+}
+
+system Use(mut Terrain terrain, mut Results results, Time time)
+{
+    if (time.tick != 1) return;
+
+    // A local's own grid, written and read
+    mut Grid2<int> local = Ramp(70); // Past one chunk of 64 by 64
+    Expect(results.tally, local.size.x == 70 && local[3, 2] == 203 && local[69, 69] == 6969);
+    local[1, 1] = -5;
+    Expect(results.tally, local[1, 1] == -5);
+    Expect(results.tally, local[70, 0] == 0); // Past its size: zero, and writes do nothing
+    local[70, 0] = 1;
+    Expect(results.tally, local[70, 0] == 0);
+
+    // A field takes what a function made, cells and all
+    terrain.heights = Ramp(3);
+    Expect(results.tally, terrain.heights.size.x == 3 && terrain.heights[2, 2] == 202 && terrain.heights[1, 0] == 1);
+
+    // mut grids: a field's, and a local's
+    Border(terrain.heights, 9);
+    Border(local, 4);
+    Expect(results.tally, terrain.heights[0, 0] == 9 && terrain.heights[2, 0] == 9 && terrain.heights[2, 1] == 102);
+    Expect(results.tally, local[69, 0] == 4 && local[69, 1] == 169);
+
+    // Reading one passed, a field's and a local's
+    Expect(results.tally, Sum(terrain.heights) == 9 * 3 + 100 + 101 + 102 + 200 + 201 + 202);
+
+    // Copy: the copy changes, the original doesn't
+    mut Grid2<int> copy = terrain.heights.Copy();
+    copy[0, 0] = 1000;
+    Expect(results.tally, terrain.heights[0, 0] == 9 && copy[0, 0] == 1000 && copy[2, 2] == 202);
+    Grid2<int> doubled = Doubled(terrain.heights);
+    Expect(results.tally, doubled[2, 2] == 404 && terrain.heights[2, 2] == 202);
+
+    // A field takes a copy of a local's
+    terrain.copied = copy.Copy();
+    copy[2, 2] = -1;
+    Expect(results.tally, terrain.copied[0, 0] == 1000 && terrain.copied[2, 2] == 202 && terrain.copied.size.x == 3);
+
+    // Open grids
+    terrain.blocks = Scatter();
+    Expect(results.tally, terrain.blocks[-100, 5, 300] == 7 && terrain.blocks[1000, -2000, 3] == 9 && terrain.blocks[0, 0, 0] == 0);
+
+    // A local can be given a new grid
+    local = Grid2(2, 2);
+    Expect(results.tally, local.size.x == 2 && local[1, 1] == 0);
+    local.Clear();
+    Expect(results.tally, local.size.x == 2);
+
+    Grid2<int> either = Either(true);
+    Grid2<int> other = Either(false);
+    Expect(results.tally, either[1, 1] == 101 && other.size.x == 3);
+}
+
+view Look(mut Seen seen)
+{
+    // Local code: a local's grid, and a local singleton's field given one
+    mut Grid2<int> made = Ramp(2);
+    Border(made, 1);
+    seen.marks = Doubled(made);
+    Border(seen.marks, 5);
+    seen.total = Sum(seen.marks) + Sum(made);
+}

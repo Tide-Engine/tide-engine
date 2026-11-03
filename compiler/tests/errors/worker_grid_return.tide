@@ -1,3 +1,4 @@
-// expect: functions can't return grids
+// expect: this can't return a grid
+// expect: C, a task, an operator, a worker and code the GPU runs can't
 local worker Grid2<int> Build(Grid2<int> cells) { return cells; }
 scene Main;

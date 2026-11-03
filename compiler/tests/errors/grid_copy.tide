@@ -1,4 +1,5 @@
-// expect: a grid can't be copied; initialize a new grid or copy its cells explicitly
+// expect: a grid can't be copied: a grid takes one of its own
+// expect: copy this one with '.Copy()'
 singleton Field { Grid2<int> cells; Grid2<int> other; }
 system Copy(mut Field field)
 {

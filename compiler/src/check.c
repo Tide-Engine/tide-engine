@@ -43,6 +43,8 @@ typedef struct checker {
     const expr *write_root;   // Checking an assignment's target: the name it writes through, which that doesn't read
     VEC(stmt *) unused;       // Locals nothing read by the end of their scope, warned about once every body is checked
     VEC(decl *) access_warnings; // Systems whose access warnings await transitive World effects
+    VEC(stmt *) grid_names;   // Locals naming a grid parameter, an error unless their function is the GPU's (settle_grid_functions)
+    VEC(decl *) grid_name_fns; // ...the function each is in
     VEC(const expr *) dropped; // Calls written as statements whose value nothing takes (warn_dropped_values)
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
@@ -530,6 +532,8 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
     return found ? found : games;
 }
 
+static void build_struct_ready(checker *c, decl *d);
+
 static decl *find_named(const checker *c, const str name, const loc at, const name_kind kind)
 {
     if (c->generic && (kind == NAME_TYPE || kind == NAME_PREFAB)) { // An instantiation's T: the type it's bound to
@@ -540,6 +544,12 @@ static decl *find_named(const checker *c, const str name, const loc at, const na
     }
     decl *other;
     decl *d = lookup(c->prog, c->unit, name, kind, &other);
+    if (!d && kind == NAME_TYPE && (str_eq_c(name, "ClipData") || str_eq_c(name, "MeshLevel"))) {
+        // Built-in structs a game has once its code names them (build_check.inc)
+        decl *builtin = str_eq_c(name, "ClipData") ? c->prog->clip_data : c->prog->mesh_level;
+        build_struct_ready((checker *)c, builtin);
+        return builtin;
+    }
     if (other) {
         diag_error(at, "'" STR_FMT "' is ambiguous: both " STR_FMT " and " STR_FMT " have it", STR_ARG(name),
                    STR_ARG(decl_ns(d)), STR_ARG(decl_ns(other)));
@@ -2395,8 +2405,10 @@ static const type_ref *type_ref_or_text(const type_ref *r, const str text)
 // ---------------------------------------------------------------------------
 // Arrays: T[N], N values side by side in the bytes of whatever holds them (docs/spec.md, Arrays)
 
+static bool takes_grid(const decl *d);
 static bool fold_int(const expr *e, int64_t *out);
 static bool is_constant(const checker *c, const expr *e);
+static bool build_calls(const expr *e);
 static bool build_constant(const checker *c, const decl *k);
 static void build_constant_function(checker *c, decl *k);
 static bool build_constant_type_ok(type t, loc at);
@@ -2617,6 +2629,7 @@ static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_mesh(const checker *c, const expr *e);
 static type check_new_mesh(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
+static bool fresh_grid(const expr *e, bool returning);
 static void refuse_arg_names(const expr *e, type result);
 
 // `default` where a value of `want` goes: that type's default value, the one
@@ -10994,6 +11007,16 @@ static bool is_new_grid(const expr *e)
         || ((e->kind == E_CALL || e->kind == E_METHOD) && e->type_alias && e->type_alias->alias_type.kind == TY_GRID);
 }
 
+// What a grid variable, a field or a function's result can take: a grid of its own, never another's (docs/spec.md,
+// Grids). A new one, a copy (`cells.Copy()`), what a call returned, and when a function returns, a local of its own,
+// which it's done with.
+static bool fresh_grid(const expr *e, const bool returning)
+{
+    if (e->kind == E_CONDITIONAL) return fresh_grid(e->lhs, returning) && fresh_grid(e->rhs, returning);
+    if (e->kind == E_DEFAULT || e->kind == E_CALL || e->kind == E_METHOD) return true;
+    return returning && e->kind == E_NAME && e->bind == BIND_LOCAL;
+}
+
 // Grid2(1024, 1024), Grid3(0, 384, 0) or Grid2(): a grid of that size, open
 // on the axes given 0 or left out. Its cell type comes from where it goes.
 static type check_new_grid(checker *c, expr *e, const type want)
@@ -11047,14 +11070,31 @@ static type check_new_mesh(checker *c, expr *e, const type want)
         diag_error(e->at, "a Mesh is made in CPU code, and drawn: 'Draw.Mesh(Mesh(vertices, indices), transform)'");
         return e->type = T_ERR;
     }
-    if (e->args.count != 2) {
+    // Mesh(vertices, indices, levels): levels of detail of its own, which the build packs as [LOD]'s
+    const bool levels = e->args.count == 3;
+    if (e->args.count != 2 && !levels) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         diag_error(e->at, "Mesh takes its vertices and its indices: 'Mesh(vertices, indices)'");
         diag_note("the vertices are a List<V> of a struct with a 'float3 position', and the indices a List<int>, three a "
-                  "triangle");
+                  "triangle; build code can give it levels of detail too: 'Mesh(vertices, indices, levels)'");
         return e->type = T_ERR;
     }
-    if (!order_named_args(e, "vertices, indices", 0)) return e->type = T_ERR;
+    if (!order_named_args(e, levels ? "vertices, indices, levels" : "vertices, indices", 0)) return e->type = T_ERR;
+    if (levels) {
+        build_struct_ready(c, c->prog->mesh_level);
+        const type want = list_of(c->prog, (type){TY_STRUCT, c->prog->mesh_level});
+        const type got = check_expr_want(c, e->args.items[2], want);
+        if (got.kind != TY_ERROR && !type_assignable(want, got)) {
+            diag_error(e->args.items[2]->at, "a Mesh's levels are a List<MeshLevel>, not %s", type_name(got));
+            return e->type = T_ERR;
+        }
+        if (!(c->method && c->method->is_build)) {
+            diag_error(e->at, "a Mesh's own levels of detail are made as the game builds: in a 'build' function, or an "
+                              "asset's value");
+            diag_note("a draw makes a made mesh's levels as the game runs: 'Draw.Mesh(mesh, transform, lod: 1)'");
+            return e->type = T_ERR;
+        }
+    }
     type vertices = into.kind == TY_STRUCT ? check_expr_want(c, e->args.items[0], into.decl->fields.items[1].type)
                                            : check_expr(c, e->args.items[0]);
     const type indices = check_expr_want(c, e->args.items[1], list_of(c->prog, T_INT_));
@@ -11086,6 +11126,7 @@ static type check_new_mesh(checker *c, expr *e, const type want)
     e->call = CALL_NEW_MESH;
     vec_push(e->arg_want, mesh.decl->fields.items[1].type);
     vec_push(e->arg_want, mesh.decl->fields.items[2].type);
+    if (levels) vec_push(e->arg_want, list_of(c->prog, (type){TY_STRUCT, c->prog->mesh_level}));
     c->prog->uses_text = true; // It's made in the scratch area, which code clears after it runs
     return e->type = mesh;
 }
@@ -11395,11 +11436,25 @@ static type check_grid_method(checker *c, expr *e, const type grid)
         return check_grid_sample(c, e, grid);
     }
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (str_eq_c(e->name, "Copy")) { // A grid of its own, with these cells (docs/spec.md, Grids)
+        if (e->args.count) {
+            diag_error(e->at, "Copy takes no arguments: 'cells.Copy()'");
+            return T_ERR;
+        }
+        if (gpu_code(c)) {
+            diag_error(e->at, "code the GPU runs reads grids where they are: it can't copy one");
+            return T_ERR;
+        }
+        e->call = CALL_GRID;
+        e->type_decl = grid.decl;
+        return grid;
+    }
     if (!str_eq_c(e->name, "Clear")) {
         diag_error(e->at, "a grid has no method '" STR_FMT "'", STR_ARG(e->name));
         suggestion sg = suggest_start(e->name);
         suggest_consider_c(&sg, "Sample");
         suggest_consider_c(&sg, "Clear");
+        suggest_consider_c(&sg, "Copy");
         suggest_consider_c(&sg, "Decode");
         suggest_note(&sg);
         return T_ERR;
@@ -12865,6 +12920,14 @@ static void check_step_stmt(checker *c, const stmt *s, const int depth)
     }
 }
 
+// Whether a grid could be one code made, in its thread's scratch area: a local's, or a parameter's, which a caller
+// can pass a local. Only a world's grids go to threads.
+static bool thread_grid(const expr *e)
+{
+    while (e->kind == E_MEMBER) e = e->object;
+    return e->kind == E_NAME && (e->bind == BIND_LOCAL || (e->bind == BIND_PARAM && e->param && e->param->type.kind == TY_GRID));
+}
+
 // parallel (var at in cells) { ... }, or by blocks: parallel (var at in cells by 2 offset shift)
 static void check_parallel(checker *c, stmt *s)
 {
@@ -12886,6 +12949,12 @@ static void check_parallel(checker *c, stmt *s)
     }
     const expr *root = s->value;
     while (root->kind == E_MEMBER) root = root->object;
+    if (grid.kind == TY_GRID && thread_grid(s->value) && !(c->method && c->method->is_worker)) {
+        diag_error(s->value->at, "a parallel loop goes through a grid the world keeps: a component's or a singleton's, "
+                                 "and this one is %s", root->bind == BIND_LOCAL ? "a variable's" : "a parameter");
+        diag_note("a grid code makes lives on the thread that made it; keep the grid in a component or singleton, or "
+                  "use a 'foreach' loop");
+    }
     if (list && root->kind == E_NAME && root->bind == BIND_LOCAL && !(c->method && c->method->is_worker)) {
         diag_error(s->value->at, "a parallel loop goes through a list the world keeps: a component's or a singleton's, "
                                  "and '" STR_FMT "' is a variable", STR_ARG(root->name));
@@ -13088,9 +13157,10 @@ static void check_assign(checker *c, const stmt *s)
     } else if (through_element(s->target) && !element_path_in_place(s->target)) {
         return;
     }
-    if (target.kind == TY_GRID && value.kind != TY_ERROR && !is_new_grid(s->value)) {
-        diag_error(s->value->at, "a grid can't be copied; initialize a new grid or copy its cells explicitly");
-        diag_note("make a new, empty one with 'Grid%d(...)', or change cells one by one", target.decl->dims);
+    if (target.kind == TY_GRID && value.kind != TY_ERROR && !fresh_grid(s->value, false)) {
+        diag_error(s->value->at, "a grid can't be copied: a grid takes one of its own");
+        diag_note("make a new, empty one with 'Grid%d(...)', take what a function returns, or copy this one with '.Copy()'",
+                  target.decl->dims);
         return;
     }
     if (holds_grid(target) && target.kind != TY_GRID && value.kind != TY_ERROR && s->value->kind != E_LITERAL) {
@@ -13581,6 +13651,14 @@ static void check_return(checker *c, const stmt *s)
         diag_error(s->value->at, "'" STR_FMT "' returns %s, not %s", STR_ARG(m->name), type_name(m->return_type),
                    type_name(value));
         note_conversion(m->return_type, value);
+    } else if (value.kind == TY_GRID && !fresh_grid(s->value, true) && m->build_owner) { // asset Grid2<Color> a = b;
+        diag_error(s->value->at, "a grid can't be copied: an asset's grid is its own");
+        diag_note("make it with code that returns one, or copy this one: '... = " STR_FMT ".Copy();'",
+                  STR_ARG(s->value->kind == E_NAME ? s->value->name : str_from("grid")));
+    } else if (value.kind == TY_GRID && !fresh_grid(s->value, true)) {
+        diag_error(s->value->at, "a grid can't be copied: a function returns one of its own");
+        diag_note("return a new one, a local, or a copy of this one, like 'return " STR_FMT ".Copy();'",
+                  STR_ARG(s->value->kind == E_NAME ? s->value->name : str_from("grid")));
     }
 }
 
@@ -13725,11 +13803,30 @@ static void check_var(checker *c, stmt *s)
         s->type = T_ERR;
     }
 
-    // A grid stays where it's made: a local would be a copy of every chunk
     // In code the GPU runs, a grid's local is a name for the grid, which shader.c follows: a frag, a vert, and a
-    // function that takes a grid, which only those call
+    // function only those call. Anywhere else a local's grid is its own (docs/spec.md, Grids): a new one, a copy or
+    // what a function returned, in the scratch area as a local's list is, and never another's.
     const bool names_grid = s->type.kind == TY_GRID && s->value && (gpu_code(c) || (c->method && c->method->gpu_only));
-    if (holds_grid(s->type) && !names_grid) {
+    if (s->type.kind == TY_GRID && !names_grid) {
+        const loc at = s->type_at.line ? s->type_at : s->value ? s->value->at : s->at;
+        if (async_code(c)) {
+            diag_error(at, "a task can't keep a grid while it waits: a local's grid lasts until the code that made it is done");
+            diag_note("keep it in a component or singleton, or make and use it in a function the task calls");
+            s->type = T_ERR;
+        } else if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false) && c->method
+                   && c->method->kind == DECL_FUNCTION && takes_grid(c->method) && s->value->kind == E_NAME
+                   && s->value->bind == BIND_PARAM) {
+            // A name for a grid it's passed: in a function only code the GPU runs calls, as a frag's local names one,
+            // and otherwise an error, once that's known
+            vec_push(c->grid_names, s);
+            vec_push(c->grid_name_fns, c->method);
+        } else if (s->value && s->value->type.kind == TY_GRID && !fresh_grid(s->value, false)) {
+            diag_error(s->value->at, "a grid can't be copied: a local's grid is its own");
+            diag_note("make a new one with 'Grid%d(...)', take what a function returns, or copy this one with '.Copy()'",
+                      s->type.decl->dims);
+            s->type = T_ERR;
+        }
+    } else if (holds_grid(s->type) && !names_grid) {
         const loc at = s->type_at.line ? s->type_at : s->value->at;
         if (s->type.kind == TY_GRID) diag_error(at, "a local can't hold a grid");
         else diag_error(at, "a local can't hold '" STR_FMT "': it has a grid in it", STR_ARG(s->type.decl->name));
@@ -13784,11 +13881,6 @@ static type local_type(checker *c, stmt *s)
     const int errors = diag_error_count();
     const type_ref *const r = type_ref_or_text(s->type_ref, s->type_name);
     t = resolve_type(c, r, PLACE_LOOP, at);
-    if (t.kind == TY_GRID) {
-        diag_error(at, "a local can't hold a grid");
-        s->type_name = str_from("");
-        return T_ERR;
-    }
     if (r->args.count > 0 && diag_error_count() > errors) s->type_name = str_from(""); // Reported: it takes the element's type, like var
     return t;
 }
@@ -14004,6 +14096,7 @@ static void check_stmt(checker *c, stmt *s)
             for (int i = 0; i < 3; i++) s->block[i] = 1;
             s->parallel = ((c->system && !c->method) || (c->method && c->method->is_worker))
                        && !async_code(c) && !c->in_input && !c->parallel
+                       && (!thread_grid(s->value) || (c->method && c->method->is_worker)) // A world's grid
                        && own_cell_only(s->then_stmt, s, 0);
             if (s->parallel) plan_window(s);
             if (!s->parallel) c->prog->uses_text = true; // In order, it keeps where it is in the scratch area
@@ -14784,6 +14877,13 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (inner.kind == TY_GRID && inner.decl->dims == 2 && grid_cell(inner).kind == TY_COLOR) *kind = ASSET_GRID;
     else if (inner.kind == TY_TEXTURE) *kind = ASSET_TEXTURE;
     else if (inner.kind == TY_CLIP) *kind = ASSET_CLIP;
+    else if (inner.kind == TY_STRUCT && inner.decl == c->prog->clip_data) {
+        if (*many) {
+            diag_error(at, "a ClipData asset names one file: declare each clip's samples separately");
+            return false;
+        }
+        *kind = ASSET_CLIP_DATA;
+    }
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATIONS) *kind = ASSET_ANIMATIONS;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATION) *kind = ASSET_ANIMATION;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_HUMANOID_RIG) {
@@ -15134,8 +15234,9 @@ static void check_asset_decl(checker *c, decl *k)
     k->asset_kind = kind;
     k->asset_many = many;
     // How its files are read: a Mesh with bones, as a skinned model is
+    // a ClipData's, as a Clip's are, which codegen decodes
     const asset_kind read = typed && fills && kind == ASSET_MESH && mesh_wants_skin(asset_mesh_vertex(k->return_type))
-                          ? ASSET_SKINNED : kind;
+                          ? ASSET_SKINNED : kind == ASSET_CLIP_DATA ? ASSET_CLIP : kind;
     attribute *retarget = NULL;
     for (int a = 0; a < k->attributes.count; a++) {
         attribute *attr = &k->attributes.items[a];
@@ -15183,9 +15284,11 @@ static void check_asset_decl(checker *c, decl *k)
     }
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
     const bool paths = catalog && k->value && k->value->kind == E_LIST;
-    // `asset Grid2<float> noise { ... }`: no file, only the code that makes it (build_check.inc)
-    const int path_count = !k->value ? 0 : paths ? k->value->args.count : 1;
-    if (!path_count && k->value) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
+    // `asset Texture hero = Outlined(heroSource, Color.red);`: a value build code makes, not a file's path, which is a
+    // constant: as for a constant, one that calls something (build_check.inc)
+    const bool built = k->value && !paths && build_calls(k->value) && !is_constant(c, k->value);
+    const int path_count = !k->value || built ? 0 : paths ? k->value->args.count : 1;
+    if (!path_count && paths) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -15253,7 +15356,7 @@ static void check_asset_decl(checker *c, decl *k)
             if (!humanoid_asset_read(&k->asset->items[0], k->value->at, c->prog->game_folder)) k->asset = NULL;
     }
     if (retarget) check_retarget_attribute(c, k, retarget);
-    if (k->body && typed && fills) build_asset_function(c, k);
+    if (built && typed && fills) build_asset_function(c, k);
     k->index = 2;
     vec_push(c->prog->assets, k);
     c->unit = outer;
@@ -16013,11 +16116,11 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
     const type t = resolve_type(c, r, is_return ? PLACE_RETURN : PLACE_FUNCTION, at);
     switch (t.kind) {
     case TY_GRID:
-        if (!is_return && c->grid_param) return t;
+        if (c->grid_param) return t;
         if (is_return) {
-            diag_error(at, "functions can't return grids");
-            diag_note("a function takes a grid to read its cells, in code the GPU runs: change a grid's cells in the system "
-                      "that has its component or singleton");
+            diag_error(at, "this can't return a grid");
+            diag_note("an ordinary function can, like 'Grid2<Color> Make(int size)'; C, a task, an operator, a worker and "
+                      "code the GPU runs can't");
         } else {
             diag_error(at, "this can't take a grid");
             diag_note("a function or a method takes one to read its cells, in code the GPU runs");
@@ -16175,7 +16278,11 @@ static void check_entity_query(const checker *c, decl *sys, param *query);
 
 static void check_signature(checker *c, decl *m)
 {
+    // A function can return a grid code made (docs/spec.md, Grids): the caller's, in the scratch area, as a list is
+    c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio
+                 && !m->is_worker && m->kind != DECL_SHADER;
     m->return_type = method_type(c, type_ref_or_text(m->return_type_ref, m->return_type_name), m->return_type_qual_at, true);
+    c->grid_param = false;
     if (type_is_asset_collection(m->return_type)) {
         diag_error(m->return_type_qual_at, "functions can't return a borrowed asset collection");
         m->return_type = T_ERR;
@@ -16243,24 +16350,18 @@ static void check_signature(checker *c, decl *m)
             p->type.decl = component_placement(c->prog, p->type.decl, p->placement_local, p->type_at);
         } else if (p->placement_local) diag_error(p->placement_at, "local component access belongs on a system, view, handler, query or async parameter; ordinary functions take values");
         if (world) check_world_param(m, p, k);
-        if (p->type.kind == TY_GRID && m->is_build) { // Build code's own grids: an image it edits, read and written
+        if (p->type.kind == TY_GRID) { // A grid the caller names: read, or with `mut` written where it is
             if (p->default_value) {
                 diag_error(p->name_at, "a grid a function takes has no default: the call names the one it reads");
                 p->type = T_ERR;
-            }
-        } else if (p->type.kind == TY_GRID) { // Read-only shader arguments or isolated worker snapshots.
-            if (p->mode == PARAM_MUT) {
-                diag_error(p->type_at, "a function reads the cells of a grid it takes, and never changes them: '" STR_FMT "' can't be '%s'",
-                           STR_ARG(p->name), p->is_out ? "out" : "mut");
-                diag_note("change a grid's cells in the system that has its component or singleton");
+            } else if (p->is_out) {
+                diag_error(p->type_at, "a grid can't be an 'out' parameter: return it, like 'Grid2<Color> Make()', or "
+                                       "take it as 'mut' to change its cells");
                 p->type = T_ERR;
-            } else if (p->default_value) {
-                diag_error(p->name_at, "a grid a function takes has no default: the call names the one it reads");
+            } else if (p->mode == PARAM_MUT && (m->is_worker || m->kind == DECL_SHADER)) {
+                diag_error(p->type_at, "'" STR_FMT "' can't be 'mut': %s reads the cells of a grid it takes", STR_ARG(p->name),
+                           m->is_worker ? "a worker" : "code the GPU runs");
                 p->type = T_ERR;
-            } else if (!m->is_worker && !m->gpu_only) {
-                m->gpu_only = true;
-                m->gpu_only_at = p->type_at;
-                m->gpu_only_reads = TY_GRID;
             }
         }
         if ((holds_render_resource(p->type) || holds_mesh_reference(p->type, 0)) && (holds_heap_beside_meshes(p->type, 0) || p->type.kind == TY_ARRAY))
@@ -21079,6 +21180,57 @@ static void check_io_calls(const checker *c)
 // A function that plays sounds is local code's to call likewise.
 // Grid-reading helpers also run inside local workers; GPU sampling remains
 // shader-only. Propagate each execution requirement through helper chains.
+static bool takes_grid(const decl *d)
+{
+    for (int i = 0; i < d->params.count; i++) {
+        if (d->params.items[i].type.kind == TY_GRID) return true;
+    }
+    return false;
+}
+
+// A function that takes a grid, which only code the GPU runs calls (or nothing does), is the GPU's, as every function
+// that took a grid was before grids were values (docs/spec.md, Grids): generated C leaves it out, and its locals can
+// name the grids it's passed. Any other caller makes it the CPU's too, where a local can't (grid_names).
+static void settle_grid_functions(checker *c)
+{
+    VEC(decl *) gpu = {0};
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_FUNCTION && !d->is_build && !d->is_worker && !d->is_extern && !d->gpu_only && takes_grid(d))
+            vec_push(gpu, d);
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int k = 0; k < c->calls.count; k++) {
+            const call_site *site = &c->calls.items[k];
+            int at = -1;
+            for (int i = 0; i < gpu.count && at < 0; i++) at = gpu.items[i] == site->to ? i : -1;
+            if (at < 0) continue;
+            const decl *from = site->from;
+            bool gpu_caller = from && (from->kind == DECL_SHADER || from->gpu_only);
+            for (int i = 0; i < gpu.count && from && !gpu_caller; i++) gpu_caller = gpu.items[i] == from;
+            if (gpu_caller) continue;
+            gpu.items[at] = gpu.items[--gpu.count];
+            changed = true;
+        }
+    }
+    for (int i = 0; i < gpu.count; i++) {
+        decl *d = gpu.items[i];
+        d->gpu_only = true;
+        d->gpu_only_reads = TY_GRID;
+        for (int k = 0; k < d->params.count && !d->gpu_only_at.line; k++) {
+            if (d->params.items[k].type.kind == TY_GRID) d->gpu_only_at = d->params.items[k].type_at;
+        }
+    }
+    for (int i = 0; i < c->grid_names.count; i++) {
+        const stmt *s = c->grid_names.items[i];
+        if (c->grid_name_fns.items[i]->gpu_only) continue;
+        diag_error(s->value->at, "a grid can't be copied: a local's grid is its own");
+        diag_note("make a new one with 'Grid%d(...)', take what a function returns, or copy this one with '.Copy()'",
+                  s->type.decl->dims);
+    }
+}
+
 static void check_gpu_only_calls(const checker *c)
 {
     for (int i = 0; i < c->prog->decls.count; i++) {
@@ -22889,6 +23041,7 @@ bool check(program *prog)
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);
+    settle_grid_functions(&c);
     check_gpu_only_calls(&c);
     check_audio_calls(&c);
     check_audio_bodies(&c);

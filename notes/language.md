@@ -1,11 +1,64 @@
 # Language features, as tidec builds them
 
+## Grids as values (2026-11-03)
+
+The owner, reworking build code: grids work as values in all code, not only in build code ("`build` making code
+behave in a different way, that is a nono"). docs/spec.md, Grids, has the rules; docs/language/grids.md, Grids in
+code, the user page.
+
+**Checker** (check.c). `fresh_grid(e, returning)`: a grid of its own is `default`, a call or a method (`Grid2(...)`,
+`cells.Copy()`, any function's result), a conditional of two, and when returning a local (`BIND_LOCAL`), which the
+function is done with. It gates three places that took only `is_new_grid` before: an assignment to a grid
+(`check_assign`), a local's value (`check_var`, after the GPU's `names_grid` case, which still names a grid in a frag,
+a vert and a function only they call), and `check_return` (a build owner's return says "an asset's grid is its own").
+`local_type` no longer refuses a grid type. A local grid in async code is refused (a task can't keep one). Field
+defaults keep `own_grid`. `check_signature` sets `grid_param` for the return type of an ordinary function (not
+extern, async, operator, interpolate, audio, worker or shader), so `method_type` takes a grid there, with a message
+for the rest. Grid parameters lost the build-only case, and the mark that made a function taking a grid `gpu_only` at its
+signature moved after the calls are known: any function takes one, `mut` too, but `out` (an error that says to
+return it) and `mut` in a worker or a shader, and `settle_grid_functions` (before `check_gpu_only_calls`) marks a
+function that takes a grid `gpu_only` when only code the GPU runs calls it, or nothing does, as every such function
+was before, so generated C still leaves those out. A local naming a grid parameter (`var mine = tallies;`, which a
+shader helper in platform/tests/shaders.tide does) is kept in `grid_names` and is the copy error only if its function
+isn't the GPU's once that's settled.
+`check_grid_method` adds `Copy` (no arguments, refused in GPU code). `thread_grid(e)`: a grid whose root is a local or
+a grid parameter, which a caller can pass a local; `check_parallel` refuses those (but in a worker), and the automatic
+parallel foreach in a system skips them.
+
+**Codegen.** Little changed: a local grid is a `tide_grid` with `TIDE_IN_SCRATCH` as its `where` (`place_where`), a
+`mut` grid parameter is `tide_grid *` with its caller's `where`, returns are the handle, and `cells.Copy()` is
+`tide_grid_copy(g, &shape)`. Assigning a field `tide_grid_set`s it, which copies a scratch grid's cells into the
+world's heap (runtime-ownership.md). Calls passing a field's grid to a non-`mut` parameter pass the handle, as build
+functions did.
+
+**What stays refused.** Structs with grids in locals, returns and copies; `Grid2(...)` as an argument (functions take
+no new grid in `arg_fits`); lambdas capturing a grid (a stored callable captures plain values); worker code keeping a
+grid local (worker_check.inc), so a worker can't call a helper that makes one; grids in lists and maps.
+
+**Tests.** `tidec_e2e_grid_values` (e2e/grid_values.tide, _test.c): locals made by a function past one chunk, `mut`
+parameters on a field's grid and a local's, reads of a passed grid, `Copy` leaving the original, a field given a
+function's grid and a copy, open 3D grids, a local given a new grid and cleared, returns from both branches, a view
+making grids in local code, world copy/pack/unpack with the field's cells, and the scratch mark back at 0 after the
+system. `tidec_safety_grid_values`: hostile sizes and places on locals, copies of a grid too big to list its chunks,
+fields taking them, foreach at the int limits, and 2000 grids made and dropped in one system, every tick. Errors:
+`grid_return_param`, `grid_parallel_local`, `grid_async_local`, `grid_out_param`; `grid_copy`, `grid_local`,
+`worker_grid_local`, `worker_grid_helper_local` and `worker_grid_return` say the new messages;
+`grid_function_param`, `grid_function_cpu_call` and `worker_grid_cpu_caller` were removed (all three are allowed
+now, and covered by grid_values and worker_grids). Codegen diff (old and new tidec, `--no-line`, plain and `--layout`, every
+`.sources` list in build/sanitize, the prototypes' too: 462): every game's C is the same but for the simulation identity,
+which the compiler's sources are part of; only the three fixtures written in the new form differ, as the old tidec
+refuses them. Full native sanitize (3025) and web-debug (2896, without the prototypes) suites passed.
+
+**Gaps.** A field can't be given a local (`terrain.heights = local;` is an error: `local.Copy()`, which copies twice,
+once into scratch and once into the world); a move from a local's last use isn't there. A parallel loop can't go
+through a local's grid. A worker can't make a grid. (GPU code can't pass a grid `mut`: what a frag reads is read-only.)
+
 ## Build code (2026-11-03)
 
-`build` functions, asset and constant bodies, built constants and their checks are in notes/assets-and-files.md,
-Build code: parser.c (the `build` word, bodies), build_check.inc (the made functions, `check_build_code`), and the
-changes to `is_constant`, `use_constant`, `check_constant`, `constant_type` and `check_signature`'s grid and mesh
-parameters.
+`build` functions, assets and constants whose value is build code, built constants and their checks are in
+notes/assets-and-files.md, Build code: parser.c (the `build` word; a block after an asset or a constant is an error),
+build_check.inc (the made functions, `check_build_code`), and the changes to `is_constant`, `use_constant`,
+`check_constant`, `constant_type`, `find_named` (ClipData and MeshLevel once named) and `check_new_mesh` (levels).
 
 ## Diagnostic mesh asset names (2026-11-03)
 

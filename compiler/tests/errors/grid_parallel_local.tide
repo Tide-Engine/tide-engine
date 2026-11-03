@@ -1,0 +1,13 @@
+// expect: a parallel loop goes through a grid the world keeps: a component's or a singleton's, and this one is a variable's
+// expect: a grid code makes lives on the thread that made it
+singleton Field { int sum; }
+system Fill(mut Field field)
+{
+    mut Grid2<int> cells = Grid2(8, 8);
+    parallel (var at in cells)
+    {
+        cells[at] = 1;
+    }
+    field.sum = cells[0, 0];
+}
+scene Main { }

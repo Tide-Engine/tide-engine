@@ -1,0 +1,3 @@
+// expect: a grid can't be an 'out' parameter: return it
+void Make(out Grid2<int> cells) { cells = Grid2(2, 2); }
+scene Main { }

@@ -1608,9 +1608,16 @@ system Fall(mut Field field, Time time)
 Implemented on the owner's go-ahead, to be revisited once games use them:
 
 - Cells are plain values: numbers, bools, chars, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, and structs of those. Not text, lists or grids, which say to keep them elsewhere and a number for them in the cell.
-- `cells[x, y]` is `cells[int2(x, y)]`, and `cells[x, y, z]` is `cells[int3(x, y, z)]`. `cells.size` is the grid's size, 0 on open axes. `cells.Clear()` sets every cell back to zero and keeps the size; `cells = Grid2(...)` gives the field a new, empty grid.
+- `cells[x, y]` is `cells[int2(x, y)]`, and `cells[x, y, z]` is `cells[int3(x, y, z)]`. `cells.size` is the grid's size, 0 on open axes. `cells.Clear()` sets every cell back to zero and keeps the size; `cells = Grid2(...)` gives the field a new, empty grid; `cells.Copy()` is a grid of its own, with the same size and cells.
 - A cell is a copy, like a list's element: `cells[p].heat = 1` is an error that says to take it out, change it and put it back. `cells[p] += 1` works on numbers. Setting a cell to zero where there's no chunk makes none.
-- A grid stays in its component or singleton: a local can't hold a copy, and a grid field is only assigned a new grid. Local workers can take independent read-only grid snapshots; their synchronous helpers and shader code can read and forward grid parameters. Other CPU callers cannot pass grids. Functions cannot return grids. `Grid2(...)` takes its cell type from the field it goes in; anywhere else it's an error that says so.
+- **Grids are values code owns, the same in all code** (the owner, 2026-11-03, with build code's rework: "yes" to grids working this way in all code, as `build` must not make code behave differently). A grid is never copied without saying so: a field, a local or what a function returns takes a grid of its own, never another's.
+  - A local can hold a grid of its own: a new one (`Grid2(...)`), a copy (`cells.Copy()`), or what a call returns. `mut Grid2<int> made = Grid2(64, 64);` is written as a field's is; one that isn't `mut` is read-only. Assigning a local a grid another place has (`var copy = field.cells;`) is an error that says to copy it.
+  - A function can return a grid: a new one, a copy, what a call returned, or a local of its own, which it's done with. Returning a parameter's or a field's grid is the same error. A task, an operator, C, a worker and code the GPU runs can't return one.
+  - A field takes a new grid, what a function returns, or a copy: `terrain.heights = Ramp(64);` gives the field that grid's size and cells, the world's own. Its default is still a new grid.
+  - A function can take a grid, `mut` or not, as any value: one it reads, and with `mut` one it changes where it is, a field's or a local's (`Border(terrain.heights, 9)`), whose writes count as the caller's, as any `mut` argument's do. A grid can't be an `out` parameter. A worker reads its grid parameters and code the GPU runs reads them where they are, as before; neither takes one `mut`.
+  - `cells.Copy()` is a grid of its own with the same size and cells, of any grid: a field's, an asset's or a local's.
+- **How a grid code owns is kept** (Claude's picks, 2026-11-03): in the scratch area, as a local's list is, gone when the system, view or handler that made it is done, and copied into the world when a field takes it. So a parallel loop goes through a world's grid, a component's or a singleton's, not a local's or a parameter's (an error that says so; a foreach over one goes in order), a task can't keep one in a local while it waits, and a lambda can't capture one. A worker still reads only its captured grid parameters: its code keeps no grid in a local.
+- `Grid2(...)` takes its cell type from where it goes: a field, a local's type, a parameter or what a function returns; anywhere else it's an error that says so.
 - A chunk is the engine's: 4096 cells (64 by 64, or 16 by 16 by 16 in 3D), or for cells bigger than four bytes, as many as fit in a page (16 KiB), a power of two along each axis, the first axes the most.
 - A loop over a grid with a size on every axis goes through every cell within it. An open axis goes on forever, so there a loop goes through the cells of the chunks the grid has, where something was set: in blocks, every block that takes in part of one. A foreach over an open grid goes through them in the same order, rows from the first, skipping what has no chunk.
 - A parallel loop's step changes only its own cell or block, `at` plus constants (`at + int2(1, 0)`, `int2(at.x + 1, at.y)`), and the variables it declares. Anything else it changes is an error that says why: a variable outside the loop (to add up, use a `for` loop or a foreach that goes in order), another cell, the whole grid (`Clear`), through a `mut` argument too. It can't `break` out of the loop (`continue` ends the step), return, wait, start tasks, spawn, send, add, remove or destroy, load scenes, draw, use the GUI, or hold another parallel loop. It can call functions, and C.
@@ -1958,19 +1965,22 @@ Transform; preview materials and lighting are editor choices, not game rendering
 
 ## Build code
 
-Agreed 2026-11-03 and built the same day. The owner proposed processing assets with Tide code as part of the build ("be it tweaking an animation, audio, image, whatever the case might be"), chose the points under Decided, and asked for it built with every other choice Provisional ("mark any decisions you have to make provisional").
+Agreed 2026-11-03 and built the same day. The owner proposed processing assets with Tide code as part of the build ("be it tweaking an animation, audio, image, whatever the case might be"), chose the points under Decided, and asked for it built with every other choice Provisional ("mark any decisions you have to make provisional"). Reworked the same day, the first version's block after an asset (`asset Texture hero = "art/hero.png" { ... }`) and its `mut` parameter replaced: the owner, "I feel like it should be a function instead of a custom syntax like that? it doesn't read well to me, i feel like i should return the value". That made grids values everywhere (see Grids), and a file code reads is declared as its data.
 
 ### Decided
 
 - **Assets and constants can be made by code that runs at build time.** The result goes into the build as a file's contents do, so every machine has the same value and the game pays nothing for it at runtime.
 - **An `asset` or `const` initializer always runs at build time.** If something in it can't, for example a value known only at runtime, that's a compile error explaining why. It never quietly runs at runtime instead.
 - **Ordinary functions can be called there, and `build` marks a function that only ever runs at build time.** Unmarked functions with no side effects are allowed in build code. A `build` function guarantees build-time evaluation: it can be called only from build code, and its body is checked as build code where it's declared.
-- **Processors edit the asset through a `mut` parameter** rather than returning a new value. Audio and animations get values that code can read and edit, as images and meshes already have.
+- **The initializer is an ordinary expression, and code returns the value** (2026-11-03, replacing the block after an asset and a `mut` parameter it edited): `asset Texture board = Checker(64);`, `const List<float> CURVE = Curve(64);`. No syntax of its own: a function that makes or processes an asset is an ordinary function, which can still use `mut` helpers inside.
+- **`build` doesn't make code behave differently** (the owner: "i dont like `build` making code behave in a different way, that is a nono from me"). Build code follows the rules all code does, so what it needs (returning grids, holding one in a local) is the language's everywhere (see Grids).
+- **A file that code reads is declared as its data**: `asset Grid2<Color> heroSource = "art/hero.png";` for an image's pixels and `asset ClipData beepSource = "sfx/beep.wav";` for a sound's samples, rather than a `Texture` or a `Clip` reading as something else in build code. `ClipData` is an asset type for that.
+- **Audio and animations get values that code can read and edit**, as images and meshes already have.
 - **`[LOD]` stays as the shorthand, and a game can write its own levels instead.**
 - **`const` gets the same mechanism**, so a constant can be a table or another value computed at build time.
 
 ```csharp
-build void Outline(mut Grid2<Color> image, Color color)
+void Outline(mut Grid2<Color> image, Color color)
 {
     for (int y = 0; y < image.size.y; y++)
     {
@@ -1978,48 +1988,53 @@ build void Outline(mut Grid2<Color> image, Color color)
     }
 }
 
-asset Texture hero = "art/hero.png"
+build Grid2<Color> Outlined(Grid2<Color> source, Color color)
 {
-    Outline(hero, Color.red);
+    mut Grid2<Color> image = source.Copy();
+    Outline(image, color);
+    return image;
 }
 
-const List<float> CURVE
-{
-    for (int i = 0; i < 64; i++)
-    {
-        CURVE.Add(Math.Sin(i * 0.1));
-    }
-}
+asset Grid2<Color> heroSource = "art/hero.png";
+asset Texture hero = Outlined(heroSource, Color.red);
+
+const List<float> CURVE = Curve(64);
 ```
 
 ### Provisional
 
 Picks made to build it, awaiting the owner:
 
-- **An asset can have a body**, a block of build code after its path, or in place of one. In the body, the asset's name is its value as the file has it, as a `mut` parameter of the body's: what the body leaves there is the asset. An asset with no path starts empty: `asset Grid2<Color> noise { noise = Grid2(256, 256); ... }`.
-- **A call passes the asset as any `mut` parameter takes its variable**: `Outline(hero, Color.red)`, with no word at the call, as Tide's calls are everywhere (an argument never says `mut`).
-- **What each asset's code edits:**
-  - Text (`string`) and bytes (`List<byte>`): the value itself.
-  - `Grid2<Color>`: the grid, which the code can give a new size (`made = Grid2(4, 2)`). It must have a size on both axes when the code is done, at most what an image's file can be (16384 a side, 4096 by 4096 in all), and every channel must be a number.
-  - `Texture`: its pixels, as a `Grid2<Color>` of the file's colors (straight alpha), which are then made a texture as a file's are: premultiplied, `[Raw]` kept, compressed as any color texture is.
-  - `Mesh<V>`: the mesh, which the code replaces with `Mesh(vertices, indices)` to change it. Its vertices are packed as the code left every field, so a field's default is the code's to keep; its triangles must name vertices the mesh has.
-  - `Clip`: a `ClipData`, a built-in struct of `int rate`, `int channels` (1 or 2) and `List<float> samples`, interleaved: the file's, decoded, as its code starts. It's packed as a 32-bit float WAV, so every sample must be a number.
-  - A list or a map of a glob's files, a `Cubemap`, a `SkinnedMesh<V>` and the animation types can't have code: that's an error naming what can.
-- **A constant's value is build code** when it has a body (`const List<float> CURVE { ... }`) or its value calls a function that isn't a constant's (`const float HALF = Twice(0.25);`). A value of literals, other constants, `Math` and constructors is still worked out while compiling, as before, and a value that reads something no constant can (a field, `Time`) is the error it was. A constant build code makes can be anything a constant can be, and a `List<T>` of plain values too (numbers, vectors, colors, enums and structs of those).
+- **What's code and what's a path**: an asset's value that calls something (`Checker(64)`, `source.Copy()`, `rulesSource + Exclaim()`) is build code, as a constant's is; anything else is a path, a constant text, as before, and an error says so when it isn't one. A block after an asset or a constant is an error that says to call a function. An asset has a path or code, not both.
+- **What each asset's code returns:**
+  - Text (`string`), bytes (`List<byte>`), `Grid2<Color>`, `Mesh<V>` and `ClipData`: a value of that type.
+  - `Texture`: its pixels, a `Grid2<Color>` (straight alpha), which are then made a texture as a file's are: premultiplied, `[Raw]` kept, compressed as any color texture is. It must have a size on both axes, at most what an image's file can be (16384 a side, 4096 by 4096 in all), and every channel must be a number.
+  - `Clip`: a `ClipData`, a built-in struct of `int rate`, `int channels` (1 or 2) and `List<float> samples`, interleaved. It's packed as a 32-bit float WAV, so every sample must be a number.
+  - `Mesh<V>`: `Mesh(vertices, indices)`, packed as the code made every field, so a field's default is the code's to keep; its triangles must name vertices the mesh has.
+  - A list or a map of a glob's files, a `Cubemap`, a `SkinnedMesh<V>` and the animation types can't be made by code: that's an error naming what can.
+- **`ClipData` as an asset**: `asset ClipData beep = "sfx/beep.wav";` is the file's samples, decoded (WAV, Vorbis, and MP3 or FLAC as a Clip imports them), read by any code: its `rate`, its `channels` and its `samples`, as a list of floats in the pack. One file each; a glob of them isn't there.
+- **A file only build code reads** isn't in a game built without what nothing reads (`--strip-unused-assets`, as release builds are), as it was the source of something else; other builds pack every asset as before.
+- **A constant's value is build code** when it calls a function that isn't a constant's (`const float HALF = Twice(0.25);`). A value of literals, other constants, `Math` and constructors is still worked out while compiling, as before, and a value that reads something no constant can (a field, `Time`) is the error it was. A constant build code makes can be anything a constant can be, and a `List<T>` of plain values too (numbers, vectors, colors, enums and structs of those).
 - **Where a built constant goes:** where a value read as the game runs goes, as an asset does: code and field defaults. Where a value has to be known while compiling (a `case` label, a bound, a setting, an asset's path) it's an error that says the build makes it. GPU code can't read one yet: its value goes to the frag or vert in a draw's values. In generated C a plain constant is its bytes, which C reads as its type while compiling; text is a C string; a list is the pack's, as an asset's list is.
 - **What build code can do** is what a function can, but nothing of a running game: no world (queries, `Spawn`, `Send`), no `Devices`, no drawing, audio or frame time, no files or network beyond the assets it names, no tasks, and not the match's random numbers (`Math.Hash`, or a `Random` it makes with a seed, work). It reads its parameters, assets, constants and what other build code made. Each is an error at the asset, constant or `build` function, with a note at the function that does it. A `build` function called from anything but build code is an error at the call, which a field's default, a system and a view are.
 - **No C in build code yet**: a build function that calls `extern` C is an error. The program that runs build code is built from the game's Tide code alone, with the engine's sources: the game's own C and libraries aren't in it, and its C functions are stubs there that nothing calls.
 - **Code reads what other code made**: an asset's or a constant's code can read another's value, and that one's code runs first. Code that reads, through others, what it makes itself is an error.
-- **Levels of detail of its own:** a mesh asset's code has a second `mut` parameter, `levels`, a `List<MeshLevel>`: a built-in struct of `List<int> indices` (triangles of the mesh's own vertices) and `float error` (how far that level's surface is from the full mesh's, in the mesh's units, as `[LOD]`'s levels say). A draw picks among them as it picks among `[LOD]`'s, with the destination's tolerance, `Draw.LOD` and the rest, around a ball of the mesh's vertices. At most 7, each with triangles, each error positive and never less than the level's before it. `[LOD]` and levels from the code together is an error: `[LOD(n)]`'s tolerance is the code's to put in its errors.
+- **Levels of detail of its own:** `Mesh(vertices, indices, levels)` gives the mesh `levels`, a `List<MeshLevel>`: a built-in struct of `List<int> indices` (triangles of the mesh's own vertices) and `float error` (how far that level's surface is from the full mesh's, in the mesh's units, as `[LOD]`'s levels say). A draw picks among them as it picks among `[LOD]`'s, with the destination's tolerance, `Draw.LOD` and the rest, around a ball of the mesh's vertices. At most 7, each with triangles, each error positive and never less than the level's before it. `[LOD]` and levels from the code together is an error: `[LOD(n)]`'s tolerance is the code's to put in its errors. Only build code makes a mesh with levels of its own (a `build` function, or an asset's value): elsewhere it's an error that says a draw makes a made mesh's levels with `lod:`. In the build program a mesh made with levels keeps them by its id, which is what's in it, so a mesh made again from the same lists has them too.
 
   ```csharp
-  asset Mesh<Corner> rock = "art/rock.glb"
+  asset Mesh<Corner> rockSource = "art/rock.glb";
+
+  build Mesh<Corner> Leveled(Mesh<Corner> rock)
   {
+      mut List<MeshLevel> levels = [];
       levels.Add(MeshLevel { indices = Simplify(rock, 0.5), error = 0.02 });
+      return Mesh(rock.vertices, rock.indices, levels);
   }
+
+  asset Mesh<Corner> rock = Leveled(rockSource);
   ```
 
-- **Attributes stay attributes**: `[Filter]` and `[Wrap]` are how the GPU reads a texture each frame, and a custom filter is a `frag`; `[Raw]` and `[LOD]` keep their meanings on an asset with code.
+- **Attributes stay attributes**: `[Filter]` and `[Wrap]` are how the GPU reads a texture each frame, and a custom filter is a `frag`; `[Raw]` and `[LOD]` keep their meanings on an asset code makes.
 - **How it runs:** tidec generates the program that runs build code from the checked game (its C, every `build` function and each asset's and constant's code, and a main), compiles it with the build's clang and the engine's sources, and runs it on the build machine, for a web or Android build too: what it made is the same bytes for every machine, as it's in the pack and the game's C. `build` functions are left out of the game. `tide build` and `tide run` compile it with tide's own compiler; `tide_add_game` with the machine's clang (`TIDE_CLANG`); tidec on its own takes `--build-cc`, `--build-include` and `--build-engine`, and says it can't run build code without them.
 - **What's made is kept**, by a key of everything that made it: the code, every function, type and constant it reaches, the files it reads (by their contents), other code's values it reads, and tidec's version. A build whose keys are all kept runs nothing, so editing a system, or an asset no build code reads, doesn't run build code. Under `tide run`, saving a file that code reads runs it again; one that a constant's code reads rebuilds the game, as the constant is in its C. What's made is kept in the game's `.tide/` (for `tide_add_game`, its output folder), and the engine's objects for the program beside it.
 - **Build code that runs more than ten minutes** is stopped, and the build fails at the asset or constant it was making. What it says (`Debug.Log`) is said as the game builds.
@@ -2027,7 +2042,7 @@ Picks made to build it, awaiting the owner:
 
 ### Open
 
-- The editable form of an animation: its tracks, with each track's times and position, rotation and scale values. Then skinned meshes, cubemaps, and lists and maps of a glob's files.
+- The data form of an animation: its tracks, with each track's times and position, rotation and scale values. Then skinned meshes, cubemaps, and lists and maps of a glob's files, which code makes or processes.
 - C in build code: building the game's own C (and its libraries, for the build machine) into the program.
 - Built constants in GPU code.
 - Which data-making steps become built-in build functions besides `[LOD]`'s, for example a texture's mip chain, so `[LOD]` is shorthand for a call the code could make itself.

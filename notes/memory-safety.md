@@ -1,5 +1,16 @@
 # No Tide code can corrupt memory
 
+## Grids code owns (2026-11-03)
+
+Locals, returned grids and copies (notes/language.md, Grids as values) reach `engine/src/grid.c` with any game
+value. A scratch grid's places are checked against its size as a world's are (`tide_grid_inside`), its chunk and
+directory sizes come from the shape, never the game, and a write to the pack's grids (scratch-tagged offsets past
+`TIDE_PACK_BASE`) still finds nothing to write. A field taking a scratch grid copies its chunks into the world, so no
+world handle names scratch memory, and a scratch grid never reaches another thread: parallel loops refuse a local's or
+a parameter's grid, workers keep none, a task can't keep one across a wait and a lambda can't capture one. The
+`grid_values` safety fixture tries sizes under 0 and at 2,000,000,000, places at the int limits, copies of a grid too
+big to list its chunks and churn of 2000 grids a system, under ASan.
+
 ## Levels of detail of a game's own meshes (2026-11-02)
 
 `lod:` hands game-made vertices and indices to the simplifier while the game runs (assets-and-files.md, Levels

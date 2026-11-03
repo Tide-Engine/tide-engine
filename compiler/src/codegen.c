@@ -31,6 +31,7 @@
 // The program that runs build code (codegen_options.build_program, build_code.c), rather than the game: build
 // functions are in it, and nowhere else
 static bool generating_build;
+static bool build_levels_table; // Its table of the levels build code gave meshes is out (Mesh(vertices, indices, levels))
 
 static bool cpu_routine(const decl *d)
 {
@@ -4622,10 +4623,15 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             if (e->hoisted) sb_put(o, e->hoisted); // Already ran, before the statement
             else gen_spawn(g, o, e);
         } else if (e->call == CALL_NEW_MESH) { // Mesh(vertices, indices): copies, in the scratch area until a world owns them
-            sb_printf(o, "tide_mesh_make_%s(", type_cname(e->type.decl));
+            // ...and with levels, which only build code makes: the build program keeps them by the mesh's id
+            sb_printf(o, "tide_mesh_%s_%s(", e->args.count == 3 ? "leveled" : "make", type_cname(e->type.decl));
             gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
             sb_put(o, ", ");
             gen_as(g, o, e->args.items[1], e->arg_want.items[1]);
+            if (e->args.count == 3) {
+                sb_put(o, ", ");
+                gen_as(g, o, e->args.items[2], e->arg_want.items[2]);
+            }
             sb_put(o, ")");
         } else if (e->call == CALL_NEW_GRID) { // Grid2(w, h): its size, in the scratch area until a world owns it
             sb_printf(o, "tide_grid_new(%du", e->type_decl->dims);
@@ -4784,6 +4790,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "), &%s, %s, ", grid_shape_name(e->object->type.decl), place_where(g, e->object));
             gen_as(g, o, e->args.items[0], e->args.items[0]->type);
             sb_put(o, ")");
+        } else if (e->call == CALL_GRID && str_eq_c(e->name, "Copy")) { // cells.Copy(): a grid of its own, in the scratch area
+            sb_put(o, "tide_grid_copy(");
+            gen_expr(g, o, e->object);
+            sb_printf(o, ", &%s)", grid_shape_name(e->object->type.decl));
         } else if (e->call == CALL_GRID) { // cells.Clear()
             sb_put(o, "tide_grid_clear(&(");
             gen_expr(g, o, e->object);
@@ -19792,10 +19802,11 @@ static uint32_t asset_pack_kind(const type t)
     return TIDE_PACK_LIST;
 }
 
-// A declaration's pack entry kind: its type's, but a constant list build code made, whose elements are a block
+// A declaration's pack entry kind: its type's, but a constant list build code made, whose elements are a block, and a
+// ClipData's samples, which are too (its entry's size is their rate, and its extra their channels)
 static uint32_t asset_decl_pack_kind(const decl *d)
 {
-    return d->asset_kind == ASSET_VALUES ? TIDE_PACK_BYTES : asset_pack_kind(d->return_type);
+    return d->asset_kind == ASSET_VALUES || d->asset_kind == ASSET_CLIP_DATA ? TIDE_PACK_BYTES : asset_pack_kind(d->return_type);
 }
 
 static const char *asset_ctype(const type t)
@@ -20002,7 +20013,7 @@ static void collect_asset_dependencies(gen *g)
     for (int i = 0; i < w.assets.count; i++) {
         const decl *d = w.assets.items[i];
         const decl *vertex = asset_vertex(d->return_type);
-        asset_dependency dep = {.asset = d, .shape = {.kind = asset_pack_kind(d->return_type)}};
+        asset_dependency dep = {.asset = d, .shape = {.kind = asset_decl_pack_kind(d)}};
         dep.shape.leaf_kind = d->asset_kind == ASSET_TEXT ? TIDE_PACK_TEXT
                            : d->asset_kind == ASSET_ANIMATIONS ? (d->return_type.kind == TY_STRUCT ? TIDE_PACK_BYTES : TIDE_PACK_LIST)
                            : d->asset_kind == ASSET_BYTES || d->asset_kind == ASSET_ANIMATION || d->asset_kind == ASSET_HUMANOID ? TIDE_PACK_BYTES
@@ -20286,6 +20297,30 @@ static void gen_assets(gen *g)
                          "    m.id = (int64_t)tide_mesh_key(m.vertices, (uint32_t)sizeof(%s), m.indices);\n"
                          "    return m;\n}\n",
                       type_cname(ref), type_cname(ref), type_cname(ref), c_type(vertex), c_type(vertex));
+            if (generating_build && prog->mesh_level->named) { // Mesh(vertices, indices, levels), in build code
+                if (!build_levels_table) {
+                    build_levels_table = true;
+                    sb_put(o, "\n// The levels build code gave a mesh it made, by the mesh's id (build_codegen.inc)\n"
+                              "#include <stdlib.h>\n\nstatic int64_t *tide_build_level_ids;\nstatic tide_list *tide_build_level_lists;\n"
+                              "static int32_t tide_build_level_count;\n\n"
+                              "static void tide_build_levels_keep(const int64_t id, const tide_list levels)\n{\n"
+                              "    for (int32_t i = 0; i < tide_build_level_count; i++) {\n"
+                              "        if (tide_build_level_ids[i] == id) {\n            tide_build_level_lists[i] = levels;\n            return;\n        }\n    }\n"
+                              "    tide_build_level_ids = realloc(tide_build_level_ids, sizeof *tide_build_level_ids * (size_t)(tide_build_level_count + 1));\n"
+                              "    tide_build_level_lists = realloc(tide_build_level_lists, sizeof *tide_build_level_lists * (size_t)(tide_build_level_count + 1));\n"
+                              "    if (!tide_build_level_ids || !tide_build_level_lists) abort();\n"
+                              "    tide_build_level_ids[tide_build_level_count] = id;\n"
+                              "    tide_build_level_lists[tide_build_level_count++] = levels;\n}\n\n"
+                              "static tide_list tide_build_levels_of(const int64_t id)\n{\n"
+                              "    for (int32_t i = 0; i < tide_build_level_count; i++) {\n"
+                              "        if (tide_build_level_ids[i] == id) return tide_build_level_lists[i];\n    }\n"
+                              "    return (tide_list){0};\n}\n");
+                }
+                sb_printf(o, "\nTIDE_HELPER %s tide_mesh_leveled_%s(const tide_list vertices, const tide_list indices, const tide_list levels)\n{\n"
+                             "    const %s m = tide_mesh_make_%s(vertices, indices);\n"
+                             "    tide_build_levels_keep(m.id, levels);\n    return m;\n}\n",
+                          type_cname(ref), type_cname(ref), type_cname(ref), type_cname(ref));
+            }
         }
         if (ref->asset_ref_geometry && ref->mesh_decoded) gen_mesh_decode(g, ref);
         sb_printf(o, "\nTIDE_HELPER %s tide_resolve_%s(const %s ref)\n{\n", c_type(value), type_cname(ref), type_cname(ref));
@@ -20335,7 +20370,7 @@ static void gen_assets(gen *g)
         const decl *d = prog->assets.items[i];
         const decl *vertex = asset_vertex(d->return_type);
         const bool skinned = d->asset_kind == ASSET_SKINNED;
-        if (generating_build && d->build_fn && !d->asset) continue; // Its code makes it, from nothing (gen_build_main)
+        if (generating_build && d->build_fn && !d->asset) continue; // Its code makes it (gen_build_main)
         if (vertex) { // A Mesh, or a glob's: under its name and its vertices' layout, read where the pack has it
             gen_asset_lookup(g, d, vertex);
             sb_printf(o, "    if (!e) tide_asset_missing(\"" STR_FMT "\");\n", STR_ARG(asset_diagnostic_name(g, d)));
@@ -20374,6 +20409,13 @@ static void gen_assets(gen *g)
                       p->data_at, p->data_at, p->pose_at, p->bones_at, p->status_at);
         }
         else if (d->return_type.kind == TY_MAP) sb_printf(o, "    %s = tide_pack_map_of(e);\n", asset_cname(d));
+        else if (d->asset_kind == ASSET_CLIP_DATA) { // Its samples, and their rate and channels
+            const decl *clip = d->return_type.decl;
+            sb_printf(o, "    %s = (%s){0};\n    if (e) {\n        %s.%s = (int32_t)e->size;\n        %s.%s = (int32_t)e->extra;\n"
+                         "        %s.%s = (tide_list){tide_pack_handle(e)};\n    }\n",
+                      asset_cname(d), c_type(d->return_type), asset_cname(d), field_cname(&clip->fields.items[0]), asset_cname(d),
+                      field_cname(&clip->fields.items[1]), asset_cname(d), field_cname(&clip->fields.items[2]));
+        }
         else sb_printf(o, "    %s = (%s){tide_pack_handle(e)};\n", asset_cname(d), asset_ctype(d->return_type));
         // A Texture is born sampled as its declaration says ([Filter], [Wrap]), each of a glob's too
         const unsigned born = (d->sample_filter == 1 ? 1u : 0u) | (d->sample_wrap > 1 ? (unsigned)(d->sample_wrap - 1) << 2 : 0u);
@@ -20953,6 +20995,25 @@ static void build_pack(gen *g)
                            (uint32_t)v->count, TIDE_PACK_BYTES);
             continue;
         }
+        if (d->asset_kind == ASSET_CLIP_DATA && v->count) { // A file's samples, decoded, as a list of floats
+            const asset_match *item = &v->items[0];
+            tide_sound sound = {0};
+            const bool ogg = item->size >= 4 && !memcmp(item->data, "OggS", 4);
+            if (!(ogg ? tide_vorbis_decode(item->data, item->size, &sound) : tide_wav_decode(item->data, item->size, &sound))) {
+                diag_error(d->at, "'" STR_FMT "''s file doesn't decode to samples", STR_ARG(d->name));
+                continue;
+            }
+            uint8_t content[32];
+            tide_sha256 s;
+            tide_sha256_init(&s);
+            tide_sha256_add(&s, "clip samples", 12);
+            tide_sha256_add(&s, item->hash, 32);
+            tide_sha256_end(&s, content);
+            const uint64_t at = tide_pack_values(&b, content, sound.samples, (uint32_t)sizeof(float), sound.frames * sound.channels);
+            tide_pack_name(&b, qualified, TIDE_PACK_BYTES, at, sound.rate, sound.channels);
+            tide_sound_free(&sound);
+            continue;
+        }
         if (!v->many) {
             uint32_t extra;
             const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, true, &extra, prog->game_folder);
@@ -20987,7 +21048,6 @@ static void build_pack(gen *g)
         free(offsets);
         free(keys);
     }
-    if (generating_build) build_pack_sources(g, &b);
     g->pack_bytes = tide_pack_end(&b, &g->pack_size);
 }
 
@@ -24427,6 +24487,7 @@ bool codegen(program *prog, const codegen_options *opts)
     g.prog = prog;
     g.opts = opts;
     generating_build = opts->build_program;
+    build_levels_table = false;
     const int files = diag_source_count();
     g.paths = arena_alloc(sizeof(char *) * (size_t)(files > 0 ? files : 1));
     sb from = {0};

@@ -306,7 +306,7 @@ static int blobs_of(const decl *d)
 {
     if (d->kind == DECL_CONST) return 1;
     switch (d->asset_kind) {
-    case ASSET_GRID: case ASSET_TEXTURE: case ASSET_CLIP: return 2;
+    case ASSET_GRID: case ASSET_TEXTURE: case ASSET_CLIP: case ASSET_CLIP_DATA: return 2;
     case ASSET_MESH: return 3; // Its vertices, its triangles and its levels of detail
     default: return 1;
     }
@@ -440,8 +440,8 @@ static bool apply(program *prog, decl *d, const uint8_t *data, const size_t size
         int32_t wh[2] = {0, 0};
         if (b[0].size == sizeof wh) memcpy(wh, b[0].data, sizeof wh);
         if (wh[0] <= 0 || wh[1] <= 0) {
-            diag_error(d->at, "build code left '" STR_FMT "' with no size: an image has one", STR_ARG(d->name));
-            diag_note("give the grid its size as the code makes it: '" STR_FMT " = Grid2(256, 256);'", STR_ARG(d->name));
+            diag_error(d->at, "build code made '" STR_FMT "' with no size: an image has one", STR_ARG(d->name));
+            diag_note("give the grid it returns a size as the code makes it, like 'Grid2<Color> image = Grid2(256, 256);'");
             return false;
         }
         if (wh[0] > 16384 || wh[1] > 16384 || (uint64_t)wh[0] * (uint64_t)wh[1] > 16777216u) {
@@ -455,7 +455,7 @@ static bool apply(program *prog, decl *d, const uint8_t *data, const size_t size
             return false;
         }
         if (!finite_floats(b[1].data, pixels * 4u)) {
-            diag_error(d->at, "build code left a pixel of '" STR_FMT "' that isn't a number (NaN or infinite)", STR_ARG(d->name));
+            diag_error(d->at, "build code made a pixel of '" STR_FMT "' that isn't a number (NaN or infinite)", STR_ARG(d->name));
             return false;
         }
         asset_match *item = built_item(d);
@@ -469,7 +469,7 @@ static bool apply(program *prog, decl *d, const uint8_t *data, const size_t size
     }
     case ASSET_MESH: {
         const decl *fn = d->build_fn;
-        const type t = fn->params.items[0].type;
+        const type t = fn->return_type;
         const decl *vertex = t.kind == TY_STRUCT && t.decl->asset_ref_of ? t.decl->asset_ref_of->fields.items[0].type.decl : NULL;
         const uint32_t vertex_size = vertex ? (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size : 0u;
         if (!vertex_size || b[0].size % vertex_size || b[1].size % 4u) {
@@ -482,7 +482,7 @@ static bool apply(program *prog, decl *d, const uint8_t *data, const size_t size
             return false;
         }
         if (indices % 3u) {
-            diag_error(d->at, "build code left '" STR_FMT "' with %llu indices: a mesh's triangles are three each",
+            diag_error(d->at, "build code made '" STR_FMT "' with %llu indices: a mesh's triangles are three each",
                        STR_ARG(d->name), (unsigned long long)indices);
             return false;
         }
@@ -492,7 +492,7 @@ static bool apply(program *prog, decl *d, const uint8_t *data, const size_t size
             int32_t n;
             memcpy(&n, b[1].data + i * 4u, sizeof n);
             if (n < 0 || (uint64_t)n >= vertices) {
-                diag_error(d->at, "build code left '" STR_FMT "' with a triangle of vertex %d, and it has %llu vertices",
+                diag_error(d->at, "build code made '" STR_FMT "' with a triangle of vertex %d, and it has %llu vertices",
                            STR_ARG(d->name), (int)n, (unsigned long long)vertices);
                 free(index);
                 return false;
@@ -574,23 +574,23 @@ static bool apply(program *prog, decl *d, const uint8_t *data, const size_t size
         memcpy(item->hash, v->hash, 32);
         return true;
     }
-    case ASSET_CLIP: {
+    case ASSET_CLIP: case ASSET_CLIP_DATA: { // Packed as a float WAV, which a ClipData's entry decodes again
         int32_t shape[2] = {0, 0};
         if (b[0].size == sizeof shape) memcpy(shape, b[0].data, sizeof shape);
         const int32_t rate = shape[0], channels = shape[1];
         if (channels < 1 || channels > 2 || rate < 1 || rate > 384000) {
-            diag_error(d->at, "build code left '" STR_FMT "' at %d samples a second in %d channels: a clip is mono or stereo, "
+            diag_error(d->at, "build code made '" STR_FMT "' at %d samples a second in %d channels: a clip is mono or stereo, "
                               "at 1 to 384000 samples a second", STR_ARG(d->name), (int)rate, (int)channels);
             return false;
         }
         const size_t samples = (size_t)(b[1].size / sizeof(float));
         if (b[1].size % (sizeof(float) * (size_t)channels) || samples > TIDE_SOUND_MAX_SAMPLES - 1u) {
-            diag_error(d->at, "build code left '" STR_FMT "' with %zu samples: %s", STR_ARG(d->name), samples,
+            diag_error(d->at, "build code made '" STR_FMT "' with %zu samples: %s", STR_ARG(d->name), samples,
                        samples > TIDE_SOUND_MAX_SAMPLES - 1u ? "a clip holds fewer" : "a stereo clip's are left and right, in pairs");
             return false;
         }
         if (!finite_floats(b[1].data, samples)) {
-            diag_error(d->at, "build code left a sample of '" STR_FMT "' that isn't a number (NaN or infinite)", STR_ARG(d->name));
+            diag_error(d->at, "build code made a sample of '" STR_FMT "' that isn't a number (NaN or infinite)", STR_ARG(d->name));
             return false;
         }
         size_t wav_size = 0;

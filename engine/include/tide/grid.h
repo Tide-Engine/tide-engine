@@ -154,16 +154,18 @@ static inline const void *tide_grid_peek(const tide_grid g, const int32_t x, con
 }
 
 // A cell, to change, made if `make` (a value that isn't zero) and its chunk
-// isn't there yet; NULL outside the grid, in the scratch area, or for zero
-// where there's no chunk. `g` is a field of the world at `where`, which an
-// empty grid's first chunk gives a directory.
+// isn't there yet; NULL outside the grid, in the pack or another world, or for
+// zero where there's no chunk. `g` is a field of the world at `where`, which an
+// empty grid's first chunk gives a directory, or a grid code made as it runs
+// (TIDE_IN_SCRATCH: a local's, or what a function returned), written in the
+// scratch area wherever `where` says.
 void *tide_grid_poke_slow(tide_grid *g, int32_t x, int32_t y, int32_t z, const tide_grid_shape *s, bool make, uint32_t where);
 
 static inline void *tide_grid_poke(tide_grid *g, const int32_t x, const int32_t y, const int32_t z, const tide_grid_shape *s,
                                    const bool make, const uint32_t where)
 {
     const tide_grid_dir *d = tide_grid_dir_of(*g);
-    if (!d || !d->records || !tide_grid_inside(d, x, y, z) || tide_handle_where(g->at) != where) {
+    if (!d || !d->records || !tide_grid_inside(d, x, y, z) || tide_handle_where(g->at) != where || where == TIDE_IN_SCRATCH) {
         return tide_grid_poke_slow(g, x, y, z, s, make, where);
     }
     const uint32_t i = tide_grid_find(d, x >> s->shift[0], y >> s->shift[1], z >> s->shift[2]);
@@ -378,11 +380,12 @@ bool tide_grid_rows_next(tide_grid_rows *r, int64_t *x0, int64_t *x1, int32_t *y
 tide_grid tide_grid_new(uint32_t dims, int32_t x, int32_t y, int32_t z);
 
 // A grid just copied into a world, like a spawn's component into the command
-// queue: a directory of the world's own, with the same size and no chunks.
+// queue: a directory of the world's own, with the same size, and the cells of
+// one code made (a scratch grid's chunks; the pack's grids give their size alone).
 void tide_grid_own(tide_grid *g, const tide_grid_shape *s, uint32_t where);
 
-// Assigning a new grid (Grid2(...)) to a world's field: the old one's chunks
-// released, and the new one's size.
+// Assigning a new grid (Grid2(...), or one code made and returned) to a world's
+// field: the old one's chunks released, and the new one's size and cells.
 void tide_grid_set(tide_grid *to, tide_grid value, const tide_grid_shape *s, uint32_t where);
 
 // A world's grid leaving it, its chunks and directory released.
@@ -397,6 +400,10 @@ static inline void tide_grid_size(const tide_grid g, int32_t size[3])
     const tide_grid_dir *d = tide_grid_dir_of(g);
     for (int i = 0; i < 3; i++) size[i] = d ? d->size[i] : 0;
 }
+
+// `grid.Copy()`: a copy of any grid (a world's, the pack's or one code made)
+// in the scratch area, its size and cells, which code then writes as its own.
+tide_grid tide_grid_copy(tide_grid g, const tide_grid_shape *s);
 
 // A world's grid, read from outside, like a host reading a component.
 const void *tide_grid_read(const tide_heap *heap, tide_grid g, int32_t x, int32_t y, int32_t z, const tide_grid_shape *s);

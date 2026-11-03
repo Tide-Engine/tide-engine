@@ -1,0 +1,11 @@
+// expect: a Mesh's own levels of detail are made as the game builds
+struct Corner { float3 position; }
+singleton Shapes { int count; }
+system Make(mut Shapes shapes)
+{
+    List<Corner> vertices = [Corner { position = float3(0, 0, 0) }];
+    List<MeshLevel> levels = [];
+    Mesh<Corner> m = Mesh(vertices, [0, 0, 0], levels);
+    shapes.count = m.vertices.count;
+}
+scene Main { }

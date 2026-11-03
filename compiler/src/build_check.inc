@@ -1,7 +1,7 @@
 // Build code (docs/spec.md, Build code): functions that run while the game builds, and the assets and constants
-// they make. An asset's or a constant's code is a function of its own, made here and then checked and generated
-// as any other: `void TideBuild_<name>(mut T <name>) { ... }`, T the value's editable form (build_editable). What
-// it leaves in its parameter is what the game is built with (build_code.c runs it).
+// they make. An asset's or a constant's value, when build code makes it, is a function of its own, made here and then
+// checked and generated as any other: `T TideBuild_<name>() { return <value>; }`, T what it returns (build_result).
+// What it returns is what the game is built with (build_code.c runs it).
 
 // A type as if it were written: `name<arg>`.
 static type_ref *build_type_ref(const char *name, type_ref *arg, const loc at)
@@ -17,9 +17,9 @@ static type_ref *build_type_ref(const char *name, type_ref *arg, const loc at)
     return r;
 }
 
-// The function that makes `owner`'s value, with `body` as its code. It's in the owner's namespace, and named so
-// no code can name it.
-static decl *build_function(checker *c, decl *owner, type_ref *editable, stmt *body)
+// The function that makes `owner`'s value, returning `value`. It's in the owner's namespace, and named so no code
+// can name it.
+static decl *build_function(checker *c, decl *owner, type_ref *result, expr *value)
 {
     decl *fn = NEW(decl);
     fn->kind = DECL_FUNCTION;
@@ -38,38 +38,32 @@ static decl *build_function(checker *c, decl *owner, type_ref *editable, stmt *b
     sb cname = {0};
     c_name_of(fn, &cname);
     fn->c_name = cname.data;
-    fn->return_type_ref = build_type_ref("void", NULL, owner->at);
-    fn->return_type_name = fn->return_type_ref->text;
+    fn->return_type_ref = result;
+    fn->return_type_name = result->text;
     fn->return_type_at = fn->return_type_qual_at = owner->at;
     fn->is_build = true;
     fn->build_at = owner->at;
     fn->build_owner = owner;
-    param p = {0};
-    p.mode = PARAM_MUT;
-    p.function_param = true;
-    p.name = owner->name;
-    p.type_ref = editable;
-    p.type_name = editable->text;
-    p.at = p.name_at = p.type_at = p.type_qual_at = owner->at;
-    vec_push(fn->params, p);
-    if (owner->kind == DECL_ASSET && owner->asset_kind == ASSET_MESH) { // ...and its levels of detail, which it can make
-        param levels = p;
-        levels.name = str_from("levels");
-        levels.type_ref = build_type_ref("List", build_type_ref("MeshLevel", NULL, owner->at), owner->at);
-        levels.type_name = levels.type_ref->text;
-        vec_push(fn->params, levels);
-    }
+    stmt *ret = NEW(stmt);
+    ret->kind = S_RETURN;
+    ret->at = value->at;
+    ret->value = value;
+    stmt *body = NEW(stmt);
+    body->kind = S_BLOCK;
+    body->at = value->at;
+    body->end = owner->end;
+    vec_push(body->stmts, ret);
     fn->body = body;
-    fn->body_at = owner->body_at.line ? owner->body_at : owner->at;
+    fn->body_at = value->at;
     owner->build_fn = fn;
     vec_push(c->prog->decls, fn);
     vec_push(c->prog->build_roots, owner);
     return fn;
 }
 
-// A constant worked out by code: one with a body, or whose value isn't a constant expression, like a call to a
-// function (`const List<float> CURVE = Bake(64);`). Its value is the build's, so only what reads values as the
-// game runs can read it, as for an asset.
+// A constant worked out by code: one whose value isn't a constant expression, like a call to a function
+// (`const List<float> CURVE = Bake(64);`). Its value is the build's, so only what reads values as the game runs can
+// read it, as for an asset.
 // Whether `e` calls something: what makes a constant's value build code, rather than a mistake.
 static bool build_calls(const expr *e)
 {
@@ -88,7 +82,7 @@ static bool build_calls(const expr *e)
 static bool build_constant(const checker *c, const decl *k)
 {
     static int depth;
-    if (k->build_fn || k->body) return true;
+    if (k->build_fn) return true;
     if (!k->value || depth > 64 || !build_calls(k->value)) return false;
     checker scoped = *c;
     scoped.unit = k->unit;
@@ -99,29 +93,11 @@ static bool build_constant(const checker *c, const decl *k)
     return built;
 }
 
-// const T NAME = <not a constant>;: its value, assigned to its parameter by the function that makes it.
+// const T NAME = <not a constant>;: the function that returns its value.
 static void build_constant_function(checker *c, decl *k)
 {
-    stmt *body = k->body;
-    if (!body) {
-        stmt *assign = NEW(stmt);
-        assign->kind = S_ASSIGN;
-        assign->at = k->value->at;
-        assign->op = T_ASSIGN;
-        expr *target = NEW(expr);
-        target->kind = E_NAME;
-        target->at = k->at;
-        target->name = k->name;
-        assign->target = target;
-        assign->value = k->value;
-        body = NEW(stmt);
-        body->kind = S_BLOCK;
-        body->at = k->value->at;
-        body->end = k->end;
-        vec_push(body->stmts, assign);
-    }
     type_ref *r = (type_ref *)type_ref_or_text(k->return_type_ref, k->return_type_name);
-    build_function(c, k, r, body);
+    build_function(c, k, r, k->value);
 }
 
 // What a built constant can be: what any constant can, and lists of plain values (`List<float>`), which the pack
@@ -141,30 +117,29 @@ static bool build_constant_type_ok(const type t, const loc at)
     return true;
 }
 
-// The form an asset's code edits: what it is, but for a Texture, whose code edits its pixels (Grid2<Color>), and a
-// Clip, whose code edits its samples (ClipData). NULL for one that code can't make yet, which `why` says.
-static type_ref *build_editable(const decl *k, const char **why)
+// What an asset's build code returns: what it is, but for a Texture, whose code makes its pixels (Grid2<Color>), and
+// a Clip, whose code makes its samples (ClipData). NULL for one that code can't make yet, which `why` says.
+static type_ref *build_result(const decl *k, const char **why)
 {
     *why = NULL;
     if (k->asset_many) {
-        *why = "a list or a map of files can't have code yet: build code makes one file's value, so give the files it "
-               "edits a declaration each";
+        *why = "a list or a map of files can't be made by code yet: build code makes one value, so give each a "
+               "declaration of its own";
         return NULL;
     }
     switch (k->asset_kind) {
-    case ASSET_TEXT: case ASSET_BYTES: case ASSET_GRID: case ASSET_MESH:
+    case ASSET_TEXT: case ASSET_BYTES: case ASSET_GRID: case ASSET_MESH: case ASSET_CLIP_DATA:
         return (type_ref *)type_ref_or_text(k->return_type_ref, k->return_type_name);
     case ASSET_TEXTURE: return build_type_ref("Grid2", build_type_ref("Color", NULL, k->at), k->at);
     case ASSET_CLIP: return build_type_ref("ClipData", NULL, k->at);
-    case ASSET_CUBEMAP: *why = "a Cubemap can't have code yet: build code makes text, bytes, images, textures, meshes and clips"; return NULL;
-    case ASSET_SKINNED: *why = "a SkinnedMesh can't have code yet: build code makes text, bytes, images, textures, meshes and clips"; return NULL;
-    default: *why = "an animation can't have code yet: build code makes text, bytes, images, textures, meshes and clips"; return NULL;
+    case ASSET_CUBEMAP: *why = "a Cubemap can't be made by code yet: build code makes text, bytes, images, textures, meshes and clips"; return NULL;
+    case ASSET_SKINNED: *why = "a SkinnedMesh can't be made by code yet: build code makes text, bytes, images, textures, meshes and clips"; return NULL;
+    default: *why = "an animation can't be made by code yet: build code makes text, bytes, images, textures, meshes and clips"; return NULL;
     }
 }
 
-// A built-in struct only an asset's code uses, ClipData or MeshLevel: a declaration of the program's, with its fields'
-// types, once a game's code needs it. Only then, so no other game's declarations, lists or names are numbered
-// differently.
+// A built-in struct build code uses, ClipData or MeshLevel: a declaration of the program's, with its fields' types,
+// once a game's code names it. Only then, so no other game's declarations, lists or names are numbered differently.
 static void build_struct_ready(checker *c, decl *d)
 {
     if (d->named) return;
@@ -177,21 +152,21 @@ static void build_struct_ready(checker *c, decl *d)
     scoped.unit = d->unit;
     resolve_field_types(&scoped, d);
     d->named = true;
+    if (c->fields_ordered) order_struct(c->prog, d); // Named after the structs were put in order
 }
 
-// An asset with code: the function that makes it, from the file (if it names one) as its code starts.
+// asset T name = <build code>;: the function that makes it.
 static void build_asset_function(checker *c, decl *k)
 {
     const char *why;
-    type_ref *editable = build_editable(k, &why);
-    if (!editable) {
-        diag_error(k->body_at, "%s", why);
+    type_ref *result = build_result(k, &why);
+    if (!result) {
+        diag_error(k->value->at, "%s", why);
         diag_note("what else it can make is open: docs/spec.md, Build code");
         return;
     }
     if (k->asset_kind == ASSET_CLIP) build_struct_ready(c, c->prog->clip_data);
-    if (k->asset_kind == ASSET_MESH) build_struct_ready(c, c->prog->mesh_level);
-    build_function(c, k, editable, k->body);
+    build_function(c, k, result, k->value);
 }
 
 // Why `d` can't run while the game builds, or NULL: what it does that needs a running game.

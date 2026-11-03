@@ -1,0 +1,6 @@
+// expect: an asset is its file's path or what code makes, with no block after it
+// expect: code that makes or changes it goes in a function its value calls
+asset Grid2<Color> hero = "../e2e/assets/hero.png"
+{
+}
+scene Main { }

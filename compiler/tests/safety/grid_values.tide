@@ -1,0 +1,119 @@
+// expect: locals 0 0 5 0 7 0 0 9
+// expect: copies 9 1 0 9 3
+// expect: fields 7 0 9 0 2 (100, 50)
+// expect: walks 3 3 0 2
+// expect: cleared 0 (2, 2) 0
+// expect: churn 2000
+
+// Grids code owns (docs/spec.md, Grids): locals, what functions return, copies and `mut` parameters, read and
+// written anywhere: outside their size, at the ints' limits on open axes, in grids too big to list their chunks,
+// copied into fields, and made again and again, every tick.
+
+singleton Field
+{
+    Grid2<int> taken;
+    Grid2<int> open;
+    Grid2<int> huge = Grid2(2000000000, 2000000000);
+    int most = 2147483647;
+    int least = 0x80000000;
+    int ticks;
+}
+
+scene Main { }
+
+Grid2<int> Sized(int x, int y)
+{
+    mut Grid2<int> made = Grid2(x, y);
+    made[x - 1, y - 1] = 7;
+    return made;
+}
+
+void Poke(mut Grid2<int> cells, int2 at, int value)
+{
+    cells[at] = value;
+}
+
+Grid2<int> Spread(int most, int least)
+{
+    mut Grid2<int> made = Grid2();
+    made[most, most] = 1;
+    made[least, least] = 2;
+    made[most, least] = 3;
+    return made;
+}
+
+system Run(mut Field f)
+{
+    f.ticks += 1;
+    if (f.ticks > 3) return;
+    var top = int2(f.most, f.most);
+    var bottom = int2(f.least, f.least);
+
+    // A local's grid: outside its size reads give zero and writes do nothing; open axes take any int
+    mut Grid2<int> local = Sized(100, 50);
+    local[-1, 0] = 1;
+    local[100, 0] = 1;
+    local[top] = 1;
+    local[bottom] = 1;
+    local[3, 3] = 5;
+    mut Grid2<int> open = Grid2();
+    open[top] = 9;
+    mut Grid2<int> negative = Grid2(-5, -7); // A size under 0 is an open axis
+    negative[int2(f.least, 0)] = 0;
+    if (f.ticks == 1)
+    {
+        Debug.Log($"locals {local[-1, 0]} {local[100, 0]} {local[3, 3]} {local[top]} {local[99, 49]} {local[bottom]} "
+            + $"{negative.size.x} {open[top]}");
+    }
+
+    // Copies: of a local, of a field's grid too big to list its chunks, and of an empty one
+    f.huge[1999999999, 1999999999] = 9;
+    mut Grid2<int> hugeCopy = f.huge.Copy();
+    Poke(hugeCopy, int2(0, 0), 1);
+    Grid2<int> empty = f.open.Copy();
+    mut Grid2<int> again = hugeCopy.Copy();
+    Poke(again, int2(1999999999, 1999999999), 3);
+    if (f.ticks == 1)
+    {
+        Debug.Log($"copies {hugeCopy[1999999999, 1999999999]} {hugeCopy[0, 0]} {empty[0, 0]} {f.huge[1999999999, 1999999999]} "
+            + $"{again[1999999999, 1999999999]}");
+    }
+
+    // A field takes a local's cells: what a function returned, and a copy
+    f.taken = Sized(100, 50);
+    Poke(f.taken, int2(200, 0), 8); // Outside its size
+    f.open = Spread(f.most, f.least);
+    if (f.ticks == 1)
+    {
+        Debug.Log($"fields {f.taken[99, 49]} {f.taken[200, 0]} {open[top]} {f.huge[0, 0]} {f.open[bottom]} {f.taken.size}");
+    }
+
+    // Going through a local in order: an open grid's cells where it has chunks, at the limits too
+    Grid2<int> spread = Spread(f.most, f.least);
+    mut var sum = 0;
+    mut var cells = 0;
+    foreach (var at in spread)
+    {
+        if (spread[at] != 0) sum += 1;
+        cells += 1;
+    }
+    mut var none = 0;
+    foreach (var at in empty) none += 1;
+    if (f.ticks == 1) Debug.Log($"walks {sum} {cells / 4096} {none} {f.open[f.most, f.least] - 1}");
+
+    // Cleared, and made anew
+    local.Clear();
+    local = Grid2(2, 2);
+    local[5, 5] = 4;
+    if (f.ticks == 1) Debug.Log($"cleared {local[3, 3]} {local.size} {local[5, 5]}");
+
+    // Grids made, copied and dropped many times in one tick: the scratch area's, gone after the system
+    mut var made = 0;
+    for (int i = 0; i < 1000; i++)
+    {
+        mut Grid2<int> one = Sized(64, 64);
+        Grid2<int> two = one.Copy();
+        made += two[63, 63] == 7 ? 2 : 0;
+    }
+    if (f.ticks == 1) Debug.Log($"churn {made}");
+}

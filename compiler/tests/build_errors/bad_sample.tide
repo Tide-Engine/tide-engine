@@ -1,8 +1,9 @@
-// expect: build code left a sample of 'tone' that isn't a number (NaN or infinite)
-asset Clip tone
+// expect: build code made a sample of 'tone' that isn't a number (NaN or infinite)
+build ClipData Tone()
 {
-    tone.rate = 8000;
-    tone.channels = 1;
+    mut ClipData tone = ClipData { rate = 8000, channels = 1 };
     tone.samples.Add(1.0 / 0.0);
+    return tone;
 }
+asset Clip tone = Tone();
 scene Main { }
