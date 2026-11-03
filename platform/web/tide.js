@@ -1681,21 +1681,24 @@
     // which the program's is when it runs on threads. Copied out first if not.
     let sharedWrites = null;
     function memoryBytes(ptr, size) {
-        const all = u8();
-        if (!(all.buffer instanceof ArrayBuffer)) {
+        // Firefox rejects views larger than 2 GiB even for a tiny upload.
+        // Keep the view to the upload, without copying its bytes. WASM pointers
+        // arrive as signed i32s, including addresses in the heap's upper half.
+        const bytes = new Uint8Array(memory.buffer, ptr >>> 0, size);
+        if (!(bytes.buffer instanceof ArrayBuffer)) {
             if (sharedWrites === null) {
                 const probe = device.createBuffer({ size: 4, usage: GPUBufferUsage.COPY_DST });
                 try {
-                    device.queue.writeBuffer(probe, 0, all, 0, 4);
+                    device.queue.writeBuffer(probe, 0, new Uint8Array(memory.buffer, 0, 4), 0, 4);
                     sharedWrites = true;
                 } catch {
                     sharedWrites = false;
                 }
                 probe.destroy();
             }
-            if (!sharedWrites) return [all.slice(ptr, ptr + size), 0];
+            if (!sharedWrites) return [bytes.slice(), 0];
         }
-        return [all, ptr];
+        return [bytes, 0];
     }
 
     // What every pipeline is bound with: its uniforms, a place in the uniform

@@ -1,5 +1,33 @@
 # Web builds
 
+## Bounded WebGPU upload views (2026-11-03)
+
+Mount & Rifle reported Firefox's `GPUQueue.writeBuffer` rejection of an
+ArrayBufferView larger than 2 GB (Mozilla bug 2022805). `memoryBytes` now
+constructs a view of just the upload's bytes, with source offset zero, instead
+of passing a view of the entire WASM heap. The view shares the backing memory;
+no additional byte copy or per-upload view allocation is introduced. The
+shared-write capability probe likewise passes a four-byte view, so heap size
+does not cause it to select the copying fallback. Browsers that actually reject
+shared writes retain that fallback. Imported signed i32 pointers are converted
+to unsigned addresses before constructing the view. Buffers, uniforms, textures,
+partial rows, compressed mip levels and cubemap faces already use this helper.
+No GPU import, renderer ABI or game-facing behavior changes. The generated
+release runtime and source manifest were regenerated (72,885 bytes).
+
+Validation: all six `cmake/web_runtime.test.mjs` tests pass on Node 24.22.1.
+The new regression uses real ordinary/shared WASM heaps above 2 GiB and covers
+low addresses, a range crossing 2 GiB, signed upper-half pointers, heap growth,
+aliasing without copying, bounded/cached capability probing and the unsupported
+shared-write fallback. It fails against the previous helper's whole-heap view.
+A scratch headless Chrome 156 WebGPU check uploads and reads back exact buffer
+and RGBA texture bytes at all three address ranges, with both ordinary and
+shared heaps; both retain the original backing memory without copying. Firefox
+159 returns no WebGPU adapter in headless mode on this machine, including with
+WebGPU explicitly enabled and its blocklist bypassed in the isolated test
+profile, so actual Firefox GPU execution remains unverified. Native and WebGL
+paths are unchanged; no game rebuild or prototype playtest was run.
+
 CLI build-mode correction (2026-10-30): --release retains readable tide.js,
 raw embedded payloads and WASM debug symbols. --distribution selects the former
 shipping runtime/compression/stripping policy; watched pages keep their existing

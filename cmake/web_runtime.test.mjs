@@ -49,6 +49,62 @@ test('checked-in runtime matches sources without loading minifier dependencies',
     assert.doesNotMatch(release, /<tide run>|EventSource|\/__tide\/build/);
 });
 
+test('WebGPU uploads use bounded views of large WASM heaps and only copy when shared writes are rejected', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('    let sharedWrites = null;');
+    const end = source.indexOf('\n    // What every pipeline', begin);
+    assert.ok(begin >= 0 && end > begin);
+    for (const mode of ['ordinary', 'shared', 'shared-copy']) {
+        const shared = mode !== 'ordinary';
+        const memory = new WebAssembly.Memory({ initial: 32769, maximum: 65536, shared });
+        let probes = 0, destroyed = 0;
+        const upload = vm.runInNewContext(`(() => {
+            ${source.slice(begin, end)}
+            return memoryBytes;
+        })()`, {
+            memory, ArrayBuffer, Uint8Array,
+            // Used by the old helper: the regression must reject its whole-heap view.
+            u8: () => new Uint8Array(memory.buffer),
+            GPUBufferUsage: { COPY_DST: 8 },
+            device: {
+                createBuffer: () => ({ destroy() { destroyed++; } }),
+                queue: {
+                    writeBuffer(buffer, offset, data, dataOffset, size) {
+                        probes++;
+                        assert.equal(data.byteLength, 4, 'the capability probe must also be bounded');
+                        assert.equal(dataOffset, 0);
+                        assert.equal(size, 4);
+                        if (mode === 'shared-copy') throw new TypeError('shared writes unsupported');
+                    },
+                },
+            },
+        });
+        const check = address => {
+            const expected = Uint8Array.from([17, 29, 43, 59, 71, 89, 101, 127]);
+            new Uint8Array(memory.buffer, address, expected.length).set(expected);
+            // Imports carry an i32, so upper-half pointers arrive negative.
+            const [data, offset] = upload(address | 0, expected.length);
+            assert.equal(data.byteLength, expected.length);
+            assert.equal(offset, 0);
+            assert.deepEqual(Array.from(data), Array.from(expected));
+            if (mode === 'shared-copy') {
+                assert.ok(data.buffer instanceof ArrayBuffer);
+                assert.notEqual(data.buffer, memory.buffer);
+            } else {
+                assert.equal(data.buffer, memory.buffer, 'supported uploads must not copy bytes');
+                assert.equal(data.byteOffset, address);
+            }
+            new Uint8Array(memory.buffer, address, 1)[0] = 211;
+            assert.equal(data[0], mode === 'shared-copy' ? expected[0] : 211);
+        };
+        for (const address of [32, 0x7ffffffc, 0x80000010]) check(address);
+        memory.grow(1);
+        check(memory.buffer.byteLength - 8);
+        assert.equal(probes, shared ? 1 : 0, 'shared support is checked only once');
+        assert.equal(destroyed, probes, 'the probe buffer is freed on either outcome');
+    }
+});
+
 test('WebGPU preserves every read kind in high texture slots and builds matching layouts', async () => {
     const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
     const begin = source.indexOf('        gpu_pipeline_begin(');
