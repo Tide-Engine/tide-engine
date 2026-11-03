@@ -1,5 +1,45 @@
 # Releases, installing and CI
 
+## LLVM resolver failure in run 41654421794 (2026-11-03)
+
+The diagnostic download correction below exposes the actual hosted failure:
+Docs' five curl attempts all report `Could not resolve host: apt.llvm.org`.
+The official server remains reachable over certificate-verified HTTPS using
+an address returned by a public resolver. Cloudflare's JSON DNS response
+reports a stale answer and `No Reachable Authority at delegation llvm.org`;
+this is evidence of an upstream DNS availability problem, not a compiler or
+test failure. Local DNS and resolver answers can still work intermittently.
+
+Both tool steps now call `.github/llvm-key.sh`. Working runner DNS takes the
+ordinary key-download path. If `getent ahostsv4` fails, the helper queries
+Cloudflare's HTTPS JSON resolver for the same host, requires successful status
+and a valid IPv4 answer, then fetches the same official key using curl --resolve.
+Only after that certificate-verified download succeeds does it append that one
+host/address to the ephemeral runner's hosts file, so apt can use it too, and
+install the complete key. No address is hardcoded. All requests retain bounded
+retries and normal TLS verification; HTTPS apt/signature checks, LLVM versions,
+dependency lists and release gates stay intact. Failed lookup/transfer/validation
+stops setup before any privileged mutation. The normal path makes no resolver
+request and changes no host mapping.
+
+The JSON GET response can use cached answers during the authority outage.
+Live testing found curl's DNS wire-format POST sometimes returned SERVFAIL
+while that cached JSON response still supplied a working, TLS-authenticated
+LLVM endpoint; the native --doh-url attempt was not shipped. Endpoint/flag
+references: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/
+and https://curl.se/docs/manpage.html#--resolve .
+
+Six checked-in helper regressions cover ordinary DNS, fallback and its exact
+single-host mapping, failed ordinary/fallback transfers, malformed addresses,
+and unsuccessful/empty DNS answers. All privileged commands are sandboxed.
+A WSL live test forces the local resolver probe to fail, obtains a real cached
+answer/key over HTTPS and validates the resulting sandbox hosts/key files;
+the machine's real hosts/trust store remains unchanged. All nineteen workflow
+helper tests pass, as do Bash syntax, YAML structural and whitespace checks.
+Only the two install command blocks and helper-test registration change in
+the existing workflows/package metadata. Hosted apt recovery and publication
+remain the new push-triggered run's coverage. No manual run/retry is dispatched.
+
 ## LLVM signing-key setup in runs 41652157692 / 41653232593 (2026-11-03)
 
 The owner's requested release follow-up found Linux test/package jobs and Docs
