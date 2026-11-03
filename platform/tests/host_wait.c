@@ -1,9 +1,29 @@
 // Synthetic presentation waits exercise the real standard host/session path.
 // The embedded platform supplies input and a screen, with no GPU or window.
 #include "game.h"
+#include "tide/time.h"
+
+// Only this host copy uses the fixture clock. Session/game code is unchanged;
+// accounting must not depend on a browser distinguishing two very short reads.
+static uint64_t host_work_time(void);
+#define tide_time_now_ns host_work_time
 #include "tide/run.h"
+#undef tide_time_now_ns
 #include "tide_test.h"
 #include "embedded.h"
+
+static bool use_work_clock;
+static uint64_t work_clock;
+static uint32_t work_clock_reads;
+
+static uint64_t host_work_time(void)
+{
+    if (!use_work_clock) return tide_time_now_ns();
+    work_clock_reads++;
+    const uint64_t now = work_clock;
+    work_clock += UINT64_C(1250000);
+    return now;
+}
 
 static tide_host_game host;
 static uint32_t frame_times, event_deliveries, age_calls;
@@ -127,13 +147,16 @@ TIDE_TEST(host_wait_clock_is_monotonic_and_never_counts_elapsed_time_twice)
     const double old_match_ms = tide_run_profiler.part_ms[TIDE_FRAME_MATCH];
     const uint32_t old_worked = tide_run_stats_worked, old_stats_frames = tide_run_stats_frames;
     const uint32_t old_profile_frames = tide_run_profiler.frames;
+    work_clock = UINT64_C(1000000000);
+    work_clock_reads = 0;
+    use_work_clock = true;
     tide_run_timing = tide_run_profiling = true;
     tide_run_wait_update(NULL, 0.125);
-    TIDE_CHECK(tide_run_stats_work > old_work);
-    TIDE_CHECK(tide_run_profiler.part_ms[TIDE_FRAME_MATCH] > old_match_ms);
+    TIDE_CHECK(work_clock_reads == 2);
+    TIDE_CHECK(tide_run_stats_work - old_work == UINT64_C(1250000));
+    TIDE_CHECK(near(tide_run_profiler.part_ms[TIDE_FRAME_MATCH] - old_match_ms, 1.25));
     TIDE_CHECK(tide_run_stats_worked == old_worked && tide_run_stats_frames == old_stats_frames);
     TIDE_CHECK(tide_run_profiler.frames == old_profile_frames);
-    tide_run_timing = tide_run_profiling = false;
     TIDE_CHECK(tide_run_now == began + 0.125);
     TIDE_CHECK(near(aged - old_aged, 0.125));
     const uint64_t nan_bits = UINT64_C(0x7ff8000000000000);
@@ -143,6 +166,11 @@ TIDE_TEST(host_wait_clock_is_monotonic_and_never_counts_elapsed_time_twice)
     tide_run_wait_update(NULL, 0.0625);
     tide_run_wait_update(NULL, -1);
     tide_run_wait_update(NULL, not_a_number);
+    TIDE_CHECK(work_clock_reads == 2);
+    TIDE_CHECK(tide_run_stats_work - old_work == UINT64_C(1250000));
+    TIDE_CHECK(near(tide_run_profiler.part_ms[TIDE_FRAME_MATCH] - old_match_ms, 1.25));
+    use_work_clock = false;
+    tide_run_timing = tide_run_profiling = false;
     TIDE_CHECK(tide_run_now == began + 0.125);
     TIDE_CHECK(age_calls == old_age_calls + 1);
     frame(0.0625f, false); // Even a frame time rounded below the serviced clock cannot rewind it.

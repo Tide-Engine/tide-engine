@@ -1,5 +1,23 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Host-wait accounting fixture clock (2026-11-03)
+
+Run 41547870181's Windows web-release shard failed the new host-wait fixture's
+two positive-work assertions. A short update can start and finish at the same
+browser clock value, so measured work need not be positive. That test now
+substitutes a controlled nanosecond clock only for its own inline host copy;
+the real session and generated game still run. It checks an exact 1,250,000 ns
+stats increment and 1.25 ms profiler increment, without extra rendered frames.
+Repeated, backward and invalid elapsed values read no additional clock and add
+no work. No runtime clock, scheduling or accounting behavior changed.
+
+Validation: the target builds and all three cases pass on Windows ASan,
+web-debug and a scoped optimized web-release build with Clang 23.1.2 and muted
+Chrome. A negative control zeroing just the host's two wait-work additions
+builds, runs and fails the exact accounting assertions; restoring the host
+byte-for-byte makes the browser test pass again. There is no runtime diff.
+Hosted coverage on other platforms remains the ordinary push-triggered run.
+
 ## Match updates during desktop Vulkan presentation waits (2026-11-03)
 
 The standard and native reload hosts register `tide_run_wait_update` through
