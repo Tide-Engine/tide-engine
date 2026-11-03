@@ -39,6 +39,7 @@ foreach(source IN LISTS tide_asset_vendors)
     string(APPEND tide_asset_vendor_text "${source}:${digest}\n")
 endforeach()
 string(SHA256 tide_asset_vendor_hash "${tide_asset_vendor_text}")
+set(TIDE_ASSET_CACHE_VENDORS "${tide_asset_vendor_hash}" PARENT_SCOPE)
 set_source_files_properties(src/asset_cache.c PROPERTIES COMPILE_DEFINITIONS
     "TIDE_ASSET_CACHE_VENDORS=\"${tide_asset_vendor_hash}\"")
 

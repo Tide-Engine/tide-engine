@@ -111,6 +111,17 @@ memory limit; the whole game's C is compiled into the program when any root miss
 then (later builds hit the cache unless build code's graph changes). Web and Android test runs of the e2e fixture
 are CI's for Android, and Linux and macOS run them in CI.
 
+## Mesh names in profile captures (2026-11-03)
+
+Generated diagnostic lookup matches current static/skinned geometry handles to
+asset declarations without changing packs, asset IDs or loading behavior.
+Static glob elements retain their key; skinned collections retain the declaration
+name, with distinct geometry/version rows. Physically shared packed aliases use
+the first matching name. Names are opaque under strip-names. Draw recording
+copies names/sources into bounded host-owned geometry rows before reload/unload.
+Contracts: drawing.md, language.md and standard-host.md.
+
+
 ## Persistent build-time asset imports (2026-11-03)
 
 Owner requested faster fresh `tide run` launches after progress feedback exposed

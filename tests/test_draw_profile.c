@@ -66,7 +66,11 @@ TIDE_TEST(draw_profile_counts_culling_and_preserves_commands)
     TIDE_CHECK(strcmp(row->source.name, grass.name) == 0 && strcmp(row->source.file, grass.file) == 0);
     TIDE_CHECK(row->source.line == 17 && row->source.column == 6);
     TIDE_REQUIRE(measured.count == plain.count && measured.matrix_count == plain.matrix_count);
-    TIDE_CHECK(memcmp(measured.commands, plain.commands, measured.count * sizeof *measured.commands) == 0);
+    for (uint32_t i = 0; i < measured.count; i++) {
+        tide_draw_command command = measured.commands[i];
+        if (command.kind == TIDE_DRAW_MESH_3D || command.kind == TIDE_DRAW_SHADED) command.profile_geometry = 0;
+        TIDE_CHECK(memcmp(&command, &plain.commands[i], sizeof command) == 0);
+    }
     TIDE_CHECK(memcmp(measured.matrices, plain.matrices, measured.matrix_count * sizeof *measured.matrices) == 0);
     TIDE_CHECK(measured.profile_active == NULL && plain.profile_active == NULL);
 
@@ -179,6 +183,7 @@ TIDE_TEST(draw_profile_limits_report_dropped_work)
         triangle(&plain, placed(0));
     }
     TIDE_CHECK(p.count == TIDE_DRAW_PROFILE_ROWS && p.dropped_calls == 1 && p.dropped_candidates == 1);
+    TIDE_CHECK(p.geometry_count == TIDE_DRAW_PROFILE_ROWS && p.dropped_geometry_instances == 1);
     TIDE_CHECK(d.matrix_count == plain.matrix_count && d.profile_active == NULL);
     TIDE_CHECK(memcmp(d.matrices, plain.matrices, d.matrix_count * sizeof *d.matrices) == 0);
     // Existing rows continue to collect after the new-row limit is reached.
@@ -196,5 +201,61 @@ TIDE_TEST(draw_profile_limits_report_dropped_work)
     free(large);
     tide_draw_free(&d);
     tide_draw_free(&plain);
+    tide_draw_diagnostics_free(&p);
+}
+
+TIDE_TEST(draw_profile_geometry_keeps_batched_sources_and_append_ownership)
+{
+    tide_draw_diagnostics p = {0}, q = {0};
+    tide_draw_list d = {.diagnostics = &p}, copy = {.diagnostics = &q};
+    camera(&d);
+    char name[] = "Boulders";
+    tide_profile_source source = {.name = name, .file = "rocks.tide", .line = 5};
+    d.profile_source = &source;
+    triangle(&d, placed(0));
+    const uint32_t commands = d.count;
+    source.line = 7;
+    triangle(&d, placed(0));
+    TIDE_CHECK(d.count == commands); // Attribution did not split the GPU batch.
+    TIDE_REQUIRE(p.geometry_count == 2);
+    TIDE_CHECK(p.geometry[0].instances == 0); // Recording is not submission.
+    name[0] = 'X';
+    tide_draw_append(&copy, &d);
+    TIDE_REQUIRE(q.geometry_count == 2);
+    TIDE_CHECK(!strcmp(q.geometry[0].source.name, "Boulders"));
+    tide_draw_free(&d);
+    tide_draw_diagnostics_free(&p);
+    for (uint32_t i = 0; i < copy.count; i++)
+        if (copy.commands[i].kind == TIDE_DRAW_MESH_3D) tide_draw_geometry_submit(&copy, copy.commands[i].profile_geometry);
+    TIDE_CHECK(q.geometry[0].instances == 1 && q.geometry[1].instances == 1);
+    TIDE_CHECK(q.geometry[0].vertices == 3 && q.geometry[1].triangles == 1);
+    tide_draw_reset(&copy);
+    TIDE_CHECK(copy.profile_link_count == 0 && copy.profile_mesh_name == NULL);
+    tide_draw_free(&copy);
+    tide_draw_diagnostics_free(&q);
+}
+
+TIDE_TEST(draw_profile_geometry_bounds_links_and_keeps_existing_rows)
+{
+    tide_draw_diagnostics p = {0};
+    tide_draw_list d = {.diagnostics = &p};
+    tide_profile_source source = grass;
+    camera(&d);
+    d.profile_source = &source;
+    for (uint32_t i = 0; i <= TIDE_DRAW_PROFILE_LINKS; i++) {
+        source.line = i % 2u;
+        triangle(&d, placed(0));
+    }
+    TIDE_CHECK(p.geometry_count == 2 && d.profile_link_count == TIDE_DRAW_PROFILE_LINKS);
+    TIDE_CHECK(p.dropped_geometry_instances == 1);
+    for (uint32_t i = 0; i < d.count; i++) if (d.commands[i].kind == TIDE_DRAW_MESH_3D)
+        tide_draw_geometry_submit(&d, d.commands[i].profile_geometry);
+    TIDE_CHECK(p.geometry[0].instances + p.geometry[1].instances == TIDE_DRAW_PROFILE_LINKS);
+    tide_draw_diagnostics_clear(&p);
+    triangle(&d, placed(0)); // Old links and command annotations must not alias the new capture.
+    for (uint32_t i = 0; i < d.count; i++) if (d.commands[i].kind == TIDE_DRAW_MESH_3D)
+        tide_draw_geometry_submit(&d, d.commands[i].profile_geometry);
+    TIDE_CHECK(p.geometry_count == 1 && p.geometry[0].instances == 1);
+    tide_draw_free(&d);
     tide_draw_diagnostics_free(&p);
 }

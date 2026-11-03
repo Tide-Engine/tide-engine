@@ -4,7 +4,7 @@
 
 #include "tide/profile.h"
 
-// Opt-in CPU mesh-recording diagnostics, owned by the host. Attach to
+// Opt-in mesh-recording and submitted-geometry diagnostics, owned by the host. Attach to
 // tide_draw_list.diagnostics; resetting/freeing the draw list does not own these.
 // Ordinary recording reads no clocks and allocates no diagnostics without it.
 #define TIDE_DRAW_PROFILE_ROWS 1024u
@@ -35,9 +35,27 @@ typedef struct tide_draw_diagnostic {
     uint32_t frame, camera_index;
 } tide_draw_diagnostic;
 
+// Geometry rows count actual renderer submissions, independently of GPU timers.
+#define TIDE_DRAW_PROFILE_LINKS 65536u
+typedef struct tide_draw_geometry {
+    tide_profile_source source;
+    const char *mesh;
+    uint64_t identity, target, geometry_id, geometry_other;
+    uint32_t lod, mesh_vertices, mesh_indices;
+    uint64_t instances, vertices, triangles;
+} tide_draw_geometry;
+
+typedef struct tide_draw_geometry_link {
+    uint32_t row, count, next;
+} tide_draw_geometry_link;
+
 typedef struct tide_draw_diagnostics {
     tide_draw_diagnostic *rows;
     uint32_t count;
+    tide_draw_geometry *geometry;
+    uint32_t geometry_count, geometry_bytes;
+    uint64_t revision;
+    uint64_t dropped_geometry_instances;
     // A full table or source-string budget drops new rows, never aliases them.
     uint64_t dropped_calls, dropped_candidates;
     uint32_t source_bytes;
@@ -57,3 +75,11 @@ typedef struct tide_draw_diagnostic_scope {
 } tide_draw_diagnostic_scope;
 tide_draw_diagnostic_scope tide_draw_diagnostics_begin(struct tide_draw_list *d, uint32_t candidates);
 void tide_draw_diagnostics_end(struct tide_draw_list *d, tide_draw_diagnostic_scope scope);
+
+// Private draw-list/renderer support. Chains carry instance counts, never GPU timings.
+struct tide_draw_command;
+void tide_draw_geometry_record(struct tide_draw_list *d, struct tide_draw_command *c, uint32_t mesh, uint32_t count);
+void tide_draw_geometry_submit(const struct tide_draw_list *d, uint32_t chain);
+uint32_t tide_draw_geometry_join(const struct tide_draw_list *d, uint32_t a, uint32_t b);
+void tide_draw_geometry_copy(struct tide_draw_list *d, struct tide_draw_command *to,
+                             const struct tide_draw_list *from, uint32_t chain);

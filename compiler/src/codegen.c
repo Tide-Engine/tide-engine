@@ -20231,6 +20231,47 @@ static void gen_assets(gen *g)
             sb_put(o, "};\n");
         }
     }
+    if (prog->views.count) {
+        sb_put(o, "\nstatic const char *tide_profile_mesh_name(const uint64_t vertices, const uint64_t indices)\n{\n"
+                  "    if (!vertices || !indices) return NULL;\n");
+        for (int a = 0; a < prog->assets.count; a++) {
+            const decl *asset = prog->assets.items[a];
+            if (!asset_vertex(asset->return_type)) continue;
+            const char *name = asset_cname(asset);
+            const bool collection = mesh_collection(asset);
+            if (collection) {
+                for (int k = 0; asset->asset && k < asset->asset->count; k++) {
+                    sb_printf(o, "    if (vertices == %s_geometry[%d].vertices.at && indices == %s_geometry[%d].indices.at) return ", name, k, name, k);
+                    sb label = {0};
+                    sb_printf(&label, STR_FMT "[%s]", STR_ARG(asset_diagnostic_name(g, asset)),
+                              g->opts->strip_names ? "item" : asset->asset->items[k].key);
+                    if (g->opts->strip_names) sb_printf(&label, "#%d", k);
+                    gen_c_raw_literal(o, str_from(label.data));
+                    sb_put(o, ";\n");
+                }
+            } else if (asset->return_type.kind == TY_MESH || asset->return_type.kind == TY_STRUCT) {
+                sb_printf(o, "    if (vertices == %s.vertices.at && indices == %s.indices.at) return ", name, name);
+                gen_c_raw_literal(o, asset_diagnostic_name(g, asset));
+                sb_put(o, ";\n");
+            } else {
+                // Skinned collections retain their portable geometry handles.
+                const bool map = asset->return_type.kind == TY_MAP;
+                sb_put(o, "    {\n");
+                if (map) sb_put(o, "      typedef struct { int64_t order; tide_text key; tide_skinned_lists value; } entry;\n");
+                sb_printf(o, "      for (int32_t k = 0; k < %s(%s); k++) {\n",
+                          map ? "tide_map_entries" : "tide_list_count", name);
+                if (map) sb_printf(o, "        const entry *e = tide_list_at(%s.entries, k, sizeof *e);\n"
+                                     "        if (!e || e->order <= 0) continue;\n"
+                                     "        const tide_skinned_lists v = e->value;\n", name);
+                else sb_printf(o, "        const tide_skinned_lists *e = tide_list_at(%s, k, sizeof *e);\n"
+                                  "        if (!e) continue;\n        const tide_skinned_lists v = *e;\n", name);
+                sb_put(o, "        if (vertices == v.vertices.at && indices == v.indices.at) return ");
+                gen_c_raw_literal(o, asset_diagnostic_name(g, asset));
+                sb_put(o, ";\n      }\n    }\n");
+            }
+        }
+        sb_put(o, "    return NULL;\n}\n");
+    }
     for (int i = 0; i < prog->asset_refs.count; i++) {
         const decl *ref = prog->asset_refs.items[i];
         const type value = type_asset_reference_value(ref);
@@ -21274,6 +21315,9 @@ static void gen_api(gen *g)
     if (prog->views.count) {
         sb_put(o, "    tide_profile *tide_p = gui->profile;\n");
         sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->views, %du, tide_view_sources);\n", prog->views.count);
+        sb_put(o, "    const char *(*tide_previous_mesh_name)(uint64_t, uint64_t) = draw ? draw->profile_mesh_name : NULL;\n");
+        sb_printf(o, "    if (draw && draw->diagnostics) draw->profile_mesh_name = %s;\n",
+                  prog->assets.count || prog->asset_refs.count ? "tide_profile_mesh_name" : "NULL");
         sb_put(o, "    const tide_profile_source *tide_previous_source = draw ? draw->profile_source : NULL;\n"
                   "    uint64_t tide_at = tide_profile_now(tide_p);\n");
     }
@@ -21298,7 +21342,7 @@ static void gen_api(gen *g)
         gen_c_literal(o, diagnostic_name(g, tool_name(view), "view", view->index), false);
         sb_put(o, ", tide_at);\n");
     }
-    if (prog->views.count) sb_put(o, "    if (draw) draw->profile_source = tide_previous_source;\n");
+    if (prog->views.count) sb_put(o, "    if (draw) { draw->profile_source = tide_previous_source; draw->profile_mesh_name = tide_previous_mesh_name; }\n");
     if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n"
                                        "    if (gui && gui->profile) tide_profile_count(&gui->profile->views, 0u);\n");
     sb_put(o, "    tide_local_apply_commands(local);\n");

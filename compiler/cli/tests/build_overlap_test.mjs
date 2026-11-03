@@ -121,7 +121,8 @@ try {
             assert.equal(readdirSync(events).length, 0, "resolve packages before starting compilers");
         } else {
             assert.equal(result.code, 0, result.said);
-            const engine = join(game, ".tide", "native-debug", "engine", "engine.c.o");
+            const engineCache = name === "host" && !["win32", "darwin"].includes(process.platform) ? "engine-pic" : "engine";
+            const engine = join(game, ".tide", "native-debug", engineCache, "engine.c.o");
             const before = statSync(engine, { bigint: true }).mtimeNs;
             const again = await run([name === "host" ? "run" : "build", game], {
                 TIDE_JOBS: String(active.jobs), TIDE_TEST_BUILD_EVENTS: events, TIDE_TEST_BUILD_GATE: gate,

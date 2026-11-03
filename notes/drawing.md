@@ -1,5 +1,20 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Geometry attribution (2026-11-03)
+
+Capture-only geometry rows retain mesh/version, view source, destination and
+selected LOD. Contribution chains reuse the mesh commands' otherwise unused
+text/shape word, preserving command size, batch compatibility and Unity packet
+layout. Mesh acquisition records diagnostic list handles for name lookup, never
+reads them later. Chains follow normal/shader/listed merging and LOD regrouping;
+append copies owned row identities even across collector/list lifetimes. Reset
+retains link capacity and drops frame links; clear revisions prevent stale rows
+aliasing a new capture; free releases links. Limits are 1,024 rows/1 MiB of text
+per collector and 65,536 links per list/frame, with dropped-instance accounting.
+No world state, drawing order, pixels or draw API changes. Built-in unshaded 2D
+meshes/shapes/text stay aggregate-only. Tests: draw_profile and platform draw LOD.
+
+
 ## Camera-relative placement (2026-11-02)
 
 The distant-camera gap keeps each recorded camera's original transform,
