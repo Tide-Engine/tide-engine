@@ -8,6 +8,7 @@
 
 #include "gl.h"
 #include "gpu.h"
+#include "tide/gpu_profile.h"
 #include "window.h"
 
 #define CHECK(condition)                                                                                              \
@@ -32,21 +33,21 @@ typedef struct query {
     GLuint64 nanoseconds;
 } query;
 
-static query queries[32];
+static query queries[4 * TIDE_GPU_PROFILE_PENDING + 32];
 static GLuint next_query, active_query;
 static unsigned begun, ended, generated, deleted, polled, read_results, counter_checks;
 static GLint counter_bits = 64;
 
 static void TIDE_GL_CALL counter(GLenum target, GLenum name, GLint *out)
 {
-    CHECK(target == GL_TIME_ELAPSED && name == GL_QUERY_COUNTER_BITS);
+    CHECK((target == GL_TIME_ELAPSED || target == GL_TIMESTAMP) && name == GL_QUERY_COUNTER_BITS);
     counter_checks++;
     *out = counter_bits;
 }
 
 static void TIDE_GL_CALL make_queries(GLsizei count, GLuint *out)
 {
-    CHECK(count == 4);
+    CHECK(count == 4 || count == 2 * TIDE_GPU_PROFILE_PENDING);
     generated++;
     for (GLsizei i = 0; i < count; i++) {
         CHECK(next_query + 1u < sizeof queries / sizeof *queries);
@@ -90,12 +91,19 @@ static void TIDE_GL_CALL query_result(GLuint id, GLenum name, GLuint64 *out)
 
 static void TIDE_GL_CALL delete_queries(GLsizei count, const GLuint *ids)
 {
-    CHECK(count == 4 && active_query == 0);
+    CHECK((count == 4 || count == 2 * TIDE_GPU_PROFILE_PENDING) && active_query == 0);
     deleted++;
     for (GLsizei i = 0; i < count; i++) {
         CHECK(queries[ids[i]].allocated);
         queries[ids[i]] = (query){0};
     }
+}
+
+static void TIDE_GL_CALL stamp(GLuint id, GLenum target)
+{
+    CHECK(target == GL_TIMESTAMP && queries[id].allocated && !queries[id].pending);
+    queries[id].pending = true;
+    queries[id].available = false;
 }
 
 static void finish(GLuint id, GLuint64 nanoseconds)
@@ -182,6 +190,42 @@ int main(void)
     CHECK(gpu->time_read() == 0.75);
     gpu->time_reset();
     CHECK(deleted == 2);
+    // Pass timestamp queries coexist with the frame elapsed query. Filling
+    // their queue skips safely; delayed results retain the accepted token.
+    tide_gl.QueryCounter = stamp;
+    const GLuint first = next_query + 1;
+    uint32_t token = 0;
+    CHECK(gpu->pass_time_read(&token) < 0);
+    for (uint32_t i = 0; i < TIDE_GPU_PROFILE_PENDING; i++) {
+        CHECK(gpu->pass_time_begin(i + 17));
+        CHECK(!gpu->pass_time_begin(999));
+        gpu->pass_time_end();
+    }
+    CHECK(!gpu->pass_time_begin(999));
+    CHECK(gpu->pass_time_read(&token) < 0);
+    gpu->time_begin();
+    CHECK(active_query != 0);
+    finish(first, 1000000);
+    finish(first + 1, 3500000);
+    CHECK(gpu->pass_time_read(&token) == 2.5 && token == 17);
+    CHECK(gpu->pass_time_read(&token) < 0);
+    CHECK(gpu->pass_time_begin(1234));
+    gpu->pass_time_end();
+    gpu->time_end();
+    gpu->time_reset();
+    gpu->pass_time_reset();
+    CHECK(gpu->pass_time_read(&token) < 0);
+    counter_bits = 8;
+    const GLuint wrapped = next_query + 1;
+    CHECK(gpu->pass_time_begin(87));
+    gpu->pass_time_end();
+    finish(wrapped, 250);
+    finish(wrapped + 1, 5);
+    CHECK(gpu->pass_time_read(&token) == 11.0 / 1000000.0 && token == 87);
+    gpu->pass_time_reset();
+    tide_gl.QueryCounter = NULL;
+    CHECK(!gpu->pass_time_begin(123));
+    gpu->pass_time_reset();
     puts("GPU timing: delayed results, full queue, reset, and unavailable timers passed");
     return 0;
 }

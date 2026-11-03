@@ -1,5 +1,31 @@
 # The standard host: runs with no window, the stats, debug views
 
+## GPU pass profile reports (2026-11-03)
+
+`--profile` now installs the optional GPU pass collector after warmup and drains
+it after rendering and once at final export, without waiting. The additive
+`gpu_passes` object in tide.profile version 1 contains rows grouped by target,
+pass encounter order, pixel size and exact shader-membership labels. Each has
+its own bounded distribution (mean/p50/p95/max, counts and reservoir semantics)
+and submitted draw/vertex totals for those completed observations. CPU views
+and the existing asynchronous frame GPU distribution remain separate.
+
+`pending`, `unmeasured` and `dropped_observations` expose incomplete coverage.
+The report owns its labels; 1,024 rows and 1 MiB of labels bound storage, while
+existing rows keep collecting after saturation. Pending query metadata has its
+own 1,024-slot/4,096-label-byte-per-slot bound. Closing/reloading/cancelling
+cannot give a delayed query another pass's identity. Backend details and pixel
+checks are in rendering.md. Native desktop export, other platform export
+refusals and F7/F8 aggregate presentation retain their existing behavior.
+
+Validation: all 11 profile_report tests pass on native Windows ASan and WASI,
+including copied/mutated labels, distinct targets/pass ordinals, exact work,
+mean/p95/max, invalid samples and row-limit loss. Native profile E2E passes
+warmup, panels, empty captures, per-player and interactive runs with the new
+pass rows, as well as byte-identical measured/unmeasured pictures. User reference
+and ranking example: docs/tools/debug-views.md, Finding expensive GPU passes.
+
+
 ## Host-wait accounting fixture clock (2026-11-03)
 
 Run 41547870181's Windows web-release shard failed the new host-wait fixture's

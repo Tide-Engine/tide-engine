@@ -297,6 +297,7 @@ static int tide_run_report_finish(const int code)
 {
     const tide_jobs *jobs = tide_platform_jobs();
     const tide_float2 size = tide_platform_screen_size(), scale = tide_platform_screen_scale();
+    tide_platform_gpu_profile_read();
     const tide_profile_report_info info = {
         .title = tide_run_settings.title, .renderer = tide_platform_renderer(), .compiler = __clang_version__,
         .executable_sha256 = tide_run_report_executable[0] ? tide_run_report_executable : NULL,
@@ -310,6 +311,7 @@ static int tide_run_report_finish(const int code)
 #if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
         .sanitized = true,
 #endif
+        .gpu_pending_passes = tide_platform_gpu_profile_pending(),
         .exit_code = code,
     };
     char *path = tide_platform_players_file(tide_run_report_path);
@@ -320,6 +322,7 @@ static int tide_run_report_finish(const int code)
     else fprintf(stderr, "tide: profile written to %s\n", path);
     free(path);
     tide_run_draw.diagnostics = NULL;
+    tide_platform_gpu_profile(NULL, NULL);
     tide_profile_report_free(&tide_run_report);
     return !ok && code == 0 ? 1 : code;
 }
@@ -1383,6 +1386,8 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_run_reset_timing(true);
         tide_platform_gpu_timing(true);
     }
+    tide_platform_gpu_profile(tide_run_reporting ? tide_profile_report_gpu_pass : NULL,
+                              tide_run_reporting ? &tide_run_report : NULL);
     const uint64_t render_began = timing ? tide_time_now_ns() : 0;
     tide_run_prewarm();
     if (!tide_run_embedded) tide_platform_draw(&tide_run_draw);
@@ -1392,6 +1397,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_RENDER);
     if (measured_netcode) tide_run_netcode(&status, update_ns, tide_time_now_ns() - frame_began);
 
+    if (tide_run_reporting) tide_platform_gpu_profile_read();
     if (timing || tide_run_reporting) {
         for (uint32_t i = 0; i < 4; i++) {
             const double ms = tide_platform_gpu_ms();

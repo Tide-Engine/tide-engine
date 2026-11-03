@@ -1,5 +1,46 @@
 # The platform layer and the renderer
 
+## Attributed GPU pass timings (2026-11-03)
+
+Owner-approved extension of structured captures: optional independent pass
+queries on tide_gpu, with accepted uint32 tokens returned alongside results.
+The renderer retains up to 1,024 pending identities (target, render-pass order,
+pixel extent and distinct shader labels), counts actual submitted calls and
+vertices, and copies labels before a game library can unload. Mixed passes
+retain their shader membership, with no invented per-shader/view time or source
+location. No draw-list/compiler boundary or language change is needed.
+
+Vulkan resets/writes pairs directly in existing pass command buffers, before
+pass setup and after rendering/layout restoration; no added pass, transfer
+barrier or submission. Submission serials and availability guard reads, like
+the total timer, including mid-frame flushes. Desktop GL uses independent
+GL_TIMESTAMP pairs (counter-width wrapping handled) alongside GL_TIME_ELAPSED.
+WebGPU retains each pass's token in its existing frame readback and returns all
+completed pass observations even when frame readbacks settle out of order.
+Pass intervals may overlap and omit uploads/mips outside render passes: their
+sum is not the existing frame timer. Timers remain optional on each backend;
+WebGL/ES and the Unity recorder have none.
+
+Collection is capture-only. No pending slot or unsupported/full query means an
+explicit unmeasured pass; oversized shader membership discards that pass's
+attribution rather than truncating identities. Reset/device loss cancels owned
+metadata and counts those observations as unmeasured. Polling does not wait;
+export reports pending observations. Backend query resources are released on
+reset. Shader labels and renderer pass identities do not enter match state.
+
+Validation: focused Windows ASan native GPU timing/mock/profile/draw/target
+checks pass on Vulkan (with synchronization validation) and OpenGL. Web-debug
+GPU timing, draw and target checks pass on WebGL and WebGPU. Real-device timing
+checks two distinct destinations, pixel sizes, pass order, shader membership,
+exact submitted counts, overlay exclusion, unchanged pixels, reopen and forced
+device loss while pass queries exist. Offscreen-only frames explicitly select
+the window before attributing its fallback clear. GL mocks
+cover independent queries alongside the total, delayed results, capacity and
+reset. WebGPU mocks cover out-of-order tokens, 1,024-query pressure, invalid
+results and stale callback cancellation. Report/schema coverage is recorded
+in standard-host.md. Other OSes and Android were not run locally.
+
+
 ## Match updates during desktop Vulkan frame waits (2026-11-03)
 
 The desktop's `tide_gpu_vk_present_updating` polls the next frame slot's fence

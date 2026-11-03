@@ -7,6 +7,7 @@
 #include "tide/devices.h"
 #include "tide/draw.h"
 #include "tide/gui.h"
+#include "tide/gpu_profile.h"
 #include "tide/io.h"
 #include "tide/jobs.h"
 #include "tide/net.h"
@@ -270,6 +271,11 @@ const char *tide_platform_renderer(void);
 // while the stats drawer is open. Overlays and the wait for display aren't
 // included. Disabling discards pending samples and releases query resources.
 void tide_platform_gpu_timing(bool enabled);
+// Detailed pass collection, independently enabled for a capture. Also enable
+// gpu_timing; WebGPU shares its frame's timestamp readback. NULL cancels.
+void tide_platform_gpu_profile(tide_gpu_pass_collect collect, void *user);
+void tide_platform_gpu_profile_read(void); // Drain ready results; never waits.
+uint32_t tide_platform_gpu_profile_pending(void);
 
 // A newly completed GPU sample, in milliseconds; -1 while none is ready or
 // the backend has no timer. Never waits for the GPU. Results arrive later

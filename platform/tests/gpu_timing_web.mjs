@@ -118,7 +118,7 @@ async function runtime({ timing = true, rejectFeature = false, compression = fal
     let adapters = 0;
     const context = {
         wantedBackend: 'webgpu', config: { textureCompression: compressionEnabled }, platform: {}, canvas: { width: 10, height: 10 },
-        device: null, gpuFormat: null, GPUBufferUsage: usage, GPUMapMode: { READ: 1 },
+        memory: { buffer: new ArrayBuffer(64) }, device: null, gpuFormat: null, GPUBufferUsage: usage, GPUMapMode: { READ: 1 },
         GPUTextureUsage: { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2, COPY_SRC: 4 },
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 },
         navigator: { gpu: {
@@ -270,3 +270,66 @@ const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve()
 }
 
 console.log('ok: WebGPU timing is asynchronous, bounded, pass-only, optional, and reset on device loss');
+
+// Pass results preserve their tokens even when frame maps settle out of order.
+{
+    const { api, first, context } = await runtime();
+    const read = () => {
+        const ms = api.gpu_pass_time_read(0);
+        return { ms, token: new DataView(context.memory.buffer).getUint32(0, true) };
+    };
+    for (const token of [41, 82]) {
+        api.gpu_time_begin();
+        assert.equal(api.gpu_pass_time_begin(token), true);
+        draw(api);
+        api.gpu_pass_time_end();
+        api.gpu_time_end();
+    }
+    assert.equal(read().ms, -1);
+    first.maps[1].complete();
+    await settle();
+    assert.deepEqual(read(), { token: 82, ms: 0.25 });
+    first.maps[0].complete();
+    await settle();
+    assert.deepEqual(read(), { token: 41, ms: 0.25 });
+    assert.equal(read().ms, -1);
+    api.gpu_time_begin();
+    for (let i = 0; i < 1024; i++) {
+        assert.equal(api.gpu_pass_time_begin(i + 1), true);
+        draw(api);
+    }
+    assert.equal(api.gpu_pass_time_begin(2048), false, 'pending pass storage is bounded');
+    draw(api);
+    api.gpu_time_end();
+    first.maps[2].complete();
+    api.gpu_pass_time_reset();
+    await settle();
+    assert.equal(read().ms, -1, 'reset cancels already resolved stale callbacks');
+    api.gpu_time_begin();
+    assert.equal(api.gpu_pass_time_begin(99), true);
+    draw(api);
+    api.gpu_time_end();
+    first.maps[3].complete();
+    await settle();
+    assert.deepEqual(read(), { token: 99, ms: 0.25 });
+}
+{
+    const { api, first, context } = await runtime();
+    api.gpu_time_begin();
+    assert.equal(api.gpu_pass_time_begin(57), true);
+    draw(api);
+    api.gpu_time_end();
+    new BigUint64Array(first.maps[0].data)[1] = 0n;
+    first.maps[0].complete();
+    await settle();
+    assert.ok(Number.isNaN(api.gpu_pass_time_read(0)), 'invalid timestamps release their token without inventing cost');
+    assert.equal(new DataView(context.memory.buffer).getUint32(0, true), 57);
+    assert.equal(api.gpu_pass_time_read(0), -1);
+    api.gpu_time_reset();
+}
+{
+    const { api } = await runtime({ timing: false });
+    api.gpu_time_begin();
+    assert.equal(api.gpu_pass_time_begin(1), false);
+}
+console.log('ok: attributed GPU passes retain tokens through delay, out-of-order completion, pressure, invalid results and reset');

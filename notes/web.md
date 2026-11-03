@@ -1,5 +1,23 @@
 # Web builds
 
+## GPU pass timing identities (2026-11-03)
+
+WebGPU's existing pass timestamp readback now optionally retains renderer
+uint32 tokens and queues their completed durations independently of the newest
+frame-total result. C imports reserve/end/read/reset pass observations; the
+reader writes a uint32 token through the supplied current WASM-memory view.
+A 1,024-token budget includes unresolved and unread results. Generation guards
+cancel reset/device-loss callbacks, and invalid/backwards timestamps release
+accepted tokens with an invalid observation rather than invented zero cost.
+No extra pass, query resolve, submission or map is needed for detailed timing.
+JSON --profile export is still desktop-only; custom hosts can use the collector.
+
+The checked-in release runtime is regenerated. Existing WebGPU mocks plus
+attributed-token delay/order/pressure/reset/invalid-result checks pass, and the
+web-debug timing/draw/targets fixtures pass on WebGL and WebGPU. Report tests
+pass under WASI. Contracts and limits are in rendering.md and standard-host.md.
+
+
 ## Bounded WebGPU upload views (2026-11-03)
 
 Mount & Rifle reported Firefox's `GPUQueue.writeBuffer` rejection of an

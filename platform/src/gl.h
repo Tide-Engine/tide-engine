@@ -261,11 +261,13 @@ enum {
     GL_QUERY_RESULT = 0x8866,
     GL_QUERY_RESULT_AVAILABLE = 0x8867,
     GL_TIME_ELAPSED = 0x88BF,
+    GL_TIMESTAMP = 0x8E28,
 };
 
 // Timer queries are core in OpenGL 3.3, but aren't in OpenGL ES 3 or WebGL 2.
 // Keep their functions separate from the imports those two share.
 #define TIDE_GL_TIMER_FUNCTIONS(V, R)                                                                                  \
+    V(QueryCounter, (GLuint query, GLenum target), (query, target))                                                   \
     V(BeginQuery, (GLenum target, GLuint query), (target, query))                                                      \
     V(DeleteQueries, (GLsizei count, const GLuint *queries), (count, queries))                                        \
     V(EndQuery, (GLenum target), (target))                                                                             \

@@ -146,6 +146,11 @@ build:
 tide run --release --script play.txt --frames 360 --profile profile.json --profile-warmup 60
 ```
 
+For GPU bottlenecks, inspect `gpu_passes.rows`: target, pass order, shader
+membership and mean/p95/max GPU time. Check missing-sample counters; a mixed
+pass's time cannot be assigned to one shader. See the
+[GPU pass reference](../tools/debug-views.md#finding-expensive-gpu-passes).
+
 This native desktop report is written when the run ends, independently of the
 panels; it measures frames after warmup and
 includes source locations and engine draw counters. Read actual CPU work and

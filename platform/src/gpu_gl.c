@@ -3,6 +3,7 @@
 // ids are OpenGL's own names for them.
 
 #include "gpu.h"
+#include "tide/gpu_profile.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -197,6 +198,82 @@ static void gl_time_reset(void)
     if (timing.active) glEndQuery(GL_TIME_ELAPSED);
     if (timing.supported) glDeleteQueries(GL_TIME_SAMPLES, timing.queries);
     memset(&timing, 0, sizeof timing);
+#endif
+}
+
+// Timestamp pairs can coexist with the frame's GL_TIME_ELAPSED query.
+#if !defined(__wasm__) && !defined(__ANDROID__)
+static struct {
+    GLuint queries[2 * TIDE_GPU_PROFILE_PENDING];
+    uint32_t tokens[TIDE_GPU_PROFILE_PENDING], first, count;
+    GLuint64 mask;
+    bool checked, supported, active;
+} pass_timing;
+#endif
+
+static bool gl_pass_time_begin(const uint32_t token)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (!pass_timing.checked) {
+        pass_timing.checked = true;
+        if (!tide_gl.QueryCounter || !tide_gl.GenQueries || !tide_gl.DeleteQueries || !tide_gl.GetQueryiv ||
+            !tide_gl.GetQueryObjectiv || !tide_gl.GetQueryObjectui64v) return false;
+        GLint bits = 0;
+        glGetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, &bits);
+        if (!bits) return false;
+        pass_timing.mask = bits >= 64 ? UINT64_MAX : (UINT64_C(1) << bits) - 1;
+        glGenQueries(2 * TIDE_GPU_PROFILE_PENDING, pass_timing.queries);
+        pass_timing.supported = true;
+    }
+    if (!pass_timing.supported || pass_timing.active || pass_timing.count == TIDE_GPU_PROFILE_PENDING) return false;
+    const uint32_t at = (pass_timing.first + pass_timing.count) % TIDE_GPU_PROFILE_PENDING;
+    pass_timing.tokens[at] = token;
+    glQueryCounter(pass_timing.queries[2 * at], GL_TIMESTAMP);
+    pass_timing.active = true;
+    return true;
+#else
+    (void)token;
+    return false;
+#endif
+}
+
+static void gl_pass_time_end(void)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (!pass_timing.active) return;
+    const uint32_t at = (pass_timing.first + pass_timing.count) % TIDE_GPU_PROFILE_PENDING;
+    glQueryCounter(pass_timing.queries[2 * at + 1], GL_TIMESTAMP);
+    pass_timing.count++;
+    pass_timing.active = false;
+#endif
+}
+
+static double gl_pass_time_read(uint32_t *token)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (!pass_timing.count) return -1.0;
+    const uint32_t at = pass_timing.first;
+    GLint available = GL_FALSE;
+    glGetQueryObjectiv(pass_timing.queries[2 * at + 1], GL_QUERY_RESULT_AVAILABLE, &available);
+    if (!available) return -1.0;
+    GLuint64 start = 0, end = 0;
+    glGetQueryObjectui64v(pass_timing.queries[2 * at], GL_QUERY_RESULT, &start);
+    glGetQueryObjectui64v(pass_timing.queries[2 * at + 1], GL_QUERY_RESULT, &end);
+    *token = pass_timing.tokens[at];
+    pass_timing.first = (at + 1) % TIDE_GPU_PROFILE_PENDING;
+    pass_timing.count--;
+    return (double)((end - start) & pass_timing.mask) / 1000000.0;
+#else
+    (void)token;
+    return -1.0;
+#endif
+}
+
+static void gl_pass_time_reset(void)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (pass_timing.supported) glDeleteQueries(2 * TIDE_GPU_PROFILE_PENDING, pass_timing.queries);
+    memset(&pass_timing, 0, sizeof pass_timing);
 #endif
 }
 
@@ -1185,6 +1262,10 @@ static uint32_t gl_epoch(void)
 const tide_gpu tide_gpu_gl = {
     .name = GL_NAME,
     .epoch = gl_epoch,
+    .pass_time_begin = gl_pass_time_begin,
+    .pass_time_end = gl_pass_time_end,
+    .pass_time_read = gl_pass_time_read,
+    .pass_time_reset = gl_pass_time_reset,
     .time_begin = gl_time_begin,
     .time_end = gl_time_end,
     .time_read = gl_time_read,
