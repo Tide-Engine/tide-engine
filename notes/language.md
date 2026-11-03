@@ -1,5 +1,17 @@
 # Language features, as tidec builds them
 
+## Diagnostic mesh asset names (2026-11-03)
+
+Generated frames scope a diagnostic mesh-name callback alongside their existing
+view source. It matches current asset geometry handles without reading game
+values later, and restores the caller's callback after views. Static collections
+use their stable resolved geometry and glob key; skinned collections use their
+asset declaration name. Shared packed aliases report the first matching name.
+Strip-names uses existing opaque asset diagnostics and hides glob keys. No
+language semantics or new generated runtime call; hosts/game libraries rebuild
+for draw-list/mesh metadata layout. Asset-mesh and skinned-rest E2Es check names.
+
+
 ## Correction age between rendered frames (2026-11-03)
 
 Generated games with corrected fields expose `tide_local_age_views(local,

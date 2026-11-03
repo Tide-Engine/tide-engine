@@ -1,5 +1,14 @@
 # The docs site
 
+## Geometry capture guidance (2026-11-03)
+
+Debug views documents `geometry.rows`, asset/view attribution, stored versus
+submitted counts, LOD, repeated passes, coverage/identity limitations and bounded
+loss. Its Python example ranks meshes by submitted triangles per measured frame.
+No route, browser or export pipeline change. Node 24.22.1 production build
+passes, including the usual allowed unstaged playable-page 404 diagnostics.
+
+
 ## GPU pass capture guidance (2026-11-03)
 
 Debug views now documents the additive gpu_passes report object, target/order/

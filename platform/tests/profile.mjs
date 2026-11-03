@@ -84,6 +84,7 @@ function checkReport(r, total, warmup, bypass = false) {
         assert.deepEqual(r.views, []);
         assert.deepEqual(r.systems, []);
         assert.deepEqual(r.draw_diagnostics, []);
+        assert.deepEqual(r.geometry, {dropped_instances: 0, rows: []});
         return;
     }
     const names = ['Camera', 'AllVisible', 'AlreadyVisible', 'MixedCandidates'];
@@ -98,6 +99,19 @@ function checkReport(r, total, warmup, bypass = false) {
     assert.ok(system, 'system metadata is present');
     validSource(system.source, 'Advance');
     assert.ok(system.calls > 0);
+    assert.equal(r.geometry.dropped_instances, 0);
+    assert.equal(r.geometry.rows.length, 3);
+    for (const row of r.geometry.rows) {
+        assert.equal(row.mesh, 'card');
+        validSource(row.source, row.source.name);
+        assert.equal(row.lod, 0);
+        assert.equal(row.target, '0000000000000000');
+        assert.equal(row.instances, measured);
+        assert.equal(row.mesh_indices, 9);
+        assert.equal(row.vertices, measured * 9);
+        assert.equal(row.triangles, measured * 3);
+        assert.ok(row.mesh_vertices > 0);
+    }
     assert.equal(r.draw_diagnostics.length, 3);
     const expectations = {
         AllVisible: { candidates: 1, tested: bypass ? 0 : 1, rejected: 0, bypassed: bypass ? 1 : 0, submitted: 1 },

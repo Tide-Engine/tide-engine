@@ -1,5 +1,28 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Geometry profile reports (2026-11-03)
+
+The additive `geometry` object in tide.profile version 1 exports actual submitted
+cached 3D/shader mesh work, independent of timestamp support. Rows carry asset
+name, mesh/version identity, originating view source, destination, selected LOD,
+stored vertices/selected indices and submitted instances/vertices/triangles.
+Only draws actually issued by the renderer contribute; rejected/skipped draws
+and overlays do not. Repeated submissions/passes count again. Names are copied
+before game unload. Empty/unsubmitted rows are omitted. Bounded attribution loss
+is `geometry.dropped_instances`, counted at recording, not GPU submission.
+F7/F8 presentation and the existing GPU timing objects are unchanged. Reference,
+coverage limits and ranking example: docs/tools/debug-views.md.
+
+Validation: all 620 engine runtime tests pass on Windows ASan and WASI, including
+six draw-profile and twelve report tests. Focused asset-mesh, skinned-rest and
+profile-source E2Es pass native/web; native profile capture passes warmup, exact
+asset/source/geometry counts, overlays and identical measured/unmeasured PNGs.
+Renderer checks pass Vulkan/OpenGL/WebGL/WebGPU, including LOD regrouping and
+repeated submissions. Stripped asset-mesh generated C passes strict C17 syntax
+checking and hides asset names/glob keys. Production docs build passes on Node
+24.22.1. Other OSes/Android and Unity itself were not run locally.
+
+
 ## GPU pass profile reports (2026-11-03)
 
 `--profile` now installs the optional GPU pass collector after warmup and drains

@@ -484,3 +484,29 @@ TIDE_TEST(profile_report_gpu_pass_limit_keeps_existing_rows)
     free(text);
     tide_profile_report_free(&report);
 }
+
+TIDE_TEST(profile_report_geometry_serializes_exact_work_without_gpu_timing)
+{
+    tide_profile_report report = {0};
+    tide_draw_list d = {.diagnostics = &report.draw};
+    tide_profile_source source = {.name = "Boulders", .file = "rocks.tide", .line = 5};
+    d.profile_source = &source;
+    const tide_vertex3 vertices[3] = {{.position = {0, 0, 0}}, {.position = {1, 0, 0}}, {.position = {0, 1, 0}}};
+    const uint32_t indices[3] = {0, 1, 2};
+    const tide_mesh mesh = {vertices, 3, indices, 3, 1};
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_mesh_3d(&d, &mesh, tide_identity_f4x4(), NULL, TIDE_FILTER_POINT);
+    for (uint32_t i = 0; i < d.count; i++) if (d.commands[i].kind == TIDE_DRAW_MESH_3D)
+        tide_draw_geometry_submit(&d, d.commands[i].profile_geometry);
+    char *text = written(&report, &(tide_profile_report_info){0});
+    TIDE_REQUIRE(text);
+    const tide_json j = report_json(text), geometry = field(j, "geometry"), rows = field(geometry, "rows"), row = item(rows, 0);
+    TIDE_CHECK(array_count(rows) == 1 && number(field(geometry, "dropped_instances")) == 0);
+    TIDE_CHECK(text_is(field(field(row, "source"), "name"), "Boulders"));
+    TIDE_CHECK(number(field(row, "mesh_vertices")) == 3 && number(field(row, "mesh_indices")) == 3);
+    TIDE_CHECK(number(field(row, "instances")) == 1 && number(field(row, "vertices")) == 3 && number(field(row, "triangles")) == 1);
+    TIDE_CHECK(!boolean(field(field(j, "gpu"), "available")));
+    free(text);
+    tide_draw_free(&d);
+    tide_profile_report_free(&report);
+}

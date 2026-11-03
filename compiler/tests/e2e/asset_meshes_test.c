@@ -5,6 +5,7 @@
 #include "game.h"
 #include "tide/math.h"
 #include "tide/pack.h"
+#include "tide/draw_profile.h"
 #include "tide/sha256.h"
 #include "tide_test.h"
 
@@ -467,4 +468,23 @@ TIDE_TEST(mesh_assets_missing_from_the_pack_read_as_empty)
         TIDE_CHECK(draw.commands[i].kind != TIDE_DRAW_SHADED && draw.commands[i].kind != TIDE_DRAW_MESH_3D);
     }
     finish();
+}
+
+TIDE_TEST(mesh_assets_profile_resolves_named_geometry)
+{
+    start();
+    tide_draw_diagnostics diagnostics = {0};
+    draw.diagnostics = &diagnostics;
+    frame();
+    bool named = false;
+    for (uint32_t i = 0; i < diagnostics.geometry_count; i++) {
+        const tide_draw_geometry *r = &diagnostics.geometry[i];
+        TIDE_CHECK(r->source.name && strcmp(r->source.name, "(unattributed)"));
+        named |= !strcmp(r->mesh, "quad");
+        TIDE_CHECK(r->instances == 0);
+    }
+    TIDE_CHECK(named);
+    TIDE_CHECK(draw.profile_mesh_name == NULL); // Generated metadata scope is restored.
+    finish();
+    tide_draw_diagnostics_free(&diagnostics);
 }

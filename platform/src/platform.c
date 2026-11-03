@@ -1,4 +1,5 @@
 #include "tide/platform.h"
+#include "tide/draw_profile.h"
 
 #include <errno.h>
 #include <math.h>
@@ -936,6 +937,7 @@ typedef struct draw_step {
     uint32_t texture; // STEP_MESH and STEP_MESH_3D: 1 + its texture's place in the list's, or 0 for none
     uint32_t filter;  // ...and how it's sampled: tide_filter...
     uint32_t wrap;    // ...and tide_wrap
+    uint32_t profile_geometry;
     uint32_t mesh;    // STEP_MESH_3D: 1 + its mesh's place in the list's
     uint32_t camera;  // ...and 1 + its camera's matrix's place in the list's, or 0 for the first camera:
                       // a STEP_SHADED's too, for a 3D shader
@@ -4812,6 +4814,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             s->texture = c->mesh3.texture;
             s->filter = c->mesh3.filter;
             s->wrap = c->mesh3.wrap;
+            s->profile_geometry = c->profile_geometry;
             s->mesh = c->mesh3.mesh;
             s->camera = f->camera_3d;
             s->camera_data = f->camera_data;
@@ -4826,6 +4829,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             draw_step *s = add_step(c->kind == TIDE_DRAW_BLIT ? STEP_BLIT : STEP_SHADED);
             s->depth = c->depth;
             s->cull = gpu_cull(c->cull, f->mirrored);
+            s->profile_geometry = c->profile_geometry;
             s->first = c->shaded.run;
             s->camera = f->camera_3d;
             s->camera_data = f->camera_data;
@@ -5024,6 +5028,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             calls++;
             break;
         }
+        if (!over && calls != before_calls && s->profile_geometry) tide_draw_geometry_submit(list, s->profile_geometry);
         profile_pass_draw(list, s, calls - before_calls, vertices - before_vertices);
     }
     if (pass_active) end_pass();

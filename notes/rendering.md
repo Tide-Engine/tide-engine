@@ -1,5 +1,16 @@
 # The platform layer and the renderer
 
+## Mesh geometry attribution (2026-11-03)
+
+Renderer mesh/shader steps retain draw-list contribution chains and collect them
+only after issuing a GPU draw, outside overlay drawing. Counts need no timing
+query, wait or backend changes, and include repeated render-target passes and
+selected LOD indices. Shapes/text/unshaded 2D work remains aggregate-only.
+LOD fixture checks both repeated pixel-read submissions and regrouped runs on
+built-in/custom shaders. Standard-host.md and drawing.md describe reports and
+provenance lifetime/budgets.
+
+
 ## Attributed GPU pass timings (2026-11-03)
 
 Owner-approved extension of structured captures: optional independent pass

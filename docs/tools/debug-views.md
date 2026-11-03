@@ -70,6 +70,7 @@ The `semantics` object repeats the measurement definitions in the file itself.
 | `systems`, `views`, `workers` | Rows with `calls`, active `frames`, `total_ms`, `mean_call_ms`, `mean_frame_ms` and `max_frame_ms`. `mean_frame_ms` divides by **all measured frames**, including those where the row did not run. These rows have no per-source percentile distribution. |
 | `gpu` | `available` means at least one timing sample arrived. Inspect `timing.samples`; `frame_aligned` is false. Pending or unsupported results are absent, and CPU and GPU intervals overlap. |
 | `gpu_passes` | GPU pass timing rows, target/order/pixel size, shader membership and submitted work for completed samples. Check `pending`, `unmeasured` and `dropped_observations` for missing coverage; see below. |
+| `geometry` | Submitted cached mesh work by asset, originating view, target and selected LOD; see below. |
 | `render_work` | Total renderer draw calls and vertices across the measured frames. These are separate from instances retained in draw commands. |
 | `draw_diagnostics` | Mesh recording time and work counts, grouped by source, destination `target` and `camera_slot`; see below. |
 | `limits` | Dropped timing observations, draw calls and draw candidates. Nonzero values mean the affected source tables are incomplete. |
@@ -159,6 +160,52 @@ custom C hosts can attach it through `tide_platform_gpu_profile` and poll
 `tide_platform_gpu_profile_read`. JSON `--profile` export remains native desktop
 only. WebGL 2 and OpenGL ES 3 do not provide these timers. The F7 panel and stats
 continue to show their existing aggregate measurements.
+
+### Finding oversized meshes
+
+`geometry.rows` connects submitted geometry to its mesh asset and originating
+view (`source` includes the view's declaration location). For example, a boulder
+with millions of stored vertices is visible directly in `mesh_vertices`, even
+when many objects share one GPU draw. Each row contains:
+
+- `mesh`: the asset declaration name, including the glob key for static mesh
+  collections. Skinned collections use their declaration name. Aliases of the
+  same packed geometry use the first matching asset name. Generated and C meshes
+  use `(generated or C mesh)`; stripped builds use opaque asset names.
+- `identity`: an opaque mesh/version identity within this capture.
+- `target`: the destination (zero is the window), and `lod`: zero for full detail,
+  otherwise the selected level, starting at one.
+- `mesh_vertices` and `mesh_indices`: stored vertex count and selected-level index
+  count per instance. LOD levels share the full mesh's vertex buffer.
+- `instances`, `vertices` and `triangles`: actual submitted totals across the
+  measured frames. `vertices` counts submitted indices, including repeats;
+  `triangles` counts index triples. Repeated draws, shadow passes and instancing
+  count again. Frustum-rejected instances and renderer-skipped draws do not count.
+
+Rank by submitted triangles to find the largest geometry workload, then compare
+stored vertex counts to distinguish a dense asset from many small instances:
+
+```python
+frames = report["frames"]["measured"]
+for row in sorted(report["geometry"]["rows"], key=lambda r: r["triangles"], reverse=True)[:10]:
+    print(row["mesh"], row["source"], "LOD", row["lod"],
+          row["mesh_vertices"], "stored vertices,",
+          row["instances"] / frames if frames else 0, "instances/frame,",
+          row["triangles"] / frames if frames else 0, "triangles/frame")
+```
+
+This covers cached 3D meshes (including primitives and skinned meshes) and custom
+shader meshes, including shader blits. Built-in 2D shapes, text and unshaded 2D
+meshes remain in the aggregate `render_work`; geometry rows need not sum to that
+total. These work counts require no GPU timer and assign no per-mesh GPU time.
+The existing pass timings measure whole passes.
+
+Capture storage is bounded to 1,024 geometry rows and 1 MiB of copied source/asset
+text, plus 65,536 contribution records per draw list per frame. Inspect
+`geometry.dropped_instances` for work omitted when those budgets fill. It counts
+retained instances whose attribution could not be recorded, which may include
+later skipped draws. Rows without actual submissions are omitted. F7/F8 retain
+their existing presentation; this breakdown is in the `--profile` JSON capture.
 
 ### Finding unnecessary drawing work
 

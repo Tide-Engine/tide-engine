@@ -559,6 +559,8 @@ static void forget_idle_meshes(tide_draw_list *d)
 
 void tide_draw_reset(tide_draw_list *d)
 {
+    d->profile_mesh_name = NULL;
+    d->profile_link_count = 0;
     d->profile_source = NULL;
     d->profile_active = NULL;
     tide_skinned_draw_cache_reset(d);
@@ -629,6 +631,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->listed);
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     free_meshes(d);
+    free(d->profile_links);
     free(d->commands);
     free(d->text);
     free(d->vertices);
@@ -1511,6 +1514,7 @@ void tide_draw_defaults(tide_draw_list *d)
 
 void tide_draw_forget(tide_draw_list *d)
 {
+    d->profile_mesh_name = NULL;
     tide_skinned_draw_cache_reset(d);
     if (d->list_data) memset(d->list_data, 0, sizeof *d->list_data);
     if (d->listed) memset(d->listed, 0, sizeof *d->listed); // Its lists are drawn as if never seen
@@ -3100,6 +3104,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
             && (uniform_size == 0 || memcmp(d->uniforms + r->uniforms, uniforms, uniform_size) == 0)) {
             if (r->count > UINT32_MAX - count) tide_out_of_memory();
             r->count += count;
+            if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
             return;
         }
         // A listed run and one of bytes that would be one run otherwise (a list's instances and a mesh drawn
@@ -3120,6 +3125,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
                     }
                     d->instance_used = run.first + count * (uint32_t)sizeof(uint32_t);
                     r->count += count;
+                    if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
                     return;
                 }
             } else if (run.listed && r->first + (uint64_t)r->count * instance_size == run.first) {
@@ -3135,6 +3141,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
                     r->textures[texture_count] = listed;
                     r->count += count;
                     d->instance_used = r->first + r->count * (uint32_t)sizeof(uint32_t);
+                    if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
                     return;
                 }
             }
@@ -3151,6 +3158,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     c->depth = deep;
     c->cull = sided;
     c->shaded.run = d->run_count++;
+    if (d->diagnostics) tide_draw_geometry_record(d, c, mesh, count);
 }
 
 // Whether the transform that starts a 3D shader's instance mirrors its mesh.
@@ -3553,6 +3561,7 @@ static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, co
         && last->mesh3.filter == (uint16_t)filter && last->mesh3.wrap == (uint16_t)wrap
         && last->mesh3.first + last->mesh3.count == at && same_color(last->color, tint)) {
         last->mesh3.count += count;
+        if (d->diagnostics) tide_draw_geometry_record(d, last, mesh, count);
         return;
     }
     tide_draw_command *c = push(d, TIDE_DRAW_MESH_3D, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), tint);
@@ -3565,6 +3574,7 @@ static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, co
     c->mesh3.texture = texture;
     c->mesh3.filter = (uint16_t)filter;
     c->mesh3.wrap = (uint16_t)wrap;
+    if (d->diagnostics) tide_draw_geometry_record(d, c, mesh, count);
 }
 
 // A run of instances of a 3D mesh, tinted by `tint`: `through` is what they
@@ -4125,11 +4135,20 @@ void tide_draw_gather_levels(const tide_draw_list *d)
             memcpy(instances, sorting, (size_t)total * size);
             free(sorting);
         }
+        uint32_t profile[TIDE_MESH_LEVELS + 1] = {0};
+        if (d->diagnostics) for (uint32_t j = i; j < end; j++) {
+            tide_draw_command *each = &d->commands[j];
+            const uint32_t named = shaded ? d->runs[each->shaded.run].mesh : each->mesh3.mesh;
+            const uint32_t level = d->meshes[named - 1u].level <= TIDE_MESH_LEVELS ? d->meshes[named - 1u].level : 0u;
+            profile[level] = tide_draw_geometry_join(d, each->profile_geometry, profile[level]);
+            each->profile_geometry = 0;
+        }
         // A run a level in the first commands, and the rest draw nothing
         uint32_t k = i;
         for (uint32_t level = 0; level <= TIDE_MESH_LEVELS; level++) {
             if (counts[level] == 0) continue;
             tide_draw_command *each = &d->commands[k++];
+            each->profile_geometry = profile[level];
             if (shaded) {
                 tide_draw_run *r = &d->runs[each->shaded.run];
                 r->mesh = meshes[level];
@@ -4181,6 +4200,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
     const uint32_t base = tide_draw_vertices(d, from->vertices, from->vertex_count);
     for (uint32_t i = 0; i < from->count; i++) {
         const tide_draw_command *c = &from->commands[i];
+        d->profile_copying = (c->kind == TIDE_DRAW_MESH_3D || c->kind == TIDE_DRAW_SHADED || c->kind == TIDE_DRAW_BLIT)
+            && c->profile_geometry && from->diagnostics;
         if (d->plain_open && c->blend != d->place.blend) close_plain(d); // Its run is another blend's
         d->place.blend = c->blend;
         if (c->kind == TIDE_DRAW_TARGET) {
@@ -4255,6 +4276,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
                                  (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, c->cull, r, NULL,
                                  NULL);
                 free(gathered);
+                if (d->profile_copying && d->count) tide_draw_geometry_copy(d, &d->commands[d->count - 1u], from, c->profile_geometry);
                 continue;
             }
             shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count, uniforms, textures,
@@ -4270,7 +4292,9 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
         } else {
             push(d, (tide_draw_kind)c->kind, c->a, c->b, c->color);
         }
+        if (d->profile_copying && d->count) tide_draw_geometry_copy(d, &d->commands[d->count - 1u], from, c->profile_geometry);
     }
+    d->profile_copying = false;
     for (uint32_t i = 0; i <= d->target_count; i++) place_of(d, i)->blend = TIDE_BLEND_ALPHA;
     refresh(d);
     // What `from` set after the last command that drew isn't in its commands: its destinations' places have it
