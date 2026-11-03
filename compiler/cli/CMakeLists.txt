@@ -99,6 +99,24 @@ add_test(NAME tide_cli_packages
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/packages_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/packages_test.cmake")
 
+if(TIDE_NODE AND NOT TIDE_EMBED_LLVM)
+    add_executable(tide_cli_build_compiler tests/build_compiler.c sys.c)
+    target_include_directories(tide_cli_build_compiler PRIVATE .)
+    target_link_libraries(tide_cli_build_compiler PRIVATE tide_flags)
+    if(WIN32)
+        # The fake host must never create a console when the tested CLI has none.
+        if(NOT MINGW)
+            target_link_options(tide_cli_build_compiler PRIVATE "LINKER:/subsystem:windows,/entry:mainCRTStartup")
+        else()
+            target_link_options(tide_cli_build_compiler PRIVATE -Wl,--subsystem,windows,-e,mainCRTStartup)
+        endif()
+    else()
+        target_link_libraries(tide_cli_build_compiler PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME tide_cli_build_overlap COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_overlap_test.mjs"
+        "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/build overlap test")
+endif()
+
 if(TIDE_NODE)
     add_executable(tide_cli_versions_driver tests/versions_driver.c versions.c upgrade.c release.c install.c line.c sys.c unzip.c
         ../lsp/json.c ../lsp/packages.c ../lsp/unity_names.c "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/platform/src/rtc/crypto.c")

@@ -924,6 +924,7 @@ typedef struct compile_job {
     bool cpp;
     bool first;       // Started ahead of its turn: the game's own code, which takes the longest
     bool engine;      // One of the engine's files, which have one stamp for them all (compiles.engine_stamp)
+    int64_t size;     // Start larger engine files early; their compile often sets the cold build's finish time
     char *stamp_path; // The file that says what the object was made of, NULL for a file with none of its own:
     char *stamp;      // gone while the file compiles, so a compile that's cut short leaves no object that passes, and written once it has
     bool started;
@@ -938,6 +939,10 @@ typedef struct compiles {
     int cap;
     char *engine_stamp_path; // Written once each of the engine's files listed here has compiled; NULL when none is
     char *engine_stamp;
+    bool engine_queued;
+    sys_process *running[SYS_AT_ONCE];
+    int job_of[SYS_AT_ONCE];
+    int running_count;
 } compiles;
 
 static char *copy_text(const char *text)
@@ -956,7 +961,7 @@ static compile_job *queue_compile(compiles *list, const build *b, const char *so
         if (!list->items) abort();
     }
     compile_job *job = &list->items[list->count++];
-    *job = (compile_job){.cpp = is_cpp(source), .engine = engine};
+    *job = (compile_job){.cpp = is_cpp(source), .engine = engine, .size = engine ? sys_file_size(source) : 0};
     job->made[0] = copy_text(source);
     job->made[1] = copy_text(object);
     job->made[2] = format("-I%s", b->include, NULL);
@@ -982,6 +987,9 @@ static compile_job *queue_compile(compiles *list, const build *b, const char *so
 
 static void free_compiles(compiles *list)
 {
+    // Generation can fail while independent engine compiles are in flight.
+    // Join their output readers before freeing commands or returning to a watcher.
+    for (int i = 0; i < list->running_count; i++) sys_kill(list->running[i]);
     for (int i = 0; i < list->count; i++) {
         compile_job *job = &list->items[i];
         for (size_t m = 0; m < sizeof job->made / sizeof job->made[0]; m++) free(job->made[m]);
@@ -996,8 +1004,9 @@ static void free_compiles(compiles *list)
     *list = (compiles){0};
 }
 
-// The next file to start among those before `stop`: one that goes ahead of
-// its turn, or else the first in order. -1 when none is left.
+// The next file before `stop`: the game's generated code first, then larger
+// engine sources, then the remaining files in order. Diagnostics keep their
+// original order independently. -1 when none is left.
 static int next_compile(const compiles *list, const int stop)
 {
     int next = -1;
@@ -1005,9 +1014,29 @@ static int next_compile(const compiles *list, const int stop)
         const compile_job *job = &list->items[i];
         if (job->started) continue;
         if (job->first) return i;
-        if (next < 0) next = i;
+        if (next < 0 || job->size > list->items[next].size) next = i;
     }
     return next;
+}
+
+static void start_compiles(compiles *list, const int at_once, int *stop)
+{
+    while (list->running_count < at_once) {
+        const int next = next_compile(list, *stop);
+        if (next < 0) break;
+        compile_job *job = &list->items[next];
+        job->started = true;
+        if (job->stamp_path) sys_remove(job->stamp_path);
+        sys_process *process = sys_start_kept(job->a.items);
+        if (!process) {
+            job->done = true;
+            job->code = -1;
+            *stop = next;
+            continue;
+        }
+        list->running[list->running_count] = process;
+        list->job_of[list->running_count++] = next;
+    }
 }
 
 // Says what the compilers of the files that are done said, in the files'
@@ -1051,47 +1080,31 @@ static bool run_compiles(build *b, compiles *list)
         fprintf(stderr, "tide: compiling %d C/C++ files (%d jobs)\n", list->count, b->jobs > 0 ? b->jobs : 1);
         fflush(stderr);
     } else build_step("C/C++ objects are up to date");
-    sys_process *running[SYS_AT_ONCE];
-    int job_of[SYS_AT_ONCE];
-    int count = 0;
     int stop = list->count; // Files from here on aren't started: the first that failed
     int shown = 0;
     int engine_left = 0;
-    for (int i = 0; i < list->count; i++) engine_left += list->items[i].engine;
+    for (int i = 0; i < list->count; i++) {
+        engine_left += list->items[i].engine;
+        if (list->items[i].done && list->items[i].code != 0 && i < stop) stop = i;
+    }
     const int at_once = b->jobs > 0 ? b->jobs : 1;
     for (;;) {
-        while (count < at_once) {
-            const int next = next_compile(list, stop);
-            if (next < 0) break;
-            compile_job *job = &list->items[next];
-            job->started = true;
-            if (job->stamp_path) sys_remove(job->stamp_path);
-            sys_process *process = sys_start_kept(job->a.items);
-            if (!process) {
-                job->done = true;
-                job->code = -1;
-                stop = next;
-                continue;
-            }
-            running[count] = process;
-            job_of[count++] = next;
-        }
+        start_compiles(list, at_once, &stop);
         show_compiles(b, list, &shown);
-        if (count == 0) break;
+        if (list->running_count == 0) break;
         int code = 1;
         char *text = NULL;
-        const int ended = sys_wait_any(running, count, &code, &text);
+        const int ended = sys_wait_any(list->running, list->running_count, &code, &text);
         if (ended < 0) {
             fprintf(stderr, "tide: the system couldn't wait for the compiler\n");
-            for (int i = 0; i < count; i++) sys_kill(running[i]);
             stop = -1;
             break;
         }
-        const int which = job_of[ended];
+        const int which = list->job_of[ended];
         compile_job *job = &list->items[which];
-        running[ended] = running[count - 1];
-        job_of[ended] = job_of[count - 1];
-        count--;
+        list->running_count--;
+        list->running[ended] = list->running[list->running_count];
+        list->job_of[ended] = list->job_of[list->running_count];
         job->done = true;
         job->code = code;
         job->said = text;
@@ -1253,6 +1266,8 @@ static void queue_engine_file(void *user, const char *source)
 // objects were made. Once for a list.
 static void queue_engine(build *b, compiles *list)
 {
+    if (list->engine_queued) return;
+    list->engine_queued = true;
     if (b->engine_built) return;
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Objects for a library have flags of their own (config_flags): kept apart,
@@ -1276,6 +1291,7 @@ static void queue_engine(build *b, compiles *list)
     const int listed = list->count;
     folder_find(engine_src, ".c", queue_engine_file, &engine);
     free(engine_src);
+    free_files(&b->engine);
     b->engine = engine.objects;
     if (list->count == listed) {
         b->engine_built = true; // Nothing of it to compile: its stamp stands
@@ -1501,22 +1517,21 @@ static void queue_game_c(const build *b, compiles *list, c_side *out, const char
     }
 }
 
-// Compiles what a build of the game is made of and isn't compiled yet: the
+// Lists what a build of the game is made of and isn't compiled yet: the
 // engine, the game's generated C (`game_c`) and what starts it (`start_c`: its
 // launcher, or its library's side of a host) into `objects`, and the game's
 // own C and its packages', whose objects go in `c`.
-static bool compile_game(build *b, const char *gen, const char *game_c, const char *start_c, const file_list *objects,
-                         c_side *c)
+static bool queue_game(build *b, compiles *list, const char *gen, const char *game_c, const char *start_c,
+                       const file_list *objects, c_side *c)
 {
-    compiles list = {0};
-    queue_engine(b, &list);
-    if (!queue_generated(b, &list, game_c, objects->items[0], gen, true)
-        || !queue_generated(b, &list, start_c, objects->items[1], gen, false)) {
-        free_compiles(&list);
+    queue_engine(b, list);
+    if (!queue_generated(b, list, game_c, objects->items[0], gen, true)
+        || !queue_generated(b, list, start_c, objects->items[1], gen, false)) {
+        free_compiles(list);
         return false;
     }
-    queue_game_c(b, &list, c, gen);
-    return run_compiles(b, &list);
+    queue_game_c(b, list, c, gen);
+    return true;
 }
 
 // Links to the ELF shared library at `path` by its name, so the program asks
@@ -2385,13 +2400,23 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     return ok;
 }
 
-static bool generate(build *b, const char *gen, const bool layout)
+static bool generate(build *b, const char *gen, const bool layout, compiles *ahead)
 {
     const bool own_feedback = begin_build_feedback();
     build_step("resolving packages");
     const bool packages = find_packages(b->folder, &b->packages);
+    if (packages && ahead) {
+        queue_engine(b, ahead);
+        // The front end stays on this thread. Independent engine objects need
+        // no generated headers. A small head start for the largest files avoids
+        // delaying generation on dozens of process launches; leave a CPU for it.
+        int stop = ahead->count;
+        const int workers = b->jobs > 4 ? 4 : b->jobs - 1;
+        start_compiles(ahead, workers, &stop);
+    }
     build_step("compiling Tide code and assets");
     const bool ok = packages && generate_sources(b, gen, layout);
+    if (!ok && ahead) free_compiles(ahead);
     if (own_feedback) end_build_feedback();
     return ok;
 }
@@ -2497,16 +2522,18 @@ static char *build_game(const char *root, const build_options *opts, const char 
     char *gen = path_join(b.cache, "gen");
     sys_mkdirs(gen);
 
-    if (!generate(&b, gen, false)) return NULL;
+    compiles list = {0};
+    if (!generate(&b, gen, false, &list)) return NULL;
     char *main_c = path_join(gen, "main.c");
-    write_main(main_c, opts, b.name);
+    if (!write_main(main_c, opts, b.name)) { free_compiles(&list); return NULL; }
 
     char *game_c = path_join(gen, "game.c");
     file_list objects = {0};
     add_file(&objects, path_join(b.cache, "game.o"));
     add_file(&objects, path_join(b.cache, "main.o"));
     c_side c = {0};
-    if (!compile_game(&b, gen, game_c, main_c, &objects, &c) || !find_libraries(&b, &c)) return NULL;
+    if (!queue_game(&b, &list, gen, game_c, main_c, &objects, &c)
+        || !run_compiles(&b, &list) || !find_libraries(&b, &c)) return NULL;
 
     char *output;
     const char *suffix = opts->managed ? ".wasm" : opts->web ? ".html" : EXE_SUFFIX;
@@ -2584,7 +2611,10 @@ typedef struct run {
     uint32_t builds; // Made so far, game-1 to game-<builds>
     uint32_t packs;  // Packs of the game's assets written so far, pack-1 to pack-<packs>: with each build, and as a named file changes
     bool watch_folder; // dir is a watch-<n> folder, which runs one after another use (open_run)
+    const char *host; // Initial native run only: compile its host in the game's batch
 } run;
+
+static bool queue_host(run *r, compiles *list, file_list *objects);
 
 // The game's pack as the last generate left it, into the run's folder as the
 // next pack-<n>, which the host loads (platform/src/reload.c). Nothing for a
@@ -2632,7 +2662,7 @@ static uint64_t asset_stamp(const build *b)
 // again, which the running game loads: a saved image is in it at once.
 static void repack(run *r)
 {
-    if (generate(&r->b, r->gen, true)) write_pack(r);
+    if (generate(&r->b, r->gen, true, NULL)) write_pack(r);
     else fprintf(stderr, "tide: the game keeps its assets as they were\n");
 }
 
@@ -2651,7 +2681,8 @@ static char *build_path(const run *r, const uint32_t n, const char *suffix)
 // there didn't leave the same one. False after saying what's wrong.
 static bool build_library_work(run *r)
 {
-    if (!generate(&r->b, r->gen, true)) return false;
+    compiles list = {0};
+    if (!generate(&r->b, r->gen, true, &list)) return false;
     const char *suffix = r->web ? ".wasm" : LIBRARY_SUFFIX;
     char *game_c = path_join(r->gen, "game.c");
     char *library_c = path_join(r->gen, r->web ? "main.c" : "library.c");
@@ -2659,7 +2690,11 @@ static bool build_library_work(run *r)
     add_file(&objects, path_join(r->dir, "game.o"));
     add_file(&objects, path_join(r->dir, r->web ? "main.o" : "library.o"));
     c_side c = {0};
-    bool ok = compile_game(&r->b, r->gen, game_c, library_c, &objects, &c) && find_libraries(&r->b, &c);
+    file_list host_objects = {0};
+    bool ok = queue_game(&r->b, &list, r->gen, game_c, library_c, &objects, &c);
+    if (ok && r->host) ok = queue_host(r, &list, &host_objects);
+    if (ok) ok = run_compiles(&r->b, &list) && find_libraries(&r->b, &c);
+    else free_compiles(&list);
     if (ok) copy_dynamic(&c, r->dir); // Next to the host, which loads the game's library
     if (ok) place_moltenvk(&r->b, r->dir);
     const uint32_t n = r->builds + 1u;
@@ -2668,6 +2703,7 @@ static bool build_library_work(run *r)
     char *pdb = build_path(r, n, ".pdb");
     char *library = build_path(r, n, suffix);
     ok = ok && link_objects(&r->b, &objects, &c, linked, !r->web, r->b.opts->distribution || r->web ? NULL : pdb, in_place);
+    if (ok && r->host) ok = link_objects(&r->b, &host_objects, NULL, r->host, false, NULL, true);
     free_game_c(&c);
     if (ok && !in_place && !sys_rename(linked, library)) {
         fprintf(stderr, "tide: can't write %s\n", library);
@@ -2691,6 +2727,7 @@ static bool build_library_work(run *r)
     free(game_c);
     free(library_c);
     free_files(&objects);
+    free_files(&host_objects);
     free(linked);
     free(pdb);
     free(library);
@@ -2721,7 +2758,7 @@ char *tide_build_editor(const char *root, const build_options *opts)
 }
 
 // The host: tide/host.h's loop, reloading the libraries in the run's folder.
-static bool build_host(run *r, const char *program)
+static bool queue_host(run *r, compiles *list, file_list *objects)
 {
     char title[600];
     char dir[2048];
@@ -2741,18 +2778,14 @@ static bool build_host(run *r, const char *program)
              title, r->b.opts->stats ? "true" : "false", r->b.opts->stats_open ? "true" : "false",
              r->b.opts->debug_views ? "true" : "false", dir);
     char *host_c = path_join(r->gen, "host.c");
-    file_list objects = {0};
-    add_file(&objects, path_join(r->dir, "host.o"));
+    add_file(objects, path_join(r->dir, "host.o"));
     // Compiled again only when it changed, or what it's compiled with: the run's folder keeps it (clear_run_entry)
     char *flags = stamp_of(&r->b, false);
     const uint64_t h = hash_text(hash_text(hash_text(0xCBF29CE484222325ull, flags), host_c), text);
     free(flags);
-    compiles list = {0};
     bool ok = sys_write_text(host_c, text);
-    if (ok) queue_unless_stamped(&r->b, &list, host_c, objects.items[0], NULL, h, false);
-    ok = ok && run_compiles(&r->b, &list) && link_objects(&r->b, &objects, NULL, program, false, NULL, true);
+    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false);
     free(host_c);
-    free_files(&objects);
     return ok;
 }
 
@@ -2969,7 +3002,9 @@ static int run_reloading(const char *root, const build_options *opts, const char
     char file[512];
     snprintf(file, sizeof file, "%s%s", r.b.name, EXE_SUFFIX);
     char *program = path_join(r.dir, file);
-    if (!write_library(&r) || !build_library(&r) || !build_host(&r, program)) return 1;
+    r.host = program;
+    if (!write_library(&r) || !build_library(&r)) return 1;
+    r.host = NULL;
 
     args a = {0};
     arg(&a, program);
@@ -3574,7 +3609,8 @@ static int tide_unity_web(const char *root, const build_options *opts)
     char *pack = NULL;
     file_list objects = {0};
     c_side c = {0};
-    if (!generate(&b, gen, false)) goto done;
+    compiles list = {0};
+    if (!generate(&b, gen, false, &list)) goto done;
     char escaped[512];
     c_string(escaped, sizeof escaped, b.name);
     char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports + sizeof unity_web_travel_exports);
@@ -3587,7 +3623,8 @@ static int tide_unity_web(const char *root, const build_options *opts)
     if (!wrote) goto done;
     add_file(&objects, path_join(b.cache, "unity-game.o"));
     add_file(&objects, path_join(b.cache, "unity-main.o"));
-    if (!compile_game(&b, gen, game_c, main_c, &objects, &c) || !find_libraries(&b, &c)) goto done;
+    if (!queue_game(&b, &list, gen, game_c, main_c, &objects, &c)
+        || !run_compiles(&b, &list) || !find_libraries(&b, &c)) goto done;
     if (!link_objects(&b, &objects, &c, program, false, NULL, false)) goto done;
     pack = pack_of(gen);
     if (!write_unity_script(root, program, script, pack, opts->distribution)) goto done;
@@ -3599,6 +3636,7 @@ static int tide_unity_web(const char *root, const build_options *opts)
     printf("tide: built the game for Unity's WebGL player in %s\n", dir);
     code = 0;
 done:
+    free_compiles(&list);
     free_game_c(&c);
     free_files(&objects);
     free(pack);
@@ -4116,7 +4154,7 @@ static char *build_android_work(const char *root, const build_options *opts, cha
     if (!android_find_ndk(root, &ndk)) return NULL;
     char *gen = path_join(b.cache, "gen");
     sys_mkdirs(gen);
-    if (!generate(&b, gen, false)) return NULL;
+    if (!generate(&b, gen, false, NULL)) return NULL;
     char id[256];
     if (!app_id(&b, id, sizeof id)) return NULL;
     char *main_c = path_join(gen, "main.c");
@@ -4146,7 +4184,9 @@ static char *build_android_work(const char *root, const build_options *opts, cha
         file_list objects = {0};
         add_file(&objects, path_join(b.cache, "game.o"));
         add_file(&objects, path_join(b.cache, "main.o"));
-        if (!compile_game(&b, gen, game_c, main_c, &objects, &c[abi]) || !find_libraries(&b, &c[abi])) return NULL;
+        compiles list = {0};
+        if (!queue_game(&b, &list, gen, game_c, main_c, &objects, &c[abi])
+            || !run_compiles(&b, &list) || !find_libraries(&b, &c[abi])) return NULL;
         char *lib = path_join(b.cache, "libgame.so");
         if (!link_android(&b, &objects, &c[abi], lib)) return NULL;
         desc.abis[desc.lib_count] = android_abis[abi];
