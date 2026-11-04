@@ -4,7 +4,10 @@
 // code spent its samples, by function and by line, through llvm-symbolizer
 // and the program's PDB (a release build has one).
 //
-//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] -- program [args...]
+//   tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] -- program [args...]
+//
+// --main samples the program's first thread alone (a game's frames and views),
+// which disturbs it far less than suspending its every thread each round.
 //
 // Samples outside the program's own image (the system's DLLs: waits, the
 // kernel's calls) are counted as "elsewhere" per DLL. A thread that's
@@ -16,6 +19,7 @@
 #include <psapi.h>
 #include <tlhelp32.h>
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -153,6 +157,7 @@ int main(int argc, char **argv)
 {
     double hz = 5000.0;
     int top = 40, lines = 40, arg = 1;
+    bool main_only = false;
     for (; arg < argc; arg++) {
         if (strcmp(argv[arg], "--") == 0) {
             arg++;
@@ -161,8 +166,9 @@ int main(int argc, char **argv)
         if (strcmp(argv[arg], "--hz") == 0 && arg + 1 < argc) hz = atof(argv[++arg]);
         else if (strcmp(argv[arg], "--top") == 0 && arg + 1 < argc) top = atoi(argv[++arg]);
         else if (strcmp(argv[arg], "--lines") == 0 && arg + 1 < argc) lines = atoi(argv[++arg]);
+        else if (strcmp(argv[arg], "--main") == 0) main_only = true;
         else {
-            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] -- program [args...]\n");
+            fprintf(stderr, "usage: tide_sample [--hz <n>] [--top <n>] [--lines <n>] [--main] -- program [args...]\n");
             return 2;
         }
     }
@@ -206,6 +212,7 @@ int main(int argc, char **argv)
             if (snap != INVALID_HANDLE_VALUE && Thread32First(snap, &te)) {
                 do {
                     if (te.th32OwnerProcessID != pi.dwProcessId || thread_count == 256) continue;
+                    if (main_only && te.th32ThreadID != pi.dwThreadId) continue;
                     HANDLE t = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
                     if (!t) continue;
                     threads[thread_count] = te.th32ThreadID;

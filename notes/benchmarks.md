@@ -1,5 +1,35 @@
 # Benchmarks
 
+## Mount & Rifle's views, for parallel views (2026-11-04)
+
+Before building parallel views (agreed 2026-11-04: automatic, draws kept in source order; planned in three
+stages: independent views at once, then gathering per-entity views, then read-only per-entity views), the
+owner asked to measure them on Mount & Rifle. Its sources (D:/Projects/mount-and-rifle at f2176c1) were
+built with this checkout through a scratch `TIDE_EXTERNAL_DIRS` folder (`tide_add_game` over its `.tide`
+and `.c` files with Box3D and Rooms, `DEFINES PERFORMANCE_TRACE`), release, its route
+`tools/performance-route.txt` without the capture lines, seed 42, 1280x720, hidden, Vulkan, 3,230 frames,
+frames past 200 averaged. Its `PerfProbeMark` views bracket the views, Camera to Present.
+
+- **Without `--profile`**, two runs: views 1.46 / 1.34 ms a frame (DrawLand 0.39 / 0.35, DrawFlora and
+  what's between it and DrawLand 0.71 / 0.65, the rest 0.36 / 0.33), whole frame 3.83 / 3.74 ms.
+- **With `--profile`**: views 4.05 ms by the same probes (the profile's own views phase 4.83, DrawFlora
+  2.50 of it), whole frame 9.87. The profile's draw diagnostics (per-draw scopes, geometry rows, mesh
+  names) triple the views' time, so view and mesh-recording times from `--profile` overstate what a game
+  without it spends. The GPU's mean was 7.09 ms (p50 8.64).
+- **Overlapping views** (stage 1) gains little there: the heavy views run in a chain through what they
+  share (Camera writes Stage; DrawLand writes Land; DrawCompoundKits reads Land; DrawMenuMan writes Stage;
+  DrawFlora reads Land and Stage; Present writes Stage and reads Flora). Only DrawWaterSurfaces could
+  run beside DrawFlora.
+- **Culling inside one draw**: a temporary timer around `shaded_placed` (culling and recording) by the
+  call's instance count, over the run: 1-15 instances 1.15M calls 209 ms; 16-63 271K, 224 ms; 64-255 197K,
+  354 ms; 256-1,023 49K, 280 ms; 1,024-4,095 9.5K, 272 ms; none bigger. About 0.42 ms a frame in all, and
+  0.08 for draws of 1,024 instances or more: too little to share a draw's culling between threads.
+- `tide_sample --main` (`bench/profile/sample.c`) samples the program's first thread alone. Suspending
+  every thread at 1,000 Hz slowed Mount & Rifle's frames to hundreds of milliseconds; the main thread
+  alone at 2,000 Hz left it near its pace. Main-thread samples in the program's own code: `shaded_placed`
+  with its culling 19%, the heap's block hashing (lists' versions: `tide_heap_block_hash`, `in_use`,
+  `tide_block_next`) about 10%, `shaded_instances` 5%.
+
 ## Singleton list parallel loops (2026-11-04)
 
 A scratch game (not kept), release build, Windows, 12 threads, timed with

@@ -1640,13 +1640,14 @@ typedef struct tide_draw_list {
     uint8_t *level_room; // Where the instances of a draw are sorted by their levels
     uint32_t level_room_capacity;
     // What the last pick went by, kept for the draws after it through the same camera into as many pixels: a
-    // view that runs for each entity asks once a draw. `frame` + 1, the camera's place, and the pixels as bits
-    uint32_t lod_seen[4];
+    // view that runs for each entity asks once a draw. `frame` + 1, the camera's place, and the screen's width,
+    // height and pixels as bits
+    uint32_t lod_seen[5];
     uint32_t frustum_seen[3]; // Camera, destination and epoch; reset and sizes also invalidate the cached matrix
     tide_float2 frustum_screen;
     tide_draw_frustum frustum;
     bool frustum_ready;
-    float lod_view[6]; // How many times a pixel a unit of the world is, its camera's w row, and that row's length
+    float lod_view[16]; // How many times a pixel a unit of the world is; its camera's w, x and y rows; their lengths
 } tide_draw_list;
 
 // Empties the list for a new frame. It keeps its memory for the next, and the
