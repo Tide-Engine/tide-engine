@@ -1,5 +1,13 @@
 # Language features, as tidec builds them
 
+## Unread results of calls that keep their order (2026-11-04)
+
+Fix, found building Mount & Rifle with dev: a statement that is a call with a result, whose arguments
+make it keep its order (an `out` argument, a call before it), ran into a temporary and then left the
+temporary's name as the statement, `tide_called1;`, which clang refuses (`-Wunused-value`). The
+`S_EXPR` case for calls now writes `(void)` before a hoisted result that isn't void. The `Tally` case in
+`compiler/tests/e2e/out_params.tide` (`out_declared_wherever_a_call_is`) pins it.
+
 ## Generated C in two files (2026-11-04)
 
 `codegen_options.split_plumbing` (`tidec --split-plumbing`) cuts the finished generated C into `<name>.c`, the

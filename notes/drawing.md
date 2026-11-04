@@ -378,6 +378,46 @@ changed RGBA pixels. Independent cache review found no blocking issues.
 [Measured forest results and reproduction](../bench/results/forest-opt-20261102/README.md)
 record the complete optimization task; those timings do not isolate this cache.
 
+## Picks out of the camera's view (2026-11-04)
+
+Mount & Rifle's gap ("A render target's LOD pixel tolerance barely moves instanced
+props' levels"): its 3072x3072 sun image, told the viewer's camera with
+`SetLODCamera`, drew 11.07 M vertices, 7.9 M at `SetLODPixels(32..128)`, 1.52 M at
+`LOD(5)`. Cause: `pick_level` measured how far a mesh is by the pick camera's clip
+`w` (its depth) and drew whole anything at or behind `w = 0`. A shadow map covers
+props beside and behind the viewer, whose depth is near or under 0 however far out
+they are, so they drew whole at every tolerance. Not the custom vert, the
+orthographic destination (with a LOD camera only that camera counts) or a clamp.
+
+- **Rule (Provisional, spec Levels of detail):** how far is the most of `w - r*|w|`,
+  `|x| - r*(|x| + 2|w|)`, `|y| - r*(|y| + 2|w|)` and `-w - 3r*|w|`, `r` the ball's
+  radius times the transform's biggest scale and `|row|` a clip row's xyz length. A
+  ball touching the view's sides (x = ±w, y = ±w) or in front of `w = 0` gets `w`'s
+  term from the max, so every pick the camera could show is the bits it was; the
+  others only take over out of view. NaN `w` still draws whole. Around the camera
+  (every term under 0) draws whole.
+- `lod_view` carries the x and y rows and their lengths. A `fit` camera (the
+  position/rotation/fov form, recorded for a square screen) has its x row narrowed
+  by the pick screen's height/width as the renderer does, else a 16:9 window's
+  sides would count as out of view; the pick screen is `lod_screen` (the window's
+  with a LOD camera, else the target's). `tide_draw_list.lod_seen` grew to five
+  words (the width joined the key) and `lod_view` to 16 floats.
+- **Tests** (`tests/test_draw_levels.c`): `draw_levels_out_of_view_go_by_how_far_out`
+  (beside and behind, the tolerance there, a ball across the view's side keeping
+  its depth's pick to the threshold, around the camera, instances and one at a time
+  through a target with a LOD camera); behind at 100 is now the last level, not
+  whole; `draw_levels_of_draws_in_a_row_are_gathered` uses markers a tenth apart,
+  as its old ones (x 1..7 at depth 2) were out of view. Native ASan: tide_tests
+  (632), `tidec_e2e_lod`, `_lod_generated`, `draw_frustum`, `draw_settings`,
+  `render_targets`, `skinned_instanced`, `instancing`, `tide_platform_draw` (Vulkan,
+  OpenGL, Vulkan sets), `tide_render3d_lod`; WASM: tide_tests, the two LOD e2es and
+  `draw_frustum`.
+- **Measured** with a scratch game (`[LOD(2)]` ball scan, 441 instances over 200 m
+  through a custom vert, ortho 1024 targets, LOD camera at the grid's edge): vertices
+  a frame unset/8/32/128/`LOD(5)` 3.76/3.51/3.48/3.48/0.37 M before, 0.34/0.13/0.12/
+  0.12/0.37 M after (the ball's chain ends there). The game itself wasn't rebuilt
+  against dev.
+
 ## Asset tolerance multiplies draw tolerance (2026-10-31)
 
 Each leveled mesh retains `lod_multiplier` from `tide_mesh_levels.multiplier`,
