@@ -66,6 +66,45 @@ Provisional; docs `multiplayer/matches.md`, Bans).
   (they are requests, like Kick). The lobby and rooms packages show a
   `Banned` message as they do a kick's.
 
+## Commands holding lists of values (2026-11-04)
+
+The owner asked for the gap mount-and-rifle met on nightly.32 to be closed: `command Enlist { List<int> attributes; }`
+was refused ("a command can't hold a list, map, set or grid"), and the game sent `int[6]`. A command now holds a
+`List<T>` of any fixed-size value, in a field, a struct, a `T?` or an array; the picks are Provisional in
+`docs/spec.md`, Commands. What's built, and what code relies on:
+
+- **The checker** (`check_fields` in `compiler/src/check.c`): `holds_map_or_grid` refuses a map, set or grid anywhere in
+  a command, lists' elements included ("a command can't hold a map, set or grid"); `holds_unsized_list` refuses a list
+  whose elements hold text or a list, map, set or grid ("a command's list can't hold text or other lists"), with a note
+  of what can. `[Clamp]`, `[Min]` and `[Max]` take a `List<T>` field as they take an array, bounding each element
+  (`check_field_attributes`, `check_bound`).
+- **The wire** (`gen_bits_list` in `compiler/src/codegen.c`, which `gen_bits` calls for a list of anything but bytes):
+  the count as a varint, then each element through `gen_bits` as a field of its type, unaligned. `List<byte>` keeps its
+  aligned raw path. Writing copies each element (`tide_list_at`) into a one-member struct `tide_element<k>` and shadows
+  `in` with it, so `gen_bits`'s `in->` paths work unchanged; reading refuses a count over `TIDE_COMMAND_LIMIT` or over
+  the bits left divided by the fewest an element takes (`bits_least`), before `tide_list_resize` makes the scratch
+  list, then reads each element into a zeroed wrapper, repairs it (`gen_repair_value` against the element type's
+  default, `gen_default`; for an enum with no member 0, its first member) and copies it in. So a hostile count costs at
+  most about eight times the command's own bytes of scratch (bools: a bit each), released with the scratch mark both
+  `check_command` and `command` take. The dispatch's `gen_bounds` loops a list's elements (`gen_bounds_list`) for a
+  bound on the field and for a struct element's bounded fields (`type_has_bounds`).
+- **Limits and room**: any list makes a command `TIDE_COMMAND_LIMIT` at most (`command_limit`, `decl_has_list`) and so
+  chunked over `TIDE_COMMAND_BYTES`, as `List<byte>` was; the session needed nothing. Local `Send` sizes its buffer
+  with `tide_command_room` (generated only in games with list commands) for every list in the value, through structs,
+  `T?`s and arrays (`gen_command_rooms`, each element's most bytes from `bits_most`, which runs `gen_bits` into a
+  throwaway buffer). The embed path (`tide_embed_command`) uses the same rooms; its `tide_embed_command_list` already
+  took plain lists. Arrays of `List<byte>` used to be left out of the room and would have aborted at send.
+- **Not built**: lists of text (each element's text would need its own bound and room; `string[N]` is the fixed form)
+  and nested lists, maps and sets (maps' entries would need a wire form of keys and values; two lists do it now). A
+  C# `TideCommandWriter` list of non-byte elements is untested from Unity.
+- **Tests**: `compiler/tests/e2e/command_lists` (ints with an element bound, structs with defaults, a bounded field,
+  an enum and a vector, floats, enums, entities, a list in a struct beside text, a `List<int>?`, `List<int>[2]`; every
+  truncation and a trailing byte refused; a hand-written command with NaN, infinity, unknown enums and out-of-bounds
+  values repaired; counts the bits can't hold and `UINT32_MAX` refused; 200,000 ints chunked through a lossy loopback
+  session to the server's and the client's verified world), natively and on the web; `compiler/tests/errors/
+  command_list_payload`, `command_list_of_lists`, `command_list_of_maps`, `command_map_payload`, `command_set_payload`,
+  `optional_field_command_list`.
+
 ## Predicting near the player alone (2026-11-04)
 
 The owner's ask: a client predicts what's near its player and leaves what's far
@@ -1545,7 +1584,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **A command's ordering is its type's, per player** (agreed 2026-10-06; built the same day, the picks Provisional in `docs/spec.md`, Commands): `[Channel(Channels.Uploads)]` on a `command`, with an enum member of the game's, puts it in a channel of its own, in order among that channel's commands and against nothing else; `[Unordered]` gives it no order at all. The server still picks the tick, and every handler runs in the tick's end queue in the server's order. What's built, and what code relies on:
   - **Channels are numbered in the world's state, not named there:** 0 is the default, and the members `[Channel]` names are 1 to N in the order of their enums' declarations and then their members (`number_channels` in `compiler/src/check.c`, `program.channels`; `decl.channel`, `decl.unordered`), 63 of the game's own at most (`TIDE_COMMAND_CHANNELS_MOST`). `tide_game.command_channels` says how many (0 for 1), and `TIDE_COMMAND_UNORDERED` (`UINT32_MAX`) is the unordered ones' channel on every contract that takes one. The channel is never on the wire: the command's type is in its first 16 bits, and `check_command` says the type's channel, so a client can't put a command in another's.
   - **The sequence state is the hidden `tide_command_state` singleton** (`compiler/src/codegen.c`): `seq<p>` for the default channel, as it was, then `seq<p>_<k>` for channel k, then, only in a game with an unordered command, `top<p>` (the highest id applied) and `seen<p>` (a `long`: a bit for each of the `TIDE_COMMAND_WINDOW` ids down from the top). So a game with no channel attributes has the world layout it had. `tide_game.command_applied(world, player, id)` reads the window (NULL in a game with no unordered command): an id older than the window counts as applied, which is why a client never has more than 32 pending unordered ids, allocated in sequence from the top. An unordered command's id goes in `sequence`'s place everywhere.
-  - **A `List<byte>` field is a file's bytes** (`type_has_bytes`): on the wire as a varint count and then the bytes on a whole byte (`tide_command_align`), packed into room the list's count sizes, through `tide_list_flatten`, and read into a scratch list (`tide_list_from`) that `tide_own_` copies into the match's heap with the rest of the event. A command with one is `TIDE_COMMAND_LIMIT` (4 MiB) packed bytes at most, any other `TIDE_COMMAND_BYTES` (1024) as before; the error for any other list stays.
+  - **A `List<byte>` field is a file's bytes** (`type_has_bytes`): on the wire as a varint count and then the bytes on a whole byte (`tide_command_align`), packed into room the list's count sizes, through `tide_list_flatten`, and read into a scratch list (`tide_list_from`) that `tide_own_` copies into the match's heap with the rest of the event. A command with one is `TIDE_COMMAND_LIMIT` (4 MiB) packed bytes at most, any other `TIDE_COMMAND_BYTES` (1024) as before. Lists of other values came later (Commands holding lists of values, 2026-11-04, at the top).
   - **Over `TIDE_COMMAND_BYTES` a command goes in chunks** (`engine/src/session.c`: `MSG_UPLOAD` up, `MSG_DOWNLOAD` down, `PROTOCOL` 12): `CHUNK` bytes each, `COMMAND_CHUNKS_PER_UPDATE` (16) an update each way, under the inputs and frames, each sent again after `resend_after` without an acknowledgement. A client uploads one at a time (`send_upload`), the server acknowledges in its SERVER datagrams (`UPLOAD_PART`, the chunks it has, as a CLIENT says a world's; `UPLOAD_WHOLE`, with the download's number once it's published) and takes the whole command into the player's queue as any other (`take_command`). **No tick waits for a transfer:** when a big command's turn comes, the server publishes it (`publish_command`, `published`: `PUBLISHED_MOST` kept, until their tick's frame is gone), sends it down to each player (`send_downloads`, acknowledged in CLIENTs after what the world lacks), and puts it in a tick only once every player in the match has it (`everyone_has`; a player being sent a world, or catching up, is sent it with the ticks it lacks instead, as `needs_published` says by the tick of the world it was sent). The frame then names the download (`size` over `TIDE_COMMAND_BYTES`, then its number) instead of carrying the bytes; a client's `pending_frame` reads the names once its pieces are there (`read_frame_names`) and is complete once those downloads are whole (`frame_complete`). Its sender keeps the bytes and, told the number, says it has the download (`note_download`), so nothing goes down to it. The wire adds nothing for a game without commands (`g->command` guards both sides), so `net_a_match_costs_little_to_keep_going` stands as pinned.
   - **The local outbox** is `tide_outgoing_item`s (a malloc'd buffer, its size and channel) in the local state, `TIDE_COMMAND_OUTBOX` of them (32 a channel, the unordered ones counted as one), packed after the struct in `tide_local_pack` (each checked again as it's unpacked) and freed by `tide_local_free` and `tide_local_disconnected`.
   - Generated C: a game with no commands generates the C it did, byte for byte (old and new tidec over every game's source list); one with commands differs only in the contract's signatures, the outbox and `TIDE_COMMAND_CHANNELS` in its header, and so in its hash, which is one hash, not a layout change.

@@ -330,6 +330,8 @@ tide_e2e_test(commands)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)
 set_tests_properties(tidec_e2e_commands_channels PROPERTIES TIMEOUT 300)
+# Commands holding lists of ints, floats, enums, entities and structs: packed, repaired, bounded, refused, and in chunks
+tide_e2e_test(command_lists)
 add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/command_schema"
@@ -510,6 +512,15 @@ if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some
 endif()
 tide_e2e_test(cpp SOURCES e2e/cpp.tide e2e/cpp_code.cpp) # ...and from its C++ file, with no C++ runtime
 tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, and T?
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    # The names `is` gives must be the debugger's typed list wrappers, as other list locals are.
+    tide_add_game(tidec_e2e_fails_visualizers VISUALIZERS
+        SOURCES e2e/fails.tide e2e/fails_c.c NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fails_test.c")
+    target_compile_options(tidec_e2e_fails_visualizers PRIVATE -g) # VISUALIZERS needs debug info in every preset
+    target_include_directories(tidec_e2e_fails_visualizers PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_fails_visualizers COMMAND tidec_e2e_fails_visualizers)
+endif()
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
 tide_e2e_test(settings SOURCES e2e/settings.tide e2e/settings_more.tide) # Several blocks, in two files, are one list
 tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What ticks and frames say to a host's profiler

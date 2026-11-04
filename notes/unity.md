@@ -1031,7 +1031,8 @@ a GameObject as a command's target): "yeah I think that makes sense yes".
   (Room live, a non-ASCII `Say` comes back in `Extras`, `Paint` sent to the ball's GameObject colors that ball).
 
 Gaps then, bridged the same day (below): events' and singletons' map, grid and heap-holding list fields left out
-of the classes; a component's struct fields Tide literals in Play. (Commands hold lists of bytes alone: Tide's rule.)
+of the classes; a component's struct fields Tide literals in Play. (Commands held lists of bytes alone then: Tide's rule. Since 2026-11-04 they hold lists of any plain value,
+`notes/netcode.md`, Commands holding lists of values; `tide_embed_command_list` takes them, untested from C#.)
 
 ### Every type in C# (2026-10-22)
 

@@ -115,7 +115,7 @@ Everything is sent again until it's acknowledged. Nothing waits on a reliable st
 
 [Commands](../game/commands.md) have a pending queue separate from tick inputs. The server schedules each received command into its next ticks and records its order. A command stays pending until a verified world confirms its sequence; duplicates are ignored. Per-player sequence state is part of the world and follows snapshots and host migration: a sequence for each [channel](../game/commands.md#ordering-channels) a game's commands are in, and a window of the unordered ids applied. Command handlers use ordinary guard clauses to check the sender's permissions and the payload against match state.
 
-A command too big for a datagram (one with a `List<byte>`, up to 4 MiB) uploads in 1000-byte chunks, 16 an update, acknowledged and resent under the inputs. In full-world games the server then distributes it before scheduling its tick, whose frame names the transfer. Visibility-enabled games keep command execution server-only and send permitted state consequences instead; a command transfer is not a public broadcast channel.
+A command too big for a datagram (one with a list, up to 4 MiB) uploads in 1000-byte chunks, 16 an update, acknowledged and resent under the inputs. In full-world games the server then distributes it before scheduling its tick, whose frame names the transfer. Visibility-enabled games keep command execution server-only and send permitted state consequences instead; a command transfer is not a public broadcast channel.
 
 ## Transports
 

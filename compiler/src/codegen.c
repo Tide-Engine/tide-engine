@@ -501,6 +501,35 @@ static bool commands_have_bytes(const program *prog)
     return false;
 }
 
+// Whether a value of type `t` is or holds a list: in a command, one that goes
+// over TIDE_COMMAND_BYTES, in chunks, a List<byte> or a list of other values
+static bool command_has_list(const type t)
+{
+    if (t.kind == TY_LIST) return true;
+    if (t.kind == TY_ARRAY) return command_has_list(t.decl->fields.items[0].type);
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (command_has_list(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+static bool decl_has_list(const decl *d)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        if (command_has_list(d->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+static bool commands_have_lists(const program *prog)
+{
+    for (int k = 0; k < prog->command_types.count; k++) {
+        if (decl_has_list(prog->command_types.items[k])) return true;
+    }
+    return false;
+}
+
 static bool commands_unordered(const program *prog)
 {
     for (int k = 0; k < prog->command_types.count; k++) {
@@ -510,10 +539,10 @@ static bool commands_unordered(const program *prog)
 }
 
 // The limit a command's packed bytes are checked against: one that holds a
-// file's bytes goes in chunks, up to TIDE_COMMAND_LIMIT
+// list (a file's bytes, or other values) goes in chunks, up to TIDE_COMMAND_LIMIT
 static const char *command_limit(const decl *d)
 {
-    return decl_has_bytes(d) ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
+    return decl_has_list(d) ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
 }
 
 // A command's channel, as generated C names it (see tide/session.h)
@@ -7103,8 +7132,8 @@ static void hoist_unwrap(gen *g, expr *e)
         else sb_printf(o, "%sbool %s = !%s.ok && %s.error == %s;\n", is_const, name.data, r, r, enum_member_cname(e->type_decl, e->enum_member));
         task_declare(g, name.data, (type){TY_BOOL, NULL});
         if (e->binding) {
-            line(g, o, "if (%s) %s = %s.%s;", name.data, local_cname(g, e->binding->name), r,
-                 e->looks_for == IS_VALUE ? "value" : "error");
+            line(g, o, "if (%s) %s%s = %s.%s;", name.data, local_cname(g, e->binding->name),
+                 typed_list_local(g, e->binding) ? ".list" : "", r, e->looks_for == IS_VALUE ? "value" : "error");
         }
         return;
     }
@@ -7155,10 +7184,11 @@ static void declare_bindings(gen *g, const expr *cond)
     if (cond->kind == E_IS && cond->binding) {
         const stmt *b = cond->binding;
         const char *name = local_cname(g, b->name);
+        const bool typed = typed_list_local(g, b); // A list is its debugger struct, as other list locals are
         indent(g, &g->c);
-        sb_printf(&g->c, "%s %s = ", c_type(b->type), name);
+        sb_printf(&g->c, "%s %s = %s", typed ? typed_list_cname(b->type) : c_type(b->type), name, typed ? "{" : "");
         gen_default(g, &g->c, b->type);
-        sb_put(&g->c, ";\n");
+        sb_put(&g->c, typed ? "};\n" : ";\n");
         line(g, &g->c, "(void)%s;", name);
         task_declare(g, name, b->type);
     }
@@ -17635,6 +17665,41 @@ static bool array_holds_struct(type t)
     return t.kind == TY_STRUCT;
 }
 
+static bool is_bound(const attribute *a)
+{
+    return str_eq_c(a->name, "Clamp") || str_eq_c(a->name, "Min") || str_eq_c(a->name, "Max");
+}
+
+// Whether a value of type `t` has a field with a [Clamp], [Min] or [Max]: in
+// its structs, their arrays and lists
+static bool type_has_bounds(const type t)
+{
+    if (t.kind == TY_ARRAY || t.kind == TY_LIST) return type_has_bounds(t.decl->fields.items[0].type);
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const field *f = &t.decl->fields.items[i];
+        for (int k = 0; k < f->attributes.count; k++) {
+            if (is_bound(&f->attributes.items[k])) return true;
+        }
+        if (type_has_bounds(f->type)) return true;
+    }
+    return false;
+}
+
+// A loop over the elements of a command's list, `path` (C), for gen_bounds:
+// `path` becomes the element, and `*et` its type. One level, to close.
+static int gen_bounds_list(gen *g, char *path, const size_t size, type *et, const int depth)
+{
+    const type element = list_elem(et->decl);
+    const char *ctype = elem_ctype(element);
+    line(g, &g->c, "for (int32_t tide_b%d = 0; tide_b%d < tide_list_count(%s); tide_b%d++) {", depth, depth, path, depth);
+    g->indent++;
+    line(g, &g->c, "%s *tide_v%d = tide_list_at_mut(%s, tide_b%d, sizeof(%s));", ctype, depth, path, depth, ctype);
+    snprintf(path, size, "(*tide_v%d)", depth);
+    *et = element;
+    return 1;
+}
+
 // The fields' [Clamp], [Min] and [Max] in `d`, the structs it holds included.
 // `in` is the C access to the value, ending in '.'.
 static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
@@ -17647,11 +17712,15 @@ static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
             if (!str_eq_c(a->name, "Clamp") && !str_eq_c(a->name, "Min") && !str_eq_c(a->name, "Max")) continue;
             // [Min(x)] is "at least x": the larger of the two, and [Max] the reverse.
             const char *fn = str_eq_c(a->name, "Clamp") ? "clamp" : str_eq_c(a->name, "Min") ? "max" : "min";
-            // An array's bound is each element's, through every level
+            // An array's bound is each element's, through every level, and a
+            // list's is each of its elements' (a command's)
             type et = f->type;
             char path[256];
             snprintf(path, sizeof path, "%s%s", in, field_cname(f));
             int levels = 0;
+            if (et.kind == TY_LIST) {
+                levels = gen_bounds_list(g, path, sizeof path, &et, depth);
+            }
             for (; et.kind == TY_ARRAY; et = et.decl->fields.items[0].type, levels++) {
                 const int index = depth + levels;
                 line(g, o, "for (int32_t tide_b%d = 0; tide_b%d < %d; tide_b%d++) {", index, index, et.decl->array_length, index);
@@ -17675,11 +17744,13 @@ static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
             char inner[256];
             snprintf(inner, sizeof inner, "%s%s.", in, field_cname(f));
             gen_bounds(g, f->type.decl, inner, depth);
-        } else if (f->type.kind == TY_ARRAY && array_holds_struct(f->type)) {
+        } else if ((f->type.kind == TY_ARRAY && array_holds_struct(f->type))
+                   || (f->type.kind == TY_LIST && array_holds_struct(list_elem(f->type.decl)) && type_has_bounds(list_elem(f->type.decl)))) {
             type et = f->type;
             char path[256];
             snprintf(path, sizeof path, "%s%s", in, field_cname(f));
             int levels = 0;
+            if (et.kind == TY_LIST) levels = gen_bounds_list(g, path, sizeof path, &et, depth);
             for (; et.kind == TY_ARRAY; et = et.decl->fields.items[0].type, levels++) {
                 const int index = depth + levels;
                 line(g, o, "for (int32_t tide_b%d = 0; tide_b%d < %d; tide_b%d++) {", index, index, et.decl->array_length, index);
@@ -21794,6 +21865,114 @@ static bool write_name_map(const gen *g)
 // `base`, which every machine has (the last one, as the world keeps it).
 typedef enum bits_mode { BITS_WRITE, BITS_READ, BITS_WRITE_DELTA, BITS_READ_DELTA } bits_mode;
 
+static void gen_bits(gen *g, const char *at, type t, bits_mode mode, uint32_t *bits);
+
+// The fewest bits gen_bits packs a value of type `t` into: what bounds how
+// many elements a command's list can say it has, against the bits left
+static uint32_t bits_least(const type t)
+{
+    switch (t.kind) {
+    case TY_BOOL: return 1;
+    case TY_BYTE: return 8;
+    case TY_CHAR: return 21;
+    case TY_FLOAT: return 32;
+    case TY_DOUBLE: return 64;
+    case TY_INT:
+    case TY_LONG:
+    case TY_PLAYER: return 8; // A varint's one group
+    case TY_ENTITY:
+    case TY_LOCAL_ENTITY: return 16;
+    case TY_ENUM: return t.decl->width == 2 ? 16 : 8;
+    case TY_QUATERNION:
+    case TY_COLOR:
+    case TY_RECT: return 128;
+    case TY_ARRAY: return bits_least(t.decl->fields.items[0].type) * (uint32_t)t.decl->array_length;
+    default: break;
+    }
+    if (type_dim(t) >= 2) return bits_least(type_scalar(t)) * (uint32_t)type_dim(t);
+    if (matrix_dim(t) > 0) return bits_least(matrix_column(t)) * (uint32_t)matrix_dim(t);
+    if (is_stored_optional(t)) return 1;
+    if (t.kind != TY_STRUCT) return 0;
+    uint32_t least = 0;
+    for (int i = 0; i < t.decl->fields.count; i++) least += bits_least(t.decl->fields.items[i].type);
+    return least;
+}
+
+// Packs or unpacks a command's list of values other than bytes, `in->` `at`:
+// its count as a varint, then each element as gen_bits packs a field of its
+// type. An element is copied into a struct of its own (`in`, within the loop),
+// which the bits go to and from, and read ones are repaired as a command's
+// fields are (NaN and infinite floats, enums and chars no member or character
+// has: the element type's defaults). A count the bits left can't hold is
+// refused before the list is made, so a list from outside takes no more of the
+// scratch area than its bits could fill.
+static void gen_bits_list(gen *g, const char *at, const type t, const bits_mode mode)
+{
+    sb *o = &g->c;
+    static int depth;
+    const int k = depth++;
+    const type element = list_elem(t.decl);
+    const char *ctype = elem_ctype(element);
+    uint32_t ignored = 0;
+    if (mode == BITS_WRITE) {
+        line(g, o, "{ const int32_t n = tide_list_count(in->%s);", at);
+        line(g, o, "  if (n < 0 || (uint32_t)n > TIDE_COMMAND_LIMIT) return 0;");
+        line(g, o, "  tide_bits_put_varint(&b, (uint32_t)n);");
+        line(g, o, "  const tide_list tide_list%d = in->%s;", k, at);
+        line(g, o, "  for (int32_t tide_e%d = 0; tide_e%d < n && !b.overflow; tide_e%d++) {", k, k, k);
+        g->indent++;
+        line(g, o, "  struct tide_element%d { %s e; } tide_w%d;", k, ctype, k);
+        line(g, o, "  memcpy(&tide_w%d.e, tide_list_at(tide_list%d, tide_e%d, sizeof(%s)), sizeof(%s));", k, k, k, ctype, ctype);
+        line(g, o, "  const struct tide_element%d *in = &tide_w%d;", k, k);
+        g->indent++;
+        gen_bits(g, "e", element, BITS_WRITE, &ignored);
+        g->indent -= 2;
+        line(g, o, "  }");
+        line(g, o, "  if (b.overflow) return 0; }");
+    } else {
+        const uint32_t least = bits_least(element);
+        line(g, o, "{ const uint32_t n = tide_bits_get_varint(&b);");
+        if (least) {
+            line(g, o, "  if (b.overflow || n > TIDE_COMMAND_LIMIT || n > (b.capacity * 8u - b.bit) / %uu) return false;", least);
+        } else {
+            line(g, o, "  if (b.overflow || n > TIDE_COMMAND_LIMIT) return false;");
+        }
+        line(g, o, "  tide_list_resize(&in->%s, (int32_t)n, sizeof(%s), TIDE_IN_SCRATCH);", at, ctype);
+        line(g, o, "  if ((uint32_t)tide_list_count(in->%s) != n) return false;", at);
+        line(g, o, "  const tide_list tide_list%d = in->%s;", k, at);
+        line(g, o, "  for (uint32_t tide_e%d = 0; tide_e%d < n; tide_e%d++) {", k, k, k);
+        g->indent++;
+        line(g, o, "  struct tide_element%d { %s e; } tide_w%d;", k, ctype, k);
+        line(g, o, "  memset(&tide_w%d, 0, sizeof tide_w%d);", k, k);
+        line(g, o, "  {");
+        g->indent++;
+        line(g, o, "  struct tide_element%d *in = &tide_w%d;", k, k);
+        gen_bits(g, "e", element, BITS_READ, &ignored);
+        // The element type's defaults, as a field of its type has them
+        indent(g, o);
+        sb_printf(o, "  const %s tide_d%d = ", ctype, k);
+        bool zero = element.kind != TY_ENUM;
+        for (int i = 0; !zero && i < element.decl->members.count; i++) zero = element.decl->members.items[i].number == 0;
+        if (zero) gen_default(g, o, element);
+        else sb_printf(o, "%s", enum_member_cname(element.decl, &element.decl->members.items[0]));
+        sb_printf(o, ";\n");
+        line(g, o, "  (void)tide_d%d;", k);
+        char def[32];
+        snprintf(def, sizeof def, "tide_d%d", k);
+        g->indent++;
+        gen_repair_value(g, "in->e", def, element);
+        g->indent -= 2;
+        line(g, o, "  }");
+        line(g, o, "  if (b.overflow) return false;");
+        line(g, o, "  memcpy(tide_list_at_mut(tide_list%d, (int32_t)tide_e%d, sizeof(%s)), &tide_w%d.e, sizeof(%s));", k, k, ctype, k,
+             ctype);
+        g->indent--;
+        line(g, o, "  }");
+        line(g, o, "}");
+    }
+    depth--;
+}
+
 // Packs or unpacks one value of an input, `in->` `at`, as bits: bools take
 // one, floats 32, chars 21, byte and ushort enums 8 and 16, ints, other enums, players
 // and entities a varint (zig-zagged where it can be negative), which small
@@ -21899,7 +22078,9 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
         *bits += one * (uint32_t)t.decl->array_length;
         return;
     }
-    if (t.kind == TY_LIST && mode == BITS_WRITE) { // A List<byte>: its count, then its bytes on a whole byte
+    if (t.kind == TY_LIST && list_elem(t.decl).kind != TY_BYTE) { // A list of other values: its count, then each element
+        gen_bits_list(g, at, t, mode);
+    } else if (t.kind == TY_LIST && mode == BITS_WRITE) { // A List<byte>: its count, then its bytes on a whole byte
         line(g, o, "{ tide_command_align(&b);");
         line(g, o, "  const int32_t n = tide_list_count(in->%s);", at);
         line(g, o, "  if (n < 0 || (uint32_t)n > TIDE_COMMAND_LIMIT) return 0;");
@@ -22521,19 +22702,81 @@ static void gen_world_copy(gen *g)
 // systems, and defaults are constants.
 // Commands keep their wire bytes outside the match, and decode them only at
 // the authenticated session boundary. Handlers use the ordinary event queue.
+// The most bits gen_bits packs a value of type `t` into, as it counts them
+// while it writes the code, which goes nowhere here
+static uint32_t bits_most(gen *g, const type t)
+{
+    const sb kept = g->c;
+    const int indent = g->indent;
+    g->c = (sb){0};
+    uint32_t bits = 0;
+    gen_bits(g, "e", t, BITS_WRITE, &bits);
+    g->c = kept;
+    g->indent = indent;
+    return bits;
+}
+
+// The room a command's value `at` (C, of type `t`) needs on the wire beyond
+// TIDE_COMMAND_BYTES: its lists', through its structs and arrays, each a count
+// and its elements' most bytes, added to `room` (tide_command_room)
+static void gen_command_room(gen *g, sb *o, const type t, const char *at, const char *pad)
+{
+    if (!command_has_list(t)) return;
+    if (t.kind == TY_LIST) {
+        const type element = list_elem(t.decl);
+        const uint32_t per = element.kind == TY_BYTE ? 1u : (bits_most(g, element) + 7u) / 8u;
+        sb_printf(o, "%sroom = tide_command_room(room, %s, %uu);\n", pad, at, per);
+    } else if (t.kind == TY_ARRAY) {
+        static int depth;
+        const int k = depth++;
+        char inner[512], deeper[64];
+        snprintf(inner, sizeof inner, "%s.at[tide_q%d]", at, k);
+        snprintf(deeper, sizeof deeper, "%s    ", pad);
+        sb_printf(o, "%sfor (int32_t tide_q%d = 0; tide_q%d < %d; tide_q%d++) {\n", pad, k, k, t.decl->array_length, k);
+        gen_command_room(g, o, t.decl->fields.items[0].type, inner, deeper);
+        sb_printf(o, "%s}\n", pad);
+        depth--;
+    } else if (t.kind == TY_STRUCT) {
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            char inner[512];
+            snprintf(inner, sizeof inner, "%s.%s", at, field_cname(f));
+            gen_command_room(g, o, f->type, inner, pad);
+        }
+    }
+}
+
+static void gen_command_rooms(gen *g, sb *o, const decl *d, const char *value, const char *pad)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        char at[512];
+        snprintf(at, sizeof at, "%s.%s", value, field_cname(f));
+        gen_command_room(g, o, f->type, at, pad);
+    }
+}
+
 static void gen_commands_api(gen *g)
 {
     const program *prog = g->prog;
     if (!prog->command_types.count) return;
     sb *o = &g->c;
     const bool bytes = commands_have_bytes(prog);
+    const bool lists = commands_have_lists(prog);
     const bool unordered = commands_unordered(prog);
-    const bool text = prog->uses_heap || prog->uses_text || bytes;
-    const char *most = bytes ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
+    const bool text = prog->uses_heap || prog->uses_text || lists;
+    const char *most = lists ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
     sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size, uint32_t *channel);\n\n");
     if (bytes) {
         sb_put(o, "// A file's bytes go on whole bytes of the wire: the bits before them are padded\n"
                   "TIDE_HELPER void tide_command_align(tide_bits *b)\n{\n    b->bit = (b->bit + 7u) & ~7u;\n}\n\n");
+    }
+    if (lists) {
+        sb_put(o, "// Room for a command's list on the wire: its count, and `per` bytes an element at the most. Past the\n"
+                  "// limit, a command is refused as it's written, so room stops there.\n"
+                  "TIDE_HELPER uint32_t tide_command_room(const uint32_t room, const tide_list l, const uint32_t per)\n{\n"
+                  "    const uint64_t all = (uint64_t)room + 8u + (uint64_t)(uint32_t)tide_list_count(l) * per;\n"
+                  "    return all > TIDE_COMMAND_LIMIT + TIDE_COMMAND_BYTES ? TIDE_COMMAND_LIMIT + TIDE_COMMAND_BYTES : (uint32_t)all;\n}\n\n");
     }
     sb_put(o, "// Command strings must be bounded, well-formed UTF-8, without embedded NULs.\n"
               "TIDE_HELPER bool tide_command_utf8(const uint8_t *s, uint32_t size)\n{\n"
@@ -22581,14 +22824,7 @@ static void gen_commands_api(gen *g)
         sb_printf(o, "    if (waiting >= TIDE_COMMAND_PENDING) { fputs(\"tide: too many unsent commands (" STR_FMT "); wait for the session to send them\\n\", stderr); abort(); }\n", STR_ARG(diagnostic_decl(g, d, "command")));
         // Room for it: a datagram's worth, and the bytes of its lists
         sb_put(o, "    uint32_t room = TIDE_COMMAND_BYTES;\n");
-        path_list paths = {0};
-        text_paths(d, "", &paths);
-        for (int k = 0; k < paths.count; k++) {
-            const heap_path *hp = &paths.items[k];
-            if (hp->list && type_has_bytes((type){TY_LIST, (decl *)hp->list})) {
-                sb_printf(o, "    room += 8u + (uint32_t)tide_list_count(value.%s);\n", hp->path);
-            }
-        }
+        gen_command_rooms(g, o, d, "value", "    ");
         sb_put(o, "    uint8_t *bytes = malloc(room);\n    if (!bytes) tide_out_of_memory();\n");
         sb_printf(o, "    const uint32_t size = tide_write_command_%s(target, value, bytes, room);\n", name);
         sb_printf(o, "    if (!size || !tide_game_check_command(bytes, size, NULL)) { fputs(\"tide: %s" STR_FMT " exceeds %s or contains invalid text\\n\", stderr); abort(); }\n", g->opts->strip_names ? "" : "command ", STR_ARG(diagnostic_decl(g, d, "command")), command_limit(d));
