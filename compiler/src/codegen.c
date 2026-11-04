@@ -7103,8 +7103,8 @@ static void hoist_unwrap(gen *g, expr *e)
         else sb_printf(o, "%sbool %s = !%s.ok && %s.error == %s;\n", is_const, name.data, r, r, enum_member_cname(e->type_decl, e->enum_member));
         task_declare(g, name.data, (type){TY_BOOL, NULL});
         if (e->binding) {
-            line(g, o, "if (%s) %s = %s.%s;", name.data, local_cname(g, e->binding->name), r,
-                 e->looks_for == IS_VALUE ? "value" : "error");
+            line(g, o, "if (%s) %s%s = %s.%s;", name.data, local_cname(g, e->binding->name),
+                 typed_list_local(g, e->binding) ? ".list" : "", r, e->looks_for == IS_VALUE ? "value" : "error");
         }
         return;
     }
@@ -7155,10 +7155,11 @@ static void declare_bindings(gen *g, const expr *cond)
     if (cond->kind == E_IS && cond->binding) {
         const stmt *b = cond->binding;
         const char *name = local_cname(g, b->name);
+        const bool typed = typed_list_local(g, b); // A list is its debugger struct, as other list locals are
         indent(g, &g->c);
-        sb_printf(&g->c, "%s %s = ", c_type(b->type), name);
+        sb_printf(&g->c, "%s %s = %s", typed ? typed_list_cname(b->type) : c_type(b->type), name, typed ? "{" : "");
         gen_default(g, &g->c, b->type);
-        sb_put(&g->c, ";\n");
+        sb_put(&g->c, typed ? "};\n" : ";\n");
         line(g, &g->c, "(void)%s;", name);
         task_declare(g, name, b->type);
     }

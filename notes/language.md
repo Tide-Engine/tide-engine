@@ -103,6 +103,17 @@ at the next draw. Existing half-life and Transform checks use the age function.
 Native/web validation is recorded with the host's GPU-wait update changes in
 `notes/standard-host.md`.
 
+## Names `is` gives are list wrappers too (2026-11-04)
+
+With visualizers (debug builds), `if (F() is List<T> got)` declared `got` as a
+plain `tide_list` while every reference to it read `got.list`, as any list local
+does (`typed_list_local`), so clang refused the foreach over it ("no member named
+'list'"; mount-and-rifle's `Directory.GetDirectories(folder) is List<string>`).
+`declare_bindings` now declares a list binding as its `tide_local_list<N>` and
+the test's assignment writes its `.list`. Without visualizers nothing changes.
+`fails.tide` reads an `is List<int>` binding with a foreach, and
+`tidec_e2e_fails_visualizers` builds that fixture with wrappers on every preset.
+
 ## Worker parallel captures with debugger list wrappers (2026-11-02)
 
 `gen_parallel_call` preserves a captured list local's `tide_local_list<N>`
