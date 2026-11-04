@@ -8417,6 +8417,8 @@ static void gen_stmt(gen *g, const stmt *s)
                    || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN || s->value->call == CALL_JSON
                    || s->value->call == CALL_PARENT || s->value->call == CALL_VISIBILITY) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
+            // A result nobody reads: a call that kept its order is its temporary's name by now
+            if (s->value->hoisted && s->value->type.kind != TY_VOID) sb_put(o, "(void)");
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
         } else if (s->value->call == CALL_RANDOM || s->value->call == CALL_ROLL) { // random.NextInt();: a number nobody reads, which still steps it
