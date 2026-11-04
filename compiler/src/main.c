@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "asset_sizes.h"
 #include "compile.h"
 #include "lexer.h"
 
@@ -40,6 +41,7 @@ static void usage(void)
             "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
             "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
             "  --pack-c       also write the assets' pack as C (<name>_pack.c: tide_game_pack), for a host that embeds it\n"
+            "  --asset-sizes  also print what each asset declaration adds to the pack, biggest first\n"
             "  --depfile <file> write source and transitive asset dependencies for the generated C\n"
             "  --build-cc <cc>  the C compiler that builds the program running the game's build code (clang);\n"
             "                   with --build-include <engine/include> and --build-engine <engine/src>, the\n"
@@ -220,6 +222,7 @@ int main(const int argc, char **argv)
 {
     input_list inputs = {0};
     codegen_options opts = {0};
+    asset_sizes sizes = {0};
     const char **build_cc = calloc(2, sizeof *build_cc);
     const char **build_flags = calloc((size_t)argc + 1u, sizeof *build_flags);
     const char **build_libs = calloc((size_t)argc + 1u, sizeof *build_libs);
@@ -274,6 +277,9 @@ int main(const int argc, char **argv)
             opts.build_engine = argv[++i];
         } else if (strcmp(argv[i], "--pack-c") == 0) {
             pack_c = true;
+        } else if (strcmp(argv[i], "--asset-sizes") == 0) {
+            opts.asset_size_out = asset_sizes_add;
+            opts.asset_size_user = &sizes;
         } else if (strcmp(argv[i], "--depfile") == 0 && i + 1 < argc && !depfile) {
             depfile = argv[++i];
         } else if (strcmp(argv[i], "--layout") == 0) {
@@ -373,6 +379,8 @@ int main(const int argc, char **argv)
         if (depfile) opts.info = &info;
         bool ok = compile_inputs(inputs.items, inputs.count, &opts, NULL);
         if (ok && depfile) ok = write_dependencies(depfile, &opts, &inputs, &info);
+        if (ok) asset_sizes_print(stdout, &sizes);
+        asset_sizes_free(&sizes);
         for (int i = 0; i < info.asset_count; i++) free(info.asset_paths[i]);
         free(info.asset_paths);
         return ok ? 0 : 1;

@@ -1,5 +1,29 @@
 # `tide`, packages and the package
 
+## Asset sizes and `--strip-assets` (2026-11-04)
+
+From a game's feedback (notes/textures.md, `[Raw]` images compress too): finding what made its pack 618 MB meant
+reverse-engineering the pack's table of contents.
+
+- **`tide build --asset-sizes`, `tidec --asset-sizes`**: `codegen_options.asset_size_out` is called once a
+  declaration is packed (`build_pack`: the builder's size before and after it, so a block an earlier declaration
+  already put in counts as 0 for this one) with its qualified name and a description (`asset_size`: type, an
+  image's size or a list's count, the formats of its first four images from `pack_item`'s new `stored`, and
+  `[Raw]`/`[Lossless]`). `compiler/src/asset_sizes.{h,c}` collect and print them biggest first, ties by name,
+  under the total (decimal units). The CLI passes a collector in `build_options.asset_sizes`; `generate_sources`
+  empties it before each compile, so Android's per-CPU compiles report once; `command_main` prints it before
+  `Built ...`, after the progress rows. Sizes are pack bytes after pruning, before a web page's compression.
+- **`tide build --strip-assets`** (`build_options.strip_assets`): `strip_game_assets` prunes a release or
+  distribution build whose game or packages have C sources or libraries, the client's twin of
+  `--strip-server-assets`. Detecting C that reads assets automatically (the feedback's other suggestion) was
+  not built: C reaches entries through `tide_pack_find` and generated names in ways a text scan would only
+  guess at. CMake's `tide_add_game` has no such option yet.
+- Neither changes telemetry (flags aren't recorded). Docs: `docs/tools/cli.md` (Asset sizes).
+- **Tests:** `tide_cli_assets` (`assets_test.mjs`) builds with `--asset-sizes` and checks the total, a line for
+  each of five declarations with its description, and the order; `tide_cli_help` covers both flags'
+  help. `--strip-assets` itself has no fixture: it only returns true earlier in `strip_game_assets`, whose
+  pruning `tidec_asset_usage` covers.
+
 ## Moving project channels and cache expiry (2026-11-03)
 
 Owner approved `tide = nightly` and `tide = stable`, with `tide pin` accepting

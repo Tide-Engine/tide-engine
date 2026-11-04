@@ -404,3 +404,23 @@ static void gen_client_codecs(gen *g, client_codec *codec)
         gen_client_codec_skip(g, codec, i);
     }
 }
+
+// Whether a value of `t` holds anything in the heap (text, lists, maps, sets,
+// grids), which its projection hash reaches through: tide_client_hv<id>.
+static bool client_codec_heapy(const program *prog, const type t, const int depth)
+{
+    if (depth > 64) return true;
+    switch (t.kind) {
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID: return true;
+    case TY_ARRAY: return client_codec_heapy(prog, t.decl->fields.items[0].type, depth + 1);
+    case TY_STRUCT: case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT: case TY_EVENT: case TY_RECORD:
+        if (t.kind == TY_RECORD && t.decl->array_of) return client_codec_heapy(prog, (type){TY_RECORD, t.decl->array_of}, depth + 1);
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->typed || (f->hidden && t.decl == prog->visibility)) continue;
+            if (client_codec_heapy(prog, f->type, depth + 1)) return true;
+        }
+        return false;
+    default: return false;
+    }
+}

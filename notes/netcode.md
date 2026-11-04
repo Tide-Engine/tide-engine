@@ -22,6 +22,80 @@ Tests: `net_a_host_with_another_player_ticks_once` (`compiler/tests/e2e/net_test
 
 Validation: full native `sanitize` (3,028 CTests, Windows ASan, tide-prototypes included through `TIDE_EXTERNAL_DIRS`) and full `web-debug` (2,899, engine only) pass, and the docs build. Other operating systems, Android and MinGW are CI's.
 
+## Projection hashes follow what changed (2026-11-04)
+
+Every tick the server hashes each player's projection (`client_hashes`). Its
+singleton part used to encode every public singleton into one buffer and hash
+it: in Mount & Rifle (Box3D's `Physics` with its rewind frames and colliders,
+the campaign's build-once `Atlas`, `Ground`, `Pathing`, ...) that was 1.8 ms a
+tick in release, more than the game's systems, and it grew with the world.
+
+The singletons now hash as trees (`gen_client_hvs`, `compiler/src/client_state_codegen.inc`):
+a value's bytes are its codec's (`tide_client_put<id>`), but each list, map, set
+and grid in it is the 8 bytes of its own hash, of its bytes made the same way.
+A container's hash is a function of its value alone, so the server and a client
+(their heaps laid out differently) agree on it as before, on every platform and
+build; it's only a different function of the same values, a 64-bit hash of
+hashes (`singleton tree hashes` is in the simulation identity). Text stays inline.
+Singletons holding nothing in the heap, entities, inputs and commands hash as
+they did; games with transform hierarchies still hash `client_state`'s bytes.
+
+What makes it cheap: a container of 256 bytes or more keeps its hash in a memo,
+by its handle and codec, with every heap page its value was read from (its own
+blocks, its chunks, its elements' text and containers, all it holds; a hit
+counts its pages into its parent's). The memo says the hash again while each of
+those pages, by its place, has the same size, start and page hash. Pages keep
+their hashes until written (`tide_heap_write` or a copy marks them), and the
+server has just hashed its world, so an unchanged container costs a comparison
+a page; a changed one is encoded again, its unchanged children taken from the
+memo. A value that reads anything outside the match's heap (the pack's) isn't
+kept. The memo is only a shortcut to a hash the value has: a page hash
+collision is the only way it could be wrong, which is what the world's own hash
+already rests on. Memos are the process's (`tide_client_memos`, 8, globals so no
+thread's exit loses them), one per world last hashed, taken under a spin lock
+and busy while a thread hashes with it; what a call didn't use goes once it's
+most of what's kept. No runtime function or `tide_game` member was added:
+generated code reads list, grid and page headers and calls `tide_heap_block_hash`.
+
+Bug found on the way, kept as a test: the walk records each page once in a row,
+and comparing against the last page recorded before the container's own start
+left that page out of the container's set (a grid whose directory shared its
+page with the list before it was taken from the memo after a cell changed).
+
+Tests: `tidec_e2e_visibility_hash_memo` (`compiler/tests/e2e/visibility_hash_memo.tide`):
+singletons with a list of structs with text and lists, a map of lists, a set, a
+list in chunks, a ring of frames of points and notes, a grid; a tick changes one
+thing deep in one of them. Over 150 ticks each projection hash differs from the
+tick before, equals itself again, the snapshot of the tick before still hashes
+as it did, and a world the projection loads into (another heap) hashes the same,
+warm and, on odd ticks, after eight other worlds pushed its memo out. The 150
+hashes together are pinned, and `tidec_e2e_visibility_hash_memo_off` (the same,
+`TIDE_CLIENT_MEMO_OFF`: nothing kept) must give the same pin. A second case
+changes values in place (a byte in a chunked list, an int in a list in a list's
+element, a point of a frame), with and without a snapshot sharing their pages:
+each change shows and undoing it gives the hash back. Validated native release,
+`sanitize` (Windows ASan) and `web-debug`: these, the visibility, double,
+event_containers and shards_visibility fixtures, `earth_tests`, `bench_earth*`
+and `tide_cornerculling`, the games whose generated code changed (every game's
+simulation ID moves, as with any compiler edit).
+
+Measured (Windows, shared machine, so runs vary):
+- Microbenchmark, that fixture's game in release (551 KB projection, one thing
+  changed a tick): projection hash 0.25-0.28 ms a tick before, 0.042 after;
+  hashed again with nothing changed, 0.25 ms before, 0.001 after.
+- Mount & Rifle (HEAD 6e963ed, tide 0.6.0-dev from this branch with and without
+  the change, route `tools/performance-route.txt`, seed 42, 3230 frames,
+  1280x720, `--profile --profile-warmup 200`, a scratch timer around
+  `client_hashes` in session.c): release 2.43, 2.21 and 2.51 ms a tick before,
+  0.49, 1.03 (a run the machine's load slowed throughout) and 0.57 after; debug
+  4.24 before, 1.57 after. The profile's match phase moves by about that much
+  but is within the machine's noise between runs.
+
+What's left: changed containers are encoded whole (a big list whose one element
+changes is encoded again, not its changed chunk); entities are still hashed
+every tick, each from its components; and the client's verification hash goes
+the same way but on a world loaded or predicted afresh it finds less unchanged.
+
 ## Service the match while desktop presentation waits (2026-11-03)
 
 The owner prioritized networking after the focus measurements below. Desktop
@@ -965,7 +1039,8 @@ and grew with the square of the players):
   hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
   and anchors differ. A transfer's check is now the hash of the bytes the
   loaded world encodes to again (it compared `client_hash`, which was the same
-  hash). `recipient logical state schema 2` is in the simulation identity.
+  hash). `recipient logical state schema 2` is in the simulation identity
+  (with `singleton tree hashes` after it since 2026-11-04, above).
 - **Inputs** (`tide_game.client_input_masks`): which slots each recipient may
   have, before and after the tick, from each slot's owner's entities' audiences
   intersected once; the session reads every slot once and packs each changed
