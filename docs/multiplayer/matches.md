@@ -285,6 +285,21 @@ settings
 
 Then clients never predict. Their inputs are delayed so that every player's reach the server before its tick, and ticks run once each, as the server confirms them: nothing is ever rolled back, at the cost of input delay of about a round trip and a half. A game whose ticks are expensive, or whose views can't show a rollback well, picks it; the server runs the match the same either way.
 
+### Predicting what's near
+
+A big world can predict only what's near each player:
+
+```csharp
+settings
+{
+    predictionRange = 40;
+}
+```
+
+A client then runs its predicted ticks only for entities within 40 world units of its player's own entities (those whose `Owner` is the player), along each axis. What's farther stays as the server last confirmed it. It runs once a tick, as each tick is confirmed, as with `Prediction.Delay`, and is drawn that far behind. In predicted ticks, what's near meets what's far as it stands: a far entity can still be read or queried, but systems and handlers that run for each entity don't run for it until the tick is confirmed. Rollbacks then run again only what's near, so a busy world costs a client less input delay. In exchange, the client runs every confirmed tick for the whole world once, and runs again what's near each time a tick is confirmed.
+
+An entity's position is its first `[Position]` field, or its `Transform`'s, as with [shards](./shards.md); an entity in a hierarchy goes by its root's. One with neither is always predicted, as is anything spawned in a predicted tick. A player who owns nothing with a position predicts everything. An entity crossing the range jumps between where it was predicted and where it was confirmed, and far entities move a tick at a time, without correction smoothing. Systems written in C run for every entity, and so does code that goes through all of them at once, like a physics package's step. The setting needs `Prediction.Rollback`.
+
 ## How many players
 
 A match takes 16 players unless the game says otherwise:

@@ -480,7 +480,9 @@ static bool shard_uses(const program *prog, const decl *component)
         && prog->components.items[component->index] == component;
 }
 
-static void gen_shard_where(gen *g)
+// tide_shard_where: where an entity is, which a sharded game's shards and a
+// client predicting near its player alone (predictionRange) go by
+static void gen_position_where(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
@@ -507,6 +509,13 @@ static void gen_shard_where(gen *g)
     } else {
         sb_put(o, "    (void)w;\n    (void)e;\n    return false; // Nothing else has a position: it stays where it's spawned\n}\n\n");
     }
+}
+
+static void gen_shard_where(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    gen_position_where(g);
     // The regions, 7 doubles each: the shard, then its box's lo and hi
     sb_printf(o, "TIDE_HELPER bool tide_shard_holds(const tide_world *w, const int32_t at, const double p[3], const double margin)\n{\n"
                  "    const tide_list r = w->tide_shard_state.regions;\n"

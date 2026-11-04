@@ -1,5 +1,13 @@
 # Runtime written by Claude for now
 
+## Predicting near the player (2026-11-04)
+
+For the owner's `predictionRange` ask, within the agent-maintained session area: `tide_game` gains the optional
+callback `predict_far(world, player)`, which generated code provides and `session.c` calls before predicted ticks
+(`tide_client.far_from`). Generated code calls no new runtime function. Hosts and games rebuild together (Session ABI
+marker `predict far (1)`). Games without the setting generate a NULL callback and an unchanged world layout. Contracts and tests:
+netcode.md, Predicting near the player alone.
+
 ## GUI widget listing (2026-11-04)
 
 Under the existing GUI maintenance exception, with the owner's request ("yes lets do that") that agents click widgets by a list rather than by pixels: `tide_gui` gains `listing` (a borrowed `tide_gui_listing *`, NULL by default), `listed` and the `describing` fields, and `tide/gui.h` gains `tide_gui_controls` and the listing types. Generated code calls nothing new and its C is unchanged. The widget functions it already calls describe themselves, so hosts, libraries and games rebuild together for the layout change. The standard host calls the new platform function `tide_platform_list_controls(&tide_run_gui)` each frame, which sets `listing` only in an `--interactive` run. No match state, wire format or simulation changes. Contracts, tests and gaps: gui.md, Widget listing; standard-host.md, Clicking widgets by name.

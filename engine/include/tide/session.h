@@ -223,6 +223,15 @@ typedef struct tide_game {
     // so confirmation replays that tick instead of reusing its guess.
     // NULL: guesses keep their previous values until let_go_inputs.
     bool (*predict_inputs)(void *world, const tide_player_set *keep);
+    // A client predicting near its player alone (the predictionRange
+    // setting): tags each entity whose position is farther than that from
+    // all of `player`'s own as one its predicted ticks don't run, a hidden
+    // sparse component only predicted worlds ever have, and takes the tag
+    // from the rest. True if anything is tagged: the ticks run from that
+    // world are never as the server's (play), and run again as each tick is
+    // confirmed. Only ever on a predicted world, before its tick. NULL: a
+    // client predicts everything.
+    bool (*predict_far)(void *world, tide_player_id player);
     // Commands are bounded, copied wire values. Checking only decodes them,
     // and says which channel the command's type is in: 0, the default, one
     // of the game's own (1 to command_channels - 1), or

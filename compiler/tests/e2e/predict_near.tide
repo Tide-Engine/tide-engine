@@ -1,0 +1,52 @@
+// A client predicts what's near its player alone (predictionRange): walkers
+// farther than that from the player's own body aren't run in its predicted
+// ticks, and stay as the server last confirmed them.
+
+settings
+{
+    predictionRange = 10;
+}
+
+component Body
+{
+    [Position] float2 position;
+    int ran; // The ticks a system ran for it
+}
+
+component Walker
+{
+    int id;
+}
+
+input Controls
+{
+    float2 move;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { position = float2(4, 0) }, Walker { id = 1 });   // Near the players
+    Spawn(Body { position = float2(100, 0) }, Walker { id = 2 }); // Far from them
+}
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Body { position = float2(0, 0) }, Owner { player = joined.player });
+}
+
+system Drive(Controls input, mut Body body, with Owner)
+{
+    body.position += input.move;
+}
+
+system Walk(mut Body body, with Walker)
+{
+    body.position.y += 0.001; // Slowly: the near one stays near
+}
+
+system Count(mut Body body)
+{
+    body.ran += 1;
+}

@@ -14849,6 +14849,14 @@ static void check_settings(checker *c)
                     prog->shards = known->bool_value;
                     prog->shards_at = f->at;
                 }
+            } else if (str_eq_c(f->name, "predictionRange")) {
+                float range;
+                if (!setting_float(value, &range, 0) || !(range > 0.0f) || range - range != 0.0f) {
+                    diag_error(value->at, "predictionRange is a finite number of world units over 0, like 'predictionRange = 40;'");
+                } else {
+                    prog->predict_range = range;
+                    prog->predict_range_at = f->at;
+                }
             } else if (str_eq_c(f->name, "reach")) {
                 float range;
                 if (!setting_float(value, &range, 0) || !(range > 0.0f) || range - range != 0.0f) {
@@ -14868,6 +14876,21 @@ static void check_settings(checker *c)
         diag_error(prog->shard_range_at, "reach only means something with 'shards = true;'");
     }
     if (prog->shards && prog->shard_range > 0.0) ensure_shards(prog);
+    if (prog->predict_range > 0.0 && prog->delay_prediction) {
+        diag_error(prog->predict_range_at, "predictionRange only means something with 'prediction = Prediction.Rollback;': "
+                   "with Prediction.Delay a client predicts nothing");
+    } else if (prog->predict_range > 0.0) {
+        // An entity a client's predicted ticks leave out: a hidden sparse tag
+        // only its predicted worlds ever have (tide_game.predict_far)
+        decl *far = NEW(decl);
+        far->kind = DECL_COMPONENT;
+        far->builtin = true;
+        far->name = far->qualified = str_from("tide_far");
+        far->c_name = "tide_far";
+        far->index = prog->components.count;
+        vec_push(prog->components, far);
+        prog->predict_far = far;
+    }
 }
 
 static type use_constant(checker *c, expr *e, decl *k)
@@ -19932,7 +19955,8 @@ static bool sparse_component_source(const program *prog, const decl *d)
 
 static bool sparse_component(const program *prog, const decl *d)
 {
-    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || d == prog->shard_anchor || sparse_component_source(prog, d);
+    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || d == prog->shard_anchor
+        || d == prog->predict_far || sparse_component_source(prog, d);
 }
 
 // Whether a system's (or handler's, or view's) filters admit archetype `mask`:
@@ -20017,6 +20041,17 @@ static void append_component_names(const program *prog, const comp_mask mask, ch
     }
 }
 
+// Whether entities with components `mask` can have a position: a [Position]
+// vector, or a Transform (tide_shard_where).
+static bool positioned(const program *prog, const comp_mask mask)
+{
+    if (prog->transform && prog->transform->index >= 0 && mask_has(mask, prog->transform->index)) return true;
+    for (int i = 0; i < prog->positions.count; i++) {
+        if (mask_has(mask, prog->positions.items[i].component->index)) return true;
+    }
+    return false;
+}
+
 // Every spawn creates an archetype, and the Adds and Removes that can reach
 // each archetype's entities (change_site) make the rest, until nothing new
 // appears.
@@ -20048,6 +20083,13 @@ static bool derive_archetypes_once(const checker *c)
     // Any of a sharded match's entities can be a ghost: another shard's, held here read-only
     for (int i = 0; prog->shard_ghost && i < prog->archetypes.count; i++) {
         if (!prog->archetype_local.items[i]) allow_sparse(prog, i, mask_or(mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)), bit(prog->shard_anchor)));
+    }
+    // Any of the match's entities with a position can be far from this player
+    // in a client's predicted ticks (predictionRange)
+    for (int i = 0; prog->predict_far && i < prog->archetypes.count; i++) {
+        if (!prog->archetype_local.items[i] && positioned(prog, mask_or(prog->archetypes.items[i], prog->possible.items[i]))) {
+            allow_sparse(prog, i, bit(prog->predict_far));
+        }
     }
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;
@@ -23297,6 +23339,16 @@ bool check(program *prog)
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || d->is_view || d->listens || !d->per_entity || d->entity_local) continue;
         d->without_mask = mask_or(d->without_mask, mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)));
+    }
+    // ...and a client's predicted ticks run them for what's near its player
+    // alone (predictionRange): only its predicted worlds have the tag, so the
+    // server's ticks and its confirmed ones run them for everything. C is
+    // handed whole runs of rows, so a system written in it runs for all.
+    for (int i = 0; prog->predict_far && i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_SYSTEM || d->is_view || d->listens || d->is_local || !d->per_entity || d->entity_local
+            || d->extern_system) continue;
+        d->without_mask = mask_or(d->without_mask, bit(prog->predict_far));
     }
     derive_archetypes(&c);
     check_extern_sparse(prog);

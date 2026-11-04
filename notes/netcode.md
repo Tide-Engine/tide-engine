@@ -1,5 +1,75 @@
 # Netcode: sessions, prediction, commands
 
+## Predicting near the player alone (2026-11-04)
+
+The owner's ask: a client predicts what's near its player and leaves what's far
+as the server confirmed it, ticking once (as `Prediction.Delay` would); near
+meets far as if it were constant, and odd reconciles at the border are fine;
+positions as shards find them. `settings { predictionRange = 40; }` (spec,
+Settings, Provisional for the picks; docs `multiplayer/matches.md`, Predicting
+what's near).
+
+What's built:
+- **A hidden sparse tag** (`check.c`): with the setting, `tide_far`, a builtin
+  component with no fields (`program.predict_far`), sparse (`sparse_component`),
+  possible in every match archetype that can have a position (`positioned`: a
+  `[Position]` component or `Transform`, in its components or `possible`). Every
+  match system and match handler that runs for each entity, but for one written
+  in C (`extern_system`: C takes whole runs of rows), gets it in `without_mask`,
+  as shards' ghosts do. So the existing sparse-filter row loops (counted chunks,
+  masked/selected/cached variants, apart loops copying skipped rows back) leave
+  tagged rows out with no new loop code. Only predicted worlds ever have the tag:
+  the server never sets it and a confirmed tick runs on a verified world, so
+  server ticks and confirmed ticks run every row, at the cost of a presence
+  count over each positioned chunk (zero pages, cached hashes).
+- **`tide_game.predict_far(world, player) -> bool`** (`predict_far_codegen.inc`):
+  the box around the positions of the player's own entities (`Owner`), grown by
+  the range on each axis; each taggable row then gets the tag when its position
+  is outside it, loses it otherwise, written (`tide_table_cell`, the page made
+  its own and its hash reset) only where that changes. Positions are
+  `tide_shard_where`'s (`gen_position_where`, split out of `gen_shard_where` and
+  generated for unsharded games too) of the entity's root (`tide_far_where`,
+  walking `tide_parent_of`). No owned positioned entity: nothing is tagged.
+  NULL without the setting. Session ABI marker: `predict far (1)`.
+- **`session.c`**: `tide_client.far_from`, the first tick run from a tagged
+  world, reset wherever `let_go` is. `run_predicted` calls `predict_far` on the
+  copied world when the tick is the verified one (each run of predictions starts
+  there, untagged) or while nothing is far (`far_from` UINT32_MAX), so an entity
+  moving out of range is noticed tick by tick; tags then carry along the chain by
+  copy. `play` never takes a tick at or past `far_from` as predicted: it runs the
+  frame on the verified world (whole), and the predicted ticks after it are stale
+  and run again near alone (`predict_again`), `predict_from` clearing `far_from`
+  past where it starts. With anything far, each confirmed tick is a whole tick
+  plus a near-only rollback of the lead; the input-delay budget measures those
+  predicted ticks (`note_tick_cost`), now near-only.
+- **Corrections**: `tide_local_correct` skips an entity tagged in either world, as
+  it skips a ghost in a sharded game: a far entity's presented values move a tick
+  at a time with no accumulated error (with it, each confirmed tick read as a
+  one-tick correction and smoothing lagged far entities by about six ticks).
+
+Tests: `tidec_e2e_predict_near` (`compiler/tests/e2e/predict_near*`): two
+players on a 100 ms loopback, and on 120 ms with 60 ms jitter and 20% loss; a
+walker 4 units from them and one 100 away, range 10. Every frame a client runs
+ahead, the far walker in its predicted world is byte for byte its verified one
+and the near one has run every predicted tick; then the mover runs to the far
+walker and the two swap for its client, not the other's. No resyncs, and both
+walkers' confirmed state follows the server's. Without the `far_from` check in
+`play` both clients resync. Error fixtures `settings_prediction_range_zero` and
+`settings_prediction_range_delay`.
+
+Gaps:
+- Whole-world code still runs for far entities in predicted ticks: C systems,
+  singleton systems going through queries, and physics packages' steps (Box2D
+  and Box3D step every body). Tagging what such code reaches is open.
+- Far entities draw a tick at a step, at the verified tick, not blended on the
+  confirmed clock; drawing them through the `verified` interpolation would be
+  smoother (spec Open: showing other players from confirmed state).
+- The marking pass reads each row's position through `tide_get_` lookups, once
+  per confirmed tick (and per predicted tick while nothing is far); a column
+  read per archetype would be cheaper on big worlds. Not measured yet.
+- Every confirmed tick with anything far reruns the near lead even when guesses
+  were right; comparing near rows alone could skip it.
+
 ## A client's own ticks of its projection; repairs that back off (2026-11-04)
 
 Mount & Rifle played alone (route `tools/performance-route.txt`, seed 42, release)
