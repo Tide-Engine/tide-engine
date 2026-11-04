@@ -3374,7 +3374,9 @@ packages need visibility-aware integration before concealing bodies: public
 Box2D.Physics.image contains the complete native snapshot byte list,
 Box3D.Physics.stamp hashes native world operations, and both packages retain
 public collider/rewind lists. Hiding Body/collider entities or omitting Resident
-does not restrict those ordinary singleton fields. Internal command
+does not restrict those ordinary singleton fields. (Corrected 2026-11-04: all
+of those are `[Native]`, which projections now write as 0; notes/netcode.md, A
+client's own ticks of its projection.) Internal command
 delivery state is restricted to the recipient's own sequence/window; other
 players' command activity is withheld. Input audience masks are derived once per
 recipient by walking entities, then reused for all input slots. Remote previous

@@ -781,6 +781,11 @@ typedef struct connection {
     uint32_t repair_burst;
     double repair_last;
     double repair_stream_until;
+    // Ticks between a stream's repairs (0 or 1: every one it asks for), and
+    // the endpoint of the last it was sent. A stream that has to start again
+    // as soon as the last ended repairs less often than that one (repair_gap_after).
+    uint32_t repair_gap;
+    uint32_t repair_streamed;
     uint32_t repair_pending; // Accepted request, packed after this update's authoritative ticks.
     bool repair_pending_stream;
     // It was sent the world and needs every tick from it on, however long
@@ -1051,6 +1056,26 @@ static const void *server_world_at(const tide_server *s, const uint32_t tick)
 }
 
 static void start_snapshot(tide_server *s, connection *c);
+
+// The ticks between a new stream's repairs. A stream that starts within a
+// second of the last one's end means the client's own ticks still go otherwise
+// than the server's, as all through it, and each of its repairs is a whole
+// projection packed here and loaded there. So it repairs half as often as the
+// last, its verified world that much further behind, as on a slower network.
+// At the least often, one a quarter of a second, and no more than a quarter of
+// the game's rewind window: the frames a client presents (its view times)
+// must stay young enough for the server to rewind to. Once a stream ended and
+// none was needed for a second, they start at every tick again.
+static uint32_t repair_gap_after(const tide_server *s, const connection *c)
+{
+    const bool again = c->repair_stream_until > 0.0 && s->now - c->repair_stream_until <= 1.0;
+    if (!again) return 1u;
+    const float rewind = s->game->max_rewind > 0.0f ? s->game->max_rewind * 0.25f : 0.25f;
+    const float seconds = rewind < 0.25f ? rewind : 0.25f;
+    const uint32_t most = s->dt > 0.0f && seconds / s->dt >= 2.0f ? (uint32_t)(seconds / s->dt) : 1u;
+    const uint32_t gap = c->repair_gap ? c->repair_gap * 2u : 2u;
+    return gap < most ? gap : most;
+}
 
 static void start_client_repair(tide_server *s, connection *c, const uint32_t tick)
 {
@@ -1410,6 +1435,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
         const bool was_greeted = c->greeted;
         stop_sending(s, c);
         c->repair_pending = 0;
+        c->repair_gap = c->repair_streamed = 0;
         c->transport = transport;
         c->address = from;
         c->nonce = nonce;
@@ -1644,7 +1670,10 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
             if (!(flags & CLIENT_REPAIR_STREAM) && repair_tick != c->repair_requested) {
                 c->repair_burst = s->now - c->repair_last <= 1.0 ? c->repair_burst + 1u : 1u;
                 c->repair_requested = repair_tick;
-                if (c->repair_burst >= 2u) c->repair_stream_until = s->now + 1.0;
+                if (c->repair_burst >= 2u) {
+                    if (s->now >= c->repair_stream_until) c->repair_gap = repair_gap_after(s, c);
+                    c->repair_stream_until = s->now + 1.0;
+                }
             }
             // Stream requests are recent evidence too. A failed periodic
             // prediction probe must not restart at an old exact endpoint.
@@ -3308,8 +3337,12 @@ void tide_server_update(tide_server *s, const double now)
         } else if (c->welcoming) { // Until it writes back
             send_welcome(s, c);
         } else {
-            if (c->repair_pending) {
+            // A streamed repair waits for its stream's gap since the last; it's
+            // asked for again meanwhile, and the next is the latest endpoint
+            if (c->repair_pending && (!c->repair_pending_stream || c->repair_gap <= 1u
+                                      || s->tick - c->repair_streamed >= c->repair_gap)) {
                 const uint32_t tick = c->repair_pending_stream ? s->tick : c->repair_pending;
+                if (c->repair_pending_stream) c->repair_streamed = tick;
                 c->repair_pending = 0;
                 start_client_repair(s, c, tick);
             }
@@ -7229,6 +7262,7 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
         c->repair_requested = c->repair_burst = 0;
         c->repair_pending = 0;
         c->repair_stream_until = 0.0;
+        c->repair_gap = c->repair_streamed = 0;
     }
     free_published(s);
     free_world(s->game, s->world);

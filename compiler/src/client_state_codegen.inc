@@ -7,6 +7,49 @@ static bool client_singleton(const program *prog, const decl *d)
     return !d->is_local && d != prog->visibility_state && d != prog->hierarchy[0] && d != prog->task_slots[0];
 }
 
+// A C library's own fields ([Native]: its handles, and its bookkeeping of
+// them) go with its Resident, which a projection hasn't: so they're 0 in one,
+// as wherever an entity arrives (a shard zeroes them too), and the library
+// makes its state again from the rest on the client. Their values, which may
+// say what's hidden (a physics world's bodies), stay on the server. The
+// value codecs keep them: local handlers' records and shards use those too.
+static bool client_natives(const decl *d)
+{
+    for (int k = 0; k < d->fields.count; k++) if (d->fields.items[k].native) return true;
+    return false;
+}
+
+// A copy of `from` named `name` with its [Native] fields 0, for a projection
+static void gen_client_bare(gen *g, const decl *d, const char *name, const char *from, const char *indent)
+{
+    sb *o = &g->c;
+    sb_printf(o, "%s%s %s = %s;\n", indent, type_cname(d), name, from);
+    for (int k = 0; k < d->fields.count; k++) {
+        const field *f = &d->fields.items[k];
+        if (f->native) sb_printf(o, "%smemset(&%s.%s, 0, sizeof %s.%s);\n", indent, name, field_cname(f), name, field_cname(f));
+    }
+}
+
+// A singleton `w->d` put by `writer` with its [Native] fields 0: copied to the
+// heap, as a singleton can be bigger than a stack has room for
+static void gen_client_put_singleton(gen *g, const client_codec *codec, const decl *d, const char *writer)
+{
+    sb *o = &g->c;
+    const char *name = type_cname(d);
+    if (!client_natives(d)) {
+        sb_printf(o, "    tide_client_put%d(%s, &w->%s, 0);\n", client_codec_id(codec, (type){TY_SINGLETON, (decl *)d}), writer, name);
+        return;
+    }
+    sb_printf(o, "    {\n        %s *bare = malloc(sizeof *bare);\n        if (!bare) tide_out_of_memory();\n"
+                 "        *bare = w->%s;\n", name, name);
+    for (int k = 0; k < d->fields.count; k++) {
+        const field *f = &d->fields.items[k];
+        if (f->native) sb_printf(o, "        memset(&bare->%s, 0, sizeof bare->%s);\n", field_cname(f), field_cname(f));
+    }
+    sb_printf(o, "        tide_client_put%d(%s, bare, 0);\n        free(bare);\n    }\n",
+              client_codec_id(codec, (type){TY_SINGLETON, (decl *)d}), writer);
+}
+
 static void gen_client_hierarchy_codec(gen *g)
 {
     const program *prog = g->prog;
@@ -275,7 +318,11 @@ static void gen_client_hashes(gen *g)
                 else sb_printf(o, "        const bool present = tide_has_%s(w, e);\n", type_cname(d));
                 sb_put(o, "        tide_write_u8(out, present ? 1u : 0u);\n        if (present) {\n");
             }
-            sb_printf(o, "        const %s value = tide_get_%s(w, e);\n", type_cname(d), type_cname(d));
+            if (client_natives(d)) {
+                char from[256];
+                snprintf(from, sizeof from, "tide_get_%s(w, e)", type_cname(d));
+                gen_client_bare(g, d, "value", from, "        ");
+            } else sb_printf(o, "        const %s value = tide_get_%s(w, e);\n", type_cname(d), type_cname(d));
             sb_printf(o, "        tide_client_put%d(out, &value, 0);\n", client_codec_id(&codec, (type){TY_COMPONENT, (decl *)d}));
             if (comp_sparse(g, c)) sb_put(o, "        }\n");
             sb_put(o, "    }\n");
@@ -297,7 +344,7 @@ static void gen_client_hashes(gen *g)
             commands = d;
             continue;
         }
-        sb_printf(o, "    tide_client_put%d(&scratch, &w->%s, 0);\n", client_codec_id(&codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d));
+        gen_client_put_singleton(g, &codec, d, "&scratch");
     }
     sb_put(o, "    if (scratch.overflow) tide_out_of_memory();\n"
               "    const uint64_t shared = tide_hash(scratch.data, scratch.size);\n"
@@ -350,7 +397,8 @@ static void gen_client_hashes(gen *g)
         sb_printf(o, "        // Its hash with all it has, and room for one with less\n"
                      "        has%d[row * 4u] = mask;\n        has%d[row * 4u + 1u] = tide_client_entity_hash%d(w, e, mask, &scratch);\n"
                      "        has%d[row * 4u + 2u] = UINT64_MAX;\n        has%d[row * 4u + 3u] = 0;\n", a, a, a, a, a);
-        sb_printf(o, "        audience%d[row] = client ? TIDE_AUDIENCE_ALL : tide_visibility_audience(w, e, -1);\n", a);
+        sb_printf(o, "        audience%d[row] = !client ? tide_visibility_audience(w, e, -1)\n"
+                     "            : tide_visibility_client_hidden(w, e) ? (Audience){0} : TIDE_AUDIENCE_ALL;\n", a);
         for (int k = 0; k < n; k++) {
             sb_printf(o, "        denied%d[row * %du + %du] = client || !((mask >> %d) & 1u) ? TIDE_AUDIENCE_ALL : tide_visibility_audience(w, e, %d);\n",
                       a, (unsigned)n, (unsigned)k, k, deniable[k]);
@@ -387,7 +435,7 @@ static void gen_client_hashes(gen *g)
         sb_printf(o, "        for (uint32_t row = 0; row < rows%d; row++) {\n", a);
         sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove): nothing kept of it above\n",
                   arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_printf(o, "            if (!client && !tide_audience_contains(audience%d[row], recipient)) continue;\n", a);
+        sb_printf(o, "            if (!tide_audience_contains(audience%d[row], recipient)) continue;\n", a);
         sb_printf(o, "            uint64_t mask = has%d[row * 4u], h;\n", a);
         for (int k = 0; k < n; k++) {
             sb_printf(o, "            if (!client && ((mask >> %d) & 1u) && !tide_audience_contains(denied%d[row * %du + %du], recipient)) mask &= ~(1ull << %d);\n",
@@ -678,7 +726,7 @@ static void gen_client_state(gen *g)
                           field_cname(f), type_cname(d), field_cname(f));
             }
             sb_printf(o, "    tide_client_put%d(&out, &permitted_commands, 0);\n", client_codec_id(&codec, (type){TY_SINGLETON, (decl *)d}));
-        } else sb_printf(o, "    tide_client_put%d(&out, &w->%s, 0);\n", client_codec_id(&codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d));
+        } else gen_client_put_singleton(g, &codec, d, "&out");
     }
     if (prog->input) {
         const int input = client_codec_id(&codec, (type){TY_INPUT, prog->input});
@@ -717,7 +765,11 @@ static void gen_client_state(gen *g)
                 sb_printf(o, "                const bool present = tide_visibility_component(w, e, %du, recipient);\n", c);
                 sb_put(o, "                tide_write_u8(&out, present ? 1u : 0u);\n                if (present) {\n");
             }
-            sb_printf(o, "                const %s value = tide_get_%s(w, e);\n", type_cname(d), type_cname(d));
+            if (client_natives(d)) {
+                char from[256];
+                snprintf(from, sizeof from, "tide_get_%s(w, e)", type_cname(d));
+                gen_client_bare(g, d, "value", from, "                ");
+            } else sb_printf(o, "                const %s value = tide_get_%s(w, e);\n", type_cname(d), type_cname(d));
             sb_printf(o, "                tide_client_put%d(&out, &value, 0);\n", client_codec_id(&codec, (type){TY_COMPONENT, (decl *)d}));
             if (comp_sparse(g, c)) sb_put(o, "                }\n");
             sb_put(o, "            }\n");
