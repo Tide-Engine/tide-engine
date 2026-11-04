@@ -186,6 +186,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
         static int again_depth;
         bool again = false;
         if (!build_code_run(prog, opts, &again)) return false;
+        diag_phase("running build code");
         if (again) {
             if (again_depth) {
                 diag_error(prog->build_roots.items[0]->at, "build code ran, and what it made isn't found: build the game again");

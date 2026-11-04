@@ -90,7 +90,7 @@ static const char *dispatch_folder(int argc, char **argv)
         "--profile", "--profile-warmup", "--capture", "--capture-audio", "--record",
         "--script", "--microphone", "--interactive", "--frames", "--scale",
         "--latency", "--jitter", "--loss", "--players", "--seed", "--define",
-        "--scene", "--editor-cache", "--title", "-o", "--assets"
+        "--scene", "--editor-cache", "--title", "-o", "--assets", "--report"
     };
     const char *zero[] = {
         "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
@@ -477,6 +477,14 @@ static int command_main(const int argc, char **argv)
             opts.work = argv[++i];
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
+        else if (build && strcmp(a, "--report") == 0) {
+            if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.report) {
+                fputs("tide: --report takes one file for the build's report, like `--report build.json` or `--report build.txt`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.report = path_absolute(argv[++i]);
+        }
         else if (unity && strcmp(a, "--once") == 0) once = true;
         else if (unity && strcmp(a, "--notified") == 0) opts.notified = true;
         else if (unity && strcmp(a, "--declarations") == 0) opts.declarations = once = true;

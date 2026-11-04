@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "asset_files.h"
+#include "build_report.h"
 #include "humanoid_assets.h"
 #include "assets.h"
 #include "model_metadata.h"
@@ -15409,6 +15410,7 @@ static void check_asset_decl(checker *c, decl *k)
         if (path) vec_push(k->asset_paths, (expr *)path);
         else valid = false;
     }
+    const double import_began = build_report_current() ? build_report_clock_ms() : 0.0;
     if (typed && fills && valid) {
         if (catalog) {
             asset_value *combined = NEW(asset_value);
@@ -15460,6 +15462,7 @@ static void check_asset_decl(checker *c, decl *k)
         else if (kind == ASSET_HUMANOID && k->asset && !c->prog->asset_metadata_only)
             if (!humanoid_asset_read(&k->asset->items[0], k->value->at, c->prog->game_folder)) k->asset = NULL;
     }
+    if (build_report_current()) k->import_ms = build_report_clock_ms() - import_began;
     if (retarget) check_retarget_attribute(c, k, retarget);
     if (built && typed && fills) build_asset_function(c, k);
     k->index = 2;
