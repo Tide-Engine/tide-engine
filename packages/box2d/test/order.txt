@@ -26,6 +26,7 @@ Box2D.AttachPartCircles
 Box2D.RecordFixtures
 Box2D.DropParts
 Box2D.SynchronizeJoints
+Box2D.HoldFar
 Box2D.ConfigureBodies
 BeforeSimulate
 Box2D.Simulate

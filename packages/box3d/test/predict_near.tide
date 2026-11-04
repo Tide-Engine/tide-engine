@@ -1,0 +1,49 @@
+// A client predicts what's near its player alone (predictionRange): a ball
+// rolling far away is held where the server last confirmed it in the
+// client's predicted ticks, and a near ball rolling into a far wall meets it
+// as a static body (predict_near_test.c).
+using Box3D;
+settings { maxPlayers = 2; predictionRange = 10; }
+
+input Controls { float push; }
+component Ball { int id; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float3(60, -1, 0) }, Box { size = float3(220, 2, 20) });
+    // Near the players, rolling to the wall
+    Spawn(Body { position = float3(2, 0.5, 0), velocity = float3(1.5, 0, 0) }, Sphere { radius = 0.5 }, Ball { id = 1 });
+    // Just past the range: its face is within it, so the near ball reaches it while still near
+    Spawn(Body { position = float3(10.6, 1, 0), asleep = true }, Box { size = float3(0.5, 2, 4), density = 20000 }, Ball { id = 2 });
+    // Far away, rolling the whole time
+    Spawn(Body { position = float3(60, 0.5, 0), velocity = float3(3, 0, 0) }, Sphere { radius = 0.5 }, Ball { id = 3 });
+}
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Body { type = BodyType.Kinematic, position = float3(0, 0.5, joined.player == PlayerID(0) ? -2 : 2) },
+          Box { size = float3(0.5) }, Owner { player = joined.player });
+}
+
+// Input that moves nothing: a client's own ticks run ahead of the server's
+system Drive(Controls controls, mut Body body, with Owner)
+{
+    body.velocity.y = controls.push;
+}
+
+// Where the step left the far ball, by Box3D: a near system asks after the step,
+// so it runs in a client's predicted ticks too, where the world holds the ball
+component Seen { float farX; }
+
+event(PlayerJoined joined) Watch()
+{
+    Spawn(Seen, Body { type = BodyType.Static, position = float3(0, 5, joined.player == PlayerID(0) ? -3 : 3) }, Owner { player = joined.player });
+}
+
+[After(PhysicsStages.Step)]
+system Look(mut Seen seen, Physics physics)
+{
+    seen.farX = physics.Raycast(float3(50, 0.5, 0), float3(200, 0.5, 0), out var hit) ? hit.point.x : -1;
+}

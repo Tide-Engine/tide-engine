@@ -146,6 +146,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define QUIET_SECONDS 2.0      // With no rollback for this long, nothing says the delay is still needed: it comes back a tick at a time
 #define COLD_SECONDS 1.0       // A rollback in a client's first second with a world isn't measured: everything is cold, and it's catching up
 #define REPLAY_SAMPLES 5       // Rollbacks' first ticks whose median is what one costs
+#define FAR_STALE_SECONDS 0.25 // How old far entities may get in predicted ticks a confirmed tick keeps (tide_game.near_same)
 #define GUESS_SECONDS 0.15     // How long a client guesses that another player's input stays as it was, unless its desc says
 #define SLACK_SECONDS 5.0      // How long a client that never predicts has to have had room to spare before it takes input delay back
 #define SLACK_TICKS 3          // Ticks a frame has to come before its tick is due to count as room to spare
@@ -963,11 +964,23 @@ struct tide_server {
     struct injected *injected;
     uint32_t injected_count, injected_room;
     tide_player_set admitted; // Players of a sharded world it takes though closed (tide_server_admit)
+    // Its players on transports[0] (`local`) are its session's own, whose
+    // worlds are its own (tide_client.mirror): nothing is sent or worked out
+    // for them that only a world of their own would need (mirrors)
+    bool mirrors_local;
     // This machine's player, while its session updates the server: its worlds
     // are the server's, shared after each tick, and what its local handlers
     // hear is what the tick sent (mirror_tick)
     tide_client *twin;
 };
+
+// Whether `c` is this machine's own player, whose world is the server's
+// (tide_client.mirror): it's sent no world, no frame and no download, and the
+// server works out no projection for it.
+static bool mirrors(const tide_server *s, const connection *c)
+{
+    return s->mirrors_local && c->local;
+}
 
 static double resend_after(const uint32_t rtt_ms)
 {
@@ -1150,6 +1163,11 @@ static void start_snapshot(tide_server *s, connection *c)
     c->frame_mask = 0;
     c->catching_up = true;
     memset(c->frame_sent, 0, s->w.history * sizeof *c->frame_sent);
+    if (mirrors(s, c)) { // A transfer named and empty: the player takes the server's world as it is
+        c->catching_up = false;
+        send_in_chunks(s, c, g->client_state ? SEND_CLIENT_WORLD : SEND_WORLD, NULL, 0, NULL);
+        return;
+    }
     if (g->client_state) {
         uint32_t size = 0;
         const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
@@ -1662,7 +1680,9 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         }
         if (c->snapshot_kind == SEND_HASHES && lacks && lacks_number == c->snapshot_number) {
             send_lacking(s, c, lacks, lacks_size);
-        } else if ((c->snapshot_kind != SEND_HASHES && c->chunk_ack >= c->chunk_count) || (newest && !wants)) {
+        } else if ((c->snapshot_kind != SEND_HASHES && c->chunk_ack >= c->chunk_count
+                    && (c->chunk_count || chunk_number == c->snapshot_number)) // An empty one once it said it had it (mirrors)
+                   || (newest && !wants)) {
             stop_sending(s, c); // It has the world, or one that needs nothing: ticks from here
         }
     }
@@ -2009,7 +2029,7 @@ static bool everyone_has(const tide_server *s, const published *p)
 {
     for (uint32_t i = 0; i < s->players; i++) {
         const connection *c = &s->connections[i];
-        if (!c->used || !c->greeted || c->sending || c->catching_up) continue;
+        if (!c->used || !c->greeted || c->sending || c->catching_up || mirrors(s, c)) continue;
         if (!tide_players_has(&p->acked, i)) return false;
     }
     return true;
@@ -2638,7 +2658,8 @@ static void server_tick(tide_server *s)
         if (!recipients || !hashes) tide_out_of_memory();
         uint32_t count = 0;
         for (uint32_t p = 0; p < s->players; p++) {
-            if (s->connections[p].used && s->connections[p].greeted) recipients[count++] = tide_player_from_index((int32_t)p);
+            const connection *c = &s->connections[p];
+            if (c->used && c->greeted && !mirrors(s, c)) recipients[count++] = tide_player_from_index((int32_t)p);
         }
         if (g->client_hashes && count) g->client_hashes(s->world, recipients, count, hashes);
         else for (uint32_t i = 0; i < count; i++) hashes[i] = g->client_hash(s->world, recipients[i]);
@@ -3046,6 +3067,17 @@ static uint32_t piece_header(const tide_server *s, const uint32_t tick, const ui
 // The ticks it lacks, in pieces, as many packets as it takes (up to a limit).
 static void send_frames(tide_server *s, connection *c)
 {
+    if (mirrors(s, c)) { // It has every tick: the server's world is its own. Its times, inputs' wait and uploads
+        c->view_limit = s->tick;
+        c->frame_ack = s->tick;
+        c->frame_mask = 0;
+        c->catching_up = false;
+        tide_writer w;
+        uint32_t count_at;
+        start_server_packet(s, c, &w, &count_at);
+        send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
+        return;
+    }
     // Too far behind for the ticks kept: the whole world again. One catching
     // up with the world it was sent has them all kept for it (keep_needed).
     if (!c->catching_up && s->tick - c->frame_ack >= s->w.history) {
@@ -3346,7 +3378,7 @@ void tide_server_update(tide_server *s, const double now)
                 send_chunks(s, c);
             } else {
                 send_frames(s, c);
-                if (s->published_count) send_downloads(s, c);
+                if (s->published_count && !mirrors(s, c)) send_downloads(s, c);
             }
         }
     }
@@ -3583,6 +3615,7 @@ struct tide_client {
     bool repair_stream;
     bool snapshot_stream;
     uint32_t resyncs;
+    uint32_t near_skips; // tide_client_status.near_kept
     uint64_t world_bytes;
     traffic traffic;
     uint64_t cookie;
@@ -3694,7 +3727,18 @@ struct tide_client {
     uint32_t guess;
     uint32_t let_go;
     uint32_t input_guessed; // First tick whose input a custom guess changed
-    double slack_since;     // Since when it's had room to spare, to take delay back after a while
+    // Predicting near its player alone (tide_game.predict_far): the first tick
+    // it ran with entities left out as far, whose world is never the server's.
+    // UINT32_MAX: none is.
+    uint32_t far_from;
+    // ...and the confirmed tick whose far entities those ticks have: a
+    // confirmed tick that leaves what's near as predicted keeps the predicted
+    // ticks after it (tide_game.near_same), with far entities that much older,
+    // up to FAR_STALE_SECONDS. A world to keep the predicted one in while the
+    // confirmed tick runs over it.
+    uint32_t far_since;
+    void *near_kept;
+    double slack_since;    // Since when it's had room to spare, to take delay back after a while
     double delay_hold_until; // No change of delay until then: the last one takes a round trip to show
 
     // The last pair actually drawn. Recording it is free; replay keeps old
@@ -4873,6 +4917,15 @@ static void run_predicted(tide_client *c, const uint32_t tick)
     const tide_game *g = c->game;
     void *world = world_at(c, tick + 1u);
     g->copy_world(world, world_at(c, tick));
+    // What's far from this machine's player isn't run: as the server last
+    // confirmed it, from the verified world each run of predictions starts
+    // from, which has none tagged. While nothing is far, each tick looks again.
+    if (c->far_from < c->verified || c->far_from >= tick + 1u) c->far_from = UINT32_MAX; // No tick before this one was
+    if (g->predict_far && (tick == c->verified || c->far_from == UINT32_MAX)
+        && g->predict_far(world, tide_player_from_index(c->player)) && c->far_from == UINT32_MAX) {
+        c->far_from = tick;
+        c->far_since = c->verified;
+    }
     if (g->predict_inputs) {
         tide_player_set mine = {0};
         tide_players_add(&mine, (uint32_t)c->player);
@@ -4903,6 +4956,7 @@ static void run_predicted(tide_client *c, const uint32_t tick)
 static void predict_from(tide_client *c, const uint32_t from)
 {
     if (c->input_guessed < c->verified || c->input_guessed >= from) c->input_guessed = UINT32_MAX;
+    if (c->far_from < c->verified || c->far_from >= from) c->far_from = UINT32_MAX;
     c->let_go = UINT32_MAX; // Where the others let go is found again, from the tick confirmed now
     // What the rollback costs is measured tick by tick for the input delay to
     // go by (note_tick_cost): its first tick apart from the rest
@@ -5010,7 +5064,7 @@ static void fall_behind(tide_client *c)
         reset_view_correction(c); // What views drew isn't there to correct from
         c->ahead = c->verified;
     }
-    c->let_go = c->input_guessed = UINT32_MAX;
+    c->let_go = c->input_guessed = c->far_from = UINT32_MAX;
     c->catching_up = true;
     skip_old_inputs(c);
     c->early_watching = false;
@@ -5308,7 +5362,7 @@ static void load_snapshot(tide_client *c)
     // had predicted, have nothing to do with it. It starts from this world,
     // behind, and catches up with the ticks since before it predicts (fall_behind).
     reset_view_correction(c);
-    c->let_go = c->input_guessed = UINT32_MAX;
+    c->let_go = c->input_guessed = c->far_from = UINT32_MAX;
     if (g->client_state && g->hear_visibility && !mirror) {
         const pending_frame transition = {.destroyed = destroyed, .destroyed_count = destroyed_count};
         hear_visibility_tick(c, world, c->loaded ? world_at(c, c->verified) : c->had, &transition, tick);
@@ -5584,7 +5638,8 @@ static void play(tide_client *c)
     // snapshot, which only needs its hash checked. One that didn't runs on the
     // snapshot before it, and the predicted ones after it are stale; nor did
     // one it ran as if the others had let go (`let_go`), which they hadn't if
-    // their inputs stayed. One past what it ran, whose tick its clock hasn't
+    // their inputs stayed, nor one it ran leaving out what's far from its
+    // player (`far_from`): that runs once, here. One past what it ran, whose tick its clock hasn't
     // reached, waits for the clock, so ticks run at the match's pace however
     // early their frames come. No more are run than a moment may
     // (catch_up_room): the rest wait for the frames to come, so that seconds
@@ -5610,8 +5665,13 @@ static void play(tide_client *c)
             c->repair_tick = tick + 1u;
             break;
         }
-        const bool predicted = tick < c->ahead && !stale
-            && tick < c->let_go && tick < c->input_guessed && as_predicted(c, f);
+        const bool guessed = tick < c->ahead && !stale && tick < c->let_go && tick < c->input_guessed && as_predicted(c, f);
+        const bool predicted = guessed && tick < c->far_from;
+        // A tick run leaving out what's far, as the inputs went: it runs once here, whole, and if what's near
+        // comes out as predicted the predicted ticks after it stand, with far entities as of `far_since`, which
+        // is no more than FAR_STALE_SECONDS old by then (the owner, 2026-11-04)
+        const bool near_kept = guessed && !predicted && c->game->near_same && tick + 1u < c->ahead
+            && (double)(tick + 1u - c->far_since) <= FAR_STALE_SECONDS * (double)c->tick_rate;
         if (!predicted && c->ran_now >= c->room.most) {
             out_of_room = true;
             break;
@@ -5633,11 +5693,21 @@ static void play(tide_client *c)
                 ? c->game->client_hash(world_at(c, tick + 1u), tide_player_from_index(c->player))
                 : hash_of(c->game, world_at(c, tick + 1u), c->desc.jobs)) == frame_hash(f);
         } else {
+            if (near_kept) {
+                if (!c->near_kept) c->near_kept = calloc(1, c->game->world_size);
+                if (!c->near_kept) tide_out_of_memory();
+                c->game->copy_world(c->near_kept, world_at(c, tick + 1u));
+            }
             if (tick < c->ahead) capture_view_correction(c, tick + 1u);
             c->game->copy_world(world_at(c, tick + 1u), world_at(c, tick));
             ok = apply_frame(c, world_at(c, tick + 1u), f);
             finish_view_rewrite(c, tick + 1u);
-            stale |= tick + 1u < c->ahead;
+            if (ok && near_kept && c->game->near_same(c->near_kept, world_at(c, tick + 1u))) {
+                c->far_from = tick + 1u; // The ticks after it stand, run as they were
+                c->near_skips++;
+            } else {
+                stale |= tick + 1u < c->ahead;
+            }
             c->ran_now++;
         }
         if (!ok) { // Diverged: ask for the world again, and keep predicting meanwhile
@@ -6100,7 +6170,7 @@ tide_client *tide_client_create(const tide_client_desc *desc, const double now)
     c->last_hello = -1.0;
     c->nonce = (uint32_t)(tide_hash(&c, sizeof c) ^ tide_hash(&now, sizeof now)) | 1u;
     c->ring = FIRST_RING;
-    c->let_go = c->input_guessed = UINT32_MAX;
+    c->let_go = c->input_guessed = c->far_from = UINT32_MAX;
     c->worlds = calloc(c->ring, sizeof *c->worlds);
     for (uint32_t i = 0; c->worlds && i < c->ring; i++) c->worlds[i] = calloc(1, g->world_size);
     c->input = calloc(1, (size_t)g->input_size + 1u);
@@ -6154,6 +6224,8 @@ void tide_client_destroy(tide_client *c)
         free(c->worlds[i]);
     }
     free(c->worlds);
+    free_world(c->game, c->near_kept);
+    free(c->near_kept);
     free(c->inputs);
     free(c->input);
     free(c->scratch);
@@ -6232,6 +6304,7 @@ tide_client_status tide_client_status_of(const tide_client *c)
         .run_ticks = c->ran,
         .ahead_ticks = c->ran_ahead,
         .resyncs = c->resyncs,
+        .near_kept = c->near_skips,
         .world_bytes = c->world_bytes,
         .cookie = c->cookie,
     };
@@ -6589,6 +6662,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         return;
     }
     s->client->mirror = s->server; // Its worlds are the server's: the match is ticked once here
+    s->server->mirrors_local = true;
     s->last_state = TIDE_SESSION_CONNECTING;
     record_server(s);
 }
@@ -7053,6 +7127,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
         return;
     }
     s->client->mirror = s->server; // Its worlds are the server's, as a match started here
+    s->server->mirrors_local = true;
     s->client->commands = s->stale->commands;
     s->stale->commands = (command_queue){0};
     s->client->commands_rebase = true;
@@ -7345,7 +7420,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
     }
     if (c->loaded) {
         c->ahead = c->verified;
-        c->let_go = c->input_guessed = UINT32_MAX;
+        c->let_go = c->input_guessed = c->far_from = UINT32_MAX;
         c->first_tick = c->verified; // Views don't blend from the old build's world
         c->verified_view = (double)c->verified;
         c->presented_view = (tide_view_time){0};
@@ -7368,7 +7443,7 @@ static void take_server_world(tide_client *c, const tide_server *s)
     }
     c->verified = s->tick;
     c->ahead = s->tick;
-    c->let_go = c->input_guessed = UINT32_MAX;
+    c->let_go = c->input_guessed = c->far_from = UINT32_MAX;
     c->first_tick = s->tick;
     c->verified_view = (double)s->tick;
     c->presented_view = (tide_view_time){0};

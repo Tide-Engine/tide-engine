@@ -2214,6 +2214,12 @@ static const setting settings[] = {
      "frame's budget, it delays its input a tick at a time until it fits. `Prediction.Delay`: clients never predict: "
      "inputs are delayed so every player's reach the server before its tick, and ticks run once, as the server "
      "confirms them, at the cost of input delay."},
+    {"predictionRange", TY_FLOAT, "none",
+     "With `Prediction.Rollback`: how far from this player's own entities a client predicts, in world units. "
+     "Entities farther than that aren't run in its predicted ticks: they stay as the server last confirmed them, "
+     "and what's near meets them there as they are. They tick once each, as the server confirms them, as with "
+     "`Prediction.Delay`. Where an entity is comes from its `[Position]` fields, or its `Transform`; one with "
+     "neither is always predicted. Without it, a client predicts everything."},
     {"stats", TY_BOOL, "false",
      "Shows the stats in the window's bottom right corner: one line, the frame rate, and the ping in a match another "
      "machine runs. A click or a tap on it, or F8, opens it to the rest: what a frame's work takes, the bandwidth, "

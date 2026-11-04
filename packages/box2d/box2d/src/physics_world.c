@@ -522,11 +522,15 @@ static void b2CollideTask( int startIndex, int endIndex, int workerIndex, void* 
 			b2WorldTransform transformA = bodySimA->transform;
 			b2WorldTransform transformB = bodySimB->transform;
 
-			// These may not be skipped by relative transform check below
-			contactSim->invMassA = bodySimA->invMass;
-			contactSim->invIA = bodySimA->invInertia;
-			contactSim->invMassB = bodySimB->invMass;
-			contactSim->invIB = bodySimB->invInertia;
+			// These may not be skipped by relative transform check below. Tide: in a world that holds bodies
+			// (b2World_HoldBodies), one that's neither awake nor static may be held, and doesn't move; elsewhere a
+			// sleeping body's contact is never solved, and keeps upstream's values, which its image has
+			bool stillA = world->holding && encodedA == B2_NULL_INDEX;
+			bool stillB = world->holding && encodedB == B2_NULL_INDEX;
+			contactSim->invMassA = stillA ? 0.0f : bodySimA->invMass;
+			contactSim->invIA = stillA ? 0.0f : bodySimA->invInertia;
+			contactSim->invMassB = stillB ? 0.0f : bodySimB->invMass;
+			contactSim->invIB = stillB ? 0.0f : bodySimB->invInertia;
 
 			bool isFast = ( ( bodySimA->flags | bodySimB->flags ) & b2_isFast ) != 0;
 

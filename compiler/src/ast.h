@@ -1686,6 +1686,11 @@ typedef struct program {
     decl *shard_dying;         // ...and the one an entity has while its destroy waits for its Destroyed handlers to run
     decl *shard_anchor;        // ...and the one naming what an entity spawned with no position goes with: the entity whose code spawned it
     decl *shard_state;         // The hidden singleton of what makes a world a shard
+    // Prediction near this player alone (`settings { predictionRange = 40; }`, docs/spec.md, Settings)
+    double predict_range;      // predictionRange, or 0 where it isn't set: a client predicts everything
+    loc predict_range_at;
+    decl *predict_far;         // The hidden sparse tag a client's predicted ticks leave out: an entity farther than that
+    decl *far_absent;          // What `with Far` names without the setting: a tag no entity ever has
 } program;
 
 // A change that fixes a diagnostic, which editors offer as a quick fix.

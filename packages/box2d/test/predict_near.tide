@@ -1,0 +1,49 @@
+// A client predicts what's near its player alone (predictionRange): a ball
+// rolling far away is held where the server last confirmed it in the
+// client's predicted ticks, and a near ball rolling into a far wall meets it
+// as a static body (packages/test/predict_near_test.c).
+using Box2D;
+settings { maxPlayers = 2; predictionRange = 10; }
+
+input Controls { float push; }
+component Ball { int id; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float2(60, -1) }, Box { size = float2(220, 2) });
+    // Near the players, rolling to the wall
+    Spawn(Body { position = float2(2, 0.5), velocity = float2(1.5, 0) }, Circle { radius = 0.5 }, Ball { id = 1 });
+    // Just past the range: its face is within it, so the near ball reaches it while still near
+    Spawn(Body { position = float2(10.6, 1), asleep = true }, Box { size = float2(0.5, 2), density = 20 }, Ball { id = 2 });
+    // Far away, rolling the whole time
+    Spawn(Body { position = float2(60, 0.5), velocity = float2(3, 0) }, Circle { radius = 0.5 }, Ball { id = 3 });
+}
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Body { type = BodyType.Kinematic, position = float2(0, joined.player == PlayerID(0) ? 3 : 4) },
+          Box { size = float2(0.5) }, Owner { player = joined.player });
+}
+
+// Input that moves nothing: a client's own ticks run ahead of the server's
+system Drive(Controls controls, mut Body body, with Owner)
+{
+    body.velocity.y = controls.push;
+}
+
+// Where the step left the far ball, by Box2D: a near system asks after the step,
+// so it runs in a client's predicted ticks too, where the world holds the ball
+component Seen { float farX; }
+
+event(PlayerJoined joined) Watch()
+{
+    Spawn(Seen, Body { type = BodyType.Static, position = float2(0, joined.player == PlayerID(0) ? 6 : 7) }, Owner { player = joined.player });
+}
+
+[After(PhysicsStages.Step)]
+system Look(mut Seen seen, Physics physics)
+{
+    seen.farX = physics.Raycast(float2(50, 0.5), float2(200, 0.5), out var hit) ? hit.point.x : -1;
+}

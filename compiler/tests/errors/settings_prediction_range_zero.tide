@@ -1,0 +1,3 @@
+// expect: predictionRange is a finite number of world units over 0, like 'predictionRange = 40;'
+settings { predictionRange = 0; }
+scene Main { }

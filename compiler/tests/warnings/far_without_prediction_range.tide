@@ -1,0 +1,9 @@
+// warnings: 1
+// expect: system 'Hold' never runs: only a client's predicted ticks tag entities Far, under 'predictionRange'
+// expect: set it, like 'settings { predictionRange = 40; }', or remove the system
+component Body { [Position] float2 position; int held; }
+singleton Held { int count; }
+system Hold(Body body, mut Held held, with Far) { held.count += body.held; }
+system Move(mut Body body, without Far) { body.position.x += 1; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body); }

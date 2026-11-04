@@ -1,5 +1,214 @@
 # Netcode: sessions, prediction, commands
 
+## Predicting near the player alone (2026-11-04)
+
+The owner's ask: a client predicts what's near its player and leaves what's far
+as the server confirmed it, ticking once (as `Prediction.Delay` would); near
+meets far as if it were constant, and odd reconciles at the border are fine;
+positions as shards find them. `settings { predictionRange = 40; }` (spec,
+Settings, Provisional for the picks; docs `multiplayer/matches.md`, Predicting
+what's near).
+
+What's built:
+- **A hidden sparse tag** (`check.c`): with the setting, `tide_far`, a builtin
+  component with no fields (`program.predict_far`), sparse (`sparse_component`),
+  possible in every match archetype that can have a position (`positioned`: a
+  `[Position]` component or `Transform`, in its components or `possible`). Every
+  match system and match handler that runs for each entity gets it in
+  `without_mask`, as shards' ghosts do; a system written in C too (owner's yes,
+  same day), whose wrapper hands C the runs of rows between tagged ones as it
+  does for visibility presence (`gen_extern_filtered_call`). So the existing sparse-filter row loops (counted chunks,
+  masked/selected/cached variants, apart loops copying skipped rows back) leave
+  tagged rows out with no new loop code. Only predicted worlds ever have the tag:
+  the server never sets it and a confirmed tick runs on a verified world, so
+  server ticks and confirmed ticks run every row, at the cost of a presence
+  count over each positioned chunk (zero pages, cached hashes).
+- **`tide_game.predict_far(world, player) -> bool`** (`predict_far_codegen.inc`):
+  the box around the positions of the player's own entities (`Owner`), grown by
+  the range on each axis; each taggable row then gets the tag when its position
+  is outside it, loses it otherwise, written (`tide_table_cell`, the page made
+  its own and its hash reset) only where that changes. Positions are
+  `tide_shard_where`'s (`gen_position_where`, split out of `gen_shard_where` and
+  generated for unsharded games too) of the entity's root (`tide_far_where`,
+  walking `tide_parent_of`). No owned positioned entity: nothing is tagged.
+  NULL without the setting. Session ABI marker: `predict far (1)`.
+- **`session.c`**: `tide_client.far_from`, the first tick run from a tagged
+  world, reset wherever `let_go` is. `run_predicted` calls `predict_far` on the
+  copied world when the tick is the verified one (each run of predictions starts
+  there, untagged) or while nothing is far (`far_from` UINT32_MAX), so an entity
+  moving out of range is noticed tick by tick; tags then carry along the chain by
+  copy. `play` never takes a tick at or past `far_from` as predicted: it runs the
+  frame on the verified world (whole), and the predicted ticks after it are stale
+  and run again near alone (`predict_again`), `predict_from` clearing `far_from`
+  past where it starts. With anything far, each confirmed tick is a whole tick
+  plus a near-only rollback of the lead; the input-delay budget measures those
+  predicted ticks (`note_tick_cost`), now near-only.
+- **Corrections**: `tide_local_correct` skips an entity tagged in either world, as
+  it skips a ghost in a sharded game: a far entity takes no accumulated error
+  (with it, each confirmed tick read as a one-tick correction and smoothing
+  lagged far entities by about six ticks); views blend it on the confirmed clock
+  instead (below).
+
+Tests: `tidec_e2e_predict_near` (`compiler/tests/e2e/predict_near*`, with a
+system written in C, `predict_near_c.c`, which fails the test excluded): two
+players on a 100 ms loopback, and on 120 ms with 60 ms jitter and 20% loss; a
+walker 4 units from them and one 100 away, range 10. Every frame a client runs
+ahead, the far walker in its predicted world is byte for byte its verified one
+and the near one has run every predicted tick; then the mover runs to the far
+walker and the two swap for its client, not the other's. No resyncs, and both
+walkers' confirmed state follows the server's. Without the `far_from` check in
+`play` both clients resync. Error fixtures `settings_prediction_range_zero` and
+`settings_prediction_range_delay`.
+
+**Far entities drawn blended** (same day, the owner: "we should blend them"):
+the drawn (predicted) world has a far entity as last confirmed at both ends of
+every tick, so it moved a tick at a step. Generated `tide_far_blend_<C>(w, e, v)`
+(`gen_far_blend`, for blended components with nothing in a heap, `far_plain`):
+for an entity tagged in the drawn world, its value in the presented confirmed
+world, blended with the one before on the confirmed clock (`tide_blend_<C>`,
+`tide_prev_<C>`), as a `verified` parameter's is; false for a near one or one
+that world lacks (born the same, else drawn as before). View row copies and
+view query rows call it before their ordinary blend, whole and lane-subset
+paths. The confirmed pair comes from file statics `tide_far_verified`,
+`tide_far_vprev`, `tide_far_valpha`, set by `tide_frame` before views (and per
+other shard's world drawn), cleared after them, so views without `verified`
+parameters needn't take the confirmed worlds (`takes_verified` would also turn
+off shader preparation). Components holding text, lists or grids keep a tick
+at a step: their handles are the drawn world's heap's.
+
+**The marking pass, by columns** (same day): `gen_far_rows` reads each
+archetype's position from its lanes chunk by chunk (`far_source`: the first
+`[Position]` component it has, then `Transform`; a sparse one, which a row may
+lack, goes through `tide_far_where`); a child in a hierarchy goes by its root
+(`tide_parent_of`, then `tide_far_where`). A chunk's tag page is made its own
+only where a tag changes. Measured (release, Windows, one thread, 50,001
+entities over 1000 × 50 units, range 40, ~3% near; a scratch game, not kept):
+
+| | lookups | columns |
+|---|---|---|
+| marking, first time on a verified world | 0.350 ms | 0.056 ms |
+| marking again, nothing changing | 0.245 ms | 0.041 ms |
+
+A whole tick of cheap systems (move, count) took 0.065 ms and the near-only one
+0.080 ms: every chunk mixes near and far rows, and the filtered loops cost more
+than the plain SIMD ones. With a system doing 32 steps of math per entity, a
+whole tick took 43.2 ms and the near-only one 1.5 ms (marking 0.11 ms). The same
+games without the setting: 0.037 ms and 42-43 ms a whole tick, so the far filter
+costs every tick (the server's and confirmed ones too, though nothing is ever
+tagged there) about 0.5 ns per row per system, which only shows on trivial
+systems.
+
+Tests (blending): `predict_near_draws_far_walkers_blended_as_confirmed` runs
+`tide_frame` on the client's views each frame and checks the far walker drawn
+at the confirmed pair's blend (and between its endpoints in over a quarter of
+frames), the near one at the predicted pair's; it fails with the helper
+returning false.
+
+**`Far`, and the physics packages holding far bodies** (same day; the owner
+named it and agreed the design: `with Far`/`without Far`, border islands
+stepped whole, near bodies hearing `Touched`/`Hit` from held ones):
+- `check.c` `far_filter`: `Far` in a `with`/`without` parameter of a system, C
+  system or query names `program.predict_far`; without the setting, a builtin
+  tag no archetype can have (`program.far_absent`, made on first use, so games
+  that never name it don't change), so a package names it either way. `Far far`
+  is an error (`errors/far_filter_binding`, `far_filter_query_binding`). A
+  game's own type named `Far` wins the lookup. A system for each entity that
+  needs the tag doesn't get it added to `without_mask` (it would never run).
+  `warn_unmatched` says a system `with Far` never runs without the setting
+  (`warnings/far_without_prediction_range`); package systems aren't warned.
+  Extern systems' wrappers already split chunks into runs by presence, so the
+  filter needed no codegen change. `tidec_e2e_predict_near` now also has a
+  `with Far` system counting far walker ticks: equal to the ticks predicted past
+  the verified one in every frame, zero on the server and in confirmed worlds.
+- Box2D/Box3D (`notes/box3d.md`, `notes/box2d.md`, each `box*d/TIDE.md`):
+  `HoldFar(Body, mut Physics, with Far)` at `Step` offset 19 hands the far
+  bodies' ids to the bridge, and the step holds them once per run of predicted
+  ticks (`b*World_HoldBodies`, noted into the stamp as `'f'`). `Leave` is
+  `without Far`. Test `tide_box{2,3}d_predict_near`
+  (`packages/test/predict_near_test.c`, the game in each package's `test/`).
+
+Measured (release, Windows, a scratch game not kept: Box3D, 3,000 balls rolling
+45 to 340 units from the players and 25 near them, range 40, a client on a
+100 ms loopback, 14 ticks ahead; client ms a frame over 10 s, server and client
+in one process):
+
+| | whole world | range 40, holding | range 40, not holding |
+|---|---|---|---|
+| guesses always right | 2.8-2.9 | 11.9-12.8 | 33-34 |
+| another player's input changing every 5 ticks | 19.5-21.2 | 14.4-14.9 | |
+
+Where the 14.7 ms goes with the range: Box3D steps 4.1-4.5 (12.1-13.4 whole),
+resident restores and commits 6.9 (5.7-5.9 whole), holding 0.3, the rest
+Tide's ticks. Holding saves most of what the steps cost, but with anything far
+every confirmed tick reruns the lead near-only, which the whole world skips
+when guesses were right: the range costs four times as much there. And holding
+3,000 bodies writes most of the arena, so the commit after it, and the
+verified world's restore the next frame, copy most pages.
+
+**Keeping the predicted ticks a confirmed tick leaves as they were** (same day;
+the owner picked "skip, bounded"): with anything far, every confirmed tick
+reran the near lead even when guesses were right, which made the range four
+times dearer than predicting everything (table above). Now:
+- `tide_game.near_same(predicted, confirmed)` (`gen_near_same`,
+  `predict_far_codegen.inc`; session ABI `predict far (2)`): every match
+  singleton and every row not tagged far in the predicted world, field by
+  field leaving out `[Native]` fields (a physics package's stamps and handles
+  differ between a held world and a whole one), sparse presence, scenes; and
+  entities, commands, task tables and order, inputs and the heap by their
+  hashes. Columns whose pages both worlds share from the tick before are
+  skipped unread.
+- `session.c` `play`: a confirmed tick whose inputs went as guessed but which
+  ran something far (`guessed && tick >= far_from`) keeps the predicted world
+  of its tick (`near_kept`, a spare world), runs whole over it, and if
+  `near_same`, sets `far_from` to the next tick and leaves `stale` alone: the
+  predicted ticks after it stand. `far_since`, the verified tick when the run
+  of predictions started, bounds it: once the next tick is more than
+  `FAR_STALE_SECONDS` (0.25) of ticks past it, they run again, which starts
+  `far_since` over. `tide_client_status.near_kept` counts the kept ones.
+- Test `tidec_e2e_predict_kept`: two still players, a near walker and a far
+  one; in every frame ahead the near one ran every predicted tick, the far one
+  is 0 to 15 ticks older than the last confirmed (older in over a quarter of
+  frames), over 100 confirmations kept per client, no resyncs.
+  `tidec_e2e_predict_near` keeps a predicted-world singleton (`FarSeen`), so it
+  never keeps one and its exact far checks still hold; so does the physics test
+  (its near raycast sees the far ball, which moved in the whole tick).
+- The same scratch game (busier machine: whole world 3.5 rather than 2.9):
+
+| client ms a frame | whole world | range 40, before | range 40, kept |
+|---|---|---|---|
+| guesses always right | 3.5-3.5 | 11.9-12.8 | 5.0-5.9 (716 kept) |
+| another player's input changing every 5 ticks | 22.4-23.5 | 14.4-14.9 | 7.5-9.0 (611 kept) |
+
+With Box3D marking less on sparse commits (notes/box3d.md, same day), the same
+game, a quieter machine: guesses always right 3.9 ms a frame with the range,
+2.65-2.7 whole; another player's input changing, 5.9 with the range, 18.5
+whole.
+What's left is mostly the whole confirmed tick and its whole commit each frame,
+and the arena switching between the confirmed and held predicted states (a
+restore each way; in this bench also the server's, in one process). A
+predicted world in an arena of its own can't: an arena's bytes hold pointers
+to where it is (notes/box3d.md). Running confirmed ticks in batches while
+what's near goes as predicted would cut the switching, at the cost of the
+confirmed world (far entities drawn, verified handlers) and divergence checks
+lagging up to the batch: the owner declined it (2026-11-04, "stop here").
+
+Gaps:
+- Singleton systems going through queries still run far entities in predicted
+  ticks unless their queries say `without Far`. A system's `mut` query rows
+  write far entities like any other: the owner's decision, same day ("written
+  like any other is correct").
+- The filter's per-row cost in ticks that have no tags (the server's,
+  confirmed ones): a world-level "nothing is tagged" would let them take the
+  unfiltered loops.
+- `World` reads in views (`world.Get<Body>(e)`) of a far entity are the drawn
+  world's, not blended from the confirmed one.
+- `near_same` compares every list and command whole (heap hash): a list
+  written anywhere in the confirmed tick, a far entity's or a package's, reruns.
+  Comparing near rows' lists alone would keep more.
+- Box3D: holding many bodies marks most of the arena, so a held world's commit
+  and the next restore copy most pages (6.9 ms a frame against 5.8 whole in the
+  table). Holding without moving bodies between sets would avoid it.
+
 ## A client's own ticks of its projection; repairs that back off (2026-11-04)
 
 Mount & Rifle played alone (route `tools/performance-route.txt`, seed 42, release)
@@ -122,11 +331,20 @@ What's built (`engine/src/session.c`):
 - **`play`** for a mirror is `mirror_play`: no frame is applied, predicted, hashed or repaired (frames for ticks before `verified` are dropped as they arrive). Behind the server (after a build change, or a ring that had no room) it takes the server's world whole (`take_server_world`, now a full copy for a mirror even with `client_state`) and skips the hearing to there. It runs the clock part of `play` (`clock_back`, `keep_early`, sampling inputs up to the clock, `early_settled`). `adjust_delay` does nothing for a mirror.
 - **Generated callback** (owner-approved design; compiler side): `tide_game.tick_client_events(world, jobs, per_player, all)` gets `all`, recording everything the tick sent, as `tick_events` does, into what was the generated `ignored` log. NULL keeps the old behavior. The Session ABI marker says `host events (1)`. Handwritten test games ignore it.
 
+**The server does nothing for its own player that only a world of its own would need** (the owner: "seems like something we should do"). `tide_server.mirrors_local`, set by the session beside `tide_client.mirror`, makes `mirrors(s, c)` true for its `local` connection:
+- `start_snapshot` packs nothing: the transfer is named and empty (`SEND_WORLD`, or `SEND_CLIENT_WORLD` with projections, 0 bytes), and it ends only once the client says it has that number (`on_client`: an empty transfer used to end at the first CLIENT, before the WELCOME naming it was even read, and started again and again).
+- `send_frames` sends no frame. The connection has every tick (`frame_ack` = the server's tick, never catching up or sent the world again), and gets one SERVER packet an update for its times, its inputs' wait and its uploads.
+- `server_tick` leaves it out of the recipients: no projection hash (`client_hashes`), no filtered inputs or journal (`store_client_frame`).
+- Big commands don't wait for it to download them (`everyone_has`), and none goes down to it (`send_downloads`).
+
+Measured with `net_alone_seen` alone (sanitize build, the change switched off by a scratch environment variable for comparison, three runs each): the host's session updates over 360 frames took 15.1 to 15.9 ms, against 25.9 to 28.3 ms. With a guest in, the guest's projection work is most of it (30.6 to 35.7 ms either way).
+
+Tests: `net_a_host_with_another_player_ticks_once` also checks the host's player was sent no world bytes; the earlier tests above cover the rest. Validation: full native `sanitize` (3,036 CTests, prototypes included): all pass but `tide_server_smoke`, which failed once to listen on UDP port 7777 that something else on the machine held, and passes 20 runs of 20 alone (its dedicated server never mirrors). Web and other platforms are left to the Build workflow at the owner's word.
+
 What changes for games: the host's views and local code see the whole match, hidden entities included (the spec's State visibility now says so; whether its views should be masked by its player's audience is Open there). Its local handlers hear every match event, including events from hidden state, which `hears_match_events` no longer decides. `tide_client_status.run_ticks`/`ahead_ticks` stay 0 for the host. The other machines are unchanged.
 
 Gaps:
 - A lone developer no longer gets the twin's desync check (the host's client hashing its own run of each tick against the server's). Nondeterminism shows only with another machine in (`--players 2`, the networking tests). An opt-in check (running the twin again) was offered to the owner and isn't built.
-- The server still keeps and sends frames to the local connection, and in visibility games hashes its projection each tick and packs one projection at join. The client ignores them. Leaving the local connection out of `store_client_frame`/`client_hashes` would save that work.
 - The host's presentation has no prediction correction to smooth, and draws the server's tick as it is.
 
 Tests: `net_a_host_with_another_player_ticks_once` (`compiler/tests/e2e/net_test.c`: a host and a guest over 30 ms, 10 ms jitter and 5% loss, 300 uneven frames; the counted game ticks exactly once per confirmed tick, the host's player runs none, its world is the server's every frame, both players' inputs reach the match, no resyncs). `net_alone_seen` now checks the host instead: alone and with a guest, ticks run equal ticks confirmed, the host has all 8 walkers every frame while the guest sees fewer, and every Rang and every walker's Shown is heard once and once as verified (before, a game hearing Rang ran both ticks, and the twin's Shown counted only walkers in sight). `delta_players_coming_back_to_a_match_that_changed_hands_get_what_they_lack`: the new host's player receives 0 world bytes (it shares its server's world); the guest still gets what it lacks. The existing `net_a_session_played_alone_ticks_once` and `net_a_session_takes_a_new_build_of_its_game` pass unchanged.

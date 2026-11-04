@@ -82,6 +82,18 @@ void b2AddContactToGraph( b2World* world, b2ContactSim* contactSim, b2Contact* c
 	b2BodyType typeB = bodyB->type;
 	B2_ASSERT( typeA == b2_dynamicBody || typeB == b2_dynamicBody );
 
+	// Tide: a dynamic body that isn't awake is held (b2World_HoldBodies), and taken as a static one
+	bool heldA = typeA != b2_staticBody && bodyA->setIndex != b2_awakeSet;
+	bool heldB = typeB != b2_staticBody && bodyB->setIndex != b2_awakeSet;
+	if ( heldA )
+	{
+		typeA = b2_staticBody;
+	}
+	if ( heldB )
+	{
+		typeB = b2_staticBody;
+	}
+
 #if B2_FORCE_OVERFLOW == 0
 	if ( typeA == b2_dynamicBody && typeB == b2_dynamicBody )
 	{

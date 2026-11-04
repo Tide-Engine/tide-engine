@@ -280,6 +280,10 @@ typedef struct b2World
 	// Tide: what changed since the world's last image. Last, so that everything above is where upstream
 	// has it.
 	b2SnapTrack snapTrack;
+
+	// Tide: some sleeping sets are held (b2World_HoldBodies), until the world is restored. Neither this nor a
+	// set's held is in an image: an image holds nothing
+	bool holding;
 } b2World;
 
 // Tide: a body, a shape or a contact may be another than the world's last image has it (b2SnapTrack). Said

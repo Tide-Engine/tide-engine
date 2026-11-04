@@ -14849,6 +14849,14 @@ static void check_settings(checker *c)
                     prog->shards = known->bool_value;
                     prog->shards_at = f->at;
                 }
+            } else if (str_eq_c(f->name, "predictionRange")) {
+                float range;
+                if (!setting_float(value, &range, 0) || !(range > 0.0f) || range - range != 0.0f) {
+                    diag_error(value->at, "predictionRange is a finite number of world units over 0, like 'predictionRange = 40;'");
+                } else {
+                    prog->predict_range = range;
+                    prog->predict_range_at = f->at;
+                }
             } else if (str_eq_c(f->name, "reach")) {
                 float range;
                 if (!setting_float(value, &range, 0) || !(range > 0.0f) || range - range != 0.0f) {
@@ -14868,6 +14876,48 @@ static void check_settings(checker *c)
         diag_error(prog->shard_range_at, "reach only means something with 'shards = true;'");
     }
     if (prog->shards && prog->shard_range > 0.0) ensure_shards(prog);
+    if (prog->predict_range > 0.0 && prog->delay_prediction) {
+        diag_error(prog->predict_range_at, "predictionRange only means something with 'prediction = Prediction.Rollback;': "
+                   "with Prediction.Delay a client predicts nothing");
+    } else if (prog->predict_range > 0.0) {
+        // An entity a client's predicted ticks leave out: a hidden sparse tag
+        // only its predicted worlds ever have (tide_game.predict_far)
+        decl *far = NEW(decl);
+        far->kind = DECL_COMPONENT;
+        far->builtin = true;
+        far->name = far->qualified = str_from("tide_far");
+        far->c_name = "tide_far";
+        far->index = prog->components.count;
+        vec_push(prog->components, far);
+        prog->predict_far = far;
+    }
+}
+
+// `with Far` and `without Far`: the tag a client's predicted ticks give what's
+// far from its player (predictionRange), for code that steps everything at once
+// (a physics package's step) to leave it out too. Without the setting it's a
+// tag no entity ever has, so a package names it whether the game sets it or not.
+static decl *far_filter(const checker *c, const param *p, const decl *found)
+{
+    if (found || !str_eq_c(p->type_name, "Far")) return NULL;
+    if (p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT) {
+        diag_error(p->type_at.line ? p->type_at : p->at, "'Far' is a filter, with no fields: 'with Far' or 'without Far'");
+        diag_note("it's what a client's predicted ticks leave out under 'predictionRange'");
+        return NULL;
+    }
+    program *prog = c->prog;
+    if (prog->predict_far) return prog->predict_far;
+    if (!prog->far_absent) {
+        decl *far = NEW(decl);
+        far->kind = DECL_COMPONENT;
+        far->builtin = true;
+        far->name = far->qualified = str_from("tide_far");
+        far->c_name = "tide_far";
+        far->index = prog->components.count;
+        vec_push(prog->components, far);
+        prog->far_absent = far;
+    }
+    return prog->far_absent;
 }
 
 static type use_constant(checker *c, expr *e, decl *k)
@@ -18007,6 +18057,14 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             }
         }
         decl *d = find_type(c, p->type_name, p->type_at);
+        if (!d && str_eq_c(p->type_name, "Far")) {
+            d = far_filter(c, p, d);
+            if (!d) {
+                p->type = T_ERR;
+                refused_binding(row, p);
+                continue;
+            }
+        }
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         if (!d || d->kind != DECL_COMPONENT) {
             diag_error(p->type_at, "a query takes only components, and '" STR_FMT "' isn't a component", STR_ARG(p->type_name));
@@ -18156,6 +18214,14 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
         decl *d = p->mode == PARAM_QUERY || p->changed ? NULL : find_type(c, p->type_name, p->type_at);
+        if (!d && p->mode != PARAM_QUERY && !p->changed) {
+            decl *far = far_filter(c, p, d);
+            if (far) d = far;
+            else if (str_eq_c(p->type_name, "Far")) {
+                p->type = T_ERR;
+                continue;
+            }
+        }
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         const bool is_entity = names_type_as(c, p->type_name, "Entity");
@@ -19932,7 +19998,8 @@ static bool sparse_component_source(const program *prog, const decl *d)
 
 static bool sparse_component(const program *prog, const decl *d)
 {
-    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || d == prog->shard_anchor || sparse_component_source(prog, d);
+    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || d == prog->shard_anchor
+        || d == prog->predict_far || sparse_component_source(prog, d);
 }
 
 // Whether a system's (or handler's, or view's) filters admit archetype `mask`:
@@ -20017,6 +20084,17 @@ static void append_component_names(const program *prog, const comp_mask mask, ch
     }
 }
 
+// Whether entities with components `mask` can have a position: a [Position]
+// vector, or a Transform (tide_shard_where).
+static bool positioned(const program *prog, const comp_mask mask)
+{
+    if (prog->transform && prog->transform->index >= 0 && mask_has(mask, prog->transform->index)) return true;
+    for (int i = 0; i < prog->positions.count; i++) {
+        if (mask_has(mask, prog->positions.items[i].component->index)) return true;
+    }
+    return false;
+}
+
 // Every spawn creates an archetype, and the Adds and Removes that can reach
 // each archetype's entities (change_site) make the rest, until nothing new
 // appears.
@@ -20048,6 +20126,13 @@ static bool derive_archetypes_once(const checker *c)
     // Any of a sharded match's entities can be a ghost: another shard's, held here read-only
     for (int i = 0; prog->shard_ghost && i < prog->archetypes.count; i++) {
         if (!prog->archetype_local.items[i]) allow_sparse(prog, i, mask_or(mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)), bit(prog->shard_anchor)));
+    }
+    // Any of the match's entities with a position can be far from this player
+    // in a client's predicted ticks (predictionRange)
+    for (int i = 0; prog->predict_far && i < prog->archetypes.count; i++) {
+        if (!prog->archetype_local.items[i] && positioned(prog, mask_or(prog->archetypes.items[i], prog->possible.items[i]))) {
+            allow_sparse(prog, i, bit(prog->predict_far));
+        }
     }
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;
@@ -20202,7 +20287,11 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
                 }
             }
         }
-        if (!matched) {
+        if (!matched && prog->far_absent && mask_has(sys->need_mask, prog->far_absent->index)) {
+            diag_warning(sys->at, "%s '" STR_FMT "' never runs: only a client's predicted ticks tag entities Far, under "
+                         "'predictionRange'", system_what(sys), STR_ARG(sys->name));
+            diag_note("set it, like 'settings { predictionRange = 40; }', or remove the system");
+        } else if (!matched) {
             diag_warning(sys->at, "%s '" STR_FMT "' never runs: no entity matches its parameters", system_what(sys),
                          STR_ARG(sys->name));
             if (mask_any(sys->need_mask)) {
@@ -23297,6 +23386,17 @@ bool check(program *prog)
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || d->is_view || d->listens || !d->per_entity || d->entity_local) continue;
         d->without_mask = mask_or(d->without_mask, mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)));
+    }
+    // ...and a client's predicted ticks run them for what's near its player
+    // alone (predictionRange): only its predicted worlds have the tag, so the
+    // server's ticks and its confirmed ones run them for everything. A system
+    // written in C gets the runs of rows between far ones, as it does for a
+    // visibility presence filter (gen_extern_filtered_call).
+    for (int i = 0; prog->predict_far && i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_SYSTEM || d->is_view || d->listens || d->is_local || !d->per_entity || d->entity_local
+            || mask_has(d->need_mask, prog->predict_far->index)) continue; // `with Far` asks for them
+        d->without_mask = mask_or(d->without_mask, bit(prog->predict_far));
     }
     derive_archetypes(&c);
     check_extern_sparse(prog);

@@ -222,6 +222,22 @@ void b2LinkContact( b2World* world, b2Contact* contact )
 	B2_ASSERT( bodyA->setIndex != b2_disabledSet && bodyB->setIndex != b2_disabledSet );
 	B2_ASSERT( bodyA->setIndex != b2_staticSet || bodyB->setIndex != b2_staticSet );
 
+	// Tide: a body held for a predicted tick (b2World_HoldBodies) is met as a static one: it isn't woken and
+	// its island isn't merged, and the contact is the awake body's island's alone. The graph takes it as a
+	// static body too (b2AddContactToGraph).
+	if ( world->holding )
+	{
+		bool heldA = b2IsHeldBody( world, bodyA );
+		bool heldB = b2IsHeldBody( world, bodyB );
+		if ( heldA || heldB )
+		{
+			int islandId = heldA ? bodyB->islandId : bodyA->islandId;
+			B2_ASSERT( heldA != heldB && islandId != B2_NULL_INDEX );
+			b2AddContactToIsland( world, islandId, contact );
+			return;
+		}
+	}
+
 	// Wake bodyB if bodyA is awake and bodyB is sleeping
 	if ( bodyA->setIndex == b2_awakeSet && bodyB->setIndex >= b2_firstSleepingSet )
 	{
@@ -471,8 +487,10 @@ void b2SplitIsland( b2World* world, int baseId )
 		B2_VALIDATE( 0 <= bodyIdB && bodyIdB < world->bodies.count );
 		b2Body* bodyA = bodies + bodyIdA;
 		b2Body* bodyB = bodies + bodyIdB;
-		int islandIndexA = bodyA->islandIndex;
-		int islandIndexB = bodyB->islandIndex;
+		// Tide: the island's own bodies, where upstream takes any with an island: a held body
+		// (b2World_HoldBodies) is in another
+		int islandIndexA = bodyA->islandId == baseId ? bodyA->islandIndex : B2_NULL_INDEX;
+		int islandIndexB = bodyB->islandId == baseId ? bodyB->islandIndex : B2_NULL_INDEX;
 
 		// Only connect non-static bodies
 		if ( islandIndexA != B2_NULL_INDEX && islandIndexB != B2_NULL_INDEX )
@@ -500,8 +518,10 @@ void b2SplitIsland( b2World* world, int baseId )
 		B2_VALIDATE( 0 <= bodyIdB && bodyIdB < world->bodies.count );
 		b2Body* bodyA = bodies + bodyIdA;
 		b2Body* bodyB = bodies + bodyIdB;
-		int islandIndexA = bodyA->islandIndex;
-		int islandIndexB = bodyB->islandIndex;
+		// Tide: the island's own bodies, where upstream takes any with an island: a held body
+		// (b2World_HoldBodies) is in another
+		int islandIndexA = bodyA->islandId == baseId ? bodyA->islandIndex : B2_NULL_INDEX;
+		int islandIndexB = bodyB->islandId == baseId ? bodyB->islandIndex : B2_NULL_INDEX;
 
 		// Only connect non-static bodies
 		if ( islandIndexA != B2_NULL_INDEX && islandIndexB != B2_NULL_INDEX )
@@ -635,7 +655,9 @@ void b2SplitIsland( b2World* world, int baseId )
 		// Static bodies don't have an island id.
 		b2Body* bodyA = b2Array_Get( world->bodies, link->bodyIdA );
 		b2Body* bodyB = b2Array_Get( world->bodies, link->bodyIdB );
-		int targetIslandId = bodyA->islandId != B2_NULL_INDEX ? bodyA->islandId : bodyB->islandId;
+		// Tide: the awake body's, where upstream takes any with an island: a held body (b2World_HoldBodies)
+		// is asleep in another
+		int targetIslandId = bodyA->islandId != B2_NULL_INDEX && bodyA->setIndex == b2_awakeSet ? bodyA->islandId : bodyB->islandId;
 
 		b2Island* targetIsland = b2Array_Get( world->islands, targetIslandId );
 		contact->islandId = targetIslandId;

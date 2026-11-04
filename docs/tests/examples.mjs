@@ -460,16 +460,18 @@ try {
     // Freeze a known counter, migrate a new field, then break and repair syntax.
     if (!only || only.has('playground')) {
         await command('Page.navigate', { url: `${origin}/guide/playground?backend=${backend}` });
-        await until(`location.pathname === '/guide/playground' && document.querySelector('#playground-source')`, 'playground page');
+        await until(`location.pathname === '/guide/playground' && document.querySelector('section.playground')?.tideEditor`, 'playground editor');
+        // Tide's grammar colors the code: its lines have several token colors.
+        await until(`new Set(Array.from(document.querySelectorAll('.playground .view-line span span'), span => span.className)).size > 4`, 'playground highlights Tide');
         await until(`document.querySelector('iframe')?.contentWindow.__draws > 5`, 'playground initial game draws');
         stats(await evaluate('document.querySelector("iframe").src'), 'playground runtime');
         const source = readFileSync(join(docs, 'playground/demo.tide'), 'utf8');
-        assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
+        assert.equal(await evaluate(`document.querySelector('section.playground').tideEditor.value`), source);
         const frozen = source.replace('const float SPEED = 1;', 'const float SPEED = 0;')
             .replace('Spawn(Ball);', 'Spawn(Ball { bounces = 37 });')
             .replace('view Show(Ball ball)\n{', 'view Show(Ball ball)\n{\n    Debug.Log($"state {ball.bounces}");');
         const edit = async text => {
-            await evaluate(`(() => { const editor = document.querySelector('#playground-source'); editor.focus(); editor.value = ${JSON.stringify(text)}; editor.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+            await evaluate(`(() => { const editor = document.querySelector('section.playground').tideEditor; editor.focus(); editor.setValue(${JSON.stringify(text)}); })()`);
         };
         const running = `document.querySelector('.status').textContent.includes('your changes are live')`;
         const details = `({status: document.querySelector('.playground .status')?.textContent,
@@ -498,9 +500,11 @@ try {
         await edit(changed);
         await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`,
             'playground preserves state and migrates new defaults', { failure, details });
-        assert.equal(await evaluate('document.activeElement.id'), 'playground-source', 'reload retains editor focus');
+        assert.equal(await evaluate(`document.querySelector('section.playground').tideEditor.hasFocus()`), true, 'reload retains editor focus');
         await edit(changed.replace('Spawn(Ball { bounces = 37 });', 'Spawn(Ball { bounces = 37 })'));
         await until(`document.querySelector('.diagnostics.error')?.textContent.includes("expected ';'")`, 'playground reports a source diagnostic');
+        // The language server underlines it before any build, too.
+        await until(`document.querySelector('.playground .problems .error') && document.querySelector('.playground .squiggly-error')`, 'playground editor marks the error');
         const draws = await evaluate(`document.querySelector('iframe').contentWindow.__draws`);
         await until(`document.querySelector('iframe').contentWindow.__draws > ${draws + 5}`, 'last good game keeps drawing after a compile error');
         await edit(changed);
@@ -508,7 +512,8 @@ try {
         await until(`document.querySelector('.console pre')?.textContent.includes('state 37 added 7')`, 'playground still has the preserved state');
         await evaluate(`Array.from(document.querySelectorAll('.actions button')).find(button => button.textContent === 'Reset code').click()`);
         await compiled('playground resets its source');
-        assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
+        assert.equal(await evaluate(`document.querySelector('section.playground').tideEditor.value`), source);
+        await until(`!document.querySelector('.playground .problems')`, 'playground problems clear after the reset');
         await shoot('playground');
         await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
         await until('innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth', 'playground fits a phone without page overflow');

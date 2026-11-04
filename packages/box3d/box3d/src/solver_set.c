@@ -9,6 +9,7 @@
 #include "island.h"
 #include "joint.h"
 #include "physics_world.h"
+#include "box3d/box3d.h"
 
 #include <string.h>
 
@@ -196,6 +197,20 @@ void b3TrySleepIsland( b3World* world, int islandId )
 		return;
 	}
 
+	// Tide: nor while it touches a held body (b3World_HoldBodies), whose set is another
+	if ( world->holding )
+	{
+		for ( int i = 0; i < island->contacts.count; ++i )
+		{
+			b3ContactLink* link = island->contacts.data + i;
+			if ( b3IsHeldBody( world, b3Array_Get( world->bodies, link->bodyIdA ) ) ||
+				 b3IsHeldBody( world, b3Array_Get( world->bodies, link->bodyIdB ) ) )
+			{
+				return;
+			}
+		}
+	}
+
 	// island is sleeping
 	// - create new sleeping solver set
 	// - move island to sleeping solver set
@@ -269,6 +284,8 @@ void b3TrySleepIsland( b3World* world, int islandId )
 			b3BodySim* sleepBodySim = b3Array_Emplace( sleepSet->bodySims );
 			memcpy( sleepBodySim, awakeSim, sizeof( b3BodySim ) );
 
+			// Tide: the awake set has a body fewer (see b3SnapTrack)
+			world->snapTrack.awakeShrunk = true;
 			int movedIndex = b3Array_RemoveSwap( awakeSet->bodySims, awakeBodyIndex );
 			if ( movedIndex != B3_NULL_INDEX )
 			{
@@ -626,6 +643,8 @@ void b3TransferBody( b3World* world, b3SolverSet* targetSet, b3SolverSet* source
 	targetSim->flags &= ~(b3_isFast | b3_bodyTransientFlags);
 
 	// Remove body sim from solver set that owns it
+	// Tide: the set has a body fewer, which may be the awake one (see b3SnapTrack)
+	world->snapTrack.awakeShrunk = true;
 	int movedIndex = b3Array_RemoveSwap( sourceSet->bodySims, sourceIndex );
 	if ( movedIndex != B3_NULL_INDEX )
 	{
@@ -711,4 +730,105 @@ void b3TransferJoint( b3World* world, b3SolverSet* targetSet, b3SolverSet* sourc
 			movedJoint->localIndex = localIndex;
 		}
 	}
+}
+
+// Tide: whether a body is in a held set (b3World_HoldBodies)
+bool b3IsHeldBody( b3World* world, const b3Body* body )
+{
+	return world->holding && body->setIndex >= b3_firstSleepingSet &&
+		   b3Array_Get( world->solverSets, body->setIndex )->held;
+}
+
+// Tide: whether every body of a set's or an island's is one of those given (a bit for each body id)
+static bool b3AllGiven( const uint64_t* given, const int* bodyIds, int count, int stride )
+{
+	for ( int i = 0; i < count; ++i )
+	{
+		int bodyId = *(const int*)( (const char*)bodyIds + (size_t)i * (size_t)stride );
+		if ( ( given[bodyId >> 6] & ( (uint64_t)1 << ( bodyId & 63 ) ) ) == 0 )
+		{
+			return false;
+		}
+	}
+	return count > 0;
+}
+
+// Tide: hold bodies for a client's predicted ticks, which leave out what's far from its player (box3d.h).
+// What it writes is followed as falling asleep is (b3TrySleepIsland), and the sets with them (b3SnapTrack).
+void b3World_HoldBodies( b3WorldId worldId, const b3BodyId* bodyIds, int count )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	B3_ASSERT( world->locked == false );
+	if ( world->locked || world->holding || count <= 0 )
+	{
+		return;
+	}
+
+	int words = ( world->bodies.count + 63 ) >> 6;
+	uint64_t* given = b3AllocScratch( (size_t)words * sizeof( uint64_t ) );
+	memset( given, 0, (size_t)words * sizeof( uint64_t ) );
+	for ( int i = 0; i < count; ++i )
+	{
+		if ( b3Body_IsValid( bodyIds[i] ) == false )
+		{
+			continue;
+		}
+		int bodyId = bodyIds[i].index1 - 1;
+		given[bodyId >> 6] |= (uint64_t)1 << ( bodyId & 63 );
+	}
+
+	// Sleeping sets of given bodies alone stay so. A set made by an island falling asleep below isn't
+	// looked at again: it's held as it's made.
+	int setCount = world->solverSets.count;
+	for ( int setIndex = b3_firstSleepingSet; setIndex < setCount; ++setIndex )
+	{
+		b3SolverSet* set = world->solverSets.data + setIndex;
+		if ( set->setIndex == B3_NULL_INDEX || set->bodySims.count == 0 )
+		{
+			continue;
+		}
+		if ( b3AllGiven( given, &set->bodySims.data[0].bodyId, set->bodySims.count, (int)sizeof( b3BodySim ) ) )
+		{
+			set->held = true;
+			b3SnapTouchSleepingSet( world, setIndex );
+		}
+	}
+
+	// Awake islands of given bodies alone fall asleep, held. Which, first: each one that falls asleep
+	// moves others in the awake set's array.
+	b3SolverSet* awakeSet = b3Array_Get( world->solverSets, b3_awakeSet );
+	int islandCount = awakeSet->islandSims.count;
+	int* islandIds = b3AllocScratch( ( islandCount > 0 ? islandCount : 1 ) * sizeof( int ) );
+	int holdCount = 0;
+	for ( int i = 0; i < islandCount; ++i )
+	{
+		int islandId = awakeSet->islandSims.data[i].islandId;
+		b3Island* island = b3Array_Get( world->islands, islandId );
+		if ( b3AllGiven( given, island->bodies.data, island->bodies.count, (int)sizeof( int ) ) )
+		{
+			islandIds[holdCount++] = islandId;
+		}
+	}
+
+	world->holding = true;
+	for ( int i = 0; i < holdCount; ++i )
+	{
+		b3Island* island = b3Array_Get( world->islands, islandIds[i] );
+		int firstBodyId = island->bodies.data[0];
+		b3TrySleepIsland( world, islandIds[i] );
+		b3Body* body = b3Array_Get( world->bodies, firstBodyId );
+		if ( body->setIndex >= b3_firstSleepingSet )
+		{
+			b3Array_Get( world->solverSets, body->setIndex )->held = true;
+		}
+	}
+
+	b3FreeScratch( islandIds, ( islandCount > 0 ? islandCount : 1 ) * sizeof( int ) );
+	b3FreeScratch( given, (size_t)words * sizeof( uint64_t ) );
+}
+
+bool b3World_IsHolding( b3WorldId worldId )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	return world != NULL && world->holding;
 }

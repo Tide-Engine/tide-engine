@@ -61,12 +61,19 @@ typedef struct b2SolverSet
 
 	// Aligns with b2World::solverSetIdPool. Used to create a stable id for body/contact/joint/islands.
 	int setIndex;
+
+	// Tide: a sleeping set held for a client's predicted ticks (b2World_HoldBodies): bodies touching it meet it
+	// as a static body, and it isn't woken by that
+	bool held;
 } b2SolverSet;
 
 void b2DestroySolverSet( b2World* world, int setIndex );
 
 void b2WakeSolverSet( b2World* world, int setIndex );
 void b2TrySleepIsland( b2World* world, int islandId );
+
+// Tide: whether a body is in a held set (b2World_HoldBodies)
+bool b2IsHeldBody( b2World* world, const b2Body* body );
 
 // Merge set 2 into set 1 then destroy set 2.
 // Warning: any pointers into these sets will be orphaned.

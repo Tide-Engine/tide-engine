@@ -1,0 +1,78 @@
+// A client predicts what's near its player alone (predictionRange): walkers
+// farther than that from the player's own body aren't run in its predicted
+// ticks, and stay as the server last confirmed them.
+
+settings
+{
+    predictionRange = 10;
+}
+
+component Body
+{
+    [Position] float2 position;
+    int ran; // The ticks a system ran for it
+    int aged; // ...and one written in C
+}
+
+component Walker
+{
+    int id;
+}
+
+input Controls
+{
+    float2 move;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { position = float2(4, 0) }, Walker { id = 1 });   // Near the players
+    Spawn(Body { position = float2(100, 0) }, Walker { id = 2 }); // Far from them
+}
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Body { position = float2(0, 0) }, Owner { player = joined.player });
+}
+
+system Drive(Controls input, mut Body body, with Owner)
+{
+    body.position += input.move;
+}
+
+system Walk(mut Body body, with Walker)
+{
+    body.position.y += 0.001; // Slowly: the near one stays near
+}
+
+system Count(mut Body body)
+{
+    body.ran += 1;
+}
+
+// Written in C: it's handed the runs of rows between far ones (predict_near_c.c)
+extern system Age(mut Body body);
+
+// Where views draw each walker: a far one as confirmed, blended on the confirmed clock
+local singleton Drawn
+{
+    float firstY;
+    float secondY;
+}
+
+view Show(Body body, Walker walker, mut Drawn drawn)
+{
+    if (walker.id == 1) drawn.firstY = body.position.y;
+    else drawn.secondY = body.position.y;
+}
+
+// `with Far` runs for what the tick leaves out: in a client's predicted ticks
+// alone, as nothing else is ever tagged
+singleton FarSeen { int ticks; }
+
+system CountFar(mut FarSeen seen, with Body, with Walker, with Far)
+{
+    seen.ticks += 1;
+}

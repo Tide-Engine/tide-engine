@@ -1,0 +1,5 @@
+// expect: 'Far' is a filter, with no fields: 'with Far' or 'without Far'
+settings { predictionRange = 40; }
+component Body { [Position] float2 position; }
+system Move(Body body, Far far) { }
+scene Main { }
