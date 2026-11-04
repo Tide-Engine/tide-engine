@@ -7284,6 +7284,146 @@ static const char *foreach_value(gen *g, expr *e)
     return value;
 }
 
+// A list foreach whose elements hold lists borrows each element (its handles,
+// as the list has them) rather than copying it, lists and all, when nothing in
+// the body can change the list or what its elements hold: the element is
+// read-only, and anything that takes it as a value elsewhere copies it then
+// (gen_value_of). What could is a write to a place that overlaps the list's,
+// a call that changes the world (World.Set replaces a component's lists), a
+// task started or waited for, or C. A task's loop keeps its copy: a wait lets
+// anything run.
+
+// The variable, parameter or `this` a place is in, or NULL for a value of its own.
+static const expr *borrow_root(const expr *e)
+{
+    while (e && (e->kind == E_MEMBER || e->kind == E_INDEX)) {
+        if (e->kind == E_MEMBER && !e->field) return NULL; // A property or a computed member: no place
+        e = e->object;
+    }
+    if (!e) return NULL;
+    if (e->kind == E_THIS) return e;
+    if (e->kind == E_NAME && (e->bind == BIND_LOCAL || e->bind == BIND_PARAM || e->bind == BIND_FIELD)) return e;
+    return NULL;
+}
+
+static bool borrow_same_root(const expr *a, const expr *b)
+{
+    const bool this_a = a->kind == E_THIS || a->bind == BIND_FIELD, this_b = b->kind == E_THIS || b->bind == BIND_FIELD;
+    if (this_a || this_b) return this_a && this_b;
+    if (a->bind != b->bind) return false;
+    return a->bind == BIND_LOCAL ? a->local == b->local : a->param == b->param;
+}
+
+// The steps from a place's root to it: fields and indexes, a BIND_FIELD name's field first.
+static int borrow_path(const expr *e, const expr **steps, const int most)
+{
+    int n = 0;
+    for (const expr *p = e; p && (p->kind == E_MEMBER || p->kind == E_INDEX); p = p->object) n++;
+    const bool named_field = borrow_root(e) && borrow_root(e)->kind == E_NAME && borrow_root(e)->bind == BIND_FIELD;
+    const int total = n + (named_field ? 1 : 0);
+    if (total > most) return -1;
+    int at = total;
+    for (const expr *p = e; p && (p->kind == E_MEMBER || p->kind == E_INDEX); p = p->object) steps[--at] = p;
+    if (named_field) steps[0] = borrow_root(e);
+    return total;
+}
+
+static const field *borrow_step_field(const expr *step)
+{
+    return step->kind == E_INDEX ? NULL : step->field;
+}
+
+// Whether a write to place `w` can change what place `src` holds: one is in the
+// other, or they could be the same element. Fields that differ are apart.
+static bool borrow_overlaps(const expr *w, const expr *src)
+{
+    if (!src) return false; // The loop's own copy of a computed list: nothing else names it
+    const expr *wr = borrow_root(w), *sr = borrow_root(src);
+    if (!wr) return false; // A value of its own: no place another can see
+    if (!sr) return true;
+    if (!borrow_same_root(wr, sr)) return false;
+    const expr *ws[32], *ss[32];
+    const int wn = borrow_path(w, ws, 32), sn = borrow_path(src, ss, 32);
+    if (wn < 0 || sn < 0) return true;
+    for (int i = 0; i < wn && i < sn; i++) {
+        const bool wi = ws[i]->kind == E_INDEX, si = ss[i]->kind == E_INDEX;
+        if (wi != si) return true;
+        if (!wi && borrow_step_field(ws[i]) != borrow_step_field(ss[i])) return false;
+    }
+    return true;
+}
+
+static bool borrow_disturbed_stmt(const stmt *s, const expr *src);
+
+static bool borrow_disturbed_expr(const expr *e, const expr *src)
+{
+    if (!e) return false;
+    if (e->kind == E_AWAIT || e->task_start_value || e->call == CALL_TASK) return true;
+    if (e->kind == E_STEP && borrow_overlaps(e->lhs, src)) return true;
+    const decl *m = (e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_BINARY || e->kind == E_UNARY) ? e->method : NULL;
+    const bool routine = m && (e->call == CALL_FUNCTION || e->call == CALL_METHOD || e->kind == E_BINARY || e->kind == E_UNARY);
+    if (routine && (m->is_extern || m->calls_c || changes_world(m) || takes_world_bindings(m) || m->starts_tasks)) return true;
+    if (e->call == CALL_WORLD && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) return true;
+    if (writes(e)) {
+        // What it writes is its receiver or an argument: any of them, to be safe
+        if (e->object && borrow_overlaps(e->object, src)) return true;
+        const expr *root = src ? borrow_root(src) : NULL;
+        if (e->kind == E_CALL && e->call == CALL_METHOD && !e->object && root && (root->kind == E_THIS || root->bind == BIND_FIELD)) {
+            return true; // A mut method of `this`
+        }
+        if (e->lhs && borrow_overlaps(e->lhs, src)) return true;
+        if (e->rhs && borrow_overlaps(e->rhs, src)) return true;
+        for (int i = 0; i < e->args.count; i++) {
+            if (borrow_overlaps(e->args.items[i], src)) return true;
+        }
+    }
+    if (borrow_disturbed_expr(e->object, src) || borrow_disturbed_expr(e->lhs, src) || borrow_disturbed_expr(e->rhs, src)
+        || borrow_disturbed_expr(e->cond, src) || borrow_disturbed_expr(e->skin_pose, src) || borrow_disturbed_expr(e->mesh_lod, src)
+        || borrow_disturbed_expr(e->lambda_body, src) || borrow_disturbed_stmt(e->block, src)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (borrow_disturbed_expr(e->args.items[i], src)) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (borrow_disturbed_expr(e->inits.items[i].value, src)) return true;
+    }
+    return false;
+}
+
+static bool borrow_disturbed_stmt(const stmt *s, const expr *src)
+{
+    if (!s) return false;
+    if (s->kind == S_ASSIGN && (borrow_overlaps(s->target, src) || borrow_disturbed_expr(s->property_set, src))) return true;
+    if (s->kind == S_FOREACH && s->query) return true; // A query's rows can come with what it writes
+    if (borrow_disturbed_expr(s->cond, src) || borrow_disturbed_expr(s->value, src) || borrow_disturbed_expr(s->target, src)
+        || borrow_disturbed_expr(s->by, src) || borrow_disturbed_expr(s->offset, src)) return true;
+    for (int i = 0; i < s->stmts.count; i++) {
+        if (borrow_disturbed_stmt(s->stmts.items[i], src)) return true;
+    }
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) {
+            if (borrow_disturbed_expr(s->cases.items[i].labels.items[k], src)) return true;
+        }
+        for (int k = 0; k < s->cases.items[i].body.count; k++) {
+            if (borrow_disturbed_stmt(s->cases.items[i].body.items[k], src)) return true;
+        }
+    }
+    return borrow_disturbed_stmt(s->init, src) || borrow_disturbed_stmt(s->step, src) || borrow_disturbed_stmt(s->then_stmt, src)
+        || borrow_disturbed_stmt(s->else_stmt, src);
+}
+
+// Whether a list foreach's element can be borrowed (above).
+static bool foreach_borrows(const gen *g, const stmt *s)
+{
+    if (!type_has_list(s->type) || g->task) return false;
+    // A place's list is read where it is (foreach_value); any other is the loop's own copy
+    const expr *src = is_place(s->value) && !s->value->kept ? s->value : NULL;
+    if (src && !borrow_root(src)) return false; // Through a property: not a place this can follow
+    // Code that changes the world through it could replace the component the list is in
+    const decl *code = g->code;
+    if (src && code && (code->world_sets || takes_world_bindings(code)) && borrow_root(src)->bind != BIND_LOCAL) return false;
+    return !borrow_disturbed_stmt(s->then_stmt, src);
+}
+
 // Session.Start(Arena { ... }), Join, Connect, Leave and End, Session.Open and
 // Close, and Session.Kick, KickAll, Ban and Unban: recorded in the local
 // state, for the host program to act on after the frame. A Start, Join,
@@ -7993,7 +8133,8 @@ static void gen_stmt(gen *g, const stmt *s)
             break;
         }
         // The list's count is read each round, so changes to it while it's gone
-        // through count; each element is a copy.
+        // through count.
+        const bool borrows = foreach_borrows(g, s);
         const int k = s->value->type.decl->index;
         const int mark = task_mark(g);
         const char *index = made_up(g, "i");
@@ -8005,8 +8146,10 @@ static void gen_stmt(gen *g, const stmt *s)
         line(g, o, "for (; %s < tide_list_count(%s); %s++) {", index, list, index);
         g->indent++;
         const int round = task_mark(g);
+        // Each element is a copy, or borrowed where nothing in the body can change it (foreach_borrows)
+        const bool copy = type_has_list(s->type) && !borrows;
         line(g, o, "%s%s %s = %stide_list%d_get(%s, %s)%s;", g->task ? "" : "const ", elem_vtype(s->type), local_cname(g, s->name),
-             element_copy_open(s->type), k, list, index, type_has_list(s->type) ? ")" : "");
+             copy ? element_copy_open(s->type) : "", k, list, index, copy ? ")" : "");
         line(g, o, "(void)%s;", local_cname(g, s->name));
         task_declare(g, local_cname(g, s->name), s->type);
         const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};

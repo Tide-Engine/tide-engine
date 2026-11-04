@@ -1,0 +1,184 @@
+// A foreach over a list of structs that hold lists borrows each element where
+// nothing in the body can change the list (no copy into scratch), and copies it
+// where the body could see the difference: a write to the list or into an
+// element's lists, a mut helper given what holds it, a World.Set, C. Either
+// way the element reads as the loop found it, and one kept past the loop is a
+// copy of its own.
+
+struct Corner
+{
+    float3 at;
+    float3 normal;
+}
+
+struct Piece
+{
+    int id;
+    List<Corner> surface;
+    List<int> faces;
+}
+
+singleton Pieces
+{
+    List<Piece> all;
+    int total;
+}
+
+singleton Results
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    int borrowedSum;
+    int borrowedScratch;
+    int copiedScratch;
+}
+
+local singleton Seen
+{
+    int sum;
+    int scratch;
+}
+
+scene Main;
+
+extern int ScratchMark();
+
+void Expect(mut Results r, bool ok)
+{
+    r.checks++;
+    if (ok) r.passed++;
+    else if (r.firstFailure == 0) r.firstFailure = r.checks;
+}
+
+Piece Make(int id)
+{
+    mut var piece = Piece { id = id };
+    for (var k = 0; k < 64; k++)
+    {
+        piece.surface.Add(Corner { at = float3(k, id, 0), normal = float3(0, 1, 0) });
+        piece.faces.Add(k + id);
+    }
+    return piece;
+}
+
+void Refill(mut Pieces pieces)
+{
+    pieces.all.Clear();
+    for (var i = 0; i < 8; i++) pieces.all.Add(Make(i));
+}
+
+void WipeFirst(mut Pieces pieces)
+{
+    mut var first = pieces.all[0];
+    first.surface.Clear();
+    pieces.all[0] = first;
+}
+
+int Faces(Piece piece)
+{
+    return piece.faces.count;
+}
+
+system Run(mut Pieces pieces, mut Results r)
+{
+    r.checks = 0;
+    r.passed = 0;
+    Refill(pieces);
+
+    // Read only, with writes beside it to other places: borrowed, no scratch taken
+    mut var sum = 0;
+    mut var seen = 0;
+    var before = ScratchMark();
+    foreach (var piece in pieces.all)
+    {
+        sum += piece.surface.count + piece.faces[1] + Faces(piece);
+        pieces.total += 1;
+        seen++;
+    }
+    r.borrowedScratch = ScratchMark() - before;
+    r.borrowedSum = sum;
+    Expect(r, sum == 8 * (64 + 64) + 36 && seen == 8 && pieces.total % 8 == 0);
+
+    // Nested: both loops read only
+    mut var pairs = 0;
+    foreach (var a in pieces.all)
+    {
+        foreach (var b in pieces.all) pairs += a.faces.count == b.faces.count ? 1 : 0;
+    }
+    Expect(r, pairs == 64);
+
+    // An element kept past the loop is its own copy
+    mut var kept = Piece { };
+    foreach (var piece in pieces.all)
+    {
+        if (piece.id == 3) kept = piece;
+    }
+    mut var third = pieces.all[3];
+    third.surface.Clear();
+    pieces.all[3] = third;
+    Expect(r, kept.id == 3 && kept.surface.count == 64 && pieces.all[3].surface.count == 0);
+
+    // The body empties an element's list: the element is as the loop found it
+    Refill(pieces);
+    var copyBefore = ScratchMark();
+    mut var found = -1;
+    foreach (var piece in pieces.all)
+    {
+        mut var first = pieces.all[0];
+        first.surface.Clear();
+        pieces.all[0] = first;
+        found = piece.surface.count;
+        break;
+    }
+    r.copiedScratch = ScratchMark() - copyBefore;
+    Expect(r, found == 64 && pieces.all[0].surface.count == 0);
+
+    // The body empties the list itself
+    Refill(pieces);
+    mut var rounds = 0;
+    foreach (var piece in pieces.all)
+    {
+        pieces.all.Clear();
+        rounds++;
+        Expect(r, piece.faces.count == 64 && piece.faces[63] == 63 && piece.surface[5].at.x == 5);
+    }
+    Expect(r, rounds == 1);
+
+    // A mut helper given what holds the list
+    Refill(pieces);
+    found = -1;
+    foreach (var piece in pieces.all)
+    {
+        WipeFirst(pieces);
+        found = piece.surface.count;
+        break;
+    }
+    Expect(r, found == 64 && pieces.all[0].surface.count == 0);
+
+    // Replacing an element whole
+    Refill(pieces);
+    found = -1;
+    foreach (var piece in pieces.all)
+    {
+        pieces.all[0] = Piece { id = 99 };
+        found = piece.surface.count + piece.id;
+        break;
+    }
+    Expect(r, found == 64 && pieces.all[0].id == 99);
+
+    // A list of lists
+    List<List<int>> rows = [[1, 2, 3], [4, 5]];
+    mut var total = 0;
+    foreach (var row in rows) total += row.count;
+    Expect(r, total == 5);
+}
+
+view Look(Pieces pieces, mut Seen seen)
+{
+    var before = ScratchMark();
+    mut var sum = 0;
+    foreach (var piece in pieces.all) sum += piece.faces.count + piece.surface.count;
+    seen.scratch = ScratchMark() - before;
+    seen.sum = sum;
+}
