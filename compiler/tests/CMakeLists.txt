@@ -96,6 +96,7 @@ tide_e2e_test(transforms) # Shared component placement, checked parenting and hi
 tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
 tide_e2e_test(visibility_lists) # A projection's lists read back in runs, the heap as element by element left it
+tide_e2e_test(visibility_predicted) # A client's tick of its projection: its hidden spawns, groups and [Native] fields as the server's projection has them
 tide_e2e_test(visibility_hash_memo) # Projection hashes kept for what didn't change: every change shows
 # The same game and test with nothing kept from one projection hash to the next: the same hashes
 tide_add_game(tidec_e2e_visibility_hash_memo_off SOURCES e2e/visibility_hash_memo.tide NAME game
