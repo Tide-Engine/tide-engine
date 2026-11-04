@@ -50,8 +50,11 @@ int tide_platform_players_finish(int code);
 
 // Interactive runs: broadcast the first player's command, then acknowledge
 // its completion on every player before reporting success to the controller.
+// Done also carries one player's answer to the first: `reply` is this
+// player's (NULL for none), and the first gets player `from`'s in `answer`,
+// terminated (empty where there's none, or it doesn't fit `capacity`).
 bool tide_platform_players_control(char *line, size_t capacity);
-bool tide_platform_players_control_done(bool *ok);
+bool tide_platform_players_control_done(bool *ok, const char *reply, uint32_t from, char *answer, size_t capacity);
 
 // A script's `leave`, `drop` and `rejoin` lines for this player, at the
 // frame they're polled in (script.c): leave and rejoin wait for the host

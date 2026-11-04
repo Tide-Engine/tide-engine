@@ -873,6 +873,214 @@ static bool interactive_event(const char *line, const uint32_t frame, char *erro
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// The GUI's widgets, which an interactive run lists and clicks by number or label
+
+static tide_gui *listed_gui;           // The host's, whose widgets `controls` lists
+static tide_gui_listing *gui_listing; // Made once an interactive run's host asks
+
+void tide_platform_list_controls(tide_gui *g)
+{
+    if (interactive && !gui_listing) gui_listing = tide_alloc_zeroed(1, sizeof *gui_listing);
+    listed_gui = g;
+    g->listing = interactive ? gui_listing : NULL;
+}
+
+#define GUI_ANSWER (1u << 20) // Room for a frame's whole listing: 1,024 widgets and their labels, quoted
+
+static const char *const kind_names[] = {"widget", "button", "control", "toggle", "slider", "number", "text"};
+
+// Appends to a growing text: `out` of `*size` bytes so far, `*capacity` held.
+static void append(char **out, size_t *size, size_t *capacity, const char *format, ...)
+{
+    for (;;) {
+        va_list args;
+        va_start(args, format);
+        const int n = vsnprintf(*out + *size, *capacity - *size, format, args);
+        va_end(args);
+        if (n < 0) return;
+        if (*size + (size_t)n < *capacity) {
+            *size += (size_t)n;
+            return;
+        }
+        *out = tide_realloc(*out, *capacity, *capacity * 2u);
+        *capacity *= 2u;
+    }
+}
+
+// A label in quotes, with \" \\ and control characters escaped, as `click "..."` reads it back.
+static void append_quoted(char **out, size_t *size, size_t *capacity, const char *text, const uint32_t length)
+{
+    append(out, size, capacity, "\"");
+    for (uint32_t i = 0; i < length; i++) {
+        const unsigned char c = (unsigned char)text[i];
+        if (c == '"' || c == '\\') append(out, size, capacity, "\\%c", c);
+        else if (c == '\n') append(out, size, capacity, "\\n");
+        else if (c == '\t') append(out, size, capacity, "\\t");
+        else if (c < 32u || c == 127u) append(out, size, capacity, "\\x%02x", c);
+        else append(out, size, capacity, "%c", c);
+    }
+    append(out, size, capacity, "\"");
+}
+
+static tide_gui_listed *listed_now(uint32_t *count)
+{
+    *count = 0;
+    if (!listed_gui) return NULL;
+    const uint32_t n = tide_gui_controls(listed_gui, NULL, 0);
+    tide_gui_listed *all = tide_alloc_zeroed(n ? n : 1u, sizeof *all);
+    *count = tide_gui_controls(listed_gui, all, n);
+    return all;
+}
+
+// `controls`: a line for each widget the frame drew, in its order, numbered from 1.
+static char *list_controls(void)
+{
+    uint32_t count;
+    tide_gui_listed *all = listed_now(&count);
+    size_t size = 0, capacity = 4096;
+    char *out = tide_alloc(capacity);
+    out[0] = '\0';
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_gui_listed *c = &all[i];
+        append(&out, &size, &capacity, "tide: control %u %s ", (unsigned)(i + 1u), kind_names[c->kind]);
+        append_quoted(&out, &size, &capacity, c->label, c->label_length);
+        append(&out, &size, &capacity, " %g %g %g %g at %.9g %.9g%s%s%s\n", (double)c->rect.x, (double)c->rect.y,
+               (double)c->rect.width, (double)c->rect.height, (double)c->at.x, (double)c->at.y,
+               c->disabled ? " disabled" : "", c->covered ? " covered" : "", c->focused ? " focused" : "");
+    }
+    append(&out, &size, &capacity, "tide: controls %u\n", (unsigned)count);
+    free(all);
+    return out;
+}
+
+// A quoted label as list_controls writes it, into `out`: false where the quotes don't close.
+static bool unquote(const char *at, char *out, const size_t size, const char **after)
+{
+    size_t n = 0;
+    for (const char *p = at + 1; *p; p++) {
+        char c = *p;
+        if (c == '"') {
+            out[n] = '\0';
+            *after = p + 1;
+            return true;
+        }
+        if (c == '\\' && p[1]) {
+            p++;
+            c = *p == 'n' ? '\n' : *p == 't' ? '\t' : *p;
+            if (*p == 'x' && p[1] && p[2]) {
+                const char hex[3] = {p[1], p[2], '\0'};
+                c = (char)strtoul(hex, NULL, 16);
+                p += 2;
+            }
+        }
+        if (n + 1u < size) out[n++] = c;
+    }
+    return false;
+}
+
+static bool same_label(const tide_gui_listed *c, const char *label, const bool any_case, const bool part)
+{
+    const size_t n = strlen(label);
+    if (!part) {
+        if (c->label_length != n) return false;
+        for (size_t i = 0; i < n; i++) {
+            if (any_case ? lower(c->label[i]) != lower(label[i]) : c->label[i] != label[i]) return false;
+        }
+        return true;
+    }
+    for (size_t from = 0; n && from + n <= c->label_length; from++) {
+        size_t i = 0;
+        while (i < n && lower(c->label[from + i]) == lower(label[i])) i++;
+        if (i == n) return true;
+    }
+    return false;
+}
+
+// `click <number>`, `click "label"` or `click label`: where the widget is
+// clicked, as "x y" in `out`. False, with why in `error`.
+static bool find_click(const char *args, char *out, const size_t out_size, char *error, const size_t error_size)
+{
+    while (blank(*args)) args++;
+    char label[512];
+    uint32_t number = 0;
+    bool by_number = false;
+    if (*args == '"') {
+        const char *after;
+        if (!unquote(args, label, sizeof label, &after)) return fail(error, error_size, "the label's quotes don't close");
+        char more[32];
+        if (word(&after, more, sizeof more)) return fail(error, error_size, "'%s' is one word too many after the label", more);
+    } else {
+        char *text = rest(args);
+        snprintf(label, sizeof label, "%s", text);
+        free(text);
+        by_number = whole(label, &number);
+    }
+    if (!label[0] && !by_number) {
+        return fail(error, error_size, "`click` takes a widget's number or label from `controls`: `click 3` or `click \"Play\"`");
+    }
+    uint32_t count;
+    tide_gui_listed *all = listed_now(&count);
+    const tide_gui_listed *found = NULL;
+    bool ok = true;
+    if (by_number) {
+        if (number >= 1u && number <= count) found = &all[number - 1u];
+        else if (!count) ok = fail(error, error_size, "the frame drew no widgets to click: capture it to see what's there");
+        else ok = fail(error, error_size, "there's no widget %u: `controls` lists %u, numbered from 1", (unsigned)number,
+                       (unsigned)count);
+    } else {
+        // Its whole label, then whatever the case, then a part of it: the first of those that some widget has
+        for (int tier = 0; tier < 3 && !found && ok; tier++) {
+            uint32_t matches = 0, first = 0, second = 0;
+            for (uint32_t i = 0; i < count; i++) {
+                if (!same_label(&all[i], label, tier > 0, tier == 2)) continue;
+                if (!matches) first = i + 1u;
+                else if (matches == 1u) second = i + 1u;
+                matches++;
+            }
+            if (matches == 1u) found = &all[first - 1u];
+            else if (matches > 1u) {
+                ok = fail(error, error_size, "%u widgets have the label '%s' (%u and %u among them): click one by its number from `controls`",
+                          (unsigned)matches, label, (unsigned)first, (unsigned)second);
+            }
+        }
+        if (ok && !found) ok = fail(error, error_size, "no widget has the label '%s': `controls` lists them", label);
+    }
+    if (found && found->disabled) ok = fail(error, error_size, "that widget is disabled: it takes no clicks");
+    else if (found && found->covered) {
+        ok = fail(error, error_size, "something is over all of that widget, which would take the click: `mouse` and `button` "
+                                     "click wherever you like");
+    }
+    if (found && ok) snprintf(out, out_size, "%.9g %.9g", (double)found->at.x, (double)found->at.y);
+    free(all);
+    return ok;
+}
+
+// Whether a line is `controls` or `click`, after its frame and player if it
+// has them: the verb, and where its arguments start. `now` is the frame drawn;
+// what's wrong with the line is in `error`.
+static bool gui_line(const char *line, const uint32_t now, uint32_t *frame, uint32_t *player, char *verb,
+                     const size_t verb_size, const char **args, char *error, const size_t error_size)
+{
+    const char *p = line;
+    char first[32];
+    word(&p, first, sizeof first);
+    *frame = 0;
+    if (!whole(first, frame)) p = line;
+    const char *before = p;
+    *player = 0;
+    if (!player_of(&p, player, NULL, 0)) p = before;
+    if (!word(&p, verb, verb_size) || (strcmp(verb, "controls") != 0 && strcmp(verb, "click") != 0)) return false;
+    *args = p;
+    const bool listing = strcmp(verb, "controls") == 0;
+    if (listing && *frame) fail(error, error_size, "`controls` lists the frame drawn now: it takes no frame");
+    else if (listing && word(&p, first, sizeof first)) fail(error, error_size, "`controls` takes no arguments");
+    else if (*frame && (*frame <= now || *frame > 1000000000u)) {
+        fail(error, error_size, "queue a future frame, from %u to 1000000000", (unsigned)(now + 1u));
+    }
+    return true; // A line of the GUI's, whether or not it's right
+}
+
 int tide_script_interactive_wait(const uint32_t frame)
 {
     if (first_player()) {
@@ -901,6 +1109,12 @@ int tide_script_interactive_wait(const uint32_t frame)
         uint32_t steps = 0;
         bool quit = false;
         bool observation = false;
+        bool gui = false, clicks = false;
+        const uint32_t own = tide_platform_player() ? tide_platform_player() : 1u;
+        uint32_t from = 1u, gui_frame = 0, gui_player = 0;
+        char gui_verb[32];
+        const char *gui_args = NULL;
+        char *reply = NULL; // What this player says of the GUI's widgets
         if (!verb[0] || verb[0] == '#') {
             // Empty lines and comments are accepted, as in script files.
         } else if (strcmp(verb, "quit") == 0) {
@@ -923,14 +1137,55 @@ int tide_script_interactive_wait(const uint32_t frame)
                 }
                 script.count = script.next_input = script.next_drawn = script.last_audio = 0;
             }
+        } else if (gui_line(line, frame, &gui_frame, &gui_player, gui_verb, sizeof gui_verb, &gui_args, error, sizeof error)) {
+            gui = true;
+            clicks = strcmp(gui_verb, "click") == 0;
+            from = gui_player ? gui_player : 1u;
+            if (clicks && script.count + 2u > 65536u) {
+                snprintf(error, sizeof error, "the queue has 65536 events: step the game before adding more");
+            }
+            if (!error[0] && own == from) {
+                if (!clicks) reply = list_controls();
+                else {
+                    reply = tide_alloc(64);
+                    if (!find_click(gui_args, reply, 64, error, sizeof error)) reply[0] = '\0';
+                }
+            }
         } else {
             uint32_t at;
             observation = !whole(verb, &at);
             interactive_event(line, frame, error, sizeof error);
         }
         bool ok = !error[0] && !replay_failed;
-        if (!tide_platform_players_control_done(&ok) || replay_failed) return -1;
-        if (!ok && !error[0]) snprintf(error, sizeof error, "command failed for another player; see stderr");
+        char *answer = gui && first_player() ? tide_alloc(GUI_ANSWER) : NULL;
+        const bool done = tide_platform_players_control_done(&ok, error[0] ? error : reply, from, answer, answer ? GUI_ANSWER : 0);
+        if (!done || replay_failed) {
+            free(reply);
+            free(answer);
+            return -1;
+        }
+        if (!ok && !error[0]) {
+            if (answer && answer[0]) snprintf(error, sizeof error, "%s", answer);
+            else snprintf(error, sizeof error, "command failed for another player; see stderr");
+        }
+        // A click is the mouse there and a tap of its left button, queued as
+        // those lines: whose it is and the first player's, which replays them
+        const char *where = first_player() ? answer : own == from ? reply : NULL;
+        if (ok && clicks && where && where[0]) {
+            const uint32_t at = gui_frame ? gui_frame : frame + 1u;
+            char whose[32] = "", queued[160], queue_error[512] = "";
+            if (gui_player) snprintf(whose, sizeof whose, "player %u ", (unsigned)gui_player);
+            snprintf(queued, sizeof queued, "%u %smouse %s", (unsigned)at, whose, where);
+            bool queued_ok = interactive_event(queued, frame, queue_error, sizeof queue_error);
+            snprintf(queued, sizeof queued, "%u %sbutton left", (unsigned)at, whose);
+            queued_ok = queued_ok && interactive_event(queued, frame, queue_error, sizeof queue_error);
+            if (!queued_ok) snprintf(error, sizeof error, "%s", queue_error);
+            else if (first_player()) printf("tide: click %u %s\n", (unsigned)at, where);
+        } else if (ok && gui && !clicks && first_player() && answer) {
+            fputs(answer, stdout);
+        }
+        free(reply);
+        free(answer);
         if (ok && observation && replay) {
             if (fprintf(replay, "%u %s\n", (unsigned)frame, line) < 0 || fflush(replay) != 0) replay_failed = true;
             if (replay_failed) return -1;

@@ -1,0 +1,106 @@
+// Projection hashes over big singletons of which a tick changes a little: one
+// thing deep in each (a text in a list of structs, a list in a map, a snapshot
+// of a ring of them, a byte, a grid's cell), so the hashes the server keeps
+// of what didn't change are checked against what changed.
+
+settings { maxPlayers = 2; }
+
+struct Point { float3 at; int id; }
+struct Site { string name; List<int> values; int2 at; }
+struct Snap { int tick; List<Point> points; List<string> notes; }
+
+singleton Catalog
+{
+    List<Site> sites;
+    Map<int, List<int>> cells;
+    Set<int> seen;
+    List<byte> bytes;
+    bool filled;
+}
+
+singleton Rewind
+{
+    List<Snap> frames;
+}
+
+singleton Board
+{
+    Grid2<int> cells = Grid2(300, 300);
+    int steps;
+}
+
+singleton Plain { int a; float b; }
+
+component Marker { int kind; List<int> data; }
+
+scene Main { }
+
+const int SITES = 400;
+const int CELLS = 500;
+const int FRAMES = 30;
+
+Snap MakeSnap(int tick)
+{
+    mut List<Point> points = [];
+    for (var i = 0; i < 300; i++) points.Add(Point { at = float3(i, tick, 0), id = tick * 1000 + i });
+    mut List<string> notes = [];
+    for (var i = 0; i < 4; i++) notes.Add("frame " + tick + " note " + i);
+    return Snap { tick = tick, points = points, notes = notes };
+}
+
+// From the second tick on one thing changes a tick, in turn
+system Change(mut Catalog catalog, mut Rewind rewind, mut Board board, Time time)
+{
+    if (time.tick < 1) return;
+    var t = int(time.tick);
+    var turn = t % 7;
+    if (turn == 0)
+    {
+        mut var site = catalog.sites[t % SITES];
+        site.name = "site " + t;
+        catalog.sites[t % SITES] = site;
+    }
+    if (turn == 1)
+    {
+        mut var site = catalog.sites[(t * 7) % SITES];
+        site.values[t % 20] += 1;
+        catalog.sites[(t * 7) % SITES] = site;
+    }
+    if (turn == 2)
+    {
+        mut var list = catalog.cells[(t * 13) % CELLS];
+        list[t % 8] = t;
+        catalog.cells[(t * 13) % CELLS] = list;
+    }
+    if (turn == 3) rewind.frames[t % FRAMES] = MakeSnap(t);
+    if (turn == 4) catalog.bytes[(t * 101) % 40000] = byte(t);
+    if (turn == 5) board.cells[int2(t % 300, (t * 3) % 300)] = t;
+    if (turn == 6) catalog.seen.Add(100000 + t);
+    board.steps += 1;
+}
+
+event(Spawned) Setup(with Main, mut Catalog catalog, mut Rewind rewind)
+{
+    for (var i = 0; i < SITES; i++)
+    {
+        mut List<int> values = [];
+        for (var k = 0; k < 20; k++) values.Add(i * k);
+        catalog.sites.Add(Site { name = "site " + i, values = values, at = int2(i, -i) });
+    }
+    for (var i = 0; i < CELLS; i++)
+    {
+        mut List<int> list = [];
+        for (var k = 0; k < 8; k++) list.Add(i + k);
+        catalog.cells[i] = list;
+        catalog.seen.Add(i * 3);
+    }
+    for (var i = 0; i < 40000; i++) catalog.bytes.Add(byte(i * 7));
+    for (var i = 0; i < FRAMES; i++) rewind.frames.Add(MakeSnap(-i));
+    catalog.filled = true;
+    for (var e = 0; e < 3; e++)
+    {
+        mut List<int> data = [];
+        for (var i = 0; i < 50; i++) data.Add(i * e);
+        Spawn(Marker { kind = e, data = data }, Visibility);
+    }
+}

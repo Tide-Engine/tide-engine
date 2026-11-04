@@ -148,4 +148,6 @@ void tide_window_typing(bool typing);
 // The game's pack of assets (tide/pack.h), as its build left it with the
 // program: beside it as <program>.pack on desktop, in its page on the web, in
 // its APK on Android. malloc'd bytes, the caller's to free, or NULL for none.
-uint8_t *tide_window_pack(size_t *size);
+// `progress`, if not NULL, is the bytes read so far and the whole size, which
+// another thread may read while this one reads (tide_platform_pack_counted).
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2]);

@@ -156,8 +156,11 @@ typedef struct tide_game {
     void (*hear_visibility)(const void *world, const void *had, const tide_entity *destroyed,
                             uint32_t destroyed_count, tide_event_log *events);
     // One authoritative tick, recording permitted genuine lifecycle events
-    // into a max_players-sized array at their actual event-time state.
-    void (*tick_client_events)(void *world, const tide_jobs *jobs, tide_event_log *per_player);
+    // into a max_players-sized array at their actual event-time state, and,
+    // with `all`, everything the tick sent, as tick_events records it: what
+    // the local handlers of the server's own machine hear, as it sees the
+    // whole match.
+    void (*tick_client_events)(void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *all);
     // Check received record kinds, typed payload spans and listener masks
     // before local handlers can interpret them. Outputs the log's build/count.
     bool (*check_client_events)(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count);

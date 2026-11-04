@@ -6,6 +6,7 @@
 
 #include "tide/pack.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -501,12 +502,15 @@ uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
     *size = (size_t)(region_at + b->size);
     uint8_t *out = tide_alloc(*size ? *size : 1u);
     memset(out, 0, *size);
-    tide_pack_header h = {{0}, TIDE_PACK_VERSION, b->entry_count, region_at, b->size, {0, 0}};
+    tide_pack_header h = {.version = TIDE_PACK_VERSION, .entries = b->entry_count, .region_at = region_at, .region_size = b->size};
     memcpy(h.magic, TIDE_PACK_MAGIC, 8);
     memcpy(out, &h, sizeof h);
     // A pack of nothing has no entries and no region to copy from
     if (b->entry_count) memcpy(out + table, b->entries, (size_t)b->entry_count * sizeof(tide_pack_entry));
     if (b->size) memcpy(out + region_at, b->region, (size_t)b->size);
+    // Its identity, of the file as it is with the digest's bytes zero, so loading needn't hash it
+    tide_sha256_of(out, *size, h.digest);
+    memcpy(out + offsetof(tide_pack_header, digest), h.digest, sizeof h.digest);
     free(b->region);
     free(b->shared);
     free(b->entries);

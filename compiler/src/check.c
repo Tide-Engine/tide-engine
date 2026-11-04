@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "asset_files.h"
+#include "build_report.h"
 #include "humanoid_assets.h"
 #include "assets.h"
 #include "model_metadata.h"
@@ -15043,6 +15044,37 @@ static void check_raw_attribute(decl *d, const attribute *attr)
     d->sample_raw = true;
 }
 
+// [Lossless] before a Texture asset (one, or a glob's list or map): its pixels stay exactly as packed, a byte a
+// channel, where an image the build may compress is BC1 or BC3 (docs/game/assets.md, GPU compression). For numbers
+// that must be exact, a lookup table or a flow map, beside [Raw] or alone.
+static void check_lossless_attribute(decl *d, const attribute *attr)
+{
+    const char *usage = "it goes before a Texture asset the build would otherwise compress, like '[Raw, Lossless] asset "
+                        "Texture flow = \"art/flow.png\";'";
+    if (d->kind != DECL_ASSET) {
+        diag_error(attr->at, "Lossless keeps an image asset's pixels exact in the pack, and '" STR_FMT "' isn't an asset",
+                   STR_ARG(d->name));
+        diag_note("%s", usage);
+        return;
+    }
+    if (d->return_type.kind == TY_ERROR) return; // Its type said why
+    if (d->asset_kind != ASSET_TEXTURE) {
+        diag_error(attr->at, "Lossless keeps a Texture asset's pixels exact, and '" STR_FMT "' is %s, which is never compressed",
+                   STR_ARG(d->name), type_name(d->return_type));
+        diag_note("%s", usage);
+        return;
+    }
+    if (attr->args.count || attr->values.count) {
+        diag_error(attr->at, "Lossless takes nothing: '[Lossless]'");
+        return;
+    }
+    if (d->lossless) {
+        diag_error(attr->at, "'" STR_FMT "' already has a Lossless", STR_ARG(d->name));
+        return;
+    }
+    d->lossless = true;
+}
+
 static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
 {
     if (str_eq_c(attr->name, "Raw")) {
@@ -15317,6 +15349,8 @@ static void check_asset_decl(checker *c, decl *k)
             else retarget = attr;
         } else if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
             check_sampling_attribute(c, k, attr);
+        } else if (str_eq_c(attr->name, "Lossless")) {
+            check_lossless_attribute(k, attr);
         } else if (str_eq_c(attr->name, "BlendShapes")) {
             check_blend_shapes_attribute(k, attr, typed, kind);
         } else if (str_eq_c(attr->name, "Parts")) {
@@ -15376,6 +15410,7 @@ static void check_asset_decl(checker *c, decl *k)
         if (path) vec_push(k->asset_paths, (expr *)path);
         else valid = false;
     }
+    const double import_began = build_report_current() ? build_report_clock_ms() : 0.0;
     if (typed && fills && valid) {
         if (catalog) {
             asset_value *combined = NEW(asset_value);
@@ -15427,6 +15462,7 @@ static void check_asset_decl(checker *c, decl *k)
         else if (kind == ASSET_HUMANOID && k->asset && !c->prog->asset_metadata_only)
             if (!humanoid_asset_read(&k->asset->items[0], k->value->at, c->prog->game_folder)) k->asset = NULL;
     }
+    if (build_report_current()) k->import_ms = build_report_clock_ms() - import_began;
     if (retarget) check_retarget_attribute(c, k, retarget);
     if (built && typed && fills) build_asset_function(c, k);
     k->index = 2;
@@ -20650,6 +20686,10 @@ static void check_attributes(checker *c)
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
+            if (str_eq_c(attr->name, "Lossless")) {
+                if (d->kind != DECL_ASSET) check_lossless_attribute(d, attr); // An asset's was read with it
+                continue;
+            }
             if (str_eq_c(attr->name, "BlendShapes")) {
                 if (d->kind != DECL_ASSET) // An asset's was read with it
                     diag_error(attr->at, "BlendShapes chooses which blend shapes a SkinnedMesh asset keeps, and '" STR_FMT
@@ -20720,7 +20760,8 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Unordered");
                 suggest_consider_c(&s, "Filter");
                 suggest_consider_c(&s, "Wrap");
-            suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "Raw");
+                suggest_consider_c(&s, "Lossless");
                 suggest_consider_c(&s, "LOD");
                 suggest_consider_c(&s, "BlendShapes");
                 suggest_consider_c(&s, "Parts");
@@ -20729,7 +20770,8 @@ static void check_attributes(checker *c)
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
                           "entities gain and lose, Channel and Unordered, which order a command's delivery, Filter and "
-                          "Wrap, which say how an asset that's drawn with is sampled, LOD, which has a mesh asset's levels of "
+                          "Wrap, which say how an asset that's drawn with is sampled, Raw, for an image of numbers, Lossless, which keeps an "
+                          "image asset uncompressed, LOD, which has a mesh asset's levels of "
                           "detail made, and Bus, which marks the enum of the audio buses");
                 continue;
             }

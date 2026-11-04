@@ -168,8 +168,10 @@ static void pack_path(const uint32_t n, char *out, const size_t size)
 
 // Loads the newest pack tide wrote in the run's folder, if it's newer than
 // the one loaded: tide writes one with each build, and again when a file an
-// asset names changes, so a saved image is in the running game at once.
-static void check_pack(void)
+// asset names changes, so a saved image is in the running game at once. The
+// first, as the game starts, loads where the window shows how far it got, if
+// `shown` (tide_run_load_shown); a new one later loads in place.
+static void check_pack(const bool shown)
 {
     char path[4096];
     uint32_t newest = reload.pack;
@@ -181,16 +183,10 @@ static void check_pack(void)
     if (newest == reload.pack) return;
     reload.pack = newest;
     pack_path(newest, path, sizeof path);
-    FILE *f = fopen(path, "rb");
-    if (!f) return;
-    fseek(f, 0, SEEK_END);
-    const long length = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
-    const bool ok = bytes && fread(bytes, 1, (size_t)length, f) == (size_t)length;
-    fclose(f);
-    if (ok) tide_run_assets_from(bytes, (size_t)length);
-    else free(bytes);
+    if (shown && tide_run_load_shown(path)) return;
+    size_t size = 0;
+    uint8_t *bytes = tide_platform_read_counted(path, &size, NULL);
+    if (bytes) tide_run_assets_from(bytes, size);
 }
 
 // The CLI keeps only two published builds. The active library's own copy
@@ -463,7 +459,7 @@ static void check(void)
         if (!file_exists(path)) break;
         newest++;
     }
-    check_pack(); // Before a new build, which starts with the pack as it is
+    check_pack(false); // Before a new build, which starts with the pack as it is
     if (newest != reload.running) {
         reload.running = newest; // A build that doesn't load isn't tried again
         void *library = NULL;

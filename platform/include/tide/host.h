@@ -8,6 +8,7 @@
 // tide_host_run_library swaps in each new build of it that tide makes: hot
 // reloading. The table is what lets one loop do both.
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,7 @@
 #include "tide/stats.h"
 #include "tide/time.h"
 #include "tide/voice.h"
+#include "tide/worker.h"
 
 typedef struct tide_run_desc {
     const char *title;      // The window's title, over the game's title setting; NULL for that
@@ -168,16 +170,24 @@ static const tide_host_game *tide_run_game;
 static uint8_t *tide_run_pack;
 static size_t tide_run_pack_size;
 
+// The pack from `bytes` (malloc'd, the host's from here on), which the game
+// has loaded (`loaded`) or found isn't one.
+static inline void tide_run_assets_kept(uint8_t *bytes, const size_t size, const bool loaded)
+{
+    if (tide_run_pack != bytes) free(tide_run_pack);
+    tide_run_pack = bytes;
+    tide_run_pack_size = size;
+    if (!loaded) fprintf(stderr, "tide: the game's pack isn't one: its assets read as empty\n");
+    tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
+}
+
 // The pack from `bytes` (malloc'd, the host's from here on): the game loads it.
 static inline void tide_run_assets_from(uint8_t *bytes, const size_t size)
 {
-    free(tide_run_pack);
-    tide_run_pack = bytes;
-    tide_run_pack_size = size;
-    if (tide_run_game->assets && bytes && !tide_run_game->assets(bytes, size)) {
-        fprintf(stderr, "tide: the game's pack isn't one: its assets read as empty\n");
-    }
-    tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
+    free(tide_run_pack); // The last one's bytes first: a pack can be gigabytes
+    tide_run_pack = NULL;
+    const bool loaded = !tide_run_game->assets || !bytes || tide_run_game->assets(bytes, size);
+    tide_run_assets_kept(bytes, size, loaded);
 }
 
 // The pack the build left with the program, for a game that has assets.
@@ -1089,6 +1099,138 @@ static inline void tide_run_begin(void)
     }
 }
 
+// A game's pack can take seconds to read and check (a big game's is
+// gigabytes), so in a window it loads on a thread of the pool's while the
+// frames show how far it got, as a page does while it fetches one (tide.js):
+// the window answers meanwhile, and isn't blank. The game starts once it's in
+// (tide_run_loading_frame). A run with no window loads it in place, as nobody
+// waits on one and it goes the same every time; so does a page, which has the
+// pack already, and a machine whose pool has no background threads.
+typedef struct tide_run_loader {
+    tide_background job;
+    char *path;           // The file read, or NULL: the program's own pack (tide_platform_pack_counted)
+    uint64_t progress[2]; // Bytes read so far, and the file's, as the reading thread stores them
+    uint32_t checking;    // 1 once it's read and the game is loading it (atomic)
+    uint8_t *bytes;       // What was read, and whether the game loaded it: the thread's until the job's done
+    size_t size;
+    bool loaded;
+    bool on;        // Frames show where it is, until it's in and the game has begun
+    double seconds; // How long they've shown it, for the bar that moves while nothing can say how far
+    tide_draw_list list;
+} tide_run_loader;
+static tide_run_loader tide_run_loading;
+
+static inline void tide_run_load_work(void *context)
+{
+    tide_run_loader *l = context;
+    size_t size = 0;
+    uint8_t *bytes = l->path ? tide_platform_read_counted(l->path, &size, l->progress)
+                             : tide_platform_pack_counted(&size, l->progress);
+    __atomic_store_n(&l->checking, 1u, __ATOMIC_RELAXED);
+    l->loaded = !bytes || tide_run_game->assets(bytes, size);
+    l->bytes = bytes;
+    l->size = size;
+}
+
+// Starts loading the pack at `path` (NULL: the program's own) on the pool, if
+// this run loads it there: false where it's to be loaded in place.
+static inline bool tide_run_load_shown(const char *path)
+{
+#ifdef __wasm__
+    (void)path;
+    return false;
+#else
+    const tide_jobs *pool = tide_platform_jobs();
+    if (!tide_run_game->assets || tide_run_headless || tide_run_embedded || !pool || !pool->background) return false;
+    tide_run_loader *l = &tide_run_loading;
+    *l = (tide_run_loader){.job = {.work = tide_run_load_work, .context = l}, .on = true};
+    if (path) {
+        const size_t n = strlen(path) + 1u;
+        l->path = malloc(n);
+        if (!l->path) abort();
+        memcpy(l->path, path, n);
+    }
+    pool->background(pool->self, &l->job);
+    return true;
+#endif
+}
+
+// Starts the game once its pack is in: now, unless it's loading on the pool.
+static inline void tide_run_begin_loaded(void)
+{
+    if (!tide_run_loading.on) tide_run_begin();
+}
+
+// A frame while the pack loads: the loading screen, as the web's shell has it
+// (platform/web/shell.html), with how much of the pack is read, then a bar
+// that moves while the game checks what it read. Once it's in, the game
+// begins, and this frame is its first.
+static inline int tide_run_frame(void *user, float seconds);
+static inline int tide_run_loading_frame(void *user, const float seconds)
+{
+    tide_run_loader *l = &tide_run_loading;
+    // What's pressed meanwhile isn't the game's: it starts from what's held
+    tide_platform_poll(&tide_run_devices);
+    tide_devices_consume(&tide_run_devices);
+    if (__atomic_load_n(&l->job.done, __ATOMIC_ACQUIRE)) {
+        l->on = false;
+        if (!l->bytes && !l->path) {
+            fprintf(stderr, "tide: the game's pack of assets isn't with the program (<program>.pack beside it): they read as empty\n");
+        }
+        free(l->path);
+        l->path = NULL;
+        tide_draw_free(&l->list);
+        if (l->bytes) tide_run_assets_kept(l->bytes, l->size, l->loaded);
+        tide_run_begin();
+        return tide_run_frame(user, seconds);
+    }
+    l->seconds += tide_is_finite_d((double)seconds) && seconds > 0.0f ? (double)seconds : 0.0;
+    const uint64_t read = __atomic_load_n(&l->progress[0], __ATOMIC_RELAXED);
+    const uint64_t total = __atomic_load_n(&l->progress[1], __ATOMIC_RELAXED);
+    const bool known = !__atomic_load_n(&l->checking, __ATOMIC_RELAXED) && total;
+    char text[64];
+    if (known) {
+        const double mb = 1048576.0;
+        const int places = total < 10u * 1048576u ? 1 : 0;
+        snprintf(text, sizeof text, "Loading %.*f / %.*f MB", places, (double)read / mb, places, (double)total / mb);
+    } else {
+        snprintf(text, sizeof text, "%s", total ? "Preparing" : "Loading");
+    }
+
+    const tide_float2 screen = tide_platform_screen_size();
+    const tide_float2 measured = tide_platform_measure_text(text, 14.0f, NULL, TIDE_FONT_REGULAR);
+    // The bar, then the text 16 pixels under it, the two in the middle of the window
+    const float bar_w = 220.0f, bar_h = 4.0f, gap = 16.0f;
+    const float top = floorf((screen.y - (bar_h + gap + measured.y)) * 0.5f);
+    const float left = floorf((screen.x - bar_w) * 0.5f);
+    float from = 0.0f, width = 0.0f; // The bar's filled part, from its left
+    if (known) {
+        width = bar_w * (float)((double)read / (double)total);
+    } else { // A third of it going side to side, easing in and out, every 1.2 seconds
+        const double phase = fmod(l->seconds / 1.2, 2.0);
+        const float t = (float)(phase < 1.0 ? phase : 2.0 - phase);
+        width = bar_w * 0.3f;
+        from = (bar_w - width) * t * t * (3.0f - 2.0f * t);
+    }
+    tide_draw_list *d = &l->list;
+    tide_draw_reset(d);
+    d->target_pixels = tide_platform_target_pixels;
+    d->target_content = tide_platform_target_content;
+    d->screen_scale = tide_platform_screen_scale();
+    tide_draw_clear(d, (tide_color){14.0f / 255.0f, 14.0f / 255.0f, 20.0f / 255.0f, 1.0f});
+    tide_draw_set_screen(d);
+    tide_draw_round_rect(d, tide_f2(left + bar_w * 0.5f, top + bar_h * 0.5f), tide_f2(bar_w, bar_h), bar_h * 0.5f,
+                         (tide_color){36.0f / 255.0f, 36.0f / 255.0f, 46.0f / 255.0f, 1.0f});
+    if (width >= 1.0f) {
+        tide_draw_round_rect(d, tide_f2(left + from + width * 0.5f, top + bar_h * 0.5f), tide_f2(width, bar_h), bar_h * 0.5f,
+                             (tide_color){106.0f / 255.0f, 140.0f / 255.0f, 1.0f, 1.0f});
+    }
+    tide_draw_text(d, text, tide_f2(floorf((screen.x - measured.x) * 0.5f), top + bar_h + gap), 14.0f,
+                   (tide_color){154.0f / 255.0f, 154.0f / 255.0f, 174.0f / 255.0f, 1.0f});
+    tide_platform_draw(d);
+    return TIDE_KEEP_RUNNING;
+}
+
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
@@ -1208,7 +1350,7 @@ static inline double tide_run_wait_update(void *user, const double elapsed)
 
 static inline int tide_run_frame(void *user, const float seconds)
 {
-    (void)user;
+    if (tide_run_loading.on) return tide_run_loading_frame(user, seconds); // The game's pack isn't in yet
     const tide_host_game *game = tide_run_game;
     // Asked every frame: a reload can bring the setting, or take it away. Inside another program's frame they're
     // drawn with the frame, as the views' drawing is, and say only what's Tide's
@@ -1360,6 +1502,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_gui_begin(&tide_run_gui, seen, tide_platform_screen_size(), tide_platform_measure_text);
     tide_run_gui.copy = tide_platform_copy;
     tide_run_gui.jobs = tide_platform_jobs();
+    tide_platform_list_controls(&tide_run_gui);
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
@@ -1517,8 +1660,8 @@ _Noreturn static inline void tide_host_run(const tide_run_desc *desc, const tide
 {
     tide_run_game = game;
     tide_run_open(desc);
-    tide_run_load_assets();
-    tide_run_begin();
+    if (!tide_run_load_shown(NULL)) tide_run_load_assets();
+    tide_run_begin_loaded();
     tide_platform_update_while_waiting(tide_run_wait_update, NULL);
     tide_platform_run(tide_run_frame, NULL);
 }

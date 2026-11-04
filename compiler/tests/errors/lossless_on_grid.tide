@@ -1,0 +1,6 @@
+// expect: Lossless keeps a Texture asset's pixels exact, and 'heights' is Grid2<Color>, which is never compressed
+[Lossless] asset Grid2<Color> heights = "../e2e/assets/hero.png";
+
+scene Main
+{
+}

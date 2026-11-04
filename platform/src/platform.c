@@ -40,8 +40,52 @@
 
 uint8_t *tide_platform_pack(size_t *size)
 {
-    return tide_window_pack(size);
+    return tide_window_pack(size, NULL);
 }
+
+uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2])
+{
+    if (progress) {
+        __atomic_store_n(&progress[0], 0u, __ATOMIC_RELAXED);
+        __atomic_store_n(&progress[1], 0u, __ATOMIC_RELAXED);
+    }
+    return tide_window_pack(size, progress);
+}
+
+#ifndef __wasm__
+uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t progress[2])
+{
+    *size = 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    // Its size in 64 bits: Windows' long is 32, and a pack can be more than 2 GB
+#ifdef _WIN32
+    const int64_t length = _fseeki64(f, 0, SEEK_END) == 0 ? _ftelli64(f) : -1;
+    _fseeki64(f, 0, SEEK_SET);
+#else
+    const int64_t length = fseek(f, 0, SEEK_END) == 0 ? (int64_t)ftell(f) : -1;
+    fseek(f, 0, SEEK_SET);
+#endif
+    uint8_t *bytes = length > 0 && (uint64_t)length < (uint64_t)PTRDIFF_MAX ? malloc((size_t)length) : NULL;
+    if (progress) __atomic_store_n(&progress[1], length > 0 ? (uint64_t)length : 0u, __ATOMIC_RELAXED);
+    // In pieces, saying how far it got, for a loading screen to show
+    size_t at = 0;
+    while (bytes && at < (size_t)length) {
+        const size_t left = (size_t)length - at;
+        const size_t got = fread(bytes + at, 1, left < ((size_t)16 << 20) ? left : ((size_t)16 << 20), f);
+        if (!got) break;
+        at += got;
+        if (progress) __atomic_store_n(&progress[0], (uint64_t)at, __ATOMIC_RELAXED);
+    }
+    fclose(f);
+    if (!bytes || at != (size_t)length) {
+        free(bytes);
+        return NULL;
+    }
+    *size = at;
+    return bytes;
+}
+#endif
 
 #ifdef __wasm__
 #include "tide_web.h"

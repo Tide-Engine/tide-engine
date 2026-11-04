@@ -4017,6 +4017,12 @@ static void describe(const occurrence *o, sb *out)
              "and keep their Raw role. A frag or a vert samples them directly or through GPU sampling and metadata "
              "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
              "escape to ordinary Texture storage, CPU arguments or returns, or draws."},
+            {"Lossless", "[Lossless]",
+             "Keeps this `Texture` asset's pixels exact in the pack, a byte a channel. Without it, an image whose sides are "
+             "powers of two and at least 128 pixels is block-compressed as the game is built (BC1, or BC3 with alpha), "
+             "`[Raw]` images too: a quarter to an eighth of the bytes, with each pixel off by a little. For numbers that "
+             "must be exact, such as a lookup table or a flow map: `[Raw, Lossless]`. It goes before a `Texture` asset, "
+             "alone or a glob's list or map."},
             {"Wrap", "[Wrap(Wrap.Repeat)]",
              "What a `uv` past this texture's edges reads wherever a draw or a `Sample` doesn't say: `Wrap.Clamp` "
              "(what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over again, "
@@ -9879,6 +9885,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
                  "Raw textures cannot be drawn or escape as ordinary Texture values.",
                  "Raw");
+            item(&c, "Lossless", CK_FUNCTION, "[Lossless]",
+                 "A Texture asset's pixels stay exact in the pack, never block-compressed (BC1/BC3) as the game is built.",
+                 "Lossless");
             item(&c, "BlendShapes", CK_FUNCTION, "[BlendShapes(\"name\", \"prefix*\")]",
                  "A SkinnedMesh<V> asset keeps only the blend shapes these names or * patterns match.", "BlendShapes(\"$1\")");
             item(&c, "Parts", CK_FUNCTION, "[Parts(\"name\", \"prefix*\")]",

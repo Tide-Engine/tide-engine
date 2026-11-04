@@ -703,6 +703,16 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_reload)
     endif()
 
+    # The loading screen: a window's pack loads on the pool while its frames
+    # go on, and the game begins once it's in. A hidden window, the real loop.
+    add_executable(tide_platform_loading tests/loading.c)
+    target_link_libraries(tide_platform_loading PRIVATE tide_platform)
+    add_test(NAME tide_platform_loading COMMAND tide_platform_loading)
+    add_test(NAME tide_platform_loading_opengl COMMAND tide_platform_loading)
+    set_tests_properties(tide_platform_loading tide_platform_loading_opengl PROPERTIES TIMEOUT 60)
+    tide_gpu_test(tide_platform_loading)
+    tide_gpu_test(tide_platform_loading_opengl OPENGL)
+
     # A game with no window (tide/run.h's --capture, --frames and --script): a
     # run with a script of every kind of input, whose pictures are read back
     # and checked. Nothing shows, but it needs a desktop session with OpenGL,

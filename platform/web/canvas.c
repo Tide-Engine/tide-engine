@@ -214,12 +214,16 @@ void tide_window_typing(const bool typing)
     tide_web_typing(typing);
 }
 
-uint8_t *tide_window_pack(size_t *size)
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
 {
     *size = tide_web_pack_size();
     if (!*size) return NULL;
     uint8_t *bytes = malloc(*size);
     if (!bytes) abort();
-    tide_web_pack_copy(bytes);
+    tide_web_pack_copy(bytes); // The page fetched it, showing how far as it went (tide.js)
+    if (progress) {
+        __atomic_store_n(&progress[1], (uint64_t)*size, __ATOMIC_RELAXED);
+        __atomic_store_n(&progress[0], (uint64_t)*size, __ATOMIC_RELAXED);
+    }
     return bytes;
 }

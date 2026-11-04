@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "asset_sizes.h"
 #include "build.h"
 #include "deploy.h"
 #include "editors.h"
@@ -89,10 +90,10 @@ static const char *dispatch_folder(int argc, char **argv)
         "--profile", "--profile-warmup", "--capture", "--capture-audio", "--record",
         "--script", "--microphone", "--interactive", "--frames", "--scale",
         "--latency", "--jitter", "--loss", "--players", "--seed", "--define",
-        "--scene", "--editor-cache", "--title", "-o", "--assets"
+        "--scene", "--editor-cache", "--title", "-o", "--assets", "--report"
     };
     const char *zero[] = {
-        "--server", "--strip-server-assets", "--anonymous", "--udp-only",
+        "--server", "--strip-server-assets", "--strip-assets", "--asset-sizes", "--anonymous", "--udp-only",
         "--no-open", "--release", "--distribution", "--web", "--single-file",
         "--android", "--stats", "--debug-views"
     };
@@ -263,6 +264,7 @@ static int command_main(const int argc, char **argv)
     const char **defines = malloc((size_t)argc * sizeof *defines);
     if (!defines) abort();
     build_options opts = {.folder = ".", .defines = defines};
+    asset_sizes sizes = {0}; // --asset-sizes'
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
     // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, a
     // network made worse, profiling, and a run with no window. There is room for every option once, and
@@ -288,6 +290,10 @@ static int command_main(const int argc, char **argv)
             opts.server = true;
         } else if (strcmp(a, "--strip-server-assets") == 0) {
             opts.server = opts.server_strip_assets = true;
+        } else if (build && strcmp(a, "--strip-assets") == 0) {
+            opts.strip_assets = true;
+        } else if (build && strcmp(a, "--asset-sizes") == 0) {
+            opts.asset_sizes = &sizes;
         } else if (run && (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0)) {
             server_args = true;
             game_args[game_arg_count++] = a;
@@ -471,6 +477,14 @@ static int command_main(const int argc, char **argv)
             opts.work = argv[++i];
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
+        else if (build && strcmp(a, "--report") == 0) {
+            if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.report) {
+                fputs("tide: --report takes one file for the build's report, like `--report build.json` or `--report build.txt`\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.report = path_absolute(argv[++i]);
+        }
         else if (unity && strcmp(a, "--once") == 0) once = true;
         else if (unity && strcmp(a, "--notified") == 0) opts.notified = true;
         else if (unity && strcmp(a, "--declarations") == 0) opts.declarations = once = true;
@@ -607,7 +621,11 @@ static int command_main(const int argc, char **argv)
     } else {
         char *program = tide_build(root, &opts);
         if (!program) code = 1;
-        else printf("Built %s\n", program);
+        else {
+            asset_sizes_print(stdout, &sizes);
+            printf("Built %s\n", program);
+        }
+        asset_sizes_free(&sizes);
     }
     if (!run && !unity) tide_check_for_update(root);
     free(defines);

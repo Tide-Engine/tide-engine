@@ -1,5 +1,9 @@
 # Runtime written by Claude for now
 
+## GUI widget listing (2026-11-04)
+
+Under the existing GUI maintenance exception, with the owner's request ("yes lets do that") that agents click widgets by a list rather than by pixels: `tide_gui` gains `listing` (a borrowed `tide_gui_listing *`, NULL by default), `listed` and the `describing` fields, and `tide/gui.h` gains `tide_gui_controls` and the listing types. Generated code calls nothing new and its C is unchanged. The widget functions it already calls describe themselves, so hosts, libraries and games rebuild together for the layout change. The standard host calls the new platform function `tide_platform_list_controls(&tide_run_gui)` each frame, which sets `listing` only in an `--interactive` run. No match state, wire format or simulation changes. Contracts, tests and gaps: gui.md, Widget listing; standard-host.md, Clicking widgets by name.
+
 ## Fonts: the checked reader and the registry (2026-11-03)
 
 Under the drawing maintenance exception, with the owner's request for custom fonts and runtime decoding: `engine/include/tide/font.h` and `engine/src/font_data.c` (font files into checked font data, its check, and the registry of a program's fonts) are Claude's on the same terms. New runtime functions generated code calls: `tide_font_find` (a Font's font, in `tide_font_file`), `tide_font_decode` (Font.Decode's helper) and `tide_pack_font_of` (an `asset Font`); the pack builder gains `tide_pack_font`, which only tidec calls. The C drawing API takes `const tide_font *` where it took a weight's file (`tide_draw_text_at`, `tide_measure_fn`, `tide_platform_measure_text`, `tide_draw_measure_text`), `tide_draw_list` has `fonts` in place of `bold`, a text command `words.font` in place of `words.bold`, and `tide_gui_theme` a `font`; hosts and game libraries rebuild together. No match state changes: a Font is local. Details: `notes/rendering.md`, Fonts of a game's own.
@@ -642,6 +646,15 @@ function: lifecycle deduplication uses a hidden, bounded match-state bitset
 through the existing list/COW functions. Checkpoint envelope 5 commits player
 metadata and pending notifications before game delivery. Contracts, failure
 reproductions and validation: `notes/sharding.md`, Border and recovery audit.
+
+## The host's events from the server's tick (2026-11-04)
+
+The owner decided the server's machine keeps no client world of its own. The
+generated `tide_game.tick_client_events` takes a fourth argument, `all`: the
+log `tick_events` would record, for the host player's local handlers (NULL:
+recorded nowhere, as before). Generated code calls nothing new; the session
+calls it. The Session ABI marker says `host events (1)`. Contracts and tests:
+notes/netcode.md, The host's player shares the server's world.
 
 ## Every player's frame at once (2026-10-24)
 

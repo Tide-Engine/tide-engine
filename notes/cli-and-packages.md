@@ -62,6 +62,85 @@ output equals the previous tidec's but for the identity (it hashes tidec's sourc
 `--build-cc`, as before. `cache_test.mjs` (native) expects `game_plumbing.o` in debug, a layout change to rebuild
 it, a body edit not to, and its reuse after a failed build. CLI unit/help/run-exit tests pass. Not run here: web
 and Android builds (CI's package checks run `cache_test.mjs --web`), LLDB (CI's Linux jobs), macOS/Linux.
+## Build reports (2026-11-04)
+
+Owner: "build reports; we should be able to have some output documenting where
+time was spent building, where pack sizes come from and how big they are, what
+was stripped maybe". Built as `tide build --report <file>`; the flag, format and
+contents are my picks (Provisional). `.json` gets JSON, any other path a table.
+`build` only: `run` refuses the flag (a watched run has many builds; one-shot
+runs could take it later). User docs: docs/tools/cli.md, Build reports.
+
+- `compiler/src/build_report.{h,c}` keeps one malloc'd report per build in a
+  global (`build_report_current`), since diag phases, the checker and codegen
+  have no shared context; nothing records while none is kept. It outlives the
+  arena. `tide_build` begins it when `opts->report` is set and no report is
+  active, and writes it after the build, failed builds included
+  (`"succeeded": false`); a write failure fails the build.
+- Steps: every `build_step` label ends the previous step (`build_report_stage`),
+  plus `compiling C/C++` from `run_compiles`. Labels said twice in a row merge.
+- Tide phases: `diag_phase` (also `TIDEC_TIMES`) now records into the report by
+  name, merged across build code's second pass. New phase marks: `running build
+  code` after `build_code_run`, and `packing assets` around `build_pack`
+  (`generating C` before it), skipped for build code's own program.
+- Asset import time: check.c times the resolve block of each asset declaration
+  into `decl.import_ms`; warm import-cache hits are what it shows warm.
+- Pack bytes: the same per-declaration measurement `--asset-sizes` uses (below):
+  `asset_size` also reports each declaration, with `asset_description` (type,
+  image size, BC1/BC3/RGBA, [Raw]/[Lossless]) as the report's type, so the two
+  can't disagree. Content-hash sharing means a later asset with the same bytes
+  adds 0 (`shared`); the remainder of the pack is entries/names. The last
+  `build_pack` of a codegen wins (a server repacks). Left-out assets have
+  their plain type: nothing was stored.
+- Left out: codegen copies the asset list before `program_strip_unused_assets`
+  and reports those missing after the final pack, telling server-only cuts
+  (in `all_assets`, not kept) from unused ones.
+- C/C++: each job's wall time from start to its observed exit, named from the
+  game or installation folder; reused objects (stamp hits, engine files, an
+  already-built engine) count as `upToDate`.
+- Cuts: `report_cuts` describes the mode's policy from the same predicates the
+  build uses (`strip_game_assets`, `strip_server_assets`, package C), naming
+  `--strip-assets` where a game with C was pruned by it or could be.
+- Outputs: the program, its pack and debugger sidecars beside it, or every file
+  of a split web page's folder, plus an Android build's returned app.
+
+Not built: per-object/section binary size attribution (needs linker maps),
+per-asset compression or texture-format breakdowns, and reports for watched
+runs, `tide unity` and deploy.
+
+Test: `tide_cli_build_report` (build_report_test.mjs) uses build_overlap's
+controlled compiler with the real front end: refusals, a cold release JSON
+report (steps, phases, compiles, pack bytes equal to the file, sharing, the
+unused asset left out with why, cuts, outputs' sizes), a warm table (0 compiled,
+reused count, layout), debug packing everything, a `--server` build's
+server-only cut and its pack, and a failed build's report. Validation: Windows
+ASan build; that test, build_overlap, help, run_exit, CLI unit, server_pack and
+the asset/pack/stages tidec e2e and unit tests pass; docs production build.
+Linux/macOS and web targets' reports are CI/untested (no web build reported).
+
+## Asset sizes and `--strip-assets` (2026-11-04)
+
+From a game's feedback (notes/textures.md, `[Raw]` images compress too): finding what made its pack 618 MB meant
+reverse-engineering the pack's table of contents.
+
+- **`tide build --asset-sizes`, `tidec --asset-sizes`**: `codegen_options.asset_size_out` is called once a
+  declaration is packed (`build_pack`: the builder's size before and after it, so a block an earlier declaration
+  already put in counts as 0 for this one) with its qualified name and a description (`asset_size`: type, an
+  image's size or a list's count, the formats of its first four images from `pack_item`'s new `stored`, and
+  `[Raw]`/`[Lossless]`). `compiler/src/asset_sizes.{h,c}` collect and print them biggest first, ties by name,
+  under the total (decimal units). The CLI passes a collector in `build_options.asset_sizes`; `generate_sources`
+  empties it before each compile, so Android's per-CPU compiles report once; `command_main` prints it before
+  `Built ...`, after the progress rows. Sizes are pack bytes after pruning, before a web page's compression.
+- **`tide build --strip-assets`** (`build_options.strip_assets`): `strip_game_assets` prunes a release or
+  distribution build whose game or packages have C sources or libraries, the client's twin of
+  `--strip-server-assets`. Detecting C that reads assets automatically (the feedback's other suggestion) was
+  not built: C reaches entries through `tide_pack_find` and generated names in ways a text scan would only
+  guess at. CMake's `tide_add_game` has no such option yet.
+- Neither changes telemetry (flags aren't recorded). Docs: `docs/tools/cli.md` (Asset sizes).
+- **Tests:** `tide_cli_assets` (`assets_test.mjs`) builds with `--asset-sizes` and checks the total, a line for
+  each of five declarations with its description, and the order; `tide_cli_help` covers both flags'
+  help. `--strip-assets` itself has no fixture: it only returns true earlier in `strip_game_assets`, whose
+  pruning `tidec_asset_usage` covers.
 
 ## Moving project channels and cache expiry (2026-11-03)
 
