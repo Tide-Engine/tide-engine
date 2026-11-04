@@ -7365,7 +7365,7 @@ static bool borrow_disturbed_expr(const expr *e, const expr *src)
     if (e->kind == E_STEP && borrow_overlaps(e->lhs, src)) return true;
     const decl *m = (e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_BINARY || e->kind == E_UNARY) ? e->method : NULL;
     const bool routine = m && (e->call == CALL_FUNCTION || e->call == CALL_METHOD || e->kind == E_BINARY || e->kind == E_UNARY);
-    if (routine && (m->is_extern || m->calls_c || changes_world(m) || takes_world_bindings(m) || m->starts_tasks)) return true;
+    if (routine && (m->is_extern || m->reaches_extern || changes_world(m) || takes_world_bindings(m) || m->starts_tasks)) return true;
     if (e->call == CALL_WORLD && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) return true;
     if (writes(e)) {
         // What it writes is its receiver or an argument: any of them, to be safe

@@ -23,7 +23,7 @@ it (`gen_value_of` on a local isn't fresh: `kept = piece`, `Add(piece)`, `return
   call (`writes()`: its receiver and every argument, conservatively) whose place overlaps the source's
   (`borrow_overlaps`: same root, the local, parameter or `this`, and the paths agree up to the shorter, fields that
   differ being apart and any index matching any index); a mut method of `this` called bare when the source is in
-  `this`; a call to an extern, a C-calling or task-starting routine, or one that changes the world
+  `this`; a call to an extern, a routine reaching the game's own C (`reaches_extern`; the engine's order-keeping builtins don't count) or a task-starting one, or one that changes the world
   (`changes_world`, `takes_world_bindings`); a non-reading `CALL_WORLD`; an await or a task start; a query foreach
   inside. The code itself setting the world (`world_sets`, `takes_world_bindings` of `g->code`) keeps the copy unless
   the source is in a local. A computed source is the loop's own copy (`foreach_value`), which nothing else names; a
