@@ -68,7 +68,7 @@ test('unavailable assets report a compile error instead of invoking a native pro
 });
 
 test('build code reports the native tool requirement in the browser host', async () => {
-    await assert.rejects(compiler.compile(source + '\nasset string made { made = "built"; }\n'),
+    await assert.rejects(compiler.compile(source + '\nbuild string Made()\n{\n    return "built";\n}\nasset string made = Made();\n'),
         /game\.tide:\d+:.*build code cannot run in the browser playground.*use tide build or tide run --web/s);
 });
 
