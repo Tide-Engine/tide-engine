@@ -53,7 +53,9 @@ with `b3t_check` on. Restoring the verified world lets everything go.
   Sumo and the predict tests pass with `b3t_check` on; pins unchanged.
 - Then the solver sets' and islands' arrays entry by entry (same rule): 286
   pages a commit on average, whole ones included. Left: the trees, marked
-  whole every commit (their writes aren't followed node by node).
+  whole every commit, rightly: `b3DynamicTree_Rebuild` rebuilds the whole
+  dynamic tree in any step where anything in it moved, so every node is
+  written. Node-by-node marks would gain nothing.
 - A predicted world in an arena of its own was looked at and dropped: the
   arena's bytes hold pointers to where it is, so a state can't move to
   another arena but through canonical bytes, and every run of predictions

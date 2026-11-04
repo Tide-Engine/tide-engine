@@ -187,7 +187,10 @@ What's left is mostly the whole confirmed tick and its whole commit each frame,
 and the arena switching between the confirmed and held predicted states (a
 restore each way; in this bench also the server's, in one process). A
 predicted world in an arena of its own can't: an arena's bytes hold pointers
-to where it is (notes/box3d.md).
+to where it is (notes/box3d.md). Running confirmed ticks in batches while
+what's near goes as predicted would cut the switching, at the cost of the
+confirmed world (far entities drawn, verified handlers) and divergence checks
+lagging up to the batch: the owner declined it (2026-11-04, "stop here").
 
 Gaps:
 - Singleton systems going through queries still run far entities in predicted
