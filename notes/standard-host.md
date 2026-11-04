@@ -1,5 +1,46 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Loading screen while the pack loads (2026-11-04)
+
+The owner's ask: Mount & Rifle opened a white window that didn't answer for
+seconds before its first frame, unlike a web page's loader. Measured on this
+machine: its pack is 1.38 GB; reading it takes about 0.6 s warm (more cold), and
+`tide_pack_load`'s SHA-256 of the whole file (`pack.digest`, the session's pack
+identity) about 6 s at the portable hash's 217 MB/s; the region copy 0.6 s.
+All of it ran on the main thread after the window opened.
+
+- `tide_run_load_shown(path)` (`tide/host.h`) starts the first pack load as a
+  pool background job (`tide_jobs.background`): read (`tide_platform_pack_counted`
+  for the program's own pack, `tide_platform_read_counted` for `tide run`'s
+  `pack-<n>`) then `game->assets`, which may take its time on that thread. Only
+  with a window and a pool with background threads, not on the web (the page
+  has the pack and its own loader) and never headless or embedded: those load in
+  place as before, so scripted frames are unchanged. A pack that changes during
+  a run, and builds swapped in, still load in place.
+- Until the job is done, `tide_run_frame` is `tide_run_loading_frame`: polls and
+  consumes the devices (input during loading isn't the game's), then draws the
+  shell's loader (platform/web/shell.html colors, 220 by 4 bar, 14 px text 16 px
+  under it): `Loading x / y MB` with a known bar while reading, then `Preparing`
+  with a third of the bar easing side to side every 1.2 s. The frame the job is
+  done in keeps the pack (`tide_run_assets_kept`), runs `tide_run_begin` and then
+  the game's first frame. Nothing calls the game before that: no session exists,
+  so `tide_run_wait_update` does nothing, and `reload_frame` skips build checks.
+- The pack's memory is mapped per thread (`tide_pack_use`); the loading thread
+  maps its own, and the main thread's is mapped by generated `tide_local_init`.
+- Pack reads are 64-bit on Windows (`_ftelli64`): `long` limited them to 2 GB.
+  Android reads its APK asset in 16 MB pieces (`AASSET_MODE_STREAMING`).
+- Test: `tide_platform_loading` (Vulkan and `_opengl`, label `gpu`,
+  `platform/tests/loading.c`): a C game table whose `assets()` waits for the test,
+  in the real loop and a hidden window. Frames go on while it waits; the loader
+  reads back with the shell's background, a bar and text; the game begins in the
+  frame the pack is in, once, with the pack kept, loaded off the main thread.
+  A negative control that skips drawing the loader fails it.
+- Not built: an icon on the loader, a game's own loader, async loading of a pack
+  that changes during a run. The SHA-256 of the pack remains most of a big
+  pack's load: a hardware SHA path (SHA-NI/ARMv8) or a digest the build writes
+  would take Mount & Rifle's 6 s to well under one; that's a runtime and pack
+  format decision, proposed rather than made.
+
 ## Geometry profile reports (2026-11-03)
 
 The additive `geometry` object in tide.profile version 1 exports actual submitted

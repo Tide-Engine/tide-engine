@@ -267,6 +267,10 @@ Until the game first draws, the page shows what it's doing: how much of the game
 - An element with the ID `tide-loading` is the loader: the game takes it away once it has drawn, and fills in the elements in it with the IDs `tide-loading-bar` (a bar, whose first child's width is how much has downloaded), `tide-loading-text` (what's happening, in words) and `tide-loading-logo` (an `<img>` for the icon). Leave it out for no loader.
 - `Tide.onProgress`, set in the `var Tide = { ... }` before the game's script, is told each step for a loader of your own: `{ stage, loaded, total, error }`, where `stage` is `download` (`loaded` of `total` bytes), `compile`, `waiting` (for `Tide.start()`, on a page that set `Tide.wait`), `start` (the game is running, until it first draws), `done` (it drew) or `error` (it couldn't start, and `error` says why).
 
+### The window while it loads
+
+On desktop and Android, a game with assets opens its window at once and shows the same loader as Tide's page while it reads its pack: how many megabytes it has read, then `Preparing` while the game checks and loads them. The window keeps answering meanwhile (you can move, resize or close it), and the game starts once its assets are in; what's pressed while it loads doesn't reach the game. A big pack can take seconds. Runs [without a window](#without-a-window) load their pack before their first frame, so their frames are the same every run. The window's loader isn't replaceable yet and shows no icon.
+
 Standalone release and distribution builds remove unreachable native code and data; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Distribution builds also strip debug symbols. Debug and hot-reload builds keep all code and every declared asset.
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
