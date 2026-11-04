@@ -20,5 +20,5 @@
   {"name": "StencilOp", "members": ["Keep","Replace","Increment","Decrement","Zero","Invert"], "values": [0,1,2,3,4,5]},
   {"name": "Font", "members": ["Regular","Bold"], "values": [0,1]},
   {"name": "SessionState", "members": ["Offline","Connecting","Connected"], "values": [0,1,2]},
-  {"name": "DisconnectReason", "members": ["Left","TimedOut","Refused","ServerLeft","Failed","Ended","Kicked"], "values": [0,1,2,3,4,5,6]}
+  {"name": "DisconnectReason", "members": ["Left","TimedOut","Refused","ServerLeft","Failed","Ended","Kicked","Banned"], "values": [0,1,2,3,4,5,6,7]}
 ]}
