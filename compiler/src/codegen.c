@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include "build_code.h"
+#include "build_report.h"
 
 #include "asset_files.h"
 #include "texture_cache.h"
@@ -20911,6 +20912,27 @@ static void note_watched(void *user, const char *path)
 // embeds it. A game with no assets gets no pack file, and an empty array.
 #include "build_codegen.inc"
 
+// An asset in a build's report (build_report.h): what it is, the files it was read from and how long that took,
+// and the bytes it added to the pack, or why it isn't there.
+static void report_asset(const decl *d, const uint64_t bytes, const char *left_out)
+{
+    build_report_asset *a = build_report_add_asset(str_to_cstr(d->qualified), type_name(d->return_type));
+    if (!a) return;
+    a->import_ms = d->import_ms;
+    a->pack_bytes = bytes;
+    a->left_out = left_out;
+    for (int k = 0; d->asset && k < d->asset->count; k++) {
+        const asset_match *m = &d->asset->items[k];
+        if (!m->built) build_report_asset_file(a, m->abs);
+        for (int s = 0; s < m->side_count; s++) build_report_asset_file(a, m->sides[s]);
+    }
+}
+
+static void report_packed(const decl *d, const uint64_t bytes)
+{
+    report_asset(d, bytes, NULL);
+}
+
 static void build_pack(gen *g)
 {
     const program *prog = g->prog;
@@ -20929,8 +20951,13 @@ static void build_pack(gen *g)
         }
     }
     if (!opts->pack && !opts->pack_c && !g->asset_dependencies.count && !g->skinned_fingerprints.count) return;
+    const bool reported = build_report_current() && !opts->build_program;
+    if (reported) build_report_assets_clear(); // What the last pack holds: a server packs again with fewer
+    if (!opts->build_program) diag_phase("generating C"); // ...and packing is a phase of its own (TIDEC_TIMES)
     tide_pack_builder b = {0};
-    for (int i = 0; i < prog->assets.count; i++) {
+    uint64_t mark = 0;
+    // After each asset, however its turn ends, what it added to the pack, for a build's report
+    for (int i = 0; i < prog->assets.count; reported ? report_packed(prog->assets.items[i], b.size - mark) : (void)0, mark = b.size, i++) {
         const decl *d = prog->assets.items[i];
         const asset_value *v = d->asset;
         if (!v) continue; // Its error was reported
@@ -21087,6 +21114,8 @@ static void build_pack(gen *g)
         free(keys);
     }
     g->pack_bytes = tide_pack_end(&b, &g->pack_size);
+    if (reported) build_report_current()->pack_size = prog->assets.count ? g->pack_size : 0; // write_pack writes none for none
+    if (!opts->build_program) diag_phase("packing assets");
 }
 
 static bool write_pack(gen *g)
@@ -24501,6 +24530,11 @@ bool codegen(program *prog, const codegen_options *opts)
     // arrays. A watcher resets that arena before compiling the next program.
     memset(&lane_memo, 0, sizeof lane_memo);
     memset(&read_memo, 0, sizeof read_memo);
+    // What a release leaves out, for a build's report: the assets nothing uses (said once the pack is made)
+    const bool reported = build_report_current() && !opts->build_program;
+    const int declared_assets = prog->assets.count;
+    decl **declared = reported ? arena_alloc(sizeof *declared * (size_t)(declared_assets ? declared_assets : 1)) : NULL;
+    if (declared && declared_assets) memcpy(declared, prog->assets.items, sizeof *declared * (size_t)declared_assets);
     if (opts->strip_unused_assets) program_strip_unused_assets(prog);
     order_arrays(prog);
     // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was
@@ -24800,6 +24834,15 @@ bool codegen(program *prog, const codegen_options *opts)
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);
     if (!opts->server && !g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
+    for (int i = 0; reported && i < declared_assets; i++) {
+        const decl *d = declared[i];
+        bool kept = false;
+        for (int k = 0; k < prog->assets.count && !kept; k++) kept = prog->assets.items[k] == d;
+        if (kept) continue;
+        bool server_cut = false; // Kept for players, but not in a server's pack
+        for (int k = 0; opts->server && k < all_asset_count && !server_cut; k++) server_cut = all_assets[k] == d;
+        report_asset(d, 0, server_cut ? "the server's code never reads it" : "nothing in the game's code, defaults or shaders names it");
+    }
     if (diag_error_count()) { free(g.pack_bytes); return false; }
     const sb c = opts->line_directives ? pin_lines(&g.c, g.c_path) : g.c;
     const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &c) && write_pack(&g)

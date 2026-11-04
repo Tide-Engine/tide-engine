@@ -3,6 +3,7 @@
 #endif
 
 #include "common.h"
+#include "build_report.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -189,11 +190,13 @@ void diag_phase(const char *what)
         enabled = set && set[0] && set[0] != '0';
         timespec_get(&last, TIME_UTC);
     }
-    if (!enabled) return;
+    // ...and for tide build --report (build_report.h), which keeps the phases by name
+    if (!enabled && !build_report_current()) return;
     struct timespec now;
     timespec_get(&now, TIME_UTC);
     const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
-    if (what) fprintf(stderr, "tidec: %-22s %9.1f ms\n", what, ms);
+    if (what) build_report_phase(what, ms);
+    if (what && enabled) fprintf(stderr,"tidec: %-22s %9.1f ms\n", what, ms);
     last = now;
 }
 

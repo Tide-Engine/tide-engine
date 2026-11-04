@@ -115,6 +115,8 @@ if(TIDE_NODE AND NOT TIDE_EMBED_LLVM)
     endif()
     add_test(NAME tide_cli_build_overlap COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_overlap_test.mjs"
         "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/build overlap test")
+    add_test(NAME tide_cli_build_report COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_report_test.mjs"
+        "$<TARGET_FILE:tide_cli>" "$<TARGET_FILE:tide_cli_build_compiler>" "${CMAKE_CURRENT_BINARY_DIR}/build report test")
 endif()
 
 if(TIDE_NODE)

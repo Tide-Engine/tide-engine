@@ -1,5 +1,57 @@
 # `tide`, packages and the package
 
+## Build reports (2026-11-04)
+
+Owner: "build reports; we should be able to have some output documenting where
+time was spent building, where pack sizes come from and how big they are, what
+was stripped maybe". Built as `tide build --report <file>`; the flag, format and
+contents are my picks (Provisional). `.json` gets JSON, any other path a table.
+`build` only: `run` refuses the flag (a watched run has many builds; one-shot
+runs could take it later). User docs: docs/tools/cli.md, Build reports.
+
+- `compiler/src/build_report.{h,c}` keeps one malloc'd report per build in a
+  global (`build_report_current`), since diag phases, the checker and codegen
+  have no shared context; nothing records while none is kept. It outlives the
+  arena. `tide_build` begins it when `opts->report` is set and no report is
+  active, and writes it after the build, failed builds included
+  (`"succeeded": false`); a write failure fails the build.
+- Steps: every `build_step` label ends the previous step (`build_report_stage`),
+  plus `compiling C/C++` from `run_compiles`. Labels said twice in a row merge.
+- Tide phases: `diag_phase` (also `TIDEC_TIMES`) now records into the report by
+  name, merged across build code's second pass. New phase marks: `running build
+  code` after `build_code_run`, and `packing assets` around `build_pack`
+  (`generating C` before it), skipped for build code's own program.
+- Asset import time: check.c times the resolve block of each asset declaration
+  into `decl.import_ms`; warm import-cache hits are what it shows warm.
+- Pack bytes: `build_pack`'s loop records `b.size` growth per asset in its for
+  increment, so every `continue` path counts. Content-hash sharing means a
+  later asset with the same bytes adds 0 (`shared`); the remainder of the pack
+  is entries/names. The last `build_pack` of a codegen wins (a server repacks).
+- Left out: codegen copies the asset list before `program_strip_unused_assets`
+  and reports those missing after the final pack, telling server-only cuts
+  (in `all_assets`, not kept) from unused ones.
+- C/C++: each job's wall time from start to its observed exit, named from the
+  game or installation folder; reused objects (stamp hits, engine files, an
+  already-built engine) count as `upToDate`.
+- Cuts: `report_cuts` describes the mode's policy from the same predicates the
+  build uses (`strip_game_assets`, `strip_server_assets`, package C).
+- Outputs: the program, its pack and debugger sidecars beside it, or every file
+  of a split web page's folder, plus an Android build's returned app.
+
+Not built: per-object/section binary size attribution (needs linker maps),
+per-asset compression or texture-format breakdowns, and reports for watched
+runs, `tide unity` and deploy.
+
+Test: `tide_cli_build_report` (build_report_test.mjs) uses build_overlap's
+controlled compiler with the real front end: refusals, a cold release JSON
+report (steps, phases, compiles, pack bytes equal to the file, sharing, the
+unused asset left out with why, cuts, outputs' sizes), a warm table (0 compiled,
+reused count, layout), debug packing everything, a `--server` build's
+server-only cut and its pack, and a failed build's report. Validation: Windows
+ASan build; that test, build_overlap, help, run_exit, CLI unit, server_pack and
+the asset/pack/stages tidec e2e and unit tests pass; docs production build.
+Linux/macOS and web targets' reports are CI/untested (no web build reported).
+
 ## Moving project channels and cache expiry (2026-11-03)
 
 Owner approved `tide = nightly` and `tide = stable`, with `tide pin` accepting
