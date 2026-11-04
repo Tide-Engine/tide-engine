@@ -1,5 +1,50 @@
 # Releases, installing and CI
 
+## Every finished dev run publishes (2026-11-04)
+
+The owner, iterating on dev: runs "take long... commits keep blocking each
+other", and "i want us iterating to actually publish releases so i can use them
+with tide officially". The overlapping-runs design (2026-10-30, below) had each
+push cancel the previous run's test and package jobs, and a nightly skipped
+publishing when dev had moved on. With pushes every 3-10 minutes against a
+~30-minute run, nothing published: of 20 dev runs on 2026-11-04 up to 15:00,
+14 were cancelled and the rest failed; the last nightly was 2026-11-03 16:54.
+
+- **Build runs one at a time per branch** (`group: build-<ref>`, `queue:
+  single`, no cancelling except pull requests): the running run finishes and
+  only the newest push waits; pushes in between are replaced while they wait.
+  Every run that passes publishes its commit, even when dev has moved on (the
+  stale-commit check is gone). The Version/Release publication lock and the
+  per-job dev cancellation (check.yml, JetBrains) are removed: runs of a ref
+  no longer overlap, so the next run's Version sees this run's tag.
+- A nightly still needs every suite and package and a `feat`/`fix`/`perf`
+  commit since the last tag (`next-nightly.mjs`); a `chore:`/`ci:` push
+  publishes nothing.
+- **Android's suite is its own test entry** (`linux-x64, android`), off Linux's
+  package job, where it took 8.5 minutes before packaging started. Both jobs
+  boot the emulator in the background (`Start the Android emulator`) while they
+  build; `.github/wait-for-android.sh` waits for it with the old 15-minute
+  limit, before the Android tests and before Linux's Google Play check.
+- **The package's incremental-build test runs in three parts at once**:
+  `cache_test.mjs --part modes|at-once|cache` (build modes and stripping,
+  several compiles at once, cache correctness with web runs and the server).
+  Each part copies its own private installation; only `cache` uses the
+  server's fixed port. One after another they took 9-15 minutes of the
+  ~22-minute package jobs (run 41841843705: Windows 15 min, Linux 11, macOS
+  9). The step prints each part's log in its own group and fails if any did.
+  Without `--part` the script runs everything, as before.
+- Not changed: packages still wait for the JetBrains job (its installer goes in
+  each package), and Docs still runs in the same workflow, so a run lasts at
+  least as long as Docs (~20 minutes in that run, partly waiting for a free
+  runner).
+
+Validation: both workflows parse as YAML and every Bash step passes `bash -n`
+(the one PowerShell step excepted). The parallel step, run with a stub `node`
+failing one part, prints all three logs, names the failed part and exits 1.
+`--part` refuses unknown parts and the `--*-only` flags; the workflow helpers'
+tests pass. The real timings (CPU sharing among the three parts on 4-vCPU
+runners, emulator boot alongside packaging) are the next push's run.
+
 ## LLVM CDN fallback in run 41656098141 (2026-11-03)
 
 Docs' hosted HTTPS-resolver response also reports lookup failure; the cached
@@ -242,6 +287,10 @@ native/web validation from the preceding change need not repeat. The normal
 push-to-dev run exercises the hosted maintenance job; no extra CI is dispatched.
 
 ## Faster feedback for overlapping dev builds (2026-10-30)
+
+Superseded on 2026-11-04 (top of this file): dev runs no longer overlap or
+cancel each other, and the publication lock and stale-commit check are gone.
+The web sharding and cache changes below still stand.
 
 Build gives each dev run its own workflow concurrency group. Its native/web/
 MinGW/sanitizer/package jobs and JetBrains build instead cancel older dev jobs
@@ -835,7 +884,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - The unpacking's bar follows the bytes of the files unpacked so far, against what the package unpacks to: a zip's directory says (`unzip_size`), and a gzip's last four bytes, the size of its tar.
   - `tide editors --update`, which the new tide runs, says nothing unless an editor refuses the update, and that waits for the upgrade's line. While editors take it, a terminal says so on the line the upgrade's own then takes.
   - `tide_cli_upgrade` checks the line is all there is, where there's no terminal.
-- `.github/workflows/build.yml` is the release workflow, and it runs only when asked to (`workflow_dispatch`, with no inputs: Run workflow on GitHub, or `gh workflow run build.yml --ref <branch>`); pushes and pull requests start nothing (the owner, 2026-10-08: "lets restore it to the proper release workflow except i want to trigger it manually"). Every run does the same: it builds each platform's package (Windows, Linux, macOS) and tries it as a user would (a game built natively, for the web and for Android, a game's C++, incremental builds; on Linux also the build service's page and the checks for Google Play), and runs every suite: native and web on all three, the MinGW target on Windows, Android on the emulator on Linux (KVM), whose image comes through the runner's SDK manager, and the suite once more on Linux under AddressSanitizer and UndefinedBehaviorSanitizer (the `sanitize` preset: see Language, no Tide code can corrupt memory). That job leaves two tests to the others: the relay's, which is Node's, and rooms with the runner's browsers, which nobody has run under sanitizers yet (without browsers it passes). The branch it runs on says what's published once all of that passed: `dev` a nightly pre-release (`0.3.0-nightly.48`), `release` a stable release, with semantic-release committing the new `VERSION` there and the JetBrains plugin going to Marketplace, and any other ref nothing, which is how a branch is checked. Windows and Linux build with the LLVM tide's built-in clang comes from (`TIDE_LLVM_VERSION`): LLVM's own release on Windows, and LLVM's apt packages of that major version on Linux. macOS builds native code with Apple's clang and web code with Homebrew's LLVM. Every platform's Node is 24 (`actions/setup-node`; see Building for why the runners' own won't do on Windows). A failure on any platform fails the run and publishes nothing, so every release has every platform's package and passed every suite; nothing in CI may swallow a failure (no `continue-on-error`). Native tests that need a GPU (label `gpu`) are skipped in CI: no runner can open their window.
+- `.github/workflows/build.yml` is the release workflow. Since 2026-10-21 it also runs on every push to `dev` and `release` and on pull requests (Automatic runs, above), and since 2026-11-04 Android's suite is its own job; what follows is otherwise its 2026-10-08 form. It ran only when asked to (`workflow_dispatch`, with no inputs: Run workflow on GitHub, or `gh workflow run build.yml --ref <branch>`); pushes and pull requests start nothing (the owner, 2026-10-08: "lets restore it to the proper release workflow except i want to trigger it manually"). Every run does the same: it builds each platform's package (Windows, Linux, macOS) and tries it as a user would (a game built natively, for the web and for Android, a game's C++, incremental builds; on Linux also the build service's page and the checks for Google Play), and runs every suite: native and web on all three, the MinGW target on Windows, Android on the emulator on Linux (KVM), whose image comes through the runner's SDK manager, and the suite once more on Linux under AddressSanitizer and UndefinedBehaviorSanitizer (the `sanitize` preset: see Language, no Tide code can corrupt memory). That job leaves two tests to the others: the relay's, which is Node's, and rooms with the runner's browsers, which nobody has run under sanitizers yet (without browsers it passes). The branch it runs on says what's published once all of that passed: `dev` a nightly pre-release (`0.3.0-nightly.48`), `release` a stable release, with semantic-release committing the new `VERSION` there and the JetBrains plugin going to Marketplace, and any other ref nothing, which is how a branch is checked. Windows and Linux build with the LLVM tide's built-in clang comes from (`TIDE_LLVM_VERSION`): LLVM's own release on Windows, and LLVM's apt packages of that major version on Linux. macOS builds native code with Apple's clang and web code with Homebrew's LLVM. Every platform's Node is 24 (`actions/setup-node`; see Building for why the runners' own won't do on Windows). A failure on any platform fails the run and publishes nothing, so every release has every platform's package and passed every suite; nothing in CI may swallow a failure (no `continue-on-error`). Native tests that need a GPU (label `gpu`) are skipped in CI: no runner can open their window.
   - The workflow has no modes, on purpose. In one day (2026-10-07, which began with no hosted minutes and the jobs on the owner's own machines) it had grown an `action` input (`check`, `nightly`, `stable`), a `scope` of the Windows web suite alone, nightlies that ran no suite, and a macOS with no suites; the owner had the workflow from before that day restored, with the manual trigger. A way to run less of it is the owner's to ask for.
   - A run on `release` uses that branch's own copy of the workflow, which is this one once `dev` is merged there for a stable release.
   - Every run also builds the docs site, and a run on `dev` deploys it: the `Docs` job, which calls `docs.yml` (`notes/docs-site.md`).
@@ -922,7 +971,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **A nightly waits for every suite, as a stable release does** (the owner, 2026-10-08, with the workflow's restoring, above). For a day they didn't (2026-10-07: "dev/nightly is meant to move fast; we can introduce them back later, right now its too early for always running it", said while every push started a run and the suites ran on a home server): nightlies went out from the three packages alone, and one could go out with a suite failing somewhere this machine's sessions didn't run it. A run is asked for now, and Windows' and Linux's packages and suites together took about four minutes on Blacksmith's runners (2026-10-08, with the compiler's cache).
   - `gh workflow run build.yml --ref dev` is a nightly, `gh workflow run build.yml --ref release` a stable release, and the same on any other branch checks it and publishes nothing.
   - macOS's suites (native and web) are back with it. They ran on no machine from 2026-10-07 until the first run after this, so what landed in between (audio's CoreAudio, Box3D's resident state) was first run on a Mac then.
-- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. The shared Version/Release publication lock (2026-10-30, above) and stale-commit check keep overlapping dev runs from publishing two commits under one number.
+- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. Runs of dev go one at a time (2026-11-04, top of this file), so no two publish under one number.
   - Nightlies use commit-based release notes again (2026-10-10, future releases
     only). Switching the publisher to `gh --generate-notes` had replaced the
     Features/Bug Fixes lists with GitHub's merged-PR notes; direct commits to

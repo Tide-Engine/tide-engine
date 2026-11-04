@@ -38,21 +38,18 @@ env:
   TIDE_TELEMETRY: '0'
 
 concurrency:
-  # Dev runs overlap so their build jobs can replace stale work independently
-  # of an active publisher. Stable releases still finish one run at a time.
-  group: build-${{ github.ref }}-${{ github.ref == 'refs/heads/dev' && github.run_id || 'serial' }}
+  # One run of a branch at a time, which finishes, and only its newest push
+  # waiting: a burst of pushes to dev publishes the commit running and then
+  # the last one. Overlapping runs cancelling each other published nothing
+  # while pushes came faster than a run took. A pull request's newer push
+  # cancels its older run.
+  group: build-${{ github.ref }}
   queue: single
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version:
     name: Version
-    # Share the publisher's lock: a new version sees tags from any publication
-    # already in progress. Superseded builds may otherwise choose the same next tag.
-    concurrency:
-      group: build-publish-${{ github.ref }}
-      queue: max # A stale Release must not replace a pending newer Version.
-      cancel-in-progress: false
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.next.outputs.new_release_version || steps.nightly.outputs.version }}
@@ -147,6 +144,11 @@ jobs:
           - platform: linux-x64
             os: ubuntu-24.04
             preset: sanitize
+            test-jobs: 4
+          # On the emulator, which Linux's runners accelerate (KVM).
+          - platform: linux-x64
+            os: ubuntu-24.04
+            preset: android
             test-jobs: 4
           - platform: macos-arm64
             os: macos-latest
@@ -249,9 +251,6 @@ jobs:
   # the oldest IDE it supports and the newest CLion.
   jetbrains:
     name: JetBrains plugin
-    concurrency:
-      group: build-jetbrains-${{ github.ref }}
-      cancel-in-progress: ${{ github.ref == 'refs/heads/dev' }}
     needs: version
     runs-on: ubuntu-24.04
     env:
@@ -293,10 +292,6 @@ jobs:
 
   release:
     name: Release
-    concurrency:
-      group: build-publish-${{ github.ref }}
-      queue: max # A stale Release must not replace a pending newer Version.
-      cancel-in-progress: false
     needs: [version, build, jetbrains]
     if: (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/release') && needs.version.outputs.published == 'true'
     runs-on: ubuntu-24.04
@@ -338,13 +333,8 @@ jobs:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
-          # Once this check passes, finish publishing even if another push arrives.
-          # Version selection shares this job's lock and will then see our tag.
-          latest=$(git ls-remote origin refs/heads/dev)
-          if [ "${latest%%[[:space:]]*}" != "$GITHUB_SHA" ]; then
-            echo "A newer dev commit exists; leaving publication to its build."
-            exit 0
-          fi
+          # A commit dev has moved past is published too: runs of dev go one
+          # at a time, so the next one's Version sees this tag.
           npm ci --prefix .github --ignore-scripts --legacy-peer-deps --no-audit --no-fund
           node .github/nightly-notes.mjs "$TAG" "$GITHUB_SHA" > "$RUNNER_TEMP/tide-release-notes.md"
           tag_ref="refs/tags/$TAG"
