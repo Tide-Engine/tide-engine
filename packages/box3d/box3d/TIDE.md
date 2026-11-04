@@ -11,6 +11,16 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
+Sparse commits mark less (2026-11-04): `b3SnapTrack.sets` says which sleeping
+sets something was done to (`b3SnapTouchSleepingSet`), and a resident commit
+marks those and their islands' arrays, where it marked every sleeping set
+whenever any was touched and every island's arrays always. `awakeShrunk` says
+the awake set lost a body since the last commit (`b3DestroyBody`,
+`b3TrySleepIsland`, `b3TransferBody`); without it the awake set's body sims and
+states are marked to their counts, not their capacity, as nothing was written
+past where they end. Images are untouched: the image writer still goes by
+`setsTouched`.
+
 Held bodies (2026-11-04): `b3World_HoldBodies` and `b3World_IsHolding`
 (`box3d.h`, `solver_set.c`) hold bodies where they are for a client's predicted
 ticks under `predictionRange`, which leave out what's far from its player. Each

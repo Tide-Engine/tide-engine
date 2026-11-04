@@ -41,6 +41,16 @@ with `b3t_check` on. Restoring the verified world lets everything go.
   the held wall in prediction (the held link path ran about 20-40 times in a
   run).
 - Measured: see notes/netcode.md, Predicting near the player alone.
+- Sparse commits (same day): a held world's near-only ticks copied 230-270
+  arena pages a commit (16 KiB each), nearly all from marking every sleeping
+  set whenever one was touched and the awake set's arrays to their capacity,
+  which is the whole world's. Now only touched sleeping sets and their islands,
+  and the awake set's bodies to their counts unless one left it
+  (box3d/TIDE.md): 90-100 pages. Measured with marks counted per section of
+  `b3World_TouchChanged` (a probe not kept). What's left a sparse commit:
+  tracked bodies, shapes and contacts ~22 pages, the solver sets' array ~15,
+  islands ~20, trees ~14, pools and fat bounds ~8, events ~7. Box3D tests,
+  Sumo and the predict tests pass with `b3t_check` on; pins unchanged.
 
 ## A client's projection, made into a physics world (2026-11-04)
 

@@ -2657,6 +2657,8 @@ static void b3SnapCommit( b3World* world, const int* bases, const int* sizes, bo
 	track->bodyCount = world->bodies.count;
 	track->shapeCount = world->shapes.count;
 	track->contactCount = world->contacts.count;
+	b3SnapClearSet( &track->sets );
+	track->awakeShrunk = false;
 	track->setsTouched = false;
 	track->pairsTouched = false;
 
@@ -2688,6 +2690,7 @@ void b3DestroySnapshotTrack( b3World* world )
 	b3Free( track->bodies.bits, (size_t)track->bodies.blockCount * sizeof( uint64_t ) );
 	b3Free( track->shapes.bits, (size_t)track->shapes.blockCount * sizeof( uint64_t ) );
 	b3Free( track->contacts.bits, (size_t)track->contacts.blockCount * sizeof( uint64_t ) );
+	b3Free( track->sets.bits, (size_t)track->sets.blockCount * sizeof( uint64_t ) );
 
 	b3SnapParts* p = track->parts;
 	if ( p != NULL )
@@ -3026,11 +3029,21 @@ bool b3World_TouchChanged( b3WorldId worldId )
 			b3TouchContact( world->contacts.data + id );
 		}
 		// The sets: the static and disabled ones and the awake one whole every time (an image writes them so),
-		// the sleeping ones only when something was done to one
+		// a sleeping one only when something was done to it, as it says (b3SnapTouchSleepingSet)
 		B3_TOUCH_ARRAY( world->solverSets );
 		for ( int i = 0; i < world->solverSets.count; ++i )
 		{
-			if ( i < b3_firstSleepingSet || track->setsTouched )
+			if ( i == b3_awakeSet && track->awakeShrunk == false )
+			{
+				// Bodies only came: what's written of their sims and states is within the arrays' counts
+				const b3SolverSet* set = world->solverSets.data + i;
+				b3TouchArray( set->bodySims.data, set->bodySims.count, sizeof( *set->bodySims.data ) );
+				b3TouchArray( set->bodyStates.data, set->bodyStates.count, sizeof( *set->bodyStates.data ) );
+				B3_TOUCH_ARRAY( set->jointSims );
+				B3_TOUCH_ARRAY( set->contactIndices );
+				B3_TOUCH_ARRAY( set->islandSims );
+			}
+			else if ( i < b3_firstSleepingSet || b3SnapHasBit( &track->sets, i ) )
 			{
 				b3TouchSet( world->solverSets.data + i );
 			}
@@ -3057,6 +3070,13 @@ bool b3World_TouchChanged( b3WorldId worldId )
 	B3_TOUCH_ARRAY( world->islands );
 	for ( int i = 0; i < world->islands.count; ++i )
 	{
+		// An island's own arrays: an awake one's, and a sleeping one's where something was done to its set,
+		// which is all that writes them (in a commit that marked everything, these are marked already)
+		const int setIndex = world->islands.data[i].setIndex;
+		if ( !everything && setIndex >= b3_firstSleepingSet && b3SnapHasBit( &track->sets, setIndex ) == false )
+		{
+			continue;
+		}
 		B3_TOUCH_ARRAY( world->islands.data[i].bodies );
 		B3_TOUCH_ARRAY( world->islands.data[i].contacts );
 		B3_TOUCH_ARRAY( world->islands.data[i].joints );
@@ -3125,6 +3145,8 @@ bool b3World_TouchChanged( b3WorldId worldId )
 		b3TouchArray( context->eventBits.bits, context->eventBits.blockCapacity, sizeof( uint64_t ) );
 	}
 	// The marks start over, as after an image: what's awake now is what the next ones go on from
+	b3SnapClearSet( &track->sets );
+	track->awakeShrunk = false;
 	track->setsTouched = false;
 	track->pairsTouched = false;
 	track->sparse = b3SnapMostlyAsleep( world );
@@ -3138,6 +3160,7 @@ bool b3World_TouchChanged( b3WorldId worldId )
 	b3TouchArray( track->bodies.bits, track->bodies.blockCount, sizeof( uint64_t ) );
 	b3TouchArray( track->shapes.bits, track->shapes.blockCount, sizeof( uint64_t ) );
 	b3TouchArray( track->contacts.bits, track->contacts.blockCount, sizeof( uint64_t ) );
+	b3TouchArray( track->sets.bits, track->sets.blockCount, sizeof( uint64_t ) );
 	return everything;
 }
 

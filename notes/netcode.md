@@ -179,6 +179,14 @@ times dearer than predicting everything (table above). Now:
 | guesses always right | 3.5-3.5 | 11.9-12.8 | 5.0-5.9 (716 kept) |
 | another player's input changing every 5 ticks | 22.4-23.5 | 14.4-14.9 | 7.5-9.0 (611 kept) |
 
+With Box3D marking less on sparse commits (notes/box3d.md, same day), the same
+game, guesses always right: 4.4 ms a frame with the range, 2.9-3.25 whole.
+What's left is mostly the whole confirmed tick and its whole commit each frame,
+and the arena switching between the confirmed and held predicted states (a
+restore each way; in this bench also the server's, in one process). A
+predicted world in an arena of its own would end the switching; it's a
+`tide/resident.h` change, the owner's runtime.
+
 Gaps:
 - Singleton systems going through queries still run far entities in predicted
   ticks unless their queries say `without Far`. A system's `mut` query rows

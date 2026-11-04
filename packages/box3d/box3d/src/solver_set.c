@@ -284,6 +284,8 @@ void b3TrySleepIsland( b3World* world, int islandId )
 			b3BodySim* sleepBodySim = b3Array_Emplace( sleepSet->bodySims );
 			memcpy( sleepBodySim, awakeSim, sizeof( b3BodySim ) );
 
+			// Tide: the awake set has a body fewer (see b3SnapTrack)
+			world->snapTrack.awakeShrunk = true;
 			int movedIndex = b3Array_RemoveSwap( awakeSet->bodySims, awakeBodyIndex );
 			if ( movedIndex != B3_NULL_INDEX )
 			{
@@ -641,6 +643,8 @@ void b3TransferBody( b3World* world, b3SolverSet* targetSet, b3SolverSet* source
 	targetSim->flags &= ~(b3_isFast | b3_bodyTransientFlags);
 
 	// Remove body sim from solver set that owns it
+	// Tide: the set has a body fewer, which may be the awake one (see b3SnapTrack)
+	world->snapTrack.awakeShrunk = true;
 	int movedIndex = b3Array_RemoveSwap( sourceSet->bodySims, sourceIndex );
 	if ( movedIndex != B3_NULL_INDEX )
 	{

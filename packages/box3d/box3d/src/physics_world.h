@@ -162,6 +162,15 @@ typedef struct b3SnapTrack
 	bool setsTouched;
 	bool pairsTouched;
 
+	// ...and which sleeping sets, by index: a resident commit marks those, with their islands, and not the
+	// others (b3World_TouchChanged)
+	b3SnapSet sets;
+
+	// The awake set lost a body since the last commit: then it marks the awake set's bodies and their
+	// states to the arrays' capacity, where they may have been written past where they end now; else to
+	// their count, as they only grew
+	bool awakeShrunk;
+
 	// How many shapes had a material array of their own, or were a mesh, a height field or a compound,
 	// when an image was last written whole. Only those, and the contacts they're in, have more in an
 	// image than the room every shape and every contact takes, and none can come while the sets are
@@ -375,6 +384,12 @@ static inline void b3SnapSetBit( b3SnapSet* set, int index )
 	set->bits[block] |= (uint64_t)1 << ( index & 63 );
 }
 
+static inline bool b3SnapHasBit( const b3SnapSet* set, int index )
+{
+	int block = index >> 6;
+	return block < set->blockCount && ( set->bits[block] & ( (uint64_t)1 << ( index & 63 ) ) ) != 0;
+}
+
 static inline void b3SnapTouchBody( b3World* world, int bodyId )
 {
 	if ( world->snapTrack.sparse && bodyId >= 0 )
@@ -412,6 +427,7 @@ static inline void b3SnapTouchSleepingSet( b3World* world, int setIndex )
 	if ( setIndex >= b3_firstSleepingSet )
 	{
 		world->snapTrack.setsTouched = true;
+		b3SnapSetBit( &world->snapTrack.sets, setIndex );
 	}
 }
 
