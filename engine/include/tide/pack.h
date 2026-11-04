@@ -38,7 +38,7 @@
 // a stale one is found by its kind), and the region.
 
 #define TIDE_PACK_MAGIC "TIDEPACK"
-#define TIDE_PACK_VERSION 3u
+#define TIDE_PACK_VERSION 4u
 
 // What a name's entry is: the kind the declaration's type resolves to.
 enum {
@@ -106,6 +106,10 @@ typedef struct tide_pack_header {
     uint32_t entries;
     uint64_t region_at; // Where the region starts in the file
     uint64_t region_size;
+    // SHA-256 of the whole file with these 32 bytes zero: the pack's identity
+    // (tide_pack_digest), worked out once by the build that wrote it
+    // (tide_pack_end), so a game that loads it doesn't hash it again.
+    uint8_t digest[32];
     uint32_t reserved[2];
 } tide_pack_header;
 
@@ -241,7 +245,8 @@ bool tide_pack_load(const uint8_t *bytes, size_t size);
 // Lets go of the loaded pack: before a game's library is unloaded.
 void tide_pack_unload(void);
 // Exact source-pack identity for negotiating asset-relative state transfers.
-// Zero with no loaded pack. Computed once when loading, never per tick.
+// Zero with no loaded pack. The build that wrote the pack worked it out
+// (tide_pack_header.digest); loading copies it, and no tick asks for it.
 void tide_pack_digest(uint8_t digest[32]);
 // Internal: only the original portable file region, before runtime relocation.
 const uint8_t *tide_pack_file_span(uint64_t offset, uint64_t bytes);

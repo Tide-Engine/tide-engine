@@ -946,20 +946,44 @@ bool tide_platform_players_control(char *line, const size_t capacity)
 #endif
 }
 
-bool tide_platform_players_control_done(bool *ok)
+// What `reply` says, into `answer` (capacity bytes, terminated): empty where it doesn't fit.
+static void answer_with(const char *reply, const size_t length, char *answer, const size_t capacity)
 {
+    if (!answer || !capacity) return;
+    const size_t n = length < capacity ? length : 0;
+    if (n) memcpy(answer, reply, n);
+    answer[n] = '\0';
+}
+
+bool tide_platform_players_control_done(bool *ok, const char *reply, const uint32_t from, char *answer,
+                                        const size_t capacity)
+{
+    const size_t length = reply ? strlen(reply) : 0;
 #if defined(__wasm__) || defined(__ANDROID__)
     (void)ok;
+    (void)from;
+    answer_with(reply, length, answer, capacity);
     return false;
 #else
+    answer_with(from <= 1u ? reply : NULL, from <= 1u ? length : 0, answer, capacity);
     if (count < 2u) return true;
-    const uint8_t result = *ok ? 1u : 0u;
-    if (own != 1u) return send_blob(hub, &result, 1);
+    if (own != 1u) {
+        // Whether it went, then what this player says, for the first to pass on
+        const size_t most = length < BLOB_MOST - 1u ? length : BLOB_MOST - 1u;
+        uint8_t *told = tide_alloc(most + 1u);
+        told[0] = *ok ? 1u : 0u;
+        if (most) memcpy(told + 1, reply, most);
+        const bool sent = send_blob(hub, told, (uint32_t)(most + 1u));
+        free(told);
+        return sent;
+    }
     tide_writer ack = {.grows = true};
     bool connected = true;
     for (uint32_t p = 2; p <= count && connected; p++) {
-        connected = read_blob(seats[p].link, &ack) && ack.size == 1;
-        if (connected && !ack.data[0]) *ok = false;
+        connected = read_blob(seats[p].link, &ack) && ack.size >= 1;
+        if (!connected) break;
+        if (!ack.data[0]) *ok = false;
+        if (p == from) answer_with((const char *)ack.data + 1, ack.size - 1u, answer, capacity);
     }
     free(ack.data);
     return connected;

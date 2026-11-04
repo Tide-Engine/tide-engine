@@ -245,6 +245,11 @@ tide_float2 tide_platform_world_to_screen(tide_float2 world);
 // are. Does nothing elsewhere.
 void tide_platform_typing(bool typing);
 
+// Before each frame's views: the host's GUI, whose widgets an interactive
+// run lists and clicks (`controls`, `click`). Gives it a listing to describe
+// them in during such a run, and none otherwise.
+void tide_platform_list_controls(tide_gui *g);
+
 // Puts `text` on the system's clipboard. A browser takes it only shortly
 // after the player clicked or pressed a key, as when a button is pressed.
 void tide_platform_copy(const char *text);
@@ -364,6 +369,13 @@ uint64_t tide_platform_gpu_written(void);
 // in its APK on Android. malloc'd bytes, the caller's to free, or NULL for
 // none. The standard host loads it before the game runs (tide/host.h).
 uint8_t *tide_platform_pack(size_t *size);
+// The same, saying as it goes how far it has read: progress[0] the bytes read
+// so far, progress[1] the whole pack's, each stored atomically, so another
+// thread can show them while this one reads (the host's loading screen).
+uint8_t *tide_platform_pack_counted(size_t *size, uint64_t progress[2]);
+// A file read whole the same way, counting as it goes; NULL for one that
+// can't be read. Desktop and Android: the web has no files to read this way.
+uint8_t *tide_platform_read_counted(const char *path, size_t *size, uint64_t progress[2]);
 
 // 64 bits from the system's random number generator, which nobody could guess:
 // what a session makes the seeds of the matches it starts from

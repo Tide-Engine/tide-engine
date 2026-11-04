@@ -27,6 +27,9 @@ lines such as `2 mouse 640 353` and `3 button left`, then send `step 30`.
 Wait for `tide: interactive ready 31`, inspect another capture and choose the
 next actions. The game waits while the agent thinks; `quit` or closing input
 ends it. Executed actions are saved to `play.txt` for normal scripted replay.
+For GUI widgets, `controls` lists each one with its label and position, and
+`click "Play"` (or `click 1`) clicks it. This works whatever size the
+picture is, with no guessing of pixels.
 For an agent's terminal tools, use a persistent terminal session (a PTY when
 needed) and retain its session handle. Launch the command without waiting for
 the game to exit. Write subsequent control lines to that same session. After

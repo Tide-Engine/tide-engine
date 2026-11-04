@@ -1079,15 +1079,25 @@ void tide_window_close(void)
 }
 
 // The game's pack of assets, in the APK as assets/game.pack (compiler/cli/apk.c).
-uint8_t *tide_window_pack(size_t *size)
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
 {
     *size = 0;
     AAssetManager *manager = app.activity ? app.activity->assetManager : NULL;
-    AAsset *asset = manager ? AAssetManager_open(manager, "game.pack", AASSET_MODE_BUFFER) : NULL;
+    AAsset *asset = manager ? AAssetManager_open(manager, "game.pack", AASSET_MODE_STREAMING) : NULL;
     if (!asset) return NULL;
-    const off_t length = AAsset_getLength(asset);
+    const off64_t length = AAsset_getLength64(asset);
     uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
-    const bool ok = bytes && AAsset_read(asset, bytes, (size_t)length) == (int)length;
+    if (progress) __atomic_store_n(&progress[1], (uint64_t)length, __ATOMIC_RELAXED);
+    // In pieces, saying how far it got, for a loading screen
+    size_t at = 0;
+    while (bytes && at < (size_t)length) {
+        const size_t left = (size_t)length - at;
+        const int got = AAsset_read(asset, bytes + at, left < (16u << 20) ? left : (16u << 20));
+        if (got <= 0) break;
+        at += (size_t)got;
+        if (progress) __atomic_store_n(&progress[0], (uint64_t)at, __ATOMIC_RELAXED);
+    }
+    const bool ok = bytes && at == (size_t)length;
     AAsset_close(asset);
     if (!ok) {
         free(bytes);
