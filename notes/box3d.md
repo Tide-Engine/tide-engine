@@ -51,6 +51,13 @@ with `b3t_check` on. Restoring the verified world lets everything go.
   tracked bodies, shapes and contacts ~22 pages, the solver sets' array ~15,
   islands ~20, trees ~14, pools and fat bounds ~8, events ~7. Box3D tests,
   Sumo and the predict tests pass with `b3t_check` on; pins unchanged.
+- Then the solver sets' and islands' arrays entry by entry (same rule): 286
+  pages a commit on average, whole ones included. Left: the trees, marked
+  whole every commit (their writes aren't followed node by node).
+- A predicted world in an arena of its own was looked at and dropped: the
+  arena's bytes hold pointers to where it is, so a state can't move to
+  another arena but through canonical bytes, and every run of predictions
+  starts from the confirmed world.
 
 ## A client's projection, made into a physics world (2026-11-04)
 

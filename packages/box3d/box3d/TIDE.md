@@ -18,8 +18,10 @@ whenever any was touched and every island's arrays always. `awakeShrunk` says
 the awake set lost a body since the last commit (`b3DestroyBody`,
 `b3TrySleepIsland`, `b3TransferBody`); without it the awake set's body sims and
 states are marked to their counts, not their capacity, as nothing was written
-past where they end. Images are untouched: the image writer still goes by
-`setsTouched`.
+past where they end. The solver sets' array and the islands' array are marked
+entry by entry the same way: the awake and static ones, free ones, and the
+sleeping ones whose set says it was touched. Images are untouched: the image
+writer still goes by `setsTouched`.
 
 Held bodies (2026-11-04): `b3World_HoldBodies` and `b3World_IsHolding`
 (`box3d.h`, `solver_set.c`) hold bodies where they are for a client's predicted
