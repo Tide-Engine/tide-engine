@@ -159,8 +159,8 @@ TIDE_TEST(ownership_events_recipient_journals_hide_private_owner_and_validate_me
     w.Actions.mode = 4; w.Actions.privateOwner = true;
     tide_world_copy(&other, &w);
     other.Actions.owner = 1;
-    tide_game_api.tick_client_events(&w, NULL, logs);
-    tide_game_api.tick_client_events(&other, NULL, variants);
+    tide_game_api.tick_client_events(&w, NULL, logs, NULL);
+    tide_game_api.tick_client_events(&other, NULL, variants, NULL);
     TIDE_CHECK(logs[1].size == variants[1].size && logs[1].count == variants[1].count);
     TIDE_CHECK(memcmp(logs[1].bytes, variants[1].bytes, logs[1].size) == 0);
     TIDE_CHECK(tide_game_api.check_client_events(logs[0].bytes, logs[0].size, NULL, NULL));

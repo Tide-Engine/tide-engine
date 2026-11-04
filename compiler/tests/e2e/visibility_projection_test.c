@@ -315,7 +315,7 @@ TIDE_TEST(visibility_projection_journals_permitted_destruction_without_local_lis
     const tide_entity root = server.Control.root, middle = server.Control.middle;
     server.Control.destroyRoot = true;
     TIDE_REQUIRE(tide_game_api.tick_client_events && tide_game_api.check_client_events);
-    tide_game_api.tick_client_events(&server, NULL, events);
+    tide_game_api.tick_client_events(&server, NULL, events, NULL);
     for (uint32_t player = 0; player < TIDE_GAME_PLAYERS; player++) {
         uint32_t at = 0, root_causes = 0, hidden_causes = 0;
         for (const tide_heard *h; (h = tide_event_log_next(&events[player], &at));) {

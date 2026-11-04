@@ -380,7 +380,8 @@ TIDE_TEST(delta_players_coming_back_to_a_match_that_changed_hands_get_what_they_
         const tide_client_status s = tide_session_status_of(machines[i]).client;
         TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
         TIDE_CHECK(s.resyncs == 0);
-        TIDE_CHECK(s.world_bytes > 0 && s.world_bytes * 10u < whole); // Its world had most of it
+        if (i == 1) TIDE_CHECK(s.world_bytes == 0); // The new host's player shares its server's world: nothing sent
+        else TIDE_CHECK(s.world_bytes > 0 && s.world_bytes * 10u < whole); // Its world had most of it
     }
     for (int i = 0; i < 3; i++) tide_session_destroy(machines[i]);
     tide_loopback_destroy(net);

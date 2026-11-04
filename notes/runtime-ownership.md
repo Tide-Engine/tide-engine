@@ -643,6 +643,15 @@ through the existing list/COW functions. Checkpoint envelope 5 commits player
 metadata and pending notifications before game delivery. Contracts, failure
 reproductions and validation: `notes/sharding.md`, Border and recovery audit.
 
+## The host's events from the server's tick (2026-11-04)
+
+The owner decided the server's machine keeps no client world of its own. The
+generated `tide_game.tick_client_events` takes a fourth argument, `all`: the
+log `tick_events` would record, for the host player's local handlers (NULL:
+recorded nowhere, as before). Generated code calls nothing new; the session
+calls it. The Session ABI marker says `host events (1)`. Contracts and tests:
+notes/netcode.md, The host's player shares the server's world.
+
 ## Every player's frame at once (2026-10-24)
 
 The owner, after the Earth stress test: "seems like we should optimize stuff".

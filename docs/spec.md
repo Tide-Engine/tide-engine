@@ -4356,6 +4356,7 @@ system Collapse(Arena arena)
 - Inputs remain the primary simulation stream. State correction uses a known verified baseline. Hashes verify each tick's permitted state; partition size and the mechanism for locating differences are implementation choices.
 - `Shown` and `Hidden` distinguish local availability changes from genuine `Spawned` and `Destroyed` lifetime events (see Events). Hiding an entity does not announce its later destruction.
 - The game decides interest rules and public consequences. The engine provides visibility tools rather than inferring what an arbitrary hidden entity might affect.
+- The server's own machine sees the whole match (the owner, 2026-11-04: the host may see everything the server does, so that its machine doesn't tick the match twice). Its player is a player like any other in the match, but it has no projection: its views and local code read the server's world, hidden entities and components included, and its local handlers hear everything the match sends. Visibility hides state from the other machines.
 
 ### Provisional
 
@@ -4374,6 +4375,7 @@ system Collapse(Arena arena)
 ### Open
 
 - A general authoritative outward-event API and its explicit audience/payload rules.
+- Whether the server's own machine's views and local queries should see only what its player's audience permits (a fog of war drawn the same on the host), while its world stays the server's.
 - Server-side task prediction alternatives and opt-in safe projections for opaque resident libraries.
 
 ## Shards
@@ -4440,6 +4442,7 @@ Picks for the first build; names and details to confirm.
 ### Decided
 
 - Single-player and multiplayer are the same: every match runs on a server, and this machine's player connects to it, over a loopback transport when the server is on this machine. The engine assumes nothing about what a game does with it, like pausing; games build that from inputs and state.
+- On the server's machine its player has no world of its own (the owner, 2026-11-04): it shares the server's after each tick, so the match is ticked once there, however many players are in it, and it never predicts or rolls back. It's still a player like any other: it joins (`PlayerJoined`), has a `PlayerID`, owns entities, and sends input and commands, which go straight in. Each tick is confirmed as it runs, so its local handlers hear each event once, as it happens and as verified at once. It sees the whole match (State visibility).
 - Local code decides which match this machine is in: `Session.Start(scene)` starts one on this machine, `Session.Join(code)` joins the match in a room by its code, `Session.Connect(address, port)` joins another machine's by its address, and `Session.Leave()` leaves. `Start` names the scene the match starts in, with its values like `Scene.Load`'s: `Session.Start(Arena { size = 30 })`. `Session.Start()` uses the selected startup, or `Main` without a selection, with its initial values. This lets code such as a package's menu start a match without naming the game's scenes; it is an error when startup is local. `Join` and `Connect` get whatever the server runs.
 - There's one kind of match. Whether others can join it is a switch on it, not another way to start one: a match starts closed, `Session.Open()` lets others join the match this machine runs, and `Session.Close()` stops letting them, at any time. Single-player is a match nobody else was let into.
 - The machine that runs a match sends players out of it with `Session.Kick(player, message)`, or every other machine's with `Session.KickAll(message)`. The message is text, so a game can say anything, and kicked players get it with their `Disconnected`. A kick isn't a ban.

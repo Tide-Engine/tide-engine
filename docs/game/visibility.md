@@ -6,6 +6,8 @@ description: "Control Tide client state with scene, entity and whole-component v
 
 Visibility decides which match scenes, entities and components a player's machine receives. The server still runs the full match. A client predicts with the state it is allowed to have, and authoritative corrections supply consequences that its partial simulation could not reproduce.
 
+The server's own machine is the exception: its player sees the whole match, as the server does, so that machine runs each tick once. Its views and local handlers see hidden entities and components too, and hear every event the match sends. Visibility keeps state from the other machines.
+
 The API names below are provisional. Visibility applies to entities and whole components. To hide a card's face while keeping its back public, put the face in a separate component; individual fields do not have visibility rules.
 
 ## Share an audience

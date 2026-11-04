@@ -205,8 +205,9 @@ static void visibility_hear(const void *world, const void *had, const tide_entit
     else visibility_hides++;
 }
 
-static void visibility_tick_journal(void *world, const tide_jobs *jobs, tide_event_log *per_player)
+static void visibility_tick_journal(void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *all)
 {
+    (void)all; // No local handler of its own machine hears it
     visibility_world *w = world;
     const uint32_t alive = w->token_alive;
     visibility_tick(world, jobs);

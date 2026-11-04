@@ -1,5 +1,27 @@
 # Netcode: sessions, prediction, commands
 
+## The host's player shares the server's world (2026-11-04)
+
+The owner's decision: the server's machine keeps no client world. Its player stays "a client" only in being a player like any other: it joins (`PlayerJoined`), has a `PlayerID`, owns entities, sends input and commands over the in-process loopback. The host may see everything the server does, so the match is ticked once there whoever else is in it. That replaces "A match played alone ticks once" below: `twin_ran`, `twin_take`, `twin_takes`, `host_runs`, `server_due`, `tide_client.host`/`host_due`/`taken_from`/`taken_to` are gone (`taken_world` stays, for remote projection reloads).
+
+What's built (`engine/src/session.c`):
+- **`tide_client.mirror`**, the server of the same session, set where the session makes its own player (`start_server`, `tide_session_take_over`). Never for shards (their clients are `tide_shard_client`'s) or a joined match.
+- **Joining**: a mirror's HELLO claims neither a world nor `can_start`, so the server sends the plain world. On the WELCOME naming it, the client doesn't receive it: `load_snapshot` copies the server's world as it is (`snapshot_tick` = the server's tick) and the client then says it has the transfer whole (`got_number`). A later transfer is acknowledged the same way. Visibility games skip `hear_visibility_tick` at that load (the world isn't a projection).
+- **Each server tick** (`server_tick`): `mirrored` is the session's player while `tide_session_update` updates the server (`tide_server.twin`), level with it (`verified == ahead == tick`, loaded, the same build). If it is and the game has local handlers that hear the match, the tick runs with `tick_events` into `tide_hearing_begin(&c->hearing, tick)` (`mirror_hearing`), or for visibility games with `tick_client_events(..., journals, all)` (below). After the tick, `mirror_tick` ends and confirms that hearing at once (predicted and verified handlers each hear it once), copies the server's world into the ring at `tick + 1` (`copy_world`: pages shared until either side writes), and sets `verified = ahead = tick + 1`.
+- **`play`** for a mirror is `mirror_play`: no frame is applied, predicted, hashed or repaired (frames for ticks before `verified` are dropped as they arrive). Behind the server (after a build change, or a ring that had no room) it takes the server's world whole (`take_server_world`, now a full copy for a mirror even with `client_state`) and skips the hearing to there. It runs the clock part of `play` (`clock_back`, `keep_early`, sampling inputs up to the clock, `early_settled`). `adjust_delay` does nothing for a mirror.
+- **Generated callback** (owner-approved design; compiler side): `tide_game.tick_client_events(world, jobs, per_player, all)` gets `all`, recording everything the tick sent, as `tick_events` does, into what was the generated `ignored` log. NULL keeps the old behavior. The Session ABI marker says `host events (1)`. Handwritten test games ignore it.
+
+What changes for games: the host's views and local code see the whole match, hidden entities included (the spec's State visibility now says so; whether its views should be masked by its player's audience is Open there). Its local handlers hear every match event, including events from hidden state, which `hears_match_events` no longer decides. `tide_client_status.run_ticks`/`ahead_ticks` stay 0 for the host. The other machines are unchanged.
+
+Gaps:
+- A lone developer no longer gets the twin's desync check (the host's client hashing its own run of each tick against the server's). Nondeterminism shows only with another machine in (`--players 2`, the networking tests). An opt-in check (running the twin again) was offered to the owner and isn't built.
+- The server still keeps and sends frames to the local connection, and in visibility games hashes its projection each tick and packs one projection at join. The client ignores them. Leaving the local connection out of `store_client_frame`/`client_hashes` would save that work.
+- The host's presentation has no prediction correction to smooth, and draws the server's tick as it is.
+
+Tests: `net_a_host_with_another_player_ticks_once` (`compiler/tests/e2e/net_test.c`: a host and a guest over 30 ms, 10 ms jitter and 5% loss, 300 uneven frames; the counted game ticks exactly once per confirmed tick, the host's player runs none, its world is the server's every frame, both players' inputs reach the match, no resyncs). `net_alone_seen` now checks the host instead: alone and with a guest, ticks run equal ticks confirmed, the host has all 8 walkers every frame while the guest sees fewer, and every Rang and every walker's Shown is heard once and once as verified (before, a game hearing Rang ran both ticks, and the twin's Shown counted only walkers in sight). `delta_players_coming_back_to_a_match_that_changed_hands_get_what_they_lack`: the new host's player receives 0 world bytes (it shares its server's world); the guest still gets what it lacks. The existing `net_a_session_played_alone_ticks_once` and `net_a_session_takes_a_new_build_of_its_game` pass unchanged.
+
+Validation: full native `sanitize` (3,028 CTests, Windows ASan, tide-prototypes included through `TIDE_EXTERNAL_DIRS`) and full `web-debug` (2,899, engine only) pass, and the docs build. Other operating systems, Android and MinGW are CI's.
+
 ## Service the match while desktop presentation waits (2026-11-03)
 
 The owner prioritized networking after the focus measurements below. Desktop
@@ -243,6 +265,8 @@ Tests: `tidec_e2e_visibility_lists` (`compiler/tests/e2e/visibility_lists.tide`)
 Validation: full native `sanitize` (2,976 CTests, Windows ASan) and full `web-debug` (2,864) suites, engine only (no external directories), pass; the one failure in each first run was that heap test's old assumption, fixed and rerun on both. Other operating systems, Android and MinGW are CI's.
 
 ## A match played alone ticks once (2026-10-30)
+
+Superseded on 2026-11-04 by "The host's player shares the server's world" above: the mechanism below is removed. Kept for the measurements and the reasons.
 
 A session that hosts its own match runs a server and this machine's client in one process, and each ran every tick: the client its prediction, the server the same tick with the same input. A game played alone paid for its simulation twice (a battle of 20000 fighters in the Bannerlord duel's tools/army: 11.9 ms a tick, 23.8 ms a frame at 60 ticks a second). Now, while `tide_session_update` updates its server, the server knows this machine's client (`tide_server.twin`), and a tick the client has run already as the server would is taken from it (`twin_ran`, a copy of its world) rather than run again: 11.4 ms a frame. Only when that's certain to be the same world: no recipient projections (`client_state`), no other player connected, the client predicting with nothing to catch up, repair or get again, its verified tick the one the server is about to run (so the world it ran from is the server's, checked by hash) and the frame as it predicted it (`as_predicted`: its own input and nothing else, no joins, leaves, commands or shard messages). Anything else, the server ticks as before. The client goes on hashing and confirming as it did.
 

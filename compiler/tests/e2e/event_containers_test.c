@@ -102,7 +102,7 @@ TIDE_TEST(event_containers_recipient_privacy_and_checked_variable_tails)
     tide_world_init(&a, 1.0f / 60); tide_world_init(&b, 1.0f / 60);
     a.Actions.spawn = b.Actions.spawn = true;
     a.Actions.secret = 0x13572468; b.Actions.secret = 0x24681357;
-    tide_game_api.tick_client_events(&a, NULL, x); tide_game_api.tick_client_events(&b, NULL, y);
+    tide_game_api.tick_client_events(&a, NULL, x, NULL); tide_game_api.tick_client_events(&b, NULL, y, NULL);
     TIDE_REQUIRE(x[1].size == y[1].size);
     TIDE_CHECK(!memcmp(x[1].bytes, y[1].bytes, x[1].size));
     for (int player = 0; player < 2; player++) {

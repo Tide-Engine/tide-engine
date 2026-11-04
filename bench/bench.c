@@ -271,10 +271,10 @@ static void timed_tick_events(void *world, const tide_jobs *jobs, tide_event_log
 }
 
 // A game with visibility's server ticks with this, noting what each player hears
-static void timed_tick_client_events(void *world, const tide_jobs *jobs, tide_event_log *per_player)
+static void timed_tick_client_events(void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *all)
 {
     const uint64_t start = tide_time_now_ns();
-    real->tick_client_events(world, jobs, per_player);
+    real->tick_client_events(world, jobs, per_player, all);
     current->tick_ms += since(start);
     current->ticks++;
 }
