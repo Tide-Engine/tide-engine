@@ -963,11 +963,23 @@ struct tide_server {
     struct injected *injected;
     uint32_t injected_count, injected_room;
     tide_player_set admitted; // Players of a sharded world it takes though closed (tide_server_admit)
+    // Its players on transports[0] (`local`) are its session's own, whose
+    // worlds are its own (tide_client.mirror): nothing is sent or worked out
+    // for them that only a world of their own would need (mirrors)
+    bool mirrors_local;
     // This machine's player, while its session updates the server: its worlds
     // are the server's, shared after each tick, and what its local handlers
     // hear is what the tick sent (mirror_tick)
     tide_client *twin;
 };
+
+// Whether `c` is this machine's own player, whose world is the server's
+// (tide_client.mirror): it's sent no world, no frame and no download, and the
+// server works out no projection for it.
+static bool mirrors(const tide_server *s, const connection *c)
+{
+    return s->mirrors_local && c->local;
+}
 
 static double resend_after(const uint32_t rtt_ms)
 {
@@ -1150,6 +1162,11 @@ static void start_snapshot(tide_server *s, connection *c)
     c->frame_mask = 0;
     c->catching_up = true;
     memset(c->frame_sent, 0, s->w.history * sizeof *c->frame_sent);
+    if (mirrors(s, c)) { // A transfer named and empty: the player takes the server's world as it is
+        c->catching_up = false;
+        send_in_chunks(s, c, g->client_state ? SEND_CLIENT_WORLD : SEND_WORLD, NULL, 0, NULL);
+        return;
+    }
     if (g->client_state) {
         uint32_t size = 0;
         const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
@@ -1662,7 +1679,9 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         }
         if (c->snapshot_kind == SEND_HASHES && lacks && lacks_number == c->snapshot_number) {
             send_lacking(s, c, lacks, lacks_size);
-        } else if ((c->snapshot_kind != SEND_HASHES && c->chunk_ack >= c->chunk_count) || (newest && !wants)) {
+        } else if ((c->snapshot_kind != SEND_HASHES && c->chunk_ack >= c->chunk_count
+                    && (c->chunk_count || chunk_number == c->snapshot_number)) // An empty one once it said it had it (mirrors)
+                   || (newest && !wants)) {
             stop_sending(s, c); // It has the world, or one that needs nothing: ticks from here
         }
     }
@@ -2009,7 +2028,7 @@ static bool everyone_has(const tide_server *s, const published *p)
 {
     for (uint32_t i = 0; i < s->players; i++) {
         const connection *c = &s->connections[i];
-        if (!c->used || !c->greeted || c->sending || c->catching_up) continue;
+        if (!c->used || !c->greeted || c->sending || c->catching_up || mirrors(s, c)) continue;
         if (!tide_players_has(&p->acked, i)) return false;
     }
     return true;
@@ -2638,7 +2657,8 @@ static void server_tick(tide_server *s)
         if (!recipients || !hashes) tide_out_of_memory();
         uint32_t count = 0;
         for (uint32_t p = 0; p < s->players; p++) {
-            if (s->connections[p].used && s->connections[p].greeted) recipients[count++] = tide_player_from_index((int32_t)p);
+            const connection *c = &s->connections[p];
+            if (c->used && c->greeted && !mirrors(s, c)) recipients[count++] = tide_player_from_index((int32_t)p);
         }
         if (g->client_hashes && count) g->client_hashes(s->world, recipients, count, hashes);
         else for (uint32_t i = 0; i < count; i++) hashes[i] = g->client_hash(s->world, recipients[i]);
@@ -3046,6 +3066,17 @@ static uint32_t piece_header(const tide_server *s, const uint32_t tick, const ui
 // The ticks it lacks, in pieces, as many packets as it takes (up to a limit).
 static void send_frames(tide_server *s, connection *c)
 {
+    if (mirrors(s, c)) { // It has every tick: the server's world is its own. Its times, inputs' wait and uploads
+        c->view_limit = s->tick;
+        c->frame_ack = s->tick;
+        c->frame_mask = 0;
+        c->catching_up = false;
+        tide_writer w;
+        uint32_t count_at;
+        start_server_packet(s, c, &w, &count_at);
+        send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
+        return;
+    }
     // Too far behind for the ticks kept: the whole world again. One catching
     // up with the world it was sent has them all kept for it (keep_needed).
     if (!c->catching_up && s->tick - c->frame_ack >= s->w.history) {
@@ -3346,7 +3377,7 @@ void tide_server_update(tide_server *s, const double now)
                 send_chunks(s, c);
             } else {
                 send_frames(s, c);
-                if (s->published_count) send_downloads(s, c);
+                if (s->published_count && !mirrors(s, c)) send_downloads(s, c);
             }
         }
     }
@@ -6603,6 +6634,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         return;
     }
     s->client->mirror = s->server; // Its worlds are the server's: the match is ticked once here
+    s->server->mirrors_local = true;
     s->last_state = TIDE_SESSION_CONNECTING;
     record_server(s);
 }
@@ -7067,6 +7099,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
         return;
     }
     s->client->mirror = s->server; // Its worlds are the server's, as a match started here
+    s->server->mirrors_local = true;
     s->client->commands = s->stale->commands;
     s->stale->commands = (command_queue){0};
     s->client->commands_rebase = true;

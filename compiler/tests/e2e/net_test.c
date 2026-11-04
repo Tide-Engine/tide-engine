@@ -1157,6 +1157,7 @@ TIDE_TEST(net_a_host_with_another_player_ticks_once)
     TIDE_CHECK(confirmed >= 290);
     TIDE_CHECK(alone_ticks == confirmed); // The server's ticks, and no other
     TIDE_CHECK(after.client.run_ticks == before.client.run_ticks); // ...as the host's player runs none
+    TIDE_CHECK(after.client.world_bytes == 0); // ...and is sent no world: it took the server's
     TIDE_CHECK(alike);
     TIDE_CHECK(moved[0] && moved[1]); // The host's input and the guest's, over the lossy network, are in the match
     // The guest's verified world is the server's at that tick, as checked by hash every tick it confirmed
