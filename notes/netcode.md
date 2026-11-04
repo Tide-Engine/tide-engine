@@ -14,9 +14,10 @@ What's built:
   component with no fields (`program.predict_far`), sparse (`sparse_component`),
   possible in every match archetype that can have a position (`positioned`: a
   `[Position]` component or `Transform`, in its components or `possible`). Every
-  match system and match handler that runs for each entity, but for one written
-  in C (`extern_system`: C takes whole runs of rows), gets it in `without_mask`,
-  as shards' ghosts do. So the existing sparse-filter row loops (counted chunks,
+  match system and match handler that runs for each entity gets it in
+  `without_mask`, as shards' ghosts do; a system written in C too (owner's yes,
+  same day), whose wrapper hands C the runs of rows between tagged ones as it
+  does for visibility presence (`gen_extern_filtered_call`). So the existing sparse-filter row loops (counted chunks,
   masked/selected/cached variants, apart loops copying skipped rows back) leave
   tagged rows out with no new loop code. Only predicted worlds ever have the tag:
   the server never sets it and a confirmed tick runs on a verified world, so
@@ -48,7 +49,8 @@ What's built:
   lagged far entities by about six ticks); views blend it on the confirmed clock
   instead (below).
 
-Tests: `tidec_e2e_predict_near` (`compiler/tests/e2e/predict_near*`): two
+Tests: `tidec_e2e_predict_near` (`compiler/tests/e2e/predict_near*`, with a
+system written in C, `predict_near_c.c`, which fails the test excluded): two
 players on a 100 ms loopback, and on 120 ms with 60 ms jitter and 20% loss; a
 walker 4 units from them and one 100 away, range 10. Every frame a client runs
 ahead, the far walker in its predicted world is byte for byte its verified one
@@ -103,9 +105,10 @@ frames), the near one at the predicted pair's; it fails with the helper
 returning false.
 
 Gaps:
-- Whole-world code still runs for far entities in predicted ticks: C systems,
-  singleton systems going through queries, and physics packages' steps (Box2D
-  and Box3D step every body). Tagging what such code reaches is open.
+- Physics packages' steps still run far bodies in predicted ticks (Box2D and
+  Box3D step every body); its design has a thread of its own. A system's `mut`
+  query rows write far entities like any other: the owner's decision, same day
+  ("written like any other is correct").
 - The filter's per-row cost in ticks that have no tags (the server's,
   confirmed ones): a world-level "nothing is tagged" would let them take the
   unfiltered loops.

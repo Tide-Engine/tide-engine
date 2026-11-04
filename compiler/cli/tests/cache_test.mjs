@@ -1,6 +1,9 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only] [--gpu] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only | --part modes|at-once|cache] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
+// --part runs one third of the whole: build modes and stripping, several
+// compiles at once, or cache correctness with runs and the server. CI runs
+// the three at once, each in its own private installation.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -8,7 +11,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, optimizationOnly: false, gpu: false, keep: false };
+const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, optimizationOnly: false, part: null, gpu: false, keep: false };
+const parts = ["modes", "at-once", "cache"];
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -20,14 +24,22 @@ for (let i = 2; i < process.argv.length; i++) {
     else if (process.argv[i] === "--strip-only") opts.stripOnly = true;
     else if (process.argv[i] === "--server-only") opts.serverOnly = true;
     else if (process.argv[i] === "--optimization-only") opts.optimizationOnly = true;
+    else if (process.argv[i] === "--part") {
+        const value = process.argv[++i];
+        if (!parts.includes(value)) throw new Error(`--part needs one of ${parts.join(", ")}`);
+        opts.part = value;
+    }
     else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only] [--gpu] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only | --optimization-only | --part modes|at-once|cache] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
 if (!opts.tide) throw new Error("pass --tide <installation>/bin/tide");
+if (opts.part && (opts.watchOnly || opts.stripOnly || opts.serverOnly || opts.optimizationOnly))
+    throw new Error("--part runs part of the whole test: leave out --watch-only, --strip-only, --server-only and --optimization-only");
+const inPart = (part) => !opts.part || opts.part === part;
 if (!existsSync(opts.tide) && existsSync(`${opts.tide}.exe`)) opts.tide += ".exe";
 
 const env = { ...process.env, TIDE_NO_UPDATE_CHECK: "1" };
@@ -1010,24 +1022,28 @@ async function main() {
         }
         if (opts.serverOnly) await serverTests(tide, root);
         if (!opts.watchOnly && !opts.serverOnly) {
-            for (const target of opts.web ? ["native", "web"] : ["native"]) {
-                await strippingTests(tide, installation, root, target, embedded);
-                await assetModeTests(tide, root, target);
-                await optimizationTests(tide, installation, root, target);
+            if (inPart("modes")) {
+                for (const target of opts.web ? ["native", "web"] : ["native"]) {
+                    await strippingTests(tide, installation, root, target, embedded);
+                    await assetModeTests(tide, root, target);
+                    await optimizationTests(tide, installation, root, target);
+                }
             }
             if (!opts.stripOnly) {
-                for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
-                for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
+                if (inPart("at-once"))
+                    for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
+                if (inPart("cache"))
+                    for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
             }
         }
-        if (!opts.serverOnly && !opts.stripOnly && (opts.web || opts.watchOnly)) {
+        if (!opts.serverOnly && !opts.stripOnly && (opts.web || opts.watchOnly) && inPart("cache")) {
             await webRunTest(tide, root);
             await webRunTest(tide, root, true);
             await webRerunTest(tide, root);
         }
-        if (opts.gpu && !opts.watchOnly && !opts.stripOnly && !opts.serverOnly) await nativeRunTest(tide, root);
-        if (!opts.serverOnly && !opts.watchOnly && !opts.stripOnly) await serverTests(tide, root);
-        console.log("Cache integration tests passed.");
+        if (opts.gpu && !opts.watchOnly && !opts.stripOnly && !opts.serverOnly && inPart("cache")) await nativeRunTest(tide, root);
+        if (!opts.serverOnly && !opts.watchOnly && !opts.stripOnly && inPart("cache")) await serverTests(tide, root);
+        console.log(opts.part ? `Cache integration tests (${opts.part}) passed.` : "Cache integration tests passed.");
     } finally {
         if (opts.keep) console.log(`Kept fixtures: ${root}`);
         else removeOwned(root, root);
