@@ -51,6 +51,35 @@ TIDE_TEST(page_same_bytes_is_what_memcmp_says)
     free(b);
 }
 
+#if defined(__wasm__) && defined(__wasm_atomics__)
+// Malloc asks sbrk for what it lacks, 64 KiB at a time, and the engine's sbrk grows the memory by 16 MiB at least, so
+// 64 MiB taken in 32 KiB blocks grows it a few times, not a thousand (a grow of a browser's big shared memory takes
+// milliseconds).
+TIDE_TEST(page_memory_grows_in_big_steps)
+{
+    enum { BLOCKS = 2048, BLOCK = 32 * 1024 };
+    void **blocks = malloc(BLOCKS * sizeof *blocks);
+    TIDE_REQUIRE(blocks);
+    size_t pages = __builtin_wasm_memory_size(0);
+    int grows = 0;
+    for (int i = 0; i < BLOCKS; i++) {
+        blocks[i] = malloc(BLOCK);
+        TIDE_REQUIRE(blocks[i]);
+        memset(blocks[i], i & 0xFF, BLOCK);
+        if (__builtin_wasm_memory_size(0) != pages) {
+            pages = __builtin_wasm_memory_size(0);
+            grows++;
+        }
+    }
+    TIDE_CHECK(grows <= 6);
+    for (int i = 0; i < BLOCKS; i++) {
+        TIDE_CHECK(((const uint8_t *)blocks[i])[BLOCK - 1] == (i & 0xFF)); // Each its own
+        free(blocks[i]);
+    }
+    free(blocks);
+}
+#endif
+
 // A table with megabytes in it: an entity and four numbers a row, in chunks
 // of 2,048 rows, so a chunk is a page of 16 KiB and four of 8.
 static const uint32_t wide_sizes[] = {sizeof(tide_entity), 4, 4, 4, 4};
