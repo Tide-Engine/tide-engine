@@ -842,6 +842,89 @@ TIDE_TEST(gui_a_finger_presses_the_widget_on_top)
     TIDE_CHECK(gui.active == 4);
 }
 
+// ---------------------------------------------------------------------------
+// Listing a frame's widgets (tide_gui_controls), as an interactive run does
+
+static tide_gui_listing listing;
+
+static bool listed_label(const tide_gui_listed *c, const char *label)
+{
+    return c->label_length == strlen(label) && memcmp(c->label, label, c->label_length) == 0;
+}
+
+TIDE_TEST(gui_lists_its_widgets_with_where_a_click_is_theirs)
+{
+    start();
+    stacked_frame();
+    tide_gui_listed all[16];
+    TIDE_CHECK(tide_gui_controls(&gui, all, 16) == 0); // No listing, nothing described
+    gui.listing = &listing;
+    TIDE_CHECK(tide_gui_controls(&gui, all, 16) == 0); // ...nor the frame before it was given
+    stacked_frame();
+    TIDE_REQUIRE(tide_gui_controls(&gui, all, 16) == 4); // The area isn't a widget
+    TIDE_CHECK(tide_gui_controls(&gui, all, 2) == 4);    // How many, past the room given
+    TIDE_CHECK(all[0].kind == TIDE_GUI_KIND_CONTROL && all[0].id == 1 && all[0].label_length == 0);
+    TIDE_CHECK(!all[0].covered && all[0].at.x == 200.0f && all[0].at.y == 200.0f); // Its center is clear
+    TIDE_CHECK(all[1].kind == TIDE_GUI_KIND_BUTTON && listed_label(&all[1], "On the control"));
+    TIDE_CHECK(all[1].at.x == 200.0f && all[1].at.y == 120.0f);
+    TIDE_CHECK(listed_label(&all[2], "Under the panel") && all[2].covered); // The panel is over all of it
+    TIDE_CHECK(all[3].kind == TIDE_GUI_KIND_BUTTON && listed_label(&all[3], "On the panel") && !all[3].covered);
+    // A click where the list says is the widget's
+    for (int i = 0; i < 4; i += 3) {
+        finger_sample(TIDE_TOUCH_BEGAN, NONE, all[i].at.x, all[i].at.y);
+        stacked_frame();
+        TIDE_CHECK(gui.active == all[i].id);
+        finger_sample(TIDE_TOUCH_ENDED, NONE, all[i].at.x, all[i].at.y);
+        stacked_frame();
+        tide_gui_controls(&gui, all, 16);
+    }
+    gui.listing = NULL;
+}
+
+// A frame with a widget of each kind, from layout calls, a disabled one and,
+// while `up`, a modal over them with a button of its own.
+static void kinds_frame(bool *up)
+{
+    static bool on;
+    static float volume = 0.5f;
+    static tide_float3 position;
+    static int32_t count;
+    begin();
+    tide_gui_layout_toggle(&gui, 1, "Sound", &on);
+    tide_gui_layout_slider(&gui, 2, "Volume", &volume, 0.0f, 1.0f);
+    tide_gui_layout_float3_field(&gui, 3, "Position", &position);
+    const int disabled = tide_gui_begin_disabled(&gui, true);
+    tide_gui_layout_int_field(&gui, 4, "Count", &count);
+    tide_gui_close(&gui, disabled);
+    const int depth = tide_gui_begin_modal(&gui, 30, TIDE_ANCHOR_MIDDLE_CENTER, up);
+    if (depth >= 0) {
+        tide_gui_layout_button(&gui, 5, "Close \"it\"");
+        tide_gui_close(&gui, depth);
+    }
+    end();
+}
+
+TIDE_TEST(gui_lists_each_kind_of_widget_and_none_under_a_modal)
+{
+    start();
+    gui.listing = &listing;
+    bool up = false;
+    kinds_frame(&up);
+    tide_gui_listed all[16];
+    TIDE_REQUIRE(tide_gui_controls(&gui, all, 16) == 6);
+    TIDE_CHECK(all[0].kind == TIDE_GUI_KIND_TOGGLE && listed_label(&all[0], "Sound"));
+    TIDE_CHECK(all[1].kind == TIDE_GUI_KIND_SLIDER && listed_label(&all[1], "Volume")); // The layout call's label
+    for (int i = 2; i < 5; i++) TIDE_CHECK(all[i].kind == TIDE_GUI_KIND_NUMBER && listed_label(&all[i], "Position"));
+    TIDE_CHECK(all[2].rect.x < all[3].rect.x && all[3].rect.x < all[4].rect.x); // A box each
+    TIDE_CHECK(all[5].kind == TIDE_GUI_KIND_NUMBER && listed_label(&all[5], "Count") && all[5].disabled);
+    TIDE_CHECK(!all[0].disabled);
+    up = true;
+    for (int frame = 0; frame < 2; frame++) kinds_frame(&up); // The modal is on top from the frame after it came
+    TIDE_REQUIRE(tide_gui_controls(&gui, all, 16) == 1);
+    TIDE_CHECK(all[0].kind == TIDE_GUI_KIND_BUTTON && listed_label(&all[0], "Close \"it\""));
+    gui.listing = NULL;
+}
+
 // A frame's GUI after a sample: the Play button, and two views, the first with
 // a widget of its own at `rect`, which it says each frame. Returns whether the
 // first view read a press (bit 0), and the second (bit 1).
