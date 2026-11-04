@@ -997,8 +997,9 @@ typedef enum builtin_call {
     CALL_SEND,      // Send(RoundOver { ... }), or target.Send(Hit { ... }): type_decl is the event
     CALL_LOAD,      // Scene.Load(Arena { ... }): a spawn whose entity is its own scene; type_decl is the scene
     CALL_UNLOAD,    // Scene.Unload(scene)
-    CALL_SESSION,   // Session.Start, Open, Close, Join, Connect and Leave: `name` says which; type_decl is Start's scene
+    CALL_SESSION,   // Session.Start, Open, Close, Kick, Ban and the rest: `name` says which; type_decl is Start's scene
     CALL_CLIPBOARD, // Clipboard.Copy(text)
+    CALL_QUIT,      // Application.Quit()
     CALL_SNAP,      // entity.Snap(), singleton.Snap() or field.Snap(): views draw it as it is this tick; type_decl is a singleton's
     CALL_GUI,       // GUI.Button(...), GUILayout.Horizontal() { ... }: calls c_callee with the GUI first
     CALL_ACTION,    // content(): runs the Action its function was given

@@ -1,5 +1,58 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Application.Quit (2026-11-04)
+
+The owner's ask, from mount-and-rifle, whose workaround was C `exit(0)`, which
+skipped engine shutdown: a clean quit from local code. The behavior per
+platform is the agent's pick (spec, Provisional; docs `game/local-state.md`,
+Quitting).
+
+- **Language**: `Application.Quit()`, checked like `Clipboard.Copy`
+  (`check_quit_call`, `CALL_QUIT`): views, local handlers and functions they
+  call; never match code, `Sample`, a comparison or a parallel step; a
+  statement; no arguments. Generated: `tide_l->tide_quit = true`, and
+  `tide_local_take_request` gives `TIDE_REQUEST_QUIT` once, after every other
+  request of the frame (copy included). No new runtime function.
+- **Host** (`tide/host.h`): `TIDE_REQUEST_QUIT` sets `tide_run_quit` and,
+  outside another program, calls the new `tide_platform_quit()`. `tide_run_open`
+  registers `tide_run_close` with the new `tide_platform_on_close`: it runs
+  `tide_run_end` (voice stop, hosted admission left, session destroyed, so the
+  server says BYE or hands the match over and a client says it leaves; local
+  state freed) when a session exists. `TIDE_DISCONNECT_BANNED` isn't a drop.
+- **Platform** (`platform.c`): `quit_asked` / `closing_asked`. A window that
+  closes now sets `closing_asked` before `finish(0)`, so the host's closing
+  runs on window close too: both paths leave the match before the platform
+  writes its used shader keys, closes audio and the window and exits.
+  `finish` runs the hook once, first. The frame a game quits in is the last:
+  headless runs treat it as the script's `quit` (`headless_drawn`'s `last`,
+  so `--capture`/`--capture-audio`/recordings are that frame's); windowed
+  runs present it and end with 0 (no between-frames wait update after it).
+  Not called for a frame function's own exit code or `--frames`' end.
+- **Web**: the same `finish`: the hook, `tide_web_stop`, `exit(0)`, so
+  `tide.js` stops the loop and calls `Tide.onExit(0)`; the canvas keeps the
+  last frame. A page can't close its tab.
+- **Android**: `finish` closes the window, which finishes the activity, and
+  the process exits.
+- **Embedded** (`tide/embed.h`, ABI 10): no exit; `tide_embed_status.quit`
+  (a pad byte, so the struct's size is unchanged) stays set until the embed
+  ends (`tide_run_end` clears `tide_run_quit`). Unity's `TideRunner` reads it:
+  a `QuitAsked` handler decides, otherwise play mode ends in the editor and
+  the player calls `Application.Quit` (notes/unity.md).
+- **Dedicated servers** have no local code, so nothing quits that way.
+- **Several players** (`--players`): a player that quits ends its process at
+  that frame, which ends the run as a process that stopped does (Ending,
+  below); a quit of the whole run is the script's `quit`.
+- **Tests**: `tide_platform_quit` (`platform/tests/quit.mjs` over `quit.tide`,
+  label `gpu`): a match runs and a view quits at frame 30 of a 600-frame run;
+  exit 0, frame 20's capture taken, frame 100's not, the run's `--capture` is
+  the green frame it quit in. `tide_platform_web_quit` (served, real-time
+  animation frames): the page ends with exit 0, which only the quit makes.
+  Generated requests: `net_local_code_joins_rooms_and_connects_to_addresses`.
+  Errors: `tidec_error_application_quit_in_system`, `_takes_nothing`.
+- **Gaps**: no "are you sure" or cancel; a web page's own after-exit screen is
+  the page's; `Application.Quit` in the reload host ends `tide run`'s game
+  with 0 as a closed window does.
+
 ## Loading screen while the pack loads (2026-11-04)
 
 The owner's ask: Mount & Rifle opened a white window that didn't answer for

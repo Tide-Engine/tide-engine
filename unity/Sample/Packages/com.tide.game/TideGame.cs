@@ -141,6 +141,7 @@ namespace Tide.Game
         Failed = 4,
         Ended = 5,
         Kicked = 6,
+        Banned = 7,
     }
 }
 namespace Tide.Game

@@ -1,5 +1,71 @@
 # Netcode: sessions, prediction, commands
 
+## Bans (2026-11-04)
+
+The owner's ask, from mount-and-rifle, whose host re-kicked banned PlayerIDs
+from a local `PlayerJoined` handler: a ban that kicks and refuses that player
+for the rest of the match, and lifting it, surviving host migration. Names,
+what a ban holds and the wire shape are the agent's picks (spec, Sessions,
+Provisional; docs `multiplayer/matches.md`, Bans).
+
+- **Language**: `Session.Ban(player, message = "")` and `Session.Unban(player)`,
+  checked as `Kick` is (local code, a statement, a `PlayerID`, text). They go
+  in the frame's kick queue (`tide_kicks`, `TIDE_GAME_PLAYERS` entries) as
+  `TIDE_REQUEST_BAN` / `TIDE_REQUEST_UNBAN`, after the session requests; a
+  `Start`/`Join`/`Connect`/`Leave` drops them with the kicks. `DisconnectReason`
+  gains `Banned` (7, `TIDE_DISCONNECT_BANNED`), with the ban's message.
+- **Server** (`session.c`): `tide_server_ban/unban/banned`; `tide_session_ban`
+  and `_unban` on the session's server (nothing on a client or a sharded
+  match); `tide_session_server(s)` gives hosts and tests the server.
+  - State: `tide_player_set banned` and `ban_messages[players]`, by slot. A ban
+    needs a slot someone played in (`digests[i] != 0`) and refuses this
+    machine's own player and a first-time player still joining (not greeted,
+    `new_player`), whom no PlayerID names yet and whose slot `drop_connection`
+    would clear.
+  - A connected banned player is sent away by `send_away` (kick's resending
+    entry, with `kicked.banned`), so the goodbye says `BYE_BANNED` and so does
+    every resend. A kick of a banned slot also says banned.
+  - `on_hello` refuses before the kick list, the closed check and slot
+    assignment: a HELLO whose cookie digest is a banned slot's, or, with a
+    trusted identity host, whose nonzero identity is that slot's, gets
+    `BYE_BANNED` + message (authenticated with the cookie and nonce it sent, as
+    a not-yet-welcomed client accepts a BYE). The slot giving-away loop skips
+    banned slots, so the PlayerID is kept for the banned player.
+  - `tide_server_unban` clears the bit and message and the slot's kick entry
+    (so the next HELLO is admitted without first being told of a kick), and
+    starts its `away_since` if unset, so the slot can be given away in time.
+- **Identity** (documented): a ban holds the slot, reached by cookie digest
+  and, under `tide_server_desc.identity`, the account. A machine without the
+  cookie is someone new: another device, cleared storage, or a session that
+  joins a migrated match at the new host's address (`tide_session_join` drops
+  the cookie for a different address, as for kicks). Accounts are what make a
+  ban stick.
+- **Survives**: host migration, through the HANDOVER record (after the
+  in-match digests: `write_players(banned)`, then per banned slot its digest and
+  message length + bytes; `handover_capacity` grows by a set and
+  `(8 + TIDE_MESSAGE_BYTES) * players`), read into `handover.banned` /
+  `ban_messages` (`free_handover`) and passed by `tide_session_take_over` as
+  `tide_server_desc.banned` / `ban_messages` with the digests. A banned player
+  who is still `present` (of a world it went on from, not back yet) stays in
+  `in_match` and banned, and leaves on the usual 20 s. Recovery:
+  `tide_server_recovery.banned` and optional `ban_messages`; managed hosting's
+  checkpoint carries both (`tide/managed_run.h`, magic `TDM3`). Server create
+  copies bans only with a `world` and only for slots with a digest. Not in the
+  world, hashes or snapshots.
+- Wire: `PROTOCOL` 22 (`BYE_BANNED = 4`, the HANDOVER tail).
+- **Tests**: `net_a_match_bans_players` (lossy loopback: own player and empty
+  slot refused, ban kicks with `Banned`/message, rejoin refused open and
+  closed, a newcomer gets another slot, unban lets the same PlayerID in,
+  recovery state has the ban and message); `handover_keeps_bans` (banned
+  before the host leaves; the new host has the ban and refuses the old cookie
+  with its message; unbanned, the same PlayerID is let in);
+  `net_local_code_joins_rooms_and_connects_to_addresses` (request order and
+  `Disconnected { reason = Banned, ... }`); `tidec_error_session_ban_not_a_player`.
+- **Gaps**: bans of a sharded world (each shard's admission is separate);
+  banning by address; a ban list that outlives the match; Ban/Unban results
+  (they are requests, like Kick). The lobby and rooms packages show a
+  `Banned` message as they do a kick's.
+
 ## Commands holding lists of values (2026-11-04)
 
 The owner asked for the gap mount-and-rifle met on nightly.32 to be closed: `command Enlist { List<int> attributes; }`

@@ -7285,21 +7285,25 @@ static const char *foreach_value(gen *g, expr *e)
 }
 
 // Session.Start(Arena { ... }), Join, Connect, Leave and End, Session.Open and
-// Close, and Session.Kick and KickAll: recorded in the local state, for the
-// host program to act on after the frame. A Start, Join, Connect, Leave or End
-// ends the match the Opens, Closes and Kicks before it were for, so it drops
-// them.
+// Close, and Session.Kick, KickAll, Ban and Unban: recorded in the local
+// state, for the host program to act on after the frame. A Start, Join,
+// Connect, Leave or End ends the match the Opens, Closes, Kicks and Bans
+// before it were for, so it drops them.
 static void gen_session_call(gen *g, const expr *e)
 {
     sb *o = &g->c;
     const bool kick = str_eq_c(e->name, "Kick");
-    if (kick || str_eq_c(e->name, "KickAll")) {
+    const bool ban = str_eq_c(e->name, "Ban");
+    const bool unban = str_eq_c(e->name, "Unban");
+    if (kick || ban || unban || str_eq_c(e->name, "KickAll")) {
+        const bool one = kick || ban || unban; // Of one player
         indent(g, o);
-        sb_printf(o, "tide_request_kick(tide_l, %s, ", kick ? "TIDE_REQUEST_KICK" : "TIDE_REQUEST_KICK_ALL");
-        if (kick) gen_expr(g, o, e->args.items[0]);
+        sb_printf(o, "tide_request_kick(tide_l, %s, ", kick ? "TIDE_REQUEST_KICK" : ban ? "TIDE_REQUEST_BAN"
+                                                      : unban ? "TIDE_REQUEST_UNBAN" : "TIDE_REQUEST_KICK_ALL");
+        if (one) gen_expr(g, o, e->args.items[0]);
         else sb_put(o, "(tide_player_id){0}");
         sb_put(o, ", ");
-        const int message = kick ? 1 : 0;
+        const int message = one ? 1 : 0;
         if (e->args.count > message) gen_c_text(g, o, e->args.items[message]);
         else sb_put(o, "\"\"");
         sb_put(o, ");\n");
@@ -8375,6 +8379,8 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_put(o, "tide_request_copy(tide_l, ");
             gen_c_text(g, o, s->value->args.items[0]);
             sb_put(o, ");\n");
+        } else if (s->value->call == CALL_QUIT) {
+            line(g, o, "tide_l->tide_quit = true;");
         } else if (s->value->call == CALL_GUI && s->value->block) {
             gen_container(g, s->value);
         } else if (s->value->call == CALL_DRAW && s->value->block && (s->value->gui & DRAW_BLOCK)) {
@@ -9280,10 +9286,11 @@ static void gen_header(gen *g)
     sb_put(o, "    tide_session_request tide_request_open; // Session.Open or Close, after tide_request\n");
     sb_put(o, "    tide_session_request tide_request_watch; // Session.Watch or Unwatch, after those\n");
     sb_put(o, "    tide_session_request tide_watch_told;    // ...as the session last heard it\n");
-    sb_put(o, "    tide_session_request tide_kicks[TIDE_GAME_PLAYERS]; // Session.Kick and KickAll, after those\n");
+    sb_put(o, "    tide_session_request tide_kicks[TIDE_GAME_PLAYERS]; // Session.Kick, KickAll, Ban and Unban, after those\n");
     sb_put(o, "    uint32_t tide_kick_count;\n");
     if (prog->uses_audio) sb_put(o, "    tide_audio_frame *tide_audio; // The frame's audio list (tide_local_audio): what Audio.Play records into\n");
     sb_put(o, "    tide_session_request tide_copy; // Clipboard.Copy: the frame's last, after the kicks\n");
+    sb_put(o, "    bool tide_quit; // Application.Quit, after everything else the frame asked\n");
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
     // TIDE_NETWORK_ADDRESS_BYTES (tide/network.h): a room's code, or what a game's own network says
     sb_put(o, "    char tide_room[64]; // Session.room: what the match is joined by (a room's code), or \"\"\n");
@@ -11454,7 +11461,7 @@ static void gen_correction_state(gen *g)
     g->indent = 0;
 }
 
-// What views and local handlers call for Session.Join, Connect, Kick and KickAll.
+// What views and local handlers call for Session.Join, Connect, Kick, KickAll, Ban and Unban.
 static void gen_session_helpers(gen *g)
 {
     sb *o = &g->c;
@@ -11465,8 +11472,9 @@ static void gen_session_helpers(gen *g)
     sb_put(o, "    size_t n = strlen(address);\n");
     sb_put(o, "    if (n >= sizeof l->tide_request.text) n = sizeof l->tide_request.text - 1u;\n");
     sb_put(o, "    memcpy(l->tide_request.text, address, n);\n}\n\n");
-    sb_put(o, "// Session.Kick(player, message) and Session.KickAll(message), in order, up to a\n");
-    sb_put(o, "// kick per player each frame. The message is cut where a character starts.\n");
+    sb_put(o, "// Session.Kick(player, message), Session.KickAll(message), Session.Ban(player,\n");
+    sb_put(o, "// message) and Session.Unban(player), in order, up to as many each frame as the\n");
+    sb_put(o, "// game takes players. The message is cut where a character starts.\n");
     sb_put(o, "TIDE_HELPER void tide_request_kick(tide_local *l, uint32_t kind, tide_player_id player, const char *message)\n{\n");
     sb_put(o, "    if (l->tide_kick_count == TIDE_GAME_PLAYERS) return;\n");
     sb_put(o, "    tide_session_request *r = &l->tide_kicks[l->tide_kick_count++];\n");
@@ -23574,9 +23582,12 @@ static void gen_game_api(gen *g)
     sb_put(o, "        *request = local->tide_request_watch;\n");
     sb_put(o, "        local->tide_request_watch = (tide_session_request){0};\n        return true;\n    }\n");
     sb_put(o, "    if (local->tide_kick_count == 0) {\n");
-    sb_put(o, "        if (local->tide_copy.kind == TIDE_REQUEST_NONE) return false;\n");
-    sb_put(o, "        *request = local->tide_copy;\n");
-    sb_put(o, "        local->tide_copy = (tide_session_request){0};\n        return true;\n    }\n");
+    sb_put(o, "        if (local->tide_copy.kind != TIDE_REQUEST_NONE) {\n");
+    sb_put(o, "            *request = local->tide_copy;\n");
+    sb_put(o, "            local->tide_copy = (tide_session_request){0};\n            return true;\n        }\n");
+    sb_put(o, "        if (!local->tide_quit) return false;\n");
+    sb_put(o, "        *request = (tide_session_request){.kind = TIDE_REQUEST_QUIT};\n");
+    sb_put(o, "        local->tide_quit = false;\n        return true;\n    }\n");
     sb_put(o, "    *request = local->tide_kicks[0];\n    local->tide_kick_count--;\n");
     sb_put(o, "    memmove(local->tide_kicks, local->tide_kicks + 1, local->tide_kick_count * sizeof local->tide_kicks[0]);\n");
     sb_put(o, "    memset(&local->tide_kicks[local->tide_kick_count], 0, sizeof local->tide_kicks[0]);\n    return true;\n}\n\n");

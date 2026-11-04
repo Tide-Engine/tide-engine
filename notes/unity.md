@@ -1,5 +1,16 @@
 # Unity as a front end
 
+## Embed ABI 10: the game asks to quit (2026-11-04)
+
+`tide_embed_status.quit` (a former pad byte; size 376 unchanged) is set once
+the game calls `Application.Quit`, until the embed ends. `TideNative.cs` has
+`quit` and `pad[2]`, `TideLibrary.Abi` is 10. `TideRunner.FollowQuit` acts
+once per embed: a `QuitAsked` handler decides; without one, the editor leaves
+play mode (`EditorApplication.isPlaying = false`) and a player calls
+`UnityEngine.Application.Quit()`. The sample's generated `DisconnectReason`
+gains `Banned = 7`. Not run in Unity locally (no Unity tests here); the
+native embed still builds and its tests pass (`tide_platform_embed`).
+
 ## Protect cached compilers from expiry (2026-11-03)
 
 The CLI now removes exact cached versions after 30 days without use

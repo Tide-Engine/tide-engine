@@ -319,6 +319,66 @@ TIDE_TEST(handover_not_for_a_kicked_player_who_didnt_hear_it)
     teardown();
 }
 
+// A player as the same player again (its cookie), joining `server` on
+// endpoint `at` while the machines go on: how it's let in, or why not.
+static tide_client_status rejoin(const uint64_t cookie, const uint32_t at, const uint32_t server)
+{
+    tide_client *c = tide_client_create(&(tide_client_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(net, at),
+                                                            .server = tide_loopback_address(server), .sample = sample,
+                                                            .lead = 1, .cookie = cookie},
+                                        now);
+    const double until = now + 1.5;
+    while (now < until) {
+        now += 1.0 / 60.0;
+        tide_loopback_set_time(net, now);
+        for (int i = 0; i < MACHINES; i++) {
+            if (!frozen[i]) frame(i);
+        }
+        tide_client_update(c, now);
+    }
+    const tide_client_status status = tide_client_status_of(c);
+    tide_client_destroy(c);
+    return status;
+}
+
+// A ban goes with the match when it changes hands: the banned player, coming
+// back to the new host as the same player, is refused with its message, until
+// the new host lifts it.
+TIDE_TEST(handover_keeps_bans)
+{
+    setup();
+    play_three();
+    TIDE_REQUIRE(status(2).client.state == TIDE_SESSION_CONNECTED);
+    const tide_player_id banned = status(2).client.player;
+    const uint64_t cookie = status(2).client.cookie;
+    TIDE_REQUIRE(cookie != 0);
+    tide_session_ban(machines[0], banned, "Cheating");
+    run(1.0);
+    TIDE_CHECK(disconnected[2] == 1 && gone[2] == TIDE_DISCONNECT_BANNED);
+    frozen[2] = true; // It's out of the match, and stays where it is
+
+    tide_session_leave(machines[0]);
+    run(0.2);
+    char code[TIDE_ROOM_CODE_LENGTH + 1];
+    char key[TIDE_ROOM_KEY_LENGTH + 1];
+    TIDE_REQUIRE(tide_session_migrating(machines[1], code, key));
+    tide_session_take_over(machines[1], tide_loopback_endpoint(net, 4), now);
+    run(1.0);
+    TIDE_REQUIRE(status(1).server && status(1).client.state == TIDE_SESSION_CONNECTED);
+    tide_server *server = tide_session_server(machines[1]);
+    TIDE_REQUIRE(server);
+    TIDE_CHECK(tide_server_banned(server, banned));
+
+    tide_client_status back = rejoin(cookie, 6, 4);
+    TIDE_CHECK(back.state == TIDE_SESSION_OFFLINE && back.reason == TIDE_DISCONNECT_BANNED);
+    TIDE_CHECK(strcmp(back.message, "Cheating") == 0);
+
+    tide_session_unban(machines[1], banned);
+    back = rejoin(cookie, 7, 4);
+    TIDE_CHECK(back.state == TIDE_SESSION_CONNECTED && back.player.id == banned.id);
+    teardown();
+}
+
 TIDE_TEST(handover_not_without_a_room)
 {
     setup();

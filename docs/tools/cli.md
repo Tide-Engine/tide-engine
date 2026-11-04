@@ -804,11 +804,11 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so a run like this isn't for a match with another machine, or with another run: neither would wait for the other. A match with [several players](#several-players) is one run, which plays them all.
 
-Something has to end a run nobody can close: `--frames`, the script's `quit`, or an interactive controller's `quit`/closed input. The run's exit code says how it went:
+Something has to end a run nobody can close: `--frames`, the script's `quit`, or an interactive controller's `quit`/closed input. A game that calls [`Application.Quit()`](../game/local-state.md#quitting) ends its run at that frame too, as the script's `quit` would. The run's exit code says how it went:
 
 | Exit code | What happened |
 |---|---|
-| 0 | The run ended at `--frames` or `quit`, and its pictures and recordings were written |
+| 0 | The run ended at `--frames`, `quit` or the game's `Application.Quit()`, and its pictures and recordings were written |
 | 1 | A picture or a recording couldn't be written. Folders aren't made for it |
 | 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 

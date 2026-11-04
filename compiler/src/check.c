@@ -6193,7 +6193,8 @@ static bool address_like(const str text)
 // and Session.Leave(): which match this machine is in; Session.Open(port)
 // and Session.Close(): whether others can join the one it runs;
 // Session.Kick(player, message) and Session.KickAll(message): sending players
-// out of it; Session.End(): ending it for everyone; and Session.Watch(center,
+// out of it; Session.Ban(player, message) and Session.Unban(player): keeping
+// one out for the rest of it; Session.End(): ending it for everyone; and Session.Watch(center,
 // size) and Session.Unwatch(): an area of a sharded world this machine sees
 // wherever its player is. Only local code decides.
 static type check_session_call(checker *c, expr *e)
@@ -6206,10 +6207,13 @@ static type check_session_call(checker *c, expr *e)
     const bool close = str_eq_c(e->name, "Close");
     const bool kick = str_eq_c(e->name, "Kick");
     const bool kick_all = str_eq_c(e->name, "KickAll");
+    const bool ban = str_eq_c(e->name, "Ban");
+    const bool unban = str_eq_c(e->name, "Unban");
     const bool end = str_eq_c(e->name, "End");
     const bool watch = str_eq_c(e->name, "Watch");
     const bool unwatch = str_eq_c(e->name, "Unwatch");
-    if (!start && !join && !connect && !leave && !open && !close && !kick && !kick_all && !end && !watch && !unwatch) {
+    if (!start && !join && !connect && !leave && !open && !close && !kick && !kick_all && !ban && !unban && !end && !watch
+        && !unwatch) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (str_eq_c(e->name, "Play") || str_eq_c(e->name, "Host")) {
             diag_error(e->at, "Session." STR_FMT " is Session.Start now", STR_ARG(e->name));
@@ -6217,8 +6221,8 @@ static type check_session_call(checker *c, expr *e)
                                                 : "'Session.Start(Arena); Session.Open();' starts a match others can join");
             return T_ERR;
         }
-        diag_error(e->at, "Session has no '" STR_FMT "'; it has Start, Open, Close, Kick, KickAll, End, Join, Connect, Leave, "
-                          "Watch and Unwatch",
+        diag_error(e->at, "Session has no '" STR_FMT "'; it has Start, Open, Close, Kick, KickAll, Ban, Unban, End, Join, "
+                          "Connect, Leave, Watch and Unwatch",
                    STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Start");
@@ -6226,6 +6230,8 @@ static type check_session_call(checker *c, expr *e)
         suggest_consider_c(&s, "Close");
         suggest_consider_c(&s, "Kick");
         suggest_consider_c(&s, "KickAll");
+        suggest_consider_c(&s, "Ban");
+        suggest_consider_c(&s, "Unban");
         suggest_consider_c(&s, "Join");
         suggest_consider_c(&s, "Connect");
         suggest_consider_c(&s, "Leave");
@@ -6264,10 +6270,10 @@ static type check_session_call(checker *c, expr *e)
         note_act(c, true, e->at, what.data, false, false);
     }
     e->call = CALL_SESSION;
-    const int least = watch ? 2 : join || connect || kick ? 1 : 0;
-    const int most = connect || kick || watch ? 2 : open || kick_all || start ? 1 : least;
-    const char *named = start ? "scene" : join ? "code" : connect ? "address, port" : open ? "port" : kick ? "player, message"
-                        : kick_all ? "message" : watch ? "center, size" : "";
+    const int least = watch ? 2 : join || connect || kick || ban || unban ? 1 : 0;
+    const int most = connect || kick || ban || watch ? 2 : open || kick_all || start ? 1 : least;
+    const char *named = start ? "scene" : join ? "code" : connect ? "address, port" : open ? "port"
+                        : kick || ban ? "player, message" : unban ? "player" : kick_all ? "message" : watch ? "center, size" : "";
     if (!order_named_args(e, named, most - least)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
@@ -6287,6 +6293,9 @@ static type check_session_call(checker *c, expr *e)
                                            "'Session.Kick(player)' or 'Session.Kick(player, \"Be nice\")'"
                                : kick_all ? "Session.KickAll takes nothing, or a message: "
                                             "'Session.KickAll()' or 'Session.KickAll(\"The party's over\")'"
+                               : ban     ? "Session.Ban takes the player, and maybe a message: "
+                                           "'Session.Ban(player)' or 'Session.Ban(player, \"Cheating\")'"
+                               : unban   ? "Session.Unban takes the player: 'Session.Unban(player)'"
                                : end     ? "Session.End takes nothing: 'Session.End()'"
                                : watch   ? "Session.Watch takes the area's center and size: "
                                            "'Session.Watch(camera.position, float3(200, 200, 200))'"
@@ -6342,17 +6351,20 @@ static type check_session_call(checker *c, expr *e)
         }
         return T_VOID_;
     }
-    if (kick) {
+    if (kick || ban || unban) {
         const type t = check_expr(c, e->args.items[0]);
         if (t.kind != TY_ERROR && t.kind != TY_PLAYER) {
-            diag_error(e->args.items[0]->at, "Session.Kick takes the player to send away, a PlayerID, not %s", type_name(t));
+            diag_error(e->args.items[0]->at, "%s, a PlayerID, not %s",
+                       kick ? "Session.Kick takes the player to send away" : ban ? "Session.Ban takes the player to keep out"
+                                                                         : "Session.Unban takes the player to let in again",
+                       type_name(t));
         }
     }
-    if ((kick && e->args.count == 2) || (kick_all && e->args.count == 1)) {
+    if (((kick || ban) && e->args.count == 2) || (kick_all && e->args.count == 1)) {
         const expr *message = e->args.items[e->args.count - 1];
         const type t = check_expr(c, e->args.items[e->args.count - 1]);
         if (t.kind != TY_ERROR && t.kind != TY_STRING) {
-            diag_error(message->at, "a kick's message is text, like \"Be nice\"");
+            diag_error(message->at, ban ? "a ban's message is text, like \"Cheating\"" : "a kick's message is text, like \"Be nice\"");
             diag_note("put a value in text with '$', like '$\"{value}\"'");
         }
     }
@@ -6675,6 +6687,41 @@ static type check_clipboard_call(checker *c, expr *e)
     if (t.kind != TY_ERROR && t.kind != TY_STRING) {
         diag_error(e->args.items[0]->at, "Clipboard.Copy takes text, not %s", type_name(t));
         diag_note("put a value in text with '$', like '$\"{value}\"'");
+    }
+    return T_VOID_;
+}
+
+// Application.Quit(): the program ends after this frame, as when its window
+// closes, which the host does once the frame's done, as it does what
+// Session's calls ask. Local code's, like those: quitting is this machine's.
+static type check_quit_call(checker *c, expr *e)
+{
+    if (in_async_function(c) && !note_task_side(c, TASK_LOCAL, e->at)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if ((in_routine(c) && !inherits(c)) || c->in_input || (!c->method && !local_code(c))) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (in_routine(c)) {
+            diag_error(e->at, "%s can't call Application.Quit; views, local handlers and the functions they call do", routines(c));
+        } else if (c->in_input) {
+            diag_error(e->at, "%s makes this machine's input, so it can't call Application.Quit", input_code(c));
+        } else {
+            diag_error(e->at, "the match runs the same on every machine, so it can't call Application.Quit");
+            diag_note("quitting is this machine's: call it from a view or a local handler, like a menu's Quit button");
+        }
+        return T_ERR;
+    }
+    if (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0) {
+        diag_error(e->at, "Application.Quit is a statement of its own");
+    }
+    if (inherits(c)) note_act(c, true, e->at, "calls Application.Quit", false, false);
+    e->call = CALL_QUIT;
+    if (e->args.count != 0) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Application.Quit takes nothing: 'Application.Quit()'");
+        diag_note("the program's exit code is 0, as when its window closes");
+        return T_ERR;
     }
     return T_VOID_;
 }
@@ -8463,6 +8510,9 @@ static type check_method(checker *c, expr *e)
     if (e->object->kind == E_NAME && str_eq_c(e->object->name, "Clipboard") && !find_local(c, e->object->name)
         && !find_param(c, e->object->name)) {
         return check_clipboard_call(c, e);
+    }
+    if (names_builtin_owner(c, e->object) && str_eq_c(e->object->name, "Application") && str_eq_c(e->name, "Quit")) {
+        return check_quit_call(c, e);
     }
 
     if (names_random(c, e->object)) return check_roll(c, e); // Random.NextInt(6): a roll, with no generator of the game's
@@ -10875,6 +10925,7 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_LOAD: case CALL_UNLOAD: what = "load or unload scenes"; break;
     case CALL_SESSION: what = "change the session"; break;
     case CALL_CLIPBOARD: what = "use the clipboard"; break;
+    case CALL_QUIT: what = "quit"; break;
     case CALL_AUDIO: what = "play sounds"; break;
     case CALL_DRAW: what = "draw"; break;
     case CALL_GUI: what = gui_call_what(e); break;
@@ -12912,7 +12963,7 @@ static void check_step_expr(checker *c, const expr *e)
     case CALL_DRAW: what = "draw"; break;
     case CALL_AUDIO: what = "play sounds"; break;
     case CALL_GUI: what = gui_call_what(e); break;
-    case CALL_SESSION: case CALL_CLIPBOARD: what = "make requests of the host"; break;
+    case CALL_SESSION: case CALL_CLIPBOARD: case CALL_QUIT: what = "make requests of the host"; break;
     case CALL_LOAD: case CALL_UNLOAD: what = "load and unload scenes"; break;
     case CALL_VISIBILITY: if (e->visibility_operation & VISIBILITY_WORLD) what = "change visibility groups"; break;
     case CALL_SNAP: what = "snap"; break;
@@ -13968,7 +14019,8 @@ static bool stands_alone(const expr *e)
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD
-        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
+        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_QUIT
+        || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_COVER || call == CALL_TASK
         || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
             || skinned_changes_pose(called->skin_operation)))
@@ -18649,7 +18701,8 @@ static bool call_acts(const expr *e)
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
-    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL: case CALL_TASK:
+    case CALL_CLIPBOARD: case CALL_QUIT: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
+    case CALL_TASK:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_SKINNED: return skinned_lookup(e->skin_operation)
@@ -19428,7 +19481,7 @@ static void add_builtins(program *prog)
     // and local events Connected and Disconnected { DisconnectReason reason; },
     // with a kick's message (see check_member).
     static const char *const states[] = {"Offline", "Connecting", "Connected"};
-    static const char *const reasons[] = {"Left", "TimedOut", "Refused", "ServerLeft", "Failed", "Ended", "Kicked"};
+    static const char *const reasons[] = {"Left", "TimedOut", "Refused", "ServerLeft", "Failed", "Ended", "Kicked", "Banned"};
     decl *state = NEW(decl);
     state->kind = DECL_ENUM;
     state->name = str_from("SessionState");
