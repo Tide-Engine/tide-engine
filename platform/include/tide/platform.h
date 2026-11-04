@@ -245,6 +245,11 @@ tide_float2 tide_platform_world_to_screen(tide_float2 world);
 // are. Does nothing elsewhere.
 void tide_platform_typing(bool typing);
 
+// Before each frame's views: the host's GUI, whose widgets an interactive
+// run lists and clicks (`controls`, `click`). Gives it a listing to describe
+// them in during such a run, and none otherwise.
+void tide_platform_list_controls(tide_gui *g);
+
 // Puts `text` on the system's clipboard. A browser takes it only shortly
 // after the player clicked or pressed a key, as when a button is pressed.
 void tide_platform_copy(const char *text);

@@ -228,8 +228,20 @@ int main(int argc, char **argv)
             check(tide_platform_players_control(line, sizeof line), "the command is broadcast to every player");
             check(strcmp(line, expected) == 0, "every player receives the complete command");
             bool ok = round != 1u || me != 2u; // The second player's observation fails once.
-            check(tide_platform_players_control_done(&ok), "every player's completion is acknowledged");
+            // Each player answers; the controller hears the one each round asks for (the third, the second, then itself)
+            const uint32_t from = 3u - round;
+            char reply[32], answer[32] = "unset";
+            snprintf(reply, sizeof reply, "player %u says %u", (unsigned)me, (unsigned)round);
+            check(tide_platform_players_control_done(&ok, reply, from, answer, sizeof answer),
+                  "every player's completion is acknowledged");
             check(ok == (round != 1u || me == 3u), "a child's error reaches the controller and the next command recovers");
+            char heard[32];
+            snprintf(heard, sizeof heard, "player %u says %u", (unsigned)from, (unsigned)round);
+            check(me != 1u || strcmp(answer, heard) == 0, "the controller hears the asked player's answer");
+            char small[4] = "x";
+            bool fine = true;
+            check(tide_platform_players_control_done(&fine, reply, from, small, sizeof small) && small[0] == '\0',
+                  "an answer too long for its room is empty");
             check(tide_platform_players_step(round) == TIDE_KEEP_RUNNING, "control and frame messages stay separate");
         }
         const int code = tide_platform_players_finish(failures ? 1 : 0);

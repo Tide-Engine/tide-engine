@@ -1,5 +1,17 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Clicking widgets by name (2026-11-04)
+
+The owner noticed that agents miss clicks because they guess a button's pixels from a picture at a resolution they assumed, and proposed listing the buttons and pressing one by index. Built for `--interactive` (the names are Claude's picks, Provisional in docs/tools/cli.md, Clicking widgets by name):
+
+- **`controls`** prints `tide: control <n> <kind> "<label>" <x> <y> <w> <h> at <x> <y>[ disabled][ covered][ focused]` for each widget the current frame drew, then `tide: controls <count>`, then the usual `ok`. Logical pixels, the units of `mouse` lines. The label is quoted with `\"`, `\\`, `\n`, `\t` and `\xNN` escapes. The GUI's side is in gui.md, Widget listing.
+- **`click <n>`, `click "label"`, `click label`**, optionally after `<frame>` and `player <n>`: the target player works out the point (by number, then by exact label, label ignoring case, part of a label; refusing an ambiguous label, a disabled or covered widget, a number not listed). Each of those processes then queues `<frame> [player n ]mouse x y` and `<frame> [player n ]button left` through `interactive_event`, so the replay has ordinary lines and the click is identical on replay. The coordinates go through text (`%.9g`, which round-trips a float) before every process parses them. It prints `tide: click <frame> <x> <y>`. With no frame it goes at the next frame.
+- **Host and platform**: `tide_platform_list_controls(&tide_run_gui)` (`tide/platform.h`, in `script.c`) runs each frame after `tide_gui_begin`. It remembers the host's GUI and gives it a listing (allocated once) only in an interactive run, and sets NULL otherwise, so ordinary runs, the embed and the web describe nothing.
+- **Several players**: `tide_platform_players_control_done(ok, reply, from, answer, capacity)` now carries one player's answer to the first player. A child's acknowledgement blob is its result byte followed by its reply, which is its listing, its click point or its error. The first player keeps player `from`'s reply (or its own). So `player 2 controls` lists the second player's widgets, `player 2 click ...` clicks there, and a child's error text reaches the controller, where it used to say only "see stderr". An answer larger than the room (1 MiB for the GUI commands) arrives empty.
+- Tests: `tide_platform_interactive` lists capture.tide's Go button with its exact line, refuses `5 controls`, `controls now`, an unknown label, a number not listed, unclosed quotes and a past frame, clicks `go` by label (case-insensitive) at frame 2 with the green witness at frame 5, checks the replay has `2 mouse 80 40` / `2 button left` and no `click`, and checks that the byte-identical replay still holds. With two players, `player 2 controls` gives `controls 0`, and `player 2 click 1` returns the second player's own error. `tide_platform_players_net_control` checks the answers of three processes (each round from another player, and one too large for its room).
+- Validation: Windows Clang 23.1.2 ASan: all 627 engine tests, the GUI/rooms e2e and safety tests (10), interactive, capture, players and the players-net tests; the WASI engine suite in web-debug. Other desktops are CI's. The docs build passes.
+- Gaps: `tap` with a finger for touch-only games, a `GUI.Control` label, and listing what a game draws and reads through `Devices` itself.
+
 ## Geometry profile reports (2026-11-03)
 
 The additive `geometry` object in tide.profile version 1 exports actual submitted
