@@ -20555,9 +20555,9 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
     }
     if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
         size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
+        // Its block is shared by what it stores (texture_content): the same file as a color and as [Raw] is one
+        // block where the two come out the same, as an opaque image does, and two where they don't
         uint8_t content[32], cache[32];
-        memcpy(content, item->hash, sizeof content);
-        if (raw) content[0] ^= 0x52u, content[31] ^= 0x52u;
         texture_cache_key(cache, item->hash, item->key, raw, compress);
         size_t cached_size;
         texture_cache_view view;
@@ -20570,7 +20570,7 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
             prepared = cached != NULL;
         }
         if (prepared) {
-            if (view.blocks.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
+            memcpy(content, view.content, sizeof content);
             *stored = view.blocks.pixels ? view.blocks.format : 0;
             const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)view.width, (int32_t)view.height,
                                                         view.rgba, view.blocks);
@@ -20600,7 +20600,6 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
             rgba[i * 4u] = channel_byte(c.r, worked), rgba[i * 4u + 1u] = channel_byte(c.g, worked);
             rgba[i * 4u + 2u] = channel_byte(c.b, worked), rgba[i * 4u + 3u] = channel_byte(1.0f, c.a);
         }
-        // The same file as a color and as numbers is two images: other bytes, told apart by what names them
         tide_texture_blocks compressed = {0};
         if (item->image_mips.pixels) {
             // Authored mip levels (DDS) retain their alpha coverage and raw
@@ -20623,12 +20622,12 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
             compressed = texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
         }
         // Blocks are the image then, with no RGBA beside them: a device without them decodes them
-        if (compressed.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
         *stored = compressed.pixels ? compressed.format : 0;
-        const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
-                                                    compressed.pixels ? NULL : rgba, compressed);
         const texture_cache_view prepared_view = {.width = item->image.width, .height = item->image.height,
             .rgba = rgba, .blocks = compressed};
+        texture_content(&prepared_view, content);
+        const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
+                                                    compressed.pixels ? NULL : rgba, compressed);
         texture_cache_write(cache_folder, cache, &prepared_view);
         if (decoded_here) {
             free(decoded.image.pixels);

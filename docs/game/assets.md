@@ -142,7 +142,7 @@ For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and r
 
 A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes every mip to RGBA as it uploads the image, preserving the prepared distant levels. That fallback uses the memory of a full RGBA mip chain.
 
-Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation.
+Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. Images that come out the same bytes are one image in the pack and on the GPU, whichever declarations name them: the same opaque file declared with and without `[Raw]`, or two copies of one picture.
 
 `[Lossless]` keeps an image exact, a byte per channel, for numbers that must not move: a lookup table, a flow map, an ID mask. It goes before a `Texture` asset, alone or a glob's list or map, and beside `[Raw]` too:
 
