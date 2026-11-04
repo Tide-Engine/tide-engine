@@ -307,7 +307,7 @@ system Fill(mut Table table, with Item)
 
 Past the end of the list it's in, such a write does nothing, as any write past the end does. A list inside a struct element is changed by taking the struct out and putting it back (`mut var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
 
-Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing, so a loop that only counts or reads is best written with indexes:
+Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing. A `foreach` that only reads costs nothing extra either: when its body can't change the list or what's in it, each element is read where it is. One whose body changes the list (or calls something that's given it to change, or C, or waits) copies each element it comes to, so a loop like that over big elements is cheaper written with indexes:
 
 ```csharp
 int Cells(Table table)
@@ -318,7 +318,7 @@ int Cells(Table table)
 }
 ```
 
-Text shows them inside out, `[[1, 20, 4], [3]]`. Nested collections don't go to C or into a `parallel` loop, whose list elements must be plain values. Inputs hold no lists; a [command](../game/commands.md#big-commands) can hold `List<byte>` for bytes, but no other list type.
+Text shows them inside out, `[[1, 20, 4], [3]]`. Nested collections don't go to C or into a `parallel` loop, whose list elements must be plain values. Inputs hold no lists; a [command](../game/commands.md#big-commands) can hold lists of plain values (`List<byte>`, `List<int>`, a list of structs of numbers), but no list of text or of other collections.
 
 Rows that all have one length need no second list: `cells[row * width + column]`, or a [grid](./grids.md).
 

@@ -1,5 +1,14 @@
 # Dedicated servers
 
+## Bans (2026-11-04)
+
+A dedicated server has no local code, so `Session.Ban` doesn't reach it; its
+C bans with `tide_server_ban(tide_hosting_server(host, match), player,
+message)`, `tide_server_unban` and `tide_server_banned`. With the hosting
+identity callback (`match_identity`), a ban binds to the account as well as
+the cookie. Managed checkpoints carry bans (`managed_run.h`). Details:
+netcode.md, Bans. `Application.Quit` never runs on a server (no local code).
+
 ## Sharded worlds (2026-10-23)
 
 `tide_serve` of a sharded game runs the engine's orchestrator over its

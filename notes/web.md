@@ -1,5 +1,44 @@
 # Web builds
 
+## Memory grown in big steps (2026-11-04)
+
+Mount & Rifle's web build froze for ~25 s going on foot: wasi-libc's dlmalloc
+asks `sbrk` for only what it lacks, in 64 KiB steps, holding its one lock (a spin
+lock: `sched_yield` is `() => 0` in `tide.js`), and a grow of Chrome's shared
+memory costs time with the memory's size, not the step's (0.25 ms at 62 MB,
+1.5-2.2 ms at 1 GB, 4.5-5 ms at 2.8 GB). A gigabyte taken in small blocks was
+thousands of grows with every other thread, the page's among them, spinning.
+
+The engine's `sbrk` (`engine/src/page.c`) now hands out from a break of its own,
+starting at wasm-ld's `__heap_end` (where dlmalloc's first segment ends), and
+grows the memory by a quarter of its size, 16 MiB at least and 256 MiB at most,
+or what's lacking if more; near the 4 GiB limit, where the big step fails, only
+what's lacking. What's grown and not handed out is untouched. A negative `sbrk`
+(dlmalloc giving back a contiguous extension it couldn't use) moves the break
+back, where it used to abort. `sbrk` has its own small spin lock (dlmalloc
+already calls it under its global lock). Where it hands out memory another
+thread grew, it brings its own thread's view up to date first (`memory.grow(0)`),
+since dlmalloc writes its headers there at once. `grown`/`tide_memory_sync` are
+unchanged. Memory a page made bigger than the program's initial size would now
+be used from `__heap_end` without growing, but no page option sets that (not
+added: the big steps make it unnecessary).
+
+The malloc lock still spins: the page's thread can't block, and with grows rare
+it's held only briefly. Not changed.
+
+Measured in headless Chrome 156 (cross-origin isolated, 24 threads, web-release),
+with a scratch C page (not kept): a held 1.5 GB block, then 23 workers taking
+1 GB in 4-64 KiB blocks (freeing one in eight) while the page's thread runs
+frames with 64 small mallocs each. Before: 79.6 s, 14,414 grows, worst frame gap
+585 ms. After: 104/125/111 ms (three runs), 4 grows, worst gap 10-14 ms; memory
+ends at 2,561 MiB against 2,478 (the last step's unused part).
+
+`page_memory_grows_in_big_steps` (`tests/test_page.c`, WASI only) takes 64 MiB
+in 32 KiB blocks and checks the memory grew at most 6 times; it fails on the old
+`sbrk`. Validation: web-release `tide_tests`, all `tidec_e2e_*`, safety, versus
+and quick benchmarks (335), threads, jobs, Box2D/Box3D and draw tests pass.
+Native is unchanged (the code is WASI only).
+
 ## GPU pass timing identities (2026-11-03)
 
 WebGPU's existing pass timestamp readback now optionally retains renderer

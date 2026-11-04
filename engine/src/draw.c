@@ -2872,9 +2872,28 @@ typedef struct lod_view {
     float scale;     // How many times the pixels a level may be off by a unit of the world is, a unit from the camera
     float w[4];      // What gives how far along the camera's view a place in the world is, which sizes shrink by...
     float w_length;  // ...and how much of it a unit of the world is, at the most
+    float x[4], y[4];          // The camera's clip x and y, which say how far out to the side a place is...
+    float x_length, y_length;  // ...and how much of each a unit of the world is, at the most
 } lod_view;
 
 static lod_view lod_view_of(const tide_draw_list *d);
+
+// The pixels a pick counts: the destination's own, or the window's for a camera that isn't the destination's.
+static tide_float2 lod_screen(const tide_draw_list *d)
+{
+    const tide_draw_place *p = &d->place;
+    tide_float2 screen = d->screen;
+    if (d->target && !p->lod_camera) {
+        const tide_target_size size = d->targets[d->target - 1u].size;
+        if (!(size.window > 0.0f)) {
+            const float scale = size.scale > 0.0f ? size.scale : 1.0f;
+            screen = tide_f2(size.width * scale, size.height * scale);
+        } else {
+            screen = tide_f2(screen.x * size.window, screen.y * size.window);
+        }
+    }
+    return screen;
+}
 
 // The same for a draw of one instance, which a view that runs for each entity records a frame's worth of: the
 // camera's part is kept while the camera, the frame and the pixels are the ones it was worked out for.
@@ -2883,25 +2902,29 @@ static lod_view lod_view_kept(tide_draw_list *d)
     const tide_draw_place *p = &d->place;
     lod_view view = {.level = p->lod};
     if (view.level) return view;
-    float height = d->screen.y;
-    if (d->target && !p->lod_camera) {
-        const tide_target_size size = d->targets[d->target - 1u].size;
-        if (!(size.window > 0.0f)) height = size.height * (size.scale > 0.0f ? size.scale : 1.0f);
-        else height *= size.window;
-    }
-    uint32_t seen[4] = {d->frame + 1u, p->lod_camera ? p->lod_camera : p->camera_3d};
-    memcpy(&seen[2], &height, sizeof height);
-    memcpy(&seen[3], &p->lod_pixels, sizeof p->lod_pixels);
+    const tide_float2 screen = lod_screen(d);
+    uint32_t seen[5] = {d->frame + 1u, p->lod_camera ? p->lod_camera : p->camera_3d};
+    memcpy(&seen[2], &screen.x, sizeof screen.x);
+    memcpy(&seen[3], &screen.y, sizeof screen.y);
+    memcpy(&seen[4], &p->lod_pixels, sizeof p->lod_pixels);
     if (memcmp(seen, d->lod_seen, sizeof seen) != 0) {
         const lod_view fresh = lod_view_of(d);
         memcpy(d->lod_seen, seen, sizeof seen);
         d->lod_view[0] = fresh.picks ? fresh.scale : 0.0f;
         memcpy(&d->lod_view[1], fresh.w, sizeof fresh.w);
         d->lod_view[5] = fresh.w_length;
+        memcpy(&d->lod_view[6], fresh.x, sizeof fresh.x);
+        memcpy(&d->lod_view[10], fresh.y, sizeof fresh.y);
+        d->lod_view[14] = fresh.x_length;
+        d->lod_view[15] = fresh.y_length;
     }
     view.scale = d->lod_view[0];
     memcpy(view.w, &d->lod_view[1], sizeof view.w);
     view.w_length = d->lod_view[5];
+    memcpy(view.x, &d->lod_view[6], sizeof view.x);
+    memcpy(view.y, &d->lod_view[10], sizeof view.y);
+    view.x_length = d->lod_view[14];
+    view.y_length = d->lod_view[15];
     view.picks = view.scale > 0.0f;
     return view;
 }
@@ -2911,13 +2934,8 @@ static lod_view lod_view_of(const tide_draw_list *d)
     const tide_draw_place *p = &d->place;
     lod_view view = {.level = p->lod};
     if (view.level) return view;
-    // The pixels counted are the destination's own, or the window's for a camera that isn't the destination's
-    float height = d->screen.y;
-    if (d->target && !p->lod_camera) {
-        const tide_target_size size = d->targets[d->target - 1u].size;
-        if (!(size.window > 0.0f)) height = size.height * (size.scale > 0.0f ? size.scale : 1.0f);
-        else height *= size.window;
-    }
+    const tide_float2 screen = lod_screen(d);
+    const float height = screen.y;
     if (!(height > 0.0f)) return view;
     const uint32_t through = p->lod_camera ? p->lod_camera : p->camera_3d;
     const tide_draw_camera_3d_data camera = through && through <= d->camera_3d_count ? d->cameras_3d[through - 1u]
@@ -2929,12 +2947,25 @@ static lod_view lod_view_of(const tide_draw_list *d)
     view.scale = up * height * 0.5f / pixels;
     view.w[0] = c->c0.w, view.w[1] = c->c1.w, view.w[2] = c->c2.w, view.w[3] = c->c3.w;
     view.w_length = tide_sqrt_f(c->c0.w * c->c0.w + c->c1.w * c->c1.w + c->c2.w * c->c2.w);
+    // Across, as the camera is drawn: one for a square screen is narrowed to the destination's shape
+    const float across = camera.fit && screen.x > 0.0f ? height / screen.x : 1.0f;
+    view.x[0] = c->c0.x * across, view.x[1] = c->c1.x * across, view.x[2] = c->c2.x * across, view.x[3] = c->c3.x * across;
+    view.x_length = tide_sqrt_f(view.x[0] * view.x[0] + view.x[1] * view.x[1] + view.x[2] * view.x[2]);
+    view.y[0] = c->c0.y, view.y[1] = c->c1.y, view.y[2] = c->c2.y, view.y[3] = c->c3.y;
+    view.y_length = up;
     view.picks = view.scale > 0.0f && view.scale <= 3.0e38f;
     return view;
 }
 
 // The level an instance of `m` at `world` draws at: 0 for the full mesh. The simplest whose error, as big as
 // it is at the nearest the mesh's ball comes to the camera, is within what the view allows.
+//
+// How far a place is goes by the camera's clip coordinates: the most of w, -w, |x| and |y|. Anywhere the
+// camera sees, that's w (|x| and |y| are within w there), the depth sizes shrink by. Out to the side or behind,
+// where w says nothing of how big a thing is (beside the camera it's 0), it's how far out the thing is in the
+// view's own measure, so a destination picking through another camera (a shadow map told the viewer's) gives
+// what it draws there coarser levels as the tolerance grows instead of the full mesh. Each of the others is
+// lessened by enough of the ball's radius that a ball reaching into the view always goes by w, as it did.
 static inline uint32_t pick_level(const tide_draw_mesh_data *m, const lod_view *view, const tide_float4x4 *world)
 {
     if (view->level) return view->level - 1u < m->levels ? view->level - 1u : m->levels;
@@ -2948,8 +2979,20 @@ static inline uint32_t pick_level(const tide_draw_mesh_data *m, const lod_view *
     const float sy = world->c1.x * world->c1.x + world->c1.y * world->c1.y + world->c1.z * world->c1.z;
     const float sz = world->c2.x * world->c2.x + world->c2.y * world->c2.y + world->c2.z * world->c2.z;
     const float big = tide_sqrt_f(sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz));
-    const float away = view->w[0] * cx + view->w[1] * cy + view->w[2] * cz + view->w[3] - m->radius * big * view->w_length;
-    if (!(away > 0.0f)) return 0; // Around the camera, or behind it, or nowhere a number says
+    const float r = m->radius * big;
+    const float w = view->w[0] * cx + view->w[1] * cy + view->w[2] * cz + view->w[3];
+    float away = w - r * view->w_length;
+    // A ball touching the planes x = w, x = -w (and so for y) has x - w at most r * (x_length + w_length); behind,
+    // it reaches w >= 0. Taken off, the others are never more than w's for a ball the view could hold
+    const float side = view->x[0] * cx + view->x[1] * cy + view->x[2] * cz + view->x[3];
+    const float rise = view->y[0] * cx + view->y[1] * cy + view->y[2] * cz + view->y[3];
+    const float out_x = (side < 0.0f ? -side : side) - r * (view->x_length + 2.0f * view->w_length);
+    const float out_y = (rise < 0.0f ? -rise : rise) - r * (view->y_length + 2.0f * view->w_length);
+    const float behind = -w - 3.0f * r * view->w_length;
+    if (out_x > away) away = out_x;
+    if (out_y > away) away = out_y;
+    if (behind > away) away = behind;
+    if (!(away > 0.0f)) return 0; // Around the camera, or nowhere a number says
     // Widen only the asset multiplication: default assets retain the original float threshold.
     const double allowed = (double)(away / (big * view->scale)) * (double)m->lod_multiplier;
     uint32_t level = 0;

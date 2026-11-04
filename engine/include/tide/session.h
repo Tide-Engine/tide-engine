@@ -347,6 +347,7 @@ typedef enum tide_disconnect_reason {
     TIDE_DISCONNECT_FAILED,      // It couldn't start: no network, a port in use, an address that isn't one, a room nobody has
     TIDE_DISCONNECT_ENDED,       // The match ended: its last scene unloaded (see tide_game.ended)
     TIDE_DISCONNECT_KICKED,      // The server sent it away (tide_server_kick), with a message
+    TIDE_DISCONNECT_BANNED,      // ...and keeps it out for the rest of the match (tide_server_ban), with a message
 } tide_disconnect_reason;
 
 // A kick's message, with its NUL: up to 255 bytes of UTF-8, cut where a
@@ -401,6 +402,11 @@ typedef struct tide_server_desc {
     // takes players, 0 for none), which they come back with. NULL: none.
     const uint64_t *digests;
     const uint8_t (*identities)[32]; // Trusted same-release recovery metadata, or NULL.
+    // Host migration and recovery: the players banned from the match
+    // (tide_server_ban), whose `digests` (and `identities`) say who they are,
+    // and their messages (as many as the game takes players; NULL: none).
+    tide_player_set banned;
+    const char (*ban_messages)[TIDE_MESSAGE_BYTES];
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
     // 64 bits nobody could guess, from the system, for the seed of the match
@@ -465,6 +471,10 @@ typedef struct tide_server_recovery {
     // Caller-provided output arrays, each tide_game_players(game) entries.
     uint64_t *digests;
     uint8_t (*identities)[32];
+    // The players banned from the match (tide_server_ban), and into
+    // `ban_messages`, when it isn't NULL, their messages.
+    tide_player_set banned;
+    char (*ban_messages)[TIDE_MESSAGE_BYTES];
     uint32_t tick_rate;
     uint32_t seed;
     float dt;
@@ -480,6 +490,21 @@ bool tide_server_player_identity(const tide_server *s, tide_player_id player, ui
 // once they know, they can join again while the match takes players. False
 // if they aren't in the match, or they're on its machine (local_first).
 bool tide_server_kick(tide_server *s, tide_player_id player, const char *message);
+// Kicks `player` if they're in the match (TIDE_DISCONNECT_BANNED, with
+// `message`), and refuses them for the rest of it the same way, open or
+// closed. A ban is of the player as admission knows them: the slot their
+// cookie's digest is, and with a trusted identity host
+// (tide_server_desc.identity) the account that slot is bound to, which a new
+// cookie doesn't get past. A machine that lost its cookie and has no such
+// identity is someone new to the server. The slot stays theirs while the ban
+// holds, so their PlayerID is given to nobody else, and the ban goes with the
+// match when it changes hands or is recovered. False for a slot nobody has
+// played in, or this machine's own player (local_first).
+bool tide_server_ban(tide_server *s, tide_player_id player, const char *message);
+// Lifts the ban: they can join again, as the same player, while the match
+// takes players. False if they weren't banned.
+bool tide_server_unban(tide_server *s, tide_player_id player);
+bool tide_server_banned(const tide_server *s, tide_player_id player);
 // A shard message (tide/shard.h) for the match, from the orchestrator or
 // another shard: the server applies it at the start of a coming tick, in the
 // order they were handed it, and its players get it in that tick's frame and
@@ -600,7 +625,7 @@ typedef struct tide_client_status {
     uint32_t near_kept;            // Confirmed ticks, run whole as something was far, that kept the predicted ticks after them
     uint64_t world_bytes;          // Bytes the server sent of worlds so far: whole, as deltas, and the hashes of their pages
     uint64_t cookie;               // What makes this player this player again, on the next connection
-    char message[TIDE_MESSAGE_BYTES]; // With TIDE_DISCONNECT_KICKED: the server's message
+    char message[TIDE_MESSAGE_BYTES]; // With TIDE_DISCONNECT_KICKED or _BANNED: the server's message
 } tide_client_status;
 
 // What views draw: the latest tick's world, the one before it, and how far
@@ -729,6 +754,10 @@ void tide_session_close(tide_session *s);
 void tide_session_kick(tide_session *s, tide_player_id player, const char *message);
 // The same for every player on another machine.
 void tide_session_kick_all(tide_session *s, const char *message);
+// Bans a player of the match this machine runs (see tide_server_ban), or
+// lifts that. Nothing on a client, or for this machine's own player.
+void tide_session_ban(tide_session *s, tide_player_id player, const char *message);
+void tide_session_unban(tide_session *s, tide_player_id player);
 // Joining the server it joined last, it's the same player again, if the server
 // still has room for them. While migrating, it's the match's next server.
 void tide_session_join(tide_session *s, tide_transport network, tide_address server, double now);
@@ -808,6 +837,9 @@ tide_event_log *tide_session_events(tide_session *s);
 void tide_session_mark_presented(tide_session *s);
 // The server's world, on the machine that runs it; NULL elsewhere.
 const void *tide_session_server_world(const tide_session *s);
+// ...and its server (a match not sharded): what the host calls tide_server_ban
+// and the like on, or reads its recovery state from. NULL elsewhere.
+tide_server *tide_session_server(tide_session *s);
 tide_session_status tide_session_status_of(const tide_session *s);
 // The next thing that happened since the last call, oldest first.
 bool tide_session_next_event(tide_session *s, tide_session_event *event);
@@ -885,8 +917,9 @@ typedef bool (*tide_migrate_fn)(void *user, const void *from, void *to);
 bool tide_session_migrate(tide_session *s, const tide_game *game, tide_migrate_fn migrate, void *user);
 
 // What local code asked for, with Session.Start, Join, Connect, Leave, Open,
-// Close, Kick, KickAll, End, Watch and Unwatch, and Clipboard.Copy, which isn't
-// the session's but goes to the host the same way.
+// Close, Kick, KickAll, Ban, Unban, End, Watch and Unwatch, and Clipboard.Copy
+// and Application.Quit, which aren't the session's but go to the host the
+// same way.
 typedef enum tide_session_request_kind {
     TIDE_REQUEST_NONE,
     TIDE_REQUEST_START,
@@ -901,6 +934,9 @@ typedef enum tide_session_request_kind {
     TIDE_REQUEST_COPY,    // Text onto this machine's clipboard
     TIDE_REQUEST_WATCH,   // An area of a sharded world this machine sees wherever its player is (tide_session_watch)
     TIDE_REQUEST_UNWATCH, // ...and no longer
+    TIDE_REQUEST_BAN,     // A player, with a message: kicked, and kept out for the rest of the match
+    TIDE_REQUEST_UNBAN,   // ...and let in again
+    TIDE_REQUEST_QUIT,    // The program ends after this frame, as when its window closes (tide_platform_quit)
 } tide_session_request_kind;
 
 #define TIDE_DEFAULT_PORT 7777u
@@ -908,8 +944,8 @@ typedef enum tide_session_request_kind {
 typedef struct tide_session_request {
     uint32_t kind;
     uint32_t port;          // Open: the port to take players on. Connect: the server's, unless `text` has one
-    tide_player_id player;  // Kick: whom
+    tide_player_id player;  // Kick, Ban and Unban: whom
     char text[TIDE_MESSAGE_BYTES]; // Join: the room's code. Connect: the server's address, "host" or "host:port".
-                                   // Kick and KickAll: the message. Copy: the text
+                                   // Kick, KickAll and Ban: the message. Copy: the text
     tide_shard_box area;           // Watch: the area
 } tide_session_request;

@@ -1,0 +1,24 @@
+// A game that ends itself: at its 30th frame a view calls Application.Quit,
+// and the program ends after that frame, as when its window closes, with exit
+// code 0. Its Main is the match's, so a match runs as it quits, which the host
+// leaves first. With no window (platform/tests/quit.mjs) the run's last
+// picture is that frame's; on the web the page hears the program end
+// (tide_platform_web_quit).
+
+scene Main { }
+
+local singleton Frames
+{
+    int count;
+}
+
+view Count(mut Frames frames)
+{
+    frames.count += 1;
+    // Green from the frame it quits in: a later one would never draw
+    Draw.Clear(frames.count >= 30 ? Color(0, 1, 0) : Color(1, 0, 0));
+    if (frames.count == 30)
+    {
+        Application.Quit();
+    }
+}

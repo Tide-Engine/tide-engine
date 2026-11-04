@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 9u
+#define TIDE_EMBED_ABI 10u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -96,7 +96,10 @@ typedef struct tide_embed_status {
     char room[TIDE_NETWORK_ADDRESS_BYTES]; // The code others join the match by, as Session.room says; "" for none
     char message[TIDE_MESSAGE_BYTES];      // A kick's message, once kicked
     uint8_t microphone;      // The game listens to the microphone (Clip.Microphone): tide_embed_microphone, please
-    uint8_t tide_pad[3];
+    // The game asked to quit (Application.Quit): this program decides what that
+    // is, such as ending itself, and the game goes on until it's destroyed
+    uint8_t quit;
+    uint8_t tide_pad[2];
 } tide_embed_status;
 
 _Static_assert(sizeof(tide_embed_status) == 52 + TIDE_NETWORK_ADDRESS_BYTES + TIDE_MESSAGE_BYTES + 4,

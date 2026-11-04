@@ -249,8 +249,11 @@ static double tide_run_frame_now;
 // the command line says for everyone or for this player of several
 static tide_net_conditions tide_run_conditions;
 // The server went away or turned this machine away: not because it left,
-// couldn't start, was kicked, or the match ran out of scenes
+// couldn't start, was kicked or banned, or the match ran out of scenes
 static bool tide_run_dropped;
+// The game asked to quit (Application.Quit): the program ends after the
+// frame, or inside another program, that program hears it (tide_embed_status)
+static bool tide_run_quit;
 // Host migration: when this machine went to its match's room again, or 0
 static double tide_run_migrating_since;
 // The last Join or Connect asked for, which a script's `rejoin` asks for again
@@ -596,6 +599,17 @@ static inline void tide_run_request(const tide_session_request *request, const v
     case TIDE_REQUEST_KICK_ALL:
         tide_session_kick_all(s, request->text);
         break;
+    case TIDE_REQUEST_BAN:
+        tide_session_ban(s, request->player, request->text);
+        break;
+    case TIDE_REQUEST_UNBAN:
+        tide_session_unban(s, request->player);
+        break;
+    case TIDE_REQUEST_QUIT:
+        // After this frame, as when the window closes (tide_run_close). Another program's frame: that program decides
+        tide_run_quit = true;
+        if (!tide_run_embedded) tide_platform_quit();
+        break;
     case TIDE_REQUEST_JOIN:
         tide_run_discard_commands();
         tide_network_match_leave(&tide_run_network);
@@ -934,8 +948,19 @@ static inline void tide_run_configure(const tide_run_desc *desc)
 
 // Opens tide_run_game's window, as `desc` and the game's settings say, or
 // none for a run that asked for none.
+static inline void tide_run_end(void);
+
+// The window closed, or the game quit: the match is left (its server's
+// players told, or with host migration handed over) and the local state let
+// go before the program ends (tide_platform_on_close).
+static inline void tide_run_close(void)
+{
+    if (tide_run_session) tide_run_end();
+}
+
 static inline void tide_run_open(const tide_run_desc *desc)
 {
+    tide_platform_on_close(tide_run_close);
     tide_run_configure(desc);
     if (tide_run_headless) {
         tide_platform_open_headless(&tide_run_headless_desc);
@@ -1256,6 +1281,7 @@ static inline void tide_run_end(void)
     tide_run_local = NULL;
     tide_run_start = NULL;
     tide_run_dropped = false;
+    tide_run_quit = false;
     tide_run_migrating_since = 0.0;
     tide_draw_free(&tide_run_gui.list);
     memset(&tide_run_gui, 0, sizeof tide_run_gui);
@@ -1444,7 +1470,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     while (tide_session_next_event(s, &event)) {
         const bool connected = event.kind == TIDE_SESSION_CONNECTED_EVENT;
         tide_run_dropped = !connected && event.reason != TIDE_DISCONNECT_LEFT && event.reason != TIDE_DISCONNECT_FAILED &&
-                           event.reason != TIDE_DISCONNECT_ENDED && event.reason != TIDE_DISCONNECT_KICKED;
+                           event.reason != TIDE_DISCONNECT_ENDED && event.reason != TIDE_DISCONNECT_KICKED &&
+                           event.reason != TIDE_DISCONNECT_BANNED;
         if (connected) game->connected(tide_run_local);
         else game->disconnected(tide_run_local, event.reason, event.message);
     }

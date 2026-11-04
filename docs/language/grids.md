@@ -121,6 +121,8 @@ system Spread(mut Heat heat)
 
 Each step reads the grid as the loop found it, and changes only its own cell, `at`. So it doesn't matter which steps run first, or on which thread: the result is exactly the same on one thread as on many, on every machine. Code after the loop runs once every step is done.
 
+How many threads a loop gets never changes what it makes, only how soon. tidec reckons what a step costs, counting the functions it calls, and a loop whose steps come to little in all, under a millisecond or so, runs on one thread. More goes to threads, even a short list of costly steps, or a grid or list the system filled that same tick.
+
 That loop runs below, 30 times a second, less a little heat each tick so it cools. Drag over the grid to heat its cells.
 
 ::: tide-example grids Heat that spreads

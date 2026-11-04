@@ -771,6 +771,17 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_first_tick)
     endif()
 
+    # A game that quits itself (Application.Quit), in such a run: it ends at
+    # that frame with exit code 0, its last picture that frame's.
+    tide_add_game(tide_platform_quit SOURCES tests/quit.tide)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_quit
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quit.mjs" $<TARGET_FILE:tide_platform_quit>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_quit-run")
+        set_tests_properties(tide_platform_quit PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_quit)
+    endif()
+
     # Such a run of several players (tide/run.h's --players): each a process of
     # its own, a frame at a time together on a made-up network. A game whose
     # Main is the match's, where the first player opens it and the others join,
@@ -977,6 +988,14 @@ if(TIDE_WEB)
     target_link_libraries(tide_platform_web_first_tick PRIVATE tide_platform)
     tide_web_page(tide_platform_web_first_tick SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_web_first_tick TARGET tide_platform_web_first_tick)
+
+    # ...and a game that quits itself (Application.Quit): the page stops
+    # running it and hears it end with exit code 0, which only the quit makes.
+    # The standard host's frames are the page's animation frames, which run in
+    # real time: served, not in the file runner's virtual time.
+    tide_add_game(tide_platform_web_quit SOURCES tests/quit.tide)
+    tide_web_page(tide_platform_web_quit SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_quit TARGET tide_platform_web_quit SERVED SECONDS 60)
 
     # Two players in a room: a relay on this machine, and WebRTC between two
     # frames of one page, in real time rather than the other tests' virtual time.

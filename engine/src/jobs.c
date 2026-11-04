@@ -31,6 +31,14 @@
 #define LOOP_WORK 100000u
 #endif
 
+// A parallel loop in a tick that runs on one thread calls the pool's threads
+// in for itself past this much work, as the loop finds it: the tick's
+// reckoning comes before its systems run, so a list a system fills, or a grid
+// it sets the first cells of, counts as empty there. Waking threads for one
+// loop costs less than waking them for a tick, which then runs every system
+// on them, so it's a tenth of PARALLEL_WORK.
+#define ROUND_WORK (PARALLEL_WORK / 10u)
+
 // A system with fewer chunks than there are threads runs each chunk in pieces
 // (tide_system_tasks.run): about two tasks a thread, each worth at least this
 // much work (a few microseconds), and up to this many pieces a chunk.
@@ -430,10 +438,66 @@ static void work(void *context, const uint32_t thread)
     current = NULL;
 }
 
+// While a tick runs on one thread: the threads it could have had, so its C
+// knows there's a pool. And whether the last tick's C started tasks, which
+// puts the next one on threads. And the pool, tick and world, for a parallel
+// loop that's worth threads all the same (round_loop).
+static TIDE_THREAD_LOCAL uint32_t serial_threads;
+static TIDE_THREAD_LOCAL bool tasks_wanted;
+static TIDE_THREAD_LOCAL const tide_jobs *serial_jobs;
+static TIDE_THREAD_LOCAL const tide_tick_systems *serial_tick;
+static TIDE_THREAD_LOCAL void *serial_world;
+
+typedef struct loop_round {
+    loop_job *job;
+    const tide_tick_systems *tick;
+    void *world;
+} loop_round;
+
+static void take_loop(void *context, const uint32_t thread)
+{
+    const loop_round *round = context;
+    loop_job *job = round->job;
+    bool prepared = thread == 0u; // The caller's thread is the tick's, prepared already
+    for (;;) {
+        const uint32_t task = atomic_fetch_add(&job->next, 1u);
+        if (task >= job->count) break;
+        if (!prepared) { // As a thread of a tick on threads is, before its first task
+            tide_memory_sync(); // What the loop's system made on its own thread
+            if (round->tick->prepare) round->tick->prepare(round->world);
+            prepared = true;
+        }
+        job->work(job->context, task);
+        atomic_fetch_add(&job->done, 1u);
+    }
+}
+
+// A loop's steps on the pool's threads, in a round of their own, from a tick
+// on one thread. The steps never depend on each other, so it's the same as
+// running them here in order. False when there's no pool to have, or the
+// loop's too little work for one.
+static bool round_loop(const uint32_t count, void (*work_fn)(void *context, uint32_t task), void *context,
+                       const uint64_t cost)
+{
+    const tide_jobs *jobs = serial_jobs;
+    if (!jobs || jobs->threads < 2u || count < 2u || cost < ROUND_WORK) return false;
+    loop_job job = {work_fn, context, count, 0u, 0u};
+    atomic_init(&job.next, 0u);
+    atomic_init(&job.done, 0u);
+    loop_round round = {&job, serial_tick, serial_world};
+    serial_jobs = NULL; // A loop inside its steps runs in order (the other threads have none)
+    tide_memory_sync(); // What the system made, for the other threads
+    jobs->run(jobs->self, take_loop, &round);
+    serial_jobs = jobs;
+    tide_memory_sync(); // What the other threads made (see tide/page.h)
+    return true;
+}
+
 void tide_parallel_for(const uint32_t count, void (*work_fn)(void *context, uint32_t task), void *context,
                        const uint64_t cost)
 {
     tick_run *r = current;
+    if (!r && round_loop(count, work_fn, context, cost)) return;
     if (!r && tide_worker_parallel(count, work_fn, context, cost)) return;
     loop_job job = {work_fn, context, count, 0u, 0u};
     atomic_init(&job.next, 0u);
@@ -459,12 +523,6 @@ void tide_parallel_for(const uint32_t count, void (*work_fn)(void *context, uint
     while (atomic_load(&slot->users)) relax();
     tide_memory_sync(); // What the other threads made (see tide/page.h)
 }
-
-// While a tick runs on one thread: the threads it could have had, so its C
-// knows there's a pool. And whether the last tick's C started tasks, which
-// puts the next one on threads.
-static TIDE_THREAD_LOCAL uint32_t serial_threads;
-static TIDE_THREAD_LOCAL bool tasks_wanted;
 
 tide_job tide_job_start(void (*work_fn)(void *context), void *context)
 {
@@ -682,6 +740,9 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
     }
     if (jobs && jobs->threads > 1) tasks_wanted = false; // A tick with no threads to have says nothing of the next
     serial_threads = jobs ? jobs->threads : 1u;
+    serial_jobs = jobs && jobs->threads > 1u ? jobs : NULL;
+    serial_tick = tick;
+    serial_world = world;
 
     // One thread, in order, recording straight into the world's queue, with
     // the same tasks, temporary handles and settling as on threads
@@ -707,5 +768,8 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
         first += tasks;
     }
     serial_threads = 0;
+    serial_jobs = NULL;
+    serial_tick = NULL;
+    serial_world = NULL;
     tide_entities_settle(tick->entities);
 }

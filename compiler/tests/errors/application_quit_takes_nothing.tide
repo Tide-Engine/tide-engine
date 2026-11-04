@@ -1,0 +1,6 @@
+// expect: Application.Quit takes nothing: 'Application.Quit()'
+local scene Main { }
+view Menu()
+{
+    if (GUILayout.Button("Quit")) Application.Quit(1);
+}

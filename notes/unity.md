@@ -1,5 +1,20 @@
 # Unity as a front end
 
+## Embed ABI 10: the game asks to quit (2026-11-04)
+
+`tide_embed_status.quit` (a former pad byte; size 376 unchanged) is set once
+the game calls `Application.Quit`, until the embed ends. `TideNative.cs` has
+`quit` and `pad[2]`, `TideLibrary.Abi` is 10. `TideRunner.FollowQuit` acts
+once per embed: a `QuitAsked` handler decides; without one, the editor leaves
+play mode (`EditorApplication.isPlaying = false`) and a player calls
+`UnityEngine.Application.Quit()`. The sample's generated `DisconnectReason`
+gains `Banned = 7`. Not run in Unity locally (no Unity tests here); the
+native embed still builds and its tests pass (`tide_platform_embed`).
+Correction the same day: `TideGame.cs` had been edited alone, and CI's
+`tide_cli_tests` (`unity_code_writes_the_samples_package`) regenerates it from
+the Sample's `schema.json`; that and `components.json` gained `Banned` (7) too,
+so the three agree.
+
 ## Protect cached compilers from expiry (2026-11-03)
 
 The CLI now removes exact cached versions after 30 days without use
@@ -1020,7 +1035,8 @@ a GameObject as a command's target): "yeah I think that makes sense yes".
   (Room live, a non-ASCII `Say` comes back in `Extras`, `Paint` sent to the ball's GameObject colors that ball).
 
 Gaps then, bridged the same day (below): events' and singletons' map, grid and heap-holding list fields left out
-of the classes; a component's struct fields Tide literals in Play. (Commands hold lists of bytes alone: Tide's rule.)
+of the classes; a component's struct fields Tide literals in Play. (Commands held lists of bytes alone then: Tide's rule. Since 2026-11-04 they hold lists of any plain value,
+`notes/netcode.md`, Commands holding lists of values; `tide_embed_command_list` takes them, untested from C#.)
 
 ### Every type in C# (2026-10-22)
 

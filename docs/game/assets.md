@@ -471,6 +471,8 @@ view Cast(Lamp lamp, Viewer viewer, Rock rock)
 
 It takes what `Draw.Camera` takes for a 3D camera: a position, a rotation and a field of view, or a transform and a projection (`Draw.CameraTransform()` and `Draw.CameraProjection()` give the window's). With nothing, `SetLODCamera()`, the destination's own camera picks again. A level that's named wins over a camera that's named.
 
+A shadow map covers more than the player sees: meshes beside the player and behind them. Those pick by how far out of the view they are, so they cast coarser shadows the farther out they are, and the shadow map's `SetLODPixels` coarsens them as it does the rest.
+
 ::: info
 That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level, a pixel tolerance or a camera to pick by, are decided. How the levels are made and the other rules above are how it works today, and may still change.
 :::

@@ -197,6 +197,7 @@ singleton Results
     int held;
     int digits;
     int noDigits;
+    int isList;
     int spent;
     int overspent;
     int validated;
@@ -281,6 +282,12 @@ system Unwrap(mut Results results)
     var digits = Digits("123") ?? [];
     results.digits = digits.count;
     results.noDigits = (Digits("") ?? []).count;
+    // A list `is` names, read by a foreach (debug builds wrap list locals for debuggers)
+    if (Digits("123") is List<int> got)
+    {
+        foreach (var d in got) results.isList += d;
+    }
+    if (Digits("") is List<int> empty) results.isList += 100 + empty.count;
 
     var stats = Stats { hp = 20 };
     results.spent = stats.Spend(5) ?? -1;

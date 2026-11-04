@@ -570,8 +570,11 @@ typedef struct tide_par_list {
 } tide_par_list;
 
 // Sets `l` up to go over a world's list `list` of elements of `size` bytes, in
-// blocks of `block` elements starting at `offset`.
-void tide_par_list_begin(tide_par_list *l, tide_list *list, uint32_t size, int32_t block, int32_t offset);
+// blocks of `block` elements starting at `offset`. `cost` is what tidec
+// reckons a step costs: steps that cost much go fewer to a task, so a short
+// list of them still shares out over every thread. Only how the steps are
+// shared out depends on it, never what they make.
+void tide_par_list_begin(tide_par_list *l, tide_list *list, uint32_t size, int32_t block, int32_t offset, uint64_t cost);
 
 // Task `task`'s blocks, by index: from *from up to *to. Its copy of their
 // elements, as the loop found them, which its steps write: the first is the

@@ -143,6 +143,7 @@ tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
 target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=15404513570503856259ull)
+tide_e2e_test(foreach_borrow) # A read-only foreach borrows elements that hold lists; one whose body could change them copies
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
 target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=15339636516785361681ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
@@ -333,6 +334,8 @@ tide_e2e_test(commands)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)
 set_tests_properties(tidec_e2e_commands_channels PROPERTIES TIMEOUT 300)
+# Commands holding lists of ints, floats, enums, entities and structs: packed, repaired, bounded, refused, and in chunks
+tide_e2e_test(command_lists)
 add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/command_schema"
@@ -448,6 +451,11 @@ foreach(variant IN ITEMS condition step block constant)
     endif()
     add_test(NAME ${target} COMMAND ${target})
 endforeach()
+tide_e2e_test(parallel_fill) # A singleton's lists filled in their tick, and short lists of costly steps, still use the pool
+if(TIDE_PLATFORM) # ...the platform layer's threads, where there are some
+    target_link_libraries(tidec_e2e_parallel_fill PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_parallel_fill PRIVATE TIDE_PARALLEL_FILL_THREADS=1)
+endif()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates
@@ -513,6 +521,15 @@ if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some
 endif()
 tide_e2e_test(cpp SOURCES e2e/cpp.tide e2e/cpp_code.cpp) # ...and from its C++ file, with no C++ runtime
 tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, and T?
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    # The names `is` gives must be the debugger's typed list wrappers, as other list locals are.
+    tide_add_game(tidec_e2e_fails_visualizers VISUALIZERS
+        SOURCES e2e/fails.tide e2e/fails_c.c NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fails_test.c")
+    target_compile_options(tidec_e2e_fails_visualizers PRIVATE -g) # VISUALIZERS needs debug info in every preset
+    target_include_directories(tidec_e2e_fails_visualizers PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    add_test(NAME tidec_e2e_fails_visualizers COMMAND tidec_e2e_fails_visualizers)
+endif()
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
 tide_e2e_test(settings SOURCES e2e/settings.tide e2e/settings_more.tide) # Several blocks, in two files, are one list
 tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What ticks and frames say to a host's profiler

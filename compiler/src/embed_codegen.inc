@@ -613,12 +613,7 @@ static void gen_embed(gen *g)
             }
             // What local code's Send would refuse as too big for a command ends the program; this says false
             sb_put(o, "        if (ok) {\n            uint32_t room = TIDE_COMMAND_BYTES;\n");
-            for (int i = 0; i < paths.count; i++) {
-                const heap_path *hp = &paths.items[i];
-                if (hp->list && type_has_bytes((type){TY_LIST, (decl *)hp->list})) {
-                    sb_printf(o, "            room += 8u + (uint32_t)tide_list_count(v.%s);\n", hp->path);
-                }
-            }
+            gen_command_rooms(g, o, d, "v", "            ");
             sb_printf(o, "            uint8_t *bytes = malloc(room);\n            if (!bytes) tide_out_of_memory();\n"
                          "            const uint32_t written = tide_write_command_%s(target, v, bytes, room);\n"
                          "            ok = written && tide_game_check_command(bytes, written, NULL);\n            free(bytes);\n        }\n"

@@ -45,6 +45,8 @@ A game that starts in a menu selects a local scene as its entry, such as a local
 | `Session.Close()` | Lets no one else join; the players in the match stay |
 | `Session.Kick(player, message)` | Sends a player out of the match this machine runs, telling them why (the message is optional) |
 | `Session.KickAll(message)` | The same for every player on another machine |
+| `Session.Ban(player, message)` | Kicks a player and keeps them out for the rest of the match (the message is optional) |
+| `Session.Unban(player)` | Lets a banned player join again |
 | `Session.Join(code)` | Joins the match in the room with this code, like `"K7QF2M"`, or on [a network of the game's own](./own-network.md), by the text that network takes |
 | `Session.Connect(address)` | Joins another machine's match by its address: `"192.168.1.5"`, `"192.168.1.5:7777"` or a name like `"localhost"` |
 | `Session.Connect(address, port)` | The same, on another port than 7777 |
@@ -63,6 +65,19 @@ There's one kind of match. It starts closed, so single-player is just a match no
 Session.Close();
 Session.KickAll("Thanks for playing!");
 ```
+
+### Bans
+
+`Session.Ban(player, message)` kicks a player, who goes offline with `Banned` and the message, and keeps them out for the rest of the match: each time they try to join again, open or closed, they're refused with the same `Banned` and message. `Session.Unban(player)` lets them in again, as the same player, while the match is open. Like kicks, bans only change a match this machine runs, and its own player can't be banned.
+
+A ban is of the player as the match knows them, the `PlayerID` they joined as. Their `PlayerID` stays theirs while they're banned, so nobody new is given it, and a ban goes with the match when [host migration](#host-migration) hands it to another machine, message and all. A returning player is known by the secret their machine was given when it first joined, so a ban can't stop someone who comes back without it: from another device, after clearing what the game kept, or by joining a migrated match at its new host's address. A [dedicated server](#dedicated-servers) whose host checks accounts binds the ban to the account as well, which a fresh start doesn't escape.
+
+```csharp
+view Players(Session session, mut Moderation moderation)
+{
+    if (!session.server) return;
+    if (GUILayout.Button("Ban the cheater")) Session.Ban(moderation.reported, "Cheating");
+}
 
 ```csharp
 local scene Main { }
@@ -179,6 +194,7 @@ The built-in local events `Connected` and `Disconnected` say when that changes. 
 | `Failed` | It couldn't start: no network, a port in use, an address that isn't one, or a room nobody has |
 | `Ended` | The match's last scene unloaded (see [Scenes](../game/scenes.md#loading-and-unloading)), or the machine running it called `Session.End()` |
 | `Kicked` | The server's machine sent it away, saying why in `message` |
+| `Banned` | The server's machine banned it, or turned it away as banned, saying why in `message` |
 
 ```csharp
 local event(Disconnected gone) BackToMenu(mut Menu menu)

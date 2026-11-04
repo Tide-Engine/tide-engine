@@ -501,6 +501,35 @@ static bool commands_have_bytes(const program *prog)
     return false;
 }
 
+// Whether a value of type `t` is or holds a list: in a command, one that goes
+// over TIDE_COMMAND_BYTES, in chunks, a List<byte> or a list of other values
+static bool command_has_list(const type t)
+{
+    if (t.kind == TY_LIST) return true;
+    if (t.kind == TY_ARRAY) return command_has_list(t.decl->fields.items[0].type);
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (command_has_list(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+static bool decl_has_list(const decl *d)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        if (command_has_list(d->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+static bool commands_have_lists(const program *prog)
+{
+    for (int k = 0; k < prog->command_types.count; k++) {
+        if (decl_has_list(prog->command_types.items[k])) return true;
+    }
+    return false;
+}
+
 static bool commands_unordered(const program *prog)
 {
     for (int k = 0; k < prog->command_types.count; k++) {
@@ -510,10 +539,10 @@ static bool commands_unordered(const program *prog)
 }
 
 // The limit a command's packed bytes are checked against: one that holds a
-// file's bytes goes in chunks, up to TIDE_COMMAND_LIMIT
+// list (a file's bytes, or other values) goes in chunks, up to TIDE_COMMAND_LIMIT
 static const char *command_limit(const decl *d)
 {
-    return decl_has_bytes(d) ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
+    return decl_has_list(d) ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
 }
 
 // A command's channel, as generated C names it (see tide/session.h)
@@ -7106,8 +7135,8 @@ static void hoist_unwrap(gen *g, expr *e)
         else sb_printf(o, "%sbool %s = !%s.ok && %s.error == %s;\n", is_const, name.data, r, r, enum_member_cname(e->type_decl, e->enum_member));
         task_declare(g, name.data, (type){TY_BOOL, NULL});
         if (e->binding) {
-            line(g, o, "if (%s) %s = %s.%s;", name.data, local_cname(g, e->binding->name), r,
-                 e->looks_for == IS_VALUE ? "value" : "error");
+            line(g, o, "if (%s) %s%s = %s.%s;", name.data, local_cname(g, e->binding->name),
+                 typed_list_local(g, e->binding) ? ".list" : "", r, e->looks_for == IS_VALUE ? "value" : "error");
         }
         return;
     }
@@ -7158,10 +7187,11 @@ static void declare_bindings(gen *g, const expr *cond)
     if (cond->kind == E_IS && cond->binding) {
         const stmt *b = cond->binding;
         const char *name = local_cname(g, b->name);
+        const bool typed = typed_list_local(g, b); // A list is its debugger struct, as other list locals are
         indent(g, &g->c);
-        sb_printf(&g->c, "%s %s = ", c_type(b->type), name);
+        sb_printf(&g->c, "%s %s = %s", typed ? typed_list_cname(b->type) : c_type(b->type), name, typed ? "{" : "");
         gen_default(g, &g->c, b->type);
-        sb_put(&g->c, ";\n");
+        sb_put(&g->c, typed ? "};\n" : ";\n");
         line(g, &g->c, "(void)%s;", name);
         task_declare(g, name, b->type);
     }
@@ -7219,7 +7249,7 @@ static void gen_grid_foreach(gen *g, const stmt *s);
 static void gen_map_foreach(gen *g, const stmt *s);
 static void gen_query_foreach(gen *g, const stmt *s);
 static void gen_sort_call(gen *g, const expr *sort);
-static uint64_t stmt_cost(const stmt *s);
+static uint64_t step_cost(const stmt *s);
 
 // Keep a stored foreach receiver's indexes once, but find its container again
 // each round. A pointer into an outer list/map can be invalidated by the body.
@@ -7257,22 +7287,166 @@ static const char *foreach_value(gen *g, expr *e)
     return value;
 }
 
+// A list foreach whose elements hold lists borrows each element (its handles,
+// as the list has them) rather than copying it, lists and all, when nothing in
+// the body can change the list or what its elements hold: the element is
+// read-only, and anything that takes it as a value elsewhere copies it then
+// (gen_value_of). What could is a write to a place that overlaps the list's,
+// a call that changes the world (World.Set replaces a component's lists), a
+// task started or waited for, or C. A task's loop keeps its copy: a wait lets
+// anything run.
+
+// The variable, parameter or `this` a place is in, or NULL for a value of its own.
+static const expr *borrow_root(const expr *e)
+{
+    while (e && (e->kind == E_MEMBER || e->kind == E_INDEX)) {
+        if (e->kind == E_MEMBER && !e->field) return NULL; // A property or a computed member: no place
+        e = e->object;
+    }
+    if (!e) return NULL;
+    if (e->kind == E_THIS) return e;
+    if (e->kind == E_NAME && (e->bind == BIND_LOCAL || e->bind == BIND_PARAM || e->bind == BIND_FIELD)) return e;
+    return NULL;
+}
+
+static bool borrow_same_root(const expr *a, const expr *b)
+{
+    const bool this_a = a->kind == E_THIS || a->bind == BIND_FIELD, this_b = b->kind == E_THIS || b->bind == BIND_FIELD;
+    if (this_a || this_b) return this_a && this_b;
+    if (a->bind != b->bind) return false;
+    return a->bind == BIND_LOCAL ? a->local == b->local : a->param == b->param;
+}
+
+// The steps from a place's root to it: fields and indexes, a BIND_FIELD name's field first.
+static int borrow_path(const expr *e, const expr **steps, const int most)
+{
+    int n = 0;
+    for (const expr *p = e; p && (p->kind == E_MEMBER || p->kind == E_INDEX); p = p->object) n++;
+    const bool named_field = borrow_root(e) && borrow_root(e)->kind == E_NAME && borrow_root(e)->bind == BIND_FIELD;
+    const int total = n + (named_field ? 1 : 0);
+    if (total > most) return -1;
+    int at = total;
+    for (const expr *p = e; p && (p->kind == E_MEMBER || p->kind == E_INDEX); p = p->object) steps[--at] = p;
+    if (named_field) steps[0] = borrow_root(e);
+    return total;
+}
+
+static const field *borrow_step_field(const expr *step)
+{
+    return step->kind == E_INDEX ? NULL : step->field;
+}
+
+// Whether a write to place `w` can change what place `src` holds: one is in the
+// other, or they could be the same element. Fields that differ are apart.
+static bool borrow_overlaps(const expr *w, const expr *src)
+{
+    if (!src) return false; // The loop's own copy of a computed list: nothing else names it
+    const expr *wr = borrow_root(w), *sr = borrow_root(src);
+    if (!wr) return false; // A value of its own: no place another can see
+    if (!sr) return true;
+    if (!borrow_same_root(wr, sr)) return false;
+    const expr *ws[32], *ss[32];
+    const int wn = borrow_path(w, ws, 32), sn = borrow_path(src, ss, 32);
+    if (wn < 0 || sn < 0) return true;
+    for (int i = 0; i < wn && i < sn; i++) {
+        const bool wi = ws[i]->kind == E_INDEX, si = ss[i]->kind == E_INDEX;
+        if (wi != si) return true;
+        if (!wi && borrow_step_field(ws[i]) != borrow_step_field(ss[i])) return false;
+    }
+    return true;
+}
+
+static bool borrow_disturbed_stmt(const stmt *s, const expr *src);
+
+static bool borrow_disturbed_expr(const expr *e, const expr *src)
+{
+    if (!e) return false;
+    if (e->kind == E_AWAIT || e->task_start_value || e->call == CALL_TASK) return true;
+    if (e->kind == E_STEP && borrow_overlaps(e->lhs, src)) return true;
+    const decl *m = (e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_BINARY || e->kind == E_UNARY) ? e->method : NULL;
+    const bool routine = m && (e->call == CALL_FUNCTION || e->call == CALL_METHOD || e->kind == E_BINARY || e->kind == E_UNARY);
+    if (routine && (m->is_extern || m->calls_c || changes_world(m) || takes_world_bindings(m) || m->starts_tasks)) return true;
+    if (e->call == CALL_WORLD && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) return true;
+    if (writes(e)) {
+        // What it writes is its receiver or an argument: any of them, to be safe
+        if (e->object && borrow_overlaps(e->object, src)) return true;
+        const expr *root = src ? borrow_root(src) : NULL;
+        if (e->kind == E_CALL && e->call == CALL_METHOD && !e->object && root && (root->kind == E_THIS || root->bind == BIND_FIELD)) {
+            return true; // A mut method of `this`
+        }
+        if (e->lhs && borrow_overlaps(e->lhs, src)) return true;
+        if (e->rhs && borrow_overlaps(e->rhs, src)) return true;
+        for (int i = 0; i < e->args.count; i++) {
+            if (borrow_overlaps(e->args.items[i], src)) return true;
+        }
+    }
+    if (borrow_disturbed_expr(e->object, src) || borrow_disturbed_expr(e->lhs, src) || borrow_disturbed_expr(e->rhs, src)
+        || borrow_disturbed_expr(e->cond, src) || borrow_disturbed_expr(e->skin_pose, src) || borrow_disturbed_expr(e->mesh_lod, src)
+        || borrow_disturbed_expr(e->lambda_body, src) || borrow_disturbed_stmt(e->block, src)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (borrow_disturbed_expr(e->args.items[i], src)) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (borrow_disturbed_expr(e->inits.items[i].value, src)) return true;
+    }
+    return false;
+}
+
+static bool borrow_disturbed_stmt(const stmt *s, const expr *src)
+{
+    if (!s) return false;
+    if (s->kind == S_ASSIGN && (borrow_overlaps(s->target, src) || borrow_disturbed_expr(s->property_set, src))) return true;
+    if (s->kind == S_FOREACH && s->query) return true; // A query's rows can come with what it writes
+    if (borrow_disturbed_expr(s->cond, src) || borrow_disturbed_expr(s->value, src) || borrow_disturbed_expr(s->target, src)
+        || borrow_disturbed_expr(s->by, src) || borrow_disturbed_expr(s->offset, src)) return true;
+    for (int i = 0; i < s->stmts.count; i++) {
+        if (borrow_disturbed_stmt(s->stmts.items[i], src)) return true;
+    }
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) {
+            if (borrow_disturbed_expr(s->cases.items[i].labels.items[k], src)) return true;
+        }
+        for (int k = 0; k < s->cases.items[i].body.count; k++) {
+            if (borrow_disturbed_stmt(s->cases.items[i].body.items[k], src)) return true;
+        }
+    }
+    return borrow_disturbed_stmt(s->init, src) || borrow_disturbed_stmt(s->step, src) || borrow_disturbed_stmt(s->then_stmt, src)
+        || borrow_disturbed_stmt(s->else_stmt, src);
+}
+
+// Whether a list foreach's element can be borrowed (above).
+static bool foreach_borrows(const gen *g, const stmt *s)
+{
+    if (!type_has_list(s->type) || g->task) return false;
+    // A place's list is read where it is (foreach_value); any other is the loop's own copy
+    const expr *src = is_place(s->value) && !s->value->kept ? s->value : NULL;
+    if (src && !borrow_root(src)) return false; // Through a property: not a place this can follow
+    // Code that changes the world through it could replace the component the list is in
+    const decl *code = g->code;
+    if (src && code && (code->world_sets || takes_world_bindings(code)) && borrow_root(src)->bind != BIND_LOCAL) return false;
+    return !borrow_disturbed_stmt(s->then_stmt, src);
+}
+
 // Session.Start(Arena { ... }), Join, Connect, Leave and End, Session.Open and
-// Close, and Session.Kick and KickAll: recorded in the local state, for the
-// host program to act on after the frame. A Start, Join, Connect, Leave or End
-// ends the match the Opens, Closes and Kicks before it were for, so it drops
-// them.
+// Close, and Session.Kick, KickAll, Ban and Unban: recorded in the local
+// state, for the host program to act on after the frame. A Start, Join,
+// Connect, Leave or End ends the match the Opens, Closes, Kicks and Bans
+// before it were for, so it drops them.
 static void gen_session_call(gen *g, const expr *e)
 {
     sb *o = &g->c;
     const bool kick = str_eq_c(e->name, "Kick");
-    if (kick || str_eq_c(e->name, "KickAll")) {
+    const bool ban = str_eq_c(e->name, "Ban");
+    const bool unban = str_eq_c(e->name, "Unban");
+    if (kick || ban || unban || str_eq_c(e->name, "KickAll")) {
+        const bool one = kick || ban || unban; // Of one player
         indent(g, o);
-        sb_printf(o, "tide_request_kick(tide_l, %s, ", kick ? "TIDE_REQUEST_KICK" : "TIDE_REQUEST_KICK_ALL");
-        if (kick) gen_expr(g, o, e->args.items[0]);
+        sb_printf(o, "tide_request_kick(tide_l, %s, ", kick ? "TIDE_REQUEST_KICK" : ban ? "TIDE_REQUEST_BAN"
+                                                      : unban ? "TIDE_REQUEST_UNBAN" : "TIDE_REQUEST_KICK_ALL");
+        if (one) gen_expr(g, o, e->args.items[0]);
         else sb_put(o, "(tide_player_id){0}");
         sb_put(o, ", ");
-        const int message = kick ? 1 : 0;
+        const int message = one ? 1 : 0;
         if (e->args.count > message) gen_c_text(g, o, e->args.items[message]);
         else sb_put(o, "\"\"");
         sb_put(o, ");\n");
@@ -7962,7 +8136,8 @@ static void gen_stmt(gen *g, const stmt *s)
             break;
         }
         // The list's count is read each round, so changes to it while it's gone
-        // through count; each element is a copy.
+        // through count.
+        const bool borrows = foreach_borrows(g, s);
         const int k = s->value->type.decl->index;
         const int mark = task_mark(g);
         const char *index = made_up(g, "i");
@@ -7974,8 +8149,10 @@ static void gen_stmt(gen *g, const stmt *s)
         line(g, o, "for (; %s < tide_list_count(%s); %s++) {", index, list, index);
         g->indent++;
         const int round = task_mark(g);
+        // Each element is a copy, or borrowed where nothing in the body can change it (foreach_borrows)
+        const bool copy = type_has_list(s->type) && !borrows;
         line(g, o, "%s%s %s = %stide_list%d_get(%s, %s)%s;", g->task ? "" : "const ", elem_vtype(s->type), local_cname(g, s->name),
-             element_copy_open(s->type), k, list, index, type_has_list(s->type) ? ")" : "");
+             copy ? element_copy_open(s->type) : "", k, list, index, copy ? ")" : "");
         line(g, o, "(void)%s;", local_cname(g, s->name));
         task_declare(g, local_cname(g, s->name), s->type);
         const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
@@ -8348,6 +8525,8 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_put(o, "tide_request_copy(tide_l, ");
             gen_c_text(g, o, s->value->args.items[0]);
             sb_put(o, ");\n");
+        } else if (s->value->call == CALL_QUIT) {
+            line(g, o, "tide_l->tide_quit = true;");
         } else if (s->value->call == CALL_GUI && s->value->block) {
             gen_container(g, s->value);
         } else if (s->value->call == CALL_DRAW && s->value->block && (s->value->gui & DRAW_BLOCK)) {
@@ -8384,6 +8563,8 @@ static void gen_stmt(gen *g, const stmt *s)
                    || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN || s->value->call == CALL_JSON
                    || s->value->call == CALL_PARENT || s->value->call == CALL_VISIBILITY) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
+            // A result nobody reads: a call that kept its order is its temporary's name by now
+            if (s->value->hoisted && s->value->type.kind != TY_VOID) sb_put(o, "(void)");
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
         } else if (s->value->call == CALL_RANDOM || s->value->call == CALL_ROLL) { // random.NextInt();: a number nobody reads, which still steps it
@@ -9253,10 +9434,11 @@ static void gen_header(gen *g)
     sb_put(o, "    tide_session_request tide_request_open; // Session.Open or Close, after tide_request\n");
     sb_put(o, "    tide_session_request tide_request_watch; // Session.Watch or Unwatch, after those\n");
     sb_put(o, "    tide_session_request tide_watch_told;    // ...as the session last heard it\n");
-    sb_put(o, "    tide_session_request tide_kicks[TIDE_GAME_PLAYERS]; // Session.Kick and KickAll, after those\n");
+    sb_put(o, "    tide_session_request tide_kicks[TIDE_GAME_PLAYERS]; // Session.Kick, KickAll, Ban and Unban, after those\n");
     sb_put(o, "    uint32_t tide_kick_count;\n");
     if (prog->uses_audio) sb_put(o, "    tide_audio_frame *tide_audio; // The frame's audio list (tide_local_audio): what Audio.Play records into\n");
     sb_put(o, "    tide_session_request tide_copy; // Clipboard.Copy: the frame's last, after the kicks\n");
+    sb_put(o, "    bool tide_quit; // Application.Quit, after everything else the frame asked\n");
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
     // TIDE_NETWORK_ADDRESS_BYTES (tide/network.h): a room's code, or what a game's own network says
     sb_put(o, "    char tide_room[64]; // Session.room: what the match is joined by (a room's code), or \"\"\n");
@@ -11427,7 +11609,7 @@ static void gen_correction_state(gen *g)
     g->indent = 0;
 }
 
-// What views and local handlers call for Session.Join, Connect, Kick and KickAll.
+// What views and local handlers call for Session.Join, Connect, Kick, KickAll, Ban and Unban.
 static void gen_session_helpers(gen *g)
 {
     sb *o = &g->c;
@@ -11438,8 +11620,9 @@ static void gen_session_helpers(gen *g)
     sb_put(o, "    size_t n = strlen(address);\n");
     sb_put(o, "    if (n >= sizeof l->tide_request.text) n = sizeof l->tide_request.text - 1u;\n");
     sb_put(o, "    memcpy(l->tide_request.text, address, n);\n}\n\n");
-    sb_put(o, "// Session.Kick(player, message) and Session.KickAll(message), in order, up to a\n");
-    sb_put(o, "// kick per player each frame. The message is cut where a character starts.\n");
+    sb_put(o, "// Session.Kick(player, message), Session.KickAll(message), Session.Ban(player,\n");
+    sb_put(o, "// message) and Session.Unban(player), in order, up to as many each frame as the\n");
+    sb_put(o, "// game takes players. The message is cut where a character starts.\n");
     sb_put(o, "TIDE_HELPER void tide_request_kick(tide_local *l, uint32_t kind, tide_player_id player, const char *message)\n{\n");
     sb_put(o, "    if (l->tide_kick_count == TIDE_GAME_PLAYERS) return;\n");
     sb_put(o, "    tide_session_request *r = &l->tide_kicks[l->tide_kick_count++];\n");
@@ -14211,7 +14394,7 @@ static void gen_parallel_call(gen *g, const stmt *s)
     const char *name = g->par_names.items[index];
     const decl *grid = s->value->type.decl;
     const capture_list caps = par_captures(g, g->routine ? g->routine : g->code, s);
-    const uint64_t cost = stmt_cost(s->then_stmt);
+    const uint64_t cost = step_cost(s->then_stmt);
     if (g->routine && g->routine->is_worker) {
         if (s->value->type.kind == TY_LIST) {
             indent(g, o);
@@ -14248,7 +14431,8 @@ static void gen_parallel_call(gen *g, const stmt *s)
         indent(g, o);
         sb_put(o, "tide_par_list_begin(&tide_pl, &(");
         gen_expr(g, o, s->value);
-        sb_printf(o, "), sizeof(%s), %d, tide_o);\n", elem_ctype(list_elem(grid)), s->block[0]);
+        sb_printf(o, "), sizeof(%s), %d, tide_o, %lluu);\n", elem_ctype(list_elem(grid)), s->block[0],
+                  (unsigned long long)(cost < 1000000u ? cost : 1000000u));
         const bool flat = flat_list_loop(s);
         if (flat) {
             line(g, o, "bool tide_copied = false;");
@@ -17630,6 +17814,41 @@ static bool array_holds_struct(type t)
     return t.kind == TY_STRUCT;
 }
 
+static bool is_bound(const attribute *a)
+{
+    return str_eq_c(a->name, "Clamp") || str_eq_c(a->name, "Min") || str_eq_c(a->name, "Max");
+}
+
+// Whether a value of type `t` has a field with a [Clamp], [Min] or [Max]: in
+// its structs, their arrays and lists
+static bool type_has_bounds(const type t)
+{
+    if (t.kind == TY_ARRAY || t.kind == TY_LIST) return type_has_bounds(t.decl->fields.items[0].type);
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const field *f = &t.decl->fields.items[i];
+        for (int k = 0; k < f->attributes.count; k++) {
+            if (is_bound(&f->attributes.items[k])) return true;
+        }
+        if (type_has_bounds(f->type)) return true;
+    }
+    return false;
+}
+
+// A loop over the elements of a command's list, `path` (C), for gen_bounds:
+// `path` becomes the element, and `*et` its type. One level, to close.
+static int gen_bounds_list(gen *g, char *path, const size_t size, type *et, const int depth)
+{
+    const type element = list_elem(et->decl);
+    const char *ctype = elem_ctype(element);
+    line(g, &g->c, "for (int32_t tide_b%d = 0; tide_b%d < tide_list_count(%s); tide_b%d++) {", depth, depth, path, depth);
+    g->indent++;
+    line(g, &g->c, "%s *tide_v%d = tide_list_at_mut(%s, tide_b%d, sizeof(%s));", ctype, depth, path, depth, ctype);
+    snprintf(path, size, "(*tide_v%d)", depth);
+    *et = element;
+    return 1;
+}
+
 // The fields' [Clamp], [Min] and [Max] in `d`, the structs it holds included.
 // `in` is the C access to the value, ending in '.'.
 static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
@@ -17642,11 +17861,15 @@ static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
             if (!str_eq_c(a->name, "Clamp") && !str_eq_c(a->name, "Min") && !str_eq_c(a->name, "Max")) continue;
             // [Min(x)] is "at least x": the larger of the two, and [Max] the reverse.
             const char *fn = str_eq_c(a->name, "Clamp") ? "clamp" : str_eq_c(a->name, "Min") ? "max" : "min";
-            // An array's bound is each element's, through every level
+            // An array's bound is each element's, through every level, and a
+            // list's is each of its elements' (a command's)
             type et = f->type;
             char path[256];
             snprintf(path, sizeof path, "%s%s", in, field_cname(f));
             int levels = 0;
+            if (et.kind == TY_LIST) {
+                levels = gen_bounds_list(g, path, sizeof path, &et, depth);
+            }
             for (; et.kind == TY_ARRAY; et = et.decl->fields.items[0].type, levels++) {
                 const int index = depth + levels;
                 line(g, o, "for (int32_t tide_b%d = 0; tide_b%d < %d; tide_b%d++) {", index, index, et.decl->array_length, index);
@@ -17670,11 +17893,13 @@ static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
             char inner[256];
             snprintf(inner, sizeof inner, "%s%s.", in, field_cname(f));
             gen_bounds(g, f->type.decl, inner, depth);
-        } else if (f->type.kind == TY_ARRAY && array_holds_struct(f->type)) {
+        } else if ((f->type.kind == TY_ARRAY && array_holds_struct(f->type))
+                   || (f->type.kind == TY_LIST && array_holds_struct(list_elem(f->type.decl)) && type_has_bounds(list_elem(f->type.decl)))) {
             type et = f->type;
             char path[256];
             snprintf(path, sizeof path, "%s%s", in, field_cname(f));
             int levels = 0;
+            if (et.kind == TY_LIST) levels = gen_bounds_list(g, path, sizeof path, &et, depth);
             for (; et.kind == TY_ARRAY; et = et.decl->fields.items[0].type, levels++) {
                 const int index = depth + levels;
                 line(g, o, "for (int32_t tide_b%d = 0; tide_b%d < %d; tide_b%d++) {", index, index, et.decl->array_length, index);
@@ -17784,6 +18009,10 @@ static void gen_incoming_input(const gen *g, sb *o, const char *value)
 // depends on it, never what the tick does.
 static uint64_t stmt_cost(const stmt *s);
 
+// How many calls deep a Tide function's body counts as what calling it costs
+// (step_cost); 0: a call is 30, whatever it runs.
+static int cost_callees;
+
 static uint64_t expr_cost(const expr *e)
 {
     if (!e) return 0;
@@ -17791,7 +18020,27 @@ static uint64_t expr_cost(const expr *e)
     for (int i = 0; i < e->args.count; i++) cost += expr_cost(e->args.items[i]);
     for (int i = 0; i < e->inits.count; i++) cost += expr_cost(e->inits.items[i].value);
     if (e->kind == E_CALL || e->kind == E_METHOD) cost += 30u;
+    if (cost_callees > 0 && (e->kind == E_CALL || e->kind == E_METHOD) && (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method
+        && !e->method->is_extern && e->method->body) {
+        cost_callees--;
+        cost += stmt_cost(e->method->body);
+        cost_callees++;
+        if (cost > 1000000u) cost = 1000000u;
+    }
     return cost + stmt_cost(e->block);
+}
+
+// What a parallel loop's step costs: as stmt_cost, with the bodies of the
+// functions it calls (a few calls deep) counted in, since a step that calls
+// one costly function is otherwise reckoned as next to nothing, and a short
+// loop of them stays on one thread. Only the choice of threads depends on it.
+static uint64_t step_cost(const stmt *s)
+{
+    const int was = cost_callees;
+    cost_callees = 4;
+    const uint64_t cost = stmt_cost(s);
+    cost_callees = was;
+    return cost;
 }
 
 // How many times a loop's body runs, as far as it can be told: a `for` from
@@ -17924,7 +18173,7 @@ static bool gen_parallel_work(sb *o, const stmt *s)
     if (!loop_work_known(s->then_stmt)) return false;
     sb path = {0};
     if (!gen_singleton_path(&path, s->value)) return false;
-    const uint64_t cost = 4u * stmt_cost(s->then_stmt);
+    const uint64_t cost = 4u * step_cost(s->then_stmt);
     if (s->value->type.kind == TY_LIST) {
         sb_printf(o, " + (uint64_t)tide_list_count(%s) * %lluu", path.data, (unsigned long long)cost);
         return true;
@@ -21789,6 +22038,114 @@ static bool write_name_map(const gen *g)
 // `base`, which every machine has (the last one, as the world keeps it).
 typedef enum bits_mode { BITS_WRITE, BITS_READ, BITS_WRITE_DELTA, BITS_READ_DELTA } bits_mode;
 
+static void gen_bits(gen *g, const char *at, type t, bits_mode mode, uint32_t *bits);
+
+// The fewest bits gen_bits packs a value of type `t` into: what bounds how
+// many elements a command's list can say it has, against the bits left
+static uint32_t bits_least(const type t)
+{
+    switch (t.kind) {
+    case TY_BOOL: return 1;
+    case TY_BYTE: return 8;
+    case TY_CHAR: return 21;
+    case TY_FLOAT: return 32;
+    case TY_DOUBLE: return 64;
+    case TY_INT:
+    case TY_LONG:
+    case TY_PLAYER: return 8; // A varint's one group
+    case TY_ENTITY:
+    case TY_LOCAL_ENTITY: return 16;
+    case TY_ENUM: return t.decl->width == 2 ? 16 : 8;
+    case TY_QUATERNION:
+    case TY_COLOR:
+    case TY_RECT: return 128;
+    case TY_ARRAY: return bits_least(t.decl->fields.items[0].type) * (uint32_t)t.decl->array_length;
+    default: break;
+    }
+    if (type_dim(t) >= 2) return bits_least(type_scalar(t)) * (uint32_t)type_dim(t);
+    if (matrix_dim(t) > 0) return bits_least(matrix_column(t)) * (uint32_t)matrix_dim(t);
+    if (is_stored_optional(t)) return 1;
+    if (t.kind != TY_STRUCT) return 0;
+    uint32_t least = 0;
+    for (int i = 0; i < t.decl->fields.count; i++) least += bits_least(t.decl->fields.items[i].type);
+    return least;
+}
+
+// Packs or unpacks a command's list of values other than bytes, `in->` `at`:
+// its count as a varint, then each element as gen_bits packs a field of its
+// type. An element is copied into a struct of its own (`in`, within the loop),
+// which the bits go to and from, and read ones are repaired as a command's
+// fields are (NaN and infinite floats, enums and chars no member or character
+// has: the element type's defaults). A count the bits left can't hold is
+// refused before the list is made, so a list from outside takes no more of the
+// scratch area than its bits could fill.
+static void gen_bits_list(gen *g, const char *at, const type t, const bits_mode mode)
+{
+    sb *o = &g->c;
+    static int depth;
+    const int k = depth++;
+    const type element = list_elem(t.decl);
+    const char *ctype = elem_ctype(element);
+    uint32_t ignored = 0;
+    if (mode == BITS_WRITE) {
+        line(g, o, "{ const int32_t n = tide_list_count(in->%s);", at);
+        line(g, o, "  if (n < 0 || (uint32_t)n > TIDE_COMMAND_LIMIT) return 0;");
+        line(g, o, "  tide_bits_put_varint(&b, (uint32_t)n);");
+        line(g, o, "  const tide_list tide_list%d = in->%s;", k, at);
+        line(g, o, "  for (int32_t tide_e%d = 0; tide_e%d < n && !b.overflow; tide_e%d++) {", k, k, k);
+        g->indent++;
+        line(g, o, "  struct tide_element%d { %s e; } tide_w%d;", k, ctype, k);
+        line(g, o, "  memcpy(&tide_w%d.e, tide_list_at(tide_list%d, tide_e%d, sizeof(%s)), sizeof(%s));", k, k, k, ctype, ctype);
+        line(g, o, "  const struct tide_element%d *in = &tide_w%d;", k, k);
+        g->indent++;
+        gen_bits(g, "e", element, BITS_WRITE, &ignored);
+        g->indent -= 2;
+        line(g, o, "  }");
+        line(g, o, "  if (b.overflow) return 0; }");
+    } else {
+        const uint32_t least = bits_least(element);
+        line(g, o, "{ const uint32_t n = tide_bits_get_varint(&b);");
+        if (least) {
+            line(g, o, "  if (b.overflow || n > TIDE_COMMAND_LIMIT || n > (b.capacity * 8u - b.bit) / %uu) return false;", least);
+        } else {
+            line(g, o, "  if (b.overflow || n > TIDE_COMMAND_LIMIT) return false;");
+        }
+        line(g, o, "  tide_list_resize(&in->%s, (int32_t)n, sizeof(%s), TIDE_IN_SCRATCH);", at, ctype);
+        line(g, o, "  if ((uint32_t)tide_list_count(in->%s) != n) return false;", at);
+        line(g, o, "  const tide_list tide_list%d = in->%s;", k, at);
+        line(g, o, "  for (uint32_t tide_e%d = 0; tide_e%d < n; tide_e%d++) {", k, k, k);
+        g->indent++;
+        line(g, o, "  struct tide_element%d { %s e; } tide_w%d;", k, ctype, k);
+        line(g, o, "  memset(&tide_w%d, 0, sizeof tide_w%d);", k, k);
+        line(g, o, "  {");
+        g->indent++;
+        line(g, o, "  struct tide_element%d *in = &tide_w%d;", k, k);
+        gen_bits(g, "e", element, BITS_READ, &ignored);
+        // The element type's defaults, as a field of its type has them
+        indent(g, o);
+        sb_printf(o, "  const %s tide_d%d = ", ctype, k);
+        bool zero = element.kind != TY_ENUM;
+        for (int i = 0; !zero && i < element.decl->members.count; i++) zero = element.decl->members.items[i].number == 0;
+        if (zero) gen_default(g, o, element);
+        else sb_printf(o, "%s", enum_member_cname(element.decl, &element.decl->members.items[0]));
+        sb_printf(o, ";\n");
+        line(g, o, "  (void)tide_d%d;", k);
+        char def[32];
+        snprintf(def, sizeof def, "tide_d%d", k);
+        g->indent++;
+        gen_repair_value(g, "in->e", def, element);
+        g->indent -= 2;
+        line(g, o, "  }");
+        line(g, o, "  if (b.overflow) return false;");
+        line(g, o, "  memcpy(tide_list_at_mut(tide_list%d, (int32_t)tide_e%d, sizeof(%s)), &tide_w%d.e, sizeof(%s));", k, k, ctype, k,
+             ctype);
+        g->indent--;
+        line(g, o, "  }");
+        line(g, o, "}");
+    }
+    depth--;
+}
+
 // Packs or unpacks one value of an input, `in->` `at`, as bits: bools take
 // one, floats 32, chars 21, byte and ushort enums 8 and 16, ints, other enums, players
 // and entities a varint (zig-zagged where it can be negative), which small
@@ -21894,7 +22251,9 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
         *bits += one * (uint32_t)t.decl->array_length;
         return;
     }
-    if (t.kind == TY_LIST && mode == BITS_WRITE) { // A List<byte>: its count, then its bytes on a whole byte
+    if (t.kind == TY_LIST && list_elem(t.decl).kind != TY_BYTE) { // A list of other values: its count, then each element
+        gen_bits_list(g, at, t, mode);
+    } else if (t.kind == TY_LIST && mode == BITS_WRITE) { // A List<byte>: its count, then its bytes on a whole byte
         line(g, o, "{ tide_command_align(&b);");
         line(g, o, "  const int32_t n = tide_list_count(in->%s);", at);
         line(g, o, "  if (n < 0 || (uint32_t)n > TIDE_COMMAND_LIMIT) return 0;");
@@ -22516,19 +22875,81 @@ static void gen_world_copy(gen *g)
 // systems, and defaults are constants.
 // Commands keep their wire bytes outside the match, and decode them only at
 // the authenticated session boundary. Handlers use the ordinary event queue.
+// The most bits gen_bits packs a value of type `t` into, as it counts them
+// while it writes the code, which goes nowhere here
+static uint32_t bits_most(gen *g, const type t)
+{
+    const sb kept = g->c;
+    const int indent = g->indent;
+    g->c = (sb){0};
+    uint32_t bits = 0;
+    gen_bits(g, "e", t, BITS_WRITE, &bits);
+    g->c = kept;
+    g->indent = indent;
+    return bits;
+}
+
+// The room a command's value `at` (C, of type `t`) needs on the wire beyond
+// TIDE_COMMAND_BYTES: its lists', through its structs and arrays, each a count
+// and its elements' most bytes, added to `room` (tide_command_room)
+static void gen_command_room(gen *g, sb *o, const type t, const char *at, const char *pad)
+{
+    if (!command_has_list(t)) return;
+    if (t.kind == TY_LIST) {
+        const type element = list_elem(t.decl);
+        const uint32_t per = element.kind == TY_BYTE ? 1u : (bits_most(g, element) + 7u) / 8u;
+        sb_printf(o, "%sroom = tide_command_room(room, %s, %uu);\n", pad, at, per);
+    } else if (t.kind == TY_ARRAY) {
+        static int depth;
+        const int k = depth++;
+        char inner[512], deeper[64];
+        snprintf(inner, sizeof inner, "%s.at[tide_q%d]", at, k);
+        snprintf(deeper, sizeof deeper, "%s    ", pad);
+        sb_printf(o, "%sfor (int32_t tide_q%d = 0; tide_q%d < %d; tide_q%d++) {\n", pad, k, k, t.decl->array_length, k);
+        gen_command_room(g, o, t.decl->fields.items[0].type, inner, deeper);
+        sb_printf(o, "%s}\n", pad);
+        depth--;
+    } else if (t.kind == TY_STRUCT) {
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            char inner[512];
+            snprintf(inner, sizeof inner, "%s.%s", at, field_cname(f));
+            gen_command_room(g, o, f->type, inner, pad);
+        }
+    }
+}
+
+static void gen_command_rooms(gen *g, sb *o, const decl *d, const char *value, const char *pad)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        char at[512];
+        snprintf(at, sizeof at, "%s.%s", value, field_cname(f));
+        gen_command_room(g, o, f->type, at, pad);
+    }
+}
+
 static void gen_commands_api(gen *g)
 {
     const program *prog = g->prog;
     if (!prog->command_types.count) return;
     sb *o = &g->c;
     const bool bytes = commands_have_bytes(prog);
+    const bool lists = commands_have_lists(prog);
     const bool unordered = commands_unordered(prog);
-    const bool text = prog->uses_heap || prog->uses_text || bytes;
-    const char *most = bytes ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
+    const bool text = prog->uses_heap || prog->uses_text || lists;
+    const char *most = lists ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
     sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size, uint32_t *channel);\n\n");
     if (bytes) {
         sb_put(o, "// A file's bytes go on whole bytes of the wire: the bits before them are padded\n"
                   "TIDE_HELPER void tide_command_align(tide_bits *b)\n{\n    b->bit = (b->bit + 7u) & ~7u;\n}\n\n");
+    }
+    if (lists) {
+        sb_put(o, "// Room for a command's list on the wire: its count, and `per` bytes an element at the most. Past the\n"
+                  "// limit, a command is refused as it's written, so room stops there.\n"
+                  "TIDE_HELPER uint32_t tide_command_room(const uint32_t room, const tide_list l, const uint32_t per)\n{\n"
+                  "    const uint64_t all = (uint64_t)room + 8u + (uint64_t)(uint32_t)tide_list_count(l) * per;\n"
+                  "    return all > TIDE_COMMAND_LIMIT + TIDE_COMMAND_BYTES ? TIDE_COMMAND_LIMIT + TIDE_COMMAND_BYTES : (uint32_t)all;\n}\n\n");
     }
     sb_put(o, "// Command strings must be bounded, well-formed UTF-8, without embedded NULs.\n"
               "TIDE_HELPER bool tide_command_utf8(const uint8_t *s, uint32_t size)\n{\n"
@@ -22576,14 +22997,7 @@ static void gen_commands_api(gen *g)
         sb_printf(o, "    if (waiting >= TIDE_COMMAND_PENDING) { fputs(\"tide: too many unsent commands (" STR_FMT "); wait for the session to send them\\n\", stderr); abort(); }\n", STR_ARG(diagnostic_decl(g, d, "command")));
         // Room for it: a datagram's worth, and the bytes of its lists
         sb_put(o, "    uint32_t room = TIDE_COMMAND_BYTES;\n");
-        path_list paths = {0};
-        text_paths(d, "", &paths);
-        for (int k = 0; k < paths.count; k++) {
-            const heap_path *hp = &paths.items[k];
-            if (hp->list && type_has_bytes((type){TY_LIST, (decl *)hp->list})) {
-                sb_printf(o, "    room += 8u + (uint32_t)tide_list_count(value.%s);\n", hp->path);
-            }
-        }
+        gen_command_rooms(g, o, d, "value", "    ");
         sb_put(o, "    uint8_t *bytes = malloc(room);\n    if (!bytes) tide_out_of_memory();\n");
         sb_printf(o, "    const uint32_t size = tide_write_command_%s(target, value, bytes, room);\n", name);
         sb_printf(o, "    if (!size || !tide_game_check_command(bytes, size, NULL)) { fputs(\"tide: %s" STR_FMT " exceeds %s or contains invalid text\\n\", stderr); abort(); }\n", g->opts->strip_names ? "" : "command ", STR_ARG(diagnostic_decl(g, d, "command")), command_limit(d));
@@ -23316,9 +23730,12 @@ static void gen_game_api(gen *g)
     sb_put(o, "        *request = local->tide_request_watch;\n");
     sb_put(o, "        local->tide_request_watch = (tide_session_request){0};\n        return true;\n    }\n");
     sb_put(o, "    if (local->tide_kick_count == 0) {\n");
-    sb_put(o, "        if (local->tide_copy.kind == TIDE_REQUEST_NONE) return false;\n");
-    sb_put(o, "        *request = local->tide_copy;\n");
-    sb_put(o, "        local->tide_copy = (tide_session_request){0};\n        return true;\n    }\n");
+    sb_put(o, "        if (local->tide_copy.kind != TIDE_REQUEST_NONE) {\n");
+    sb_put(o, "            *request = local->tide_copy;\n");
+    sb_put(o, "            local->tide_copy = (tide_session_request){0};\n            return true;\n        }\n");
+    sb_put(o, "        if (!local->tide_quit) return false;\n");
+    sb_put(o, "        *request = (tide_session_request){.kind = TIDE_REQUEST_QUIT};\n");
+    sb_put(o, "        local->tide_quit = false;\n        return true;\n    }\n");
     sb_put(o, "    *request = local->tide_kicks[0];\n    local->tide_kick_count--;\n");
     sb_put(o, "    memmove(local->tide_kicks, local->tide_kicks + 1, local->tide_kick_count * sizeof local->tide_kicks[0]);\n");
     sb_put(o, "    memset(&local->tide_kicks[local->tide_kick_count], 0, sizeof local->tide_kicks[0]);\n    return true;\n}\n\n");

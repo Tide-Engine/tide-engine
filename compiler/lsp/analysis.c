@@ -1022,6 +1022,12 @@ static void walk_value(const expr *e)
             o.kind = OCC_FUNCTION;
             o.owner = str_from("Clipboard");
             add_occ(o);
+        } else if (e->call == CALL_QUIT) {
+            add_occ((occurrence){.at = e->object->at, .len = 11, .kind = OCC_OWNER, .owner = str_from("Application"),
+                                 .name = str_from("Application")});
+            o.kind = OCC_FUNCTION;
+            o.owner = str_from("Application");
+            add_occ(o);
         } else if (e->call == CALL_WAIT) {
             add_occ((occurrence){.at = e->object->at, .len = 4, .kind = OCC_OWNER, .owner = str_from("Wait"),
                                  .name = str_from("Wait")});
@@ -2167,6 +2173,13 @@ static const method_form session_calls[] = {
      "`message`, and `PlayerLeft` follows. They can join again while the match is open."},
     {"KickAll", "Session.KickAll(string message = \"\")",
      "Sends every player on another machine out of the match this machine runs, with `message`, as `Kick` does."},
+    {"Ban", "Session.Ban(PlayerID player, string message = \"\")",
+     "Kicks a player of the match this machine runs and keeps them out for the rest of it: they get `Disconnected` "
+     "with `Banned` and `message`, now and each time they try to join again. Their PlayerID stays theirs. A ban holds "
+     "the player's cookie (and, on a server with accounts, the account): a machine that comes with neither is someone "
+     "new."},
+    {"Unban", "Session.Unban(PlayerID player)",
+     "Lifts `Session.Ban`: the player can join the match again, as the same player, while it's open."},
     {"Join", "Session.Join(string code)",
      "Joins the match in the room with `code`, like \"K7QF2M\": its host's `Session.room`. On a network of the game's "
      "own (tide/network.h), `code` is the text that network takes. It leaves the match it's in first."},
@@ -2208,6 +2221,11 @@ static const method_form session_calls[] = {
 #define DEVICE_ARRAY_COUNT_DOC "How many fingers the touchscreen follows at once: every slot, touching or not."
 #define TEXT_LENGTH_DOC "How many characters the text has."
 
+#define APPLICATION_QUIT_FORM "Application.Quit()"
+#define APPLICATION_QUIT_DOC                                                                                       \
+    "Ends the program after this frame, as closing its window does: it leaves its match, and its exit code is 0. "  \
+    "On the web the page stops running the game; inside another program (Unity) that program decides. Views, "     \
+    "local handlers and the functions they call; the match can't quit."
 #define CLIPBOARD_COPY_FORM "Clipboard.Copy(string text)"
 #define CLIPBOARD_COPY_DOC                                                                                             \
     "Puts `text` on this machine's clipboard, after the frame: up to 255 bytes for now. A browser takes it only "     \
@@ -3713,7 +3731,7 @@ static void describe(const occurrence *o, sb *out)
                                                          "state, wrapped where it repeats, or read `Time.t`, the "
                                                          "match's seconds."
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
-                      : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId."
+                      : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId, the game's title, and Quit, which ends the program after the frame."
                       : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
                       : str_eq_c(o->name, "Web") ? "\n\nThis machine's network: `await Web.Fetch(url)` gives a URL's bytes, from local code, failing with IOError."
                       : str_eq_c(o->name, "Json") ? "\n\nJSON to and from the game's own structs: `Json.Read<T>(json)` gives a `T?`, and `Json.Write(value)` its text. The same on every machine."
@@ -3775,6 +3793,9 @@ static void describe(const occurrence *o, sb *out)
         } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Clipboard")) {
             code_block(out, CLIPBOARD_COPY_FORM);
             sb_put(out, "\n\n" CLIPBOARD_COPY_DOC);
+        } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Application") && str_eq_c(o->name, "Quit")) {
+            code_block(out, APPLICATION_QUIT_FORM);
+            sb_put(out, "\n\n" APPLICATION_QUIT_DOC);
         } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Draw") && str_eq_c(o->name, "Blit")) {
             code_block(out, BLIT_FORM);
             sb_put(out, "\n\n" BLIT_DOC);
@@ -7271,7 +7292,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                  NULL);
         }
         if (t.kind == TY_EVENT && t.decl->builtin && str_eq_c(t.decl->name, "Disconnected")) {
-            item(c, "message", CK_FIELD, "string", "With `Kicked`: why, as the server's `Session.Kick` said. \"\" otherwise.",
+            item(c, "message", CK_FIELD, "string", "With `Kicked` or `Banned`: why, as the server's `Session.Kick` or `Session.Ban` said. \"\" otherwise.",
                  NULL);
         }
         for (int i = 0; i < t.decl->methods.count; i++) {
@@ -7605,6 +7626,7 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                                || str_eq_c(base, "Application") || str_eq_c(base, "Storage") || str_eq_c(base, "Web")
                                || str_eq_c(base, "Frame");
             if (local_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
+            if (str_eq_c(base, "Application")) item(c, "Quit", CK_FUNCTION, APPLICATION_QUIT_FORM, APPLICATION_QUIT_DOC, "Quit()");
             const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
             const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
@@ -8327,7 +8349,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     if (local_code || (routine && sc.decl->kind == DECL_FUNCTION)) {
         item(c, "File", CK_MODULE, "Reads and writes this machine's files", NULL, NULL);
         item(c, "Directory", CK_MODULE, "Lists and manages this machine's directories", NULL, NULL);
-        item(c, "Application", CK_MODULE, "Persistent save and temporary cache paths", NULL, NULL);
+        item(c, "Application", CK_MODULE, "Save and cache paths, the title, and Quit", NULL, NULL);
         item(c, "Frame", CK_MODULE, "This machine's frame: how long it is, for what isn't the match's", NULL, NULL);
         if (sc.decl->is_async) item(c, "Storage", CK_MODULE, "Await persistent storage commits", NULL, NULL);
         if (sc.decl->is_async) item(c, "Web", CK_MODULE, "Await a URL's bytes, fetched by this machine", NULL, NULL);
@@ -11951,6 +11973,9 @@ static int call_param_names(const expr *call, str *names, const int max)
     case CALL_CLIPBOARD:
         vec_push(list.labels, CLIPBOARD_COPY_FORM);
         break;
+    case CALL_QUIT:
+        vec_push(list.labels, APPLICATION_QUIT_FORM);
+        break;
     case CALL_JSON: // Json's and string's own, then int.TryParse and the like, which the engine's table has
         if (call->object && str_eq_c(call->object->name, "Json")) {
             for (size_t i = 0; i < sizeof json_calls / sizeof json_calls[0]; i++) {
@@ -12194,6 +12219,8 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         }
     } else if (str_eq_c(owner, "Clipboard")) {
         if (str_eq_c(name, "Copy")) add_signature(&s, CLIPBOARD_COPY_FORM, CLIPBOARD_COPY_DOC);
+    } else if (str_eq_c(owner, "Application")) {
+        if (str_eq_c(name, "Quit")) add_signature(&s, APPLICATION_QUIT_FORM, APPLICATION_QUIT_DOC);
     } else if (method) {
         // What it's called on decides: text's, a list's, a grid's, an entity's or a singleton's.
         // The call's own, once it parses; until then, what the names before the dot are.

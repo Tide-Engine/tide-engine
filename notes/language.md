@@ -1,5 +1,53 @@
 # Language features, as tidec builds them
 
+## Unread results of calls that keep their order (2026-11-04)
+
+Fix, found building Mount & Rifle with dev: a statement that is a call with a result, whose arguments
+make it keep its order (an `out` argument, a call before it), ran into a temporary and then left the
+temporary's name as the statement, `tide_called1;`, which clang refuses (`-Wunused-value`). The
+`S_EXPR` case for calls now writes `(void)` before a hoisted result that isn't void. The `Tally` case in
+`compiler/tests/e2e/out_params.tide` (`out_declared_wherever_a_call_is`) pins it.
+
+## Read-only list foreach borrows its elements (2026-11-04)
+
+mount-and-rifle's DrawWays (a view, `foreach (var piece in pieces.all)` over ~500 structs of two lists, ~2,000
+corners each) spent 41 ms a frame copying each element, its lists included, into scratch
+(`tide_copy_<Piece>(tide_list<n>_get(...))`), against nothing for `pieces.all[k].surface`. Codegen-only, no language,
+runtime-interface or layout change: the element stays a read-only value, and anything taking it elsewhere still copies
+it (`gen_value_of` on a local isn't fresh: `kept = piece`, `Add(piece)`, `return piece`).
+
+- **When it borrows** (`foreach_borrows` in codegen.c, used by `gen_stmt`'s list `S_FOREACH`): the element type holds a
+  list (`type_has_list`; plain elements generate what they did), the code isn't a task (`g->task`: a wait lets
+  anything run), and nothing in the body can disturb the source (`borrow_disturbed_stmt`/`_expr`, over statements,
+  switch cases, call blocks, lambda bodies and draw operands). Disturbing: an assignment, `++`/`--`, or any writing
+  call (`writes()`: its receiver and every argument, conservatively) whose place overlaps the source's
+  (`borrow_overlaps`: same root, the local, parameter or `this`, and the paths agree up to the shorter, fields that
+  differ being apart and any index matching any index); a mut method of `this` called bare when the source is in
+  `this`; a call to an extern, a C-calling or task-starting routine, or one that changes the world
+  (`changes_world`, `takes_world_bindings`); a non-reading `CALL_WORLD`; an await or a task start; a query foreach
+  inside. The code itself setting the world (`world_sets`, `takes_world_bindings` of `g->code`) keeps the copy unless
+  the source is in a local. A computed source is the loop's own copy (`foreach_value`), which nothing else names; a
+  source through a property is never borrowed.
+- **Why it's safe.** The checker refuses every write through the foreach variable (`check_writable`, "read-only copy
+  of a foreach element"). With nothing in the body able to change the list or its elements' lists, the handles the
+  element holds point at what it had for the whole body; readonly parameters are already copied at a call where a
+  `mut` argument could alias them. Outer and inner loops are decided apart: an outer loop whose body (the inner loop
+  included) writes the source copies, so an inner loop borrowing from that copy is safe.
+- **Not covered here, as before:** map/set foreach (`gen_map_foreach`) and array foreach already took entries and
+  elements shallow, whatever their body does.
+- **Generated C.** Old and new tidec over every `.sources` list in build/sanitize (476, prototypes included),
+  `--no-line`: all differ only in the simulation identity (the compiler's sources are in it) but 18, whose only change
+  is such loops borrowing: banked, foldline, sidekick, the lobby/steam-lobby packages, asset_borrows, asset_meshes,
+  mesh_decode, mesh_runtime, nested, skinned_defaults, safety optional_fields and the new fixture.
+- **Measured** (release, Windows, Ryzen 9 7900X shared with other sessions; a scratch view over a local singleton of
+  500 pieces, 2,000 `{float3, float3}` corners and 2,000 ints each, summing three reads a piece; median of 200
+  frames, three runs): 6.0 to 7.4 ms a frame before (minimum 4.7), 0.009 to 0.016 ms after, the same sum.
+- **Tests:** `tidec_e2e_foreach_borrow` (a read-only loop beside writes to a disjoint field and locals taking no
+  scratch, nested loops, an element kept past the loop staying its own copy, and loops whose body empties an
+  element's list, empties the list, calls a `mut` helper given the singleton, or replaces the element, each seeing the
+  element as it was and taking scratch; a view's loop over the match taking none; snapshots unchanged), plus the
+  changed targets' own tests on native and web.
+
 ## Generated C in two files (2026-11-04)
 
 `codegen_options.split_plumbing` (`tidec --split-plumbing`) cuts the finished generated C into `<name>.c`, the
@@ -102,6 +150,17 @@ state and frame duration during aging, and one full frame duration/random seed
 at the next draw. Existing half-life and Transform checks use the age function.
 Native/web validation is recorded with the host's GPU-wait update changes in
 `notes/standard-host.md`.
+
+## Names `is` gives are list wrappers too (2026-11-04)
+
+With visualizers (debug builds), `if (F() is List<T> got)` declared `got` as a
+plain `tide_list` while every reference to it read `got.list`, as any list local
+does (`typed_list_local`), so clang refused the foreach over it ("no member named
+'list'"; mount-and-rifle's `Directory.GetDirectories(folder) is List<string>`).
+`declare_bindings` now declares a list binding as its `tide_local_list<N>` and
+the test's assignment writes its `.list`. Without visualizers nothing changes.
+`fails.tide` reads an `is List<int>` binding with a foreach, and
+`tidec_e2e_fails_visualizers` builds that fixture with wrappers on every preset.
 
 ## Worker parallel captures with debugger list wrappers (2026-11-02)
 
@@ -4345,7 +4404,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **The table** is `generic_forms` in `compiler/src/types.c` (`generic_form`, `generic_arg` in `types.h`): for each of `List`, `Map`, `Set`, `Grid2` and `Grid3`, what each type in its `<>` is (`GENERIC_ELEMENT`, `GENERIC_KEY`, `GENERIC_CELL`) and what a syntax error says of it; `generic_optional` and `generic_fails` are the forms around a type. The parser reads it for the `<>` (`parse_type`), the checker for what may go there: `resolve_generic` resolves each argument at its kind's place (`ARG_ELEMENT`, `ARG_KEY`, `ARG_CELL`) and `resolve_arg` checks it with that kind's rule (`element_ok`, `map_key_ok`, `grid_cell_ok`). `element_ok` takes containers and structs that hold them, and a grid only where the type is an asset's (`PLACE_ASSET`, which `asset_type` resolves through and then reads the shape of). `refuse_held`, `first_held`, the parser's `refuse_nested` and the fields' second look at their elements are gone, with the nine error tests that pinned what they said.
   - **An element that's a container is changed where it is** (`element_in_place` in `check.c`; `gen_slot` in `codegen.c`): `rows[i].Add(x)`, `rows[i][j] = v`, `buckets[key].Add(e)`, through any number of indexes, each a `tide_list%d_slot(l, i)` (a pointer to the element, or NULL past the end) or a `tide_map%d_slot(m, key, where)` (which adds the key). In a program that has such a type (`program_has_slots`), what changes a list or a map takes NULL for one that isn't there and does nothing; a program with none generates the helpers it did. Not through a struct element's field, and not `Sort`: both say to take the element out and put it back. A `parallel` loop's list refuses elements that hold lists as it refuses text, and C takes none (`c_refuses`).
   - **Ownership goes through the helpers there were:** a list's `put`, `drop` and `take` of an element that's a container call that container's `assign`, `release` and `own` (`gen_list_helpers`), and a map's value the same (`gen_map_slot`), so a world's inner lists are blocks of its own heap, released as the outer lets go of them (`Clear`, `RemoveAt`, `Resize`, a release), and made its own as a value comes in. Snapshots, hashes, deltas, the world as bytes and hot reloading see nothing new: an inner list is a block with pages of its own. `nested_lists_reuse_their_memory` checks the heap's use stays flat through 400 ticks of churn.
-  - **A copy is deep where it has to be:** `tide_list%d_copy` and `tide_map%d_copy` of elements that hold lists copy each element's own (`element_copy_open`), as do a map's `Get` and `TryGet`, a foreach's variable and `gen_value_of`'s copies, so no scratch copy ever holds a handle into a world's heap, which a later change to the outer list would leave dangling. An element with a list in it goes into a list or a map as a copy of its own (`gen_value_of` at `Add`, `Insert` and `items[i] = x`), as `scores[k] = x` always did. Reading `rows[i][j]` and `rows[i].count` goes through the handles where they are.
+  - **A copy is deep where it has to be:** `tide_list%d_copy` and `tide_map%d_copy` of elements that hold lists copy each element's own (`element_copy_open`), as do a map's `Get` and `TryGet`, a foreach's variable (unless its body can't change the list: see Read-only list foreach borrows its elements, 2026-11-04) and `gen_value_of`'s copies, so no scratch copy ever holds a handle into a world's heap, which a later change to the outer list would leave dangling. An element with a list in it goes into a list or a map as a copy of its own (`gen_value_of` at `Add`, `Insert` and `items[i] = x`), as `scores[k] = x` always did. Reading `rows[i][j]` and `rows[i].count` goes through the handles where they are.
   - **A `verified` value's elements say which heap they're in through every level** (`gen_confirm_value`, `gen_confirm_decl`): a list or a map whose elements hold text or containers is copied to the scratch area and each element retagged, inner lists and maps included, with `tide_e<depth>` and `tide_k<depth>` for the loops, which is the one change to the C of games that had `verified` lists of text (`tidec_e2e_verified_heap`, `view_queries`); every other game's C is byte for byte what it was (175 of 178).
   - **Measured** (`bench/versus/buckets`, `versus_buckets`, saved as `nested-lists` in `bench/results/versus.jsonl`; `nested-lists-removeat` is the same with `RemoveAt(0)` where the ring is): 4,096 buckets of 32 values each, a value a tick into each, as a `List<List<int>>` of rings, as one flat `List<int>` of rings, and in C. Release, one thread, with the run caches that write (`list-caches`, built the same day: see A world's list, under ECS and simulation state): 0.043 ms a tick nested, 0.019 flat (2.2x), 0.007 C; before them (`nested-lists`), 0.165, 0.082 and 0.009. What's left of the difference is one `tide_list_at_mut` for each inner list written, a page table lookup and the page made the world's own, as each bucket's is another list and a cache holds one run; the flat list's writes all go through its one cache.
   - Tests: `compiler/tests/e2e/nested` (every shape in a component, a singleton, an event, a local singleton and a view, changes in place through two and three indexes, copies that change nothing, text, a map's key added by `Add`, the heap's use, snapshots, the world as bytes, a pinned hash the web shares, and a `verified` view through the confirmed copy), `compiler/tests/errors/nested_*.tide` (a grid in a map, a map in a grid's cells and as a set's key, an element changed through a struct's field, `Sort` of an element, an extern's list of lists, a parallel loop over one), and the docs' Lists inside lists (`docs/language/text-and-lists.md`).

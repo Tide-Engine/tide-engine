@@ -877,6 +877,7 @@ void tide_embed_status_of(const tide_embed *e, tide_embed_status *out)
         .typing = tide_platform_embed_typing(),
         .cursor_locked = tide_platform_embed_cursor_lock(),
         .microphone = tide_platform_embed_microphone(),
+        .quit = tide_run_quit,
     };
     memcpy(out->room, tide_run_room, sizeof out->room);
     out->room[sizeof out->room - 1] = '\0';

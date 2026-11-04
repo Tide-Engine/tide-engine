@@ -249,7 +249,9 @@ appending to an output list or reducing a total keeps the loop ordered. Explicit
 list-parallel steps can read the captured grids while writing their own output.
 Jobs and their parallel steps share the host's bounded pool. With no background
 provider, a worker runs synchronously when polled, so expensive work can still
-stall a frame on a host without threads. Small parallel loops run serially.
+stall a frame on a host without threads. Small parallel loops run serially:
+small is the steps' reckoned work in all, counting the functions they call, so
+a short loop of costly steps still shares out.
 
 Local code can start a worker and keep its `LocalTask<T>` handle; only local
 async code awaits its result. Bare `worker` is reserved for a future match

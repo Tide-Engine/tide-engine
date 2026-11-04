@@ -951,6 +951,26 @@ TIDE_TEST(net_local_code_joins_rooms_and_connects_to_addresses)
     TIDE_CHECK(request.kind == TIDE_REQUEST_KICK_ALL && request.text[0] == 0);
     TIDE_CHECK(!tide_local_take_request(&local, &request, &start));
 
+    // Bans and unbans go in the same queue, in order.
+    local.Menu.ban = true;
+    run_views();
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_BAN && request.player.id == 3u && strcmp(request.text, "Cheating") == 0);
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_BAN && request.player.id == 4u && request.text[0] == 0);
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_UNBAN && request.player.id == 4u);
+    TIDE_CHECK(!tide_local_take_request(&local, &request, &start));
+
+    // Application.Quit: once, after everything else the frame asked.
+    local.Menu.quit = true;
+    run_views();
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_CLOSE);
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_QUIT);
+    TIDE_CHECK(!tide_local_take_request(&local, &request, &start));
+
     // Clipboard.Copy: the frame's last, after the session's requests.
     local.Menu.copy = true;
     local.Menu.close = true;
@@ -966,6 +986,9 @@ TIDE_TEST(net_local_code_joins_rooms_and_connects_to_addresses)
     run_views();
     TIDE_CHECK(shows(local.Menu.gone, "Disconnected { reason = Kicked, message = \"Be nice\" }"));
     TIDE_CHECK(shows(local.Menu.why, "Be nice"));
+    tide_local_disconnected(&local, TIDE_DISCONNECT_BANNED, "Cheating");
+    run_views();
+    TIDE_CHECK(shows(local.Menu.gone, "Disconnected { reason = Banned, message = \"Cheating\" }"));
     tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, NULL);
     run_views();
     TIDE_CHECK(shows(local.Menu.gone, "Disconnected { reason = Left, message = \"\" }"));
@@ -1393,6 +1416,86 @@ TIDE_TEST(net_a_match_kicks_players)
     TIDE_CHECK(!still_in(late, &gone) && gone.reason == TIDE_DISCONNECT_KICKED);
     TIDE_CHECK(still_in(host, &gone)); // Its own player plays on, alone
     TIDE_CHECK(players_in(tide_session_server_world(host))->left == 3);
+
+    tide_session_destroy(late);
+    tide_session_destroy(guest);
+    tide_session_destroy(host);
+    tide_loopback_destroy(network);
+}
+
+// A banned player is sent away as a kicked one is, but hears Banned, and is
+// refused with the ban's message each time it comes back, open or closed, as
+// the same player (its cookie). It keeps its PlayerID: nobody new gets it.
+// Unbanned, it's let in again as that player.
+TIDE_TEST(net_a_match_bans_players)
+{
+    tide_loopback *network = tide_loopback_create(80);
+    tide_loopback_set_conditions(network, (tide_net_conditions){.latency = 0.03, .loss = 0.2});
+    tide_session *host = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = session_sample});
+    tide_session *guest = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = guest_sample});
+    tide_session *late = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = guest_sample});
+    tide_session *const all[3] = {host, guest, late};
+    tide_session_event gone = {0};
+    double t = 0.0;
+    tide_session_start(host, NULL, t);
+    TIDE_REQUIRE(tide_session_open(host, tide_loopback_endpoint(network, 1)));
+    tide_session_join(guest, tide_loopback_endpoint(network, 2), tide_loopback_address(1), t);
+    run_three(network, all, &t, 2.0);
+    TIDE_REQUIRE(still_in(guest, &gone));
+    const tide_player_id banned = tide_session_status_of(guest).client.player;
+    tide_server *server = tide_session_server(host);
+    TIDE_REQUIRE(server);
+
+    // Nobody to ban: its own player, a slot nobody played in
+    TIDE_CHECK(!tide_server_ban(server, tide_session_status_of(host).client.player, "No"));
+    TIDE_CHECK(!tide_server_ban(server, (tide_player_id){5}, "No"));
+    TIDE_CHECK(!tide_server_unban(server, banned)); // Not banned
+
+    tide_session_ban(host, banned, "Cheating");
+    TIDE_CHECK(tide_server_banned(server, banned));
+    run_three(network, all, &t, 4.0);
+    TIDE_CHECK(!still_in(guest, &gone) && gone.reason == TIDE_DISCONNECT_BANNED);
+    TIDE_CHECK(strcmp(gone.message, "Cheating") == 0);
+    TIDE_CHECK(players_in(tide_session_server_world(host))->left == 1);
+
+    // Coming back, as the same player: refused with the message, whether it heard it was sent away or not
+    tide_session_join(guest, tide_loopback_endpoint(network, 2), tide_loopback_address(1), t);
+    run_three(network, all, &t, 6.0);
+    TIDE_CHECK(!still_in(guest, &gone) && gone.reason == TIDE_DISCONNECT_BANNED);
+    TIDE_CHECK(strcmp(gone.message, "Cheating") == 0);
+    // ...the same closed
+    tide_session_close(host);
+    tide_session_join(guest, tide_loopback_endpoint(network, 2), tide_loopback_address(1), t);
+    run_three(network, all, &t, 7.5);
+    TIDE_CHECK(!still_in(guest, &gone) && gone.reason == TIDE_DISCONNECT_BANNED);
+    TIDE_CHECK(tide_session_open(host, (tide_transport){0}));
+
+    // Someone new joins, and gets another slot: the banned player's stays theirs
+    tide_session_join(late, tide_loopback_endpoint(network, 3), tide_loopback_address(1), t);
+    run_three(network, all, &t, 9.0);
+    TIDE_REQUIRE(still_in(late, &gone));
+    TIDE_CHECK(tide_session_status_of(late).client.player.id != banned.id);
+
+    // Unbanned: let in again, as the same player
+    TIDE_CHECK(tide_server_unban(server, banned));
+    TIDE_CHECK(!tide_server_banned(server, banned));
+    tide_session_join(guest, tide_loopback_endpoint(network, 2), tide_loopback_address(1), t);
+    run_three(network, all, &t, 11.0);
+    TIDE_CHECK(still_in(guest, &gone));
+    TIDE_CHECK(tide_session_status_of(guest).client.player.id == banned.id);
+
+    // Recovery keeps the ban, with its message
+    tide_session_ban(host, banned, "Again");
+    run_three(network, all, &t, 12.0);
+    TIDE_CHECK(!still_in(guest, &gone) && gone.reason == TIDE_DISCONNECT_BANNED);
+    uint64_t digests[TIDE_GAME_PLAYERS];
+    uint8_t identities[TIDE_GAME_PLAYERS][32];
+    char messages[TIDE_GAME_PLAYERS][TIDE_MESSAGE_BYTES];
+    tide_server_recovery recovery = {.digests = digests, .identities = identities, .ban_messages = messages};
+    tide_server_recovery_state(server, &recovery);
+    const int32_t at = tide_player_index(banned);
+    TIDE_CHECK(tide_players_has(&recovery.banned, (uint32_t)at) && strcmp(messages[at], "Again") == 0);
+    TIDE_CHECK(!tide_players_has(&recovery.banned, (uint32_t)tide_player_index(tide_session_status_of(late).client.player)));
 
     tide_session_destroy(late);
     tide_session_destroy(guest);
