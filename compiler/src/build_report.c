@@ -346,27 +346,27 @@ static void write_table(sb *o, const build_report *r, const build_report_about *
     sb_printf(o, "\nPack: %s (%llu bytes), %d asset%s\n", r->pack_size ? size : "none", (unsigned long long)r->pack_size,
               packed_count, packed_count == 1 ? "" : "s");
     if (packed_count) {
-        sb_printf(o, "  %-34s %-24s %11s %11s %9s\n", "asset", "type", "in pack", "files", "import ms");
+        sb_printf(o, "  %-34s %-30s %11s %11s %9s\n", "asset", "type", "in pack", "files", "import ms");
         for (int i = 0; i < r->asset_count; i++) {
             const build_report_asset *a = &assets[i];
             if (a->left_out) continue;
             bytes_text(size, sizeof size, (double)a->pack_bytes);
             bytes_text(files, sizeof files, (double)asset_files_size(a));
-            sb_printf(o, "  %-34s %-24s %11s %11s %9.1f\n", a->name, a->type, a->pack_bytes ? size : "shared",
+            sb_printf(o, "  %-34s %-30s %11s %11s %9.1f\n", a->name, a->type, a->pack_bytes ? size : "shared",
                       a->file_count ? files : "-", a->import_ms);
         }
         bytes_text(size, sizeof size, (double)(r->pack_size > packed ? r->pack_size - packed : 0));
-        sb_printf(o, "  %-34s %-24s %11s\n", "(names and tables)", "", size);
+        sb_printf(o, "  %-34s %-30s %11s\n", "(names and tables)", "", size);
     }
 
     if (packed_count < r->asset_count) {
         sb_printf(o, "\nLeft out: %d asset%s\n", r->asset_count - packed_count, r->asset_count - packed_count == 1 ? "" : "s");
-        sb_printf(o, "  %-34s %-24s %11s  %s\n", "asset", "type", "files", "why");
+        sb_printf(o, "  %-34s %-30s %11s  %s\n", "asset", "type", "files", "why");
         for (int i = 0; i < r->asset_count; i++) {
             const build_report_asset *a = &assets[i];
             if (!a->left_out) continue;
             bytes_text(files, sizeof files, (double)asset_files_size(a));
-            sb_printf(o, "  %-34s %-24s %11s  %s\n", a->name, a->type, a->file_count ? files : "-", a->left_out);
+            sb_printf(o, "  %-34s %-30s %11s  %s\n", a->name, a->type, a->file_count ? files : "-", a->left_out);
         }
     }
     free(assets);

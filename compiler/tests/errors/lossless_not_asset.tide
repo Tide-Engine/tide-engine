@@ -1,0 +1,9 @@
+// expect: Lossless keeps an image asset's pixels exact in the pack, and 'Ball' isn't an asset
+[Lossless] component Ball
+{
+    float x;
+}
+
+scene Main
+{
+}

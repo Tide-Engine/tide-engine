@@ -20540,10 +20540,14 @@ static uint8_t channel_byte(const float v, const float alpha)
 }
 
 // One item of an asset into the pack: its block's offset.
+// `stored`, where it isn't NULL, gets an image's blocks' format (tide/texture_blocks.h), or 0 for its exact RGBA.
 static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
-                          const bool compress, uint32_t *extra, const char *cache_folder)
+                          const bool compress, uint32_t *extra, const char *cache_folder, uint32_t *stored)
 {
     *extra = 0;
+    uint32_t stored_here;
+    if (!stored) stored = &stored_here;
+    *stored = 0;
     if (kind == ASSET_ANIMATIONS || kind == ASSET_ANIMATION || kind == ASSET_HUMANOID) {
         uint8_t hash[32];
         tide_sha256_of(item->skinned, item->skinned_size, hash);
@@ -20568,6 +20572,7 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         }
         if (prepared) {
             if (view.blocks.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
+            *stored = view.blocks.pixels ? view.blocks.format : 0;
             const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)view.width, (int32_t)view.height,
                                                         view.rgba, view.blocks);
             free(cached);
@@ -20613,9 +20618,14 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
                 chain[i + 3u] = c[3];
             }
             compressed.pixels = chain;
-        } else if (!raw && compress) compressed = texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
+        } else if (compress) {
+            // Colors are premultiplied by now, and [Raw]'s channels are numbers as the file has them: either way
+            // each channel of a mip is the mean of the four below it, and BC1/BC3 keep the bytes they're given.
+            compressed = texture_compress(rgba, (int32_t)item->image.width, (int32_t)item->image.height);
+        }
         // Blocks are the image then, with no RGBA beside them: a device without them decodes them
         if (compressed.pixels) content[0] ^= 0x42u, content[15] ^= 0x4Fu, content[31] ^= 0x43u;
+        *stored = compressed.pixels ? compressed.format : 0;
         const uint64_t at = tide_pack_texture_blocks(b, content, (int32_t)item->image.width, (int32_t)item->image.height,
                                                     compressed.pixels ? NULL : rgba, compressed);
         const texture_cache_view prepared_view = {.width = item->image.width, .height = item->image.height,
@@ -20912,11 +20922,41 @@ static void note_watched(void *user, const char *path)
 // embeds it. A game with no assets gets no pack file, and an empty array.
 #include "build_codegen.inc"
 
+// What an asset declaration is and how its images are kept, as a pack's sizes say it ("Texture 4096x4096 BC1
+// [Raw]"): the arena's.
+static const char *asset_description(const decl *d, const uint32_t stored[4])
+{
+    const asset_value *v = d->asset;
+    sb what = {0}; // The arena's
+    sb_put(&what, type_name(d->return_type));
+    if (v->kind == ASSET_TEXTURE || v->kind == ASSET_CUBEMAP || v->kind == ASSET_GRID) {
+        if (v->many) sb_printf(&what, " %d image%s", v->count, v->count == 1 ? "" : "s");
+        else if (v->count) sb_printf(&what, " %ux%u", (unsigned)v->items[0].image.width, (unsigned)v->items[0].image.height);
+        if (v->kind == ASSET_TEXTURE && v->count) {
+            // Each format its first images are kept in, once: an image of a list's might differ from these
+            _Static_assert(TIDE_BLOCKS_BC1 == 1 && TIDE_BLOCKS_BC3 == 3 && TIDE_BLOCKS_RGBA8 == 4, "formats' names");
+            static const char *const formats[] = {"RGBA", "BC1", "", "BC3", "RGBA mips"};
+            bool said[5] = {0}, any = false;
+            for (int k = 0; k < v->count && k < 4; k++) {
+                const uint32_t f = stored[k] < 5u ? stored[k] : 0u;
+                if (said[f]) continue;
+                said[f] = true;
+                sb_printf(&what, "%s%s", any ? "/" : " ", formats[f]);
+                any = true;
+            }
+        }
+    } else if (v->many) sb_printf(&what, " %d file%s", v->count, v->count == 1 ? "" : "s");
+    if (d->sample_raw && d->lossless) sb_put(&what, " [Raw, Lossless]");
+    else if (d->sample_raw) sb_put(&what, " [Raw]");
+    else if (d->lossless) sb_put(&what, " [Lossless]");
+    return what.data ? what.data : "";
+}
+
 // An asset in a build's report (build_report.h): what it is, the files it was read from and how long that took,
 // and the bytes it added to the pack, or why it isn't there.
-static void report_asset(const decl *d, const uint64_t bytes, const char *left_out)
+static void report_asset(const decl *d, const char *what, const uint64_t bytes, const char *left_out)
 {
-    build_report_asset *a = build_report_add_asset(str_to_cstr(d->qualified), type_name(d->return_type));
+    build_report_asset *a = build_report_add_asset(str_to_cstr(d->qualified), what);
     if (!a) return;
     a->import_ms = d->import_ms;
     a->pack_bytes = bytes;
@@ -20928,9 +20968,14 @@ static void report_asset(const decl *d, const uint64_t bytes, const char *left_o
     }
 }
 
-static void report_packed(const decl *d, const uint64_t bytes)
+// One declaration's line of the pack's sizes (codegen_options.asset_size_out), and of a build's report.
+static void asset_size(const gen *g, const decl *d, const uint64_t bytes, const uint32_t stored[4])
 {
-    report_asset(d, bytes, NULL);
+    const bool reported = build_report_current() && !g->opts->build_program;
+    if (!g->opts->asset_size_out && !reported) return;
+    const char *what = asset_description(d, stored);
+    if (g->opts->asset_size_out) g->opts->asset_size_out(g->opts->asset_size_user, str_to_cstr(d->qualified), what, bytes);
+    if (reported) report_asset(d, what, bytes, NULL);
 }
 
 static void build_pack(gen *g)
@@ -20955,12 +21000,18 @@ static void build_pack(gen *g)
     if (reported) build_report_assets_clear(); // What the last pack holds: a server packs again with fewer
     if (!opts->build_program) diag_phase("generating C"); // ...and packing is a phase of its own (TIDEC_TIMES)
     tide_pack_builder b = {0};
-    uint64_t mark = 0;
-    // After each asset, however its turn ends, what it added to the pack, for a build's report
-    for (int i = 0; i < prog->assets.count; reported ? report_packed(prog->assets.items[i], b.size - mark) : (void)0, mark = b.size, i++) {
+    const decl *sized = NULL; // The declaration whose bytes are being counted, from sized_from
+    uint64_t sized_from = 0;
+    uint32_t stored[4] = {0}; // How its first images are kept, for its size's line
+    for (int i = 0; i <= prog->assets.count; i++) {
+        if (sized) asset_size(g, sized, b.size - sized_from, stored);
+        sized = NULL;
+        if (i == prog->assets.count) break;
         const decl *d = prog->assets.items[i];
         const asset_value *v = d->asset;
         if (!v) continue; // Its error was reported
+        sized = d, sized_from = b.size;
+        memset(stored, 0, sizeof stored);
         const type t = d->return_type;
         const decl *grid = t.kind == TY_GRID ? t.decl : t.kind == TY_LIST && list_elem(t.decl).kind == TY_GRID ? list_elem(t.decl).decl
                          : t.kind == TY_MAP && t.decl->fields.items[1].type.kind == TY_GRID ? t.decl->fields.items[1].type.decl : NULL;
@@ -21043,7 +21094,7 @@ static void build_pack(gen *g)
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
             uint64_t faces[6];
             uint32_t extra;
-            for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, false, &extra, prog->game_folder);
+            for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, false, &extra, prog->game_folder, NULL);
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
             continue;
         }
@@ -21080,7 +21131,8 @@ static void build_pack(gen *g)
         }
         if (!v->many) {
             uint32_t extra;
-            const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, true, &extra, prog->game_folder);
+            const uint64_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, !d->lossless, &extra, prog->game_folder,
+                                          &stored[0]);
             tide_pack_name(&b, qualified, kind, at,
                            v->kind == ASSET_ANIMATION || v->kind == ASSET_HUMANOID ? v->items[0].skinned_size : (uint32_t)v->items[0].size, extra);
             continue;
@@ -21090,7 +21142,8 @@ static void build_pack(gen *g)
         if (!offsets || !keys) abort();
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
-            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, true, &extra, prog->game_folder);
+            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, !d->lossless, &extra, prog->game_folder,
+                                   k < 4 ? &stored[k] : NULL);
             if (v->is_map) { // Its key: text, as code reads one
                 uint8_t hash[32];
                 tide_sha256_of(v->items[k].key, strlen(v->items[k].key), hash);
@@ -24841,7 +24894,7 @@ bool codegen(program *prog, const codegen_options *opts)
         if (kept) continue;
         bool server_cut = false; // Kept for players, but not in a server's pack
         for (int k = 0; opts->server && k < all_asset_count && !server_cut; k++) server_cut = all_assets[k] == d;
-        report_asset(d, 0, server_cut ? "the server's code never reads it" : "nothing in the game's code, defaults or shaders names it");
+        report_asset(d, type_name(d->return_type), 0, server_cut ? "the server's code never reads it" : "nothing in the game's code, defaults or shaders names it");
     }
     if (diag_error_count()) { free(g.pack_bytes); return false; }
     const sb c = opts->line_directives ? pin_lines(&g.c, g.c_path) : g.c;

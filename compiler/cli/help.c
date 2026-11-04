@@ -281,6 +281,14 @@ static const argument_help arguments[] = {
     {"--strip-server-assets", "--strip-server-assets", "Opt custom C into server asset pruning",
      "Also selects --server. Tide-only server builds prune client-only assets\n"
      "automatically; use this when custom C does not need those assets.", RUN | BUILD},
+    {"--strip-assets", "--strip-assets", "Opt custom C into release asset pruning",
+     "Release and distribution builds of a game without C or libraries leave\n"
+     "out assets no Tide code names. Custom C could read any asset by name, so\n"
+     "such a game keeps them all; use this when its C reads none that way.", BUILD},
+    {"--asset-sizes", "--asset-sizes", "List what each asset adds to the pack",
+     "After the build, one line per asset declaration, biggest first: its\n"
+     "bytes, share, name, type, image size and how images are kept (BC1, BC3\n"
+     "or RGBA). Bytes shared with an earlier declaration count once.", BUILD},
     {"--anonymous", "--anonymous", "Allow unauthenticated server admission",
      "Requires run --server. Allows clients to create and join matches\n"
      "without authentication.", RUN},

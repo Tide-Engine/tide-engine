@@ -751,6 +751,8 @@ typedef struct decl {
     // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
     // only code the GPU runs reads, by its name (declared_raw)
     bool sample_raw;
+    // [Lossless] before a Texture asset: its pixels are packed exactly, never block-compressed (pack_item)
+    bool lossless;
     // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
     bool lod;
     float lod_multiplier; // [LOD(multiplier)]: positive finite error tolerance multiplier, default 1

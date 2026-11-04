@@ -87,7 +87,7 @@ contains("${out}" "--shard-width <units>")
 excludes("${out}" "--nightly")
 
 foreach(argument folder source package editor file.tprefab --release --distribution -O0 -O1 -O2 -O3 --web --android --define --title --scene --stats --debug-views --assets -o
-        --no-open --host --join --connect --server --strip-server-assets --anonymous --port --max-matches --max-connections
+        --no-open --host --join --connect --server --strip-server-assets --strip-assets --asset-sizes --anonymous --port --max-matches --max-connections
         --udp-only --shards --shard-width --shard-most --shard-journal --capture --capture-audio --microphone --frames --script
         --scale --size --profile --profile-warmup
         --seed --players --data-dir --project --single-file

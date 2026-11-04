@@ -41,6 +41,11 @@ typedef struct codegen_options {
     const char *game_folder; // Where the game's .tide/ is, for its asset hashes and fetched URLs; NULL where nothing says
     const char *pack;        // Where to write the pack of the game's assets (tide/pack.h), or NULL
     const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL
+    // If set, called as the pack is built with each asset declaration in it (after pruning): its qualified name, what
+    // it is and how its images are kept ("Texture 4096x4096 BC1 [Raw]"), and the bytes of the pack it added. A
+    // block two declarations share is counted with the first (tidec --asset-sizes, tide build --asset-sizes).
+    void (*asset_size_out)(void *user, const char *name, const char *what, uint64_t bytes);
+    void *asset_size_user;
     const char *const *defines; // The symbols the build defines for every file's #if (`--define FAST`, DEBUG), or NULL
     int define_count;
     const uint8_t *external_identity; // Optional SHA-256 of game C/headers/libraries, independent of target.

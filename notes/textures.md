@@ -1,5 +1,38 @@
 # Textures and how they are sampled
 
+## `[Raw]` images compress too; `[Lossless]` keeps one exact (2026-11-04)
+
+From a game's feedback (Mount & Rifle, pinned 0.6.0-nightly.21): its 618 MB distribution pack was ~495 MB of 47
+`[Raw]` textures, normal and ARM maps stored as RGBA8 because `pack_item` compressed only `!raw` images (a 4096
+normal map 67,108,864 bytes, 4096²×4; BC1 with mips is ~11 MB). 173 of its 179 Raw textures had no alpha. The
+owner chose, from a proposal: "Compress, opt-out", the attribute named `[Lossless]`.
+
+- **Packing** (`pack_item`, `compiler/src/codegen.c`): the `compress` argument is now `!decl.lossless`, and Raw
+  images go through `texture_compress` as color ones do. The RGBA it's given is already what the GPU reads: color
+  bytes premultiplied, Raw channels as the file has them (worked alpha 1), and `texture_compress`'s box filter averages each
+  channel apart, which is right for both. BC1 when every alpha byte is 255, else BC3, as for colors. The
+  decoder for devices without BC (`tide_texture_blocks_decode`) never premultiplied, so a Raw image decodes to
+  its numbers; no runtime, shader or ABI change. Authored DDS chains, cubemap faces (`compress` false) and
+  small/non-power-of-two images are as they were.
+- **Cache keys** (`texture_cache_key`, `compiler/src/texture_cache.c`): a Raw compressed variant hashes a third
+  word, as its old key held exact RGBA another build would otherwise reuse. Color keys are unchanged, so no color
+  image is re-encoded.
+- **`[Lossless]`** (`decl.lossless`, `check_lossless_attribute` in `check.c`): before a `Texture` asset, one or a
+  glob's list or map, with or without `[Raw]`. Takes nothing, once; an error on a non-asset (through the general
+  attribute loop) and on any other asset type, grids and cubemaps included ("which is never compressed"). Editors
+  offer it in an asset's brackets with a hover (`compiler/lsp/analysis.c`).
+- **Mips** (the feedback's second question): an uncompressed image, Raw or `[Lossless]`, has only its base level
+  in the pack; the renderer makes the rest on the GPU the first time a `Filter.Trilinear` draw reads it
+  (`prepare_mipmaps`, below), so the pack's 4096²×4 was right and the GPU held 4/3 of it. Compressed Raw images
+  now carry the build's chain, as color ones do.
+- **The no-alpha warning** the feedback proposed is moot with Raw compressed; not built.
+- **Not built:** BC4/BC5 (two-channel normals: a Raw texture's `Sample` would read z as 0, which changes what a
+  frag gets), BC7, per-asset quality, renormalized normal-map mips (the GPU's runtime mips didn't either).
+- **Tests:** `texture_compression` e2e: Raw alpha image BC3 with unpremultiplied channels within 8 of the file,
+  Raw opaque BC1, `[Lossless]` color exact and premultiplied, `[Raw, Lossless]` exact, small exact.
+  `compiler/tests/errors/lossless_*.tide` (on a grid, on a component, twice). The renderer's Raw passes use an
+  8x6 image, below the size that compresses, so their exact-pixel checks stand.
+
 ## Idle images by the device's memory (2026-11-02)
 
 Internal, from an investigation of frame hitches in the owner's Mount & Rifle (pinned 0.6.0-nightly.12, the

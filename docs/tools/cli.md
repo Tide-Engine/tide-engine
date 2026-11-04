@@ -197,6 +197,8 @@ still performs only front-end validation, even with a preview flag.
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
 | `-o <path>` | `build` only: where the program goes |
+| `--asset-sizes` | `build` only: lists what each asset declaration adds to the pack, biggest first (see [Asset sizes](#asset-sizes)) |
+| `--strip-assets` | `build` only, with `--release` or `--distribution`: leaves out assets no Tide code names even when the game or a package has C (see [Asset sizes](#asset-sizes)) |
 | `--report <file>` | `build` only: writes a [build report](#build-reports): where the build's time went, what each asset adds to the pack, what was left out and how big each output is. A `.json` path gets JSON, any other a table |
 | `--single-file` | `build --web` only: one self-contained `.html` with the game inside, which opens from disk, instead of a folder whose page downloads the game (see [The page while it loads](#the-page-while-it-loads)) |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
@@ -253,9 +255,9 @@ tide build --distribution --web --report build.txt
 
 - **Time**: each step of the build (preparing, resolving packages, compiling Tide code and assets, compiling C/C++, linking, packaging) with its share of the whole, and the compiler's own phases inside the Tide step: parsing, checking, running build code, generating C and packing assets.
 - **C/C++**: each file compiled and how long its compiler ran, slowest first in the table, and how many objects were already up to date. Compiles run several at once, so their times add up to more than the step's.
-- **Pack**: its size, and each asset's type, the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
+- **Pack**: its size, and each asset's type and how its images are kept (as [`--asset-sizes`](#asset-sizes) says them), the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
 - **Left out**: assets the build didn't pack, and why: in `--release` and `--distribution`, assets nothing in the game's code, defaults or shaders names, and in a `--server` build those its match code never reads.
-- **This mode**: what the mode cut or kept, such as unreferenced code removed by the linker, stripped names and symbols, or why every asset was packed (a game or package with C, which could read an asset by name).
+- **This mode**: what the mode cut or kept, such as unreferenced code removed by the linker, stripped names and symbols, or why every asset was packed (a game or package with C, which could read an asset by name, unless `--strip-assets`).
 - **Outputs**: the files the build made and their sizes.
 
 A failed build still writes its report, as far as it got. The report is of the build alone; it doesn't change what's built.
@@ -271,6 +273,21 @@ Shipping shader source also replaces function, type, field, parameter and local 
 Standalone macOS distribution executables expose no public symbols. Android's shipping `libgame.so` exports only `ANativeActivity_onCreate`, the entry point Android loads. Additional shared libraries supplied by your game keep their own exports; code needing a public dynamic API should provide it in a separate library. Hot-reload and Unity libraries retain their host APIs.
 
 This makes reverse engineering less convenient; it does not encrypt a game or prevent copying a downloaded demo. Game text, lookup keys, model contents and executable shader source remain available where the game needs them. For a custom compiler pipeline, `tidec --strip-names` applies the same metadata policy and writes `<name>.names` beside its generated C. CMake's standard-host `Release`/`MinSizeRel` games enable it automatically; custom hosts, layout/embed targets, `RelWithDebInfo` and explicit debugger-visualizer builds retain names unless their compiler pipeline explicitly requests stripping. `tide_add_game(... STRIP_NAMES)` opts in explicitly, including for custom hosts. Required layout/embed metadata still retains its names. The repository's `release` preset uses `RelWithDebInfo` for profiling; use `tide build --distribution` for a shipping build.
+
+### Asset sizes
+
+`tide build --asset-sizes` prints, after the build, what each asset declaration put in the pack, biggest first, under the pack's total:
+
+```text
+Assets in the pack: 96.4 MB in 41 declarations, biggest first
+     67.1 MB  69.6%  flowField        Texture 4096x4096 RGBA [Raw, Lossless]
+     11.2 MB  11.6%  groundColor      Texture 4096x4096 BC1
+      2.8 MB   2.9%  groundNormal     Texture 2048x2048 BC1 [Raw]
+```
+
+Each line has the bytes and share, the declaration's name, its type, an image's size (or how many files a list or map has) and how images are kept: `BC1` or `BC3` when [compressed](../game/assets.md#gpu-compression), `RGBA` when exact, `RGBA mips` for [authored mipmaps](../game/assets.md#authored-mipmaps). The bytes are the pack's, before a web page compresses it. A file two declarations share is in the pack once and counts toward the first. It's the pack of the build it's given with, so `--release` and `--distribution` show what pruning left. `tidec --asset-sizes` prints the same.
+
+Release and distribution builds leave out assets no Tide code, default or shader names. A game or package with C/C++ sources or prebuilt libraries keeps every asset instead, since C can find a pack entry by name. When the game's C reads no asset that way, `--strip-assets` says so, and its build is pruned like any other. An asset the C does read by name and nothing in Tide names is then missing at run time: its lookup finds nothing.
 
 Custom build pipelines can pass `tidec --depfile <file>` to write Make-style dependencies for the generated C, including rig profiles, their reference models and external animation buffers. `tide_add_game` consumes this file automatically so editing those inputs rebuilds the asset pack. The flag applies to code generation, not schedule, outline or shader inspection.
 
@@ -667,7 +684,8 @@ Closed Tide-only server builds automatically retain only simulation assets.
 Games or packages with C/C++ or prebuilt libraries retain all assets because C
 can find entries by name. `--strip-server-assets` explicitly enables server
 pruning for such projects when their C has no additional asset dependencies.
-This option also selects `--server`. Source asset validation still runs for all
+This option also selects `--server`. `tide build --strip-assets` makes the same
+promise for a release or distribution client build (see [Asset sizes](#asset-sizes)). Source asset validation still runs for all
 declarations. Standalone server links discard unreachable client code in debug
 and release. `--web`, `--android` and capture/view options do not apply to a
 server executable; browser players still connect through WebRTC.
