@@ -33,8 +33,16 @@ it (`gen_value_of` on a local isn't fresh: `kept = piece`, `Add(piece)`, `return
   element holds point at what it had for the whole body; readonly parameters are already copied at a call where a
   `mut` argument could alias them. Outer and inner loops are decided apart: an outer loop whose body (the inner loop
   included) writes the source copies, so an inner loop borrowing from that copy is safe.
-- **Not covered here, as before:** map/set foreach (`gen_map_foreach`) and array foreach already took entries and
-  elements shallow, whatever their body does.
+- **Maps, sets and arrays (2026-11-05).** These took entries and elements shallow whatever the body did: an array
+  foreach whose body replaced `pair[0]` read the replacement's list through its variable (0, then 1,000 parts where
+  it had 4: a freed block read through a stale handle), and a map entry's value was the same kind of handle, kept
+  across waits in a task. Now `foreach_borrows(g, s, held)` decides them too, `held` being what a round holds: a
+  map's value type (`gen_map_foreach`: `.value = tide_copy_<T>(entry->value)` when it copies; a set's keys hold no
+  list), and an array's element type, where a copy is the whole array as the loop found it
+  (`tide_array<n>_copy(...)` into `tide_all<n>`; an array nothing writes, `array_unwritten`, has no copy helper and
+  needs none, and a fresh array is the loop's own). Read-only loops generate what they did. Generated C over every
+  source list: only the Box2D package's two map loops in its topology pass (which remove and replace entries of the
+  map they walk) now copy, in every game that uses it (towers and the box2d tests).
 - **Generated C.** Old and new tidec over every `.sources` list in build/sanitize (476, prototypes included),
   `--no-line`: all differ only in the simulation identity (the compiler's sources are in it) but 18, whose only change
   is such loops borrowing: banked, foldline, sidekick, the lobby/steam-lobby packages, asset_borrows, asset_meshes,
@@ -42,7 +50,9 @@ it (`gen_value_of` on a local isn't fresh: `kept = piece`, `Add(piece)`, `return
 - **Measured** (release, Windows, Ryzen 9 7900X shared with other sessions; a scratch view over a local singleton of
   500 pieces, 2,000 `{float3, float3}` corners and 2,000 ints each, summing three reads a piece; median of 200
   frames, three runs): 6.0 to 7.4 ms a frame before (minimum 4.7), 0.009 to 0.016 ms after, the same sum.
-- **Tests:** `tidec_e2e_foreach_borrow` (a read-only loop beside writes to a disjoint field and locals taking no
+- **Tests:** `tidec_e2e_foreach_borrow` (maps and arrays read only taking no scratch, and with the body removing
+  and replacing the entry or both elements seeing them as the loop found them and taking scratch; a set's plain keys;
+  a read-only loop beside writes to a disjoint field and locals taking no
   scratch, nested loops, an element kept past the loop staying its own copy, and loops whose body empties an
   element's list, empties the list, calls a `mut` helper given the singleton, or replaces the element, each seeing the
   element as it was and taking scratch; a view's loop over the match taking none; snapshots unchanged), plus the

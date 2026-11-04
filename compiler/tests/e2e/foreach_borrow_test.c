@@ -14,12 +14,14 @@ TIDE_TEST(foreach_borrows_read_only_elements_and_copies_where_the_body_changes_t
     tide_local_init(&local);
     for (int tick = 0; tick < 3; tick++) {
         tide_world_tick(&world);
-        TIDE_CHECK(world.Results.checks == 9);
+        TIDE_CHECK(world.Results.checks == 14);
         TIDE_CHECK(world.Results.passed == world.Results.checks);
         TIDE_CHECK(world.Results.firstFailure == 0);
         TIDE_CHECK(world.Results.borrowedSum == 8 * 128 + 36);
         TIDE_CHECK(world.Results.borrowedScratch == 0); // Read only: nothing copied
         TIDE_CHECK(world.Results.copiedScratch > 0);    // The body changes it: the element copied
+        TIDE_CHECK(world.Results.mapBorrowedScratch == 0 && world.Results.mapCopiedScratch > 0);
+        TIDE_CHECK(world.Results.arrayBorrowedScratch == 0 && world.Results.arrayCopiedScratch > 0);
         // A snapshot keeps its pieces whatever the next tick does to the list
         tide_world_copy(&kept, &world);
         const uint64_t before = tide_world_hash(&kept);

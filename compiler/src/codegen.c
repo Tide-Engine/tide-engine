@@ -7411,10 +7411,12 @@ static bool borrow_disturbed_stmt(const stmt *s, const expr *src)
         || borrow_disturbed_stmt(s->else_stmt, src);
 }
 
-// Whether a list foreach's element can be borrowed (above).
-static bool foreach_borrows(const gen *g, const stmt *s)
+// Whether a foreach over a list, a map, a set or an array can borrow what
+// each round holds, of type `held`, rather than copy it (above). For a type
+// with no list in it there's nothing to copy, and it says false.
+static bool foreach_borrows(const gen *g, const stmt *s, const type held)
 {
-    if (!type_has_list(s->type) || g->task) return false;
+    if (!type_has_list(held) || g->task) return false;
     // A place's list is read where it is (foreach_value); any other is the loop's own copy
     const expr *src = is_place(s->value) && !s->value->kept ? s->value : NULL;
     if (src && !borrow_root(src)) return false; // Through a property: not a place this can follow
@@ -8068,7 +8070,12 @@ static void gen_stmt(gen *g, const stmt *s)
             const char *index = made_up(g, "i");
             line(g, o, "{");
             g->indent++;
-            line(g, o, "%s %s = %s;", c_type(s->value->type), all, expr_text(g, s->value));
+            // The array as the loop found it: its lists copied too, unless the body can't change them (foreach_borrows)
+            // (an array nothing writes has no copy, nor needs one)
+            const bool deep = s->value->type.kind == TY_ARRAY && type_has_list(s->type) && !array_unwritten(g->prog, array)
+                && !is_fresh(s->value) && !foreach_borrows(g, s, s->type);
+            if (deep) line(g, o, "%s %s = tide_array%d_copy(%s);", c_type(s->value->type), all, array->index, expr_text(g, s->value));
+            else line(g, o, "%s %s = %s;", c_type(s->value->type), all, expr_text(g, s->value));
             task_declare(g, all, s->value->type);
             line(g, o, "int32_t %s = 0;", index);
             task_declare(g, index, (type){TY_INT, NULL});
@@ -8134,7 +8141,7 @@ static void gen_stmt(gen *g, const stmt *s)
         }
         // The list's count is read each round, so changes to it while it's gone
         // through count.
-        const bool borrows = foreach_borrows(g, s);
+        const bool borrows = foreach_borrows(g, s, s->type);
         const int k = s->value->type.decl->index;
         const int mark = task_mark(g);
         const char *index = made_up(g, "i");
@@ -14821,7 +14828,11 @@ static void gen_map_foreach(gen *g, const stmt *s)
         if (key.kind == TY_STRING) sb_printf(o, "%s%s %s = tide_text_view(%s->key);\n", g->task ? "" : "const ", elem_vtype(key), var, entry);
         else sb_printf(o, "%s%s %s = %s->key;\n", g->task ? "" : "const ", elem_vtype(key), var, entry);
     } else {
-        line(g, o, "%s%s %s = {.key = %s->key, .value = %s->value};", g->task ? "" : "const ", type_cname(m->entry), var, entry, entry);
+        // The value is a copy, its lists too, unless the body can't change them (foreach_borrows)
+        const type value = m->fields.items[1].type;
+        const bool copy = type_has_list(value) && !foreach_borrows(g, s, value);
+        line(g, o, "%s%s %s = {.key = %s->key, .value = %s%s->value%s};", g->task ? "" : "const ", type_cname(m->entry), var, entry,
+             copy ? element_copy_open(value) : "", entry, copy ? ")" : "");
     }
     line(g, o, "(void)%s;", var);
     if (g->task) task_declare(g, var, s->type);
