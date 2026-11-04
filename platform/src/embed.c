@@ -224,7 +224,7 @@ tide_embed *tide_embed_create(const tide_embed_desc *desc)
         tide_run_assets_from(pack, desc->pack_size);
     }
 #if !defined(__wasm__)
-    if (from_library) check_pack(); // The pack tide wrote with the build, where the game has assets
+    if (from_library) check_pack(false); // The pack tide wrote with the build, where the game has assets
 #endif
     tide_run_begin();
     return &the_embed;

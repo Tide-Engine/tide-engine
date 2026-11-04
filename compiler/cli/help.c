@@ -302,6 +302,8 @@ static const argument_help arguments[] = {
     {"--interactive", "--interactive <replay.txt>", "Play dynamically over stdin without a window",
      "Draws frame 1, then waits for commands: future-frame script lines queue\n"
      "input; step <n> advances; capture <file.png> observes; quit or EOF ends.\n"
+     "controls lists the GUI's widgets with numbers, labels and rects;\n"
+     "click <n> or click \"label\" clicks one at the next frame.\n"
      "Reports tide: interactive ready <frame> after each step. Executed actions\n"
      "are saved as a replay script; relative captures are beside that script.\n"
      "Supports --players. Desktop only; cannot combine with --script.", RUN},

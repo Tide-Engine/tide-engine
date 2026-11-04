@@ -267,6 +267,10 @@ Until the game first draws, the page shows what it's doing: how much of the game
 - An element with the ID `tide-loading` is the loader: the game takes it away once it has drawn, and fills in the elements in it with the IDs `tide-loading-bar` (a bar, whose first child's width is how much has downloaded), `tide-loading-text` (what's happening, in words) and `tide-loading-logo` (an `<img>` for the icon). Leave it out for no loader.
 - `Tide.onProgress`, set in the `var Tide = { ... }` before the game's script, is told each step for a loader of your own: `{ stage, loaded, total, error }`, where `stage` is `download` (`loaded` of `total` bytes), `compile`, `waiting` (for `Tide.start()`, on a page that set `Tide.wait`), `start` (the game is running, until it first draws), `done` (it drew) or `error` (it couldn't start, and `error` says why).
 
+### The window while it loads
+
+On desktop and Android, a game with assets opens its window at once and shows the same loader as Tide's page while it reads its pack: how many megabytes it has read, then `Preparing` while the game checks and loads them. The window keeps answering meanwhile (you can move, resize or close it), and the game starts once its assets are in; what's pressed while it loads doesn't reach the game. A big pack can take seconds. Runs [without a window](#without-a-window) load their pack before their first frame, so their frames are the same every run. The window's loader isn't replaceable yet and shows no icon.
+
 Standalone release and distribution builds remove unreachable native code and data; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Distribution builds also strip debug symbols. Debug and hot-reload builds keep all code and every declared asset.
 
 `tide run` builds and plays with [hot reload](#hot-reload) by default, on desktop, the web or Android. Runs [without a window](#without-a-window) play once. On desktop, closing the game window ends the command too.
@@ -860,6 +864,8 @@ frame keep their arrival order. Held input stays held until released.
 | `step <n>` | Advances every player together by exactly `n` frames, then waits; `n` is 1 to 1,000,000 and the resulting frame is at most 1,000,000,000 |
 | `capture <file.png>` | Captures the current frame without advancing; `player 2 capture hers.png` selects one player |
 | `status` | Reports the current frame without advancing |
+| `controls` | Lists the GUI widgets the current frame drew, without advancing (below) |
+| `click <n>`, `click "label"` | Clicks a widget from `controls` at the next frame; `<frame> click ...` picks a later one |
 | `clear` | Removes all pending actions; already held keys/buttons stay held |
 | `quit`, or closing standard input | Ends the session at its current frame |
 
@@ -871,6 +877,46 @@ for correction. These lines are flushed immediately; ordinary capture output
 and game logs can appear alongside them. Blank lines and comments beginning
 with `#` are accepted. A command is at most 4,094 UTF-8 bytes, excluding its
 newline; terminate each command with a newline.
+
+#### Clicking widgets by name
+
+Guessing a button's pixels from a picture misses when the picture's size or
+scale isn't the one assumed. `controls` lists the widgets the current frame
+drew, one line each, in the order they were drawn:
+
+```text
+tide: control 1 button "Play" 560 400 160 48 at 640 424
+tide: control 2 toggle "Sound" 560 460 120 28 at 620 474 focused
+tide: control 3 slider "Volume" 560 500 320 28 at 726 514
+tide: control 4 button "Quit" 560 540 160 48 at 640 564 disabled
+tide: controls 4
+tide: interactive ok 12
+```
+
+Each line has the widget's number, its kind (`button`, `toggle`, `slider`,
+`number`, `text`, or `control` for a `GUI.Control`), its label in quotes, its
+rect (x, y, width and height in logical pixels from the top left, the units of
+`mouse` lines) and `at`, a point where a click is the widget's. `disabled`
+means it takes no clicks, `covered` that something drawn over it covers all
+of it, and `focused` that it has the keyboard's focus. A vector or color
+field lists a `number` for each of its boxes, all with the field's label.
+Widgets under an open modal, and widgets a scroll hides completely, are left
+out. Areas and panels aren't widgets.
+
+`click 1` or `click "Play"` moves the mouse to that widget's `at` point and taps
+the left button at the next frame. The click completes at the frame after,
+when the button is released, so `step 2` shows the result. A label without
+quotes is the rest of the line: `click Play`. A label matches exactly, then
+ignoring case, then as part of a label. When several widgets match, the
+error names two of them so you can click by number. `<frame> click ...` queues
+the click at a later frame, still going by the widgets drawn now.
+`tide: click <frame> <x> <y>` says where the click goes. The replay file
+records it as ordinary `mouse` and `button left` lines. A disabled or covered
+widget is refused with an error; `mouse` and `button` lines can still click
+anywhere. `player 2 controls` and `player 2 click ...` go by the second
+player's widgets. Only the GUI's widgets are listed: a game that draws its
+own buttons and reads `Devices` itself has none to list, and a `GUI.Control`
+has no label.
 
 Capture and recording paths are relative to the replay file's directory,
 including when `tide run` was invoked elsewhere. Several players use the same

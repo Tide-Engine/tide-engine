@@ -751,7 +751,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     const uint64_t room = (whole + TIDE_SCRATCH_BYTES - 1u) & ~(uint64_t)(TIDE_SCRATCH_BYTES - 1u);
     if (whole > TIDE_PACK_BASE || room > SIZE_MAX) return false; // More than memory holds
     tide_pack_unload();
-    tide_sha256_of(bytes, size, pack.digest);
+    memcpy(pack.digest, h.digest, sizeof pack.digest); // The build hashed it (tide_pack_end)
     pack.region = tide_alloc(room ? (size_t)room : 16u);
     memcpy(pack.region, bytes + h.region_at, (size_t)h.region_size);
     pack.size = h.region_size;
