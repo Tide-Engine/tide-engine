@@ -1,5 +1,55 @@
 # The docs site
 
+## Playground editor: Monaco, Tide colors and the browser language server (2026-11-04)
+
+The owner asked for Tide colors and completion in the playground, and for a wider
+code area ("the code editing part is very small horizontally"), keeping it in the docs.
+The textarea is now Monaco 0.57 (`src/lib/components/playground/editor.ts`, imported
+only after mount). It loads only the editor feature modules it uses
+(`monaco-editor/features/*/register`, plus the suggest widget's controller, which
+`features/suggest` doesn't bring), not Monaco's other languages. Colors come from
+`tools/tide-syntax`'s grammar through Shiki (`@shikijs/monaco`), as in the docs' code
+blocks, with the github light/dark themes on the site's code background. The site's
+theme toggle switches the editor's theme.
+
+The language server is the real tidels: `tidels_browser` (docs/playground/CMakeLists.txt)
+builds `compiler/lsp/*.c` without its stdio `main.c`, plus `docs/playground/tidels.c`,
+as a WASI reactor (`-mexec-model=reactor`). Its exports take one JSON-RPC message
+(`tidels_input`/`tidels_handle`) and return what the server sent, NUL-separated
+(`tidels_output`/`_len`). It runs without `defer`, so each change is analysed at once;
+the page sends the whole text after a 200 ms pause, and before any request so
+positions match. The compiler sources are now the static library
+`tide_browser_compiler`, shared by `tidec_browser` and `tidels_browser`, with
+unchanged flags. `language.mjs` (the client, shared by its worker and the Node test)
+and `language-worker.mjs` run it off the page's thread. The editor wires completion,
+hover, signature help, diagnostics (markers and a clickable problem list), document
+highlights, definition within the file, rename, formatting and folding. Definitions
+in engine headers are dropped, as the page has no tab for them. A server trap stops
+the language features; editing and compiling continue.
+
+Staging adds `tidels.bin` (1.17 MiB compressed) and `headers.bin` (0.39 MiB, the
+`include/tide/` headers that hovers and built-ins read), checked for imports like
+tidec. The editor downloads only these on load, while the compiler's 25 MiB still
+waits for the first build. `assets.mjs` holds the manifest/hash/gunzip loading both
+workers share.
+
+Layout: the playground's docs column has no maximum width, and a draggable,
+keyboard-adjustable divider sets the code's share (30-78%, default 60%, kept in
+localStorage). **Expand** fills the window below the header; Esc or Exit returns.
+Phones keep the stacked layout. `section.playground` carries `tideEditor` (value,
+setValue, focus, hasFocus) for the browser smoke. The layout's `.content.playground`
+div shares the class, so tests select the section.
+
+Validation: the web-release `docs_playground` build, `svelte-check` (zero errors and
+warnings) and the production build pass. All playground Node tests pass, including
+two new ones against the staged `tidels.bin`: hover on a component field and an
+engine built-in, member completion, error diagnostics and their clearing, rename
+and formatting. `TIDE_EXAMPLES=playground node tests/examples.mjs` (WebGL) passes
+with new checks for grammar coloring, editor markers and the problem list during
+a syntax error and their clearing after Reset. Screenshots checked by eye: dark,
+light, Expand, the member suggestion list and phone. Other browsers, the WebGPU
+smoke and real phones are not exercised.
+
 ## Browser host and native build code (2026-11-03)
 
 Merging the new build-code feature exposed native process headers (`spawn.h`,

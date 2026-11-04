@@ -1,5 +1,16 @@
 # The language server and the editors
 
+## tidels in the docs playground (2026-11-04)
+
+The docs playground runs tidels compiled to a WASI reactor (`tidels_browser`,
+`docs/playground/tidels.c`): the same `compiler/lsp` sources without `main.c`'s
+stdio transport, one message per call, no `defer`, engine headers at `/include` and
+no packages (`packages_set_builtin_folder(NULL)`). Server changes reach it with the
+next docs build. Code that needs native-only facilities (processes, file watching,
+threads) must keep a path that works under WASI, or `tidels_browser` stops
+linking. Its tests are in `docs/tests/playground.test.mjs`. See
+notes/docs-site.md, "Playground editor".
+
 ## Explicit texture gradients (2026-11-02)
 
 Texture member completion and the common method-form table expose

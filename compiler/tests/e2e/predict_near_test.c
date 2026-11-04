@@ -102,9 +102,11 @@ static void watch(const tide_client *c, const int32_t near, const int32_t far, w
         || !walker(known, far, &known_far)) return;
     out->frames++;
     if (memcmp(&shown_far, &known_far, sizeof shown_far) == 0) out->far_same++;
+    // Run every predicted tick: by Tide's system and by the one written in C
+    const int ahead = (int)(status.predicted_tick - status.verified_tick);
+    if (shown_near.ran - known_near.ran == ahead && shown_near.aged - known_near.aged == ahead) out->near_ahead++;
     const int counted = ((const tide_world *)shown)->FarSeen.ticks - ((const tide_world *)known)->FarSeen.ticks;
-    if (counted == (int)(status.predicted_tick - status.verified_tick)) out->far_counted++;
-    if (shown_near.ran - known_near.ran == (int)(status.predicted_tick - status.verified_tick)) out->near_ahead++;
+    if (counted == ahead) out->far_counted++;
 }
 
 typedef struct phase {

@@ -25,6 +25,20 @@ starts it again.
 error, diagnostics appear below the editor and the last successful game keeps
 running. Try removing a semicolon, then putting it back.
 
+## The editor
+
+The editor runs the same language server as the [editor extensions](../tools/editors.md),
+so it already knows your code before you compile it:
+
+- Type `.` after a value, or press Ctrl+Space, for completions. Hover a name to see its type and documentation.
+  Parameter hints appear as you type a call.
+- Mistakes are underlined as you type and listed under the editor; click one to jump to it.
+- F12 goes to a definition in this file, F2 renames, and Shift+Alt+F formats the code.
+  Ctrl+/ comments lines, and Ctrl+F finds text.
+
+Drag the divider between the code and the game to give either more room, or press
+**Expand** to fill the window. Esc or **Exit** brings back the page.
+
 ## What runs here
 
 This is the real Tide compiler and engine: Tide is transpiled to C, compiled
@@ -32,7 +46,8 @@ to WebAssembly and loaded into the running preview. The first compilation
 downloads about 25 MiB of compiler tools, which your browser can cache. Later
 edits reuse them. The first build also initializes the tools and can take longer
 than later edits; progress appears below the editor. The compiler runs in a
-worker so you can keep editing while it builds.
+worker so you can keep editing while it builds. The editor's language server is
+a separate download of under 2 MiB, so suggestions work before the first build.
 
 This demo edits one `.tide` file with no external assets or packages. The
 engine's normal component, system and view features work here, including
