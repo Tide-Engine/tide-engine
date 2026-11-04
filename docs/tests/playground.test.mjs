@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 import { BrowserCompiler } from '../playground/compiler.mjs';
+import { LanguageServer, diagnosticsOf } from '../playground/language.mjs';
 
 const staged = new URL('../static/playground/generated/', import.meta.url);
 const modules = Object.fromEntries(await Promise.all(['tidec', 'clang', 'lld'].map(async name =>
@@ -83,4 +84,54 @@ test('texture imports build identical packs in isolated browser filesystems', as
     assert.equal(second.diagnostics, '');
     assert.ok(first.pack.length > png.length);
     assert.deepEqual(second.pack, first.pack);
+});
+
+// The editor's language server is the real tidels, staged as its own small
+// payload with only the engine headers.
+const language = async text => {
+    const server = new LanguageServer(await WebAssembly.compile(gunzipSync(await readFile(new URL('tidels.bin', staged)))),
+        Object.fromEntries(Object.entries(JSON.parse(gunzipSync(await readFile(new URL('headers.bin', staged)))))
+            .map(([name, encoded]) => [name, new Uint8Array(Buffer.from(encoded, 'base64'))])));
+    return { server, opened: await server.start(text) };
+};
+const lineOf = (text, needle) => {
+    const lines = text.split('\n');
+    const line = lines.findIndex(l => l.includes(needle));
+    return { line, character: lines[line].indexOf(needle) };
+};
+
+test('the browser language server completes, hovers and reports diagnostics', async () => {
+    const { server, opened } = await language(source);
+    assert.deepEqual(diagnosticsOf(opened), []);
+    const field = lineOf(source, 'ball.position +=');
+    const hover = server.at('textDocument/hover', field.line, field.character + 6);
+    assert.match(hover.contents.value, /float2 position/);
+    assert.match(hover.contents.value, /Field of component `Ball`/);
+
+    const edited = source.replace('ball.position +=', 'ball. +=');
+    const diagnostics = server.change(edited);
+    assert.ok(diagnostics.some(d => d.severity === 1), JSON.stringify(diagnostics));
+    const dot = lineOf(edited, 'ball. +=');
+    const members = server.at('textDocument/completion', dot.line, dot.character + 5);
+    const labels = (Array.isArray(members) ? members : members.items).map(item => item.label);
+    assert.deepEqual([...labels].sort(), ['bounces', 'position', 'velocity']);
+
+    // Engine built-ins come from the bundled headers.
+    const math = lineOf(source, 'Math.Abs');
+    const builtin = server.at('textDocument/hover', math.line, math.character + 6);
+    assert.ok(builtin?.contents.value.includes('Abs'), JSON.stringify(builtin));
+
+    assert.deepEqual(server.change(source), []);
+});
+
+test('the browser language server renames and formats the one document', async () => {
+    const { server } = await language(source);
+    const at = lineOf(source, 'SPEED;');
+    const edit = server.at('textDocument/rename', at.line, at.character, { newName: 'PACE' });
+    const edits = edit.changes?.['file:///game.tide'] ?? edit.documentChanges.flatMap(d => d.edits);
+    assert.equal(edits.length, source.split(/\bSPEED\b/).length - 1);
+    assert.ok(edits.every(e => e.newText === 'PACE'));
+    const formatted = server.request('textDocument/formatting', { textDocument: { uri: 'file:///game.tide' }, options: { tabSize: 4, insertSpaces: true } });
+    assert.ok(Array.isArray(formatted));
+    assert.equal(server.log, '');
 });

@@ -153,6 +153,12 @@
         max-width: none;
     }
 
+    /* The playground's editor and game take all the room beside the sidebar. */
+    .content.playground {
+        max-width: none;
+        padding-right: 48px;
+    }
+
     .outline {
         position: sticky;
         top: calc(var(--header-h) + 48px);
