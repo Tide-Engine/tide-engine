@@ -330,6 +330,8 @@ tide_e2e_test(commands)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)
 set_tests_properties(tidec_e2e_commands_channels PROPERTIES TIMEOUT 300)
+# Commands holding lists of ints, floats, enums, entities and structs: packed, repaired, bounded, refused, and in chunks
+tide_e2e_test(command_lists)
 add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/command_schema"

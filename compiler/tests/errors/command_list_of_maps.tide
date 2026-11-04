@@ -1,0 +1,4 @@
+// expect: a command can't hold a map, set or grid
+struct Scores { Map<int, int> best; }
+command Submit { List<Scores> scores; }
+scene Main { }

@@ -1,5 +1,14 @@
 # No Tide code can corrupt memory
 
+## Commands' lists of values (2026-11-04)
+
+A command's `List<T>` from the wire (`gen_bits_list`, `notes/netcode.md`, Commands holding lists of values) is
+generated code over the list helpers there were. Its count is refused past `TIDE_COMMAND_LIMIT` or past the bits left
+over the fewest bits an element takes, before `tide_list_resize` makes the scratch list, so the list is at most about
+eight times the command's bytes; each element is read into a zeroed wrapper and checked for overflow before it's
+copied in, and the write side reads elements only below the list's count. Floats, enums and chars are repaired before
+anything reads them, as a field's are. `compiler/tests/e2e/command_lists` feeds hand-written counts and truncations.
+
 ## Grids code owns (2026-11-03)
 
 Locals, returned grids and copies (notes/language.md, Grids as values) reach `engine/src/grid.c` with any game
