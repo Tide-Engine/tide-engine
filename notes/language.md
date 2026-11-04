@@ -2506,6 +2506,16 @@ mutation during the call. No Tide alias/reference behavior is added. Overlapping
 mutable input types (including nested fields/containers), world writes, sends,
 spawns, tasks, extern calls and Action helpers keep the ordinary value path.
 Extern, async, operator, Interpolate, audio and input entry ABIs are unchanged.
+(2026-11-05) "Extern calls" means a game's own `extern` C, reached directly or
+through helpers (`decl.reaches_extern`, propagated with `calls_c`). `calls_c`
+alone also marks the engine's ordered builtins (render-target and cubemap
+creation, Resize/Dispose, Texture.size and contentRevision, file and network
+I/O), which keep their place among C's calls but can't reach a value a caller
+lends: a helper calling only those borrows. Found in Mount & Rifle's
+performance pass, where a helper reaching an extern copied a 452 KB local
+singleton on every call. `readonly_aggregates_codegen` checks that a helper
+reading a render target's size borrows its `Big` and `WithC`, which reaches C,
+keeps its copy.
 Recursive type inspection is bounded and fails conservatively. Later argument
 side effects retain existing ordered snapshots; non-addressable values use
 caller-owned compound literals. Shared GPU helpers retain their shader ABI.

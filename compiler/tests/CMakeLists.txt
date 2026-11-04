@@ -157,6 +157,9 @@ tide_e2e_test(default_value)
 tide_e2e_test(math)
 tide_e2e_test(float_bits)
 tide_e2e_test(readonly_aggregates)
+add_test(NAME tidec_readonly_aggregates_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_readonly_aggregates/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/readonly_aggregates_codegen.cmake")
 tide_e2e_test(screen_scale)
 tide_e2e_test(input)
 tide_e2e_test(input_borrows)

@@ -53,4 +53,9 @@ system Check(mut Big big, mut Results result)
     result.external = WithC(big);
     result.nested = Nested(plain, plain.head);
 }
+// Reading a resource's size keeps its place among C's calls, but no C can
+// reach a value it's lent: it borrows (readonly_aggregates_codegen.cmake)
+int Measured(Big value, RenderTarget target) { return target.color.size.x + value.words[0]; }
+local singleton Seen { int width; }
+view Measure(Big big, mut Seen seen) { seen.width = Measured(big, RenderTarget.Window()); }
 scene Main { }
