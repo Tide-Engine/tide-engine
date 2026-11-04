@@ -105,10 +105,10 @@ frames), the near one at the predicted pair's; it fails with the helper
 returning false.
 
 Gaps:
-- Whole-world code still runs for far entities in predicted ticks: singleton
-  systems writing through `mut` queries (whether those skip far rows is the
-  owner's call) and physics packages' steps (Box2D and Box3D step every body;
-  its design has a thread of its own).
+- Physics packages' steps still run far bodies in predicted ticks (Box2D and
+  Box3D step every body); its design has a thread of its own. A system's `mut`
+  query rows write far entities like any other: the owner's decision, same day
+  ("written like any other is correct").
 - The filter's per-row cost in ticks that have no tags (the server's,
   confirmed ones): a world-level "nothing is tagged" would let them take the
   unfiltered loops.
