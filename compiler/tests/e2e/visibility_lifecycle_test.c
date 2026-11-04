@@ -437,16 +437,16 @@ TIDE_TEST(visibility_lifecycle_private_spawn_values_do_not_fingerprint_journals)
         TIDE_REQUIRE(tide_set_Details(&a, e, (Details){.secret = 111}));
         TIDE_REQUIRE(tide_set_Details(&b, e, (Details){.secret = 222}));
         a.Actions.next = b.Actions.next = ghost ? 15 : 14;
-        tide_game_api.tick_client_events(&a, NULL, events_a);
-        tide_game_api.tick_client_events(&b, NULL, events_b);
+        tide_game_api.tick_client_events(&a, NULL, events_a, NULL);
+        tide_game_api.tick_client_events(&b, NULL, events_b, NULL);
         const tide_player_id recipient = tide_player_from_index(1);
         TIDE_CHECK(tide_game_api.client_hash(&a, recipient) == tide_game_api.client_hash(&b, recipient));
         TIDE_CHECK(tide_game_api.client_hash(&a, tide_player_from_index(0)) != tide_game_api.client_hash(&b, tide_player_from_index(0)));
         same_journal(&events_a[1], &events_b[1]);
         if (!ghost) TIDE_CHECK(events_a[1].count != 0);
         a.Actions.next = b.Actions.next = ghost ? 16 : 6;
-        tide_game_api.tick_client_events(&a, NULL, events_a);
-        tide_game_api.tick_client_events(&b, NULL, events_b);
+        tide_game_api.tick_client_events(&a, NULL, events_a, NULL);
+        tide_game_api.tick_client_events(&b, NULL, events_b, NULL);
         same_journal(&events_a[1], &events_b[1]);
         TIDE_CHECK(tide_game_api.check_client_events(events_a[1].bytes, events_a[1].size, NULL, NULL));
         if (ghost) {
@@ -493,16 +493,16 @@ TIDE_TEST(visibility_lifecycle_private_policy_and_resident_do_not_enter_journals
     tide_world_tick(&b);
     a.Actions.count = b.Actions.count = 0;
     a.Actions.next = b.Actions.next = 17;
-    tide_game_api.tick_client_events(&a, NULL, events_a);
-    tide_game_api.tick_client_events(&b, NULL, events_b);
+    tide_game_api.tick_client_events(&a, NULL, events_a, NULL);
+    tide_game_api.tick_client_events(&b, NULL, events_b, NULL);
     // Player 1 sees the same public scene value; membership of player 0 and
     // opaque resident state differ, including scene snapshots in query rows.
     TIDE_REQUIRE(events_a[1].count != 0);
     same_journal(&events_a[1], &events_b[1]);
     TIDE_CHECK(tide_game_api.client_hash(&a, tide_player_from_index(1)) == tide_game_api.client_hash(&b, tide_player_from_index(1)));
     a.Actions.next = b.Actions.next = 18;
-    tide_game_api.tick_client_events(&a, NULL, events_a);
-    tide_game_api.tick_client_events(&b, NULL, events_b);
+    tide_game_api.tick_client_events(&a, NULL, events_a, NULL);
+    tide_game_api.tick_client_events(&b, NULL, events_b, NULL);
     TIDE_REQUIRE(events_a[1].count != 0);
     same_journal(&events_a[1], &events_b[1]);
     for (int i = 0; i < 2; i++) { tide_event_log_free(&events_a[i]); tide_event_log_free(&events_b[i]); }
@@ -524,7 +524,7 @@ TIDE_TEST(visibility_lifecycle_authoritative_recipient_journals)
     TIDE_REQUIRE(tide_game_api.tick_client_events && tide_game_api.check_client_events);
     const int before = world.Time.tick;
     world.Actions.next = 4;
-    tide_game_api.tick_client_events(&world, NULL, events);
+    tide_game_api.tick_client_events(&world, NULL, events, NULL);
     TIDE_CHECK(world.Time.tick == before + 1); // One authoritative tick, regardless of recipient count.
     for (int i = 0; i < 2; i++) {
         uint32_t build = 0, count = 0;
@@ -547,7 +547,7 @@ TIDE_TEST(visibility_lifecycle_authoritative_recipient_journals)
     TIDE_CHECK(local[0].Observed.absentRows == 0 && local[1].Observed.absentRows == 7);
 
     world.Actions.next = 6;
-    tide_game_api.tick_client_events(&world, NULL, events);
+    tide_game_api.tick_client_events(&world, NULL, events, NULL);
     TIDE_CHECK(!contains_value(&events[1], 0x13572468 + 1000));
     for (int i = 0; i < 2; i++) {
         uint32_t build = 0, count = 0;
@@ -581,7 +581,7 @@ TIDE_TEST(visibility_lifecycle_hidden_destruction_is_not_journaled)
     world.Actions.next = 7;
     tide_world_tick(&world);
     world.Actions.next = 6;
-    tide_game_api.tick_client_events(&world, NULL, events);
+    tide_game_api.tick_client_events(&world, NULL, events, NULL);
     TIDE_CHECK(events[0].count == 0 && events[1].count == 0);
     TIDE_CHECK(!tide_entity_alive(&world.entities, e));
     for (int i = 0; i < 2; i++) tide_event_log_free(&events[i]);
@@ -597,7 +597,7 @@ TIDE_TEST(visibility_lifecycle_destruction_cause_uses_event_time_visibility)
         const tide_entity target = marker(&world);
         if (reveal) { world.Actions.next = 7; tide_world_tick(&world); }
         world.Actions.next = reveal ? 9 : 8;
-        tide_game_api.tick_client_events(&world, NULL, events);
+        tide_game_api.tick_client_events(&world, NULL, events, NULL);
         TIDE_CHECK(!tide_entity_alive(&world.entities, target));
         for (int player = 0; player < 2; player++) {
             uint32_t at = 0, causes = 0;
@@ -648,7 +648,7 @@ TIDE_TEST(visibility_lifecycle_received_plain_values_are_checked_before_casts)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_local_init(&local);
     world.Actions.next = 17;
-    tide_game_api.tick_client_events(&world, NULL, events);
+    tide_game_api.tick_client_events(&world, NULL, events, NULL);
     tide_event_log *const log = &events[0];
     TIDE_REQUIRE(tide_game_api.check_client_events(log->bytes, log->size, NULL, NULL));
     uint32_t at = 0;

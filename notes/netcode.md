@@ -9,7 +9,10 @@ A scratch probe (in `session.c` at each divergence, with the generated
 `client_state` marking where every singleton, entity and component starts;
 kept with the findings, not in the tree) compared the server's projection after
 the tick with the client's run of it, from a projection both had alike. Four
-causes, two of them the engine's:
+causes, two of them the engine's. That was the lone player's own client, before
+the host shared the server's world (the next section, merged the same day); the
+causes are any remote client's, and the measurements below are from before
+that change.
 
 - **A client's hidden spawns were in its projection.** On a client
   `Visibility.CreateGroup` returned -1 whatever the audience, and
@@ -103,12 +106,106 @@ Still open (the owner's):
   made a hidden one has another handle until repaired. Sending the entity count
   would fix it and tell clients how much hidden spawning goes on.
 - Physics queries from views of a world just loaded find nothing until the client
-  ticks it (`Physics.Ready` is false at stamp 0); a lone player's take (`twin_take`)
-  never ticks. No game hits this today.
+  ticks it (`Physics.Ready` is false at stamp 0). No game hits this today.
 - Moving Box3D/Box2D bodies start again without warm starts or sleep state on a
   client after each projection, so their motion can differ until corrected.
 - The backoff's numbers (a second, doubling, a quarter of a second, a quarter of
   `maxRewind`) are picks.
+## The host's player shares the server's world (2026-11-04)
+
+The owner's decision: the server's machine keeps no client world. Its player stays "a client" only in being a player like any other: it joins (`PlayerJoined`), has a `PlayerID`, owns entities, sends input and commands over the in-process loopback. The host may see everything the server does, so the match is ticked once there whoever else is in it. That replaces "A match played alone ticks once" below: `twin_ran`, `twin_take`, `twin_takes`, `host_runs`, `server_due`, `tide_client.host`/`host_due`/`taken_from`/`taken_to` are gone (`taken_world` stays, for remote projection reloads).
+
+What's built (`engine/src/session.c`):
+- **`tide_client.mirror`**, the server of the same session, set where the session makes its own player (`start_server`, `tide_session_take_over`). Never for shards (their clients are `tide_shard_client`'s) or a joined match.
+- **Joining**: a mirror's HELLO claims neither a world nor `can_start`, so the server sends the plain world. On the WELCOME naming it, the client doesn't receive it: `load_snapshot` copies the server's world as it is (`snapshot_tick` = the server's tick) and the client then says it has the transfer whole (`got_number`). A later transfer is acknowledged the same way. Visibility games skip `hear_visibility_tick` at that load (the world isn't a projection).
+- **Each server tick** (`server_tick`): `mirrored` is the session's player while `tide_session_update` updates the server (`tide_server.twin`), level with it (`verified == ahead == tick`, loaded, the same build). If it is and the game has local handlers that hear the match, the tick runs with `tick_events` into `tide_hearing_begin(&c->hearing, tick)` (`mirror_hearing`), or for visibility games with `tick_client_events(..., journals, all)` (below). After the tick, `mirror_tick` ends and confirms that hearing at once (predicted and verified handlers each hear it once), copies the server's world into the ring at `tick + 1` (`copy_world`: pages shared until either side writes), and sets `verified = ahead = tick + 1`.
+- **`play`** for a mirror is `mirror_play`: no frame is applied, predicted, hashed or repaired (frames for ticks before `verified` are dropped as they arrive). Behind the server (after a build change, or a ring that had no room) it takes the server's world whole (`take_server_world`, now a full copy for a mirror even with `client_state`) and skips the hearing to there. It runs the clock part of `play` (`clock_back`, `keep_early`, sampling inputs up to the clock, `early_settled`). `adjust_delay` does nothing for a mirror.
+- **Generated callback** (owner-approved design; compiler side): `tide_game.tick_client_events(world, jobs, per_player, all)` gets `all`, recording everything the tick sent, as `tick_events` does, into what was the generated `ignored` log. NULL keeps the old behavior. The Session ABI marker says `host events (1)`. Handwritten test games ignore it.
+
+What changes for games: the host's views and local code see the whole match, hidden entities included (the spec's State visibility now says so; whether its views should be masked by its player's audience is Open there). Its local handlers hear every match event, including events from hidden state, which `hears_match_events` no longer decides. `tide_client_status.run_ticks`/`ahead_ticks` stay 0 for the host. The other machines are unchanged.
+
+Gaps:
+- A lone developer no longer gets the twin's desync check (the host's client hashing its own run of each tick against the server's). Nondeterminism shows only with another machine in (`--players 2`, the networking tests). An opt-in check (running the twin again) was offered to the owner and isn't built.
+- The server still keeps and sends frames to the local connection, and in visibility games hashes its projection each tick and packs one projection at join. The client ignores them. Leaving the local connection out of `store_client_frame`/`client_hashes` would save that work.
+- The host's presentation has no prediction correction to smooth, and draws the server's tick as it is.
+
+Tests: `net_a_host_with_another_player_ticks_once` (`compiler/tests/e2e/net_test.c`: a host and a guest over 30 ms, 10 ms jitter and 5% loss, 300 uneven frames; the counted game ticks exactly once per confirmed tick, the host's player runs none, its world is the server's every frame, both players' inputs reach the match, no resyncs). `net_alone_seen` now checks the host instead: alone and with a guest, ticks run equal ticks confirmed, the host has all 8 walkers every frame while the guest sees fewer, and every Rang and every walker's Shown is heard once and once as verified (before, a game hearing Rang ran both ticks, and the twin's Shown counted only walkers in sight). `delta_players_coming_back_to_a_match_that_changed_hands_get_what_they_lack`: the new host's player receives 0 world bytes (it shares its server's world); the guest still gets what it lacks. The existing `net_a_session_played_alone_ticks_once` and `net_a_session_takes_a_new_build_of_its_game` pass unchanged.
+
+Validation: full native `sanitize` (3,028 CTests, Windows ASan, tide-prototypes included through `TIDE_EXTERNAL_DIRS`) and full `web-debug` (2,899, engine only) pass, and the docs build. Other operating systems, Android and MinGW are CI's.
+
+## Projection hashes follow what changed (2026-11-04)
+
+Every tick the server hashes each player's projection (`client_hashes`). Its
+singleton part used to encode every public singleton into one buffer and hash
+it: in Mount & Rifle (Box3D's `Physics` with its rewind frames and colliders,
+the campaign's build-once `Atlas`, `Ground`, `Pathing`, ...) that was 1.8 ms a
+tick in release, more than the game's systems, and it grew with the world.
+
+The singletons now hash as trees (`gen_client_hvs`, `compiler/src/client_state_codegen.inc`):
+a value's bytes are its codec's (`tide_client_put<id>`), but each list, map, set
+and grid in it is the 8 bytes of its own hash, of its bytes made the same way.
+A container's hash is a function of its value alone, so the server and a client
+(their heaps laid out differently) agree on it as before, on every platform and
+build; it's only a different function of the same values, a 64-bit hash of
+hashes (`singleton tree hashes` is in the simulation identity). Text stays inline.
+Singletons holding nothing in the heap, entities, inputs and commands hash as
+they did; games with transform hierarchies still hash `client_state`'s bytes.
+
+What makes it cheap: a container of 256 bytes or more keeps its hash in a memo,
+by its handle and codec, with every heap page its value was read from (its own
+blocks, its chunks, its elements' text and containers, all it holds; a hit
+counts its pages into its parent's). The memo says the hash again while each of
+those pages, by its place, has the same size, start and page hash. Pages keep
+their hashes until written (`tide_heap_write` or a copy marks them), and the
+server has just hashed its world, so an unchanged container costs a comparison
+a page; a changed one is encoded again, its unchanged children taken from the
+memo. A value that reads anything outside the match's heap (the pack's) isn't
+kept. The memo is only a shortcut to a hash the value has: a page hash
+collision is the only way it could be wrong, which is what the world's own hash
+already rests on. Memos are the process's (`tide_client_memos`, 8, globals so no
+thread's exit loses them), one per world last hashed, taken under a spin lock
+and busy while a thread hashes with it; what a call didn't use goes once it's
+most of what's kept. No runtime function or `tide_game` member was added:
+generated code reads list, grid and page headers and calls `tide_heap_block_hash`.
+
+Bug found on the way, kept as a test: the walk records each page once in a row,
+and comparing against the last page recorded before the container's own start
+left that page out of the container's set (a grid whose directory shared its
+page with the list before it was taken from the memo after a cell changed).
+
+Tests: `tidec_e2e_visibility_hash_memo` (`compiler/tests/e2e/visibility_hash_memo.tide`):
+singletons with a list of structs with text and lists, a map of lists, a set, a
+list in chunks, a ring of frames of points and notes, a grid; a tick changes one
+thing deep in one of them. Over 150 ticks each projection hash differs from the
+tick before, equals itself again, the snapshot of the tick before still hashes
+as it did, and a world the projection loads into (another heap) hashes the same,
+warm and, on odd ticks, after eight other worlds pushed its memo out. The 150
+hashes together are pinned, and `tidec_e2e_visibility_hash_memo_off` (the same,
+`TIDE_CLIENT_MEMO_OFF`: nothing kept) must give the same pin. A second case
+changes values in place (a byte in a chunked list, an int in a list in a list's
+element, a point of a frame), with and without a snapshot sharing their pages:
+each change shows and undoing it gives the hash back. Validated native release,
+`sanitize` (Windows ASan) and `web-debug`: these, the visibility, double,
+event_containers and shards_visibility fixtures, `earth_tests`, `bench_earth*`
+and `tide_cornerculling`, the games whose generated code changed (every game's
+simulation ID moves, as with any compiler edit).
+
+Measured (Windows, shared machine, so runs vary):
+- Microbenchmark, that fixture's game in release (551 KB projection, one thing
+  changed a tick): projection hash 0.25-0.28 ms a tick before, 0.042 after;
+  hashed again with nothing changed, 0.25 ms before, 0.001 after.
+- Mount & Rifle (HEAD 6e963ed, tide 0.6.0-dev from this branch with and without
+  the change, route `tools/performance-route.txt`, seed 42, 3230 frames,
+  1280x720, `--profile --profile-warmup 200`, a scratch timer around
+  `client_hashes` in session.c): release 2.43, 2.21 and 2.51 ms a tick before,
+  0.49, 1.03 (a run the machine's load slowed throughout) and 0.57 after; debug
+  4.24 before, 1.57 after. The profile's match phase moves by about that much
+  but is within the machine's noise between runs.
+
+What's left: changed containers are encoded whole (a big list whose one element
+changes is encoded again, not its changed chunk); entities are still hashed
+every tick, each from its components; and the client's verification hash goes
+the same way but on a world loaded or predicted afresh it finds less unchanged.
 
 ## Service the match while desktop presentation waits (2026-11-03)
 
@@ -353,6 +450,8 @@ Tests: `tidec_e2e_visibility_lists` (`compiler/tests/e2e/visibility_lists.tide`)
 Validation: full native `sanitize` (2,976 CTests, Windows ASan) and full `web-debug` (2,864) suites, engine only (no external directories), pass; the one failure in each first run was that heap test's old assumption, fixed and rerun on both. Other operating systems, Android and MinGW are CI's.
 
 ## A match played alone ticks once (2026-10-30)
+
+Superseded on 2026-11-04 by "The host's player shares the server's world" above: the mechanism below is removed. Kept for the measurements and the reasons.
 
 A session that hosts its own match runs a server and this machine's client in one process, and each ran every tick: the client its prediction, the server the same tick with the same input. A game played alone paid for its simulation twice (a battle of 20000 fighters in the Bannerlord duel's tools/army: 11.9 ms a tick, 23.8 ms a frame at 60 ticks a second). Now, while `tide_session_update` updates its server, the server knows this machine's client (`tide_server.twin`), and a tick the client has run already as the server would is taken from it (`twin_ran`, a copy of its world) rather than run again: 11.4 ms a frame. Only when that's certain to be the same world: no recipient projections (`client_state`), no other player connected, the client predicting with nothing to catch up, repair or get again, its verified tick the one the server is about to run (so the world it ran from is the server's, checked by hash) and the frame as it predicted it (`as_predicted`: its own input and nothing else, no joins, leaves, commands or shard messages). Anything else, the server ticks as before. The client goes on hashing and confirming as it did.
 
@@ -1051,7 +1150,8 @@ and grew with the square of the players):
   hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
   and anchors differ. A transfer's check is now the hash of the bytes the
   loaded world encodes to again (it compared `client_hash`, which was the same
-  hash). `recipient logical state schema 2` is in the simulation identity.
+  hash). `recipient logical state schema 2` is in the simulation identity
+  (with `singleton tree hashes` after it since 2026-11-04, above).
 - **Inputs** (`tide_game.client_input_masks`): which slots each recipient may
   have, before and after the tick, from each slot's owner's entities' audiences
   intersected once; the session reads every slot once and packs each changed
@@ -1143,7 +1243,7 @@ counts and remaining platform coverage are in notes/language.md.
 
 Self-contained restoration currently omits pack-offset affinity along with optional page origins. Such retained payloads may use full dictionary transmission even when identical catalog bytes are installed; explicit shared-base reuse still works. This is an encoding-size gap, not a value/hash or fallback failure.
 
-The production `tide_game.pack_delta` callback now takes `bool assets` before its size output. The existing public generated `tide_world_pack_delta` remains self-contained by default. HELLO advertises the SHA-256 of exact original pack-file bytes; wants/lacks requests advertise it too, with no added steady-tick bytes. Only equal nonzero digests enable pack references. A failed snapshot decode disables references for that client and uses the existing retry path to obtain self-contained state. Old protocol peers/builds reject through protocol/build identity. Generated headers carry the session ABI marker for all games and the retained-heap marker where applicable; hosts and games rebuild together.
+The production `tide_game.pack_delta` callback now takes `bool assets` before its size output. The existing public generated `tide_world_pack_delta` remains self-contained by default. HELLO advertises the SHA-256 of exact original pack-file bytes (since pack format 4, the digest the build wrote into the header: notes/assets-and-files.md); wants/lacks requests advertise it too, with no added steady-tick bytes. Only equal nonzero digests enable pack references. A failed snapshot decode disables references for that client and uses the existing retry path to obtain self-contained state. Old protocol peers/builds reject through protocol/build identity. Generated headers carry the session ABI marker for all games and the retained-heap marker where applicable; hosts and games rebuild together.
 
 Heap dictionaries carry ID32/count4/element4/users4/hint4 and either full bytes, a portable pack-file offset or UINT32_MAX for explicit XOR-base dictionary reuse, followed by one uint32 descriptor location per lease. The decoder verifies exact ID and shape and checks each registered descriptor; world hashing authenticates lease ID/location/count independently of registry order. Raw saves always include bytes. Detached page-sized list chunks may carry an asset-relative XOR region; the encoder compares actual complete full/patch sizes including 48 bytes of identity/slice metadata and picks patch only when smaller. Dense changes fall back to full. Patch decoding bounds the source slice, proves current immutable content and reconstructs ordinary page bytes; every result must satisfy heap descriptor/lease validation and the world hash. ECS regions retain their existing format. Save pages and small inline edited lists do not use asset patches yet.
 

@@ -236,6 +236,13 @@ static const argument_help arguments[] = {
     {"--profile-warmup", "--profile-warmup <n>", "Skip the first n frames of a profile capture",
      "Requires --profile. A whole number from 0 to 1000000000; default 0.\n"
      "Warmup frames still run normally and count toward --frames.", RUN},
+    {"--report", "--report <file>", "Write where the build's time and bytes went",
+     "Writes a report of the build: the time of each step and of the compiler's\n"
+     "phases, each C/C++ file's compile time, each asset's import time and the\n"
+     "bytes it adds to the pack, assets the build left out and why, what the\n"
+     "mode cut or kept, and the size of each output. A .json path gets JSON;\n"
+     "any other a table to read. Written even when the build fails.\n\n"
+     "Example: tide build --distribution --web --report build.txt", BUILD},
     {"-o", "-o <path>", "Select the built program's output path",
      "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
     {"--once", "--once", "Build once and end",
@@ -274,6 +281,14 @@ static const argument_help arguments[] = {
     {"--strip-server-assets", "--strip-server-assets", "Opt custom C into server asset pruning",
      "Also selects --server. Tide-only server builds prune client-only assets\n"
      "automatically; use this when custom C does not need those assets.", RUN | BUILD},
+    {"--strip-assets", "--strip-assets", "Opt custom C into release asset pruning",
+     "Release and distribution builds of a game without C or libraries leave\n"
+     "out assets no Tide code names. Custom C could read any asset by name, so\n"
+     "such a game keeps them all; use this when its C reads none that way.", BUILD},
+    {"--asset-sizes", "--asset-sizes", "List what each asset adds to the pack",
+     "After the build, one line per asset declaration, biggest first: its\n"
+     "bytes, share, name, type, image size and how images are kept (BC1, BC3\n"
+     "or RGBA). Bytes shared with an earlier declaration count once.", BUILD},
     {"--anonymous", "--anonymous", "Allow unauthenticated server admission",
      "Requires run --server. Allows clients to create and join matches\n"
      "without authentication.", RUN},
@@ -302,6 +317,8 @@ static const argument_help arguments[] = {
     {"--interactive", "--interactive <replay.txt>", "Play dynamically over stdin without a window",
      "Draws frame 1, then waits for commands: future-frame script lines queue\n"
      "input; step <n> advances; capture <file.png> observes; quit or EOF ends.\n"
+     "controls lists the GUI's widgets with numbers, labels and rects;\n"
+     "click <n> or click \"label\" clicks one at the next frame.\n"
      "Reports tide: interactive ready <frame> after each step. Executed actions\n"
      "are saved as a replay script; relative captures are beside that script.\n"
      "Supports --players. Desktop only; cannot combine with --script.", RUN},

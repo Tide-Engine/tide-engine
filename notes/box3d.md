@@ -13,9 +13,9 @@ empty, and the package makes its world again in the client's next tick, as for
 bodies a match starts with. No package or bridge change. Static geometry asks
 the same of the remade world; moving bodies lose their contacts' warm start
 and sleep state, and history starts again, so a client's `Physics.Rewind`
-covers only ticks since its last projection. In one process (a lone player's
-server and client) the two worlds take turns in the one arena: the client's
-tick restores an empty arena, the server's its own pages.
+covers only ticks since its last projection. In one process (a server and a
+client of it, as in the test) the two worlds take turns in the one arena: the
+client's tick restores an empty arena, the server's its own pages.
 `tide_box3d_projected` (`test/projected.tide`): 60 ticks of a client loading
 the server's projection and ticking it, with static boxes and a sphere, a body
 made every 9 ticks and two probes casting down after the step; the client's

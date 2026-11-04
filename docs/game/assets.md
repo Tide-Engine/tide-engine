@@ -138,11 +138,21 @@ For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and r
 
 ### GPU compression
 
-Ordinary color `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled colors can differ slightly from the source, especially around sharp color changes or faint transparency.
+`Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels: color images and [`[Raw]` images of numbers](./shaders.md#textures-that-are-numbers) alike, such as normal, roughness and mask maps. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled values can differ slightly from the source, especially around sharp changes or faint transparency. A Raw image's channels are compressed as the file has them, never multiplied by its alpha.
 
 A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes every mip to RGBA as it uploads the image, preserving the prepared distant levels. That fallback uses the memory of a full RGBA mip chain.
 
-Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
+Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. Images that come out the same bytes are one image in the pack and on the GPU, whichever declarations name them: the same opaque file declared with and without `[Raw]`, or two copies of one picture.
+
+`[Lossless]` keeps an image exact, a byte per channel, for numbers that must not move: a lookup table, a flow map, an ID mask. It goes before a `Texture` asset, alone or a glob's list or map, and beside `[Raw]` too:
+
+```csharp
+[Raw, Lossless] asset Texture flow = "art/flow.png";   // Every byte as the file has it
+```
+
+A lossless image costs its full RGBA in the pack, 64 MB for 4096 by 4096, and on the GPU a third more for the mips a `Filter.Trilinear` draw makes as it first reads it.
+
+To see what each asset costs, build with `--asset-sizes` (see [the CLI](../tools/cli.md#asset-sizes)): a line for each declaration, biggest first, with how its images are kept.
 
 The renderer keeps recently hidden pack images in a bounded GPU cache, avoiding another upload when they return soon. This is whole-image residency; mip streaming and virtual textures aren't built yet.
 

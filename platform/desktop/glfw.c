@@ -550,7 +550,7 @@ void tide_window_typing(const bool typing)
 
 // The program's own path, with its extension replaced by .pack: what tide
 // build and tide_add_game put a game's assets in, beside it.
-uint8_t *tide_window_pack(size_t *size)
+uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
 {
     *size = 0;
     char path[4096];
@@ -571,18 +571,5 @@ uint8_t *tide_window_pack(size_t *size)
     if (dot && (!slash || dot > slash) && (!backslash || dot > backslash)) *dot = '\0';
     if (strlen(path) + 6 >= sizeof path) return NULL;
     strcat(path, ".pack");
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    const long length = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
-    const bool ok = bytes && fread(bytes, 1, (size_t)length, f) == (size_t)length;
-    fclose(f);
-    if (!ok) {
-        free(bytes);
-        return NULL;
-    }
-    *size = (size_t)length;
-    return bytes;
+    return tide_platform_read_counted(path, size, progress);
 }

@@ -97,6 +97,13 @@ tide_e2e_test(visibility_groups) # Shared audiences, whole-component restriction
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
 tide_e2e_test(visibility_lists) # A projection's lists read back in runs, the heap as element by element left it
 tide_e2e_test(visibility_predicted) # A client's tick of its projection: its hidden spawns, groups and [Native] fields as the server's projection has them
+tide_e2e_test(visibility_hash_memo) # Projection hashes kept for what didn't change: every change shows
+# The same game and test with nothing kept from one projection hash to the next: the same hashes
+tide_add_game(tidec_e2e_visibility_hash_memo_off SOURCES e2e/visibility_hash_memo.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/visibility_hash_memo_test.c")
+target_include_directories(tidec_e2e_visibility_hash_memo_off PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_visibility_hash_memo_off PRIVATE TIDE_CLIENT_MEMO_OFF)
+add_test(NAME tidec_e2e_visibility_hash_memo_off COMMAND tidec_e2e_visibility_hash_memo_off)
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region

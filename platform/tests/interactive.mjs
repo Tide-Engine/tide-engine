@@ -16,7 +16,7 @@ async function session(program, name, extra = []) {
                         { cwd: scratch, env, stdio: ['pipe', 'pipe', 'pipe'] });
     children.push(child);
     let output = '', errors = '', pending;
-    const lines = [];
+    const lines = [], said = []; // said: what came before a command's answer (controls, click)
     const exited = new Promise((accept, reject) => {
         child.on('error', reject);
         child.on('exit', (code, signal) => {
@@ -32,6 +32,7 @@ async function session(program, name, extra = []) {
             if (end < 0) break;
             const line = output.slice(0, end).trimEnd();
             output = output.slice(end + 1);
+            if (/^tide: (control|controls|click) /.test(line)) { said.push(line); continue; }
             if (!line.startsWith('tide: interactive ')) continue;
             if (pending) { const take = pending; pending = null; take.accept(line); }
             else lines.push(line);
@@ -39,13 +40,14 @@ async function session(program, name, extra = []) {
     });
     const next = () => lines.length ? Promise.resolve(lines.shift()) : new Promise((accept, reject) => { pending = { accept, reject }; });
     const command = async (text, expected = 'ok') => {
+        said.length = 0;
         child.stdin.write(text + '\n');
         const line = await next();
         assert.ok(line.startsWith(`tide: interactive ${expected} `), `${text}: ${line}; ${errors}`);
         return line;
     };
     assert.equal(await next(), 'tide: interactive ready 1');
-    return { child, replay, command, exited, next };
+    return { child, replay, command, exited, next, said };
 }
 function replay(program, file, extra = []) {
     const ran = spawnSync(resolve(program), ['--script', file, '--size', '320', '200', ...extra],
@@ -65,8 +67,17 @@ try {
     // Queue out of order, and send the click only after looking at the menu.
     await s.command('8 key d up');
     await s.command('2 key d down');
-    await s.command('2 mouse 80 40');
-    await s.command('3 button left');
+    // The Go button, by the GUI's list rather than by its pixels
+    await s.command('controls');
+    assert.deepEqual(s.said, ['tide: control 1 button "Go" 20 20 120 40 at 80 40', 'tide: controls 1']);
+    await s.command('5 controls', 'error');
+    await s.command('controls now', 'error');
+    await s.command('click Stop', 'error');
+    await s.command('click 2', 'error');
+    await s.command('click "Go', 'error');
+    await s.command('1 click Go', 'error');
+    await s.command('click go');
+    assert.deepEqual(s.said, ['tide: click 2 80 40']);
     assert.equal(await s.command('step 4', 'ready'), 'tide: interactive ready 5');
     await s.command('capture clicked.png');
     assert.deepEqual(color('clicked.png', 200, 40), [0, 255, 0]);
@@ -101,12 +112,16 @@ try {
     assert.equal(readFileSync(join(scratch, 'quit.wav')).readUInt32LE(40), 13 * 800 * 4);
     const transcript = readFileSync(s.replay, 'utf8');
     assert.ok(!transcript.includes('20 key') && !transcript.includes('blorp') && !transcript.includes('missing/fail'));
+    assert.ok(transcript.includes('\n2 mouse 80 40\n2 button left\n') && !transcript.includes(' click '), transcript);
     replay(captureArg, s.replay);
     assert.deepEqual(bytes('clicked.png'), clicked);
     assert.deepEqual(bytes('stopped.png'), stopped);
     console.log('ok: visual decision, ordered queue, held/released input, click, text, pause, errors and replay');
 
     const m = await session(playersArg, 'multi', ['--players', '2']);
+    await m.command('player 2 controls');
+    assert.deepEqual(m.said, ['tide: controls 0']);
+    assert.match(await m.command('player 2 click 1', 'error'), /drew no widgets/); // The second player's own answer
     await m.command('2 player 2 key d down');
     await m.command('20 player 2 key d up');
     await m.command('step 40', 'ready');

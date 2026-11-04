@@ -10,6 +10,8 @@
 
 #include "android.h"
 #include "apk.h"
+#include "asset_sizes.h"
+#include "build_report.h"
 #include "common.h"
 #include "compile.h"
 #include "fetch.h"
@@ -103,6 +105,7 @@ static void end_build_feedback(void)
 
 static void build_step(const char *step)
 {
+    build_report_stage(step);
     if (build_activity) {
         lock_feedback();
         snprintf(feedback.label, sizeof feedback.label, "%s", step);
@@ -929,6 +932,7 @@ typedef struct compile_job {
     char *stamp;      // gone while the file compiles, so a compile that's cut short leaves no object that passes, and written once it has
     bool started;
     bool done;
+    double began; // When it started, for a build's report (build_report.h)
     int code;   // The compiler's exit code; -1 if it couldn't start
     char *said; // What it said
 } compile_job;
@@ -1026,6 +1030,7 @@ static void start_compiles(compiles *list, const int at_once, int *stop)
         if (next < 0) break;
         compile_job *job = &list->items[next];
         job->started = true;
+        job->began = build_report_clock_ms();
         if (job->stamp_path) sys_remove(job->stamp_path);
         sys_process *process = sys_start_kept(job->a.items);
         if (!process) {
@@ -1068,11 +1073,34 @@ static void show_compiles(const build *b, compiles *list, int *shown)
     }
 }
 
+// A file that compiled, in a build's report: from the game's folder or the installation's where it's in one.
+static void report_compiled(const build *b, const compile_job *job)
+{
+    if (!build_report_current()) return;
+    const char *source = job->made[0];
+    const char *const bases[] = {b->folder, b->root};
+    for (size_t i = 0; i < sizeof bases / sizeof bases[0]; i++) {
+        const size_t n = strlen(bases[i]);
+        if (n && strncmp(source, bases[i], n) == 0 && (source[n] == '/' || source[n] == '\\')) {
+            source += n + 1;
+            break;
+        }
+    }
+    build_report_compiled(source, build_report_clock_ms() - job->began, job->engine);
+}
+
+static void report_reused(void)
+{
+    build_report *r = build_report_current();
+    if (r) r->reused++;
+}
+
 // Compiles the files listed, and empties the list. False once it has said
 // what's wrong with the first that didn't compile.
 static bool run_compiles(build *b, compiles *list)
 {
     const bool own_feedback = begin_build_feedback();
+    if (list->count) build_report_stage("compiling C/C++");
     int completed = 0;
     const bool terminal = build_activity != NULL;
     if (list->count && terminal) build_progress(0, list->count, "");
@@ -1125,6 +1153,7 @@ static bool run_compiles(build *b, compiles *list)
             continue;
         }
         if (job->stamp_path) sys_write_text(job->stamp_path, job->stamp);
+        report_compiled(b, job);
         if (job->engine && --engine_left == 0) {
             sys_write_text(list->engine_stamp_path, list->engine_stamp);
             b->engine_built = true;
@@ -1267,7 +1296,7 @@ static void queue_engine_file(void *user, const char *source)
     char *object = path_join(e->out_dir, name);
     if (e->rebuild || sys_mtime(object) < sys_mtime(source)) {
         queue_compile(e->list, e->b, source, object, NULL, true);
-    }
+    } else report_reused();
     add_file(&e->objects, object);
     free(object);
 }
@@ -1279,7 +1308,10 @@ static void queue_engine(build *b, compiles *list)
 {
     if (list->engine_queued) return;
     list->engine_queued = true;
-    if (b->engine_built) return;
+    if (b->engine_built) {
+        for (int i = 0; i < b->engine.count; i++) report_reused();
+        return;
+    }
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Objects for a library have flags of their own (config_flags): kept apart,
     // so running and building don't rebuild each other's.
@@ -1411,6 +1443,7 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
         job->first = first;
     } else {
         free(stamp_path);
+        report_reused();
     }
     free(old);
 }
@@ -2227,7 +2260,9 @@ static bool folder_has_c_code(const char *folder)
 // Only a closed Tide game gives the compiler every root of its asset graph.
 static bool strip_game_assets(const build *b, const bool layout)
 {
-    if (!b->opts->release || b->opts->watch || b->library || layout || folder_has_c_code(b->folder)) return false;
+    if (!b->opts->release || b->opts->watch || b->library || layout) return false;
+    if (b->opts->strip_assets) return true; // The game says its C reads no asset Tide code doesn't name
+    if (folder_has_c_code(b->folder)) return false;
     for (int i = 0; i < b->packages.count; i++) {
         if (folder_has_c_code(b->packages.items[i].folder)) return false;
     }
@@ -2361,6 +2396,7 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
     if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the source overlay replacement: %s\n", b->opts->editor_draft); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
     sb outline = {0}, shaders = {0};
+    if (b->opts->asset_sizes) asset_sizes_free(b->opts->asset_sizes); // This compile's, as each Android CPU's is the same
     free(b->views);
     b->views = debug_views(b->opts) ? format("%s", gen, NULL) : NULL;
     // Build code's program (compiler/src/build_code.h) is this machine's, whatever the game's target: built as a
@@ -2400,6 +2436,8 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
                                      .outline_to = b->opts->unity ? &outline : NULL,
                                      .shader_out = b->opts->unity ? collect_shader : NULL, .shader_user = &shaders,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
+                                     .asset_size_out = b->opts->asset_sizes ? asset_sizes_add : NULL,
+                                     .asset_size_user = b->opts->asset_sizes,
                                      .server = b->opts->server,
                                      .strip_server_assets = strip_server_assets(b),
                                      .strip_unused_assets = strip_game_assets(b, layout),
@@ -2558,6 +2596,50 @@ static bool place_pack(const char *from, const char *to)
 }
 
 static char *build_android(const char *root, const build_options *opts, char *package, size_t package_size);
+static void report_output(const char *path);
+static void report_output_in(void *user, const char *name, bool is_dir);
+
+// What a build's mode cut or kept, for its report (build_report.h): a line each.
+static void report_cuts(const build *b)
+{
+    const build_options *o = b->opts;
+    if (!build_report_current()) return;
+    if (strip_game_assets(b, false)) {
+        build_report_cut(o->strip_assets ? "assets no Tide code names are left out of the pack (--strip-assets)"
+                                         : "assets nothing names are left out of the pack");
+    } else if (o->release && folder_has_c_code(b->folder)) {
+        build_report_cut("every asset is packed: the game has C, which could read one by name (--strip-assets says it doesn't)");
+    }
+    else if (o->release) {
+        for (int i = 0; i < b->packages.count; i++) {
+            if (!folder_has_c_code(b->packages.items[i].folder)) continue;
+            char line[512];
+            snprintf(line, sizeof line, "every asset is packed: package %s has C, which could read one by name (--strip-assets says it doesn't)",
+                     b->packages.items[i].name);
+            build_report_cut(line);
+            break;
+        }
+    } else build_report_cut("every asset is packed (debug: --release leaves out what nothing names)");
+    if (o->server) {
+        build_report_cut(strip_server_assets(b) ? "the server's pack has only what its match code reads"
+                                                : "the server's pack has every asset: custom C could read one by name (--strip-server-assets)");
+    }
+    if ((o->release || o->server) && !o->watch) build_report_cut("the linker leaves out code and data nothing reaches");
+    if (o->distribution) {
+        build_report_cut("names of declarations and shaders are left out (a private game.names maps them)");
+        build_report_cut("symbols are stripped; no debugger files go beside the program");
+        build_report_cut("C assertions are off (NDEBUG)");
+        if (o->web) build_report_cut("the page is minified and compressed");
+    } else {
+        build_report_cut(o->release ? "debug info, names and C assertions are kept (--distribution cuts them)"
+                                    : "game code is unoptimized, with debug info, names and assertions");
+    }
+    if (o->optimization) {
+        char line[64];
+        snprintf(line, sizeof line, "optimization %s for all C", o->optimization);
+        build_report_cut(line);
+    }
+}
 
 static char *build_game(const char *root, const build_options *opts, const char *const *args)
 {
@@ -2569,6 +2651,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
 
     compiles list = {0};
     if (!generate(&b, gen, false, &list)) return NULL;
+    report_cuts(&b);
     char *main_c = path_join(gen, "main.c");
     if (!write_main(main_c, opts, b.name)) { free_compiles(&list); return NULL; }
 
@@ -2630,14 +2713,90 @@ static char *build_game(const char *root, const build_options *opts, const char 
     copy_dynamic(&c, output_dir);
     if (!opts->server) place_moltenvk(&b, output_dir);
     free_game_c(&c);
+    if (build_report_current()) {
+        // What a build put where it went: the program and what goes beside it. A page's own folder has only its files.
+        report_output(output);
+        if (opts->web && !opts->managed && !opts->single_file) sys_list(output_dir, report_output_in, output_dir);
+        else {
+            const char *const beside[] = {".pack", "-server.pack", ".pdb", ".natvis", "_lldb.py"};
+            char *stem = format("%s", output, NULL);
+            char *dot = strrchr(stem, '.');
+            if (dot && *EXE_SUFFIX && strcmp(dot, EXE_SUFFIX) == 0) *dot = 0;
+            char *named = path_join(output_dir, b.name);
+            for (size_t i = 0; i < sizeof beside / sizeof beside[0]; i++) {
+                char *file = format("%s%s", i < 2 ? named : stem, beside[i]);
+                if (opts->managed && i == 0) {
+                    free(file);
+                    file = path_join(output_dir, "server.pack");
+                }
+                report_output(file);
+                free(file);
+            }
+            free(named);
+            free(stem);
+        }
+    }
     return output;
+}
+
+static void report_output(const char *path)
+{
+    if (sys_exists(path) && !sys_is_dir(path)) build_report_output(path, sys_file_size(path));
+}
+
+static void report_output_in(void *user, const char *name, const bool is_dir)
+{
+    if (is_dir) return;
+    char *path = path_join(user, name);
+    report_output(path);
+    free(path);
+}
+
+// The target a build's report names: what the build is for.
+static const char *report_target(const build_options *o)
+{
+    if (o->managed) return "managed server (wasm)";
+    if (o->web) return o->single_file ? "web (one file)" : "web";
+    if (o->android) return "android";
+    if (o->server) return "native server";
+    return "native";
+}
+
+static bool write_report(const build_options *o, const bool succeeded)
+{
+    const size_t n = strlen(o->report);
+    const bool json = n >= 5 && strcmp(o->report + n - 5, ".json") == 0;
+    char *folder = path_absolute(o->folder);
+    const build_report_about about = {TIDE_VERSION, path_base(folder), folder,
+                                      o->distribution ? "distribution" : o->release ? "release" : "debug",
+                                      report_target(o), succeeded};
+    char *text = build_report_end(&about, json);
+    free(folder);
+    char *dir = path_dir(o->report);
+    sys_mkdirs(dir);
+    free(dir);
+    const bool ok = text && sys_write_text(o->report, text);
+    if (!ok) fprintf(stderr, "tide: can't write the build report %s; check that its folder can be written\n", o->report);
+    free(text);
+    return ok;
 }
 
 char *tide_build(const char *root, const build_options *opts)
 {
+    // A report is of one build: the one this command makes, not a build of tide run's inside another
+    const bool report = opts->report && !build_report_current();
+    if (report) build_report_begin();
     const bool own_feedback = begin_build_feedback();
     char *output = build_game(root, opts, NULL);
     if (own_feedback) end_build_feedback();
+    if (report) {
+        if (output) report_output(output); // An Android app's, which build_game doesn't see
+        build_report_stage(NULL); // Nothing after the build is its time
+        if (!write_report(opts, output != NULL) && output) {
+            free(output);
+            output = NULL;
+        }
+    }
     return output;
 }
 

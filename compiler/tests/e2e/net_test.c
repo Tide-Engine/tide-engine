@@ -1112,6 +1112,60 @@ TIDE_TEST(net_a_session_played_alone_ticks_once)
     tide_session_destroy(s);
 }
 
+// ...and with another machine's player in the match too, on a network that
+// delays and loses datagrams: the host's player has no world of its own, it
+// shares the server's after each tick, so the match is still ticked once on
+// the host's machine. The other machine predicts and is corrected as ever,
+// and both players' inputs reach the match.
+TIDE_TEST(net_a_host_with_another_player_ticks_once)
+{
+    tide_game counted = tide_game_api;
+    counted.tick = alone_tick;
+    tide_loopback *lossy = tide_loopback_create(2);
+    tide_loopback_set_conditions(lossy, (tide_net_conditions){.latency = 0.03, .jitter = 0.01, .loss = 0.05});
+    int ids[2] = {0, 1};
+    tide_session *host = tide_session_create(&(tide_session_desc){.game = &counted, .tick_rate = 60, .sample = sample, .user = &ids[0]});
+    tide_session *guest = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample, .user = &ids[1]});
+    double t = 0.0;
+    tide_session_start(host, NULL, t);
+    TIDE_REQUIRE(tide_session_open(host, tide_loopback_endpoint(lossy, 1)));
+    tide_session_join(guest, tide_loopback_endpoint(lossy, 2), tide_loopback_address(1), t);
+    for (int frame = 0; frame < 120; frame++) {
+        t += 1.0 / 60.0;
+        tide_loopback_set_time(lossy, t);
+        tide_session_update(host, t);
+        tide_session_update(guest, t);
+    }
+    const tide_session_status before = tide_session_status_of(host);
+    TIDE_REQUIRE(before.client.state == TIDE_SESSION_CONNECTED);
+    TIDE_REQUIRE(tide_session_status_of(guest).client.state == TIDE_SESSION_CONNECTED);
+    alone_ticks = 0;
+    bool alike = true;
+    bool moved[2] = {false, false};
+    for (int frame = 0; frame < 300; frame++) {
+        t += frame % 3 == 0 ? 0.6 / 60.0 : 1.2 / 60.0; // Some updates run no tick, some two
+        tide_loopback_set_time(lossy, t);
+        tide_session_update(host, t);
+        tide_session_update(guest, t);
+        alike &= same(tide_session_world(host), tide_session_server_world(host));
+        const tide_world *w = tide_session_server_world(host);
+        for (int p = 0; p < 2; p++) moved[p] |= w->inputs[p].move.x != 0.0f || w->inputs[p].jump;
+    }
+    const tide_session_status after = tide_session_status_of(host);
+    TIDE_CHECK(after.client.state == TIDE_SESSION_CONNECTED && after.client.resyncs == 0);
+    const int confirmed = (int)(after.client.verified_tick - before.client.verified_tick);
+    TIDE_CHECK(confirmed >= 290);
+    TIDE_CHECK(alone_ticks == confirmed); // The server's ticks, and no other
+    TIDE_CHECK(after.client.run_ticks == before.client.run_ticks); // ...as the host's player runs none
+    TIDE_CHECK(alike);
+    TIDE_CHECK(moved[0] && moved[1]); // The host's input and the guest's, over the lossy network, are in the match
+    // The guest's verified world is the server's at that tick, as checked by hash every tick it confirmed
+    TIDE_CHECK(tide_session_status_of(guest).client.resyncs == 0);
+    tide_session_destroy(guest);
+    tide_session_destroy(host);
+    tide_loopback_destroy(lossy);
+}
+
 // Hot reloading (tide/host.h): another build of the same game, new code with
 // the same layout, takes over the match where it is.
 static int new_build_ticks;

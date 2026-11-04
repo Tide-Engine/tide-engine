@@ -12,6 +12,8 @@ For how a game starts, hosts and joins matches, see [Matches](./matches.md). Thi
 
 Single-player is a match too: the machine runs a server itself, and connects to it through a loopback transport. There's no separate offline path, so what works alone works online.
 
+The player on the server's machine joins like any other, with a `PlayerID`, its own entities, input and commands, but it keeps no world of its own: it sees the server's, so the match is ticked once on that machine, and it never predicts or rolls back. It sees all of the match, including what [visibility](../game/visibility.md) hides from the other players.
+
 A minimized desktop window or a browser tab in the background keeps running without drawing, so the match goes on for the other players. Browsers slow a hidden page's timers and stop its animation frames, so a hidden page's frames come from a worker's timers instead. Meanwhile it runs a frame when its match is due a tick, at the game's `tickRate`, and none in between.
 
 A machine that stops simulating can't keep hosting: a program paused in a debugger, a browser that freezes its page, or a phone whose app is suspended can stop answering the other players. With [host migration](./matches.md#host-migration), another player's machine takes over a room's match. Without it, the other players eventually time out; the suspended host's own match resumes from where it stopped if its program comes back. Putting a phone's game in the background does not keep its match running there indefinitely.

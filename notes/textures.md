@@ -1,5 +1,50 @@
 # Textures and how they are sampled
 
+## `[Raw]` images compress too; `[Lossless]` keeps one exact (2026-11-04)
+
+From a game's feedback (Mount & Rifle, pinned 0.6.0-nightly.21): its 618 MB distribution pack was ~495 MB of 47
+`[Raw]` textures, normal and ARM maps stored as RGBA8 because `pack_item` compressed only `!raw` images (a 4096
+normal map 67,108,864 bytes, 4096²×4; BC1 with mips is ~11 MB). 173 of its 179 Raw textures had no alpha. The
+owner chose, from a proposal: "Compress, opt-out", the attribute named `[Lossless]`.
+
+- **Packing** (`pack_item`, `compiler/src/codegen.c`): the `compress` argument is now `!decl.lossless`, and Raw
+  images go through `texture_compress` as color ones do. The RGBA it's given is already what the GPU reads: color
+  bytes premultiplied, Raw channels as the file has them (worked alpha 1), and `texture_compress`'s box filter averages each
+  channel apart, which is right for both. BC1 when every alpha byte is 255, else BC3, as for colors. The
+  decoder for devices without BC (`tide_texture_blocks_decode`) never premultiplied, so a Raw image decodes to
+  its numbers; no runtime, shader or ABI change. Authored DDS chains, cubemap faces (`compress` false) and
+  small/non-power-of-two images are as they were.
+- **Cache keys** (`texture_cache_key`, `compiler/src/texture_cache.c`): a Raw compressed variant hashes a third
+  word, as its old key held exact RGBA another build would otherwise reuse. Color keys are unchanged, so no color
+  image is re-encoded.
+- **`[Lossless]`** (`decl.lossless`, `check_lossless_attribute` in `check.c`): before a `Texture` asset, one or a
+  glob's list or map, with or without `[Raw]`. Takes nothing, once; an error on a non-asset (through the general
+  attribute loop) and on any other asset type, grids and cubemaps included ("which is never compressed"). Editors
+  offer it in an asset's brackets with a hover (`compiler/lsp/analysis.c`).
+- **Mips** (the feedback's second question): an uncompressed image, Raw or `[Lossless]`, has only its base level
+  in the pack; the renderer makes the rest on the GPU the first time a `Filter.Trilinear` draw reads it
+  (`prepare_mipmaps`, below), so the pack's 4096²×4 was right and the GPU held 4/3 of it. Compressed Raw images
+  now carry the build's chain, as color ones do.
+- **Images are shared by what they store** (owner, the same day: "if they are equivalent they should remain the
+  same"): `[Raw]` only changes alpha's part, so an opaque file declared as a color and as Raw comes out the same
+  bytes, which were two blocks because the content key was the file's hash with bytes turned for Raw and for
+  blocks. The content key is now `texture_content` (`texture_cache.c`): SHA-256 of a version string, the size,
+  the blocks' format and levels, and the stored bytes. `tide_pack_texture_blocks` already shared by content, so
+  equal images are one block, one version in the draw list and one GPU upload; images that differ by a byte are
+  two. Its first 8 bytes stay the image's version. The texture cache entry carries the key after its 20-byte head
+  (layout word 2 in `texture_cache_key`, so every texture is prepared once more), so a build that reuses the cache
+  hashes nothing. Exact equality, not a rule about alpha: a 16-bit alpha just under 1 rounds colors apart, and
+  stays two. Two different files of the same pixels share too.
+- **The no-alpha warning** the feedback proposed is moot with Raw compressed; not built.
+- **Not built:** BC4/BC5 (two-channel normals: a Raw texture's `Sample` would read z as 0, which changes what a
+  frag gets), BC7, per-asset quality, renormalized normal-map mips (the GPU's runtime mips didn't either).
+- **Tests:** `texture_compression` e2e: Raw alpha image BC3 with unpremultiplied channels within 8 of the file,
+  Raw opaque BC1, `[Lossless]` color exact and premultiplied, `[Raw, Lossless]` exact, small exact; the opaque
+  pair is one block and version, the pairs with alpha are two. `tide_platform_shaders` (Vulkan and OpenGL)
+  passes with the new keys, its Raw and color `hero.png` having clear pixels and so staying two.
+  `compiler/tests/errors/lossless_*.tide` (on a grid, on a component, twice). The renderer's Raw passes use an
+  8x6 image, below the size that compresses, so their exact-pixel checks stand.
+
 ## Idle images by the device's memory (2026-11-02)
 
 Internal, from an investigation of frame hitches in the owner's Mount & Rifle (pinned 0.6.0-nightly.12, the
@@ -415,7 +460,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **`[Raw]` is a texture of numbers** (built 2026-10-07, after the owner asked for the follow-up; the attribute was approved with the proposal, and its name and rules are Claude's picks, Provisional in the spec beside the rest). `docs/game/shaders.md` (Textures that are numbers) is the users' page. What code relies on:
     - **Where:** before an asset that's one `Texture` or one `Grid2<Color>` (`decl.sample_raw`, `check_raw_attribute` in `compiler/src/check.c`, read with the asset's declaration as `[Filter]` is), and on a `Grid2<Color>` field (`check_field_raw`; the attribute stays on the field, `field_is_raw`). Refused, each with what to write: a glob's list or map, any other asset, a `Grid2<float>`, a `Texture` or `RenderTarget` field, an argument, twice.
     - **Nothing carries it at run time, on purpose:** a `Texture`'s four sampling bits are all taken (the filter's two since `Filter.Trilinear`, the wrap's two), and a frag handed a `Texture` would need a uniform or a second shader to know. So a raw texture is only ever the object of a `Sample` by its name, where `declared_raw` (`compiler/src/shader.c`) knows it as the game compiles, and every other use is an error. For a raw `Texture` asset, each place its name is used is noted (`checker.raw_uses`, in `use_asset`), `check_grid_sample` marks its own (`expr.raw_sampled`), and `check_raw_uses` says the rest once code is checked: that catches a local or a function argument too, with no list of places. For a raw grid, which code still reads cell by cell, it's where a `Texture` is wanted: `check_expr_want_any`, `check_blit` and `check_mesh_draw` call `refuse_raw_grid`. A new place a grid becomes a `Texture` without going through one of those has to call it too: `compiler/tests/errors/raw_*.tide` has a file for each way in there is.
-    - **Bytes:** tidec packs a raw `Texture` asset's channels as the file has them (`pack_item`'s `raw`), under the file's hash with two bytes turned, so the same file declared both ways is two blocks and two versions in the draw list. A raw grid goes through `tide_draw_grid_texture_raw` (`engine/src/mesh.c`: `grid_pixels` with no alpha worked in, and another version than the same cells as colors), which generated `tide_shade_<n>` calls for a raw asset grid or field. A `Grid2<Color>` asset is in the pack as its file has it either way.
+    - **Bytes:** tidec packs a raw `Texture` asset's channels as the file has them (`pack_item`'s `raw`), under the file's hash with two bytes turned, so the same file declared both ways is two blocks and two versions in the draw list (since 2026-11-04 the key is what's stored, and the two are one block where the bytes match: `[Raw]` images compress too, above). A raw grid goes through `tide_draw_grid_texture_raw` (`engine/src/mesh.c`: `grid_pixels` with no alpha worked in, and another version than the same cells as colors), which generated `tide_shade_<n>` calls for a raw asset grid or field. A `Grid2<Color>` asset is in the pack as its file has it either way.
     - **The shader:** `ex_sample` leaves `tide_straight` off a raw texture's read, and nothing else differs. `compiler/tests/shaders/raw` pins it beside the same file as colors.
     - A game with no `[Raw]` generates the C it did (the changes are a suffix and a flag that are empty and false without one).
     - **Tests:** pass 16 of `platform/tests/shaders.tide` with `run_raw_checks` in `shaders.c` (a raw `Texture` asset's clear pixel keeps its file's numbers where the same file as colors has none, a raw `Grid2<Color>` asset, a raw grid field's cell with no alpha, and numbers blended between cells), the same on OpenGL 3.3, WebGL 2 and WebGPU; `compiler/tests/shaders/raw`; `compiler/tests/errors/raw_*.tide`, a file a diagnostic; `lsp_asset_textures_and_declared_sampling` (hover, completion, the diagnostic and its note).
