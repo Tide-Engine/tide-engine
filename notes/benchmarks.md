@@ -1,5 +1,16 @@
 # Benchmarks
 
+## Singleton list parallel loops (2026-11-04)
+
+A scratch game (not kept), release build, Windows, 12 threads, timed with
+`--profile`: a 361,201-element `List<float>` resized and filled by a
+`parallel` loop whose step calls a 400-iteration Sin/Cos function, the same
+serially, and the same over a 601x601 grid. One-off ticks: list 2,494 to
+450-483 ms, grid 2,490 to 228-249 ms, serial 2,458-2,662 either way.
+Persistent lists of the same steps, mean per tick: 80 elements 0.574 to 0.088
+ms, 1,500 elements 10.3 to 1.04 ms. Cause, fix and tests:
+`notes/schedule-and-threads.md`, 2026-11-04.
+
 ## Separate correction aging calls (2026-11-03)
 
 The correction and native lag harnesses follow the generated-host timing split:

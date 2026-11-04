@@ -762,7 +762,13 @@ static const uint8_t *list_run(const tide_list l, const int32_t i, const uint32_
     return at;
 }
 
-void tide_par_list_begin(tide_par_list *l, tide_list *list, const uint32_t size, const int32_t block, const int32_t offset)
+// Steps to a task: at most 16, and as few as come to this much of tidec's
+// work (a microsecond or so), so a task's setup is little beside its steps.
+#define LIST_TASK_WORK 4096u
+#define LIST_TASK_STEPS 16
+
+void tide_par_list_begin(tide_par_list *l, tide_list *list, const uint32_t size, const int32_t block, const int32_t offset,
+                         const uint64_t cost)
 {
     *l = (tide_par_list){.list = list, .size = size, .block = block > 0 ? block : 1};
     // Blocks start at the offset plus any multiple of their size, so an
@@ -775,11 +781,15 @@ void tide_par_list_begin(tide_par_list *l, tide_list *list, const uint32_t size,
     if (!list->at || l->hi <= l->lo) return;
     tide_list_prepare(list, size, tide_handle_where(list->at));
     if (!tide_heap_of(tide_handle_where(list->at))) return;
-    // Tasks of 16 blocks or more, so that steps that each take long share
-    // out well and steps that take little aren't swamped by their tasks
+    // Up to 1024 tasks of 16 blocks or more where steps take little, so they
+    // aren't swamped by their tasks, and of fewer where each takes long, down
+    // to one, so that a few dozen of them still go to every thread
     const int64_t blocks = (int64_t)l->hi - l->lo;
+    const uint64_t step = cost ? cost : 1u;
+    const uint64_t fewest = step >= LIST_TASK_WORK ? 1u : (LIST_TASK_WORK + step - 1u) / step;
+    const int32_t least = fewest < LIST_TASK_STEPS ? (int32_t)fewest : LIST_TASK_STEPS;
     l->per_task = (int32_t)((blocks + 1023) / 1024);
-    if (l->per_task < 16) l->per_task = 16;
+    if (l->per_task < least) l->per_task = least;
     l->tasks = (uint32_t)((blocks + l->per_task - 1) / l->per_task);
     l->steps = (uint64_t)blocks;
     l->copies = tide_alloc_zeroed(l->tasks, sizeof *l->copies);

@@ -445,6 +445,11 @@ foreach(variant IN ITEMS condition step block constant)
     endif()
     add_test(NAME ${target} COMMAND ${target})
 endforeach()
+tide_e2e_test(parallel_fill) # A singleton's lists filled in their tick, and short lists of costly steps, still use the pool
+if(TIDE_PLATFORM) # ...the platform layer's threads, where there are some
+    target_link_libraries(tidec_e2e_parallel_fill PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_parallel_fill PRIVATE TIDE_PARALLEL_FILL_THREADS=1)
+endif()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates

@@ -7216,7 +7216,7 @@ static void gen_grid_foreach(gen *g, const stmt *s);
 static void gen_map_foreach(gen *g, const stmt *s);
 static void gen_query_foreach(gen *g, const stmt *s);
 static void gen_sort_call(gen *g, const expr *sort);
-static uint64_t stmt_cost(const stmt *s);
+static uint64_t step_cost(const stmt *s);
 
 // Keep a stored foreach receiver's indexes once, but find its container again
 // each round. A pointer into an outer list/map can be invalidated by the body.
@@ -14208,7 +14208,7 @@ static void gen_parallel_call(gen *g, const stmt *s)
     const char *name = g->par_names.items[index];
     const decl *grid = s->value->type.decl;
     const capture_list caps = par_captures(g, g->routine ? g->routine : g->code, s);
-    const uint64_t cost = stmt_cost(s->then_stmt);
+    const uint64_t cost = step_cost(s->then_stmt);
     if (g->routine && g->routine->is_worker) {
         if (s->value->type.kind == TY_LIST) {
             indent(g, o);
@@ -14245,7 +14245,8 @@ static void gen_parallel_call(gen *g, const stmt *s)
         indent(g, o);
         sb_put(o, "tide_par_list_begin(&tide_pl, &(");
         gen_expr(g, o, s->value);
-        sb_printf(o, "), sizeof(%s), %d, tide_o);\n", elem_ctype(list_elem(grid)), s->block[0]);
+        sb_printf(o, "), sizeof(%s), %d, tide_o, %lluu);\n", elem_ctype(list_elem(grid)), s->block[0],
+                  (unsigned long long)(cost < 1000000u ? cost : 1000000u));
         const bool flat = flat_list_loop(s);
         if (flat) {
             line(g, o, "bool tide_copied = false;");
@@ -17781,6 +17782,10 @@ static void gen_incoming_input(const gen *g, sb *o, const char *value)
 // depends on it, never what the tick does.
 static uint64_t stmt_cost(const stmt *s);
 
+// How many calls deep a Tide function's body counts as what calling it costs
+// (step_cost); 0: a call is 30, whatever it runs.
+static int cost_callees;
+
 static uint64_t expr_cost(const expr *e)
 {
     if (!e) return 0;
@@ -17788,7 +17793,27 @@ static uint64_t expr_cost(const expr *e)
     for (int i = 0; i < e->args.count; i++) cost += expr_cost(e->args.items[i]);
     for (int i = 0; i < e->inits.count; i++) cost += expr_cost(e->inits.items[i].value);
     if (e->kind == E_CALL || e->kind == E_METHOD) cost += 30u;
+    if (cost_callees > 0 && (e->kind == E_CALL || e->kind == E_METHOD) && (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method
+        && !e->method->is_extern && e->method->body) {
+        cost_callees--;
+        cost += stmt_cost(e->method->body);
+        cost_callees++;
+        if (cost > 1000000u) cost = 1000000u;
+    }
     return cost + stmt_cost(e->block);
+}
+
+// What a parallel loop's step costs: as stmt_cost, with the bodies of the
+// functions it calls (a few calls deep) counted in, since a step that calls
+// one costly function is otherwise reckoned as next to nothing, and a short
+// loop of them stays on one thread. Only the choice of threads depends on it.
+static uint64_t step_cost(const stmt *s)
+{
+    const int was = cost_callees;
+    cost_callees = 4;
+    const uint64_t cost = stmt_cost(s);
+    cost_callees = was;
+    return cost;
 }
 
 // How many times a loop's body runs, as far as it can be told: a `for` from
@@ -17921,7 +17946,7 @@ static bool gen_parallel_work(sb *o, const stmt *s)
     if (!loop_work_known(s->then_stmt)) return false;
     sb path = {0};
     if (!gen_singleton_path(&path, s->value)) return false;
-    const uint64_t cost = 4u * stmt_cost(s->then_stmt);
+    const uint64_t cost = 4u * step_cost(s->then_stmt);
     if (s->value->type.kind == TY_LIST) {
         sb_printf(o, " + (uint64_t)tide_list_count(%s) * %lluu", path.data, (unsigned long long)cost);
         return true;
