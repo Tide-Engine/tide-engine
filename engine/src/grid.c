@@ -35,8 +35,8 @@ static int32_t chunks_along(const int32_t size, const uint32_t shift)
     return (int32_t)(((uint32_t)size + (1u << shift) - 1u) >> shift);
 }
 
-// A grid's directory in `heap`, with its size and no chunks: its block.
-static uint64_t new_dir(tide_heap *heap, const int32_t size[3], const tide_grid_shape *s)
+// A directory's head with its size and no chunks: room for 8, and its table.
+static tide_grid_dir dir_head(const int32_t size[3], const tide_grid_shape *s)
 {
     tide_grid_dir head = {{size[0], size[1], s->dims == 3 ? size[2] : 0}, s->dims, 0, 8u, 16u, 0, {1, 1, 1}, 0};
     const bool sized = size[0] > 0 && size[1] > 0 && (s->dims == 2 || size[2] > 0);
@@ -48,6 +48,13 @@ static uint64_t new_dir(tide_heap *heap, const int32_t size[3], const tide_grid_
             head.slots = (uint32_t)total;
         }
     }
+    return head;
+}
+
+// A grid's directory in `heap`, with its size and no chunks: its block.
+static uint64_t new_dir(tide_heap *heap, const int32_t size[3], const tide_grid_shape *s)
+{
+    const tide_grid_dir head = dir_head(size, s);
     const uint64_t block = tide_heap_alloc(heap, dir_bytes(head.room, head.slots));
     tide_grid_dir *d = dir_at(heap, block);
     *d = head;
@@ -111,9 +118,98 @@ static uint8_t *add_chunk(tide_grid *g, tide_heap *heap, const int32_t cx, const
     return (uint8_t *)tide_heap_write(heap, chunk); // Making room can give the heap another page
 }
 
+// ---------------------------------------------------------------------------
+// Grids in the scratch area: what code makes as it runs (a local's, a function's result, a copy), written there
+// and never shared with a world, which copies one's cells when a field takes it (tide_grid_own). A directory that
+// runs out of room grows into a new block, the old one left for the area's mark; a chunk is a block of the area
+// whose header is cells too, as in a heap, and is read as the pack's are (tide_grid_chunk_at with no heap).
+
+static bool in_scratch(const tide_grid g)
+{
+    return g.at && tide_handle_where(g.at) == TIDE_IN_SCRATCH && !tide_pack_holds(g.at);
+}
+
+static tide_grid_dir *scratch_dir(const tide_grid g)
+{
+    return (tide_grid_dir *)(void *)(tide_block_write(g.at) + 1);
+}
+
+// The directory of `g`, a scratch grid, with room for `more` records: grown into a new block if it has to.
+static tide_grid_dir *scratch_room(tide_grid *g, const tide_grid_shape *s, const uint32_t more)
+{
+    const tide_grid_dir *d = scratch_dir(*g);
+    if (d->records + more <= d->room) return (tide_grid_dir *)(uintptr_t)d;
+    tide_grid_dir head = dir_head(d->size, s); // tide_grid_new's directory has no room or table yet
+    while (head.room < d->records + more) head.room *= 2u;
+    if (!head.flat) {
+        while (head.slots < head.room * 2u) head.slots *= 2u;
+    }
+    head.records = d->records;
+    tide_handle at = 0;
+    tide_block *b = tide_scratch_block(dir_bytes(head.room, head.slots), "a grid", &at);
+    tide_grid_dir *to = (tide_grid_dir *)(void *)(b + 1);
+    d = scratch_dir(*g); // The area adds pieces as it grows, and never moves one
+    *to = head;
+    memset(tide_grid_records(to), 0, head.room * sizeof(tide_grid_record) + head.slots * sizeof(uint32_t));
+    memcpy(tide_grid_records(to), tide_grid_records(d), d->records * sizeof(tide_grid_record));
+    for (uint32_t i = 0; i < to->records; i++) insert(to, i);
+    g->at = at;
+    return to;
+}
+
+// A new chunk of a scratch grid at (cx, cy, cz), in chunks, with `cells` in it (NULL: zero). Returns its cells.
+static uint8_t *scratch_chunk(tide_grid *g, const int32_t cx, const int32_t cy, const int32_t cz, const void *cells,
+                              const tide_grid_shape *s)
+{
+    (void)scratch_room(g, s, 1u);
+    const uint32_t bytes = tide_grid_chunk_bytes(s);
+    tide_handle at = 0;
+    uint8_t *to = (uint8_t *)tide_scratch_block(bytes - (uint32_t)sizeof(tide_block), "a grid", &at);
+    if (cells) memcpy(to, cells, bytes);
+    else memset(to, 0, bytes);
+    tide_grid_dir *d = scratch_dir(*g);
+    tide_grid_records(d)[d->records] = (tide_grid_record){{cx, cy, cz}, 0u, tide_handle_offset(at)};
+    insert(d, d->records++);
+    return to;
+}
+
+static void *scratch_poke(tide_grid *g, const int32_t x, const int32_t y, const int32_t z, const tide_grid_shape *s,
+                          const bool make)
+{
+    if (!g->at) {
+        if (!make) return NULL;
+        *g = tide_grid_new(s->dims, 0, 0, 0);
+    }
+    const int32_t zz = s->dims == 3 ? z : 0;
+    const tide_grid_dir *d = scratch_dir(*g);
+    if (!tide_grid_inside(d, x, y, zz)) return NULL;
+    const int32_t cx = x >> s->shift[0];
+    const int32_t cy = y >> s->shift[1];
+    const int32_t cz = s->dims == 3 ? z >> s->shift[2] : 0;
+    const uint32_t i = d->records ? tide_grid_find(d, cx, cy, cz) : 0u;
+    if (i) return (uint8_t *)tide_scratch_at(tide_grid_records(d)[i - 1u].block) + tide_grid_place(s, x, y, zz);
+    if (!make) return NULL;
+    return scratch_chunk(g, cx, cy, cz, NULL, s) + tide_grid_place(s, x, y, zz);
+}
+
+tide_grid tide_grid_copy(const tide_grid g, const tide_grid_shape *s)
+{
+    const tide_grid_dir *d = tide_grid_dir_of(g);
+    if (!d) return (tide_grid){0};
+    tide_grid out = tide_grid_new(s->dims, d->size[0], d->size[1], d->size[2]);
+    const tide_heap *heap = tide_heap_read(tide_handle_where(g.at));
+    d = tide_grid_dir_of(g);
+    for (uint32_t i = 0; i < d->records; i++) {
+        const tide_grid_record r = tide_grid_records(d)[i];
+        (void)scratch_chunk(&out, r.chunk[0], r.chunk[1], r.chunk[2], tide_grid_chunk_at(heap, r.block), s);
+    }
+    return out;
+}
+
 void *tide_grid_poke_slow(tide_grid *g, const int32_t x, const int32_t y, const int32_t z, const tide_grid_shape *s,
                           const bool make, const uint32_t where)
 {
+    if (in_scratch(*g) || (!g->at && where == TIDE_IN_SCRATCH)) return scratch_poke(g, x, y, z, s, make);
     tide_heap *heap = tide_heap_of(where);
     if (!heap || (g->at && tide_handle_where(g->at) != where)) return NULL; // The scratch area's, or another world's
     if (!g->at) {
@@ -149,9 +245,16 @@ void tide_grid_own(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
         g->at = 0;
         return;
     }
+    const tide_grid made = *g;
     int32_t size[3];
-    tide_grid_size(*g, size);
+    tide_grid_size(made, size);
     g->at = tide_handle_of(where, new_dir(heap, size, s));
+    if (!in_scratch(made)) return; // The pack's: its size alone
+    const tide_grid_dir *d = tide_grid_dir_of(made); // Code's own cells, copied in
+    for (uint32_t i = 0; i < d->records; i++) {
+        const tide_grid_record r = tide_grid_records(d)[i];
+        (void)add_chunk(g, heap, r.chunk[0], r.chunk[1], r.chunk[2], tide_scratch_at(r.block), s);
+    }
 }
 
 void tide_grid_release(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
@@ -177,6 +280,12 @@ void tide_grid_set(tide_grid *to, const tide_grid value, const tide_grid_shape *
 
 void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t where)
 {
+    if (in_scratch(*g)) { // Code's own: its records forgotten, their blocks left for the area's mark
+        tide_grid_dir *d = scratch_dir(*g);
+        memset(tide_grid_records(d), 0, d->room * sizeof(tide_grid_record) + d->slots * sizeof(uint32_t));
+        d->records = 0;
+        return;
+    }
     tide_heap *heap = tide_heap_of(where);
     if (!heap || !g->at || tide_handle_where(g->at) != where) return;
     tide_grid_dir *d = dir_at(heap, OFFSET(g->at));
@@ -895,8 +1004,8 @@ static bool enter_layer(tide_grid_rows *r, uint32_t i)
 void tide_grid_rows_begin(tide_grid_rows *r, const tide_grid g, const tide_grid_shape *s)
 {
     *r = (tide_grid_rows){.done = true};
-    if (!g.at || (!tide_heap_read(tide_handle_where(g.at)) && !tide_pack_holds(g.at))) return; // Empty, or the scratch area's
-    const tide_grid_dir *d = tide_grid_dir_of(g); // A world's, or the pack's (tide/pack.h)
+    const tide_grid_dir *d = tide_grid_dir_of(g); // A world's, the pack's (tide/pack.h) or code's own, in the scratch area
+    if (!d) return;
     bool open = false;
     for (uint32_t a = 0; a < 3; a++) {
         r->size[a] = a < s->dims ? d->size[a] : 1;

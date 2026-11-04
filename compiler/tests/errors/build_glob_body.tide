@@ -1,6 +1,0 @@
-// expect: a list or a map of files can't have code yet
-asset List<string> notes = "../e2e/assets/notes/*.txt"
-{
-    notes.Add("more");
-}
-scene Main { }

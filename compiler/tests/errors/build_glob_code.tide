@@ -1,0 +1,4 @@
+// expect: a list or a map of files can't be made by code yet
+List<string> More() { return ["more"]; }
+asset List<string> notes = More();
+scene Main { }

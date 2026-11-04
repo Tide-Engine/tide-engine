@@ -1,6 +1,9 @@
-// expect: build code left 'blank' with no size: an image has one
-asset Grid2<Color> blank
+// expect: build code made 'blank' with no size: an image has one
+build Grid2<Color> Blank()
 {
-    blank[int2(0, 0)] = Color(1, 0, 0, 1);
+    mut Grid2<Color> image = Grid2();
+    image[int2(0, 0)] = Color(1, 0, 0, 1);
+    return image;
 }
+asset Grid2<Color> blank = Blank();
 scene Main { }

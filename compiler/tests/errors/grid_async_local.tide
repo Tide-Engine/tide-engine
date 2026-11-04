@@ -1,0 +1,10 @@
+// expect: a task can't keep a grid while it waits
+singleton Field { int sum; }
+async void Wait1(mut Field field)
+{
+    mut Grid2<int> cells = Grid2(8, 8);
+    await Wait.Ticks(1);
+    field.sum = cells[0, 0];
+}
+system Step(mut Field field) { Wait1(field); }
+scene Main { }

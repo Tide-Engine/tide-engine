@@ -1993,17 +1993,11 @@ static decl *parse_const(parser *p)
     d->return_type_at = type->name_at;
     d->return_type_qual_at = type->at;
     d->return_type_ref = type;
-    // const List<float> CURVE { ... }: build code makes its value (docs/spec.md, Build code)
-    if (at(p, T_LBRACE)) {
-        d->body_at = name->at;
-        d->body = parse_block(p);
-        d->end = d->body->end;
-        return d;
-    }
     if (!at(p, T_ASSIGN)) {
-        diag_error(peek(p)->at, "a constant needs a value: 'const " STR_FMT " " STR_FMT " = ...;', or code that makes it: "
-                                "'const " STR_FMT " " STR_FMT " { ... }'", STR_ARG(type->text), STR_ARG(name->text),
-                   STR_ARG(type->text), STR_ARG(name->text));
+        diag_error(peek(p)->at, "a constant needs a value: 'const " STR_FMT " " STR_FMT " = ...;'", STR_ARG(type->text),
+                   STR_ARG(name->text));
+        if (at(p, T_LBRACE)) diag_note("code that works it out goes in a function, which its value calls: 'const " STR_FMT " "
+                                       STR_FMT " = Make();' (docs/spec.md, Build code)", STR_ARG(type->text), STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
     advance(p);
@@ -2014,7 +2008,8 @@ static decl *parse_const(parser *p)
 
 // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name,
 // at the top of a file (see docs/spec.md, Assets). Its value is its path, a
-// constant text, which the checker resolves.
+// constant text, which the checker resolves, or what build code makes, like
+// 'asset Texture board = Checker(64);' (docs/spec.md, Build code).
 static decl *parse_asset(parser *p)
 {
     if (peek(p)->kind == T_IDENT && peek_at(p, 1)->kind == T_ASSIGN) {
@@ -2031,26 +2026,22 @@ static decl *parse_asset(parser *p)
     d->return_type_at = type->name_at;
     d->return_type_qual_at = type->at;
     d->return_type_ref = type;
-    // asset Texture hero = "art/hero.png" { ... }: build code edits what the file has, and with no path it
-    // starts empty (docs/spec.md, Build code)
-    if (!at(p, T_ASSIGN) && !at(p, T_LBRACE)) {
+    if (!at(p, T_ASSIGN)) {
         diag_error(peek(p)->at, "an asset needs its file's path: 'asset " STR_FMT " " STR_FMT " = \"...\";', from the folder this file is in",
                    STR_ARG(type->text), STR_ARG(name->text));
-        diag_note("or code that makes it, with or without a path: 'asset " STR_FMT " " STR_FMT " { ... }'", STR_ARG(type->text),
+        diag_note("or a call of code that makes it as the game builds: 'asset " STR_FMT " " STR_FMT " = Make();'", STR_ARG(type->text),
                   STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
-    if (at(p, T_ASSIGN)) {
-        advance(p);
-        d->value = parse_expr(p);
-    }
+    advance(p);
+    d->value = parse_expr(p);
     if (at(p, T_LBRACE)) {
-        d->body_at = name->at;
-        d->body = parse_block(p);
-        d->end = d->body->end;
-        return d;
+        diag_error(peek(p)->at, "an asset is its file's path or what code makes, with no block after it");
+        diag_note("code that makes or changes it goes in a function its value calls: 'asset " STR_FMT " " STR_FMT
+                  " = Outlined(source, Color.red);' (docs/spec.md, Build code)", STR_ARG(type->text), STR_ARG(name->text));
+        longjmp(p->fail, 1);
     }
-    d->end = expect(p, T_SEMI, "';' after the asset's path")->at;
+    d->end = expect(p, T_SEMI, "';' after the asset's value")->at;
     return d;
 }
 
@@ -3091,7 +3082,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         if (build) {
             if (d->kind != DECL_FUNCTION || d->is_extern) {
                 diag_error(build->at, "'build' goes before a function, which then runs only while the game builds: "
-                                      "'build void Outline(mut Grid2<Color> image, int width) { ... }'");
+                                      "'build Grid2<Color> Checker(int size) { ... }'");
             } else {
                 d->is_build = true;
                 d->build_at = build->at;

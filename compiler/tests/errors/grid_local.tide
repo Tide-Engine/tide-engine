@@ -1,4 +1,5 @@
-// expect: a local can't hold a grid
+// expect: a grid can't be copied: a local's grid is its own
+// expect: take what a function returns, or copy this one with '.Copy()'
 singleton Field { Grid2<int> cells; }
 system Copy(Field field)
 {

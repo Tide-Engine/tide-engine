@@ -525,7 +525,7 @@ What was fetched is kept in the game's `.tide/`, with the server's ETag. Each bu
 
 ## Assets made by code
 
-An asset can have code that runs while the game builds, which edits what its file has or makes it from nothing: `asset Texture hero = "art/hero.png" { Outline(hero, Color.black); }`. See [Build code](./build-code.md).
+An asset's value can be a call of code that runs while the game builds, which makes it from nothing or from another asset's file: `asset Texture hero = Outlined(heroSource, Color.black);`. A sound's samples are an asset too: `asset ClipData step = "sfx/step.wav";`. See [Build code](./build-code.md).
 
 ## What's checked
 

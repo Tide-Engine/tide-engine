@@ -1,0 +1,6 @@
+// expect: a grid can't be copied: an asset's grid is its own
+// expect: '... = grid.Copy();'
+asset Grid2<Color> source = "../e2e/assets/hero.png";
+bool First() { return true; }
+asset Grid2<Color> copy = First() ? source : source;
+scene Main { }

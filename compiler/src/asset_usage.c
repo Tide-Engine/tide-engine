@@ -380,14 +380,15 @@ static void declaration(asset_usage *w, const decl *d)
             if (type_asset_reference_accepts(d, value)) use_asset(w, asset);
         }
     }
-    // What build code made is the value, and the code that made it is what made it so
-    queue(w, USAGE_DECL, d->build_fn);
+    // What build code made is the value, and the code that made it is what made it so; a game's pack has what it made,
+    // not what that code read, which only the build program has (strip_assets)
+    if (w->hash) queue(w, USAGE_DECL, d->build_fn);
     if (w->hash && d->built) tide_sha256_add(w->hash, d->built->hash, sizeof d->built->hash);
     value_type(w, d->return_type);
     value_type(w, d->skin_vertex);
     if (!w->server) queue(w, USAGE_DECL, d->local_part);
     if (!w->server) queue(w, USAGE_DECL, d->interpolate);
-    queue(w, USAGE_EXPR, d->value);
+    if (!d->build_fn || w->hash) queue(w, USAGE_EXPR, d->value); // Build code's, which build_fn has
     if (!w->server || d->kind != DECL_INPUT) queue(w, USAGE_STMT, d->body);
     queue(w, USAGE_STMT, d->sanitize);
     if (!w->server || w->hash) queue(w, USAGE_STMT, d->predict);
@@ -556,7 +557,7 @@ static void strip_assets(program *prog, const bool server)
             if (!d->is_local && !d->is_view && (d->kind == DECL_SYSTEM || (d->kind == DECL_COMPONENT && d->is_scene)
                 || d->kind == DECL_SINGLETON || d->kind == DECL_INPUT
                 || d->kind == DECL_EVENT)) queue(&w, USAGE_DECL, d);
-        } else if (d->kind != DECL_ASSET) queue(&w, USAGE_DECL, d);
+        } else if (d->kind != DECL_ASSET && !d->is_build) queue(&w, USAGE_DECL, d); // Build code isn't the game's
     }
     if (!server) {
         for (int i = 0; i < prog->local_parts.count; i++) queue(&w, USAGE_DECL, prog->local_parts.items[i]);

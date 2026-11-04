@@ -1,0 +1,4 @@
+// expect: a grid can't be copied: a function returns one of its own
+// expect: return a new one, a local, or a copy of this one, like 'return cells.Copy();'
+Grid2<int> Same(Grid2<int> cells) { return cells; }
+scene Main { }

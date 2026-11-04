@@ -220,6 +220,11 @@ tide_e2e_test(mesh_values)
 tide_e2e_test(mesh_decode) # Mesh<V>.Decode: a file's bytes in match code, the vertices its asset has
 tide_e2e_test(mesh_runtime) # Mesh(vertices, indices): static meshes a game makes, values beside assets', drawn by their key
 tide_e2e_test(build_code SOURCES e2e/build_code.tide e2e/build_code_c.c) # Assets and constants build code makes, read by match code and the pack
+add_test(NAME tidec_build_code_strip # An asset only build code reads is left out of a stripped game
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/e2e/build_code.tide"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/build_code_strip" "-DBUILD_CC=${TIDE_BUILD_CC}"
+        "-DBUILD_INCLUDE=${PROJECT_SOURCE_DIR}/engine/include" "-DBUILD_ENGINE=${PROJECT_SOURCE_DIR}/engine/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/build_code_strip.cmake")
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(lod_generated) # Levels of detail for meshes a game makes (`lod:`), made in the background and kept by contents
@@ -416,6 +421,7 @@ target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=1814360554844410170u
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
 target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=17773546526439762167ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
+tide_e2e_test(grid_values) # Grids code owns: locals, mut parameters, returns and Copy
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
 tide_e2e_test(window_indices) # Task-local windows with global positions, offsets and partial writes

@@ -4,6 +4,22 @@
 
 Under the drawing maintenance exception, with the owner's request for custom fonts and runtime decoding: `engine/include/tide/font.h` and `engine/src/font_data.c` (font files into checked font data, its check, and the registry of a program's fonts) are Claude's on the same terms. New runtime functions generated code calls: `tide_font_find` (a Font's font, in `tide_font_file`), `tide_font_decode` (Font.Decode's helper) and `tide_pack_font_of` (an `asset Font`); the pack builder gains `tide_pack_font`, which only tidec calls. The C drawing API takes `const tide_font *` where it took a weight's file (`tide_draw_text_at`, `tide_measure_fn`, `tide_platform_measure_text`, `tide_draw_measure_text`), `tide_draw_list` has `fonts` in place of `bold`, a text command `words.font` in place of `words.bold`, and `tide_gui_theme` a `font`; hosts and game libraries rebuild together. No match state changes: a Font is local. Details: `notes/rendering.md`, Fonts of a game's own.
 
+## Grids code owns, in the scratch area (2026-11-03)
+
+Within the grids maintenance exception (`tide/grid.h`, `engine/src/grid.c`), for the owner's decision that grids are
+values in all code (docs/spec.md, Grids): a grid code makes as it runs (a local's, a function's result, a copy) lives
+in the thread's scratch area, as a local's list does, and is written there. `tide_grid_poke_slow` writes a scratch
+grid that isn't the pack's wherever `where` says, or makes one for an empty grid when `where` is `TIDE_IN_SCRATCH`;
+`tide_grid_poke`'s fast path sends `TIDE_IN_SCRATCH` to it (it has no heap). Its directory grows into a new scratch
+block, the old one left for the area's mark, and a chunk is a scratch block whose header is cells too, read through
+`tide_grid_chunk_at` with no heap as the pack's are. `tide_grid_own` (so `tide_grid_set`) copies a scratch grid's
+chunks into the world it goes in, where it took only the size; the pack's grids still give their size alone.
+`tide_grid_clear` forgets a scratch grid's records. `tide_grid_rows_begin` goes through a scratch grid too, where it
+gave nothing. One new function generated code calls: `tide_grid_copy(g, shape)`, `cells.Copy()`, a scratch copy of
+any grid. Parallel loops (`tide_par_begin`) still go through a world's grid only, which the checker makes sure of.
+No layout, snapshot, hash or match-state change: a scratch grid is never the world's. The owner should confirm the
+new generated call. Contracts and tests: notes/language.md, Grids as values.
+
 ## Build code's constant lists (2026-11-03)
 
 Under the pack maintenance exception, the owner-approved build code (docs/spec.md, Build code) adds one pack
