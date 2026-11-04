@@ -30,7 +30,7 @@ function repository(t) {
     commit('chore: initialize history');
     const notes = (gitTag, gitHead = git('rev-parse', 'HEAD')) =>
         generateNightlyNotes({ cwd, gitTag, gitHead, repositoryUrl });
-    return { git, commit, notes };
+    return { git, commit, notes, cwd };
 }
 
 test('nightly notes describe the built snapshot, including merged work, and keep their baseline on retry', async t => {
@@ -119,4 +119,19 @@ test('nightly notes handle initial history and the first nightly after a stable 
     assert.ok(subsequent.includes(repositoryUrl + '/compare/v0.1.0...v0.2.0-nightly.1'));
     assert.ok(!subsequent.includes('add the first game'));
     assert.ok(!subsequent.includes('accept touch'));
+});
+
+test('nightly notes start from the last released version, past one whose run failed', async t => {
+    const { git, commit, cwd } = repository(t);
+    commit('feat(old): released feature');
+    git('tag', 'v0.3.0-nightly.1');
+    commit('feat(lost): its run failed');
+    git('tag', 'v0.3.0-nightly.2');
+    commit('fix(test): repair what failed');
+    const markdown = await generateNightlyNotes({ cwd, gitTag: 'v0.3.0-nightly.3', gitHead: 'HEAD', repositoryUrl,
+        released: new Set(['v0.3.0-nightly.1']) });
+    assert.ok(markdown.includes('**lost:** its run failed'), 'the failed version\'s changes are in');
+    assert.ok(markdown.includes('**test:** repair what failed'));
+    assert.ok(!markdown.includes('released feature'));
+    assert.ok(markdown.includes(repositoryUrl + '/compare/v0.3.0-nightly.1...v0.3.0-nightly.3'));
 });

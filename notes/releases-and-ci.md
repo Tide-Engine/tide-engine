@@ -1,25 +1,48 @@
 # Releases, installing and CI
 
-## Every finished dev run publishes (2026-11-04)
+## Every dev push claims a version (2026-11-04)
 
 The owner, iterating on dev: runs "take long... commits keep blocking each
-other", and "i want us iterating to actually publish releases so i can use them
-with tide officially". The overlapping-runs design (2026-10-30, below) had each
-push cancel the previous run's test and package jobs, and a nightly skipped
-publishing when dev had moved on. With pushes every 3-10 minutes against a
-~30-minute run, nothing published: of 20 dev runs on 2026-11-04 up to 15:00,
-14 were cancelled and the rest failed; the last nightly was 2026-11-03 16:54.
+other", "i want us iterating to actually publish releases so i can use them
+with tide officially", and "i would rather each push have a version, if it
+fails it doesnt release but it still has the version such that others can
+continue moving without it". The overlapping-runs design (2026-10-30, below)
+had each push cancel the previous run's test and package jobs, and a nightly
+skipped publishing when dev had moved on. With pushes every 3-10 minutes
+against a ~30-minute run, nothing published: of 20 dev runs on 2026-11-04 up
+to 15:00, 14 were cancelled and the rest failed; the last nightly was
+2026-11-03 16:54. (Earlier the same day, runs were briefly serialized with only
+the newest push waiting; the owner chose a version for every push instead.)
 
-- **Build runs one at a time per branch** (`group: build-<ref>`, `queue:
-  single`, no cancelling except pull requests): the running run finishes and
-  only the newest push waits; pushes in between are replaced while they wait.
-  Every run that passes publishes its commit, even when dev has moved on (the
-  stale-commit check is gone). The Version/Release publication lock and the
-  per-job dev cancellation (check.yml, JetBrains) are removed: runs of a ref
-  no longer overlap, so the next run's Version sees this run's tag.
-- A nightly still needs every suite and package and a `feat`/`fix`/`perf`
-  commit since the last tag (`next-nightly.mjs`); a `chore:`/`ci:` push
-  publishes nothing.
+- **Every push to dev gets its own run, which nothing cancels** (workflow group
+  per run ID on dev; pull requests still cancel older runs, `release` still
+  goes one run at a time). The per-job dev cancellation (check.yml, JetBrains),
+  the Version/Release publication lock and Release's stale-commit check are
+  gone.
+- **Version claims the push's nightly at the start**:
+  `next-nightly.mjs --reserve` fetches tags, picks the highest version's next
+  number and pushes that tag with its `semantic-release-<tag>` note
+  (`{"channels":["dev"]}`) atomically. A refused push (another run took the
+  number) fetches and takes the next one, 20 tries at most. A commit with a
+  nightly tag already (a re-run) keeps it. Release later finds the tag and
+  note there and only makes the GitHub release.
+- **A run that fails keeps its version, with no release**: a gap in the
+  numbers. `tide upgrade` and the installers take a channel's highest version
+  with this platform's package, so gaps and out-of-order finishes are harmless.
+  "Released" means a GitHub release with that tag (`releasedTags`, `gh api`):
+  whether a push is worth a nightly (`feat`/`fix`/`perf`) and the release
+  notes' baseline (`nightly-notes.mjs`) both count from the newest *released*
+  version behind the commit, so a failed version's changes go into the next
+  release's notes and a `test:` repair after a failed `feat:` still publishes.
+  Without `GITHUB_REPOSITORY` (tests, local runs) every tag counts as released.
+- A commit behind another version's tag claims none: a newer push's Version
+  ran first, and its release covers this one. Normally runs start in push
+  order.
+- A push with no `feat`/`fix`/`perf` since the last release gets no version and
+  publishes nothing, as before.
+- More runs at once share the account's runners (20 jobs at a time, 5 on
+  macOS; one run is about 20), so overlapping runs queue for runners and each
+  takes longer. Every push still gets its release, in push order or near it.
 - **Android's suite is its own test entry** (`linux-x64, android`), off Linux's
   package job, where it took 8.5 minutes before packaging started. Both jobs
   boot the emulator in the background (`Start the Android emulator`) while they
@@ -38,7 +61,16 @@ publishing when dev had moved on. With pushes every 3-10 minutes against a
   least as long as Docs (~20 minutes in that run, partly waiting for a free
   runner).
 
-Validation: both workflows parse as YAML and every Bash step passes `bash -n`
+Validation: `.github/next-nightly.test.mjs` runs real Git histories against a
+local bare origin: version order after nightly and stable tags, nothing worth a
+release, a failed version skipped by `released`, an older commit behind a
+newer version, the pushed tag and note, a re-run keeping its version, a tag
+another run pushed, and a push refused because the origin's `pre-receive` hook
+took the number meanwhile (the retry takes the next). A new notes test checks
+a failed version's changes appear in the next release's notes, comparing from
+the last released tag. All workflow-helper tests pass. Read-only against the
+real repository (no `--reserve`), the script says `0.6.0-nightly.25` after the
+latest release `.24`. Both workflows parse as YAML and every Bash step passes `bash -n`
 (the one PowerShell step excepted). The parallel step, run with a stub `node`
 failing one part, prints all three logs, names the failed part and exits 1.
 `--part` refuses unknown parts and the `--*-only` flags; the workflow helpers'
@@ -288,8 +320,9 @@ push-to-dev run exercises the hosted maintenance job; no extra CI is dispatched.
 
 ## Faster feedback for overlapping dev builds (2026-10-30)
 
-Superseded on 2026-11-04 (top of this file): dev runs no longer overlap or
-cancel each other, and the publication lock and stale-commit check are gone.
+Superseded on 2026-11-04 (top of this file): dev runs still overlap but no
+longer cancel each other, each claims its version when it starts, and the
+publication lock and stale-commit check are gone.
 The web sharding and cache changes below still stand.
 
 Build gives each dev run its own workflow concurrency group. Its native/web/
@@ -971,7 +1004,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **A nightly waits for every suite, as a stable release does** (the owner, 2026-10-08, with the workflow's restoring, above). For a day they didn't (2026-10-07: "dev/nightly is meant to move fast; we can introduce them back later, right now its too early for always running it", said while every push started a run and the suites ran on a home server): nightlies went out from the three packages alone, and one could go out with a suite failing somewhere this machine's sessions didn't run it. A run is asked for now, and Windows' and Linux's packages and suites together took about four minutes on Blacksmith's runners (2026-10-08, with the compiler's cache).
   - `gh workflow run build.yml --ref dev` is a nightly, `gh workflow run build.yml --ref release` a stable release, and the same on any other branch checks it and publishes nothing.
   - macOS's suites (native and web) are back with it. They ran on no machine from 2026-10-07 until the first run after this, so what landed in between (audio's CoreAudio, Box3D's resident state) was first run on a Mac then.
-- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. Runs of dev go one at a time (2026-11-04, top of this file), so no two publish under one number.
+- **A nightly is published by the workflow itself, not by semantic-release** (2026-10-07): semantic-release publishes nothing for a commit that isn't its branch's newest any more ("The local branch dev is behind the remote one"), and with several sessions pushing, `dev`'s rarely is by the time its packages are built: runs passed every job and released nothing. `.github/next-nightly.mjs` says the version in the Version job (the highest tag's, one further: `0.3.0-nightly.7` after `.6`, `0.4.0-nightly.1` after a stable `0.3.0`), and that nothing is published for a commit with no `feat`, `fix` or `perf` since the last tag behind it, or that's itself behind a tag. The Release job tags the commit, adds the note semantic-release keeps for each of its tags (`refs/notes/semantic-release-<tag>`, `{"channels":["dev"]}`), and makes the release with `gh`, which the runner has. A stable release (`release`) is still semantic-release's, start to end. Since 2026-11-04 (top of this file) the Version job pushes the tag and note when a run starts, so overlapping runs each claim their own number, and the baseline is the last released version behind the commit.
   - Nightlies use commit-based release notes again (2026-10-10, future releases
     only). Switching the publisher to `gh --generate-notes` had replaced the
     Features/Bug Fixes lists with GitHub's merged-PR notes; direct commits to

@@ -6,8 +6,12 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { generateNotes } from '@semantic-release/release-notes-generator';
 import semver from 'semver';
+import { releasedTags } from './next-nightly.mjs';
 
-export async function generateNightlyNotes({ cwd = process.cwd(), gitTag, gitHead, repositoryUrl }) {
+// released: the set of tags with a release, or null to count every tag. A
+// version whose run failed has a tag and no release: its changes belong to
+// the next released version's notes.
+export async function generateNightlyNotes({ cwd = process.cwd(), gitTag, gitHead, repositoryUrl, released = null }) {
     const version = gitTag?.startsWith('v') && semver.valid(gitTag.slice(1));
     if (!version || !gitHead) throw new Error('Usage: nightly-notes.mjs <vVERSION> <built commit>');
     const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
@@ -15,7 +19,7 @@ export async function generateNightlyNotes({ cwd = process.cwd(), gitTag, gitHea
     // Exclude this release's tag on a retry, and any newer stable/nightly
     // tags published while this snapshot was building.
     const previous = git('tag', '--merged', head, '--list', 'v[0-9]*').split('\n')
-        .filter(tag => semver.valid(tag.slice(1)) && semver.lt(tag.slice(1), version))
+        .filter(tag => semver.valid(tag.slice(1)) && semver.lt(tag.slice(1), version) && (!released || released.has(tag)))
         .sort((a, b) => semver.rcompare(a.slice(1), b.slice(1)))[0];
     const fields = git('log', '--format=%H%x00%B%x00', previous ? `${previous}..${head}` : head, '--').split('\0');
     const commits = [];
@@ -36,5 +40,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const [gitTag, gitHead] = process.argv.slice(2);
     const repositoryUrl = process.env.GITHUB_REPOSITORY
         ? `${process.env.GITHUB_SERVER_URL ?? 'https://github.com'}/${process.env.GITHUB_REPOSITORY}` : undefined;
-    process.stdout.write(await generateNightlyNotes({ gitTag, gitHead, repositoryUrl }));
+    const released = process.env.GITHUB_REPOSITORY ? releasedTags(process.env.GITHUB_REPOSITORY) : null;
+    process.stdout.write(await generateNightlyNotes({ gitTag, gitHead, repositoryUrl, released }));
 }
