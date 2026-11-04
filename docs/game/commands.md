@@ -95,13 +95,27 @@ Whatever the ordering, the server picks the tick and every handler runs in the t
 
 A command holds a `List<byte>` too, so a player's file goes into the match as it is: an image's bytes, a text's, any file's, for a handler to keep in a component or decode. Such a command is 4 MiB at most. One that doesn't fit a datagram goes as a numbered transfer in chunks, the way worlds go, resent until acknowledged and paced under the input traffic (16 KB an update, about a megabyte a second), so a transfer never delays a tick. It lands in a later tick, as any command may.
 
+A command holds lists of other values as well: numbers, bools, enums, vectors, entity or player IDs, and structs of those, in a field or in a struct the command holds.
+
+```csharp
+struct Slot { [Clamp(0, 9)] int level; float weight = 1; }
+
+command Enlist
+{
+    [Clamp(0, 20)] List<int> attributes; // Each element is bounded
+    List<Slot> slots;
+}
+```
+
+Each element goes on the wire as a field of its type would, after the list's count, and is checked the same way: a float that isn't finite becomes the element type's default, an enum value no member has becomes its default, and `[Clamp]`, `[Min]` and `[Max]` bound each element, on the list or on a struct's fields. A command with a list follows the same rules as one with a `List<byte>`: 4 MiB at most, sent in chunks when it doesn't fit a datagram. A list of text or of other lists can't be sent: send text in string fields or a fixed `string[N]`, or its bytes as a `List<byte>`. Commands can't hold maps, sets or grids; a map's keys and values can go as two lists.
+
 In full-world games, the server distributes a big command to every player before scheduling it, so no player's tick waits for its download; later joiners receive the resulting world. Visibility-enabled games keep that upload server-side and replicate only permitted state consequences. A few megabytes is fine; larger public media can be a URL fetched by each machine. Put a big command in a channel of its own, or make it unordered, so nothing waits behind it.
 
 ## Untrusted payloads
 
-The engine checks payload structure and size, UTF-8, numeric values and declared bounds before match code sees the fields. A command holds numbers, bools, enums, vectors, entity or player IDs, strings, `List<byte>`, and structs of those; it does not hold other lists, maps, grids, components or device records.
+The engine checks payload structure and size, UTF-8, numeric values and declared bounds before match code sees the fields. A command holds numbers, bools, enums, vectors, entity or player IDs, strings, `List<byte>`, lists of those but strings, and structs of those; it does not hold lists of text or lists, maps, sets, grids, components or device records.
 
-The initial limits are 1024 packed bytes per command (4 MiB for one with a `List<byte>`), 32 pending commands per player in each channel, and 16 commands scheduled per authoritative tick. The packed limit includes the command type, target and string bytes. Incoming queues are bounded before allocation. A full session queue leaves local submissions of that channel waiting for capacity. Sending a payload larger than the packed limit, or filling a channel's local submission queue, is a programming error that stops the program with a diagnostic.
+The initial limits are 1024 packed bytes per command (4 MiB for one with a list), 32 pending commands per player in each channel, and 16 commands scheduled per authoritative tick. The packed limit includes the command type, target and string bytes. Incoming queues are bounded before allocation. A full session queue leaves local submissions of that channel waiting for capacity. Sending a payload larger than the packed limit, or filling a channel's local submission queue, is a programming error that stops the program with a diagnostic.
 
 Starting or leaving a match clears its pending submissions. Host migration preserves them. A hot reload that changes the game's data layout clears pending packed commands, because the new build can give their types a different wire layout.
 

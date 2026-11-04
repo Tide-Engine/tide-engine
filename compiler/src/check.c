@@ -15579,7 +15579,8 @@ static void check_bound(checker *c, const field *f, expr *value)
         suggest_constant(c, value);
         return;
     }
-    type ft = f->type; // An array's bound is each element's
+    type ft = f->type; // An array's bound is each element's, and so is a list's
+    if (ft.kind == TY_LIST) ft = ft.decl->fields.items[0].type;
     while (ft.kind == TY_ARRAY) ft = array_element(ft);
     const type t = check_constant_expr(c, value, ft.kind == TY_BYTE, ft.kind == TY_BYTE ? ft : T_ERR);
     if (t.kind == TY_ERROR || ft.kind == TY_ERROR) return;
@@ -15903,7 +15904,8 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
         has_clamp |= clamp;
         has_min |= min;
         has_max |= max;
-        type bounded = f->type; // An array's bound is each element's
+        type bounded = f->type; // An array's bound is each element's, and so is a list's
+        if (bounded.kind == TY_LIST) bounded = bounded.decl->fields.items[0].type;
         while (bounded.kind == TY_ARRAY) bounded = array_element(bounded);
         if (bounded.kind != TY_ERROR && !type_is_numeric(bounded) && bounded.kind != TY_LONG) {
             diag_error(a->at, "[" STR_FMT "] works on numbers and vectors, not %s", STR_ARG(a->name), type_name(f->type));
@@ -16112,16 +16114,33 @@ static bool holds_list(const type t)
     return false;
 }
 
-// Whether a value of type `t` is or holds a list, map or set, but for
-// List<byte>, a file's bytes, which a command can hold
-static bool holds_list_but_bytes(const type t)
+static bool holds_text(const type t);
+
+// Whether a value of type `t` is or holds a map, a set or a grid, which a
+// command can't hold: in its fields, its structs, arrays and lists
+static bool holds_map_or_grid(const type t)
 {
-    if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind != TY_BYTE;
-    if (t.kind == TY_MAP || t.kind == TY_SET) return true;
-    if (t.kind == TY_ARRAY) return holds_list_but_bytes(t.decl->fields.items[0].type);
+    if (t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) return true;
+    if (t.kind == TY_ARRAY || t.kind == TY_LIST) return holds_map_or_grid(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (holds_list_but_bytes(t.decl->fields.items[i].type)) return true;
+        if (holds_map_or_grid(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+// Whether a value of type `t` holds a list a command can't: one whose elements
+// aren't of a fixed size, as they hold text or lists of their own
+static bool holds_unsized_list(const type t)
+{
+    if (t.kind == TY_LIST) {
+        const type element = t.decl->fields.items[0].type;
+        return holds_list(element) || holds_text(element) || element.kind == TY_GRID;
+    }
+    if (t.kind == TY_ARRAY) return holds_unsized_list(t.decl->fields.items[0].type);
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (holds_unsized_list(t.decl->fields.items[i].type)) return true;
     }
     return false;
 }
@@ -16160,9 +16179,14 @@ static void check_fields(checker *c, const decl *d)
         if (holds_callable(f->type) && d->kind != DECL_STRUCT && !d->is_local && d->kind != DECL_COMPONENT) {
             diag_error(f->at, "callable and shader bindings belong in local state: make this field local");
         }
-        if (d->is_command && (holds_list_but_bytes(f->type) || f->type.kind == TY_GRID)) {
-            diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a list, map, set or grid");
-            diag_note("send numbers, bools, enums, strings, a file's bytes as List<byte>, or structs containing those");
+        if (d->is_command && holds_map_or_grid(f->type)) {
+            diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a map, set or grid");
+            diag_note("send numbers, bools, enums, strings, lists of those, or structs containing them; a map's keys and values can go "
+                      "as two lists");
+        } else if (d->is_command && holds_unsized_list(f->type)) {
+            diag_error(f->type_at.line ? f->type_at : f->at, "a command's list can't hold text or other lists");
+            diag_note("a command's List<T> holds numbers, bools, enums, vectors, entities, or structs of those; send text as string "
+                      "fields or a fixed string[N], or its bytes as a List<byte>");
         }
         if (holds_render_resource(f->type)) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;

@@ -80,6 +80,7 @@ TIDE_TEST(fails_loops_and_locals)
     TIDE_CHECK(r->held == 9);
     TIDE_CHECK(r->digits == 3);
     TIDE_CHECK(r->noDigits == 0);
+    TIDE_CHECK(r->isList == 6); // 1 + 2 + 3, and the failing one names nothing
     TIDE_CHECK(r->spent == 15);
     TIDE_CHECK(r->overspent == -1);
 }

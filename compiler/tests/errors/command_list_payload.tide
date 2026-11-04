@@ -1,4 +1,4 @@
-// expect: a command can't hold a list, map, set or grid
-struct Detail { List<int> values; }
+// expect: a command's list can't hold text or other lists
+struct Detail { List<string> values; }
 command Submit { Detail detail; }
 scene Main { }

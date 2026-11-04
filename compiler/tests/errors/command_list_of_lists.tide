@@ -1,0 +1,3 @@
+// expect: a command's list can't hold text or other lists
+command Submit { List<List<int>> rows; }
+scene Main { }
