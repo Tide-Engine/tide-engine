@@ -13,12 +13,8 @@ has 240/290. The forest's D3D11 variants, which give `SECONDS 240`, get
 240/290 too instead of 120/170. Locally (web-debug, Chrome 156) the served
 shader D3D11 run passes in 40 seconds.
 
-Run 41852531021 also failed once, in `tide_platform_rooms` on Windows:
-headless Chrome never opened the page of "Chrome joins a desktop room"
-(90 seconds) and then didn't close when asked (60 more), so the test ran out
-of its 180. The case after it, with Chrome hosting, connected. That job hadn't
-failed in the 40 dev runs before it; if it happens again it needs looking into
-(`notes/webrtc-and-rooms.md` has the Firefox causes found before).
+`tide_platform_rooms` runs alone (`RUN_SERIAL`): see `notes/webrtc-and-rooms.md`
+(2026-11-04).
 
 ## All forest browser variants await completion (2026-11-03)
 

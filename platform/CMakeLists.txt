@@ -454,7 +454,9 @@ if(NOT TIDE_WEB)
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rooms.mjs" "${TIDE_BROWSER}"
                 $<TARGET_FILE:tide_platform_rooms> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_rooms-browser"
                 "${TIDE_FIREFOX}")
-        set_tests_properties(tide_platform_rooms PROPERTIES TIMEOUT 180)
+        # Alone: its browsers' first start on a fresh CI runner, beside a suite's
+        # compiles on every core, stalled Chrome's page (notes/webrtc-and-rooms.md)
+        set_tests_properties(tide_platform_rooms PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
     endif()
 
     # On Android, rooms need an app around them: the relay's TLS is Java's,
