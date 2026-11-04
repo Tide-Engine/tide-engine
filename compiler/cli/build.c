@@ -10,6 +10,7 @@
 
 #include "android.h"
 #include "apk.h"
+#include "asset_sizes.h"
 #include "common.h"
 #include "compile.h"
 #include "fetch.h"
@@ -2227,7 +2228,9 @@ static bool folder_has_c_code(const char *folder)
 // Only a closed Tide game gives the compiler every root of its asset graph.
 static bool strip_game_assets(const build *b, const bool layout)
 {
-    if (!b->opts->release || b->opts->watch || b->library || layout || folder_has_c_code(b->folder)) return false;
+    if (!b->opts->release || b->opts->watch || b->library || layout) return false;
+    if (b->opts->strip_assets) return true; // The game says its C reads no asset Tide code doesn't name
+    if (folder_has_c_code(b->folder)) return false;
     for (int i = 0; i < b->packages.count; i++) {
         if (folder_has_c_code(b->packages.items[i].folder)) return false;
     }
@@ -2361,6 +2364,7 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
     if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the source overlay replacement: %s\n", b->opts->editor_draft); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
     sb outline = {0}, shaders = {0};
+    if (b->opts->asset_sizes) asset_sizes_free(b->opts->asset_sizes); // This compile's, as each Android CPU's is the same
     free(b->views);
     b->views = debug_views(b->opts) ? format("%s", gen, NULL) : NULL;
     // Build code's program (compiler/src/build_code.h) is this machine's, whatever the game's target: built as a
@@ -2400,6 +2404,8 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
                                      .outline_to = b->opts->unity ? &outline : NULL,
                                      .shader_out = b->opts->unity ? collect_shader : NULL, .shader_user = &shaders,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
+                                     .asset_size_out = b->opts->asset_sizes ? asset_sizes_add : NULL,
+                                     .asset_size_user = b->opts->asset_sizes,
                                      .server = b->opts->server,
                                      .strip_server_assets = strip_server_assets(b),
                                      .strip_unused_assets = strip_game_assets(b, layout),

@@ -7,11 +7,13 @@
 
 void texture_cache_key(uint8_t key[32], const uint8_t source[32], const char *name, const bool raw, const bool compress)
 {
-    const uint32_t variant[] = {raw, compress};
+    // A third word since [Raw] images were compressed too (2026-11-04): what was kept under {raw, compress} was
+    // their exact RGBA, which another build mustn't read as this one's.
+    const uint32_t variant[] = {raw, compress, 1};
     tide_sha256 h;
     uint8_t context[32];
     tide_sha256_init(&h);
-    tide_sha256_add(&h, variant, sizeof variant);
+    tide_sha256_add(&h, variant, raw && compress ? sizeof variant : 2u * sizeof variant[0]);
     tide_sha256_add(&h, name, strlen(name)); // TGA uses its written suffix to select a decoder.
     tide_sha256_end(&h, context);
     asset_cache_key(key, "texture", source, context, sizeof context);

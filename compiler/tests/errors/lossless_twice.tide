@@ -1,0 +1,6 @@
+// expect: 'flow' already has a Lossless
+[Raw, Lossless, Lossless] asset Texture flow = "../e2e/assets/hero.png";
+
+scene Main
+{
+}
