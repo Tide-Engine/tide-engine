@@ -122,6 +122,9 @@ static bool due_asked;     // ...as the frame function asked (tide_platform_next
 static double (*waiting_update)(void *user, double elapsed);
 static void *waiting_user;
 static bool between_frames;
+static bool quit_asked;     // The program ends after this frame (tide_platform_quit)
+static bool closing_asked;  // ...or its window closed: the host's closing runs as it ends
+static void (*closing)(void); // What the host does then (tide_platform_on_close)
 
 // The window's size as of the frame's start, in logical pixels, and in the
 // pixels it renders.
@@ -470,7 +473,8 @@ static int headless_drawn(void)
     if (headless_frame == 1 && headless_run.record && !record_start(&run_recording, headless_run.record)) return 1;
     const int code = tide_script_drawn(headless_frame);
     if (code != 0 && code != TIDE_KEEP_RUNNING) return code;
-    const bool last = code == 0 || (headless_run.frames && headless_frame >= headless_run.frames);
+    // The game quitting ends the run at this frame, as the script's `quit` does
+    const bool last = code == 0 || quit_asked || (headless_run.frames && headless_frame >= headless_run.frames);
     if (last && headless_run.capture && !tide_platform_capture(headless_run.capture)) return 1;
     if (last && headless_run.capture_audio && !capture_audio(headless_run.capture_audio, 0)) return 1;
     if (last) {
@@ -482,8 +486,22 @@ static int headless_drawn(void)
 
 static void write_used_keys(void);
 
+void tide_platform_quit(void)
+{
+    quit_asked = true;
+}
+
+void tide_platform_on_close(void (*on_close)(void))
+{
+    closing = on_close;
+}
+
 _Noreturn static void finish(int code)
 {
+    // The window closed or the game quit: the host ends what it began first (its match, its local state)
+    void (*const close_host)(void) = closing_asked || quit_asked ? closing : NULL;
+    closing = NULL;
+    if (close_host) close_host();
     if (!tide_script_interactive_close(headless_frame) && code == 0) code = 1;
     // A recording the run ended in the middle of is written out
     const bool run_written = record_end(&run_recording), script_written = tide_platform_record_stop();
@@ -541,9 +559,10 @@ static int step(void)
     if (headless && code == TIDE_KEEP_RUNNING) code = headless_drawn();
     // In a run of several players: what this one sent in the frame goes, and what the others sent comes
     if (headless && code == TIDE_KEEP_RUNNING) code = tide_platform_players_step(headless_frame);
-    between_frames = code == TIDE_KEEP_RUNNING;
+    between_frames = code == TIDE_KEEP_RUNNING && !quit_asked;
     tide_window_present(); // Also takes the system's input
     between_frames = false;
+    if (code == TIDE_KEEP_RUNNING && quit_asked) code = 0; // The game quit: the frame it did that in was the last
 #ifndef __wasm__
     // A window nobody sees (minimized, or an app in the background) has no
     // display's pace to wait for: the next frame comes when the frame function
@@ -581,7 +600,10 @@ void tide_platform_run(const tide_frame_fn frame, void *user)
 #else
     uint32_t interactive_steps = 0;
     for (;;) {
-        if (tide_window_should_close()) finish(0);
+        if (tide_window_should_close()) {
+            closing_asked = true;
+            finish(0);
+        }
         if (headless_run.interactive && headless_frame) {
             if (!interactive_steps) {
                 const int steps = tide_script_interactive_wait(headless_frame);

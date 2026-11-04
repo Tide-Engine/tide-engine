@@ -182,6 +182,19 @@ typedef int (*tide_frame_fn)(void *user, float seconds);
 // nothing then, and come when the frame function asks (tide_platform_next_frame).
 _Noreturn void tide_platform_run(tide_frame_fn frame, void *user);
 
+// The program ends after this frame, as when its window closes: exit code 0
+// (Application.Quit). A headless run ends at it as at its script's `quit`,
+// with its pictures. On the web, the page stops running the program and
+// hears its exit (Tide.onExit(0)); on Android the activity finishes.
+void tide_platform_quit(void);
+
+// What the host does as the program ends because its window closed or it
+// quit (tide_platform_quit), before the platform closes anything: what it
+// began, such as leaving its match, ends cleanly. Not when a frame function
+// returns an exit code, or a headless run ends at its count of frames. NULL
+// for nothing.
+void tide_platform_on_close(void (*closing)(void));
+
 // While nobody sees the window, the next frame comes `seconds` after this one
 // started: when the host next has work, such as its match's next tick
 // (tide_session_until_tick). Called from the frame function; the soonest of

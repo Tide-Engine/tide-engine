@@ -1085,6 +1085,7 @@ local event(Disconnected gone) MatchLost(mut LobbyClient client)
                    : gone.reason == DisconnectReason.Refused ? "That match is full, or closed."
                    : gone.reason == DisconnectReason.TimedOut ? (client.joining ? "The match didn't answer." : "Lost the connection to the match.")
                    : gone.reason == DisconnectReason.Kicked ? (gone.message != "" ? gone.message : "The host sent you out of the match.")
+                   : gone.reason == DisconnectReason.Banned ? (gone.message != "" ? gone.message : "The host banned you from the match.")
                    : "The match ended.";
     client.started = true;
     client.page = client.lobby.id != "" ? LobbyMenu.Lobby : LobbyMenu.Title;

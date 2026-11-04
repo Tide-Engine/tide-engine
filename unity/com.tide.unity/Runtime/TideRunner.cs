@@ -112,7 +112,12 @@ namespace Tide
             }
         }
 
-        // A kick's message, once this machine was kicked
+        // The game asked to quit (Application.Quit). Without a handler, play mode ends in the editor and the
+        // player quits (UnityEngine.Application.Quit); with one, the handler decides, and the game runs on until
+        // the runner is destroyed.
+        public event Action QuitAsked;
+
+        // A kick's or a ban's message, once this machine was kicked or banned
         public string Message
         {
             get
@@ -127,6 +132,7 @@ namespace Tide
         TideEmbedStatus status;
         bool cursorLocked;
         bool schemaWarned;
+        bool quitHeard;
 
         readonly Dictionary<ulong, TideEntityView> shown = new Dictionary<ulong, TideEntityView>();
         readonly List<ulong> gone = new List<ulong>();
@@ -189,6 +195,7 @@ namespace Tide
                 return;
             }
             embed = Create();
+            quitHeard = false;
             if (embed == IntPtr.Zero)
             {
                 Debug.LogError("Tide: the game didn't start: see the Console for what tide said.", this);
@@ -446,6 +453,7 @@ namespace Tide
             fixed (TideTravel* p = &travel) library.Travel(embed, p);
             if (audio != null) audio.Listen(status.microphone != 0);
             FollowCursor();
+            FollowQuit();
             uint size = 0;
             var bytes = library.View(embed, &size);
             frames++;
@@ -464,6 +472,22 @@ namespace Tide
             }
             if (Application.isEditor && (frames & 63) == 0 && Map.Stale(TideLibrary.BuildFolder)) LoadMap(); // The prefabs and scenes were built again
             Show(true);
+        }
+
+        void FollowQuit()
+        {
+            if (status.quit == 0 || quitHeard) return;
+            quitHeard = true;
+            if (QuitAsked != null)
+            {
+                QuitAsked();
+                return;
+            }
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
         }
 
         void FollowCursor()

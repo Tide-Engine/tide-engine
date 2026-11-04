@@ -74,6 +74,8 @@ local singleton Menu
     bool host;  // Start and Open, in one frame
     bool close;
     bool kick;
+    bool ban;
+    bool quit;
     bool copy;
     bool join;
     bool connect;
@@ -118,6 +120,19 @@ view Start(mut Menu menu, Session session)
         menu.kick = false;
         Session.Kick(PlayerID(1), "Be nice");
         Session.KickAll();
+    }
+    if (menu.ban)
+    {
+        menu.ban = false;
+        Session.Ban(PlayerID(2), "Cheating");
+        Session.Ban(player: PlayerID(3));
+        Session.Unban(PlayerID(3));
+    }
+    if (menu.quit)
+    {
+        menu.quit = false;
+        Application.Quit();
+        Session.Close(); // Asked after, done before: the frame's last request is the quit
     }
     if (menu.copy)
     {

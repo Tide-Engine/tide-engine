@@ -1,0 +1,6 @@
+// expect: Session.Ban takes the player to keep out, a PlayerID, not int
+local scene Main { }
+view Menu()
+{
+    if (GUILayout.Button("Ban")) Session.Ban(1, "Cheating");
+}

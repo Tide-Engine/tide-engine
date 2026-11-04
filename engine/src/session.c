@@ -45,11 +45,13 @@
 // order a side's datagrams, which are never seconds apart on a connection that
 // hasn't timed out. Numbers that are mostly small go as varints.
 //   BYE      either: leaving; the server's says whether the match ended, or
-//            goes on with another machine as its server
+//            goes on with another machine as its server, or the player was
+//            kicked or banned, with the message
 //   HANDOVER server, with host migration: its room's code and key, its own
 //            player, whether it's open, the players in the match and their
-//            cookies' digests, numbered so a client keeps the newest, and in
-//            parts when a match has more players than one datagram holds
+//            cookies' digests, those banned with theirs and their messages,
+//            numbered so a client keeps the newest, and in parts when a match
+//            has more players than one datagram holds
 //
 // Nothing is sent reliably as such: each side says what it has, and the other
 // sends what's missing again until it does.
@@ -91,7 +93,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 21u
+#define PROTOCOL 22u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
@@ -100,9 +102,9 @@ enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER
 enum { UPLOAD_NONE = 0, UPLOAD_PART = 1, UPLOAD_WHOLE = 2 };
 enum { REFUSE_OTHER_GAME = 1, REFUSE_FULL = 2, REFUSE_CLOSED = 3 };
 enum { EVENT_JOIN = 1, EVENT_LEAVE = 2 };
-// KICKED: then the message's length and bytes. HANDOVER: the server left, and
-// the match goes on with another machine as its server.
-enum { BYE_LEFT = 0, BYE_ENDED = 1, BYE_KICKED = 2, BYE_HANDOVER = 3 };
+// KICKED and BANNED: then the message's length and bytes. HANDOVER: the
+// server left, and the match goes on with another machine as its server.
+enum { BYE_LEFT = 0, BYE_ENDED = 1, BYE_KICKED = 2, BYE_HANDOVER = 3, BYE_BANNED = 4 };
 enum {
     HELLO_KNEW_KICK = 1, // It heard it was kicked from this server: the server takes it again
     HELLO_HAS_WORLD = 2, // It has a world to build the match's from
@@ -667,10 +669,12 @@ static tide_player_set read_players(tide_reader *r)
 }
 
 // The most a handover record takes (see send_handover): its server's player,
-// whether it's open, the room's code and key, who's in the match and a digest each.
+// whether it's open, the room's code and key, who's in the match and a digest
+// each, and who's banned, with a digest and a message each.
 static uint32_t handover_capacity(const uint32_t players)
 {
-    return 16u + TIDE_ROOM_CODE_LENGTH + TIDE_ROOM_KEY_LENGTH + (players + 7u) / 7u + 8u * players;
+    return 16u + TIDE_ROOM_CODE_LENGTH + TIDE_ROOM_KEY_LENGTH + 2u * ((players + 7u) / 7u) + 8u * players
+         + (8u + TIDE_MESSAGE_BYTES) * players;
 }
 
 static bool players_beyond(const tide_player_set *a, const tide_player_set *b)
@@ -871,6 +875,7 @@ typedef struct kicked {
     uint32_t transport;   // Where it was last
     tide_address address;
     uint32_t nonce;       // Its HELLOs, if it was still joining; another one is a new try
+    bool banned;          // Told it's banned (tide_server_ban), not kicked
     char message[TIDE_MESSAGE_BYTES];
 } kicked;
 
@@ -950,6 +955,10 @@ struct tide_server {
     tide_player_set present; // Players in the world it went on from, who haven't joined it yet (tide_server_desc.players)
     double present_until; // ...who leave then
     kicked *kicks; // Players sent away, told so every update for a while
+    // Players kept out for the rest of the match (tide_server_ban), by slot,
+    // and what they're told when they try to come back
+    tide_player_set banned;
+    char (*ban_messages)[TIDE_MESSAGE_BYTES];
     // Host migration: the room its players meet in again when it goes, and
     // what it last told them (see send_handover)
     char room_code[TIDE_ROOM_CODE_LENGTH + 1];
@@ -1342,16 +1351,39 @@ static void send_bye(tide_server *s, const uint32_t transport, const tide_addres
     send_packet(&s->desc.transports[transport], to, &w, &s->traffic);
 }
 
-static void send_kicked(tide_server *s, const kicked *k)
+// A kick's or a ban's goodbye, with its message
+static void send_sent_away(tide_server *s, const uint32_t transport, const tide_address to, const uint64_t cookie,
+                           const uint32_t nonce, const bool banned, const char *message)
 {
     uint8_t data[20u + TIDE_MESSAGE_BYTES];
     tide_writer w = {data, sizeof data, 0, false, false};
-    authenticated_header(&w, MSG_BYE, k->cookie, k->nonce);
-    tide_write_u8(&w, BYE_KICKED);
-    const uint32_t n = (uint32_t)strlen(k->message);
+    authenticated_header(&w, MSG_BYE, cookie, nonce);
+    tide_write_u8(&w, banned ? BYE_BANNED : BYE_KICKED);
+    uint32_t n = 0;
+    while (n < TIDE_MESSAGE_BYTES - 1u && message[n]) n++;
     tide_write_u8(&w, (uint8_t)n);
-    tide_write_bytes(&w, k->message, n);
-    send_packet(&s->desc.transports[k->transport], k->address, &w, &s->traffic);
+    tide_write_bytes(&w, message, n);
+    send_packet(&s->desc.transports[transport], to, &w, &s->traffic);
+}
+
+static void send_kicked(tide_server *s, const kicked *k)
+{
+    send_sent_away(s, k->transport, k->address, k->cookie, k->nonce, k->banned, k->message);
+}
+
+// The banned slot a HELLO with `cookie` (whose digest is `digest`) and the
+// trusted `identity` (zero: anonymous) is, or -1: the cookie's, or with an
+// identity host, the account's, which a new cookie doesn't get past.
+static int32_t banned_slot(const tide_server *s, const uint64_t cookie, const uint64_t digest, const uint8_t identity[32])
+{
+    const uint8_t anonymous[32] = {0};
+    const bool known = s->desc.identity && memcmp(identity, anonymous, 32) != 0;
+    for (uint32_t i = 0; i < s->players; i++) {
+        if (!tide_players_has(&s->banned, i)) continue;
+        if (cookie && s->digests[i] == digest) return (int32_t)i;
+        if (known && memcmp(identity, s->identities[i], 32) == 0) return (int32_t)i;
+    }
+    return -1;
 }
 
 static void refuse(tide_server *s, const uint32_t transport, const tide_address to, const uint32_t nonce,
@@ -1402,6 +1434,12 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
                 return;
             }
         }
+    }
+    // Banned: told so, whatever else it says, open or closed
+    const int32_t banned = banned_slot(s, cookie, digest, identity);
+    if (banned >= 0) {
+        send_sent_away(s, transport, from, cookie, nonce, true, s->ban_messages[banned]);
+        return;
     }
     connection *c = find_connection(s, transport, from);
     // A source address alone cannot replace a live or pending connection.
@@ -1489,6 +1527,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     if (player < 0) {
         for (uint32_t i = 0; i < s->players; i++) {
             if (s->connections[i].used || tide_players_has(&s->present, i) || tide_players_has(&s->admitted, i)) continue; // In the world
+            if (tide_players_has(&s->banned, i)) continue; // Kept for whoever's banned
             if (player < 0 || s->away_since[i] < s->away_since[player]) player = (int32_t)i;
         }
         if (player >= 0) { // Given away
@@ -3156,6 +3195,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->digests = calloc(s->players, sizeof *s->digests);
     s->away_since = calloc(s->players, sizeof *s->away_since);
     s->kicks = calloc(s->players, sizeof *s->kicks);
+    s->ban_messages = calloc(s->players, sizeof *s->ban_messages);
     s->handover = malloc(handover_capacity(s->players));
     s->frames = calloc(s->w.history, sizeof *s->frames);
     s->published = calloc(PUBLISHED_MOST, sizeof *s->published);
@@ -3168,7 +3208,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->server_last = malloc((size_t)g->max_input_bytes + 1u);
     s->scratch = calloc(1, scratch_size(g));
     if (!s->connections || !s->events || !s->cookies || !s->identities || !s->digests || !s->away_since || !s->kicks || !s->handover
-        || !s->frames || !s->published || !s->world || !s->frame || !s->packet || !s->input || !s->packed
+        || !s->ban_messages || !s->frames || !s->published || !s->world || !s->frame || !s->packet || !s->input || !s->packed
         || !s->server_last || !s->scratch) {
         tide_server_destroy(s);
         return NULL;
@@ -3204,6 +3244,12 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
         }
         if (desc->digests) s->digests[i] = desc->digests[i];
         if (desc->identities) memcpy(s->identities[i], desc->identities[i], 32);
+    }
+    // The bans it goes on with: of slots someone played in
+    for (uint32_t i = 0; desc->world && i < s->players; i++) {
+        if (!tide_players_has(&desc->banned, i) || !s->digests[i]) continue;
+        tide_players_add(&s->banned, i);
+        if (desc->ban_messages) copy_message(s->ban_messages[i], desc->ban_messages[i], TIDE_MESSAGE_BYTES - 1u);
     }
     s->closed = desc->closed;
     s->now = now;
@@ -3264,6 +3310,7 @@ void tide_server_destroy(tide_server *s)
     free(s->digests);
     free(s->away_since);
     free(s->kicks);
+    free(s->ban_messages);
     free(s->handover);
     for (uint32_t i = 0; i < s->injected_count; i++) free(s->injected[i].data);
     free(s->injected);
@@ -3274,7 +3321,8 @@ void tide_server_destroy(tide_server *s)
 // goes, or to join the one who did, every update while it's new, and every
 // HANDOVER_EVERY after. The record is the server's own player (plus one; 0 for
 // none), whether the match is open, the room's code and key, who's in the
-// match and each one's digest. It goes in parts of a datagram each, as a match
+// match and each one's digest, and who's banned, with each one's digest and
+// message (its length and bytes). It goes in parts of a datagram each, as a match
 // of many players has more digests than one holds: each part says the
 // record's version and size, and which part it is.
 static void send_handover(tide_server *s)
@@ -3299,6 +3347,18 @@ static void send_handover(tide_server *s)
     for (uint32_t i = 0; i < s->players; i++) {
         if (tide_players_has(&in_match, i)) tide_write_u64(&w, s->digests[i]);
     }
+    // A banned player can be in the match still: one of the world it went on
+    // from, who hasn't come back to it, and leaves once that's too long
+    write_players(&w, &s->banned);
+    for (uint32_t i = 0; i < s->players; i++) {
+        if (!tide_players_has(&s->banned, i)) continue;
+        tide_write_u64(&w, s->digests[i]);
+        uint32_t n = 0;
+        while (n < TIDE_MESSAGE_BYTES - 1u && s->ban_messages[i][n]) n++;
+        tide_write_u8(&w, (uint8_t)n);
+        tide_write_bytes(&w, s->ban_messages[i], n);
+    }
+    assert(!w.overflow);
     const uint64_t hash = tide_hash(s->handover, w.size);
     if (hash != s->handover_hash || !s->handover_version) {
         s->handover_hash = hash;
@@ -3407,7 +3467,10 @@ void tide_server_recovery_state(const tide_server *s, tide_server_recovery *out)
 {
     uint64_t *digests = out->digests;
     uint8_t (*identities)[32] = out->identities;
-    *out = (tide_server_recovery){.digests = digests, .identities = identities};
+    char (*ban_messages)[TIDE_MESSAGE_BYTES] = out->ban_messages;
+    *out = (tide_server_recovery){.digests = digests, .identities = identities, .ban_messages = ban_messages};
+    out->banned = s->banned;
+    for (uint32_t i = 0; ban_messages && i < s->players; i++) memcpy(ban_messages[i], s->ban_messages[i], TIDE_MESSAGE_BYTES);
     out->players = s->present;
     out->closed = s->closed;
     out->tick_rate = s->desc.tick_rate;
@@ -3439,19 +3502,56 @@ bool tide_server_player_identity(const tide_server *s, const tide_player_id play
     return memcmp(identity, zero, 32) != 0;
 }
 
+// Sends the player on `c` away, kicked or banned, and tells them so for a while
+static void send_away(tide_server *s, connection *c, const char *message, const bool banned)
+{
+    const uint32_t index = (uint32_t)(c - s->connections);
+    kicked *k = &s->kicks[index];
+    *k = (kicked){.used = true, .cookie = s->cookies[index], .transport = c->transport, .address = c->address,
+                  .nonce = c->nonce, .banned = banned};
+    copy_message(k->message, message, TIDE_MESSAGE_BYTES - 1u);
+    send_kicked(s, k);
+    drop_connection(s, c);
+}
+
 bool tide_server_kick(tide_server *s, const tide_player_id player, const char *message)
 {
     const int32_t index = tide_player_index(player);
     if (index < 0 || (uint32_t)index >= s->players) return false;
     connection *c = &s->connections[index];
     if (!c->used || c->local) return false;
-    kicked *k = &s->kicks[index];
-    *k = (kicked){.used = true, .cookie = s->cookies[index], .transport = c->transport, .address = c->address,
-                  .nonce = c->nonce};
-    copy_message(k->message, message, TIDE_MESSAGE_BYTES - 1u);
-    send_kicked(s, k);
-    drop_connection(s, c);
+    send_away(s, c, message, tide_players_has(&s->banned, (uint32_t)index));
     return true;
+}
+
+bool tide_server_ban(tide_server *s, const tide_player_id player, const char *message)
+{
+    const int32_t index = tide_player_index(player);
+    if (index < 0 || (uint32_t)index >= s->players || !s->digests[index]) return false; // Nobody played there
+    connection *c = &s->connections[index];
+    // This machine's own player, and one still joining for the first time, whom no PlayerID names yet
+    if (c->used && (c->local || (c->new_player && !c->greeted))) return false;
+    tide_players_add(&s->banned, (uint32_t)index);
+    copy_message(s->ban_messages[index], message, TIDE_MESSAGE_BYTES - 1u);
+    if (c->used) send_away(s, c, message, true);
+    return true;
+}
+
+bool tide_server_unban(tide_server *s, const tide_player_id player)
+{
+    const int32_t index = tide_player_index(player);
+    if (index < 0 || (uint32_t)index >= s->players || !tide_players_has(&s->banned, (uint32_t)index)) return false;
+    tide_players_remove(&s->banned, (uint32_t)index);
+    memset(s->ban_messages[index], 0, TIDE_MESSAGE_BYTES);
+    s->kicks[index].used = false; // Let straight in again, whether it heard of the ban or not
+    if (s->away_since[index] == 0.0 && !s->connections[index].used) s->away_since[index] = s->now > 0.0 ? s->now : 1e-9;
+    return true;
+}
+
+bool tide_server_banned(const tide_server *s, const tide_player_id player)
+{
+    const int32_t index = tide_player_index(player);
+    return s && index >= 0 && (uint32_t)index < s->players && tide_players_has(&s->banned, (uint32_t)index);
 }
 
 // ---------------------------------------------------------------------------
@@ -3466,8 +3566,18 @@ typedef struct handover {
     char code[TIDE_ROOM_CODE_LENGTH + 1];
     char key[TIDE_ROOM_KEY_LENGTH + 1];
     tide_player_set in_match;
-    uint64_t *digests; // Owned, sized to this game; 0 for players outside the match
+    uint64_t *digests; // Owned, sized to this game; 0 for players outside the match and not banned
+    tide_player_set banned; // ...whose messages these are (owned), NULL when nobody is
+    char (*ban_messages)[TIDE_MESSAGE_BYTES];
 } handover;
+
+static void free_handover(handover *h)
+{
+    free(h->digests);
+    free(h->ban_messages);
+    h->digests = NULL;
+    h->ban_messages = NULL;
+}
 
 // A tick's frame as it comes, in pieces. The pieces it has are a bit each,
 // after its bytes: a frame can take as many pieces as the game's inputs make.
@@ -4392,6 +4502,20 @@ static void on_handover(tide_client *c, tide_reader *r)
         if (i >= c->players) sound = false; // No player the game takes
         else h.digests[i] = tide_read_u64(&record);
     }
+    h.banned = read_players(&record);
+    if (tide_players_any(&h.banned)) {
+        h.ban_messages = calloc(c->players, sizeof *h.ban_messages);
+        if (!h.ban_messages) tide_out_of_memory();
+    }
+    for (uint32_t i = 0; sound && i < TIDE_PLAYER_SET_BITS; i++) {
+        if (!tide_players_has(&h.banned, i)) continue;
+        if (i >= c->players) { sound = false; break; } // No player the game takes
+        h.digests[i] = tide_read_u64(&record);
+        const uint8_t n = tide_read_u8(&record);
+        const uint8_t *message = tide_read_bytes(&record, n);
+        if (record.failed || !message || !h.digests[i]) { sound = false; break; }
+        copy_message(h.ban_messages[i], (const char *)message, n);
+    }
     char letters[TIDE_ROOM_CODE_LENGTH + TIDE_ROOM_KEY_LENGTH];
     if (sound && !record.failed && code && key_bytes) {
         memcpy(letters, code, TIDE_ROOM_CODE_LENGTH);
@@ -4402,20 +4526,20 @@ static void on_handover(tide_client *c, tide_reader *r)
     // Done with the parts, whatever they made: a record that isn't sound waits for the next version
     free(c->handover_bytes);
     c->handover_bytes = NULL;
-    if (!sound) { free(h.digests); return; }
+    if (!sound) { free_handover(&h); return; }
     code = (const uint8_t *)letters;
     key_bytes = (const uint8_t *)letters + TIDE_ROOM_CODE_LENGTH;
     // A room's code and key are letters and digits, as the platform layer makes them
     for (uint32_t i = 0; i < TIDE_ROOM_CODE_LENGTH; i++) {
-        if (!strchr(TIDE_ROOM_CODE_LETTERS, code[i]) || !code[i]) { free(h.digests); return; }
+        if (!strchr(TIDE_ROOM_CODE_LETTERS, code[i]) || !code[i]) { free_handover(&h); return; }
         h.code[i] = (char)code[i];
     }
     for (uint32_t i = 0; i < key; i++) {
         const char k = (char)key_bytes[i];
-        if (!((k >= '0' && k <= '9') || (k >= 'a' && k <= 'z') || (k >= 'A' && k <= 'Z'))) { free(h.digests); return; }
+        if (!((k >= '0' && k <= '9') || (k >= 'a' && k <= 'z') || (k >= 'A' && k <= 'Z'))) { free_handover(&h); return; }
         h.key[i] = k;
     }
-    free(c->handover.digests);
+    free_handover(&c->handover);
     c->handover = h;
 }
 
@@ -4469,13 +4593,13 @@ static void client_receive(tide_client *c)
         }
         case MSG_BYE: {
             const uint8_t why = tide_read_u8(&r);
-            if (r.failed || why > BYE_HANDOVER) continue;
-            if (why == BYE_KICKED) {
+            if (r.failed || why > BYE_BANNED) continue;
+            if (why == BYE_KICKED || why == BYE_BANNED) {
                 const uint8_t n = tide_read_u8(&r);
                 const uint8_t *bytes = tide_read_bytes(&r, n);
                 if (r.failed || r.at != r.size) continue;
                 if (c->state != TIDE_SESSION_OFFLINE) copy_message(c->message, (const char *)bytes, n);
-                go_offline(c, TIDE_DISCONNECT_KICKED);
+                go_offline(c, why == BYE_BANNED ? TIDE_DISCONNECT_BANNED : TIDE_DISCONNECT_KICKED);
                 break;
             }
             if (r.at != r.size) continue;
@@ -6211,7 +6335,7 @@ void tide_client_destroy(tide_client *c)
     drop_had(c);
     drop_taken(c);
     free(c->handover_bytes);
-    free(c->handover.digests);
+    free_handover(&c->handover);
     free_commands(&c->commands);
     stop_upload_client(c);
     free_downloads(c);
@@ -6707,6 +6831,16 @@ void tide_session_kick_all(tide_session *s, const char *message)
     }
 }
 
+void tide_session_ban(tide_session *s, const tide_player_id player, const char *message)
+{
+    if (s->server) tide_server_ban(s->server, player, message);
+}
+
+void tide_session_unban(tide_session *s, const tide_player_id player)
+{
+    if (s->server) tide_server_unban(s->server, player);
+}
+
 // A shard of the dedicated server's sharded world this session joined at its
 // front: let into its match over the front's connection, then followed there
 static bool shard_join_reach(void *user, const uint32_t shard, const uint64_t match, tide_transport *transport,
@@ -6876,7 +7010,8 @@ void tide_session_update(tide_session *s, const double now)
     const tide_client_status status = tide_client_status_of(s->client);
     if (!s->server && status.cookie) s->cookie = status.cookie;
     if (status.state == TIDE_SESSION_CONNECTED) s->kicked = false; // Played there since
-    if (status.state == TIDE_SESSION_OFFLINE && status.reason == TIDE_DISCONNECT_KICKED && !s->server) s->kicked = true;
+    if (status.state == TIDE_SESSION_OFFLINE && !s->server
+        && (status.reason == TIDE_DISCONNECT_KICKED || status.reason == TIDE_DISCONNECT_BANNED)) s->kicked = true;
     if (status.state == TIDE_SESSION_CONNECTED && s->last_state != TIDE_SESSION_CONNECTED) {
         // Back in a match that changed hands, it was never out of it
         if (!s->stale) {
@@ -7009,6 +7144,11 @@ const void *tide_session_server_world(const tide_session *s)
     return s->server ? tide_server_world(s->server) : NULL;
 }
 
+tide_server *tide_session_server(tide_session *s)
+{
+    return s->server;
+}
+
 tide_session_status tide_session_status_of(const tide_session *s)
 {
     tide_session_status status = {0};
@@ -7100,6 +7240,8 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
         .players = players,
         .leaving = leaving,
         .digests = h->digests,
+        .banned = h->banned,
+        .ban_messages = (const char (*)[TIDE_MESSAGE_BYTES])h->ban_messages,
         .closed = !h->open,
         .entropy = s->desc.entropy,
         .jobs = s->desc.jobs,

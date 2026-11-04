@@ -1,0 +1,8 @@
+// expect: the match runs the same on every machine, so it can't call Application.Quit
+scene Main { }
+component Timer { int ticks; }
+system Tick(mut Timer timer)
+{
+    timer.ticks += 1;
+    if (timer.ticks > 60) Application.Quit();
+}

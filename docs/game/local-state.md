@@ -223,6 +223,25 @@ Input and commands carry local actions into the match. Starting, joining and lea
 system Count(local Spark spark) { }
 ```
 
+## Quitting
+
+`Application.Quit()` ends the program after this frame, as closing its window does: this machine leaves its match first (with [host migration](../multiplayer/matches.md#host-migration), the others carry a match it ran on), and the program's exit code is 0. It's local code's, like `Session`'s calls: a view, a local handler or a function they call, never match code, as quitting is this machine's alone.
+
+```csharp
+view Menu()
+{
+    GUILayout.Area(Anchor.MiddleCenter)
+    {
+        if (GUILayout.Button("Quit")) Application.Quit();
+    }
+}
+```
+
+- **On desktop and Android**, the window closes and the program ends. A run with no window (`--frames`, `--script`) ends at that frame as at its script's `quit`, its `--capture` taking that frame.
+- **On the web**, a page can't close itself: the game stops running and the page hears it end (`Tide.onExit(0)`), its last frame still showing. What the page shows then is the page's.
+- **Inside another program** (Unity, `tide/embed.h`), that program decides: Unity's `TideRunner` ends play mode in the editor and quits a player, unless a `QuitAsked` handler takes it.
+- **A dedicated server** runs no local code, so nothing there quits this way.
+
 ## Local scenes and events
 
 A local `Main` starts the program outside any match, usually in a menu:

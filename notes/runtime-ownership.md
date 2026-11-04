@@ -1,5 +1,21 @@
 # Runtime written by Claude for now
 
+## Quit and bans across the host boundary (2026-11-04)
+
+Owner-approved for mount-and-rifle's two gaps. Generated code calls no new
+runtime function: `Application.Quit` and `Session.Ban`/`Unban` are new
+`tide_session_request_kind` values (`TIDE_REQUEST_BAN`, `_UNBAN`, `_QUIT`,
+appended so earlier values keep their numbers) through the existing
+`tide_local_take_request`, and the local struct gains `bool tide_quit`.
+`DisconnectReason` gains `Banned` (`TIDE_DISCONNECT_BANNED`, 7). New host-side
+calls: `tide_platform_quit` and `tide_platform_on_close` (`tide/platform.h`),
+`tide_server_ban`, `_unban`, `_banned`, `tide_session_ban`, `_unban` and
+`tide_session_server` (`tide/session.h`); `tide_server_desc` and
+`tide_server_recovery` gain `banned`/`ban_messages`; `tide_embed_status` gains
+`quit` in a pad byte (embed ABI 10, Unity's `TideLibrary.Abi`); session
+protocol 22; managed checkpoint magic `TDM3`. Hosts and game libraries rebuild
+together. Details: standard-host.md, Application.Quit; netcode.md, Bans.
+
 ## Predicting near the player (2026-11-04)
 
 For the owner's `predictionRange` ask, within the agent-maintained session area: `tide_game` gains the optional
