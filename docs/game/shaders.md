@@ -752,7 +752,7 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 - A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
 - Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.
 - `rawField.size` is available as ordinary texture metadata, including `int2(0)` for a default or unavailable image; pack reload follows the currently bound asset. Reading its size does not read or convert its pixels.
-- The same file can be declared twice, once `[Raw]` and once not: they're two textures.
+- The same file can be declared twice, once `[Raw]` and once not: they're two textures. Where `[Raw]` changes nothing, as for an image with no transparency, the pack and the GPU keep one copy for both.
 - A Raw `Texture` asset is [compressed](./assets.md#gpu-compression) as a color one is, when it's big enough: BC1 or BC3, its channels as the file has them, each a little off. For numbers that must be exact, a lookup table or a flow map, add `[Lossless]`: `[Raw, Lossless] asset Texture flow = "art/flow.png";`.
 - `[Filter]` and `[Wrap]` go beside Raw assets and grid fields as on other textures. A `Texture` field retains the bound texture's filter/wrap settings; those attributes do not go on the field itself. Code reads a `[Raw]` grid's cells as it reads any grid's.
 

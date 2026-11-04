@@ -199,6 +199,7 @@ still performs only front-end validation, even with a preview flag.
 | `-o <path>` | `build` only: where the program goes |
 | `--asset-sizes` | `build` only: lists what each asset declaration adds to the pack, biggest first (see [Asset sizes](#asset-sizes)) |
 | `--strip-assets` | `build` only, with `--release` or `--distribution`: leaves out assets no Tide code names even when the game or a package has C (see [Asset sizes](#asset-sizes)) |
+| `--report <file>` | `build` only: writes a [build report](#build-reports): where the build's time went, what each asset adds to the pack, what was left out and how big each output is. A `.json` path gets JSON, any other a table |
 | `--single-file` | `build --web` only: one self-contained `.html` with the game inside, which opens from disk, instead of a folder whose page downloads the game (see [The page while it loads](#the-page-while-it-loads)) |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
@@ -243,6 +244,23 @@ earlier. The JSON is written when the run ends normally, to a path relative to
 where `tide` was invoked. It measures actual CPU work even though hidden runs
 advance simulation by a fixed step. See [Profile captures](debug-views.md#profile-captures)
 for the report, culling diagnostics and comparison workflow.
+
+### Build reports
+
+`tide build --report <file>` writes what the build did, to a path relative to where `tide` was invoked. A path ending in `.json` gets JSON for scripts and agents; any other, such as `build.txt`, a table to read:
+
+```sh
+tide build --distribution --web --report build.txt
+```
+
+- **Time**: each step of the build (preparing, resolving packages, compiling Tide code and assets, compiling C/C++, linking, packaging) with its share of the whole, and the compiler's own phases inside the Tide step: parsing, checking, running build code, generating C and packing assets.
+- **C/C++**: each file compiled and how long its compiler ran, slowest first in the table, and how many objects were already up to date. Compiles run several at once, so their times add up to more than the step's.
+- **Pack**: its size, and each asset's type and how its images are kept (as [`--asset-sizes`](#asset-sizes) says them), the bytes it adds to the pack, the size of the files it was read from and how long reading them took. Content an earlier asset already put in the pack is shared, shown as `shared`; the rest of the pack is its table of names.
+- **Left out**: assets the build didn't pack, and why: in `--release` and `--distribution`, assets nothing in the game's code, defaults or shaders names, and in a `--server` build those its match code never reads.
+- **This mode**: what the mode cut or kept, such as unreferenced code removed by the linker, stripped names and symbols, or why every asset was packed (a game or package with C, which could read an asset by name, unless `--strip-assets`).
+- **Outputs**: the files the build made and their sizes.
+
+A failed build still writes its report, as far as it got. The report is of the build alone; it doesn't change what's built.
 
 Choose one optimization override to experiment, for example `tide run --release -O3 --stats` or `tide build --distribution -O1`. `-O0` disables optimization; `-O1`, `-O2` and `-O3` select increasing optimization levels, which are not guaranteed to improve a particular workload. The override applies to engine sources, generated game code and game/package C/C++, including hot reload, native, web, Android, servers and `tide unity`. Prebuilt libraries keep their own optimization. Without an override, debug game code uses `-O0`, debug engine code uses `-O2`, and release/distribution use `-O2` for both.
 

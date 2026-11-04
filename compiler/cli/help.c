@@ -236,6 +236,13 @@ static const argument_help arguments[] = {
     {"--profile-warmup", "--profile-warmup <n>", "Skip the first n frames of a profile capture",
      "Requires --profile. A whole number from 0 to 1000000000; default 0.\n"
      "Warmup frames still run normally and count toward --frames.", RUN},
+    {"--report", "--report <file>", "Write where the build's time and bytes went",
+     "Writes a report of the build: the time of each step and of the compiler's\n"
+     "phases, each C/C++ file's compile time, each asset's import time and the\n"
+     "bytes it adds to the pack, assets the build left out and why, what the\n"
+     "mode cut or kept, and the size of each output. A .json path gets JSON;\n"
+     "any other a table to read. Written even when the build fails.\n\n"
+     "Example: tide build --distribution --web --report build.txt", BUILD},
     {"-o", "-o <path>", "Select the built program's output path",
      "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
     {"--once", "--once", "Build once and end",

@@ -53,6 +53,20 @@ TIDE_TEST(color_and_raw_assets_compress_automatically_while_lossless_and_small_i
             TIDE_CHECK(abs((int)pixel[c] - (int)images[i].expected[c]) <= (compressed ? 8 : 0));
         free(decoded);
     }
+    // An opaque file comes out the same as a color and as [Raw]: one block, one image. With alpha it doesn't.
+    static const char *const pairs[3][2] = {{"opaque", "opaqueNumbers"}, {"alpha", "numbers"}, {"exactColors", "exactNumbers"}};
+    for (uint32_t p = 0; p < 3; p++) {
+        tide_texture image[2];
+        const uint8_t *stored[2];
+        for (uint32_t k = 0; k < 2; k++) {
+            const uint64_t named = tide_pack_texture_of(tide_pack_find(pairs[p][k], TIDE_PACK_TEXTURE)).image.version & TIDE_TEXTURE_NAME;
+            TIDE_REQUIRE(tide_pack_texture_find(named, &image[k]));
+            const tide_texture_blocks blocks = tide_pack_texture_blocks_find(named);
+            stored[k] = blocks.pixels ? blocks.pixels : (const uint8_t *)image[k].pixels;
+        }
+        TIDE_CHECK(p == 0 ? stored[0] == stored[1] && image[0].version == image[1].version
+                          : stored[0] != stored[1] && image[0].version != image[1].version);
+    }
     // Actual mesh commands make append copy their borrowed block references.
     const tide_vertex vertices[] = {{{0,0},{0,0},{1,1,1,1}},{{1,0},{1,0},{1,1,1,1}},{{0,1},{0,1},{1,1,1,1}}};
     const int32_t indices[] = {0,1,2};
