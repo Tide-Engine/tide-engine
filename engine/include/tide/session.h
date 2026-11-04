@@ -232,6 +232,12 @@ typedef struct tide_game {
     // confirmed. Only ever on a predicted world, before its tick. NULL: a
     // client predicts everything.
     bool (*predict_far)(void *world, tide_player_id player);
+    // Whether a confirmed world is the predicted one of the same tick but for
+    // what that left out as far: its singletons, entities, rows that aren't
+    // far in `predicted`, commands, tasks, inputs and heap, leaving out
+    // packages' [Native] fields, which are C's own. Then the predicted ticks
+    // after it can stand (play). NULL with predict_far.
+    bool (*near_same)(const void *predicted, const void *confirmed);
     // Commands are bounded, copied wire values. Checking only decodes them,
     // and says which channel the command's type is in: 0, the default, one
     // of the game's own (1 to command_channels - 1), or
@@ -591,6 +597,7 @@ typedef struct tide_client_status {
     uint32_t run_ticks;            // Ticks it ran so far, all of them: as the server sent them, predicted, and again
     uint32_t ahead_ticks;          // ...and the predicted ones among them, again_ticks included
     uint32_t resyncs;              // Times its world diverged and the server sent it again
+    uint32_t near_kept;            // Confirmed ticks, run whole as something was far, that kept the predicted ticks after them
     uint64_t world_bytes;          // Bytes the server sent of worlds so far: whole, as deltas, and the hashes of their pages
     uint64_t cookie;               // What makes this player this player again, on the next connection
     char message[TIDE_MESSAGE_BYTES]; // With TIDE_DISCONNECT_KICKED: the server's message

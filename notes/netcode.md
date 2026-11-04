@@ -145,6 +145,40 @@ when guesses were right: the range costs four times as much there. And holding
 3,000 bodies writes most of the arena, so the commit after it, and the
 verified world's restore the next frame, copy most pages.
 
+**Keeping the predicted ticks a confirmed tick leaves as they were** (same day;
+the owner picked "skip, bounded"): with anything far, every confirmed tick
+reran the near lead even when guesses were right, which made the range four
+times dearer than predicting everything (table above). Now:
+- `tide_game.near_same(predicted, confirmed)` (`gen_near_same`,
+  `predict_far_codegen.inc`; session ABI `predict far (2)`): every match
+  singleton and every row not tagged far in the predicted world, field by
+  field leaving out `[Native]` fields (a physics package's stamps and handles
+  differ between a held world and a whole one), sparse presence, scenes; and
+  entities, commands, task tables and order, inputs and the heap by their
+  hashes. Columns whose pages both worlds share from the tick before are
+  skipped unread.
+- `session.c` `play`: a confirmed tick whose inputs went as guessed but which
+  ran something far (`guessed && tick >= far_from`) keeps the predicted world
+  of its tick (`near_kept`, a spare world), runs whole over it, and if
+  `near_same`, sets `far_from` to the next tick and leaves `stale` alone: the
+  predicted ticks after it stand. `far_since`, the verified tick when the run
+  of predictions started, bounds it: once the next tick is more than
+  `FAR_STALE_SECONDS` (0.25) of ticks past it, they run again, which starts
+  `far_since` over. `tide_client_status.near_kept` counts the kept ones.
+- Test `tidec_e2e_predict_kept`: two still players, a near walker and a far
+  one; in every frame ahead the near one ran every predicted tick, the far one
+  is 0 to 15 ticks older than the last confirmed (older in over a quarter of
+  frames), over 100 confirmations kept per client, no resyncs.
+  `tidec_e2e_predict_near` keeps a predicted-world singleton (`FarSeen`), so it
+  never keeps one and its exact far checks still hold; so does the physics test
+  (its near raycast sees the far ball, which moved in the whole tick).
+- The same scratch game (busier machine: whole world 3.5 rather than 2.9):
+
+| client ms a frame | whole world | range 40, before | range 40, kept |
+|---|---|---|---|
+| guesses always right | 3.5-3.5 | 11.9-12.8 | 5.0-5.9 (716 kept) |
+| another player's input changing every 5 ticks | 22.4-23.5 | 14.4-14.9 | 7.5-9.0 (611 kept) |
+
 Gaps:
 - Singleton systems going through queries still run far entities in predicted
   ticks unless their queries say `without Far`. A system's `mut` query rows
@@ -155,10 +189,9 @@ Gaps:
   unfiltered loops.
 - `World` reads in views (`world.Get<Body>(e)`) of a far entity are the drawn
   world's, not blended from the confirmed one.
-- Every confirmed tick with anything far reruns the near lead even when guesses
-  were right; comparing near rows alone could skip it. With physics this is the
-  cost that matters (table above): it makes the range four times dearer than
-  predicting everything where guesses are right.
+- `near_same` compares every list and command whole (heap hash): a list
+  written anywhere in the confirmed tick, a far entity's or a package's, reruns.
+  Comparing near rows' lists alone would keep more.
 - Box3D: holding many bodies marks most of the arena, so a held world's commit
   and the next restore copy most pages (6.9 ms a frame against 5.8 whole in the
   table). Holding without moving bodies between sets would avoid it.

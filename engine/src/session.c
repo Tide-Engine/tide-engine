@@ -146,6 +146,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define QUIET_SECONDS 2.0      // With no rollback for this long, nothing says the delay is still needed: it comes back a tick at a time
 #define COLD_SECONDS 1.0       // A rollback in a client's first second with a world isn't measured: everything is cold, and it's catching up
 #define REPLAY_SAMPLES 5       // Rollbacks' first ticks whose median is what one costs
+#define FAR_STALE_SECONDS 0.25 // How old far entities may get in predicted ticks a confirmed tick keeps (tide_game.near_same)
 #define GUESS_SECONDS 0.15     // How long a client guesses that another player's input stays as it was, unless its desc says
 #define SLACK_SECONDS 5.0      // How long a client that never predicts has to have had room to spare before it takes input delay back
 #define SLACK_TICKS 3          // Ticks a frame has to come before its tick is due to count as room to spare
@@ -3614,6 +3615,7 @@ struct tide_client {
     bool repair_stream;
     bool snapshot_stream;
     uint32_t resyncs;
+    uint32_t near_skips; // tide_client_status.near_kept
     uint64_t world_bytes;
     traffic traffic;
     uint64_t cookie;
@@ -3729,6 +3731,13 @@ struct tide_client {
     // it ran with entities left out as far, whose world is never the server's.
     // UINT32_MAX: none is.
     uint32_t far_from;
+    // ...and the confirmed tick whose far entities those ticks have: a
+    // confirmed tick that leaves what's near as predicted keeps the predicted
+    // ticks after it (tide_game.near_same), with far entities that much older,
+    // up to FAR_STALE_SECONDS. A world to keep the predicted one in while the
+    // confirmed tick runs over it.
+    uint32_t far_since;
+    void *near_kept;
     double slack_since;    // Since when it's had room to spare, to take delay back after a while
     double delay_hold_until; // No change of delay until then: the last one takes a round trip to show
 
@@ -4915,6 +4924,7 @@ static void run_predicted(tide_client *c, const uint32_t tick)
     if (g->predict_far && (tick == c->verified || c->far_from == UINT32_MAX)
         && g->predict_far(world, tide_player_from_index(c->player)) && c->far_from == UINT32_MAX) {
         c->far_from = tick;
+        c->far_since = c->verified;
     }
     if (g->predict_inputs) {
         tide_player_set mine = {0};
@@ -5655,8 +5665,13 @@ static void play(tide_client *c)
             c->repair_tick = tick + 1u;
             break;
         }
-        const bool predicted = tick < c->ahead && !stale
-            && tick < c->let_go && tick < c->input_guessed && tick < c->far_from && as_predicted(c, f);
+        const bool guessed = tick < c->ahead && !stale && tick < c->let_go && tick < c->input_guessed && as_predicted(c, f);
+        const bool predicted = guessed && tick < c->far_from;
+        // A tick run leaving out what's far, as the inputs went: it runs once here, whole, and if what's near
+        // comes out as predicted the predicted ticks after it stand, with far entities as of `far_since`, which
+        // is no more than FAR_STALE_SECONDS old by then (the owner, 2026-11-04)
+        const bool near_kept = guessed && !predicted && c->game->near_same && tick + 1u < c->ahead
+            && (double)(tick + 1u - c->far_since) <= FAR_STALE_SECONDS * (double)c->tick_rate;
         if (!predicted && c->ran_now >= c->room.most) {
             out_of_room = true;
             break;
@@ -5678,11 +5693,21 @@ static void play(tide_client *c)
                 ? c->game->client_hash(world_at(c, tick + 1u), tide_player_from_index(c->player))
                 : hash_of(c->game, world_at(c, tick + 1u), c->desc.jobs)) == frame_hash(f);
         } else {
+            if (near_kept) {
+                if (!c->near_kept) c->near_kept = calloc(1, c->game->world_size);
+                if (!c->near_kept) tide_out_of_memory();
+                c->game->copy_world(c->near_kept, world_at(c, tick + 1u));
+            }
             if (tick < c->ahead) capture_view_correction(c, tick + 1u);
             c->game->copy_world(world_at(c, tick + 1u), world_at(c, tick));
             ok = apply_frame(c, world_at(c, tick + 1u), f);
             finish_view_rewrite(c, tick + 1u);
-            stale |= tick + 1u < c->ahead;
+            if (ok && near_kept && c->game->near_same(c->near_kept, world_at(c, tick + 1u))) {
+                c->far_from = tick + 1u; // The ticks after it stand, run as they were
+                c->near_skips++;
+            } else {
+                stale |= tick + 1u < c->ahead;
+            }
             c->ran_now++;
         }
         if (!ok) { // Diverged: ask for the world again, and keep predicting meanwhile
@@ -6199,6 +6224,8 @@ void tide_client_destroy(tide_client *c)
         free(c->worlds[i]);
     }
     free(c->worlds);
+    free_world(c->game, c->near_kept);
+    free(c->near_kept);
     free(c->inputs);
     free(c->input);
     free(c->scratch);
@@ -6277,6 +6304,7 @@ tide_client_status tide_client_status_of(const tide_client *c)
         .run_ticks = c->ran,
         .ahead_ticks = c->ran_ahead,
         .resyncs = c->resyncs,
+        .near_kept = c->near_skips,
         .world_bytes = c->world_bytes,
         .cookie = c->cookie,
     };

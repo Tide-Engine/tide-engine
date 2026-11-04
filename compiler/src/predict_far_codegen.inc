@@ -82,6 +82,117 @@ static void gen_far_rows(gen *g, const int a, const char *pad)
     if (prog->hierarchy[0]) sb_printf(o, "%s            }\n", pad);
 }
 
+// Whether one component's value in two worlds is the same but for its
+// [Native] fields, which a package's C keeps (a physics world's handles and
+// stamps): those differ between a world whose step held far bodies and one
+// that stepped them all, whatever the match says.
+static void gen_near_same_value(gen *g, const decl *d, const char *a, const char *b, const char *pad)
+{
+    sb *o = &g->c;
+    for (int k = 0; k < d->fields.count; k++) {
+        const field *f = &d->fields.items[k];
+        if (f->native) continue;
+        sb_printf(o, "%sif (memcmp(&%s.%s, &%s.%s, sizeof %s.%s) != 0) return false;\n", pad, a, field_cname(f), b,
+                  field_cname(f), a, field_cname(f));
+    }
+}
+
+// tide_game_near_same(predicted, confirmed): whether the confirmed world is the
+// predicted one of the same tick but for its far rows (notes/netcode.md,
+// Predicting near the player alone). Pages both share from the world before
+// are the same without a look; the rest is compared, rows that are far in the
+// predicted world left out. Anything else that differs, an entity made or
+// destroyed, a list, a command, says they aren't.
+static void gen_near_same(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    const int far = prog->predict_far->index;
+    sb_put(o, "static bool tide_game_near_same(const void *predicted_world, const void *confirmed_world)\n{\n"
+              "    const tide_world *p = predicted_world, *q = confirmed_world;\n");
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (d->is_local) continue;
+        char a[256], b[256];
+        snprintf(a, sizeof a, "p->%s", type_cname(d));
+        snprintf(b, sizeof b, "q->%s", type_cname(d));
+        gen_near_same_value(g, d, a, b, "    ");
+    }
+    sb_put(o, "    if (tide_entities_hash(TIDE_HASH_START, &p->entities) != tide_entities_hash(TIDE_HASH_START, &q->entities)) return false;\n"
+              "    if (tide_queue_hash(TIDE_HASH_START, &p->commands) != tide_queue_hash(TIDE_HASH_START, &q->commands)) return false;\n");
+    for (int i = 0; i < g->tasks.count; i++) {
+        if (!task_table_in(g->tasks.items[i].fn, false)) continue;
+        const char *id = task_id(g->tasks.items[i].fn);
+        sb_printf(o, "    if (tide_table_hash(TIDE_HASH_START, &p->tide_tasks_%s, &tide_columns_tasks_%s)\n"
+                     "        != tide_table_hash(TIDE_HASH_START, &q->tide_tasks_%s, &tide_columns_tasks_%s)) return false;\n", id, id, id, id);
+    }
+    if (world_has_tasks(g, false)) sb_put(o, "    if (memcmp(&p->tide_task_order, &q->tide_task_order, sizeof p->tide_task_order) != 0) return false;\n");
+    if (prog->input) {
+        sb_put(o, "    if (memcmp(p->inputs, q->inputs, sizeof p->inputs) != 0) return false;\n"
+                  "    if (memcmp(p->previous_inputs, q->previous_inputs, sizeof p->previous_inputs) != 0) return false;\n");
+    }
+    if (prog->uses_heap) sb_put(o, "    if (tide_heap_hash(TIDE_HASH_START, &p->heap) != tide_heap_hash(TIDE_HASH_START, &q->heap)) return false;\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a)) continue;
+        const char *cols = arch_columns(g, a);
+        sb_printf(o, "    {\n        const tide_table *const s = &p->%s, *const t = &q->%s;\n"
+                     "        if (s->chunks != t->chunks) return false;\n"
+                     "        for (uint32_t c = 0; c < s->chunks; c++) {\n"
+                     "            const uint32_t n = tide_table_rows(s, %d, c);\n"
+                     "            if (n != tide_table_rows(t, %d, c)) return false;\n"
+                     "            const tide_entity *const ent = tide_table_column(s, %s, c, 0);\n"
+                     "            const tide_entity *const ent2 = tide_table_column(t, %s, c, 0);\n"
+                     "            if (ent != ent2 && memcmp(ent, ent2, n * sizeof *ent) != 0) return false;\n",
+                  arch_name(g, a), arch_name(g, a), arch_shift(g, a), arch_shift(g, a), cols, cols);
+        const bool tagged = arch_stores(g, a, far);
+        if (tagged) sb_printf(o, "            const uint8_t *const tags = tide_table_column(s, %s, c, %d);\n", cols, arch_presence(g, a, far));
+        const char *skip = tagged ? "tide_row_gone(&ent[i]) || tags[i]" : "tide_row_gone(&ent[i])";
+        if (arch_scene_column(g, a)) {
+            sb_printf(o, "            {\n                const tide_entity *const x = tide_table_column(s, %s, c, 1), *const y = tide_table_column(t, %s, c, 1);\n"
+                         "                for (uint32_t i = 0; x != y && i < n; i++) {\n"
+                         "                    if (%s) continue;\n"
+                         "                    if (memcmp(&x[i], &y[i], sizeof x[i]) != 0) return false;\n"
+                         "                }\n            }\n", cols, cols, skip);
+        }
+        for (int k = 0; k < prog->components.count; k++) {
+            if (k == far || !arch_stores(g, a, k)) continue;
+            const decl *d = prog->components.items[k];
+            if (d->is_local) continue;
+            const bool sparse = comp_sparse(g, k);
+            const int lanes = comp_lanes(d);
+            sb_put(o, "            {\n");
+            if (sparse) {
+                sb_printf(o, "                const uint8_t *const here = tide_table_column(s, %s, c, %d);\n"
+                             "                const uint8_t *const there = tide_table_column(t, %s, c, %d);\n",
+                          cols, arch_presence(g, a, k), cols, arch_presence(g, a, k));
+            }
+            if (lanes > 0) {
+                sb_printf(o, "                const uint8_t *const x[%d] = {", lanes);
+                for (int l = 0; l < lanes; l++) sb_printf(o, "%stide_table_column(s, %s, c, %d)", l ? ", " : "", cols, arch_column(g, a, k) + l);
+                sb_printf(o, "};\n                const uint8_t *const y[%d] = {", lanes);
+                for (int l = 0; l < lanes; l++) sb_printf(o, "%stide_table_column(t, %s, c, %d)", l ? ", " : "", cols, arch_column(g, a, k) + l);
+                sb_put(o, "};\n                bool shared = true;\n");
+                sb_printf(o, "                for (int l = 0; l < %d; l++) shared &= x[l] == y[l];\n", lanes);
+            } else {
+                sb_put(o, "                const bool shared = true;\n");
+            }
+            sb_printf(o, "                if (%sshared) goto next_%d_%d;\n", sparse ? "here == there && " : "", a, k);
+            if (!sparse && lanes == 0) sb_printf(o, "                (void)n;\n");
+            sb_put(o, "                for (uint32_t i = 0; i < n; i++) {\n");
+            sb_printf(o, "                    if (%s) continue;\n", skip);
+            if (sparse) sb_put(o, "                    if (here[i] != there[i]) return false;\n                    if (!here[i]) continue;\n");
+            if (lanes > 0) {
+                sb_printf(o, "                    %s u, v;\n                    tide_gather_%s(&u, x, i);\n                    tide_gather_%s(&v, y, i);\n",
+                          type_cname(d), type_cname(d), type_cname(d));
+                gen_near_same_value(g, d, "u", "v", "                    ");
+            }
+            sb_printf(o, "                }\n            }\n            next_%d_%d:;\n", a, k);
+        }
+        sb_put(o, "        }\n    }\n");
+    }
+    sb_put(o, "    return true;\n}\n\n");
+}
+
 // tide_game_predict_far(world, player): tags each entity with a position
 // farther than predictionRange from every one of the player's own (Owner) as
 // tide_far, and takes the tag from the rest. Where an entity is goes by its
@@ -154,4 +265,5 @@ static void gen_predict_far(gen *g)
                   pad, arch_presence(g, a, far), pad, pad, arch_presence(g, a, far));
     }
     sb_put(o, "    return any;\n}\n\n");
+    gen_near_same(g);
 }
