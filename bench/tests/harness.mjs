@@ -9,9 +9,11 @@ import { fileURLToPath } from "node:url";
 import { compareDraw, compareResults, comparisonKey } from "../compare.mjs";
 
 const compare = resolve(dirname(fileURLToPath(import.meta.url)), "..", "compare.mjs");
+// The timeout only stops a hang: each run refuses its arguments at once, but a CI
+// runner busy with the rest of the suite has taken over 5 s to start Node.
 function invoke(command, args, expected) {
     const result = spawnSync(command, args, {
-        encoding: "utf8", windowsHide: true, timeout: 5000,
+        encoding: "utf8", windowsHide: true, timeout: 60000,
         env: { ...process.env, TIDE_HIDDEN: "1" },
     });
     assert.ifError(result.error);
