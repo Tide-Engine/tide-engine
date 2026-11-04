@@ -59,7 +59,12 @@ static void gen_visibility(gen *g)
     sb_printf(o,
         "TIDE_HELPER VisibilityGroup tide_visibility_create_group(tide_world *w, Audience audience)\n{\n"
         "    VisibilityGroup group = {.id = -1};\n"
-        "    if (w->tide_visibility_state.client || w->tide_visibility_state.next == INT64_MAX) return group;\n"
+        "    if (w->tide_visibility_state.client) {\n"
+        "        // The server numbers groups. A client's prediction can only say whether what it puts in one is its own\n"
+        "        // to see (0, everyone's as far as it knows) or not (-1, which hides it: tide_visibility_client_hidden)\n"
+        "        if (tide_audience_contains(audience, (tide_player_id){(uint32_t)w->tide_visibility_state.client})) group.id = 0;\n"
+        "        return group;\n    }\n"
+        "    if (w->tide_visibility_state.next == INT64_MAX) return group;\n"
         "%s"
         "    group.id = ++w->tide_visibility_state.next;\n"
         "    tide_map%d_set(&w->tide_visibility_state.groups, group.id, tide_audience_intersect(audience, TIDE_AUDIENCE_ALL), TIDE_IN_MATCH);\n"
@@ -135,11 +140,21 @@ static void gen_visibility(gen *g)
                  "            const tide_visibility_policy policy = tide_map%d_get(visibility.overrides, key);\n"
                  "            audience = tide_audience_intersect(audience, policy.direct ? policy.audience : tide_visibility_group_audience(w, policy.group));\n"
                  "        }\n    }\n    return audience;\n}\n\n", overrides, overrides);
+    // A client's world holds what it was sent, which it sees, and what its own
+    // ticks made. Of those, what it put in a group hidden from it (above) is
+    // the server's alone: not in what it says its world is (client_state, its
+    // hashes), as it isn't in the server's projection for it.
+    sb_put(o, "TIDE_HELPER bool tide_visibility_client_hidden(const tide_world *w, tide_entity e)\n{\n"
+              "    Visibility visibility = {0};\n"
+              "    const tide_entity scene = tide_visibility_scene(w, e);\n"
+              "    if (!tide_entity_is_null(scene) && !tide_entity_equal(scene, e) && tide_load_Visibility(w, scene, &visibility)\n"
+              "        && visibility.group.id < 0) return true;\n"
+              "    return tide_load_Visibility(w, e, &visibility) && visibility.group.id < 0;\n}\n\n");
     sb_put(o, "TIDE_HELPER bool tide_visibility_entity(const tide_world *w, tide_entity e, tide_player_id player)\n{\n"
-              "    if (w->tide_visibility_state.client) return tide_entity_alive(&w->entities, e);\n"
+              "    if (w->tide_visibility_state.client) return tide_entity_alive(&w->entities, e) && !tide_visibility_client_hidden(w, e);\n"
               "    return tide_audience_contains(tide_visibility_audience(w, e, -1), player);\n}\n\n"
               "TIDE_HELPER bool tide_visibility_component(const tide_world *w, tide_entity e, uint32_t component, tide_player_id player)\n{\n"
-              "    if (w->tide_visibility_state.client) return tide_client_has_component(w, e, component);\n"
+              "    if (w->tide_visibility_state.client) return tide_client_has_component(w, e, component) && !tide_visibility_client_hidden(w, e);\n"
               "    return tide_client_has_component(w, e, component) && tide_audience_contains(tide_visibility_audience(w, e, (int32_t)component), player);\n}\n\n"
               "bool tide_world_visible(const tide_world *w, tide_entity e, tide_player_id player)\n{\n"
               "    tide_text_use((tide_heap *)&w->heap, NULL);\n    return tide_visibility_entity(w, e, player);\n}\n\n"

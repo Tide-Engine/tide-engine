@@ -121,10 +121,11 @@ server retains the complete world for collision and wall-penetrating shots.
 
 The query does not implement smoke, sound or gameplay events. Treat those as
 separate policies. Hiding one component does not hide copies of its position in
-public singletons, physics snapshots, rewind lists, inputs or event payloads.
+public singletons, inputs or event payloads. Box2D's and Box3D's own state
+(their snapshots, colliders and rewind lists) isn't sent to clients, but a
+hidden player's body is still in the server's physics world, which decides hits.
 The [existing visibility limitations](../game/visibility.md#consequences-across-a-visibility-boundary),
-including Box2D/Box3D privacy integration and projected-world host migration,
-still apply. This package does not resolve network correction latency.
+including projected-world host migration, still apply. This package does not resolve network correction latency.
 
 ## Cost and scope
 

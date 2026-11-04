@@ -1,5 +1,12 @@
 # `tide_add_game` and the generated header
 
+## SPLIT_PLUMBING (2026-11-04)
+
+`tide_add_game(... SPLIT_PLUMBING)` passes `tidec --split-plumbing` and compiles `<name>_plumbing.c` with the
+game's other sources, its source property adding `-O2` after the target's flags: the generated C as `tide`'s debug
+builds compile it (notes/cli-and-packages.md, Optimized plumbing in debug builds). The debugger fixture
+(`tidec_debugger_fixture`) uses it, so the natvis and LLDB tests debug a game built that way. No other target does.
+
 ## Build code's tools (2026-11-03)
 
 `cmake/Tide.cmake` sets `TIDE_BUILD_CODE_FLAGS` once: `--build-cc` (`TIDE_CLANG`, the toolchain's own clang, else

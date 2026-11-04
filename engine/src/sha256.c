@@ -217,6 +217,7 @@ void tide_sha256_init(tide_sha256 *s)
 
 void tide_sha256_add(tide_sha256 *s, const void *data, size_t size)
 {
+    if (!size) return; // data may be null when there is nothing to add
     const uint8_t *p = data;
     size_t used = (size_t)(s->bytes % 64u);
     s->bytes += size;

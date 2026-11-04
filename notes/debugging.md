@@ -1,5 +1,21 @@
 # Debugging Tide code in native debuggers
 
+## Optimized plumbing beside unoptimized code (2026-11-04)
+
+`tide`'s debug builds now compile the generated C in two files (notes/cli-and-packages.md, Optimized plumbing in
+debug builds): `game.c`, the functions whose lines are `.tide` lines, at `-O0 -g` with the visualizer flags as
+before, and `game_plumbing.c`, everything else, with the engine's `-O2 -g`. Stepping is unchanged: the plumbing's
+helpers were `nodebug` already, and in the plumbing file those a code function calls are `TIDE_SPLIT_HELPER`,
+`nodebug` too unless `TIDE_DEBUG_PLUMBING`. Rows and tasks (`tide_rows_...`, `tide_task_...`) keep their debug
+info, now optimized. The plumbing file has no `.tide` `#line`s: its prototypes of the code's functions aren't
+preceded by theirs. Types are declared in both files; `-fno-eliminate-unused-debug-types` stays on `game.c`'s
+flags, which every type the natvis casts to reaches.
+
+`tidec_debugger_fixture` builds with `SPLIT_PLUMBING` (notes/tide-programs.md), so `tidec_debugger_natvis` and
+`tidec_debugger_lldb` check a split build: the natvis test passes locally (breakpoint on a `.tide` line, a source
+step, a breakpoint in a function with its caller, locals, lists, maps, sets, text, enums, entities). LLDB's runs
+in CI's Linux jobs.
+
 ## Worker visualizer fixture in MinGW Release (2026-11-03)
 
 Run `41539750446` failed while compiling `tidec_e2e_worker_values_visualizers`:

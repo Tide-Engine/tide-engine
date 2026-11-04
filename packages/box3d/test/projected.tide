@@ -1,0 +1,49 @@
+// A client's world is the server's projection for it: Box3D's Resident isn't
+// in it, nor its [Native] handles and bookkeeping. The client's own tick makes
+// Box3D's world again from the Bodies and asks it what the server's world was
+// asked (projected_test.c).
+using Box3D;
+settings { maxPlayers = 2; }
+
+component Floor { int kind; }
+component Probe { float3 from; float distance; Entity hit; int ticks; }
+component Secret { int code; }   // Hidden from every player: the match has projections
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    // First: entities a client makes go after the last it was sent, and the
+    // server's after the last it has (this test is of Box3D, not of that)
+    Spawn(Secret { code = 7 }, Visibility { group = Visibility.CreateGroup(Audience.None) });
+    Spawn(Body { type = BodyType.Static, position = float3(0, -1, 0) }, Box { size = float3(40, 2, 40) }, Floor { kind = 1 });
+    Spawn(Body { type = BodyType.Static, position = float3(3, 1, 0) }, Box { size = float3(1, 2, 1) }, Floor { kind = 2 });
+    Spawn(Body { type = BodyType.Static, position = float3(6, 0.5, 0) }, Sphere { radius = 0.75 }, Floor { kind = 3 });
+    Spawn(Probe { from = float3(-2, 6, 0) });
+    Spawn(Probe { from = float3(1, 6, 0.25) });
+}
+
+// Now and then another body, which a client's tick makes as the server's does
+system Build(Time time)
+{
+    if (time.tick % 9 == 4) Spawn(Body { type = BodyType.Static, position = float3(float(time.tick % 11), 2.5, 0) }, Box, Floor { kind = 100 + time.tick });
+}
+
+// What's under each probe, as it goes along
+[After(PhysicsStages.Step)]
+system Look(mut Probe probe, Physics physics)
+{
+    probe.ticks += 1;
+    probe.from.x += 0.25;
+    if (probe.from.x > 10) probe.from.x = -2;
+    if (physics.Raycast(probe.from, probe.from - float3(0, 10, 0), out var hit))
+    {
+        probe.distance = hit.fraction * 10;
+        probe.hit = hit.entity;
+    }
+    else
+    {
+        probe.distance = -1;
+        probe.hit = default;
+    }
+}

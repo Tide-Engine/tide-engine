@@ -1,5 +1,27 @@
 # The Box3D package
 
+## A client's projection, made into a physics world (2026-11-04)
+
+A projection (a game with visibility) carried `Physics`' and the bodies'
+`[Native]` fields but never the Resident, so a client that loaded one had an
+empty C world with handles saying the bodies were made: Enter skipped them,
+every query missed, and the client's tick rewrote the bookkeeping (Mount &
+Rifle's repair stream, notes/netcode.md, same date). A projection now writes
+`[Native]` fields 0 (`gen_client_put_singleton`, `gen_client_bare`), so a client's world arrives as a
+shard's does, `Body.id` and the shape caches 0 and `Physics`' bookkeeping
+empty, and the package makes its world again in the client's next tick, as for
+bodies a match starts with. No package or bridge change. Static geometry asks
+the same of the remade world; moving bodies lose their contacts' warm start
+and sleep state, and history starts again, so a client's `Physics.Rewind`
+covers only ticks since its last projection. In one process (a server and a
+client of it, as in the test) the two worlds take turns in the one arena: the
+client's tick restores an empty arena, the server's its own pages.
+`tide_box3d_projected` (`test/projected.tide`): 60 ticks of a client loading
+the server's projection and ticking it, with static boxes and a sphere, a body
+made every 9 ticks and two probes casting down after the step; the client's
+projection and hash after each tick are the server's. Before the change its
+probes missed from the first tick.
+
 ## Layouts with 64-bit handles (2026-10-30)
 
 Lists and maps in `box3d.tide`'s types are 8 and 32 bytes (notes/ecs.md,

@@ -1,5 +1,116 @@
 # Netcode: sessions, prediction, commands
 
+## A client's own ticks of its projection; repairs that back off (2026-11-04)
+
+Mount & Rifle played alone (route `tools/performance-route.txt`, seed 42, release)
+had its client's own ticks differ from the server's projection every ~62 ticks for
+the whole route: 1,338 to 1,357 repairs of 3-4 MB projections, packed and loaded.
+A scratch probe (in `session.c` at each divergence, with the generated
+`client_state` marking where every singleton, entity and component starts;
+kept with the findings, not in the tree) compared the server's projection after
+the tick with the client's run of it, from a projection both had alike. Four
+causes, two of them the engine's. That was the lone player's own client, before
+the host shared the server's world (the next section, merged the same day); the
+causes are any remote client's, and the measurements below are from before
+that change.
+
+- **A client's hidden spawns were in its projection.** On a client
+  `Visibility.CreateGroup` returned -1 whatever the audience, and
+  `tide_visibility_entity` called every live entity visible, so a bot spawned into
+  `Audience.None` by the client's own tick was in its projection and hash and not
+  in the server's (315 parties at the first probe). Now a client's group is 0 (the
+  default handle) when the audience has its player and -1 otherwise, and
+  `tide_visibility_client_hidden` (the entity or its scene in a group below 0)
+  keeps such entities out of `client_state`, the client's `client_hashes`
+  (audience none instead of all), `tide_visibility_component` and
+  `client_destroyed`. They stay in the client's world, and its systems see them,
+  as the server's do. `Set` and `DestroyGroup` still do nothing on a client.
+- **`[Native]` fields went in projections, the Resident didn't.** A client that
+  loaded one had Box3D's bookkeeping (`Body.id`, `owners`, colliders, history)
+  saying the bodies existed and an empty C world, so every query missed and its
+  tick rewrote the bookkeeping. `client_state` and `client_hashes` now write each
+  singleton and component with its `[Native]` fields 0 (`gen_client_bare` for a
+  component's copy, `gen_client_put_singleton` for a singleton's, on the heap), so a
+  loaded world has them 0, as on a shard an entity comes to, and the package makes
+  its world again in the client's next tick (notes/box3d.md, same date); a client's
+  own handles don't count in its hash. The value codecs themselves are unchanged:
+  local handlers' event records and shards' entity records use them too, and a
+  local handler taking `Physics` keeps its stamp. Box2D's `image` and both
+  packages' collider and rewind lists no longer reach clients.
+- **Game code** (written up for the game's thread: public `Works.hauler` checked
+  with `world.Has` against a hidden party, and a public `Pathing` budget spent by
+  hidden bots). With those changed in a scratch copy, what's left is what can't be
+  predicted: the game's own commands, and parties coming into or out of sight.
+- A client's spawn into a group it's in (the player's own party) has the client's
+  group number (0), the server's another, so it's repaired once. Leaving
+  VisibilityGroup numbers out of the codecs fixed that and broke shards, which
+  move entities and shared singletons with them (`shards_visibility`, Earth); left
+  as it is.
+
+`recipient logical state schema 3` (`asset_usage.c`) is in the simulation
+identity: builds before and after differ in projection bytes and refuse each
+other. The wire and `PROTOCOL` are unchanged.
+
+**Repairs back off** (`session.c`, `repair_gap_after`): a stream (two repairs
+within a second) that has to start again within a second of the last one's end
+repairs half as often as that one did. The server packs a streamed repair only
+`repair_gap` ticks after the last (`repair_streamed`): 2, 4, 8 ticks, to a quarter
+of a second at most, and at most a quarter of the game's `maxRewind` (the frames a
+client presents must stay young enough to rewind to: 7 ticks for Mount & Rifle's
+0.5 s, 3 for a quarter of a second). After a second with no stream it's every tick
+again. The client's verified world falls that much further behind, as on a slower
+network; reconnects and migration reset it.
+
+Tried and taken back: letting a client in a stream confirm frames with its own
+ticks and ask again only where one differs. It cut the scratch-fixed game's repairs
+from 669 to 56, but a tick a client confirms itself (by the order-free projection
+hash) can have its rows in another order than the server's (tables fill and settle
+holes that hidden entities left), so the next repair's delta, made against the
+server's bytes, failed against the client's and it resynced
+(`net_alone_seen_hearing_its_events_runs_its_ticks`). That needs a repair without
+a base (a wire change) or projections in a canonical row order (which changes the
+order a client's systems see rows in): the owner's call. The same can happen today
+to an exact repair after ticks a client confirmed itself.
+
+Tests: `tidec_e2e_visibility_predicted` (a client loading the server's projection
+each tick and running it: hidden spawns out of its projection, spawns into an
+`Audience.All` group seen, and game `[Native]` fields neither sent nor hashed, over
+a reload too); `tide_box3d_projected` (notes/box3d.md);
+`visibility_repairs_back_off_while_a_client_goes_on_differing`
+(`tests/test_visibility_session.c`: one client on a loopback with no delay, every
+tick differing for 8 s: 137 loads, 18 in the last 4 s, most lag 14 ticks, against
+489, 240 and 1 before; with `maxRewind` 0.25 s, a 3-tick gap and lag 3). All three
+fail against the code before. `session_view_time_large_changing_repairs_keep_chunks_before_welcome`
+is unchanged (292/320 bounded stamps, worst lag 18); with a quarter-second gap and
+no rewind cap it had fallen to 263/320.
+
+Validation: the whole native release suite (3,029 CTests, with the private
+prototypes configured) passes; on `web-debug` (WASI, Node 24.22.1) and native
+`sanitize` (Windows ASan), the engine test binary, `visibility_predicted`,
+`visibility_projection`, `visibility_lists`, `shards_visibility`,
+`net_alone_seen` and `tide_box3d_projected` pass (web also `visibility_groups`
+and `visibility_lifecycle`). The docs site builds. Other operating systems,
+Android and MinGW are CI's.
+
+Measured on Mount & Rifle, the same build but for the session, two runs each (the
+machine was shared and loaded, so times are high and vary; counts don't): repairs
+packed 1,338 / 1,346 before, 401 / 424 after; pack and load 12.9 / 15.5 s over the
+route before, 5.3 / 4.7 s after; match phase 8.96 / 10.56 ms a frame before,
+7.89 / 6.55 after.
+
+Still open (the owner's):
+- A repair base that doesn't depend on row order (above), which would let streams
+  stop as soon as a client's ticks go as the server's.
+- A client's own spawns go after the last entity it was sent, the server's after
+  the last it has, hidden ones too, so a client's visible spawn after the server
+  made a hidden one has another handle until repaired. Sending the entity count
+  would fix it and tell clients how much hidden spawning goes on.
+- Physics queries from views of a world just loaded find nothing until the client
+  ticks it (`Physics.Ready` is false at stamp 0). No game hits this today.
+- Moving Box3D/Box2D bodies start again without warm starts or sleep state on a
+  client after each projection, so their motion can differ until corrected.
+- The backoff's numbers (a second, doubling, a quarter of a second, a quarter of
+  `maxRewind`) are picks.
 ## The host's player shares the server's world (2026-11-04)
 
 The owner's decision: the server's machine keeps no client world. Its player stays "a client" only in being a player like any other: it joins (`PlayerJoined`), has a `PlayerID`, owns entities, sends input and commands over the in-process loopback. The host may see everything the server does, so the match is ticked once there whoever else is in it. That replaces "A match played alone ticks once" below: `twin_ran`, `twin_take`, `twin_takes`, `host_runs`, `server_due`, `tide_client.host`/`host_due`/`taken_from`/`taken_to` are gone (`taken_world` stays, for remote projection reloads).

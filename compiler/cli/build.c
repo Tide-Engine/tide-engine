@@ -955,9 +955,10 @@ static char *copy_text(const char *text)
 }
 
 // Lists one C or C++ file to compile; `gen`, the generated files' folder, may
-// be NULL.
-static compile_job *queue_compile(compiles *list, const build *b, const char *source, const char *object, const char *gen,
-                                  const bool engine)
+// be NULL. `optimized` takes the engine's flags (O2 in a debug build) for a
+// file that isn't the engine's own: a package's C, the generated plumbing.
+static compile_job *queue_compile_as(compiles *list, const build *b, const char *source, const char *object, const char *gen,
+                                     const bool engine, const bool optimized)
 {
     if (list->count == list->cap) {
         list->cap = list->cap * 2 + 64;
@@ -977,7 +978,7 @@ static compile_job *queue_compile(compiles *list, const build *b, const char *so
     arg(&job->a, job->made[1]);
     arg(&job->a, job->made[2]);
     if (job->made[3]) arg(&job->a, job->made[3]);
-    config_flags(&job->a, b, job->cpp, engine);
+    config_flags(&job->a, b, job->cpp, optimized);
     // The compiler's words are kept until its file's turn, so it can't see
     // that they're for a terminal: it's told. No part of an object's stamp.
     if (diag_colored()) {
@@ -987,6 +988,12 @@ static compile_job *queue_compile(compiles *list, const build *b, const char *so
 #endif
     }
     return job;
+}
+
+static compile_job *queue_compile(compiles *list, const build *b, const char *source, const char *object, const char *gen,
+                                  const bool engine)
+{
+    return queue_compile_as(list, b, source, object, gen, engine, engine);
 }
 
 static void free_compiles(compiles *list)
@@ -1425,9 +1432,10 @@ static uint64_t header_stamp(const char *folder)
 }
 
 // Lists `source` when the stamp beside `object` isn't `h`, what it would be
-// compiled from, `first` for the one to start ahead of its turn.
+// compiled from, `first` for the one to start ahead of its turn, `optimized`
+// for one compiled as the engine is.
 static void queue_unless_stamped(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                                 const uint64_t h, const bool first)
+                                 const uint64_t h, const bool first, const bool optimized)
 {
     char stamp[32];
     snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
@@ -1437,7 +1445,7 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
         // A failed compile may leave a partial object: never reuse it, even
         // if the source is then put back exactly as it was before the failure.
         // The stamp goes as the compile starts (run_compiles).
-        compile_job *job = queue_compile(list, b, source, object, gen, false);
+        compile_job *job = queue_compile_as(list, b, source, object, gen, false, optimized);
         job->stamp_path = stamp_path;
         job->stamp = copy_text(stamp);
         job->first = first;
@@ -1453,10 +1461,11 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
 // not modification times: a C-only edit needn't compile the game or launcher.
 // The generated header is shared by both, so a layout change rebuilds both.
 // Lists `source` when its object isn't what it would compile to, `first` for
-// the one to start ahead of its turn. False when the generated files aren't
-// there to read.
+// the one to start ahead of its turn, `plumbing` for the generated plumbing a
+// debug build compiles as the engine (splits_plumbing). False when the
+// generated files aren't there to read.
 static bool queue_generated(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                            const bool first)
+                            const bool first, const bool plumbing)
 {
     char *text = sys_read_file(source, NULL);
     char *header_path = path_join(gen, "game.h");
@@ -1467,13 +1476,15 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
         free(header);
         return false;
     }
-    char *flags = stamp_of(b, false);
+    char *flags = stamp_of(b, plumbing);
     uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
     h = hash_text(hash_text(h, source), text);
     // Only the managed reactor embeds this macro in its launcher. Ordinary
     // launchers use the game API's identity, so gameplay edits still reuse
-    // their objects. Every other header byte remains a cache dependency.
-    char *identity = !first && !b->opts->managed ? strstr(header, "\n#define TIDE_SIMULATION_ID ") : NULL;
+    // their objects, as does the plumbing, whose text an edit of the game's
+    // code alone leaves as it was. Every other header byte remains a cache
+    // dependency.
+    char *identity = (!first || plumbing) && !b->opts->managed ? strstr(header, "\n#define TIDE_SIMULATION_ID ") : NULL;
     if (identity) {
         char *end = strchr(identity + 1, '\n');
         *identity = '\0';
@@ -1485,7 +1496,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     free(flags);
     free(text);
     free(header);
-    queue_unless_stamped(b, list, source, object, gen, h, first);
+    queue_unless_stamped(b, list, source, object, gen, h, first, plumbing);
     return true;
 }
 
@@ -1512,7 +1523,10 @@ static void queue_c_files(const build *b, compiles *list, const char *folder_pat
         free(base);
     }
     sys_mkdirs(dir);
-    char *flags = stamp_of(b, false);
+    // A package's C is library code, as the engine's is: a debug build keeps
+    // it optimized (with symbols), and only the game's own C at -O0
+    const bool library = package != NULL;
+    char *flags = stamp_of(b, library);
     uint64_t common = hash_text(0xCBF29CE484222325ull, flags);
     free(flags);
     if (b->opts->server) {
@@ -1538,7 +1552,7 @@ static void queue_c_files(const build *b, compiles *list, const char *folder_pat
         snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)hash_file(common, sources.items[i]));
         char *old = sys_read_file(stamp_path, NULL);
         if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
-            compile_job *job = queue_compile(list, b, sources.items[i], object, b->opts->server ? gen : NULL, false);
+            compile_job *job = queue_compile_as(list, b, sources.items[i], object, b->opts->server ? gen : NULL, false, library);
             job->stamp_path = stamp_path;
             job->stamp = copy_text(stamp);
         } else {
@@ -1550,6 +1564,16 @@ static void queue_c_files(const build *b, compiles *list, const char *folder_pat
     }
     free(dir);
     free_files(&sources);
+}
+
+// Whether a build's generated C comes in two (codegen_options.split_plumbing):
+// the game's code in game.c, compiled as the game's own C is, and everything
+// else in game_plumbing.c, compiled as the engine is. Only where the two
+// differ: a debug build optimizes its plumbing and leaves the game's code as
+// written, for its debugger.
+static bool splits_plumbing(const build *b)
+{
+    return !b->opts->release && !b->opts->distribution && !b->opts->optimization;
 }
 
 // The game's C, and its packages'.
@@ -1569,8 +1593,25 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
                        const file_list *objects, c_side *c)
 {
     queue_engine(b, list);
-    if (!queue_generated(b, list, game_c, objects->items[0], gen, true)
-        || !queue_generated(b, list, start_c, objects->items[1], gen, false)) {
+    bool ok = queue_generated(b, list, game_c, objects->items[0], gen, true, false)
+              && queue_generated(b, list, start_c, objects->items[1], gen, false, false);
+    if (ok && splits_plumbing(b)) {
+        // game_plumbing.c, beside game.c, into <game's object>_plumbing.o beside its object
+        char *dir = path_dir(game_c);
+        char *plumbing_c = path_join(dir, "game_plumbing.c");
+        const char *game_o = objects->items[0];
+        const size_t stem = strlen(game_o) - (has_extension(game_o, ".o") ? 2 : 0);
+        char *object = malloc(stem + sizeof "_plumbing.o");
+        if (!object) abort();
+        memcpy(object, game_o, stem);
+        memcpy(object + stem, "_plumbing.o", sizeof "_plumbing.o");
+        ok = queue_generated(b, list, plumbing_c, object, gen, true, true);
+        add_file(&c->objects, object);
+        free(object);
+        free(plumbing_c);
+        free(dir);
+    }
+    if (!ok) {
         free_compiles(list);
         return false;
     }
@@ -2429,6 +2470,7 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     const char *const *build_libs = native_link.items;
 #endif
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
+                                     .split_plumbing = splits_plumbing(b),
                                      .build_cc = build_cc, .build_flags = native_flags, .build_libs = build_libs,
                                      .build_include = b->include, .build_engine = engine_src,
                                      .visualizers = b->views != NULL,
@@ -2988,7 +3030,7 @@ static bool queue_host(run *r, compiles *list, file_list *objects)
     const uint64_t h = hash_text(hash_text(hash_text(0xCBF29CE484222325ull, flags), host_c), text);
     free(flags);
     bool ok = sys_write_text(host_c, text);
-    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false);
+    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false, false);
     free(host_c);
     return ok;
 }

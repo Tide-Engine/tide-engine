@@ -96,6 +96,7 @@ tide_e2e_test(transforms) # Shared component placement, checked parenting and hi
 tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
 tide_e2e_test(visibility_lists) # A projection's lists read back in runs, the heap as element by element left it
+tide_e2e_test(visibility_predicted) # A client's tick of its projection: its hidden spawns, groups and [Native] fields as the server's projection has them
 tide_e2e_test(visibility_hash_memo) # Projection hashes kept for what didn't change: every change shows
 # The same game and test with nothing kept from one projection hash to the next: the same hashes
 tide_add_game(tidec_e2e_visibility_hash_memo_off SOURCES e2e/visibility_hash_memo.tide NAME game
@@ -898,9 +899,10 @@ endif()
 
 # Debuggers stopping in Tide code (debugger/): a game built as tide's debug builds are, with its natvis in its
 # .pdb, under Windows' own debugger engine on Windows, and LLDB with the game's LLDB views where there's an LLDB.
-# Unoptimized whatever the build type, as tide builds a game to debug it.
+# The game's code unoptimized whatever the build type, and its generated plumbing optimized, as tide builds a game
+# to debug it.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
-    tide_add_game(tidec_debugger_fixture VISUALIZERS SOURCES debugger/fixture.tide NAME game
+    tide_add_game(tidec_debugger_fixture VISUALIZERS SPLIT_PLUMBING SOURCES debugger/fixture.tide NAME game
         HOST "${CMAKE_CURRENT_SOURCE_DIR}/debugger/fixture_main.c")
     target_compile_options(tidec_debugger_fixture PRIVATE -O0 -g)
     if(WIN32 AND NOT MINGW)

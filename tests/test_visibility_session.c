@@ -447,6 +447,74 @@ TIDE_TEST(visibility_continuous_hidden_effects_coalesce_without_rtt_per_tick)
     visibility_run_case((tide_net_conditions){.latency = 0.08, .jitter = 0.06, .loss = 0.2}, false, false, true);
 }
 
+// One client on a network that takes no time, so a stream of repairs would
+// go as fast as the session updates, while every tick from 90 to 570 differs
+// on the client: how many projections it loads, how many of them in the last
+// four seconds of it, and how far its verified world falls behind.
+static void visibility_count_repairs(const tide_game *game, uint32_t *loads, uint32_t *late_loads, uint32_t *most_lag)
+{
+    visibility_loads = 0;
+    visibility_continuous = true;
+    tide_loopback *net = tide_loopback_create(98123);
+    TIDE_REQUIRE(net);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = game, .tick_rate = 60,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    uint32_t sampled = 3;
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = game,
+        .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
+        .sample = visibility_sample, .user = &sampled, .lead = 2}, 0);
+    TIDE_REQUIRE(server && client);
+    uint32_t before = 0, late = 0;
+    *most_lag = 0;
+    for (uint32_t step = 1; step <= 1400; step++) {
+        const double now = (double)step / 120.0;
+        tide_loopback_set_time(net, now);
+        tide_client_update(client, now);
+        tide_server_update(server, now);
+        if (step == 170) before = visibility_loads; // Tick 85: joined, and nothing hidden has happened yet
+        if (step == 660) late = visibility_loads;   // Tick 330, four seconds in
+        if (step == 1140) *late_loads = visibility_loads - late; // Tick 570, the last of them
+        const visibility_world *confirmed = tide_client_verified_world(client);
+        if (step >= 170 && confirmed && tide_server_tick(server) >= confirmed->tick) {
+            const uint32_t lag = tide_server_tick(server) - confirmed->tick;
+            if (lag > *most_lag) *most_lag = lag;
+        }
+    }
+    *loads = visibility_loads - before;
+    const tide_client_status status = tide_client_status_of(client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
+    const visibility_world *w = tide_client_verified_world(client);
+    TIDE_REQUIRE(w);
+    TIDE_CHECK(w->tick > 600 && w->health == 563u);
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    visibility_continuous = false;
+}
+
+TIDE_TEST(visibility_repairs_back_off_while_a_client_goes_on_differing)
+{
+    // Its first stream repairs every tick; each that has to start again as the
+    // last ends repairs half as often, to one a quarter of a second. So the
+    // last four of the eight seconds take a projection every 14 ticks or so,
+    // where they took one a tick (240 of them, and 489 in all)
+    uint32_t loads = 0, late = 0, most_lag = 0;
+    visibility_count_repairs(&visibility_game, &loads, &late, &most_lag);
+    if (getenv("TIDE_VISIBILITY_METRICS")) printf("continuous: %u loads, %u in the last 4 s, most lag %u ticks\n", loads, late, most_lag);
+    TIDE_CHECK(late <= 24u);
+    TIDE_CHECK(loads < 180u);
+    TIDE_CHECK(most_lag <= 40u); // A quarter of a second's gap, and what's on its way
+
+    // A game that rewinds for a quarter of a second backs off to a quarter of
+    // that, 3 ticks: what its clients present stays young enough to rewind to
+    tide_game rewinding = visibility_game;
+    rewinding.max_rewind = 0.25f;
+    visibility_count_repairs(&rewinding, &loads, &late, &most_lag);
+    if (getenv("TIDE_VISIBILITY_METRICS")) printf("rewinding: %u loads, %u in the last 4 s, most lag %u ticks\n", loads, late, most_lag);
+    TIDE_CHECK(late >= 60u && late <= 90u);
+    TIDE_CHECK(most_lag <= 8u);
+}
+
 TIDE_TEST(visibility_host_migration_never_promotes_a_partial_world)
 {
     visibility_continuous = false;
