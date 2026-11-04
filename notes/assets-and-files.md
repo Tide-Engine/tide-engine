@@ -506,6 +506,39 @@ drawing.md; language/editor integration is in language.md. The LOD e2e fixture
 checks changed picks, nested/default scopes, target independence, restoration
 and forced-level priority against the imported mesh's recorded errors.
 
+## Pack format 4: the build writes the pack's digest (2026-11-04)
+
+The owner's pick, after Mount & Rifle's 1.38 GB pack spent about 6 s of every
+start in `tide_pack_load`'s SHA-256 of the whole file (notes/standard-host.md,
+Loading screen): do both, the CPU's SHA instructions and a digest the build
+writes, so the game pays nothing for it.
+
+- `TIDE_PACK_VERSION` is 4. `tide_pack_header` gains `digest[32]` before
+  `reserved` (72 bytes; an empty pack is 80 with the region's 16-byte
+  alignment). It's the SHA-256 of the whole file with those 32 bytes zero,
+  which `tide_pack_end` works out last; `tide_pack_load` copies it into
+  `tide_pack_digest` and hashes nothing of the file. Packs of version 3 are
+  refused as any other version is: games and packs rebuild together.
+- What changes: the session's pack identity (HELLO, wants/lacks; netcode.md) is
+  the build's word, not a hash of the bytes this machine loaded. Two machines of
+  one build agree as before, and different builds' packs differ as before. A
+  pack damaged after it was built now claims its build's identity, so that
+  machine would take asset references it resolves to other data, and the
+  per-tick world hash then finds and repairs the divergence, where it used to
+  get self-contained state. Nothing else reads the digest.
+- `engine/src/sha256.c` runs whole blocks through x86's SHA extensions
+  (cpuid leaf 7 EBX bit 29, with SSSE3 and SSE4.1) or Armv8's SHA-2 (always on
+  Apple, `getauxval(AT_HWCAP) & HWCAP_SHA2` on Linux and Android), chosen once,
+  else the portable code, which now also takes whole blocks straight from the
+  caller's bytes. Windows on Arm and the web keep the portable code. Measured
+  over 1.38 GB on this machine while a build ran: 1.21 s through the
+  instructions, 8.97 s portable; the same digests. `tide_sha256_portable(true)`
+  forces the portable code for tests, `tide_sha256_hardware()` says which runs.
+  Builds gain the most: names, shared blocks and dependency fingerprints all hash.
+- Tests: `tests/test_sha256.c` (FIPS 180-4's four examples both ways, and every
+  length to 260 then every 61st to 4,100, whole and in 1..97-byte pieces,
+  hardware against portable). The CLI's empty-pack size check is 80.
+
 ## Pack format 3: 64-bit offsets and handles (2026-10-30)
 
 `TIDE_PACK_VERSION` is 3 (notes/ecs.md, 64-bit handles). The header's region

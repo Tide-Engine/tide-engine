@@ -36,10 +36,9 @@ All of it ran on the main thread after the window opened.
   frame the pack is in, once, with the pack kept, loaded off the main thread.
   A negative control that skips drawing the loader fails it.
 - Not built: an icon on the loader, a game's own loader, async loading of a pack
-  that changes during a run. The SHA-256 of the pack remains most of a big
-  pack's load: a hardware SHA path (SHA-NI/ARMv8) or a digest the build writes
-  would take Mount & Rifle's 6 s to well under one; that's a runtime and pack
-  format decision, proposed rather than made.
+  that changes during a run. The SHA-256 that was most of a big pack's load is
+  gone from it: the build writes the digest (pack format 4, the owner's pick,
+  notes/assets-and-files.md), and hashing uses the CPU's SHA instructions.
 
 ## Clicking widgets by name (2026-11-04)
 
