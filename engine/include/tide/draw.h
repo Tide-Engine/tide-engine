@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "tide/color.h"
+#include "tide/font.h"
 #include "tide/math.h"
 
 // Immediate-mode drawing: Tide's Draw calls record commands into a draw
@@ -216,7 +217,7 @@ typedef struct tide_draw_command {
             tide_float2 at;  // `a`
             float size;      // `b.x`
             uint16_t anchor; // tide_anchor: the place of its box that's at `a`
-            uint16_t bold;   // 1: in the bold weight, whose file is tide_draw_list.bold
+            uint16_t font;   // 1 + its font's place in tide_draw_list.fonts, or 0 for TIDE_FONT_REGULAR
             uint32_t turned; // 1 + its place in tide_draw_list.turns, for text a transform turned or stretched; else 0
         } words;
     };
@@ -265,16 +266,18 @@ typedef enum tide_anchor {
     TIDE_ANCHOR_LOWER_RIGHT,
 } tide_anchor;
 
-// The weights text is drawn in, each a file of the engine's font. C names a
-// weight by its file: TIDE_FONT_REGULAR, which every renderer has, or
-// TIDE_FONT_BOLD, whose file is in the platform layer's library, in an object
-// of its own. Nothing in the engine or the platform layer names that file, so
-// a program only carries it when its own code does: a game's C that draws in
-// bold, or the C generated for a game that says `Font.Bold`. A program that
-// names it links the platform layer, or defines the array itself.
-extern const unsigned char tide_font_bold_ttf[];
-#define TIDE_FONT_REGULAR ((const unsigned char *)0)
-#define TIDE_FONT_BOLD tide_font_bold_ttf
+// The fonts text is drawn in (tide/font.h): TIDE_FONT_REGULAR, the regular
+// weight of the engine's font, which every renderer has; TIDE_FONT_BOLD, its
+// bold weight; and any font of the registry (tide_font_find). The bold
+// weight's file is in the platform layer's library, in an object of its own
+// with tide_font_bold. Nothing in the engine or the platform layer names
+// either, so a program only carries the file when its own code names it: a
+// game's C that draws in bold, or the C generated for a game that says
+// `Font.Bold`. A program that names it links the platform layer, or defines
+// tide_font_bold itself.
+extern const tide_font tide_font_bold;
+#define TIDE_FONT_REGULAR ((const tide_font *)0)
+#define TIDE_FONT_BOLD (&tide_font_bold)
 
 // What a shape with smooth edges is: a box, whose corners can be round, the
 // ellipse that fits its size, or part of a ring.
@@ -1607,7 +1610,9 @@ typedef struct tide_draw_list {
     tide_draw_shape_data *shapes; // The TIDE_DRAW_SHAPE commands' shapes
     uint32_t shape_count;
     uint32_t shape_capacity;
-    const unsigned char *bold; // The bold weight's file, once a command of the frame draws with it: its renderer's
+    const tide_font **fonts; // The fonts the frame's text is in, but the regular weight: each once, as its commands name them
+    uint32_t font_count;
+    uint32_t font_capacity;
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t epoch;   // Counts tide_draw_forget
     // The image of the pack's found last (its name, TIDE_TEXTURE_NAME of a
@@ -2088,9 +2093,10 @@ void tide_draw_text(tide_draw_list *d, const char *text, tide_float2 position, f
 // TIDE_ANCHOR_UPPER_RIGHT. Upper is towards the top of the screen, under a
 // camera too. Each line is against the anchor's side: lines start at a left
 // anchor, end at a right one, and are centered on one between. `font` is the
-// weight it's drawn in: TIDE_FONT_REGULAR or TIDE_FONT_BOLD.
+// font it's drawn in: TIDE_FONT_REGULAR, TIDE_FONT_BOLD or one of the
+// registry's (tide/font.h), which the list names until it's reset.
 void tide_draw_text_at(tide_draw_list *d, const char *text, tide_float2 position, float size, tide_color color,
-                       tide_anchor anchor, const unsigned char *font);
+                       tide_anchor anchor, const tide_font *font);
 
 // Triangles: three of `indices` each, places in `vertices`, both copied into
 // the list. Each pixel is its corners' colors blended across the triangle,
@@ -2622,18 +2628,18 @@ tide_float3x3 tide_draw_world_to_screen_matrix(const tide_draw_list *d, tide_flo
 // next. Text is fitted to the pixels it's drawn on, so where it's drawn is
 // part of the answer: in the window (NULL), or in a render target of the size
 // `target` says, whose image has pixels of its own. Either way the units are
-// logical pixels. The platform measures with its font
-// (tide_platform_measure_text), in the weight `font` is the file of:
-// TIDE_FONT_REGULAR or TIDE_FONT_BOLD.
+// logical pixels. The platform measures with its fonts
+// (tide_platform_measure_text), in `font`: TIDE_FONT_REGULAR,
+// TIDE_FONT_BOLD or one of the registry's.
 typedef tide_float2 (*tide_measure_fn)(const char *text, float size, const tide_target_size *target,
-                                       const unsigned char *font);
+                                       const tide_font *font);
 
 // What stands in for a host's tide_measure_fn when it has none (NULL), as
-// tests and servers do: a guess, on the wide side, the same for every weight.
-tide_float2 tide_draw_guess_text(const char *text, float size, const tide_target_size *target, const unsigned char *font);
+// tests and servers do: a guess, on the wide side, the same for every font.
+tide_float2 tide_draw_guess_text(const char *text, float size, const tide_target_size *target, const tide_font *font);
 
-// The size of `text` as tide_draw_text_at would draw it now, at `size` in the
-// weight `font` is the file of, in the units the commands recorded next are
+// The size of `text` as tide_draw_text_at would draw it now, at `size` in
+// `font`, in the units the commands recorded next are
 // in: the screen's pixels on the screen, and world units through the current
 // 2D camera, which draws text as many times bigger as it has pixels to a
 // unit, or the units a transform takes when there's one. `x` is its widest
@@ -2641,5 +2647,5 @@ tide_float2 tide_draw_guess_text(const char *text, float size, const tide_target
 // names a place of. `screen_size` is as for the coordinate helpers above, and
 // `measure` the renderer's, or NULL to guess. Nothing for a size that isn't
 // above 0, as nothing is drawn.
-tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, float size, const unsigned char *font,
+tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, float size, const tide_font *font,
                                    tide_float2 screen_size, tide_measure_fn measure);

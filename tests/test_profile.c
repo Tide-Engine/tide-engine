@@ -315,7 +315,7 @@ static float measure(const char *text, const float size)
     return (float)strlen(text) * 7.0f;
 }
 
-static tide_float2 font(const char *text, const float size, const tide_target_size *target, const unsigned char *weight)
+static tide_float2 font(const char *text, const float size, const tide_target_size *target, const tide_font *weight)
 {
     (void)target;
     (void)weight;

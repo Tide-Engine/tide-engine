@@ -189,7 +189,7 @@ It lays nothing out: its widgets stay where they'd be without it, in the contain
 
 ## Themes
 
-The GUI has one look, and a theme changes its colors, its corners, its borders, shading and shadows, how fast it fades between states, and its text size and spacing. `GUITheme` is a struct whose defaults are that look, so a theme names only what it changes:
+The GUI has one look, and a theme changes its colors, its corners, its borders, shading and shadows, how fast it fades between states, and its text's font, size and spacing. `GUITheme` is a struct whose defaults are that look, so a theme names only what it changes:
 
 ```csharp
 const Color INK = Color(0.86, 0.92, 1);
@@ -236,6 +236,8 @@ The rest are numbers:
 | `textSize` | 16 | The widgets' text size, in pixels. A widget's height follows it: `textSize + 12` |
 | `padding` | 12 | Space inside an area, around its widgets |
 | `spacing` | 5 | Space between widgets |
+
+`font` is the `Font` the widgets' text is in: `Font.Regular` by default, `Font.Bold`, or one of the game's ([Fonts](./views.md#fonts)): `GUI.Theme(GUITheme { font = menuFont }) { ... }`.
 
 A number that isn't a number, or is out of its range, is taken as the nearest one that is: a negative size as 0, a `shading` over 1 as 1.
 

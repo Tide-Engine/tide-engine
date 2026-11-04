@@ -1,4 +1,4 @@
-// expect: the engine's font has two weights
+// expect: the engine's font has two weights, 'Font.Regular' and 'Font.Bold'
 scene Main { }
 
 view Show()

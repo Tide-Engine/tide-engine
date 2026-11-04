@@ -1733,7 +1733,7 @@ static void add_glyph(const mesh_vertex corners[4])
 
 // Where the line of text at `line` starts, in the target's pixels, a whole
 // one: at `x`, or for a `side` of 1 or 2, with its middle or its end there.
-static float line_start(const unsigned char *font, const char *line, const int pixels, const float stretch,
+static float line_start(const tide_font *font, const char *line, const int pixels, const float stretch,
                         const float x, const uint32_t side)
 {
     int64_t across = 0; // A line of any length: more pixels than an int counts
@@ -1747,7 +1747,7 @@ static float line_start(const unsigned char *font, const char *line, const int p
 // target's own pixels (see font.h): its lines start on one, and each glyph is
 // a whole number of them from the last, so none is ever blended between two.
 static void add_text(const char *text, const tide_float2 at, const float size, const rgba color, const uint32_t anchor,
-                     const unsigned char *font)
+                     const tide_font *font)
 {
     if (!(size > 0.0f)) return;
     const tide_float2 scale = pixel_scale();
@@ -1803,7 +1803,7 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
 // to: its glyphs are the ones fitted for upright text of that size, and their
 // pixels blend where they land.
 static void add_text_turned(const char *text, const tide_float2 at, const float size, const camera *cam,
-                            const tide_float2x2 turn, const rgba color, const uint32_t anchor, const unsigned char *font)
+                            const tide_float2x2 turn, const rgba color, const uint32_t anchor, const tide_font *font)
 {
     const float mean = sqrtf(fabsf(turn.c0.x * turn.c1.y - turn.c0.y * turn.c1.x));
     const float drawn = size * cam->scale * mean; // Its size on the screen, in logical pixels
@@ -4861,7 +4861,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break; // Kinds of the list's plain shapes, never of its commands
         case TIDE_DRAW_TEXT: {
             // A command in bold without the bold's file (a list filled by hand) is in the regular weight
-            const unsigned char *font = c->words.bold ? list->bold : TIDE_FONT_REGULAR;
+            const tide_font *font = c->words.font && c->words.font <= list->font_count ? list->fonts[c->words.font - 1u]
+                                                                                      : TIDE_FONT_REGULAR;
             if (c->words.turned && c->words.turned <= list->turn_count) {
                 add_text_turned(list->text + c->text, to_screen(cam, c->a), c->b.x, cam, list->turns[c->words.turned - 1u],
                                 color, c->words.anchor, font);
@@ -5211,7 +5212,7 @@ tide_int2 tide_platform_target_pixels(const tide_target_size size)
 // target's image, as many to a logical one as a frame drawn into the window
 // gives it.
 tide_float2 tide_platform_measure_text(const char *text, const float size, const tide_target_size *target,
-                                       const unsigned char *font)
+                                       const tide_font *font)
 {
     tide_float2 scale = window_scale();
     if (target) {

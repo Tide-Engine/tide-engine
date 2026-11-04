@@ -178,7 +178,7 @@ static bool tide_asset_fp_grid(const tide_asset_fp_region *r, const uint64_t at,
 static bool tide_asset_fp_leaf_kind(const uint32_t kind)
 {
     return kind == TIDE_PACK_TEXT || kind == TIDE_PACK_BYTES || kind == TIDE_PACK_GRID || kind == TIDE_PACK_LIST
-        || kind == TIDE_PACK_TEXTURE || kind == TIDE_PACK_CLIP;
+        || kind == TIDE_PACK_TEXTURE || kind == TIDE_PACK_CLIP || kind == TIDE_PACK_FONT;
 }
 
 static bool tide_asset_fp_leaf(const tide_asset_fp_region *r, const uint64_t at, const uint32_t kind,
@@ -226,7 +226,7 @@ static bool tide_asset_fp_leaf(const tide_asset_fp_region *r, const uint64_t at,
         tide_sha256_add(hash, pixels, (size_t)bytes);
         return true;
     }
-    if (kind == TIDE_PACK_CLIP) {
+    if (kind == TIDE_PACK_CLIP || kind == TIDE_PACK_FONT) { // A font's block is laid out as a clip's
         const uint8_t *size = tide_asset_fp_span(r, (uint64_t)at + sizeof b, sizeof(uint32_t));
         if (!size) return false;
         const uint32_t bytes = tide_asset_fp_u32(size);
@@ -295,7 +295,8 @@ static bool tide_asset_fp_map(const tide_asset_fp_region *r, const tide_pack_ent
     const bool mesh = e->kind == TIDE_PACK_MESHES, skinned = e->kind == TIDE_PACK_SKINNED_MAP;
     const uint32_t stride = skinned ? (uint32_t)sizeof(tide_asset_fp_skinned_row)
                                    : mesh ? (uint32_t)sizeof(tide_asset_fp_mesh_row) : (uint32_t)sizeof(tide_asset_fp_map_row);
-    const uint32_t leaf = e->kind == TIDE_PACK_TEXTURES ? TIDE_PACK_TEXTURE : e->kind == TIDE_PACK_CLIPS ? TIDE_PACK_CLIP : desc->leaf_kind;
+    const uint32_t leaf = e->kind == TIDE_PACK_TEXTURES ? TIDE_PACK_TEXTURE : e->kind == TIDE_PACK_CLIPS ? TIDE_PACK_CLIP
+                        : e->kind == TIDE_PACK_FONTS ? TIDE_PACK_FONT : desc->leaf_kind;
     if (!mesh && !skinned && !tide_asset_fp_leaf_kind(leaf)) return false;
     uint32_t count, slots;
     const uint8_t *rows, *table;
@@ -351,7 +352,7 @@ static bool tide_asset_fp_entry(const tide_asset_fp_region *r, const tide_pack_e
             ok = tide_asset_fp_block(&region, e.offset, &b) && b.a == e.size
                 && tide_asset_fp_leaf(&region, e.offset, e.kind, desc, &hash);
         } else ok = tide_asset_fp_leaf(&region, e.offset, e.kind, desc, &hash);
-    } else if (e.kind == TIDE_PACK_MAP || e.kind == TIDE_PACK_TEXTURES || e.kind == TIDE_PACK_CLIPS
+    } else if (e.kind == TIDE_PACK_MAP || e.kind == TIDE_PACK_TEXTURES || e.kind == TIDE_PACK_CLIPS || e.kind == TIDE_PACK_FONTS
                || e.kind == TIDE_PACK_MESHES || e.kind == TIDE_PACK_SKINNED_MAP) {
         if (e.kind == TIDE_PACK_MESHES || e.kind == TIDE_PACK_SKINNED_MAP) tide_asset_fp_word(&hash, e.extra);
         ok = tide_asset_fp_map(&region, &e, desc, &hash);

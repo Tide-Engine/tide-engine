@@ -2424,7 +2424,7 @@ static int dump(const char *path)
 // own pixels whatever the display's scale is: text measures as it's fitted
 // there.
 static tide_float2 measure_read_back(const char *text, const float size, const tide_target_size *target,
-                                     const unsigned char *font)
+                                     const tide_font *font)
 {
     (void)target;
     // As a target of the window's size with one pixel of its own to a logical one, which is what's read back
@@ -2460,7 +2460,7 @@ static void text_area(uint32_t *out)
 // to, and their ink ends where the measure says. One size is halfway between
 // two whole numbers of pixels, where measuring and drawing have to round the
 // same way.
-static void text_measures_as_drawn(const unsigned char *font, const char *weight)
+static void text_measures_as_drawn(const tide_font *font, const char *weight)
 {
     static const float scales[] = {0.0f, 1.0f, 2.75f, 0.4f, 7.3f};
     static const tide_float2 centers[] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.3f, 0.7f}, {-40.0f, 12.5f}, {3.0f, -2.0f}};
@@ -2522,7 +2522,7 @@ static void text_bold_is_heavier(void)
     int ink[2] = {0, 0}, right[2] = {-1, -1};
     float width[2];
     for (int bold = 0; bold < 2; bold++) {
-        const unsigned char *font = bold ? TIDE_FONT_BOLD : TIDE_FONT_REGULAR;
+        const tide_font *font = bold ? TIDE_FONT_BOLD : TIDE_FONT_REGULAR;
         text_frame(0.0f, tide_f2(0.0f, 0.0f));
         width[bold] = tide_draw_measure_text(&list, "Hill time", 24.0f, font, screen, measure_read_back).x;
         tide_draw_text_at(&list, "Hill time", tide_f2(6.0f, 6.0f), 24.0f, white, TIDE_ANCHOR_UPPER_LEFT, font);
@@ -2546,7 +2546,7 @@ static void text_bold_is_heavier(void)
 // to the pixel, its lines drawn one by one from the top left corners that box
 // puts them at; and upper is towards the top of the screen under a camera
 // too, where y goes up.
-static void text_anchors(const unsigned char *font, const char *weight)
+static void text_anchors(const tide_font *font, const char *weight)
 {
     static const char *const names[] = {"upper left", "upper center", "upper right", "middle left", "middle center",
                                         "middle right", "lower left", "lower center", "lower right"};

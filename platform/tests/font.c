@@ -13,12 +13,12 @@
 // The weights, by their files: this program names the bold's, so it has it.
 static const struct {
     const char *name;
-    const unsigned char *font;
+    const tide_font *font;
 } weights[] = {{"regular", TIDE_FONT_REGULAR}, {"bold", TIDE_FONT_BOLD}};
 
 enum { WEIGHTS = sizeof weights / sizeof weights[0] };
 
-static tide_font_glyph glyph_in(const unsigned char *font, const uint32_t codepoint, const int pixels)
+static tide_font_glyph glyph_in(const tide_font *font, const uint32_t codepoint, const int pixels)
 {
     tide_font_glyph g = {0};
     TIDE_CHECK(tide_font_glyph_for(font, codepoint, pixels, &g));
@@ -170,7 +170,7 @@ TIDE_TEST(font_text_is_as_wide_as_its_glyphs_go)
 {
     static const float scales[] = {1.0f, 1.25f, 1.5f, 2.0f};
     for (int w = 0; w < WEIGHTS; w++) {
-        const unsigned char *font = weights[w].font;
+        const tide_font *font = weights[w].font;
         for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
             float stretch = 0.0f;
             const int pixels = tide_font_pixels(16.0f, scales[i], &stretch);
@@ -192,7 +192,7 @@ TIDE_TEST(font_text_is_as_high_as_its_lines_go)
 {
     static const float scales[] = {1.0f, 1.25f, 1.5f, 2.0f, 2.625f};
     for (int w = 0; w < WEIGHTS; w++) {
-        const unsigned char *font = weights[w].font;
+        const tide_font *font = weights[w].font;
         for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
             const float scale = scales[i];
             float stretch = 0.0f, width = 0.0f, height = 0.0f;

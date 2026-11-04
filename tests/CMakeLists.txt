@@ -21,7 +21,21 @@ foreach(ref tone low noise)
 endforeach()
 add_library(tide_audio_refs STATIC ${TIDE_AUDIO_REFS})
 
-add_executable(tide_tests ${TIDE_TEST_SOURCES} "${PROJECT_SOURCE_DIR}/platform/src/png.c")
+# The engine's font, both weights, for the font reader's tests (test_font_data.c).
+set(TIDE_TEST_FONTS)
+foreach(font Tuffy Tuffy_Bold)
+    string(TOLOWER "${font}" name)
+    set(out "${CMAKE_CURRENT_BINARY_DIR}/test_${name}.c")
+    add_custom_command(OUTPUT "${out}"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/platform/font/${font}.ttf" "-DOUTPUT=${out}"
+            -DNAME=tide_test_${name}_ttf -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        DEPENDS "${PROJECT_SOURCE_DIR}/platform/font/${font}.ttf" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        COMMENT "The font reader test's ${font}.ttf as C"
+        VERBATIM)
+    list(APPEND TIDE_TEST_FONTS "${out}")
+endforeach()
+
+add_executable(tide_tests ${TIDE_TEST_SOURCES} ${TIDE_TEST_FONTS} "${PROJECT_SOURCE_DIR}/platform/src/png.c")
 target_include_directories(tide_tests PRIVATE "${PROJECT_SOURCE_DIR}/platform/src")
 target_link_libraries(tide_tests PRIVATE tide tide_audio_refs)
 

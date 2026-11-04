@@ -50,10 +50,8 @@ static const decl *depth_decl;
 static decl cull_enum;
 static const type T_CULL = {TY_ENUM, &cull_enum};
 static const decl *cull_decl;
-// And the Font enum, which Draw.Text and Draw.MeasureText take.
-static decl text_font;
-static const type T_FONT = {TY_ENUM, &text_font};
-static const decl *font_decl;
+// And Font, which Draw.Text and Draw.MeasureText take.
+static const type T_FONT = {TY_FONT, NULL};
 // ...and the Format enum, what a render target is made to hold.
 static decl format_enum;
 static const type T_FORMAT = {TY_ENUM, &format_enum};
@@ -100,15 +98,13 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
-                  const decl *font)
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull)
 {
     anchor_decl = anchor;
     shape_decl = shape;
     blend_decl = blend;
     depth_decl = depth;
     cull_decl = cull;
-    font_decl = font;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = wrap_decl = transforms_decl = NULL;
     bytes_decl = paths_decl = NULL;
@@ -168,7 +164,6 @@ static type real_type(const type t)
     if (t.decl == &format_enum && format_decl) return (type){TY_ENUM, (decl *)format_decl};
     if (t.decl == &stencil_test_enum && stencil_test_decl) return (type){TY_ENUM, (decl *)stencil_test_decl};
     if (t.decl == &stencil_op_enum && stencil_op_decl) return (type){TY_ENUM, (decl *)stencil_op_decl};
-    if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
     if (t.decl == &mesh_vertices && vertices_decl) return (type){TY_LIST, (decl *)vertices_decl};
@@ -200,7 +195,6 @@ static const char *signature_type_name(const type t)
     if (t.decl == &format_enum) return "Format";
     if (t.decl == &stencil_test_enum) return "StencilTest";
     if (t.decl == &stencil_op_enum) return "StencilOp";
-    if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
     return t.kind == TY_ENUM && !t.decl ? "Anchor" : type_name(t);
@@ -886,8 +880,8 @@ static void build_signatures(void)
         "Text, `size` high: a line's height, with its capitals in the line's middle. `position` is its top left "
         "corner, or with an `anchor`, that place of its box: `Anchor.MiddleCenter` centers it there, "
         "`Anchor.UpperRight` ends its first line there. Upper is towards the top of the screen, under a camera too, "
-        "and each line of several is against the anchor's side. `font` is its weight: `Font.Regular` (the "
-        "default) or `Font.Bold`.";
+        "and each line of several is against the anchor's side. `font` is what it's in: `Font.Regular` (the "
+        "default), `Font.Bold`, an `asset Font` or one `Font.Decode` read.";
     add_draw("Text", "tide_draw_text", "text, position, size, color", text_doc, 4, &T_STR, &T_F2, &T_F, &T_COLOR);
     // With an anchor, the font is one a call can leave out; a font alone goes after the color
     defaulted(add_draw("Text", "tide_draw_text_at", "text, position, size, color, anchor, font", text_doc,
@@ -895,7 +889,7 @@ static void build_signatures(void)
     add_draw("Text", "tide_draw_text_at", "text, position, size, color, font", text_doc,
                5, &T_STR, &T_F2, &T_F, &T_COLOR, &T_FONT);
     static const char measure_doc[] =
-        "How big `Draw.Text` would draw `text` at `size` now, in the weight `font` (`Font.Regular` without "
+        "How big `Draw.Text` would draw `text` at `size` now, in `font` (`Font.Regular` without "
         "one): the width of its widest line in x and the height of its lines in y, in the units the 2D draws are "
         "in. One line is `size` high. It's the box an anchor names a place of: "
         "`Draw.Text(text, center, size, color, Anchor.MiddleCenter)` centers it.";
@@ -1402,6 +1396,8 @@ static const struct {
     {"Color", "none", TY_COLOR, "TIDE_COLOR_NONE"},
     {"Clip", "none", TY_CLIP, "((tide_clip_ref){0})"},
     {"Clip", "Microphone", TY_CLIP, "TIDE_CLIP_MICROPHONE"},
+    {"Font", "Regular", TY_FONT, "((tide_font_ref){0})"},
+    {"Font", "Bold", TY_FONT, "((tide_font_ref){1})"},
     {"Draw", "window", TY_RENDER_TARGET, "((tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Draw", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
@@ -1436,6 +1432,13 @@ static const char *member_doc(const size_t i)
                "`effect` can filter and its bus plays or mutes (`volume` 0 to only process). The device is open while a "
                "frame names such a `Sound` playing, and the system asks the player first on phones and the web: until "
                "they allow it, silence. A one-shot (`Audio.Play`) of it plays nothing.";
+    }
+    if (strcmp(members[i].owner, "Font") == 0 && strcmp(members[i].member, "Regular") == 0) {
+        return "The engine's font, its regular weight: what text is in where nothing says another, a `Font`'s default.";
+    }
+    if (strcmp(members[i].owner, "Font") == 0 && strcmp(members[i].member, "Bold") == 0) {
+        return "The engine's font, its bold weight, a file of its own: a game only carries it when its code says "
+               "`Font.Bold`. A character it has no glyph for is drawn in the regular weight.";
     }
     if (strcmp(members[i].owner, "Cursor") == 0) {
         return "Whether the window holds the mouse's cursor right now: what the system says, not what `Cursor.Lock` "
@@ -1654,7 +1657,19 @@ static bool fits(const signature *s, const expr *e)
         const expr *arg = e->args.items[i];
         const bool mut = s->mut & (1u << a);
         if (arg->enum_shorthand) {
-            if (mut || want.kind != TY_ENUM) return false;
+            if (mut) return false;
+            // .Bold is a Font where one goes, and an enum's member where that enum has it
+            const bool font = str_eq_c(arg->member, "Regular") || str_eq_c(arg->member, "Bold");
+            if (want.kind == TY_FONT) {
+                if (!font) return false;
+                continue;
+            }
+            if (want.kind != TY_ENUM) return false;
+            if (font && want.decl && want.decl->members.count) {
+                bool has = false;
+                for (int m = 0; m < want.decl->members.count && !has; m++) has = str_eq(want.decl->members.items[m].name, arg->member);
+                if (!has) return false;
+            }
             continue;
         }
         if (arg->is_out && (out_untyped(arg) || (s->out & (1u << a)))) continue;
@@ -1868,7 +1883,7 @@ type resolve_builtin_call(const str owner, expr *e)
     for (int i = 0; i < e->args.count; i++) {
         const type t = e->args.items[i]->type;
         if (t.kind == TY_ENUM && t.decl == anchor_decl && anchor_at < 0) anchor_at = i;
-        if (t.kind == TY_ENUM && t.decl == font_decl && font_at < 0) font_at = i;
+        if (t.kind == TY_FONT && font_at < 0) font_at = i;
     }
     if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Text") && font_at >= 0 && anchor_at > font_at) {
         diag_note("the anchor comes before the font: 'Draw.Text(text, position, size, color, Anchor.MiddleCenter, "

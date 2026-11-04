@@ -22,7 +22,7 @@ static tide_float2 screen;
 static tide_devices sampled;
 
 // Every character 8 pixels wide (a UTF-8 character, not a byte: the arrows are three).
-static tide_float2 font(const char *text, const float size, const tide_target_size *target, const unsigned char *weight)
+static tide_float2 font(const char *text, const float size, const tide_target_size *target, const tide_font *weight)
 {
     (void)target;
     (void)weight;

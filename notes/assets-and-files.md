@@ -1,5 +1,9 @@
 # Assets and local files
 
+## Font assets (2026-11-03)
+
+`asset Font`, `List<Font>` and `Map<string, Font>` (`ASSET_FONT`): tidec reads the file with the engine's checked reader (`tide_font_data_make`, `tide/font.h`) in `asset_resolve` (`compiler/src/asset_files.c`, kept per file as `font_data`), an error at the declaration with the reader's reason; the pack keeps the font data, not the file, in a clip-shaped block (`tide_pack_font`, `TIDE_PACK_FONT`/`TIDE_PACK_FONTS`, fingerprinted as a clip's block in `pack_fingerprint.inc`), and loading adds each to the font registry (`note_font` in `engine/src/pack_load.c`), whose number the asset's `tide_font_ref` holds. Details, `Font.Decode` and tests: `notes/rendering.md`, Fonts of a game's own.
+
 ## Build code (2026-11-03)
 
 Assets and constants made by Tide code that runs while the game builds (docs/spec.md, Build code; user page

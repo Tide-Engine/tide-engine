@@ -22,6 +22,7 @@
 #include "folders.h"
 #include "image_files.h"
 #include "sha256.h"
+#include "tide/font.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
 
@@ -51,6 +52,10 @@ typedef struct read_file {
     char image_why[256];
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
     bool sound_tried, sound;
+    bool font_tried;
+    tide_font_error font_error;
+    uint8_t *font_data; // Its font data (tide/font.h), once read as a Font
+    size_t font_size;
     char sound_why[256];
     uint8_t *sound_data; // MP3/FLAC imported as float PCM WAV; raw file bytes remain available separately
     size_t sound_size;
@@ -128,6 +133,7 @@ static void forget_file(read_file *f)
     free(f->path);
     free(f->data);
     free(f->sound_data);
+    free(f->font_data);
     free(f->image.pixels);
     free(f->prepared_texture);
     free((void *)(uintptr_t)f->image_mips.pixels);
@@ -599,7 +605,8 @@ static const char *kind_name(const asset_kind kind)
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
          : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
          : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "AnimationCatalog"
-         : kind == ASSET_ANIMATION ? "Animation" : kind == ASSET_HUMANOID ? "HumanoidRig" : "Grid2<Color>";
+         : kind == ASSET_ANIMATION ? "Animation" : kind == ASSET_HUMANOID ? "HumanoidRig" : kind == ASSET_FONT ? "Font"
+         : "Grid2<Color>";
 }
 
 static bool source_extension(const char *path, const char *extension)
@@ -935,6 +942,21 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             item->data = f->sound_data;
             item->size = f->sound_size;
         }
+    } else if (kind == ASSET_FONT) {
+        // Read as Font.Decode reads one, so a file that builds is one the game can draw, and one that
+        // doesn't says why here
+        if (!f->font_tried) {
+            f->font_tried = true;
+            f->font_error = tide_font_data_make(f->data, f->len, &f->font_data, &f->font_size);
+        }
+        if (f->font_error != TIDE_FONT_OK) {
+            diag_error(at, "'%s' can't be read as a font: %s", key, tide_font_error_text(f->font_error));
+            diag_note("a Font asset is a TrueType font file (.ttf, an .otf of TrueType outlines, or a .ttc's first font); "
+                      "for the file's bytes as they are, read it as a List<byte>");
+            return false;
+        }
+        item->data = f->font_data;
+        item->size = f->font_size;
     } else if ((kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS) && parts_keep) {
         // Some of its parts, for this declaration: decoded here, never into the file's cache, which has all of them
         char *folder = asset_path_folder(path);

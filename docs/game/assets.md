@@ -33,14 +33,15 @@ not prevent a build.
 | `AnimationCatalog` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | Skeleton and every animation clip; see [Animation files](./animation.md#animation-files) |
 | `Animation` | glTF 2.0 (`.gltf`, `.glb`), binary or ASCII FBX | The only clip, or an exact `[Name("source name")]` selection |
 | `Clip` | WAV, Ogg Vorbis, MP3, FLAC | WAV/Vorbis bytes, or float PCM WAV converted from MP3/FLAC; see [Audio](./audio.md#clips) |
+| `Font` | TrueType fonts: `.ttf`, an `.otf` of TrueType outlines, a `.ttc`'s first font | Its glyphs' outlines, checked; see [Fonts](./views.md#fonts) |
 | `string` | Any UTF-8 text file | Text |
 | `List<byte>` | Any file | Its original bytes |
 
-These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, runtime [`Mesh<V>.Decode`](#meshes) reads GLB, a glTF with its buffers inside it and OBJ, and runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
+These are source imports. Runtime [`grid.Decode`](#decoding-a-png) reads PNG only, runtime [`Mesh<V>.Decode`](#meshes) reads GLB, a glTF with its buffers inside it and OBJ, runtime [`SkinnedMesh.Decode`](./animation.md#load-while-playing) reads self-contained GLB only, and runtime [`Font.Decode`](./views.md#fonts) reads what a `Font` asset does. `AnimationCatalog` has no runtime `Decode` operation. A supported extension doesn't imply every feature of that format: the image and model limits below say what is read.
 
 WebP, TIFF, animated images, SVG, HDR/EXR, compressed DDS and KTX/KTX2 aren't image imports yet. USD, Collada (`.dae`), Alembic, STL, PLY and Blender project files aren't model imports; export a model as glTF 2.0 or FBX, or OBJ for static geometry. Model materials and their textures still need separate declarations and draws.
 
-Custom font assets (TTF/OTF) and video playback aren't built. [`Draw.Text`](./views.md#text) uses Tide's bundled font. Any file can still be packed as `List<byte>`, which preserves its bytes without interpreting them.
+Fonts of CFF (PostScript) outlines, which many `.otf` files have, aren't read: convert one to `.ttf`. Video playback isn't built. Any file can still be packed as `List<byte>`, which preserves its bytes without interpreting them.
 
 ## Declaring an asset
 
@@ -53,7 +54,7 @@ asset string rules = "rules.txt";           // UTF-8 text
 asset List<byte> table = "data/table.bin";  // Any file, as its bytes
 ```
 
-Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. Those four are the plain ones: `string`, `List<byte>`, `Grid2<Color>` and `Texture`. A sky is a [`Cubemap`](#cubemaps), a static model a [`Mesh`](#meshes), a model with bones a [`SkinnedMesh`](./animation.md), animation clips an [`AnimationCatalog`](./animation.md#animation-files) asset, and a sound a [`Clip`](./audio.md#clips).
+Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. Those four are the plain ones: `string`, `List<byte>`, `Grid2<Color>` and `Texture`. A sky is a [`Cubemap`](#cubemaps), a static model a [`Mesh`](#meshes), a model with bones a [`SkinnedMesh`](./animation.md), animation clips an [`AnimationCatalog`](./animation.md#animation-files) asset, a sound a [`Clip`](./audio.md#clips), and a font a [`Font`](./views.md#fonts).
 
 ::: tide-example assets A sprite from a file
 <<< @/examples/assets.tide

@@ -133,6 +133,7 @@ typedef struct tide_gui_theme {
     float text_size;      // Text's size, in pixels; a widget's height follows it
     float padding;        // Inside an area, around its content, and inside a button, from its sides
     float spacing;        // Between widgets
+    const tide_font *font; // Its text's (tide/draw.h): TIDE_FONT_REGULAR, the default, or any other
 } tide_gui_theme;
 
 // What the player is doing with a control (GUI.Control). Tide's GUIControl

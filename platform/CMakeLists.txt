@@ -53,9 +53,10 @@ endif()
 # file a weight, each an object of its own with nothing else in it. The
 # regular one, src/font.c names. The bold one, nothing in the library does:
 # the linker only takes its object out of the library for a program whose own
-# code names tide_font_bold_ttf (tide/draw.h), which a game's does when it
-# says Font.Bold. So the library stays a static one, of objects linkers pick
-# from, and no source file of it may name the bold's array.
+# code names tide_font_bold (TIDE_FONT_BOLD, tide/draw.h), which is in that
+# object (font/tide_font_bold.inc), and a game's code does when it says
+# Font.Bold. So the library stays a static one, of objects linkers pick
+# from, and no source file of it may name the bold's array or tide_font_bold.
 set(TIDE_FONT_C "${CMAKE_CURRENT_BINARY_DIR}/tide_font.c")
 set(TIDE_FONT_BOLD_C "${CMAKE_CURRENT_BINARY_DIR}/tide_font_bold.c")
 add_custom_command(OUTPUT "${TIDE_FONT_C}"
@@ -66,8 +67,9 @@ add_custom_command(OUTPUT "${TIDE_FONT_C}"
     VERBATIM)
 add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/font/Tuffy_Bold.ttf" "-DOUTPUT=${TIDE_FONT_BOLD_C}"
-        -DNAME=tide_font_bold_ttf -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
-    DEPENDS font/Tuffy_Bold.ttf "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        -DNAME=tide_font_bold_ttf "-DAPPEND=${CMAKE_CURRENT_SOURCE_DIR}/font/tide_font_bold.inc"
+        -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS font/Tuffy_Bold.ttf font/tide_font_bold.inc "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     COMMENT "The platform's bold font as C"
     VERBATIM)
 

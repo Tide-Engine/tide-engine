@@ -4778,6 +4778,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "tide_mesh_decode_%s(", type_cname(e->type_decl));
             gen_as(g, o, e->args.items[0], e->args.items[0]->type);
             sb_put(o, ")");
+        } else if (e->call == CALL_FONT_DECODE) { // Font.Decode(bytes): the font, in this machine's registry
+            sb_put(o, "tide_font_decode_value(");
+            gen_as(g, o, e->args.items[0], e->args.items[0]->type);
+            sb_put(o, ")");
         } else if (e->call == CALL_GRID && str_eq_c(e->name, "Decode")) { // cells.Decode(bytes): the PNG's pixels
             sb_put(o, "tide_checked_grid_decode(&(");
             gen_expr(g, o, e->object);
@@ -5073,7 +5077,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     else if (receiver) gen_expr(g, o, e->object);
     // Several arguments as one value: a draw setting or scalar Euler angles.
     if (e->c_pack) sb_printf(o, "%s%s(", e->call == CALL_DRAW || e->call == CALL_AUDIO || receiver ? ", " : "", e->c_pack);
-    // Text at an anchor, in a weight: C takes both, the weight as its file (tide_font_file)
+    // Text at an anchor, in a font: C takes both, the font as tide/draw.h does (tide_font_file)
     const bool text_at = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_text_at") == 0;
     const bool measure_text = e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText");
     bool anchored = false, weighted = false;
@@ -5091,7 +5095,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             continue;
         }
-        if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
+        if (e->call == CALL_DRAW && want.kind == TY_FONT) {
             if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
             sb_put(o, "tide_font_file(");
             gen_as(g, o, e->args.items[i], want);
@@ -11471,6 +11475,21 @@ static void gen_prelude(gen *g)
                  "                                    .outline = s.outline, .outline_color = s.outlineColor,\n"
                  "                                    .soft = s.soft, .ellipse = s.ellipse});\n}\n\n",
               type_cname(g->prog->shape));
+    // A Font is a number of the font registry's (tide/font.h), which C takes as its font. The bold weight's is
+    // in the platform layer's library, and the linker only takes it from there for a program that names it:
+    // so this does only for a game that says Font.Bold.
+    if (g->prog->names_bold) {
+        sb_put(o, "// Font: a font as tide/draw.h takes it.\n"
+                  "TIDE_HELPER const tide_font *tide_font_file(const tide_font_ref font)\n{\n"
+                  "    return font.id == 1u ? TIDE_FONT_BOLD : tide_font_find(font.id);\n}\n\n");
+    } else {
+        sb_put(o, "// Font: a font as tide/draw.h takes it. This game never says Font.Bold, so nothing here names the\n"
+                  "// bold weight's, and the game doesn't carry it: its number is the regular weight's, as any the\n"
+                  "// registry hasn't.\n"
+                  "TIDE_HELPER const tide_font *tide_font_file(const tide_font_ref font)\n{\n"
+                  "    return tide_font_find(font.id);\n}\n\n");
+    }
+
     // ...and so do Tide's GUITheme and GUIControl and tide/gui.h's tide_gui_theme and tide_control
     const char *theme = type_cname(g->prog->gui_theme);
     const char *control = type_cname(g->prog->gui_control);
@@ -11481,7 +11500,8 @@ static void gen_prelude(gen *g)
                  "                            .accent = t.accent, .radius = t.radius, .border = t.border,\n"
                  "                            .border_width = t.borderWidth, .shading = t.shading, .shadow = t.shadow,\n"
                  "                            .shadow_size = t.shadowSize, .transition = t.transition,\n"
-                 "                            .text_size = t.textSize, .padding = t.padding, .spacing = t.spacing};\n}\n\n"
+                 "                            .text_size = t.textSize, .padding = t.padding, .spacing = t.spacing,\n"
+                 "                            .font = tide_font_file(t.font)};\n}\n\n"
                  "TIDE_HELPER void tide_gui_set_theme_value(tide_gui *g, const %s t)\n{\n"
                  "    tide_gui_set_theme(g, tide_gui_theme_value(t));\n}\n\n"
                  "TIDE_HELPER int tide_gui_begin_theme_value(tide_gui *g, const %s t)\n{\n"
@@ -11495,20 +11515,6 @@ static void gen_prelude(gen *g)
                  "                .hover = c.hover, .press = c.press, .focus = c.focus};\n"
                  "}\n\n",
               control, control);
-
-    // C names a weight by its file. The bold's is in the platform layer's library, and the linker only
-    // takes it from there for a program that names it: so this does only for a game that says Font.Bold.
-    if (g->prog->names_bold) {
-        sb_put(o, "// Font: a weight as tide/draw.h takes it, its file.\n"
-                  "TIDE_HELPER const unsigned char *tide_font_file(const int32_t font)\n{\n"
-                  "    return font == 1 ? TIDE_FONT_BOLD : TIDE_FONT_REGULAR;\n}\n\n");
-    } else {
-        sb_put(o, "// Font: a weight as tide/draw.h takes it, its file. This game never says Font.Bold, so nothing here\n"
-                  "// names the bold's, and the game doesn't carry it.\n"
-                  "TIDE_HELPER const unsigned char *tide_font_file(const int32_t font)\n{\n"
-                  "    (void)font;\n"
-                  "    return TIDE_FONT_REGULAR;\n}\n\n");
-    }
 
     sb_put(o, "// Arithmetic on ints, vectors, quaternions and matrices comes from tide/math.h.\n\n");
 
@@ -19784,9 +19790,11 @@ static uint32_t asset_pack_kind(const type t)
     if (t.kind == TY_TEXTURE) return TIDE_PACK_TEXTURE;
     if (t.kind == TY_CUBEMAP) return TIDE_PACK_CUBEMAP;
     if (t.kind == TY_CLIP) return TIDE_PACK_CLIP;
+    if (t.kind == TY_FONT) return TIDE_PACK_FONT;
     if (t.kind == TY_MAP) {
         const type value = t.decl->fields.items[1].type;
-        return value.kind == TY_TEXTURE ? TIDE_PACK_TEXTURES : value.kind == TY_CLIP ? TIDE_PACK_CLIPS : TIDE_PACK_MAP;
+        return value.kind == TY_TEXTURE ? TIDE_PACK_TEXTURES : value.kind == TY_CLIP ? TIDE_PACK_CLIPS
+             : value.kind == TY_FONT ? TIDE_PACK_FONTS : TIDE_PACK_MAP;
     }
     if (t.kind == TY_LIST && list_elem(t.decl).kind == TY_BYTE) return TIDE_PACK_BYTES;
     return TIDE_PACK_LIST;
@@ -19801,7 +19809,8 @@ static uint32_t asset_decl_pack_kind(const decl *d)
 static const char *asset_ctype(const type t)
 {
     return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
-         : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_MAP ? "tide_map"
+         : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_FONT ? "tide_font_ref"
+         : t.kind == TY_MAP ? "tide_map"
          : t.kind == TY_MESH ? "tide_mesh_lists" : t.kind == TY_STRUCT ? c_type(t) : "tide_list";
 }
 
@@ -20007,7 +20016,7 @@ static void collect_asset_dependencies(gen *g)
                            : d->asset_kind == ASSET_ANIMATIONS ? (d->return_type.kind == TY_STRUCT ? TIDE_PACK_BYTES : TIDE_PACK_LIST)
                            : d->asset_kind == ASSET_BYTES || d->asset_kind == ASSET_ANIMATION || d->asset_kind == ASSET_HUMANOID ? TIDE_PACK_BYTES
                            : d->asset_kind == ASSET_GRID ? TIDE_PACK_GRID : d->asset_kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE
-                           : d->asset_kind == ASSET_CLIP ? TIDE_PACK_CLIP : 0u;
+                           : d->asset_kind == ASSET_CLIP ? TIDE_PACK_CLIP : d->asset_kind == ASSET_FONT ? TIDE_PACK_FONT : 0u;
         if (vertex) dep.shape.vertex_size = (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size;
         if (d->asset_kind == ASSET_GRID) {
             const type t = d->return_type.kind == TY_LIST ? list_elem(d->return_type.decl)
@@ -20204,11 +20213,37 @@ static void gen_mesh_decode(gen *g, const decl *ref)
               bones ? "    tide_skinned_data_free(model);\n" : "", type_cname(vertex));
 }
 
+// Font.Decode(bytes) (check_font_decode): the engine's reader (tide/font.h), which reads the file into checked
+// font data and adds it to this machine's registry; the Font is its number there.
+static void gen_font_decode(gen *g)
+{
+    const decl *result = NULL;
+    for (int i = 0; i < g->prog->results.count && !result; i++) {
+        const decl *r = g->prog->results.items[i];
+        if (r->fields.count == 2 && r->fields.items[0].type.kind == TY_FONT && r->fields.items[1].type.kind == TY_ENUM
+            && r->fields.items[1].type.decl == g->prog->io_error) result = r;
+    }
+    if (!result) return;
+    const char *result_c = c_type((type){TY_FAILABLE, (decl *)result});
+    sb_printf(&g->c, "\nTIDE_HELPER %s tide_font_decode_value(const tide_list input)\n{\n"
+                     "    %s result = {.error = IOError_InvalidData};\n"
+                     "    bool copied = false;\n"
+                     "    void *raw = tide_list_flatten(input, 1u, false, &copied);\n"
+                     "    tide_font_error why;\n"
+                     "    const uint64_t id = tide_font_decode(raw, (size_t)tide_list_count(input), &why);\n"
+                     "    tide_list_unflatten(input, raw, 1u, false, copied);\n"
+                     "    if (!id) return result;\n"
+                     "    result.value = (tide_font_ref){id};\n"
+                     "    result.ok = true;\n    result.error = (IOError)0;\n    return result;\n}\n\n",
+              result_c, result_c);
+}
+
 static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
     if (prog->asset_refs.count) sb_put(o, "TIDE_HELPER bool tide_asset_equal_id(const int64_t a, const int64_t b) { return a == b; }\n\n");
+    if (prog->font_decodes) gen_font_decode(g);
     if (!prog->assets.count && g->opts->server) {
         sb_put(o, "bool tide_assets_load(const uint8_t *bytes, const size_t size)\n"
                   "{ (void)bytes; (void)size; return true; }\n\n");
@@ -20358,6 +20393,7 @@ static void gen_assets(gen *g)
         else if (d->return_type.kind == TY_TEXTURE) sb_printf(o, "    %s = tide_pack_texture_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CUBEMAP) sb_printf(o, "    %s = tide_pack_cubemap_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CLIP) sb_printf(o, "    %s = tide_pack_clip_of(e);\n", asset_cname(d));
+        else if (d->return_type.kind == TY_FONT) sb_printf(o, "    %s = tide_pack_font_of(e);\n", asset_cname(d));
         else if (d->asset_kind == ASSET_ANIMATION)
             sb_printf(o, "    %s = (%s){.data = {tide_pack_handle(e)}, .index = %d};\n",
                       asset_cname(d), c_type(d->return_type), d->asset_animation_index);
@@ -20551,6 +20587,7 @@ static uint64_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         return at;
     }
     if (kind == ASSET_CLIP) return tide_pack_clip(b, item->hash, item->data, (uint32_t)item->size); // WAV/Vorbis or imported PCM WAV
+    if (kind == ASSET_FONT) return tide_pack_font(b, item->hash, item->data, (uint32_t)item->size); // Its font data (tide/font.h)
     if (kind == ASSET_VALUES) return tide_pack_values(b, item->hash, item->data, item->element, item->count);
     if (kind == ASSET_GRID) {
         const tide_grid_shape shape = asset_grid_shape(grid);
@@ -20975,7 +21012,8 @@ static void build_pack(gen *g)
         const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT
                                     : v->kind == ASSET_ANIMATIONS ? TIDE_PACK_LIST
                                     : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES
-                                    : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : v->kind == ASSET_CLIP ? TIDE_PACK_CLIP : TIDE_PACK_GRID;
+                                    : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : v->kind == ASSET_CLIP ? TIDE_PACK_CLIP
+                                    : v->kind == ASSET_FONT ? TIDE_PACK_FONT : TIDE_PACK_GRID;
         if (v->is_map) {
             uint64_t index;
             const uint64_t at = tide_pack_map(&b, keys, offsets, (uint32_t)v->count, &index);

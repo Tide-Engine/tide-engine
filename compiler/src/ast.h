@@ -168,6 +168,7 @@ typedef enum type_kind {
     TY_DOUBLE2X2,
     TY_DOUBLE3X3,
     TY_DOUBLE4X4,
+    TY_FONT,      // Font: a local reference to a font of this machine's registry (tide/font.h): Font.Regular, Font.Bold, an asset's or a decoded one
 } type_kind;
 
 typedef struct type {
@@ -1008,6 +1009,7 @@ typedef enum builtin_call {
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_NEW_MESH,  // Mesh(vertices, indices): a static mesh of the game's own lists, copied
     CALL_MESH_DECODE, // Mesh<V>.Decode(bytes): a static mesh read from a file's bytes; type_decl is the Mesh<V>
+    CALL_FONT_DECODE, // Font.Decode(bytes): a font file's bytes read into this machine's registry
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
     CALL_DERIVATIVE, // this.Ddx(v), this.Ddy(v) and this.Fwidth(v), in a frag: how fast v changes across a pixel; `name` says which
     CALL_COVER,     // this.Cutout(alpha) and this.Coverage(share), in a frag: how much of the pixel it covers; `name` says which
@@ -1535,10 +1537,10 @@ typedef struct program {
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.
     decl *anchor;        // The built-in enum Anchor: where GUILayout.Area goes, and the place of a text's box
-    decl *font;          // The built-in enum Font, the weight text is drawn in
-    // Whether code names Font.Bold, or makes a Font of a number: only then does
-    // generated C name the bold weight's file, so only then does the game carry it.
+    // Whether code names Font.Bold: only then does generated C name the bold
+    // weight's file, so only then does the game carry it.
     bool names_bold;
+    bool font_decodes;   // It says Font.Decode: generated C has its helper
     bool uses_microphone; // It says Clip.Microphone: its Android app asks to record
     // Whether code names Filter.Trilinear: only then does generated C have the member, and only then is a
     // Sample that leaves its filter to the Texture it's given written so that it can read between that

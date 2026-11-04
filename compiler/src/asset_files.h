@@ -35,6 +35,7 @@ typedef enum asset_kind {
     ASSET_ANIMATION, // Animation: one selected clip from an animation source.
     ASSET_HUMANOID, // HumanoidRig: a checked calibration profile, packed as immutable typed blocks.
     ASSET_VALUES,   // A constant List<T> build code made: plain elements side by side (build_code.h)
+    ASSET_FONT,     // Font: a TrueType font file, read into font data (tide/font.h), which `data` then is
 } asset_kind;
 
 typedef struct asset_match {

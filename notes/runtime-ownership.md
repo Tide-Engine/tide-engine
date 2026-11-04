@@ -1,5 +1,9 @@
 # Runtime written by Claude for now
 
+## Fonts: the checked reader and the registry (2026-11-03)
+
+Under the drawing maintenance exception, with the owner's request for custom fonts and runtime decoding: `engine/include/tide/font.h` and `engine/src/font_data.c` (font files into checked font data, its check, and the registry of a program's fonts) are Claude's on the same terms. New runtime functions generated code calls: `tide_font_find` (a Font's font, in `tide_font_file`), `tide_font_decode` (Font.Decode's helper) and `tide_pack_font_of` (an `asset Font`); the pack builder gains `tide_pack_font`, which only tidec calls. The C drawing API takes `const tide_font *` where it took a weight's file (`tide_draw_text_at`, `tide_measure_fn`, `tide_platform_measure_text`, `tide_draw_measure_text`), `tide_draw_list` has `fonts` in place of `bold`, a text command `words.font` in place of `words.bold`, and `tide_gui_theme` a `font`; hosts and game libraries rebuild together. No match state changes: a Font is local. Details: `notes/rendering.md`, Fonts of a game's own.
+
 ## Build code's constant lists (2026-11-03)
 
 Under the pack maintenance exception, the owner-approved build code (docs/spec.md, Build code) adds one pack

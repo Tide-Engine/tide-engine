@@ -65,7 +65,7 @@ void Texts(float v, float w, int number)
 {
     Draw.Text("text", float2(v, w), v, Color.white);
     Draw.Text("two\nlines", float2(w, v), w, Color(v, w, v, w), Anchor(number));
-    Draw.Text("bold", float2(0, 0), v, Color.white, Anchor(number % 9), Font(number));
+    Draw.Text("bold", float2(0, 0), v, Color.white, Anchor(number % 9), number % 2 == 0 ? Font.Regular : Font.Bold);
     var measured = Draw.MeasureText("measured\n\n", v) + Draw.MeasureText("", w, Font.Bold);
     Draw.Text($"{measured}", measured, 12, Color.white);
     var there = Draw.WorldToScreen(float2(v, w)) + Draw.ScreenToWorld(float2(w, v)) + Screen.Flip(float2(v, w));

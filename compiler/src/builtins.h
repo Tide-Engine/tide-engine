@@ -24,9 +24,8 @@ bool builtin_frame_clock(str name);
 
 // The program's Anchor enum, which GUILayout.Area and Draw.Text take, its
 // Shape struct, which Draw.Shape does, its Blend enum, which Draw.Blend
-// does, and its Font enum, a text's weight. Call before resolving calls.
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
-                  const decl *font);
+// does. Call before resolving calls.
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull);
 void builtins_use_io(const decl *bytes, const decl *paths);
 
 // Web.Request's types, which are Tide's own code: WebRequest, with the

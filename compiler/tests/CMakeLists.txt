@@ -214,6 +214,7 @@ tide_e2e_test(audio_listener_only) # Audio.SetListener with nothing to play stil
 tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Texture and Grid2<Color> assets
 tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/texture assets
 tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
+tide_e2e_test(fonts) # Font assets alone and of globs, Font.Decode and the GUI theme's font, as registry fonts
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(mesh_values)
 tide_e2e_test(mesh_decode) # Mesh<V>.Decode: a file's bytes in match code, the vertices its asset has

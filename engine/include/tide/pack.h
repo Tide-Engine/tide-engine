@@ -7,6 +7,7 @@
 #include "tide/color.h"
 #include "tide/audio.h"
 #include "tide/draw.h"
+#include "tide/font.h"
 #include "tide/grid.h"
 #include "tide/list.h"
 #include "tide/map.h"
@@ -77,6 +78,11 @@ enum {
     TIDE_PACK_SKINNED = 14,
     TIDE_PACK_SKINNEDS = 15, // List<SkinnedMesh<V>>: three handles per element; `size` is its count
     TIDE_PACK_SKINNED_MAP = 16, // Map<string, SkinnedMesh<V>>: live, key, three handles; `size` is its index offset
+    // Font: font data (tide/font.h), a font file as the build read it (tide_pack_font), in a block laid out as a
+    // clip's is. Loading adds it to the font registry, and a Font names it there (tide_pack_font_of). A list's
+    // elements' kind too (`extra`)
+    TIDE_PACK_FONT = 17,
+    TIDE_PACK_FONTS = 18, // Map<string, Font> of a glob: as TIDE_PACK_MAP, its values' blocks fonts
 };
 
 // The hidden portable model bytes followed by ordinary typed geometry lists.
@@ -166,6 +172,9 @@ uint64_t tide_pack_texture_blocks(tide_pack_builder *b, const uint8_t content[32
 // block's offset: the version it's told by in its header (the content's
 // first bytes, never 0), then its size, then the bytes.
 uint64_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size);
+// A font's font data of `size` bytes (tide/font.h), shared by `content`. Its
+// block's offset, laid out as a clip's: a version, its size, then the bytes.
+uint64_t tide_pack_font(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size);
 
 // A mesh: `count` vertices of `vertex` bytes each, as the game's vertex
 // struct lays one out, and `index_count` ints, three a triangle. Two blocks,
@@ -297,6 +306,10 @@ bool tide_pack_cubemap_find(uint64_t named, int32_t *size, uint64_t *version, co
 // clips are laid out after the region as textures' are. The default Clip for
 // no entry.
 tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e);
+// The Font an `asset Font` resolves to: its font data, which loading the pack
+// checked and added to the font registry (tide/font.h). Font.Regular for an
+// entry that's no font, or whose data isn't font data.
+tide_font_ref tide_pack_font_of(const tide_pack_entry *e);
 
 // The loaded pack's sound that a Clip names: the file's bytes as they are,
 // and a version that's what's in them (the file's hash). False when the pack

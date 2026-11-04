@@ -1372,10 +1372,10 @@ typedef struct resource_outer {
     const struct resource_outer *previous;
 } resource_outer;
 
-static bool holds_render_resource_in(const type t, const resource_outer *outer)
+static bool holds_render_resource_in(const type t, const resource_outer *outer, const bool fonts)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_CLIP) return true;
+        || t.kind == TY_CLIP || (fonts && t.kind == TY_FONT)) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
@@ -1383,14 +1383,23 @@ static bool holds_render_resource_in(const type t, const resource_outer *outer)
     }
     const resource_outer here = {t.decl, outer};
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (holds_render_resource_in(t.decl->fields.items[i].type, &here)) return true;
+        if (holds_render_resource_in(t.decl->fields.items[i].type, &here, fonts)) return true;
     }
     return false;
 }
 
+// Whether a value of `t` is or holds this machine's: a rendering resource, a
+// Clip or a Font, which the match can't use.
 static bool holds_render_resource(const type t)
 {
-    return holds_render_resource_in(t, NULL);
+    return holds_render_resource_in(t, NULL, true);
+}
+
+// The same, but for a Font, which is a number however it's kept: a constant
+// holds one (a GUITheme's), and a parameter takes one as its default.
+static bool holds_resource_but_font(const type t)
+{
+    return holds_render_resource_in(t, NULL, false);
 }
 
 static bool holds_local_handle(const type t, const int depth)
@@ -1856,7 +1865,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
     case TY_STRUCT:
-    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP:
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
         return true;
     case TY_MESH: // An asset's glob of mesh files
         if (asset) return true;
@@ -2104,7 +2113,7 @@ static type resolve_arg(const checker *c, const type_ref *arg, const generic_for
     const type t = resolve_type(&scoped, arg, places[kind], at);
     switch (kind) {
     case GENERIC_ELEMENT: return element_ok(t, at, key, asset || (borrow && (!key || key->kind == TY_STRING)
-                                           && (t.kind == TY_CLIP || t.kind == TY_TEXTURE || t.kind == TY_MESH))) ? t : T_ERR;
+                                           && (t.kind == TY_CLIP || t.kind == TY_TEXTURE || t.kind == TY_FONT || t.kind == TY_MESH))) ? t : T_ERR;
     case GENERIC_KEY: return map_key_ok(t, at, strcmp(form->name, "Set") == 0) ? t : T_ERR;
     default: return grid_cell_ok(t, at) ? t : T_ERR;
     }
@@ -2478,7 +2487,7 @@ static bool array_element_ok(const type t, const loc at)
         }
         return true;
     case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
-    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: return true;
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
@@ -2725,11 +2734,32 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         return want;
     }
     const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
+    if (e->enum_shorthand && inner.kind == TY_FONT) {
+        // .Bold where a Font goes is Font.Bold, as an enum's member would be
+        e->enum_shorthand = false;
+        e->object = NEW(expr);
+        e->object->kind = E_NAME;
+        e->object->at = e->at;
+        e->object->name = str_from("Font");
+        return check_expr_any(c, e);
+    }
     if (e->enum_shorthand) {
         e->type_decl = inner.kind == TY_ENUM ? inner.decl : NULL;
         return check_expr_any(c, e);
     }
-    if (e->kind == E_CONDITIONAL && (inner.kind == TY_ENUM || (inner.decl && inner.decl->asset_ref_of)) && !checked) e->type_decl = inner.decl;
+    if (e->kind == E_CONDITIONAL && inner.kind == TY_FONT && !checked) {
+        // bold ? .Bold : .Regular, where a Font goes: each side is Font's
+        expr *sides[2] = {e->lhs, e->rhs};
+        for (int i = 0; i < 2; i++) {
+            if (!sides[i]->enum_shorthand) continue;
+            sides[i]->enum_shorthand = false;
+            sides[i]->object = NEW(expr);
+            sides[i]->object->kind = E_NAME;
+            sides[i]->object->at = sides[i]->at;
+            sides[i]->object->name = str_from("Font");
+        }
+    }
+    if (e->kind == E_CONDITIONAL && (inner.kind == TY_ENUM ||(inner.decl && inner.decl->asset_ref_of)) && !checked) e->type_decl = inner.decl;
     if (e->kind == E_LIST) {
         const bool takes_list = inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY || inner.kind == TY_ERROR;
         if (!takes_list) diag_error(e->at, "a list's type comes from where it goes: 'List<int> scores = [1, 2];'");
@@ -3694,7 +3724,6 @@ static type check_enum_conversion(checker *c, expr *e, decl *d)
     // Its name is the enum's, for editors, whatever its arguments are: it's a call only once they're right
     e->type_decl = d;
     e->ctor = CTOR_ENUM;
-    if (d == c->prog->font) c->prog->names_bold = true; // Whatever number it's of
     const type target = {TY_ENUM, d};
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
@@ -5165,7 +5194,7 @@ static bool arg_fits(const expr *arg, const param *p)
         return out_untyped(arg) || arg->type.kind == TY_ERROR || p->type.kind == TY_ERROR || same_type(p->type, arg->type);
     }
     const type inner = p->type.kind == TY_OPTIONAL ? wrapped_value(p->type) : p->type;
-    if (arg->enum_shorthand) return p->mode != PARAM_MUT && inner.kind == TY_ENUM;
+    if (arg->enum_shorthand) return p->mode != PARAM_MUT && (inner.kind == TY_ENUM || inner.kind == TY_FONT);
     if (arg->kind == E_DEFAULT) return p->mode != PARAM_MUT;
     if (arg->kind == E_NULL) return p->mode != PARAM_MUT && p->type.kind == TY_OPTIONAL;
     if (arg->kind == E_LIST) return p->mode != PARAM_MUT && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY);
@@ -7958,6 +7987,46 @@ static type check_mesh_decode(checker *c, expr *e, bool *handled)
     return result_of(c->prog, mesh, (type){TY_ENUM, c->prog->io_error}, false);
 }
 
+// Font.Decode(bytes): a font file's bytes read into this machine's font
+// registry (tide/font.h) as an asset of the file is read, every place it says
+// checked before it's read, so what's drawn is checked font data. A Font is
+// this machine's, so local code decodes, and the functions it calls. It fails
+// with IOError.InvalidData.
+static type check_font_decode(checker *c, expr *e, bool *handled)
+{
+    *handled = false;
+    expr *receiver = e->object;
+    if (!receiver || receiver->kind != E_NAME || !str_eq_c(receiver->name, "Font") || receiver->type_arg_ref
+        || find_local(c, receiver->name) || find_param(c, receiver->name) || field_in_scope(c, receiver->name)) {
+        return T_ERR;
+    }
+    *handled = true;
+    if (!str_eq_c(e->name, "Decode")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Font has the static method Decode(bytes), not '" STR_FMT "'", STR_ARG(e->name));
+        diag_note("a Font is 'Font.Regular', 'Font.Bold', an 'asset Font' or one 'Font.Decode(bytes)' read");
+        return T_ERR;
+    }
+    if (gpu_code(c)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a Font is decoded in CPU code, and drawn with: 'Draw.Text(text, position, size, color, font)'");
+        return T_ERR;
+    }
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+    if (!skinned_arguments(c, e, "bytes", 0, &bytes, 1, -1)) return T_ERR;
+    if (!c->method && !local_code(c)) {
+        diag_error(e->at, "a Font is this machine's, so the match can't decode one: Font.Decode is for local code");
+        diag_note("decode it in a view, a local handler or a local task, from bytes the match keeps if every machine "
+                  "should draw it: 'myFont = Font.Decode(match.fontBytes)!;'");
+        return T_ERR;
+    }
+    receiver->type = (type){TY_FONT, NULL};
+    e->call = CALL_FONT_DECODE;
+    if (builds(c->prog)) c->prog->font_decodes = true;
+    c->prog->uses_text = true; // Its bytes are flattened in the scratch area
+    return result_of(c->prog, (type){TY_FONT, NULL}, (type){TY_ENUM, c->prog->io_error}, false);
+}
+
 static decl *named_enum(const checker *c, const expr *e);
 // Sample's filter and wrap have fixed enum types even though this call's
 // shader binding is checked separately from the ordinary signature table.
@@ -8350,6 +8419,9 @@ static type check_method(checker *c, expr *e)
     bool mesh_decode_handled = false;
     const type mesh_decoded = check_mesh_decode(c, e, &mesh_decode_handled);
     if (mesh_decode_handled) return mesh_decoded;
+    bool font_decode_handled = false;
+    const type font_decoded = check_font_decode(c, e, &font_decode_handled);
+    if (font_decode_handled) return font_decoded;
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
         if (!world && str_eq_c(e->object->name, "world") && !field_in_scope(c, e->object->name)
@@ -9506,9 +9578,6 @@ static type check_enum_member(expr *e, decl *d)
     suggestion s = suggest_start(e->member);
     for (int i = 0; i < d->members.count; i++) suggest_consider(&s, d->members.items[i].name);
     suggest_note(&s);
-    if (d->builtin && str_eq_c(d->name, "Font")) {
-        diag_note("the engine's font has two weights, 'Font.Regular' and 'Font.Bold'");
-    }
     if (d->builtin && str_eq_c(d->name, "Depth")) {
         diag_note("a 3D mesh reads depth and writes it, 'Depth.ReadWrite', as each frame starts; only reads it, "
                   "'Depth.Read', hidden behind what's nearer and hiding nothing; or does neither, 'Depth.None'");
@@ -9695,7 +9764,6 @@ static type check_member(checker *c, expr *e)
         }
         if (builds(c->prog) && !c->prog->quiet_names && named_only(c->prog, e->type_decl)) e->type_decl->named = true;
         const type member = check_enum_member(e, e->type_decl);
-        if (e->type_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
         if (e->type_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
         return member;
     }
@@ -9716,6 +9784,8 @@ static type check_member(checker *c, expr *e)
         }
         if (str_eq_c(e->object->name, "Application") && str_eq_c(e->member, "title")) c->prog->uses_title = true;
         if (str_eq_c(e->object->name, "Clip")) c->prog->uses_clip_values = true;
+        // Font.Bold: the game draws in bold, so it carries the bold's file
+        if (str_eq_c(e->object->name, "Font") && str_eq_c(e->member, "Bold") && builds(c->prog)) c->prog->names_bold = true;
         // Clip.Microphone: the game records, which its Android app's manifest has to say
         if (str_eq_c(e->object->name, "Clip") && str_eq_c(e->member, "Microphone") && builds(c->prog)) c->prog->uses_microphone = true;
         if (builtin_old_draw_owner(e->object->name)) {
@@ -9738,6 +9808,9 @@ static type check_member(checker *c, expr *e)
             diag_note("'Frame.dt' is the seconds since this machine's previous frame started");
         } else if (str_eq_c(e->object->name, "Frame")) {
             if (!check_frame_time_use(c, e->at)) return T_ERR;
+        } else if (str_eq_c(e->object->name, "Font") && member.kind == TY_ERROR) {
+            diag_note("the engine's font has two weights, 'Font.Regular' and 'Font.Bold'; any other font is an asset, "
+                      "'asset Font title = \"fonts/Title.ttf\";', or one 'Font.Decode(bytes)' read");
         } else if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
             diag_note("'Cursor.locked' is whether the window holds the cursor, hidden, which 'Cursor.Lock()' asks for");
         } else if (str_eq_c(e->object->name, "Cursor")) {
@@ -9751,8 +9824,6 @@ static type check_member(checker *c, expr *e)
     decl *const enum_decl = named_enum(c, e->object);
     if (enum_decl) {
         const type member = check_enum_member(e, enum_decl);
-        // Font.Bold: the game draws in bold, so it carries the bold's file
-        if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
         // Filter.Trilinear: the game's textures can be read between their smaller images
         if (enum_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
         return member;
@@ -14295,7 +14366,7 @@ static type constant_type(const checker *c, const decl *k, const bool built)
             diag_error(at, "a constant can't hold callable or shader bindings: they belong in local state");
             return T_ERR;
         }
-        if (holds_render_resource(t)) {
+        if (holds_resource_but_font(t)) {
             diag_error(at, "a constant can't hold rendering resources, including inside a struct");
             return T_ERR;
         }
@@ -14312,7 +14383,7 @@ static type constant_type(const checker *c, const decl *k, const bool built)
         diag_note("for the values a component starts with, give its fields defaults: 'int lives = 3;'");
         return T_ERR;
     default:
-        if (holds_render_resource(t)) {
+        if (holds_resource_but_font(t)) {
             diag_error(at, "a constant can't hold rendering resources");
             return T_ERR;
         }
@@ -14784,6 +14855,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (inner.kind == TY_GRID && inner.decl->dims == 2 && grid_cell(inner).kind == TY_COLOR) *kind = ASSET_GRID;
     else if (inner.kind == TY_TEXTURE) *kind = ASSET_TEXTURE;
     else if (inner.kind == TY_CLIP) *kind = ASSET_CLIP;
+    else if (inner.kind == TY_FONT) *kind = ASSET_FONT;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATIONS) *kind = ASSET_ANIMATIONS;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATION) *kind = ASSET_ANIMATION;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_HUMANOID_RIG) {
@@ -16119,7 +16191,7 @@ static void check_param_default(checker *c, const decl *m, const param *p)
     case TY_INPUT: refused = "the input context, which the caller passes explicitly"; break;
     default: break;
     }
-    if (!refused && holds_render_resource(p->type)) refused = "a rendering resource, which the caller passes";
+    if (!refused && holds_resource_but_font(p->type)) refused = "a rendering resource, which the caller passes";
     if (refused) {
         diag_error(value->at, "'" STR_FMT "' is %s: it takes no default", STR_ARG(p->name), refused);
         diag_note("defaults are for plain values, like 'float multiplier = 1'");
@@ -18753,20 +18825,6 @@ static void add_builtins(program *prog)
     }
     prog->anchor = anchor;
 
-    // enum Font { Regular, Bold }: the weight Draw.Text draws in. Each is a
-    // file of the engine's font, and C names a weight by its file (tide/draw.h:
-    // TIDE_FONT_REGULAR, TIDE_FONT_BOLD), which generated code turns these into.
-    static const char *const fonts[] = {"Regular", "Bold"};
-    decl *font = NEW(decl);
-    font->kind = DECL_ENUM;
-    font->name = str_from("Font");
-    font->builtin = true;
-    for (int i = 0; i < (int)(sizeof fonts / sizeof fonts[0]); i++) {
-        const enum_member m = {str_from(fonts[i]), {0, 0, 0}, NULL, i};
-        vec_push(font->members, m);
-    }
-    prog->font = font;
-
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
     // a corner of what Draw.Mesh draws, as tide/draw.h's tide_vertex. And
     // enum Filter { Point, Bilinear, Trilinear }: how it reads its texture
@@ -18892,6 +18950,11 @@ static void add_builtins(program *prog)
         if (color || strcmp(theme_more[i][2], "0") != 0) f.default_value = value;
         vec_push(theme->fields, f);
     }
+    // ...and the font its widgets' text is in: Font.Regular, a Font's default
+    field theme_font = {0};
+    theme_font.name = str_from("font");
+    theme_font.type_name = str_from("Font");
+    vec_push(theme->fields, theme_font);
     prog->gui_theme = theme;
     // GUI.Control's interaction flags and GUI-space pointer position, as
     // tide/gui.h's tide_control. Generated padding stays explicit and zeroed.
@@ -19208,7 +19271,6 @@ static void add_builtins(program *prog)
     vec_push(decls, format);
     vec_push(decls, stencil_test);
     vec_push(decls, stencil_op);
-    vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
     vec_push(decls, session);
@@ -22633,7 +22695,7 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull, prog->font);
+    builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull);
     builtins_use_format(prog->format);
     builtins_use_stencil(prog->stencil_test, prog->stencil_op);
     builtins_use_gui(prog->gui_theme, prog->gui_control);

@@ -64,8 +64,8 @@
 # text, and has to be there.
 
 # The bold weight's file (platform/font/Tuffy_Bold.ttf) as a library of that
-# one object. A game that says Font.Bold names the file in its C
-# (tide_font_bold_ttf, tide/draw.h), and a linker takes it out of a library for
+# one object. A game that says Font.Bold names it in its C (tide_font_bold,
+# TIDE_FONT_BOLD in tide/draw.h), and a linker takes it out of a library for
 # such a game alone: out of the platform layer's, which has it too, for a game
 # with a window, and out of this one for a HOST's program, which may link no
 # platform layer. So a game builds whichever program it's in, and one that
@@ -73,11 +73,14 @@
 set(TIDE_FONT_BOLD_C "${PROJECT_BINARY_DIR}/tide_font_bold/tide_font_bold.c")
 add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf"
-        "-DOUTPUT=${TIDE_FONT_BOLD_C}" -DNAME=tide_font_bold_ttf -P "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
-    DEPENDS "${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf" "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+        "-DOUTPUT=${TIDE_FONT_BOLD_C}" -DNAME=tide_font_bold_ttf
+        "-DAPPEND=${PROJECT_SOURCE_DIR}/platform/font/tide_font_bold.inc" -P "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf" "${PROJECT_SOURCE_DIR}/platform/font/tide_font_bold.inc"
+        "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
     COMMENT "The bold font as C"
     VERBATIM)
 add_library(tide_font_bold STATIC "${TIDE_FONT_BOLD_C}")
+target_include_directories(tide_font_bold PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../engine/include")
 
 set(TIDE_GAMES_MANIFEST "${PROJECT_SOURCE_DIR}/build/tools/games.txt")
 set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")

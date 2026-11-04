@@ -1765,6 +1765,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. Fields, lists, arrays, maps, parameters and results keep its stable asset ID; geometry stays shared and resolves on access. `Mesh(vertices, indices)` makes one of the game's own lists, a copy nothing changes after, which goes everywhere an asset's does.";
+    case TY_FONT: return "A font text is drawn in, this machine's: `Font.Regular` (the engine's, and a `Font`'s default), `Font.Bold` (its bold weight, a file a game carries only when it says so), an `asset Font` of a TrueType file (`asset Font title = \"fonts/Title.ttf\";`), or one `Font.Decode(bytes)` read from a file's bytes as the game runs. `Draw.Text` and `Draw.MeasureText` take one after their other arguments, and `GUITheme.font` is the GUI's. A character a font has no glyph for is drawn in `Font.Regular`. The match can't use one.";
     case TY_CLIP: return "A sound of the game's pack, this machine's to play: an `asset Clip` by its name, or a copy of one. `Audio.Play(clip[, position][, volume[, pitch]])` plays it once, from views, local handlers and the functions they call; a `Sound` field keeps one playing. The match can't use it.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -3274,11 +3275,7 @@ static void describe(const occurrence *o, sb *out)
             else if (o->decl == A.prog->visibility) sb_put(out, "\n\n" VISIBILITY_DOC);
             else if (o->decl == A.prog->visibility_group) sb_put(out, "\n\n" VISIBILITY_GROUP_DOC);
             else if (retarget_type_doc(o->decl)) sb_printf(out, "\n\n%s", retarget_type_doc(o->decl));
-            else if (o->decl == A.prog->font) {
-                sb_put(out, "\n\nThe weight `Draw.Text` draws in and `Draw.MeasureText` measures in, after their "
-                            "other arguments: `Font.Regular` (what they use without one) or `Font.Bold`, the font's "
-                            "own bold. A game only carries the bold weight's file when its code says `Font.Bold`.");
-            } else if (o->decl == A.prog->anchor) {
+            else if (o->decl == A.prog->anchor) {
                 sb_put(out, "\n\nA place of a box, as Unity's `TextAnchor`: where `GUILayout.Area` puts an area on "
                             "the screen, and which place of a text's box is at the position `Draw.Text` takes "
                             "(`Anchor.MiddleCenter` centers it there). Upper is towards the top of the screen.");
@@ -3454,6 +3451,11 @@ static void describe(const occurrence *o, sb *out)
             if (o->decl->asset_kind == ASSET_CLIP) {
                 sb_put(out, " A `Clip` is a sound to play, this machine's (WAV, Ogg Vorbis, MP3 or FLAC): `Audio.Play(name)` in a view "
                             "or a local handler plays it, and the match can't use it.");
+            }
+            if (o->decl->asset_kind == ASSET_FONT) {
+                sb_put(out, " A `Font` is a TrueType font file (`.ttf`, an `.otf` of TrueType outlines, or a `.ttc`'s first "
+                            "font) to draw text in, this machine's: `Draw.Text(text, position, size, color, name)`, or "
+                            "`GUITheme { font = name }` for the GUI. The match can't use it.");
             }
             if (o->decl->asset_kind == ASSET_MESH) {
                 sb_put(out, " A `Mesh` is a glTF (`.glb`, `.gltf`), FBX or OBJ file as one mesh of its vertex struct: the file "
@@ -8005,6 +8007,7 @@ static void complete_asset_types(completion *c, const bool collection)
     item(c, "string", CK_STRUCT, "UTF-8 text asset", builtin_type_doc(TY_STRING), NULL);
     item(c, "Texture", CK_STRUCT, "Image asset", builtin_type_doc(TY_TEXTURE), NULL);
     item(c, "Clip", CK_STRUCT, "Sound asset", builtin_type_doc(TY_CLIP), NULL);
+    item(c, "Font", CK_STRUCT, "Font asset", builtin_type_doc(TY_FONT), NULL);
     item(c, "Grid2", CK_STRUCT, "Grid2<Color>: image pixels", builtin_type_doc(TY_GRID), "Grid2<Color>");
     item(c, "Mesh", CK_STRUCT, "Mesh<V>: static model asset, or a mesh the game made", builtin_type_doc(TY_MESH), "Mesh<${1:Vertex3}>");
     item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>: animated model asset",
@@ -9423,6 +9426,27 @@ static void complete_out_argument(completion *c, const out_argument *arg, const 
 }
 
 
+// Font's two members, as an enum's, for completing `.Bold` where a Font goes.
+static const decl *font_choices(void)
+{
+    static decl font;
+    if (!font.members.count) {
+        font.kind = DECL_ENUM;
+        font.name = str_from("Font");
+        font.builtin = true;
+        const enum_member regular = {str_from("Regular"), {0, 0, 0}, NULL, 0}, bold = {str_from("Bold"), {0, 0, 0}, NULL, 1};
+        vec_push(font.members, regular);
+        vec_push(font.members, bold);
+    }
+    return &font;
+}
+
+// The enum whose members `.` completes where a value of `t` goes: its own, or Font's two.
+static const decl *choices_of(const type t)
+{
+    return t.kind == TY_ENUM ? t.decl : t.kind == TY_FONT ? font_choices() : NULL;
+}
+
 // Expected enum at an incomplete expression: the recovering parser may have
 // discarded its statement, so use the preceding tokens and the surviving scope.
 typedef struct enum_argument_completion {
@@ -9435,7 +9459,7 @@ typedef struct enum_argument_completion {
 
 static void enum_argument_type(enum_argument_completion *v, const type t)
 {
-    const decl *of = t.kind == TY_ENUM ? t.decl : NULL;
+    const decl *of = choices_of(t);
     if (!of || (v->found && v->of != of)) v->ambiguous = true;
     v->found = true;
     v->of = of;
@@ -9460,6 +9484,7 @@ static void visit_enum_argument(void *user, const char *label, const char *doc)
             decl *d = A.prog->decls.items[i];
             if (d->kind == DECL_ENUM && str_eq(written, d->name)) { t = (type){TY_ENUM, d}; break; }
         }
+        if (str_eq_c(written, "Font")) t = (type){TY_FONT, NULL};
         enum_argument_type(v, t);
     }
 }
@@ -9519,7 +9544,7 @@ static const decl *completion_enum(const scope *sc, const int last, const int br
         const type indexed = names_type(sc, first, last - 1);
         if (indexed.decl && indexed.decl->skin_kind == SKIN_HUMANOID_RIG) return A.prog->humanoid_bone;
     }
-    if (kind == T_RETURN && sc->decl && sc->decl->return_type.kind == TY_ENUM) return sc->decl->return_type.decl;
+    if (kind == T_RETURN && sc->decl && choices_of(sc->decl->return_type)) return choices_of(sc->decl->return_type);
     if (kind == T_CASE) {
         const int switched = switch_of_brace(brace);
         return switched >= 0 ? switch_enum(sc, switched, brace) : NULL;
@@ -9529,7 +9554,7 @@ static const decl *completion_enum(const scope *sc, const int last, const int br
     int first = last - 1;
     while (first >= 2 && toks[first - 1].kind == T_DOT && toks[first - 2].kind == T_IDENT) first -= 2;
     type t = names_type(sc, first, last - 1);
-    if (t.kind == TY_ENUM) return t.decl;
+    if (choices_of(t)) return choices_of(t);
     // A typed declaration, including a field default: ZombieState state =
     if (kind != T_ASSIGN || first < 1 || toks[first].kind != T_IDENT || toks[first - 1].kind != T_IDENT) return NULL;
     int type_first = first - 1;

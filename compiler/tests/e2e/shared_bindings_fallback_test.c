@@ -36,7 +36,7 @@ static tide_int2 changing_target_size(tide_target_size size)
 }
 
 static tide_float2 changing_text_measure(const char *text, float size, const tide_target_size *target,
-                                        const unsigned char *font)
+                                        const tide_font *font)
 {
     (void)text;
     (void)size;

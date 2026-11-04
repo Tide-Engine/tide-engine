@@ -1317,7 +1317,7 @@ TIDE_TEST(lsp_text_anchor_and_font)
     open_document(TEXT_VIEW("    var size = Draw.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw.Rect(size, size, Color.white);"));
     TIDE_CHECK(has(request("textDocument/hover"), "Draw.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
     open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
-    TIDE_CHECK(has(request("textDocument/hover"), "A game only carries the bold weight's file when its code says"));
+    TIDE_CHECK(has(request("textDocument/hover"), "a file a game carries only when it says so"));
     open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
     TIDE_CHECK(has(request("textDocument/hover"), "which place of a text's box is at the position"));
 

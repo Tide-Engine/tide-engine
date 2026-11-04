@@ -61,6 +61,7 @@ tide_gui_theme tide_gui_theme_default(void)
         .text_size = 16.0f,
         .padding = 12.0f,
         .spacing = 5.0f,
+        .font = TIDE_FONT_REGULAR,
     };
 }
 
@@ -180,7 +181,7 @@ static float clamp_f(const float v, const float lo, const float hi)
 
 static float text_width(const tide_gui *g, const char *text)
 {
-    return g->measure(text, FONT, NULL, TIDE_FONT_REGULAR).x; // The GUI draws in the window
+    return g->measure(text, FONT, NULL, g->theme.font).x; // The GUI draws in the window
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +287,10 @@ static void body(tide_gui *g, const uint32_t id, const tide_rect r, const tide_c
 // Text starting at `x`, centered on `middle` vertically.
 static void text_at(tide_gui *g, const char *text, const float x, const float middle, const tide_color color)
 {
-    if (text[0]) tide_draw_text(&g->list, text, tide_f2(x, middle - FONT * 0.5f), FONT, shade(g, color));
+    if (text[0]) {
+        tide_draw_text_at(&g->list, text, tide_f2(x, middle - FONT * 0.5f), FONT, shade(g, color), TIDE_ANCHOR_UPPER_LEFT,
+                          g->theme.font);
+    }
 }
 
 static void text_centered(tide_gui *g, const char *text, const tide_rect r, const tide_color color)

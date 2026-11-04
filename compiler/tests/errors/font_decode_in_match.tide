@@ -1,0 +1,12 @@
+// expect: a Font is this machine's, so the match can't decode one
+asset List<byte> bytes = "font_decode_in_match.tide";
+
+singleton Holder { int tries; }
+
+scene Main { }
+
+system Decode(mut Holder holder)
+{
+    holder.tries += 1;
+    var font = Font.Decode(bytes);
+}

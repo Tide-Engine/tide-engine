@@ -51,6 +51,13 @@ typedef struct texture_entry {
     tide_texture_ref value;
 } texture_entry;
 
+// ...and from text to fonts.
+typedef struct font_entry {
+    int64_t live;
+    tide_handle key;
+    tide_font_ref value;
+} font_entry;
+
 typedef struct handle_entry {
     int64_t live;
     tide_handle key;
@@ -525,6 +532,10 @@ static uint64_t textures_room(const uint8_t *region, const uint64_t size, const 
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(tide_handle)) * sizeof(tide_clip_ref));
         } else if (e->kind == TIDE_PACK_CLIPS) {
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(handle_entry)) * sizeof(clip_entry));
+        } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_FONT) {
+            room += padded((uint64_t)count_at(region, size, e->offset, sizeof(tide_handle)) * sizeof(tide_font_ref));
+        } else if (e->kind == TIDE_PACK_FONTS) {
+            room += padded((uint64_t)count_at(region, size, e->offset, sizeof(handle_entry)) * sizeof(font_entry));
         }
     }
     return room;
@@ -592,6 +603,16 @@ static tide_clip_ref note_clip(const uint64_t named, const uint64_t offset, cons
     return (tide_clip_ref){.name = named};
 }
 
+// The font whose block is at `offset` of the file's `file` bytes, added to the
+// registry, which checks it's font data: Font.Regular for a block that isn't
+// whole, or isn't font data.
+static tide_font_ref note_font(const uint64_t offset, const uint64_t file)
+{
+    packed_texture t;
+    if (offset == NOWHERE || !clip_at(pack.region, file, offset, &t)) return (tide_font_ref){0};
+    return (tide_font_ref){tide_font_add(pack.region + offset + sizeof(tide_block) + sizeof(uint32_t), (size_t)t.width)};
+}
+
 // Lays the lists and maps of textures out as Tide reads them, after the
 // file's region (whose `file` bytes they're made from), and has their entries
 // name those. Notes every image on the way.
@@ -637,6 +658,26 @@ static void lay_textures(const uint64_t file)
             }
             e->offset = at;
             e->size = count;
+        } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_FONT) {
+            const uint32_t count = count_at(pack.region, file, e->offset, sizeof(tide_handle));
+            const uint64_t at = lay_block(count, (uint64_t)count * sizeof(tide_font_ref));
+            const tide_handle *handles = (const tide_handle *)(const void *)(pack.region + e->offset + sizeof(tide_block));
+            tide_font_ref *out = (tide_font_ref *)(void *)(pack.region + at + sizeof(tide_block));
+            for (uint32_t k = 0; k < count; k++) out[k] = note_font(place_of(handles[k], file), file);
+            e->offset = at;
+            e->size = count;
+        } else if (e->kind == TIDE_PACK_FONTS) {
+            const uint32_t count = count_at(pack.region, file, e->offset, sizeof(handle_entry));
+            const uint64_t at = lay_block(count, (uint64_t)count * sizeof(font_entry));
+            const handle_entry *from = (const handle_entry *)(const void *)(pack.region + e->offset + sizeof(tide_block));
+            font_entry *out = (font_entry *)(void *)(pack.region + at + sizeof(tide_block));
+            for (uint32_t k = 0; k < count; k++) {
+                out[k].live = from[k].live;
+                out[k].key = from[k].key;
+                out[k].value = note_font(place_of(from[k].value, file), file);
+            }
+            e->offset = at;
+            e->extra = e->extra > count ? count : e->extra;
         } else if (e->kind == TIDE_PACK_CLIPS) {
             const uint32_t count = count_at(pack.region, file, e->offset, sizeof(handle_entry));
             const uint64_t at = lay_block(count, (uint64_t)count * sizeof(clip_entry));
@@ -1078,6 +1119,12 @@ tide_map tide_pack_map_of(const tide_pack_entry *e)
 {
     if (!e) return (tide_map){0};
     return (tide_map){.entries = {tagged(e->offset)}, .index = {tagged(e->size)}, .live = e->extra, .last_order = e->extra};
+}
+
+tide_font_ref tide_pack_font_of(const tide_pack_entry *e)
+{
+    if (!e || e->kind != TIDE_PACK_FONT || e->offset >= pack.file_size) return (tide_font_ref){0};
+    return note_font(e->offset, pack.file_size); // Added as the pack was loaded: found again
 }
 
 tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e)

@@ -583,7 +583,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->mesh_key = d->mesh_key_vertices = d->mesh_key_indices = 0;
     d->unsettled = d->altered = 0;
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
-    d->bold = NULL;
+    d->font_count = 0;
     // The textures the frame drew with stay, for the next to find its pixels
     // here already
     uint32_t kept = 0;
@@ -652,6 +652,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->instances);
     free(d->uniforms);
     free(d->shapes);
+    free(d->fonts);
     free(d->level_room);
     *d = (tide_draw_list){0};
 }
@@ -1969,9 +1970,24 @@ void tide_draw_arc(tide_draw_list *d, const tide_float2 center, const float radi
                                       .sweep = half, .form = TIDE_SHAPE_ARC, .color2 = color});
 }
 
+// 1 + `font`'s place in the list's fonts, which it's added to the first time
+// a frame draws in it; 0 for the regular weight, and for a font past the
+// most a command can name, which is drawn in it.
+static uint16_t font_slot(tide_draw_list *d, const tide_font *font)
+{
+    if (!font) return 0;
+    for (uint32_t i = d->font_count; i > 0; i--) {
+        if (d->fonts[i - 1u] == font) return (uint16_t)i;
+    }
+    if (d->font_count == UINT16_MAX) return 0;
+    d->fonts = grow(d->fonts, d->font_count, &d->font_capacity, 1, sizeof *d->fonts, 8u);
+    d->fonts[d->font_count++] = font;
+    return (uint16_t)d->font_count;
+}
+
 // Text as it's given, through `turn` when a transform turned or stretched it.
 static void push_text(tide_draw_list *d, const char *text, const tide_float2 position, const float size,
-                      const tide_color color, const tide_anchor anchor, const unsigned char *font,
+                      const tide_color color, const tide_anchor anchor, const tide_font *font,
                       const tide_float2x2 *turn)
 {
     uint32_t turned = 0;
@@ -1986,15 +2002,14 @@ static void push_text(tide_draw_list *d, const char *text, const tide_float2 pos
     c->text = d->text_used;
     // An anchor that's none of the nine is the first, as the GUI's areas take one
     c->words.anchor = (uint16_t)((uint32_t)anchor <= TIDE_ANCHOR_LOWER_RIGHT ? anchor : TIDE_ANCHOR_UPPER_LEFT);
-    c->words.bold = font != NULL;
+    c->words.font = font_slot(d, font);
     c->words.turned = turned;
-    if (font) d->bold = font;
     memcpy(d->text + d->text_used, text, bytes);
     d->text_used += (uint32_t)bytes;
 }
 
 void tide_draw_text_at(tide_draw_list *d, const char *text, tide_float2 position, const float size, tide_color color,
-                       const tide_anchor anchor, const unsigned char *font)
+                       const tide_anchor anchor, const tide_font *font)
 {
     const tide_draw_place *p = &d->place;
     if (!d->altered) {
@@ -4233,7 +4248,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
         } else if (c->kind == TIDE_DRAW_TEXT) {
             const uint32_t turned = c->words.turned;
             push_text(d, from->text + c->text, c->a, c->b.x, c->color, (tide_anchor)c->words.anchor,
-                      c->words.bold ? from->bold : TIDE_FONT_REGULAR,
+                      c->words.font && c->words.font <= from->font_count ? from->fonts[c->words.font - 1u]
+                                                                          : TIDE_FONT_REGULAR,
                       turned && turned <= from->turn_count ? &from->turns[turned - 1u] : NULL);
         } else if (c->kind == TIDE_DRAW_MESH) {
             // Its indices are places in `from`'s vertices, which are `d`'s from `base`

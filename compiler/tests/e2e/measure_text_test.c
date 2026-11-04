@@ -19,7 +19,7 @@ static int asks;
 
 // A font of the test's: a character is half as wide as text is tall, and
 // lines are one and a half sizes apart.
-static tide_float2 measure(const char *text, const float size, const tide_target_size *target, const unsigned char *font)
+static tide_float2 measure(const char *text, const float size, const tide_target_size *target, const tide_font *font)
 {
     (void)font;
     if (asks < 16) {

@@ -270,6 +270,23 @@ uint64_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const v
     return at;
 }
 
+uint64_t tide_pack_font(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size)
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_FONT);
+    if (had) return had->offset;
+    const uint64_t at = block(b, sizeof(uint32_t) + (uint64_t)size);
+    tide_block *h = header(b, at);
+    uint64_t version = 0;
+    memcpy(&version, content, sizeof version);
+    if (!version) version = 1u;
+    h->a = (uint32_t)version;
+    h->b = (uint32_t)(version >> 32);
+    memcpy(h + 1, &size, sizeof size);
+    if (size) memcpy((uint8_t *)(h + 1) + sizeof size, data, size);
+    add_shared(b, content, TIDE_PACK_FONT, at, size, 0);
+    return at;
+}
+
 // A list's block of `count` elements of `element` bytes each, with what's in it said after them (tide/pack.h).
 static uint64_t versioned_list(tide_pack_builder *b, const void *elements, const uint32_t element, const uint32_t count,
                                uint64_t version, const uint64_t levels)
