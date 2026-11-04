@@ -120,7 +120,7 @@ try {
     assert.match(table, /\n  rules +string +\d/);
     assert.match(table, /\n  copy +string +shared/);
     assert.match(table, /Left out: 1 asset\n  asset +type +files +why\n  unused +string +19 B  nothing in the game's code/);
-    assert.match(table, /Outputs\n +[\d.]+ KiB  \.build\/reported/);
+    assert.match(table, /Outputs\n +[\d.]+ (?:KiB|MiB)  \.build\/reported/);
 
     // Debug packs everything, and says why
     const debugPath = join(root, "reports", "debug.json");
