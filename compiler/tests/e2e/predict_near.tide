@@ -63,3 +63,12 @@ view Show(Body body, Walker walker, mut Drawn drawn)
     if (walker.id == 1) drawn.firstY = body.position.y;
     else drawn.secondY = body.position.y;
 }
+
+// `with Far` runs for what the tick leaves out: in a client's predicted ticks
+// alone, as nothing else is ever tagged
+singleton FarSeen { int ticks; }
+
+system CountFar(mut FarSeen seen, with Body, with Walker, with Far)
+{
+    seen.ticks += 1;
+}

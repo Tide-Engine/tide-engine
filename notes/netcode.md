@@ -102,17 +102,62 @@ at the confirmed pair's blend (and between its endpoints in over a quarter of
 frames), the near one at the predicted pair's; it fails with the helper
 returning false.
 
+**`Far`, and the physics packages holding far bodies** (same day; the owner
+named it and agreed the design: `with Far`/`without Far`, border islands
+stepped whole, near bodies hearing `Touched`/`Hit` from held ones):
+- `check.c` `far_filter`: `Far` in a `with`/`without` parameter of a system, C
+  system or query names `program.predict_far`; without the setting, a builtin
+  tag no archetype can have (`program.far_absent`, made on first use, so games
+  that never name it don't change), so a package names it either way. `Far far`
+  is an error (`errors/far_filter_binding`, `far_filter_query_binding`). A
+  game's own type named `Far` wins the lookup. A system for each entity that
+  needs the tag doesn't get it added to `without_mask` (it would never run).
+  `warn_unmatched` says a system `with Far` never runs without the setting
+  (`warnings/far_without_prediction_range`); package systems aren't warned.
+  Extern systems' wrappers already split chunks into runs by presence, so the
+  filter needed no codegen change. `tidec_e2e_predict_near` now also has a
+  `with Far` system counting far walker ticks: equal to the ticks predicted past
+  the verified one in every frame, zero on the server and in confirmed worlds.
+- Box2D/Box3D (`notes/box3d.md`, `notes/box2d.md`, each `box*d/TIDE.md`):
+  `HoldFar(Body, mut Physics, with Far)` at `Step` offset 19 hands the far
+  bodies' ids to the bridge, and the step holds them once per run of predicted
+  ticks (`b*World_HoldBodies`, noted into the stamp as `'f'`). `Leave` is
+  `without Far`. Test `tide_box{2,3}d_predict_near`
+  (`packages/test/predict_near_test.c`, the game in each package's `test/`).
+
+Measured (release, Windows, a scratch game not kept: Box3D, 3,000 balls rolling
+45 to 340 units from the players and 25 near them, range 40, a client on a
+100 ms loopback, 14 ticks ahead; client ms a frame over 10 s, server and client
+in one process):
+
+| | whole world | range 40, holding | range 40, not holding |
+|---|---|---|---|
+| guesses always right | 2.8-2.9 | 11.9-12.8 | 33-34 |
+| another player's input changing every 5 ticks | 19.5-21.2 | 14.4-14.9 | |
+
+Where the 14.7 ms goes with the range: Box3D steps 4.1-4.5 (12.1-13.4 whole),
+resident restores and commits 6.9 (5.7-5.9 whole), holding 0.3, the rest
+Tide's ticks. Holding saves most of what the steps cost, but with anything far
+every confirmed tick reruns the lead near-only, which the whole world skips
+when guesses were right: the range costs four times as much there. And holding
+3,000 bodies writes most of the arena, so the commit after it, and the
+verified world's restore the next frame, copy most pages.
+
 Gaps:
-- Whole-world code still runs for far entities in predicted ticks: C systems,
-  singleton systems going through queries, and physics packages' steps (Box2D
-  and Box3D step every body). Tagging what such code reaches is open.
+- Whole-world code still runs for far entities in predicted ticks unless it
+  says `without Far`: C systems and singleton systems going through queries.
 - The filter's per-row cost in ticks that have no tags (the server's,
   confirmed ones): a world-level "nothing is tagged" would let them take the
   unfiltered loops.
 - `World` reads in views (`world.Get<Body>(e)`) of a far entity are the drawn
   world's, not blended from the confirmed one.
 - Every confirmed tick with anything far reruns the near lead even when guesses
-  were right; comparing near rows alone could skip it.
+  were right; comparing near rows alone could skip it. With physics this is the
+  cost that matters (table above): it makes the range four times dearer than
+  predicting everything where guesses are right.
+- Box3D: holding many bodies marks most of the arena, so a held world's commit
+  and the next restore copy most pages (6.9 ms a frame against 5.8 whole in the
+  table). Holding without moving bodies between sets would avoid it.
 
 ## A client's own ticks of its projection; repairs that back off (2026-11-04)
 

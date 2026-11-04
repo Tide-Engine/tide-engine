@@ -1,5 +1,49 @@
 # The Box2D package
 
+## Far bodies held in predicted ticks (2026-11-04)
+
+Under `predictionRange` a client's predicted ticks leave far entities out
+(notes/netcode.md, Predicting near the player alone). The package's step held
+nothing, so far bodies were stepped and moved in every predicted tick. Now, as
+the owner agreed (picks in the spec's `predictionRange` entry):
+- `HoldFar(Body body, mut Physics physics, with Far)`, a C system at `Step`
+  offset 19, gives `b2t_hold_far` the far bodies' ids; it returns at once when
+  the world holds bodies already. `b2t_step` holds them
+  (`b2World_HoldBodies`, box2d/TIDE.md) after code's sleeps and before the
+  step, noting the ids into the stamp (`'f'`), once for each run of predicted
+  ticks: each starts from the verified world, which holds nothing, and the
+  ticks after it find the world holding. Bodies made later in the run aren't
+  held.
+- What's held: each awake island of far bodies alone, put to sleep, and each
+  sleeping set of far bodies alone. A near body that starts touching a held
+  body meets it as a static one: not woken, island not merged, contact in the
+  near island alone, `Touched`/`Hit` reported. A near island touching a held
+  body doesn't fall asleep in predicted ticks. Islands mixing near and far
+  (touching or jointed) aren't held and step whole. Kinematic bodies have no
+  island and aren't held: a far one moving keeps moving in the physics world.
+- `Leave` is `without Far`: far bodies' components aren't written in predicted
+  ticks, so they stay byte for byte confirmed even where the physics world moved
+  them (border islands, kinematic bodies); `Enter` then finds nothing written
+  and leaves the physics world's state alone.
+State: neither flag is in an image; a world restored from one holds nothing
+(`b2World_Restore`). A world that holds bodies is cached by its stamp like any
+other, and the stamp says it holds them: a confirmed tick never finds it.
+While holding, the narrow phase gives a contact with a body neither awake nor
+static no mass, as the solver reads a contact's masses from it, where Box3D's
+reads the body's.
+- Test: `tide_box2d_predict_near` (`packages/test/predict_near_test.c`, shared
+  with Box3D; game `test/predict_near.tide`): a server and two clients on
+  a 100 ms loopback, range 10; a far ball rolling at x = 60, a heavy far wall
+  just past the range, a near ball rolling into it. In every frame a client
+  predicts ahead: the far ball's and the wall's `Body` equal the verified ones,
+  a near system's raycast finds the far ball where its component is (fails with
+  the hold switched off: the physics world moved it on), the near ball runs
+  ahead, never passes the wall's face and stops at it. Over 800 holds, no
+  resyncs, the far ball's confirmed state the server's. The near ball touches
+  the held wall in prediction (the held link path ran about 20-40 times in a
+  run).
+- Measured: see notes/netcode.md, Predicting near the player alone.
+
 ## Layouts with 64-bit handles (2026-10-30)
 
 Lists and maps in `box2d.tide`'s types are 8 and 32 bytes (notes/ecs.md,

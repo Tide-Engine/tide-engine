@@ -11,6 +11,25 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
+Held bodies (2026-11-04): `b2World_HoldBodies` and `b2World_IsHolding`
+(`box2d.h`, `solver_set.c`) hold bodies where they are for a client's predicted
+ticks under `predictionRange`, which leave out what's far from its player. Each
+awake island of given bodies alone is put to sleep (`b2TrySleepIsland`), and it
+and each sleeping set of given bodies alone is marked `held` (`b2SolverSet`).
+`b2World.holding` says the world has any, until a restore from an image
+(`snapshot.c`), which holds nothing; neither flag is in an image. While the
+world holds bodies: `b2LinkContact` (`island.c`) takes a contact that starts
+touching a held body as one with a static body, without waking its set or
+merging its island, in the awake body's island alone; `b2AddContactToGraph`
+(`constraint_graph.c`) colours and solves it as a static body's, with no mass;
+the narrow phase gives a contact with a body that's neither awake nor static
+no mass (`physics_world.c`, only while holding, so a sleeping body's contact
+keeps upstream's values and image bytes); and `b2TrySleepIsland` leaves an
+island that touches a held body awake. `b2SplitIsland` connects only the base
+island's own bodies, and gives a contact the awake body's island, where
+upstream took any body with an island: the same for a world that holds
+nothing.
+
 Each change is marked `Tide:` where it is. Most are for one thing: a world's
 image (`b2World_GetSnapshot`) is kept in the match, where it's hashed and sent
 between players, so it has to be the same bytes on every machine for the same

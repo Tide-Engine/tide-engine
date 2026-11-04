@@ -354,6 +354,9 @@ typedef struct b3World
 	// Tide: what changed since the world's last image. Last, so that everything above is where upstream
 	// has it.
 	b3SnapTrack snapTrack;
+
+	// Tide: some sleeping sets are held (b3World_HoldBodies), until the world is restored
+	bool holding;
 } b3World;
 
 // Tide: a body, a shape or a contact may be another than the world's last image has it (b3SnapTrack). Said

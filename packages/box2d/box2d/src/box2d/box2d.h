@@ -213,6 +213,16 @@ B2_API void b2World_EnableSSE2Fallback( b2WorldId worldId, bool flag );
 /// Get the number of awake bodies.
 B2_API int b2World_GetAwakeBodyCount( b2WorldId worldId );
 
+/// Tide: hold these bodies where they are for the steps that follow, for a client's predicted ticks, which leave
+/// out what's far from its player. Each island all of whose bodies are given is put to sleep, and each sleeping
+/// set all of whose bodies are given stays asleep: a body touching one meets it as a static body, without waking
+/// it. An island with any other body in it isn't held. Only a restore of the world from an image lets them go;
+/// calls while the world holds bodies do nothing.
+B2_API void b2World_HoldBodies( b2WorldId worldId, const b2BodyId* bodyIds, int count );
+
+/// Tide: whether the world holds bodies (b2World_HoldBodies)
+B2_API bool b2World_IsHolding( b2WorldId worldId );
+
 /// Get the current world performance profile
 B2_API b2Profile b2World_GetProfile( b2WorldId worldId );
 

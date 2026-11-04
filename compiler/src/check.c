@@ -14893,6 +14893,33 @@ static void check_settings(checker *c)
     }
 }
 
+// `with Far` and `without Far`: the tag a client's predicted ticks give what's
+// far from its player (predictionRange), for code that steps everything at once
+// (a physics package's step) to leave it out too. Without the setting it's a
+// tag no entity ever has, so a package names it whether the game sets it or not.
+static decl *far_filter(const checker *c, const param *p, const decl *found)
+{
+    if (found || !str_eq_c(p->type_name, "Far")) return NULL;
+    if (p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT) {
+        diag_error(p->type_at.line ? p->type_at : p->at, "'Far' is a filter, with no fields: 'with Far' or 'without Far'");
+        diag_note("it's what a client's predicted ticks leave out under 'predictionRange'");
+        return NULL;
+    }
+    program *prog = c->prog;
+    if (prog->predict_far) return prog->predict_far;
+    if (!prog->far_absent) {
+        decl *far = NEW(decl);
+        far->kind = DECL_COMPONENT;
+        far->builtin = true;
+        far->name = far->qualified = str_from("tide_far");
+        far->c_name = "tide_far";
+        far->index = prog->components.count;
+        vec_push(prog->components, far);
+        prog->far_absent = far;
+    }
+    return prog->far_absent;
+}
+
 static type use_constant(checker *c, expr *e, decl *k)
 {
     e->bind = BIND_CONST;
@@ -18030,6 +18057,14 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             }
         }
         decl *d = find_type(c, p->type_name, p->type_at);
+        if (!d && str_eq_c(p->type_name, "Far")) {
+            d = far_filter(c, p, d);
+            if (!d) {
+                p->type = T_ERR;
+                refused_binding(row, p);
+                continue;
+            }
+        }
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         if (!d || d->kind != DECL_COMPONENT) {
             diag_error(p->type_at, "a query takes only components, and '" STR_FMT "' isn't a component", STR_ARG(p->type_name));
@@ -18179,6 +18214,14 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
         decl *d = p->mode == PARAM_QUERY || p->changed ? NULL : find_type(c, p->type_name, p->type_at);
+        if (!d && p->mode != PARAM_QUERY && !p->changed) {
+            decl *far = far_filter(c, p, d);
+            if (far) d = far;
+            else if (str_eq_c(p->type_name, "Far")) {
+                p->type = T_ERR;
+                continue;
+            }
+        }
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         const bool is_entity = names_type_as(c, p->type_name, "Entity");
@@ -20244,7 +20287,11 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
                 }
             }
         }
-        if (!matched) {
+        if (!matched && prog->far_absent && mask_has(sys->need_mask, prog->far_absent->index)) {
+            diag_warning(sys->at, "%s '" STR_FMT "' never runs: only a client's predicted ticks tag entities Far, under "
+                         "'predictionRange'", system_what(sys), STR_ARG(sys->name));
+            diag_note("set it, like 'settings { predictionRange = 40; }', or remove the system");
+        } else if (!matched) {
             diag_warning(sys->at, "%s '" STR_FMT "' never runs: no entity matches its parameters", system_what(sys),
                          STR_ARG(sys->name));
             if (mask_any(sys->need_mask)) {
@@ -23347,7 +23394,7 @@ bool check(program *prog)
     for (int i = 0; prog->predict_far && i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || d->is_view || d->listens || d->is_local || !d->per_entity || d->entity_local
-            || d->extern_system) continue;
+            || d->extern_system || mask_has(d->need_mask, prog->predict_far->index)) continue; // `with Far` asks for them
         d->without_mask = mask_or(d->without_mask, bit(prog->predict_far));
     }
     derive_archetypes(&c);

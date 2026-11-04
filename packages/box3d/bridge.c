@@ -1443,6 +1443,38 @@ typedef struct tuning {
     bool sleeping;
 } tuning;
 
+// The bodies far from this client's player in a predicted tick (`with Far`,
+// predictionRange), which HoldFar gives the step to hold where they are
+// (b3World_HoldBodies): each island or sleeping set of them alone doesn't move,
+// and a near body meets it as a static one. Only predicted worlds are tagged,
+// so a server's tick and a confirmed one give none. Each run of predicted ticks
+// starts from a confirmed world, whose restore lets them go, and holds them
+// once: the ticks after it find the world holding, and give none either.
+static b3BodyId *far_bodies;
+static int32_t far_count, far_room;
+static int32_t holds, held; // For tests: holds made, and awake bodies they put to sleep
+
+int32_t b3t_holds(void) { return holds; }
+int32_t b3t_held(void) { return held; }
+
+void b3t_hold_far(tide_rows *rows, physics *p)
+{
+    (void)p;
+    if (!active || !active->made || b3World_IsHolding(active->id)) return;
+    const uint32_t count = tide_rows_count(rows);
+    const int32_t *ids = tide_rows_ints(rows, 0, offsetof(body, id));
+    const int32_t *ids_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4);
+    for (uint32_t i = 0; i < count; i++) {
+        if (ids[i] == 0) continue; // Not made yet
+        if (far_count == far_room) {
+            const int32_t room = far_room ? far_room * 2 : 256;
+            far_bodies = tide_realloc(far_bodies, (size_t)far_room * sizeof *far_bodies, (size_t)room * sizeof *far_bodies);
+            far_room = room;
+        }
+        far_bodies[far_count++] = body_of(active, (int64_t)((uint64_t)(uint32_t)ids[i] | (uint64_t)(uint32_t)ids_high[i] << 32));
+    }
+}
+
 int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, const tide_float3 gravity, const float contact_stiffness,
                  const float contact_damping, const float contact_speed, const float bounce_speed, const float hit_speed,
                  const bool sleeping)
@@ -1456,6 +1488,8 @@ int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, c
     // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
     // step would leave it as it is. The stamp stays, which says so. The rest of how it's to step waits
     // for a step there's something to step in.
+    const int32_t far = far_count;
+    far_count = 0;
     if (!turned && !roused && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b3World_GetAwakeBodyCount(w->id) == 0) {
         return w->stamp;
     }
@@ -1488,6 +1522,15 @@ int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, c
     // ...and then what code put to sleep this tick is: in a world whose bodies don't fall asleep by
     // themselves too, as that only says what the step does
     slept = put_to_sleep(w);
+    // ...and what's far from this client's player is held where it is, in its predicted ticks: a world
+    // that holds bodies is another state than the one that doesn't, which the stamp says
+    if (far > 0 && !b3World_IsHolding(w->id)) {
+        note('f', far_bodies, (size_t)far * sizeof *far_bodies);
+        const int awake = b3World_GetAwakeBodyCount(w->id);
+        b3World_HoldBodies(w->id, far_bodies, far);
+        holds++;
+        held += awake - b3World_GetAwakeBodyCount(w->id);
+    }
     shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;

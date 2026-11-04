@@ -11,6 +11,23 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
+Held bodies (2026-11-04): `b3World_HoldBodies` and `b3World_IsHolding`
+(`box3d.h`, `solver_set.c`) hold bodies where they are for a client's predicted
+ticks under `predictionRange`, which leave out what's far from its player. Each
+awake island of given bodies alone is put to sleep (`b3TrySleepIsland`, which
+says what it writes), and it and each sleeping set of given bodies alone is
+marked `held` (`b3SolverSet`, in the solver sets' array, which every resident
+commit marks). `b3World.holding` says the world has any, until its resident
+pages or an image (`world_snapshot.c`) restore one that holds nothing; neither
+flag is in an image. While the world holds bodies, `b3LinkContact`
+(`island.c`) takes a contact that starts touching a held body as one with a
+static body, without waking its set or merging its island, in the awake body's
+island alone: the solver already takes a body that isn't awake as one with no
+mass (`b3DecodeAwakeIndex`). `b3TrySleepIsland` leaves an island that touches a
+held body awake. `b3SplitIsland` connects only the base island's own bodies,
+and gives a contact the awake body's island, where upstream took any body with
+an island: the same for a world that holds nothing.
+
 Hull limits (2026-10-25): `b3CreateHull` (`hull.c`) builds a hull again with a
 smaller vertex budget when the one it built has more faces or half edges than
 `B3_MAX_HULL_FACES` and `2 * B3_MAX_HULL_EDGES` allow, scaled down by how far

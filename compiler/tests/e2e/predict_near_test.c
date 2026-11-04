@@ -89,6 +89,7 @@ typedef struct watched {
     int frames;     // Frames with both walkers in both worlds
     int far_same;   // ...in which it showed the far walker exactly as it knew it
     int near_ahead; // ...and the near one run every tick it predicted past that
+    int far_counted; // ...and `with Far` run for the far one alone, in each tick it predicted
 } watched;
 
 static void watch(const tide_client *c, const int32_t near, const int32_t far, watched *out)
@@ -101,6 +102,8 @@ static void watch(const tide_client *c, const int32_t near, const int32_t far, w
         || !walker(known, far, &known_far)) return;
     out->frames++;
     if (memcmp(&shown_far, &known_far, sizeof shown_far) == 0) out->far_same++;
+    const int counted = ((const tide_world *)shown)->FarSeen.ticks - ((const tide_world *)known)->FarSeen.ticks;
+    if (counted == (int)(status.predicted_tick - status.verified_tick)) out->far_counted++;
     if (shown_near.ran - known_near.ran == (int)(status.predicted_tick - status.verified_tick)) out->near_ahead++;
 }
 
@@ -130,6 +133,7 @@ static void check_all_of(const watched *w)
     TIDE_CHECK(w->frames > 100);
     TIDE_CHECK(w->far_same == w->frames); // Never run in a predicted tick
     TIDE_CHECK(w->near_ahead == w->frames); // Run in every one
+    TIDE_CHECK(w->far_counted == w->frames);
 }
 
 static void check_confirmed_as_the_server(void)
@@ -137,6 +141,9 @@ static void check_confirmed_as_the_server(void)
     TIDE_CHECK(tide_client_status_of(mover).state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(tide_client_status_of(other).state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(tide_client_status_of(mover).resyncs == 0);
+    // Nothing is Far on the server, nor in a confirmed world
+    TIDE_CHECK(((const tide_world *)tide_server_world(server))->FarSeen.ticks == 0);
+    TIDE_CHECK(((const tide_world *)tide_client_verified_world(mover))->FarSeen.ticks == 0);
     TIDE_CHECK(tide_client_status_of(other).resyncs == 0);
     // Both walkers ran every tick the server did, as far as each client knows
     for (int32_t id = 1; id <= 2; id++) {

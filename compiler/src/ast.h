@@ -1690,6 +1690,7 @@ typedef struct program {
     double predict_range;      // predictionRange, or 0 where it isn't set: a client predicts everything
     loc predict_range_at;
     decl *predict_far;         // The hidden sparse tag a client's predicted ticks leave out: an entity farther than that
+    decl *far_absent;          // What `with Far` names without the setting: a tag no entity ever has
 } program;
 
 // A change that fixes a diagnostic, which editors offer as a quick fix.

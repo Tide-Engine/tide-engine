@@ -2916,6 +2916,7 @@ bool b3World_Restore( b3WorldId worldId, const uint8_t* image, int size, const u
 	// The shapes let go of their geometry first, as some of it may go.
 	b3FreeLiveSimElements( world );
 	b3SnapGeometryLoad( world, geometry, geometrySize );
+	world->holding = false; // Tide: an image holds no bodies (b3World_HoldBodies)
 
 	if ( b3DeserializeIntoShell( image, size, world, NULL ) == false )
 	{

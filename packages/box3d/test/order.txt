@@ -32,6 +32,7 @@ Box3D.RegisterShapes
 Box3D.RecordParts
 Box3D.FilterColliders
 Box3D.ApplyFilters
+Box3D.HoldFar
 Box3D.SynchronizeJoints
 Box3D.ConfigureBodies
 Box3D.DefaultBodySettings

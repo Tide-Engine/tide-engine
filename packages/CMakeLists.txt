@@ -634,6 +634,19 @@ foreach(dimension 2 3)
     add_test(NAME tide_box${dimension}d_rewind_network COMMAND tide_box${dimension}d_rewind_network)
     set_tests_properties(tide_box${dimension}d_rewind_network PROPERTIES TIMEOUT 120)
 endforeach()
+# predictionRange: a client's predicted ticks hold what's far from its player
+# in the physics world, where the server last confirmed it.
+foreach(dimension 2 3)
+    tide_add_game(tide_box${dimension}d_predict_near
+        SOURCES box${dimension}d/bridge.c box${dimension}d/test/predict_near.tide
+        NAME predict_near PACKAGES Box${dimension}D box${dimension}d/box${dimension}d.tide
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/predict_near_test.c)
+    target_include_directories(tide_box${dimension}d_predict_near PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tide_box${dimension}d_predict_near PRIVATE PREDICT_NEAR_${dimension}D=1)
+    target_link_libraries(tide_box${dimension}d_predict_near PRIVATE tide_box${dimension}d)
+    add_test(NAME tide_box${dimension}d_predict_near COMMAND tide_box${dimension}d_predict_near)
+    set_tests_properties(tide_box${dimension}d_predict_near PROPERTIES TIMEOUT 120)
+endforeach()
 # Voice's codec belongs only to targets that explicitly link the package.
 # The engine/platform, compiler and games without voice never link it.
 file(GLOB voice_codec_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/voice/codec/*.c")

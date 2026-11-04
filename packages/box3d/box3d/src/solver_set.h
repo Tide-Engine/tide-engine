@@ -52,12 +52,19 @@ typedef struct b3SolverSet
 
 	// Aligns with b3World::solverSetIdPool. Used to create a stable id for body/contact/joint/islands.
 	int setIndex;
+
+	// Tide: a sleeping set held for a client's predicted ticks (b3World_HoldBodies): bodies touching it meet it
+	// as a static body, and it isn't woken by that
+	bool held;
 } b3SolverSet;
 
 void b3DestroySolverSet( b3World* world, int setIndex );
 
 void b3WakeSolverSet( b3World* world, int setIndex );
 void b3TrySleepIsland( b3World* world, int islandId );
+
+// Tide: whether a body is in a held set (b3World_HoldBodies)
+bool b3IsHeldBody( b3World* world, const b3Body* body );
 
 // Merge set 2 into set 1 then destroy set 2.
 // Warning: any pointers into these sets will be orphaned.

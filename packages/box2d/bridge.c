@@ -1117,6 +1117,38 @@ static void tune(const world *w, const float stiffness, const float damping, con
     }
 }
 
+// The bodies far from this client's player in a predicted tick (`with Far`,
+// predictionRange), which HoldFar gives the step to hold where they are
+// (b2World_HoldBodies): each island or sleeping set of them alone doesn't move,
+// and a near body meets it as a static one. Only predicted worlds are tagged,
+// so a server's tick and a confirmed one give none. Each run of predicted ticks
+// starts from a confirmed world, which holds nothing, and holds them once: the
+// ticks after it find the world holding, and give none either.
+static b2BodyId *far_bodies;
+static int32_t far_count, far_room;
+static int32_t holds, held; // For tests: holds made, and awake bodies they put to sleep
+
+int32_t b2t_holds(void) { return holds; }
+int32_t b2t_held(void) { return held; }
+
+void b2t_hold_far(tide_rows *rows, physics *p)
+{
+    (void)p;
+    if (!active || !active->made || b2World_IsHolding(active->id)) return;
+    const uint32_t count = tide_rows_count(rows);
+    const int32_t *ids = tide_rows_ints(rows, 0, offsetof(body, id));
+    const int32_t *ids_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4);
+    for (uint32_t i = 0; i < count; i++) {
+        if (ids[i] == 0) continue; // Not made yet
+        if (far_count == far_room) {
+            const int32_t room = far_room ? far_room * 2 : 256;
+            far_bodies = tide_realloc(far_bodies, (size_t)far_room * sizeof *far_bodies, (size_t)room * sizeof *far_bodies);
+            far_room = room;
+        }
+        far_bodies[far_count++] = body_of(active, (int64_t)((uint64_t)(uint32_t)ids[i] | (uint64_t)(uint32_t)ids_high[i] << 32));
+    }
+}
+
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity, const float stiffness, const float damping,
                  const float push_speed, const float bounce_speed, const float hit_speed, const bool sleeping)
 {
@@ -1128,6 +1160,8 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
     const bool turned = pulled.x != gravity.x || pulled.y != gravity.y;
     // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
     // step would leave it as it is. The stamp stays, which says so.
+    const int32_t far = far_count;
+    far_count = 0;
     if (!turned && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b2World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
@@ -1144,6 +1178,15 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
         b2World_EnableSleeping(w->id, sleeping);
     }
     slept = put_to_sleep(w);
+    // ...and what's far from this client's player is held where it is, in its predicted ticks: a world
+    // that holds bodies is another state than the one that doesn't, which the stamp says
+    if (far > 0 && !b2World_IsHolding(w->id)) {
+        note('f', far_bodies, (size_t)far * sizeof *far_bodies);
+        const int awake = b2World_GetAwakeBodyCount(w->id);
+        b2World_HoldBodies(w->id, far_bodies, far);
+        holds++;
+        held += awake - b2World_GetAwakeBodyCount(w->id);
+    }
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
