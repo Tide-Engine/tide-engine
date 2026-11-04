@@ -1218,6 +1218,9 @@ static bool value_contains_type(const type value, const type part, const int dep
 
 // This changes only the private C ABI. Value snapshots remain necessary when
 // C, a callback, world writes or an overlapping mutable argument can reach them.
+// The engine's builtins that only need their order kept (calls_c without
+// reaches_extern: resource operations, Texture.size, I/O) can't: they lend
+// nothing of the caller's, and change no Tide value.
 static bool indirect_value(const decl *fn, const type value)
 {
     const type_kind k = value.kind;
@@ -1234,7 +1237,7 @@ static bool indirect_value(const decl *fn, const type value)
 static void select_indirect_routine(decl *fn)
 {
     if ((fn->kind != DECL_FUNCTION && fn->kind != DECL_METHOD) || fn->is_extern || fn->is_async || fn->is_audio || fn->is_worker
-        || fn->is_operator || fn->is_interpolate || fn->takes_action || fn->calls_c
+        || fn->is_operator || fn->is_interpolate || fn->takes_action || fn->reaches_extern
         || fn->is_mut_method || fn->world_sets || fn->acts[0] || fn->acts[1] || fn->starts_tasks
         || (fn->owner && fn->owner->kind == DECL_INPUT)) return;
     if (fn->owner) {

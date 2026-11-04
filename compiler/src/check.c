@@ -21290,6 +21290,10 @@ static void mark_c_callers(const checker *c)
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
+            if ((site->to->is_extern || site->to->reaches_extern) && !site->from->reaches_extern) {
+                site->from->reaches_extern = true;
+                changed = true;
+            }
             if (site->from->calls_c || !(site->to->is_extern || site->to->calls_c)) continue;
             site->from->calls_c = true;
             changed = true;
@@ -21641,6 +21645,10 @@ static void check_audio_bodies(const checker *c)
             }
             if (site->to->calls_c && !site->from->calls_c) {
                 site->from->calls_c = true;
+                changed = true;
+            }
+            if ((site->to->is_extern || site->to->reaches_extern) && !site->from->reaches_extern) {
+                site->from->reaches_extern = true;
                 changed = true;
             }
         }
