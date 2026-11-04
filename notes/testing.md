@@ -1,5 +1,25 @@
 # Test infrastructure
 
+## D3D11 served runs take the test's SECONDS (2026-11-04)
+
+Run 41862233666 failed tide_platform_shaders_d3d11 on CI's Windows runner:
+the file runner's fixed 120 seconds ran out after the page's first five
+checks, at its first pixel readback on WARP. The same test had passed in
+64, 80 and 89 seconds in the runs before, while its WebGL and WebGPU runs
+already had `SECONDS 240`, which a file-page D3D11 run can't take. It is now
+`D3D11_SERVED`, and a `D3D11_SERVED` run's budget is the test's `SECONDS`
+(120 when not given) plus 50 for the guard, so the shader test's D3D11 run
+has 240/290. The forest's D3D11 variants, which give `SECONDS 240`, get
+240/290 too instead of 120/170. Locally (web-debug, Chrome 156) the served
+shader D3D11 run passes in 40 seconds.
+
+Run 41852531021 also failed once, in `tide_platform_rooms` on Windows:
+headless Chrome never opened the page of "Chrome joins a desktop room"
+(90 seconds) and then didn't close when asked (60 more), so the test ran out
+of its 180. The case after it, with Chrome hosting, connected. That job hadn't
+failed in the 40 dev runs before it; if it happens again it needs looking into
+(`notes/webrtc-and-rooms.md` has the Firefox causes found before).
+
 ## All forest browser variants await completion (2026-11-03)
 
 Run 41556106089 repeats the premature DOM completion in ordinary WebGL:

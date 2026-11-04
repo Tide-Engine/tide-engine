@@ -555,9 +555,10 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_platform_shaders SHELL web/test_shell.html)
         # Keep diagnostics for this long WebGL fixture and close Chrome gracefully.
-        # WebGL took 118.6 seconds on macOS; both software backends use the 240-second budget.
-        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders SERVED WEBGPU EXPECT "renderer: WebGPU" D3D11
-            SECONDS 240)
+        # WebGL took 118.6 seconds on macOS, and D3D11 (WARP) 64-89 on CI's Windows runner, once
+        # over the file runner's fixed 120: every software backend uses the 240-second budget.
+        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders SERVED WEBGPU EXPECT "renderer: WebGPU"
+            D3D11_SERVED SECONDS 240)
     else()
         add_test(NAME tide_platform_shaders COMMAND tide_platform_shaders)
         add_test(NAME tide_platform_shaders_opengl COMMAND tide_platform_shaders)

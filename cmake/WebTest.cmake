@@ -23,7 +23,8 @@
 # D3D11 adds a Windows-host test through ANGLE's software D3D11/WARP backend,
 # checking its renderer identity as well as the page's existing assertions.
 # D3D11_SERVED uses the same backend/checks but waits for the actual served
-# page result, with a nominal 120-second budget and 50 for diagnostics/cleanup.
+# page result, with a nominal 120-second budget (SECONDS, if given) and 50 for
+# diagnostics/cleanup.
 
 # For web builds' tests, and desktop rooms against a browser (platform/tests/rooms.mjs).
 find_program(TIDE_BROWSER
@@ -81,12 +82,16 @@ function(tide_add_web_test name)
         PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     if((ARG_D3D11 OR ARG_D3D11_SERVED) AND CMAKE_HOST_WIN32)
         set(d3d11_guard 150)
+        set(d3d11_seconds 120)
+        if(ARG_SECONDS)
+            set(d3d11_seconds "${ARG_SECONDS}")
+        endif()
         if(ARG_D3D11_SERVED)
             add_test(NAME ${name}_d3d11
                 COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}" "${page}"
                     "${CMAKE_CURRENT_BINARY_DIR}/${name}_d3d11-browser" "${query}&expect-angle=Direct3D11"
-                    --angle-backend d3d11-warp --seconds 120)
-            set(d3d11_guard 170)
+                    --angle-backend d3d11-warp --seconds ${d3d11_seconds})
+            math(EXPR d3d11_guard "${d3d11_seconds} + 50")
         else()
             add_test(NAME ${name}_d3d11
                 COMMAND "${CMAKE_COMMAND}"
