@@ -10,6 +10,10 @@ play mode (`EditorApplication.isPlaying = false`) and a player calls
 `UnityEngine.Application.Quit()`. The sample's generated `DisconnectReason`
 gains `Banned = 7`. Not run in Unity locally (no Unity tests here); the
 native embed still builds and its tests pass (`tide_platform_embed`).
+Correction the same day: `TideGame.cs` had been edited alone, and CI's
+`tide_cli_tests` (`unity_code_writes_the_samples_package`) regenerates it from
+the Sample's `schema.json`; that and `components.json` gained `Banned` (7) too,
+so the three agree.
 
 ## Protect cached compilers from expiry (2026-11-03)
 
