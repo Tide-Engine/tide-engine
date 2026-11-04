@@ -726,6 +726,9 @@ async function targetTests(tide, installation, root, target, embedded) {
     await build();
     let before = mark(cache);
     check(before.has("game.o") && before.has("main.o") && before.has("c/native.c.o"), "initial build did not create expected objects");
+    // A debug build's generated plumbing is its own object, compiled as the engine is, which an edit of the game's
+    // code alone (below) leaves as it is
+    check(before.has("game_plumbing.o"), "debug build did not compile the generated plumbing apart");
     await build();
     expectWrites(cache, before, [], "unchanged build reuses every object");
 
@@ -753,7 +756,7 @@ async function targetTests(tide, installation, root, target, embedded) {
     before = mark(cache);
     put(source, originalTide.replace("int value;", "int value; int extra;").replace("+ 1;", "+ 2;"));
     await build();
-    expectWrites(cache, before, ["game.o", "main.o"], "layout change rebuilds game and launcher");
+    expectWrites(cache, before, ["game.o", "game_plumbing.o", "main.o"], "layout change rebuilds game, plumbing and launcher");
 
     before = mark(cache);
     removeOwned(root, join(cache, "game.o"));
@@ -950,6 +953,7 @@ async function atOnceTests(tide, root, target) {
     // of the game's is compiled.
     let before = mark(cache);
     const keptLauncher = contents(cache).get("main.o");
+    const keptPlumbing = contents(cache).get("game_plumbing.o");
     check([...before.keys()].some((file) => file.startsWith("engine/")) && before.has("game.o") && before.has("main.o"),
         "a build that failed in the game's C still compiled the engine and the generated C");
     put(join(game, `${name(5)}.c`), text(5), headerTime);
@@ -960,12 +964,15 @@ async function atOnceTests(tide, root, target) {
     check(!again.some((file) => !file.startsWith("c/") && file !== "game.o"),
         `the build after the fix compiled more than the game's C and identity: ${again}`);
     const repaired = contents(cache);
-    // The launcher intentionally survives identity-only header edits. DWARF
-    // can retain the checksum of game.h from the failed build, so its debug
-    // bytes need not match a clean compile against the restored header.
-    // Require exact reuse of that object, and clean-build parity everywhere else.
+    // The launcher and a debug build's plumbing intentionally survive
+    // identity-only header edits. DWARF can retain the checksum of game.h from
+    // the failed build, so their debug bytes need not match a clean compile
+    // against the restored header. Require exact reuse of those objects, and
+    // clean-build parity everywhere else.
     check(repaired.get("main.o") === keptLauncher, "the build after the fix changed the reused launcher");
-    const differ = [...built[0].files].filter(([path, bytes]) => path !== "main.o" && repaired.get(path) !== bytes).map(([path]) => path);
+    check(repaired.get("game_plumbing.o") === keptPlumbing, "the build after the fix changed the reused plumbing");
+    const reused = new Set(["main.o", "game_plumbing.o"]);
+    const differ = [...built[0].files].filter(([path, bytes]) => !reused.has(path) && repaired.get(path) !== bytes).map(([path]) => path);
     const more = [...repaired.keys()].filter((path) => !built[0].files.has(path));
     check(!differ.length && !more.length, `the build after the fix left other files than a clean build: ${[...differ, ...more]}`);
     console.log("  a build that failed keeps what compiled, and the next one finishes it");

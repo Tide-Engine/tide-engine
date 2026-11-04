@@ -172,8 +172,8 @@ static const argument_help arguments[] = {
     {"file.tprefab", "<file.tprefab>", "Authored prefab or scene file",
      "Selects the file to edit or validate. Use --project to choose the game root.", OPEN},
     {"--release", "--release", "Optimize game code for testing and profiling",
-     "Keeps debug symbols, readable diagnostics and assertions. Engine code\n"
-     "defaults to -O2; default game/package code is unoptimized. DEBUG is\n"
+     "Keeps debug symbols, readable diagnostics and assertions, and optimizes\n"
+     "the game's code, which debug builds leave unoptimized. DEBUG is\n"
      "undefined. Standalone builds collect unused code and data, and Tide-only\n"
      "games omit unreferenced assets. Use --distribution for shipping cuts.", COMPILE},
     {"--distribution", "--distribution", "Build an optimized game for distribution",
@@ -191,7 +191,8 @@ static const argument_help arguments[] = {
      "Choose one of -O0, -O1, -O2 or -O3 for engine, game and package C/C++.\n"
      "Does not rebuild prebuilt libraries or change DEBUG, assertions, symbols\n"
      "or shipping cuts. Deterministic math stays enabled; no fast-math or FMA.\n"
-     "Defaults: debug game -O0, engine -O2; release/distribution both -O2.\n"
+     "Defaults: debug game code -O0; engine, package C and the game's\n"
+     "generated plumbing -O2; release/distribution all -O2.\n"
      "Explicit levels use separate caches. Example: tide run --release -O3 --stats.", COMPILE},
     {"--web", "--web", "Build a web page",
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"

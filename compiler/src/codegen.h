@@ -21,6 +21,9 @@ typedef struct codegen_options {
     const char *name;        // Base name of the generated files.
     const char *out_dir;
     bool line_directives;    // Map generated code back to .tide lines for debuggers.
+    // With line_directives: write the plumbing, all but the game's own code, as <name>_plumbing.c, for a debug build
+    // to compile optimized while the game's code (<name>.c) stays as it was written (plumbing_split.inc).
+    bool split_plumbing;
     bool visualizers;        // Also write <name>.natvis and <name>_lldb.py: how debuggers show the game's values.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
     bool embed;              // ...and tide_game_embed (tide/embed_game.h), for another program to run it (tide/embed.h): implies layout.
@@ -63,5 +66,5 @@ typedef struct codegen_options {
     bool build_program; // Instead of the game, the program that runs its build code, its main and all (build_code.c)
 } codegen_options;
 
-// Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.
+// Writes <out_dir>/<name>.h and <out_dir>/<name>.c (and <name>_plumbing.c). Returns false on I/O errors.
 bool codegen(program *prog, const codegen_options *opts);

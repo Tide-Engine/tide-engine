@@ -1,5 +1,14 @@
 # Language features, as tidec builds them
 
+## Generated C in two files (2026-11-04)
+
+`codegen_options.split_plumbing` (`tidec --split-plumbing`) cuts the finished generated C into `<name>.c`, the
+game's code, and `<name>_plumbing.c`, for debug builds to optimize the plumbing alone
+(`compiler/src/plumbing_split.inc`). Codegen's part: `gen.code_at`, the definitions an edit of the code changes,
+which stay in the code's file, and `write_pinned`, `#line` pinning streamed to the file. Nothing a Tide programmer
+sees changes, and without the option the output is as before. Details, tests and measurements:
+notes/cli-and-packages.md, Optimized plumbing in debug builds.
+
 ## Grids as values (2026-11-03)
 
 The owner, reworking build code: grids work as values in all code, not only in build code ("`build` making code

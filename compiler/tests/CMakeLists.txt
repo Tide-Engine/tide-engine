@@ -891,9 +891,10 @@ endif()
 
 # Debuggers stopping in Tide code (debugger/): a game built as tide's debug builds are, with its natvis in its
 # .pdb, under Windows' own debugger engine on Windows, and LLDB with the game's LLDB views where there's an LLDB.
-# Unoptimized whatever the build type, as tide builds a game to debug it.
+# The game's code unoptimized whatever the build type, and its generated plumbing optimized, as tide builds a game
+# to debug it.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
-    tide_add_game(tidec_debugger_fixture VISUALIZERS SOURCES debugger/fixture.tide NAME game
+    tide_add_game(tidec_debugger_fixture VISUALIZERS SPLIT_PLUMBING SOURCES debugger/fixture.tide NAME game
         HOST "${CMAKE_CURRENT_SOURCE_DIR}/debugger/fixture_main.c")
     target_compile_options(tidec_debugger_fixture PRIVATE -O0 -g)
     if(WIN32 AND NOT MINGW)

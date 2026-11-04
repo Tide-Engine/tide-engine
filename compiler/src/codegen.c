@@ -184,6 +184,10 @@ typedef struct gen {
     const expr *raw_place; // A text field being generated as the tide_text it is, not read as text
     uint64_t game_hash;    // Of the header: tells builds of different games apart
     uint8_t simulation[32];
+    // Where in `c` the variables start that an edit of the game's code changes, not being its code: the game's
+    // table, which holds `simulation`, and the profile's .tide lines. Split C (plumbing_split.inc) has them in the
+    // code's file, so the plumbing's stays as it was
+    VEC(size_t) code_at;
     bool reserved_send;   // A pure one-Send system fills a queue item reserved by its entity loop.
     const decl *blending;  // The view whose run function is being generated: its blended parameters are copies
     bool lanes_in;         // In a loop over a chunk's rows: the lanes it changes are read as tide_in_<Component> (gen_chunk)
@@ -21236,6 +21240,7 @@ static void gen_api(gen *g)
     }
     if (any_settles) gen_settle_item(g);
     if (prog->systems.count) {
+        vec_push(g->code_at, o->len);
         sb_put(o, "static const tide_profile_source tide_system_sources[] = {\n");
         for (int i = 0; i < prog->systems.count; i++) gen_profile_source(g, o, prog->systems.items[i], "system");
         sb_put(o, "};\n\n");
@@ -21363,6 +21368,7 @@ static void gen_api(gen *g)
     sb_put(o, "}\n\n");
 
     if (prog->views.count) {
+        vec_push(g->code_at, o->len);
         sb_put(o, "static const tide_profile_source tide_view_sources[] = {\n");
         for (int i = 0; i < prog->views.count; i++) gen_profile_source(g, o, prog->views.items[i], "view");
         sb_put(o, "};\n\n");
@@ -23359,6 +23365,7 @@ static void gen_game_api(gen *g)
                   "static void tide_game_set_view_time(void *p, tide_view_time v)\n{\n"
                   "    ((tide_input *)p)->viewTime = (ViewTime){.tick = v.tick, .alpha = v.alpha, .valid = v.valid};\n}\n\n");
     }
+    vec_push(g->code_at, o->len);
     sb_put(o, "const tide_game tide_game_api = {\n");
     sb_printf(o, "    .hash = 0x%016llXull,\n", (unsigned long long)g->game_hash);
     sb_put(o, "    .simulation = {");
@@ -23767,6 +23774,7 @@ static void gen_layout(gen *g)
 
 #include "embed_codegen.inc"
 #include "debug_views_codegen.inc"
+#include "plumbing_split.inc"
 
 // The C, with each line of a statement's code at that statement's .tide line.
 // A statement's C can take several lines (a foreach's loop and its element),
@@ -23774,12 +23782,23 @@ static void gen_layout(gen *g)
 // lines: a debugger would step through those, and a breakpoint on them would
 // find this statement's code. So a code line after the first that a #line
 // names gets its own #line, and the directives naming the generated file
-// itself (line_reset) are counted again, as these lines move them.
-static sb pin_lines(const sb *c, const char *c_path)
+// itself (line_reset) are counted again, as these lines move them, and name
+// `out_path`, the file the lines are written to, `path`. Written as it goes, a
+// few megabytes at a time: a big game's C is a hundred, which the arena would
+// keep. False on I/O errors.
+static bool write_pinned(const char *path, const sb *c, const char *c_path, const char *out_path)
 {
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "tidec: can't write %s\n", path);
+        return false;
+    }
+    bool ok = true;
     sb out = {0};
     char *self = arena_alloc(strlen(c_path) + 16);
     sprintf(self, "\"%s\"", c_path);
+    char *written = arena_alloc(strlen(out_path) + 16);
+    sprintf(written, "\"%s\"", out_path);
     const char *tide = NULL; // The #line in force that names a .tide file, or NULL
     size_t tide_len = 0;
     bool first = false;     // The next code line is the first after it
@@ -23795,7 +23814,7 @@ static sb pin_lines(const sb *c, const char *c_path)
         } else if (len > 6 && strncmp(at, "#line ", 6) == 0) {
             const char *quote = memchr(at, '"', len);
             if (quote && (size_t)(at + len - quote) == strlen(self) && strncmp(quote, self, strlen(self)) == 0) {
-                sb_printf(&out, "#line %d %s\n", out.line + 1, self);
+                sb_printf(&out, "#line %d %s\n", out.line + 1, written);
                 tide = NULL;
             } else {
                 sb_putn(&out, at, len);
@@ -23816,8 +23835,14 @@ static sb pin_lines(const sb *c, const char *c_path)
             if (end) sb_put(&out, "\n");
         }
         at = end ? end + 1 : at + len;
+        if (out.len > (4u << 20) || !*at) { // Its lines keep counting
+            ok = ok && fwrite(out.data, 1, out.len, f) == out.len;
+            out.len = 0;
+        }
     }
-    return out;
+    if (fclose(f) != 0) ok = false;
+    if (!ok) fprintf(stderr, "tidec: can't write %s\n", path);
+    return ok;
 }
 
 // A setting's text for tide, cut to fit.
@@ -24801,9 +24826,32 @@ bool codegen(program *prog, const codegen_options *opts)
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);
     if (!opts->server && !g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
     if (diag_error_count()) { free(g.pack_bytes); return false; }
-    const sb c = opts->line_directives ? pin_lines(&g.c, g.c_path) : g.c;
-    const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &c) && write_pack(&g)
-                    && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
+    bool ok = write_file(h_path.data, &g.h), whole = true;
+    if (ok && opts->split_plumbing) {
+        // A debug build compiles the plumbing optimized, and the game's code as written. Generated C this can't cut
+        // stays whole in <name>.c, and the plumbing's file says so
+        sb plumbing_path = {0};
+        sb_printf(&plumbing_path, "%s/%s_plumbing.c", opts->out_dir, opts->name);
+        const char *plumbing_c = forward_slashes(plumbing_path.data);
+        sb code = {0}, plumbing = {0};
+        if (opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing)) {
+            ok = write_pinned(path.data, &code, g.c_path, g.c_path)
+                 && write_pinned(plumbing_path.data, &plumbing, g.c_path, plumbing_c);
+            whole = false;
+        } else {
+            // What it couldn't cut, for whoever reads this
+            const size_t at = split_why && split_where < g.c.len ? split_where : g.c.len;
+            size_t end = at;
+            while (end < g.c.len && end - at < 160 && g.c.data[end] != '\n') end++;
+            sb whole = {0};
+            sb_printf(&whole, "// Generated by tidec: this game's generated C is whole in its other file.\n"
+                              "// Not split: %s:\n// %.*s\ntypedef int tide_plumbing_whole;\n",
+                      split_why ? split_why : "no line directives", (int)(end - at), g.c.data ? g.c.data + at : "");
+            ok = write_file(plumbing_path.data, &whole);
+        }
+    }
+    if (ok && whole) ok = opts->line_directives ? write_pinned(path.data, &g.c, g.c_path, g.c_path) : write_file(path.data, &g.c);
+    ok = ok && write_pack(&g) && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
     free(g.pack_bytes);
     return ok;
 }

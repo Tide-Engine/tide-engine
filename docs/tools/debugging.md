@@ -15,7 +15,7 @@ Native `tide run`, `tide build` and `tide unity` builds retain debug information
 - its debug information, which maps each line of the C the game becomes back to its `.tide` line. On Windows that's a `.pdb`, with the game's natvis inside it, which Visual Studio, VS Code, CLion and WinDbg read by themselves.
 - `<name>.natvis`, how those debuggers show the game's values, and `<name>_lldb.py`, the same for LLDB. A Unity project's are `Library/Tide/game.natvis` and `Library/Tide/game_lldb.py`.
 
-`--release` optimizes game code while retaining debug information; inlining and optimized-away locals can affect stepping. `--distribution` builds have no debug information. Web and Android debug/release builds retain symbols, but do not produce these native debugger visualizers.
+A debug build leaves your code unoptimized and optimizes what the engine generates around it and packages' C, which a debugger steps over anyway, so a large game stays playable while you debug it. `--release` optimizes game code too, while retaining debug information; inlining and optimized-away locals can affect stepping. `--distribution` builds have no debug information. Web and Android debug/release builds retain symbols, but do not produce these native debugger visualizers.
 
 ## What you see
 
