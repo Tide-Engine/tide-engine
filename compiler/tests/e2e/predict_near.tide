@@ -11,6 +11,7 @@ component Body
 {
     [Position] float2 position;
     int ran; // The ticks a system ran for it
+    int aged; // ...and one written in C
 }
 
 component Walker
@@ -50,6 +51,9 @@ system Count(mut Body body)
 {
     body.ran += 1;
 }
+
+// Written in C: it's handed the runs of rows between far ones (predict_near_c.c)
+extern system Age(mut Body body);
 
 // Where views draw each walker: a far one as confirmed, blended on the confirmed clock
 local singleton Drawn

@@ -23342,12 +23342,12 @@ bool check(program *prog)
     }
     // ...and a client's predicted ticks run them for what's near its player
     // alone (predictionRange): only its predicted worlds have the tag, so the
-    // server's ticks and its confirmed ones run them for everything. C is
-    // handed whole runs of rows, so a system written in it runs for all.
+    // server's ticks and its confirmed ones run them for everything. A system
+    // written in C gets the runs of rows between far ones, as it does for a
+    // visibility presence filter (gen_extern_filtered_call).
     for (int i = 0; prog->predict_far && i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
-        if (d->kind != DECL_SYSTEM || d->is_view || d->listens || d->is_local || !d->per_entity || d->entity_local
-            || d->extern_system) continue;
+        if (d->kind != DECL_SYSTEM || d->is_view || d->listens || d->is_local || !d->per_entity || d->entity_local) continue;
         d->without_mask = mask_or(d->without_mask, bit(prog->predict_far));
     }
     derive_archetypes(&c);
