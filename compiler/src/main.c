@@ -10,7 +10,7 @@ static void usage(void)
 {
     fprintf(stderr,
             "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--visualizers] [--layout] [--embed]\n"
-            "             [--define <SYMBOL>]...\n"
+            "             [--split-plumbing] [--define <SYMBOL>]...\n"
             "       tidec <file.tide>... --schedule [--name <name>]\n"
             "       tidec <file.tide>... --shaders\n"
             "       tidec <file.tide>... --outline\n"
@@ -31,6 +31,8 @@ static void usage(void)
             "  --scene <name> start directly in this qualified prefab or scene, overriding settings.startScene\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --visualizers  also write <name>.natvis and <name>_lldb.py, how debuggers show the game's values\n"
+            "  --split-plumbing  also write all but the game's own code as <name>_plumbing.c, for a debug build\n"
+            "                 to compile optimized while <name>.c stays as written\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
             "  --embed        ...and what another program needs to run the game (tide/embed.h), as tide unity builds it\n"
             "  --declarations the game's types alone: its systems, views, handlers, functions, frags and verts\n"
@@ -260,6 +262,8 @@ int main(const int argc, char **argv)
             opts.line_directives = false;
         } else if (strcmp(argv[i], "--visualizers") == 0) {
             opts.visualizers = true;
+        } else if (strcmp(argv[i], "--split-plumbing") == 0) {
+            opts.split_plumbing = true;
         } else if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
             opts.game_folder = argv[++i];
         } else if (strcmp(argv[i], "--build-cc") == 0 && i + 1 < argc) {

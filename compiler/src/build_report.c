@@ -323,7 +323,7 @@ static void write_table(sb *o, const build_report *r, const build_report_about *
     if (r->compile_count || r->reused) {
         build_report_compile *sorted = malloc(sizeof *sorted * (size_t)(r->compile_count ? r->compile_count : 1));
         if (!sorted) abort();
-        memcpy(sorted, r->compiles, sizeof *sorted * (size_t)r->compile_count);
+        if (r->compile_count) memcpy(sorted, r->compiles, sizeof *sorted * (size_t)r->compile_count);
         qsort(sorted, (size_t)r->compile_count, sizeof *sorted, by_time);
         double sum = 0.0;
         for (int i = 0; i < r->compile_count; i++) sum += sorted[i].ms;

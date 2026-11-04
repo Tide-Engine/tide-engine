@@ -1,5 +1,67 @@
 # `tide`, packages and the package
 
+## Optimized plumbing in debug builds (2026-11-04)
+
+Asked for by the owner: a plain debug `tide run` of a large game (Mount & Rifle) was unplayable, while
+`tide run -O2` was not, but `-O2` also optimizes the game's code, which a debugger then steps badly. Debug builds
+(no `--release`, `--distribution` or `-O<n>`: `splits_plumbing` in `build.c`) now compile with the engine's
+`-O2 -g`:
+
+- **Package C/C++** (`queue_c_files` for a package: stamp and flags from `stamp_of(b, true)` and
+  `queue_compile_as(..., optimized)`). The game's own C stays `-O0 -g`. Packages are library code, as the
+  engine is.
+- **The generated plumbing.** tidec's `codegen_options.split_plumbing` (`tidec --split-plumbing`) writes
+  `game_plumbing.c` beside `game.c` (`compiler/src/plumbing_split.inc`, run on the finished text before `#line`
+  pinning). `game.c` keeps the functions whose lines are `.tide` lines (systems, views, handlers, functions,
+  methods, parallel steps, sort comparators, async bodies) and compiles as before; everything else (world copy,
+  hashing, packing and deltas, client state and projections, rows and tasks that call the systems, dispatch,
+  assets, shaders' data, layout, the game API) goes to the plumbing file, compiled into `game_plumbing.o` beside
+  `game.o` (`queue_game`, in the game C's objects, so every link takes it: build, run/reload, Unity, Android,
+  web, servers). Release, distribution and explicit levels still write one file.
+
+How it cuts (comments at the top of the .inc): top-level items, by a scanner that follows strings, comments,
+directives and braces. A function goes to one file. Types, prototypes, directives and macros go to both. A
+variable is the plumbing's, except a small static const both name (in both), a static only the code names, and
+the definitions codegen lists in `gen.code_at`: `tide_game_api` (it holds the simulation identity) and the
+profile's `tide_system_sources`/`tide_view_sources` (`.tide` lines), so an edit of the code alone leaves
+`game_plumbing.c` byte for byte, and its stamp (which leaves `TIDE_SIMULATION_ID` out of the header's hash, as the
+launcher's does) keeps the `-O2` object. Top-level `.tide` `#line`s go to `game.c` only, for the same reason.
+Linkage: a name one file uses and the other defines becomes external with hidden visibility (`TIDE_SPLIT`;
+`TIDE_SPLIT_HELPER` keeps `TIDE_HELPER`'s `nodebug`), declared in the other file where the definition was; who
+uses what is a fixed point over function bodies, initializers and macro bodies. A static of the plumbing's that
+becomes external is renamed `tide_split_<name>` in both files: `tide_game_pack` (world packing) is also
+`--pack-c`'s data, and `tide_embed_command/schema/view` the platform's. The game's code keeps its names, and so
+does a name that is also a field's anywhere (after `.`/`->`: `tide_request_watch`, `tide_born`), as renaming would
+reach the struct declaring it; a field mention isn't a use either. What
+it can't cut (none of this build's games) stays whole in `game.c`, and `game_plumbing.c` says why in a comment.
+Output is sized by a counting pass and `#line` pinning streams to the file (`write_pinned`): the arena never
+frees, and Mount & Rifle's 96 MB of generated C ran tide out of memory otherwise.
+
+Measured (Windows, clang 23.1.2, this checkout's installed toolchain against the same scratch copy of Mount &
+Rifle at 6e963ed, unpinned; `tools/performance-route.txt`, seed 42, 3230 frames, 1280x720, `--profile`; the
+machine ran up to three other Mount & Rifle sessions, so interleaved runs, medians):
+
+| debug, ms/frame | before (5 runs) | after (4 runs) |
+|---|---|---|
+| match (`cpu_phases.match`) | 23.1 (p50 19.4) | 17.7 (p50 14.3) |
+| match minus systems (hash, pack, load, copy) | 15.3 | 9.9 |
+| views | 10.9 (p50 10.5) | 10.8 (p50 9.5) |
+
+Single runs vary up to 2x with the other sessions' load. In 700-frame load-phase runs (2 each) match went
+29.5/30.4 to 24.2/28.1. Sumo (`examples/sumo`, 1800 frames, seed 42, 3 runs each): match 7.1 to 1.7 ms, views
+2.9 to 0.9 ms (its Box3D package C is most of it). One later split run of the route ended with the engine's "out
+of memory" while three other Mount & Rifle instances were running; its other runs and the base runs before and
+after it completed. Cold `tide build` of Mount & Rifle with a debug-built tide: 5:00, the `-O2` plumbing (86 MB,
+mostly shader data; `game.c` 14.7 MB) compiling in about a minute alongside the engine.
+
+Tests: `tidec_debugger_natvis` on the split fixture (`SPLIT_PLUMBING`, notes/tide-programs.md); every `.sources`
+list of the debug build (463) generated with `--split-plumbing --visualizers --layout`: 443 split, both halves
+compile with `-Wall -Wextra -Wpedantic -Werror` (MinGW target), no symbol defined by both, nothing undefined
+that the whole file didn't need but the engine's own functions (helpers made external are emitted); the unsplit
+output equals the previous tidec's but for the identity (it hashes tidec's sources). `build_code` fails without
+`--build-cc`, as before. `cache_test.mjs` (native) expects `game_plumbing.o` in debug, a layout change to rebuild
+it, a body edit not to, and its reuse after a failed build. CLI unit/help/run-exit tests pass. Not run here: web
+and Android builds (CI's package checks run `cache_test.mjs --web`), LLDB (CI's Linux jobs), macOS/Linux.
 ## Build reports (2026-11-04)
 
 Owner: "build reports; we should be able to have some output documenting where
