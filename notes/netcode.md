@@ -43,9 +43,10 @@ What's built:
   plus a near-only rollback of the lead; the input-delay budget measures those
   predicted ticks (`note_tick_cost`), now near-only.
 - **Corrections**: `tide_local_correct` skips an entity tagged in either world, as
-  it skips a ghost in a sharded game: a far entity's presented values move a tick
-  at a time with no accumulated error (with it, each confirmed tick read as a
-  one-tick correction and smoothing lagged far entities by about six ticks).
+  it skips a ghost in a sharded game: a far entity takes no accumulated error
+  (with it, each confirmed tick read as a one-tick correction and smoothing
+  lagged far entities by about six ticks); views blend it on the confirmed clock
+  instead (below).
 
 Tests: `tidec_e2e_predict_near` (`compiler/tests/e2e/predict_near*`): two
 players on a 100 ms loopback, and on 120 ms with 60 ms jitter and 20% loss; a
@@ -57,16 +58,59 @@ walkers' confirmed state follows the server's. Without the `far_from` check in
 `play` both clients resync. Error fixtures `settings_prediction_range_zero` and
 `settings_prediction_range_delay`.
 
+**Far entities drawn blended** (same day, the owner: "we should blend them"):
+the drawn (predicted) world has a far entity as last confirmed at both ends of
+every tick, so it moved a tick at a step. Generated `tide_far_blend_<C>(w, e, v)`
+(`gen_far_blend`, for blended components with nothing in a heap, `far_plain`):
+for an entity tagged in the drawn world, its value in the presented confirmed
+world, blended with the one before on the confirmed clock (`tide_blend_<C>`,
+`tide_prev_<C>`), as a `verified` parameter's is; false for a near one or one
+that world lacks (born the same, else drawn as before). View row copies and
+view query rows call it before their ordinary blend, whole and lane-subset
+paths. The confirmed pair comes from file statics `tide_far_verified`,
+`tide_far_vprev`, `tide_far_valpha`, set by `tide_frame` before views (and per
+other shard's world drawn), cleared after them, so views without `verified`
+parameters needn't take the confirmed worlds (`takes_verified` would also turn
+off shader preparation). Components holding text, lists or grids keep a tick
+at a step: their handles are the drawn world's heap's.
+
+**The marking pass, by columns** (same day): `gen_far_rows` reads each
+archetype's position from its lanes chunk by chunk (`far_source`: the first
+`[Position]` component it has, then `Transform`; a sparse one, which a row may
+lack, goes through `tide_far_where`); a child in a hierarchy goes by its root
+(`tide_parent_of`, then `tide_far_where`). A chunk's tag page is made its own
+only where a tag changes. Measured (release, Windows, one thread, 50,001
+entities over 1000 × 50 units, range 40, ~3% near; a scratch game, not kept):
+
+| | lookups | columns |
+|---|---|---|
+| marking, first time on a verified world | 0.350 ms | 0.056 ms |
+| marking again, nothing changing | 0.245 ms | 0.041 ms |
+
+A whole tick of cheap systems (move, count) took 0.065 ms and the near-only one
+0.080 ms: every chunk mixes near and far rows, and the filtered loops cost more
+than the plain SIMD ones. With a system doing 32 steps of math per entity, a
+whole tick took 43.2 ms and the near-only one 1.5 ms (marking 0.11 ms). The same
+games without the setting: 0.037 ms and 42-43 ms a whole tick, so the far filter
+costs every tick (the server's and confirmed ones too, though nothing is ever
+tagged there) about 0.5 ns per row per system, which only shows on trivial
+systems.
+
+Tests (blending): `predict_near_draws_far_walkers_blended_as_confirmed` runs
+`tide_frame` on the client's views each frame and checks the far walker drawn
+at the confirmed pair's blend (and between its endpoints in over a quarter of
+frames), the near one at the predicted pair's; it fails with the helper
+returning false.
+
 Gaps:
 - Whole-world code still runs for far entities in predicted ticks: C systems,
   singleton systems going through queries, and physics packages' steps (Box2D
   and Box3D step every body). Tagging what such code reaches is open.
-- Far entities draw a tick at a step, at the verified tick, not blended on the
-  confirmed clock; drawing them through the `verified` interpolation would be
-  smoother (spec Open: showing other players from confirmed state).
-- The marking pass reads each row's position through `tide_get_` lookups, once
-  per confirmed tick (and per predicted tick while nothing is far); a column
-  read per archetype would be cheaper on big worlds. Not measured yet.
+- The filter's per-row cost in ticks that have no tags (the server's,
+  confirmed ones): a world-level "nothing is tagged" would let them take the
+  unfiltered loops.
+- `World` reads in views (`world.Get<Body>(e)`) of a far entity are the drawn
+  world's, not blended from the confirmed one.
 - Every confirmed tick with anything far reruns the near lead even when guesses
   were right; comparing near rows alone could skip it.
 

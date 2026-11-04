@@ -50,3 +50,16 @@ system Count(mut Body body)
 {
     body.ran += 1;
 }
+
+// Where views draw each walker: a far one as confirmed, blended on the confirmed clock
+local singleton Drawn
+{
+    float firstY;
+    float secondY;
+}
+
+view Show(Body body, Walker walker, mut Drawn drawn)
+{
+    if (walker.id == 1) drawn.firstY = body.position.y;
+    else drawn.secondY = body.position.y;
+}

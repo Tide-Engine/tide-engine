@@ -11048,11 +11048,59 @@ static const char *blend_worlds(const decl *d, const bool verified)
     return !blend_reads_heap(d) ? "" : verified ? ", tide_vprev, tide_verified" : ", tide_prev, tide_w";
 }
 
+// Whether a component's value is plain, holding nothing in a heap: one taken
+// whole from another world reads nothing of that world's heap.
+static bool far_plain(const type t)
+{
+    switch (t.kind) {
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID: return false;
+    case TY_STRUCT: case TY_COMPONENT: case TY_ARRAY:
+        for (int i = 0; t.decl && i < t.decl->fields.count; i++) {
+            if (!far_plain(t.decl->fields.items[i].type)) return false;
+        }
+        return true;
+    default: return true;
+    }
+}
+
+// Whether a view draws component `d` of a far entity (predictionRange) from
+// the confirmed worlds, blended on their clock (gen_far_blend)
+static bool far_blends(const gen *g, const decl *d)
+{
+    return predicts_near(g) && !d->is_local && decl_blends(d) && far_plain((type){TY_COMPONENT, (decl *)d});
+}
+
+// tide_far_blend_<Component>(w, e, v): for an entity the drawn world `w` has
+// left out of its predicted ticks as far (predictionRange), its value in the
+// confirmed world the frame presents, blended with the one before on the
+// confirmed clock, as a `verified` parameter's is; the drawn world only has it
+// as last confirmed, the same at both ends of every tick. False for a near
+// one, or one the confirmed world doesn't have: drawn as any other.
+static void gen_far_blend(gen *g, const decl *d)
+{
+    if (!far_blends(g, d)) return;
+    sb *o = &g->c;
+    const char *name = type_cname(d);
+    sb_printf(o, "TIDE_HELPER bool tide_far_blend_%s(const tide_world *w, tide_entity e, %s *v)\n{\n"
+                 "    if (!tide_far_verified || !tide_has_tide_far(w, e)) return false;\n", name, name);
+    if (entities_born(g)) {
+        sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&tide_far_verified->entities, e))) return false;\n");
+    }
+    sb_printf(o, "    %s now;\n    if (!tide_load_%s(tide_far_verified, e, &now)) return false;\n"
+                 "    if (tide_far_vprev && tide_far_valpha < 1.0f) {\n"
+                 "        %s before;\n        tide_blend_%s(&now, tide_prev_%s(tide_far_vprev, tide_far_verified, e, &before), tide_far_valpha);\n"
+                 "    }\n    *v = now;\n    return true;\n}\n\n", name, name, name, name, name);
+}
+
 static void gen_blend_helpers(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
     g->indent = 1;
+    if (predicts_near(g)) {
+        sb_put(o, "// The confirmed worlds a frame presents, for far entities' views (tide_far_blend_*): set as views run\n"
+                  "static const tide_world *tide_far_verified, *tide_far_vprev;\nstatic float tide_far_valpha;\n\n");
+    }
     if (prog->grids.count) {
         sb_put(o, "TIDE_HELPER tide_grid tide_blend_grid_snapshot(tide_grid value, const tide_grid_shape *shape)\n{\n"
                   "    if (!value.at || tide_handle_where(value.at) == TIDE_IN_SCRATCH) return value;\n"
@@ -11115,6 +11163,7 @@ static void gen_blend_helpers(gen *g)
             sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
             if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
             sb_printf(o, "    return tide_load_%s(w, e, out) ? out : NULL;\n}\n\n", name);
+            gen_far_blend(g, d);
             if (!reads_some_used(g, d)) continue;
             // The same for the lanes a view reads: only the fields in them blend, and only those are found
             sb_printf(o, "TIDE_HELPER __attribute__((always_inline)) void tide_blend_some_%s(%s *v, const %s *before, float t, const uint64_t *some)\n{\n"
@@ -15563,6 +15612,9 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
             sb_printf(o, "%s%s tide_v%d;\n%stide_gather_some_%s(&tide_v%d, (const uint8_t *const *)tide_col_%s, tide_i, %s);\n", pad, c, i,
                       pad, c, i, c, some.data);
             if (param_blends(p)) {
+                if (sys->is_view && !p->verified && far_blends(g, p->type.decl)) {
+                    sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &tide_v%d))\n", pad, c, i);
+                }
                 sb_printf(o, "%sif (tide_blend) { %s tide_p%d; tide_blend_some_%s(&tide_v%d, tide_prev_some_%s(tide_prev, tide_w, "
                              "tide_ent[tide_i], &tide_p%d, %s), tide_alpha, %s); }\n", pad, c, i, c, i, c, i, some.data, some.data);
             }
@@ -15578,6 +15630,9 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
         }
         const bool drawn = sys->is_view;
         if (drawn && param_blends(p)) {
+            if (!p->verified && far_blends(g, p->type.decl)) {
+                sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &tide_v%d))\n", pad, c, i);
+            }
             sb_printf(o, "%sif (%s) { %s tide_p%d; %s(&tide_v%d, tide_prev_%s(%s, %s, tide_ent[tide_i], "
                          "&tide_p%d), %s%s); }\n", pad, p->verified ? "tide_vblend" : "tide_blend", c, i, view_blender(p->type.decl), i, c,
                       p->verified ? "tide_vprev" : "tide_prev", p->verified ? "tide_verified" : "tide_w", i,
@@ -19032,6 +19087,9 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
                 lane_words_c(&some, &read, comp_lanes(comp));
                 sb_printf(o, "%stide_gather_some_%s(&%s, tide_col%d, tide_i, %s);\n", pad, c, place.data, i, some.data);
                 if (decl_blends(comp) && !comp->is_local) {
+                    if (!p->verified && far_blends(g, comp)) {
+                        sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &%s))\n", pad, c, place.data);
+                    }
                     sb_printf(o, "%sif (tide_blend) { %s tide_p; tide_blend_some_%s(&%s, tide_prev_some_%s(tide_prev, tide_w, tide_ent[tide_i], "
                                  "&tide_p, %s), tide_alpha, %s); }\n", pad, c, c, place.data, c, some.data, some.data);
                 }
@@ -19047,6 +19105,7 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
                 continue;
             }
             if (decl_blends(comp)) {
+                if (far_blends(g, comp)) sb_printf(o, "%sif (!tide_far_blend_%s(tide_w, tide_ent[tide_i], &%s))\n", pad, c, place.data);
                 sb_printf(o, "%sif (tide_blend) { %s tide_p; %s(&%s, tide_prev_%s(tide_prev, tide_w, tide_ent[tide_i], &tide_p), "
                              "tide_alpha%s); }\n", pad, c, view_blender(comp), place.data, c, blend_worlds(comp, false));
             }
@@ -21521,6 +21580,10 @@ static void gen_api(gen *g)
         sb_put(o, "    const tide_profile_source *tide_previous_source = draw ? draw->profile_source : NULL;\n"
                   "    uint64_t tide_at = tide_profile_now(tide_p);\n");
     }
+    // Far entities are drawn as confirmed, on the confirmed clock (tide_far_blend_*)
+    const char *far_home = "    tide_far_verified = verified;\n    tide_far_vprev = verified ? verified_previous : NULL;\n"
+                           "    tide_far_valpha = verified ? verified_alpha : 1.0f;\n";
+    if (predicts_near(g)) sb_put(o, far_home);
     for (int i = 0; i < prog->views.count; i++) {
         const decl *view = prog->views.items[i];
         sb_printf(o, "    if (draw && draw->diagnostics) draw->profile_source = &tide_view_sources[%d];\n", i);
@@ -21532,16 +21595,23 @@ static void gen_api(gen *g)
             sb_put(o, "    for (uint32_t tide_k = 0; tide_k < tide_view_more_count; tide_k++) {\n"
                       "        const tide_view_worlds *tide_o = &tide_view_more[tide_k];\n"
                       "        tide_view_switch((int32_t)tide_k, local);\n");
+            if (predicts_near(g)) {
+                sb_put(o, "        tide_far_verified = tide_o->verified;\n"
+                          "        tide_far_vprev = tide_o->verified ? tide_o->verified_previous : NULL;\n"
+                          "        tide_far_valpha = tide_o->verified ? tide_o->verified_alpha : 1.0f;\n");
+            }
             sb_printf(o, "        tide_run_view_%s(tide_o->current, tide_o->previous, tide_o->alpha, %slocal, draw, gui);\n    }\n",
                       decl_cname(view),
                       view->takes_verified ? "tide_o->verified ? tide_o->verified : tide_o->current, tide_o->verified ? tide_o->verified_previous "
                                              ": tide_o->previous, tide_o->verified ? tide_o->verified_alpha : tide_o->alpha, " : "");
             sb_put(o, "    if (tide_view_more_count) tide_view_switch(-1, local);\n");
+            if (predicts_near(g)) sb_put(o, far_home);
         }
         sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
         gen_c_literal(o, diagnostic_name(g, tool_name(view), "view", view->index), false);
         sb_put(o, ", tide_at);\n");
     }
+    if (predicts_near(g)) sb_put(o, "    tide_far_verified = tide_far_vprev = NULL; // Only while views run\n");
     if (prog->views.count) sb_put(o, "    if (draw) { draw->profile_source = tide_previous_source; draw->profile_mesh_name = tide_previous_mesh_name; }\n");
     if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n"
                                        "    if (gui && gui->profile) tide_profile_count(&gui->profile->views, 0u);\n");

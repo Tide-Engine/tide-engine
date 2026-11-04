@@ -163,6 +163,48 @@ static void check_far_walkers_wait(const tide_net_conditions conditions)
     finish();
 }
 
+// Views draw a far walker from the confirmed worlds the frame presents,
+// blended on their clock: where the drawn world has it the same at both ends
+// of every tick, it would only move a tick at a time. A near one is drawn
+// from the predicted worlds as ever.
+TIDE_TEST(predict_near_draws_far_walkers_blended_as_confirmed)
+{
+    start((tide_net_conditions){.latency = 0.1});
+    static tide_local local;
+    static tide_draw_list draw;
+    static tide_gui gui;
+    tide_local_init(&local);
+    int frames = 0, far_right = 0, between = 0, near_right = 0;
+    bool odd = false;
+    while (now < 5.0) {
+        now += (odd = !odd) ? 0.011 : 0.022;
+        tide_loopback_set_time(net, now);
+        tide_client_update(mover, now);
+        tide_client_update(other, now);
+        tide_server_update(server, now);
+        const tide_view_worlds v = tide_client_view(mover);
+        Body confirmed, before, shown, shown_before;
+        if (!v.current || !v.previous || !v.verified || !v.verified_previous || !walker(v.verified, 2, &confirmed)
+            || !walker(v.verified_previous, 2, &before) || !walker(v.current, 1, &shown) || !walker(v.previous, 1, &shown_before)) continue;
+        tide_draw_reset(&draw);
+        tide_frame(v.current, v.previous, v.alpha, v.verified, v.verified_previous, v.verified_alpha, &local, &draw, &gui);
+        tide_client_mark_presented(mover);
+        frames++;
+        const float expected = before.position.y + (confirmed.position.y - before.position.y) * v.verified_alpha;
+        if (tide_abs_f(local.Drawn.secondY - expected) < 1e-6f) far_right++;
+        if (tide_abs_f(local.Drawn.secondY - before.position.y) > 1e-6f && tide_abs_f(local.Drawn.secondY - confirmed.position.y) > 1e-6f) between++;
+        const float near_expected = shown_before.position.y + (shown.position.y - shown_before.position.y) * v.alpha;
+        if (tide_abs_f(local.Drawn.firstY - near_expected) < 1e-6f) near_right++;
+    }
+    TIDE_CHECK(frames > 100);
+    TIDE_CHECK(far_right == frames);
+    TIDE_CHECK(between > frames / 4); // Blended, not a tick at a step
+    TIDE_CHECK(near_right == frames);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    finish();
+}
+
 TIDE_TEST(predict_near_leaves_far_walkers_as_confirmed)
 {
     check_far_walkers_wait((tide_net_conditions){.latency = 0.1});
