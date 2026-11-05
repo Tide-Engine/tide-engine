@@ -223,6 +223,22 @@ use TIDE_HIDDEN. Other platforms remain normal push-triggered workflow coverage.
 
 ## Agent-readable profile captures (2026-11-02)
 
+Cheaper draw diagnostics (2026-11-05): `--profile` tripled Mount & Rifle's views (4.05 ms a
+frame against 1.34-1.46 without it; notes/benchmarks.md, Mount & Rifle's views). Main-thread samples put
+22% of the program's own in `geometry_row`, which went through every geometry row comparing names for each
+recorded draw (1,024 rows, full on that route), and 9% in the generated `tide_profile_mesh_name`, which went
+through every mesh asset for each draw. Now (engine/src/draw_profile.c): the rows are found through an index
+by a hash of the key's text and numbers (`tide_draw_diagnostics.geometry_index`, 4,096 places for the 1,024
+rows, emptied by `tide_draw_diagnostics_clear`), each hit compared with its row, and a key the index hasn't
+is one no row has, so a full table drops it without a scan; and a mesh slot keeps the name it was given with
+the list handles, version and naming function it was given for (`tide_draw_mesh_data.profile_name` and
+`profile_named_*`), asked again only when one changes (tide_draw_forget frees the slots and clears the
+function, so a reloaded library's names are asked anew). Rows, counts and names are what they were; text
+changed in place is another key, as before. With `--profile` the route's views took 1.50 / 1.68 ms against
+1.44 without (noisy machine). `draw_profile_geometry_rows_go_by_text_and_names_by_mesh`
+(tests/test_draw_profile.c) pins rows by text across addresses, changed text, a full table and clearing,
+and one name asked for a mesh drawn 100 times.
+
 Owner-approved first profiling slice: `--profile <file.json>` captures the
 ordinary desktop host independently of F7/F8. `--profile-warmup <n>` excludes
 the first n frames (default zero, integer 0..1,000,000,000). It requires a

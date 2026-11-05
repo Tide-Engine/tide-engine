@@ -60,6 +60,8 @@ typedef struct tide_draw_diagnostics {
     uint64_t dropped_calls, dropped_candidates;
     uint32_t source_bytes;
     uint32_t last; // 1 + the most recently used row, or zero.
+    // Private: geometry rows by their keys' pointers and numbers, so a draw finds its row without comparing names.
+    struct tide_draw_geometry_index *geometry_index;
 } tide_draw_diagnostics;
 
 // Clear measurements and owned names, retaining the bounded row allocation.

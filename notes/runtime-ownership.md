@@ -1,5 +1,12 @@
 # Runtime written by Claude for now
 
+## Cheaper draw diagnostics (2026-11-05)
+
+Within the drawing maintenance exception: `tide_draw_mesh_data` gains `profile_name`, `profile_named_by`
+and `profile_named_vertices/indices/version`, and `tide_draw_diagnostics` a private `geometry_index`. Generated
+code calls nothing new; hosts and game libraries rebuild together for the layouts. Details: standard-host.md,
+Cheaper draw diagnostics.
+
 ## Quit and bans across the host boundary (2026-11-04)
 
 Owner-approved for mount-and-rifle's two gaps. Generated code calls no new

@@ -6,6 +6,19 @@
 #include "tide/draw.h"
 #include "tide/page.h"
 
+// The geometry rows by a hash of their keys (key_hash), each 1 + its row; 0 is an empty place
+typedef struct geometry_entry {
+    uint64_t hash;
+    uint32_t row;
+} geometry_entry;
+
+typedef struct tide_draw_geometry_index {
+    geometry_entry *entries;
+    uint32_t capacity; // A power of two
+} tide_draw_geometry_index;
+
+#define GEOMETRY_INDEX_CAPACITY (TIDE_DRAW_PROFILE_ROWS * 4u)
+
 static const char *source_name(const tide_profile_source *source)
 {
     return source && source->name ? source->name : "(unattributed)";
@@ -88,6 +101,8 @@ void tide_draw_diagnostics_clear(tide_draw_diagnostics *p)
     for (uint32_t i = 0; i < p->count; i++) free((void *)p->rows[i].source.name);
     for (uint32_t i = 0; i < p->geometry_count; i++) free((void *)p->geometry[i].source.name);
     p->revision++;
+    // The rows go: so does what found them
+    if (p->geometry_index) memset(p->geometry_index->entries, 0, (size_t)p->geometry_index->capacity * sizeof *p->geometry_index->entries);
     p->geometry_count = p->geometry_bytes = 0;
     p->dropped_geometry_instances = 0;
     p->count = p->last = p->source_bytes = 0;
@@ -100,6 +115,8 @@ void tide_draw_diagnostics_free(tide_draw_diagnostics *p)
     tide_draw_diagnostics_clear(p);
     free(p->rows);
     free(p->geometry);
+    if (p->geometry_index) free(p->geometry_index->entries);
+    free(p->geometry_index);
     *p = (tide_draw_diagnostics){0};
 }
 
@@ -129,17 +146,64 @@ void tide_draw_diagnostics_end(tide_draw_list *d, const tide_draw_diagnostic_sco
     d->profile_active = scope.previous;
 }
 
+static uint64_t text_hash(uint64_t h, const char *text)
+{
+    for (; *text; text++) {
+        h ^= (uint8_t)*text;
+        h *= 0x100000001B3ull;
+    }
+    return h * 0x100000001B3ull; // Its end too, so "ab" + "c" isn't "a" + "bc"
+}
+
+// A key's hash, of its names' text and its numbers: what a row is found by in the index
+static uint64_t key_hash(const tide_draw_geometry *key, const char *name, const char *file)
+{
+    uint64_t h = text_hash(text_hash(text_hash(0xCBF29CE484222325ull, name), file), key->mesh);
+    const uint64_t parts[] = {key->identity, key->target, key->geometry_id, key->geometry_other,
+                              (uint64_t)key->lod << 32 | key->mesh_vertices,
+                              (uint64_t)key->mesh_indices << 32 | key->source.line, key->source.column};
+    for (size_t i = 0; i < sizeof parts / sizeof parts[0]; i++) {
+        h ^= parts[i];
+        h *= 0xBF58476D1CE4E5B9ull;
+        h ^= h >> 31;
+    }
+    return h;
+}
+
+static bool same_row(const tide_draw_geometry *r, const tide_draw_geometry *key, const char *name, const char *file)
+{
+    return r->geometry_id == key->geometry_id && r->geometry_other == key->geometry_other && r->identity == key->identity
+        && r->target == key->target && r->lod == key->lod && r->mesh_vertices == key->mesh_vertices
+        && r->mesh_indices == key->mesh_indices && r->source.line == key->source.line
+        && r->source.column == key->source.column && !strcmp(r->mesh, key->mesh) && !strcmp(r->source.name, name)
+        && !strcmp(r->source.file, file);
+}
+
+// Where a key's row is in the index, or the empty place it would go in: the index has every row, so a key it
+// hasn't is a key no row has, and a draw never goes through the rows one by one
+static geometry_entry *index_slot(const tide_draw_diagnostics *p, const uint64_t hash, const tide_draw_geometry *key,
+                                  const char *name, const char *file)
+{
+    const tide_draw_geometry_index *x = p->geometry_index;
+    const uint32_t mask = x->capacity - 1u;
+    for (uint32_t at = (uint32_t)hash & mask;; at = (at + 1u) & mask) {
+        geometry_entry *e = &x->entries[at];
+        if (!e->row || (e->hash == hash && same_row(&p->geometry[e->row - 1u], key, name, file))) return e;
+    }
+}
+
 static uint32_t geometry_row(tide_draw_diagnostics *p, const tide_draw_geometry *key)
 {
     const char *name = source_name(&key->source), *file = source_file(&key->source);
-    for (uint32_t i = 0; i < p->geometry_count; i++) {
-        const tide_draw_geometry *r = &p->geometry[i];
-        if (r->geometry_id == key->geometry_id && r->geometry_other == key->geometry_other &&
-            r->identity == key->identity && r->target == key->target && r->lod == key->lod &&
-            r->mesh_vertices == key->mesh_vertices && r->mesh_indices == key->mesh_indices &&
-            r->source.line == key->source.line && r->source.column == key->source.column &&
-            !strcmp(r->mesh, key->mesh) && !strcmp(r->source.name, name) && !strcmp(r->source.file, file)) return i + 1u;
+    if (!p->geometry_index) { // Room for every row at under half full: it's never made bigger
+        p->geometry_index = tide_alloc(sizeof *p->geometry_index);
+        p->geometry_index->capacity = GEOMETRY_INDEX_CAPACITY;
+        p->geometry_index->entries = tide_alloc(GEOMETRY_INDEX_CAPACITY * sizeof *p->geometry_index->entries);
+        memset(p->geometry_index->entries, 0, GEOMETRY_INDEX_CAPACITY * sizeof *p->geometry_index->entries);
     }
+    const uint64_t hash = key_hash(key, name, file);
+    geometry_entry *e = index_slot(p, hash, key, name, file);
+    if (e->row) return e->row;
     const size_t n = strlen(name) + 1, f = strlen(file) + 1, m = strlen(key->mesh) + 1;
     const size_t left = TIDE_DRAW_PROFILE_SOURCE_BYTES - p->geometry_bytes;
     if (p->geometry_count == TIDE_DRAW_PROFILE_ROWS || n > left || f > left - n || m > left - n - f) return 0;
@@ -155,6 +219,7 @@ static uint32_t geometry_row(tide_draw_diagnostics *p, const tide_draw_geometry 
     r->mesh = copy + n + f;
     r->instances = r->vertices = r->triangles = 0;
     p->geometry_bytes += (uint32_t)(n + f + m);
+    *e = (geometry_entry){.hash = hash, .row = p->geometry_count};
     return p->geometry_count;
 }
 
@@ -193,8 +258,17 @@ void tide_draw_geometry_record(tide_draw_list *d, tide_draw_command *c, const ui
 {
     if (!d->diagnostics || d->profile_copying || !count || !mesh || mesh > d->mesh_count) return;
     const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
-    const tide_draw_mesh_data *base = m->base ? &d->meshes[m->base - 1u] : m;
-    const char *name = d->profile_mesh_name ? d->profile_mesh_name(base->profile_vertices, base->profile_indices) : NULL;
+    tide_draw_mesh_data *base = m->base && m->base <= d->mesh_count ? &d->meshes[m->base - 1u] : &d->meshes[mesh - 1u];
+    // The generated name search goes through every mesh asset: asked once for each mesh, not for each draw
+    if (base->profile_named_by != d->profile_mesh_name || base->profile_named_vertices != base->profile_vertices
+        || base->profile_named_indices != base->profile_indices || base->profile_named_version != base->version) {
+        base->profile_name = d->profile_mesh_name ? d->profile_mesh_name(base->profile_vertices, base->profile_indices) : NULL;
+        base->profile_named_by = d->profile_mesh_name;
+        base->profile_named_vertices = base->profile_vertices;
+        base->profile_named_indices = base->profile_indices;
+        base->profile_named_version = base->version;
+    }
+    const char *name = base->profile_name;
     const tide_draw_geometry key = {
         .source = d->profile_source ? *d->profile_source : (tide_profile_source){0},
         .mesh = name ? name : "(generated or C mesh)", .identity = base->version,

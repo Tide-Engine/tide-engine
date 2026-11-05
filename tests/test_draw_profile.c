@@ -259,3 +259,57 @@ TIDE_TEST(draw_profile_geometry_bounds_links_and_keeps_existing_rows)
     tide_draw_free(&d);
     tide_draw_diagnostics_free(&p);
 }
+
+static uint32_t names_asked;
+
+static const char *count_names(const uint64_t vertices, const uint64_t indices)
+{
+    (void)vertices;
+    (void)indices;
+    names_asked++;
+    return "Counted";
+}
+
+TIDE_TEST(draw_profile_geometry_rows_go_by_text_and_names_by_mesh)
+{
+    tide_draw_diagnostics p = {0};
+    tide_draw_list d = {.diagnostics = &p};
+    camera(&d);
+    d.profile_mesh_name = count_names;
+    names_asked = 0;
+    char first[] = "Rocks", second[] = "Rocks";
+    tide_profile_source source = {.name = first, .file = "rocks.tide", .line = 3};
+    d.profile_source = &source;
+    for (uint32_t i = 0; i < 100; i++) triangle(&d, placed(0));
+    TIDE_CHECK(names_asked == 1); // One mesh: its name asked for once
+    source.name = second; // The same text somewhere else: the same row
+    triangle(&d, placed(0));
+    TIDE_REQUIRE(p.geometry_count == 1);
+    TIDE_CHECK(!strcmp(p.geometry[0].mesh, "Counted"));
+    second[0] = 'D'; // Other text where it was: a row of its own
+    triangle(&d, placed(0));
+    TIDE_REQUIRE(p.geometry_count == 2);
+    TIDE_CHECK(!strcmp(p.geometry[1].source.name, "Docks") && !strcmp(p.geometry[0].source.name, "Rocks"));
+    // A full table still finds its rows, and drops the keys it hasn't
+    for (uint32_t line = 100; p.geometry_count < TIDE_DRAW_PROFILE_ROWS; line++) {
+        source.line = line;
+        triangle(&d, placed(0));
+    }
+    const uint64_t dropped = p.dropped_geometry_instances;
+    source.line = 100000;
+    triangle(&d, placed(0));
+    TIDE_CHECK(p.dropped_geometry_instances == dropped + 1);
+    source.name = first;
+    source.line = 3;
+    const uint32_t links = d.profile_link_count;
+    triangle(&d, placed(0));
+    TIDE_CHECK(p.dropped_geometry_instances == dropped + 1 && d.profile_link_count <= links + 1u);
+    TIDE_CHECK(d.profile_links[d.profile_link_count - 1u].row == 1);
+    // After a clear, the same keys make new rows from nothing
+    tide_draw_diagnostics_clear(&p);
+    triangle(&d, placed(0));
+    TIDE_CHECK(p.geometry_count == 1 && !strcmp(p.geometry[0].source.name, "Rocks"));
+    TIDE_CHECK(names_asked == 1);
+    tide_draw_free(&d);
+    tide_draw_diagnostics_free(&p);
+}

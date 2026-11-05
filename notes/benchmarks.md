@@ -15,7 +15,8 @@ frames past 200 averaged. Its `PerfProbeMark` views bracket the views, Camera to
 - **With `--profile`**: views 4.05 ms by the same probes (the profile's own views phase 4.83, DrawFlora
   2.50 of it), whole frame 9.87. The profile's draw diagnostics (per-draw scopes, geometry rows, mesh
   names) triple the views' time, so view and mesh-recording times from `--profile` overstate what a game
-  without it spends. The GPU's mean was 7.09 ms (p50 8.64).
+  without it spends. The GPU's mean was 7.09 ms (p50 8.64). Fixed 2026-11-05 (standard-host.md, Cheaper
+  draw diagnostics): with `--profile` the views took 1.50 / 1.68 ms, without it 1.44.
 - **Overlapping views** (stage 1) gains little there: the heavy views run in a chain through what they
   share (Camera writes Stage; DrawLand writes Land; DrawCompoundKits reads Land; DrawMenuMan writes Stage;
   DrawFlora reads Land and Stage; Present writes Stage and reads Flora). Only DrawWaterSurfaces could

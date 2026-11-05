@@ -1350,6 +1350,10 @@ typedef struct tide_draw_mesh_data {
     // A mesh a game made, drawn with `lod:` (tide_draw_want_levels): the key its levels are kept by, which is what's
     // in it and how it's weighed, and the tolerance multiplier they're picked with once they're made. 0 otherwise
     uint64_t profile_vertices, profile_indices; // Diagnostic list handles, never dereferenced.
+    // The name the list's profile_mesh_name gave last, and what it was asked about: asked again only when one changed
+    const char *profile_name;
+    const char *(*profile_named_by)(uint64_t vertices, uint64_t indices);
+    uint64_t profile_named_vertices, profile_named_indices, profile_named_version;
     uint64_t lod_key;
     float lod_want;
 } tide_draw_mesh_data;
