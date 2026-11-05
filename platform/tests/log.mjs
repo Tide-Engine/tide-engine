@@ -130,11 +130,16 @@ else {
         const files = unzip(bytes);
         const expected = ['crash.txt', 'system.txt', 'Player.log', ...(process.platform === 'win32' ? ['crash.dmp'] : [])];
         check(expected.every(file => files.has(file)), `with ${expected.join(', ')}: it has ${[...files.keys()].join(', ')}`);
-        check(files.get('crash.txt')?.equals(readFileSync(join(crashes, name, 'crash.txt'))), 'crash.txt as it is in the folder: it has nothing to mask');
         // The log names this scratch folder, inside the home folder: its name is masked in the zip, not in the folder
         const home = basename(homedir());
         const inPath = text => text.toLowerCase().replaceAll('\\', '/').match(/\/(users|home)\/([^/]+)\//g)
             ?.some(found => found.split('/')[2] === home.toLowerCase());
+        // crash.txt is sent as it is, but where it names a path in the home folder (Linux's and macOS's say where the
+        // program is), whose name the zip masks too
+        const crashKept = readFileSync(join(crashes, name, 'crash.txt')), crashSent = files.get('crash.txt');
+        if (inPath(crashKept.toString())) {
+            check(crashSent && !inPath(crashSent.toString()), `crash.txt as it is in the folder, the home folder's name (${home}) masked`);
+        } else check(crashSent?.equals(crashKept), 'crash.txt as it is in the folder: it has nothing to mask');
         const kept = read(join(crashes, name, 'Player.log')), sent = files.get('Player.log')?.toString() || '';
         if (inPath(kept)) check(!inPath(sent) && /[\\/](users|home)[\\/]\*+[\\/]/i.test(sent), `the home folder's name (${home}) is masked in the zip's log`);
         else console.log('skipped: the log names no path in the home folder here');
