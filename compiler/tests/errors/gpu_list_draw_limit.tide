@@ -1,0 +1,16 @@
+// expect: this draw reads 65 GPU lists, and a draw's shaders name 64 at the most
+scene Main { }
+
+local singleton Many
+{
+    GPUList<int> l0; GPUList<int> l1; GPUList<int> l2; GPUList<int> l3; GPUList<int> l4; GPUList<int> l5; GPUList<int> l6; GPUList<int> l7; GPUList<int> l8; GPUList<int> l9; GPUList<int> l10; GPUList<int> l11; GPUList<int> l12; GPUList<int> l13; GPUList<int> l14; GPUList<int> l15; GPUList<int> l16; GPUList<int> l17; GPUList<int> l18; GPUList<int> l19; GPUList<int> l20; GPUList<int> l21; GPUList<int> l22; GPUList<int> l23; GPUList<int> l24; GPUList<int> l25; GPUList<int> l26; GPUList<int> l27; GPUList<int> l28; GPUList<int> l29; GPUList<int> l30; GPUList<int> l31; GPUList<int> l32; GPUList<int> l33; GPUList<int> l34; GPUList<int> l35; GPUList<int> l36; GPUList<int> l37; GPUList<int> l38; GPUList<int> l39; GPUList<int> l40; GPUList<int> l41; GPUList<int> l42; GPUList<int> l43; GPUList<int> l44; GPUList<int> l45; GPUList<int> l46; GPUList<int> l47; GPUList<int> l48; GPUList<int> l49; GPUList<int> l50; GPUList<int> l51; GPUList<int> l52; GPUList<int> l53; GPUList<int> l54; GPUList<int> l55; GPUList<int> l56; GPUList<int> l57; GPUList<int> l58; GPUList<int> l59; GPUList<int> l60; GPUList<int> l61; GPUList<int> l62; GPUList<int> l63; GPUList<int> l64;
+}
+struct Corner { float2 position; }
+frag Paint(Corner corner, Many many, out Color color)
+{
+    color = Color(float(many.l0[0] + many.l1[0] + many.l2[0] + many.l3[0] + many.l4[0] + many.l5[0] + many.l6[0] + many.l7[0] + many.l8[0] + many.l9[0] + many.l10[0] + many.l11[0] + many.l12[0] + many.l13[0] + many.l14[0] + many.l15[0] + many.l16[0] + many.l17[0] + many.l18[0] + many.l19[0] + many.l20[0] + many.l21[0] + many.l22[0] + many.l23[0] + many.l24[0] + many.l25[0] + many.l26[0] + many.l27[0] + many.l28[0] + many.l29[0] + many.l30[0] + many.l31[0] + many.l32[0] + many.l33[0] + many.l34[0] + many.l35[0] + many.l36[0] + many.l37[0] + many.l38[0] + many.l39[0] + many.l40[0] + many.l41[0] + many.l42[0] + many.l43[0] + many.l44[0] + many.l45[0] + many.l46[0] + many.l47[0] + many.l48[0] + many.l49[0] + many.l50[0] + many.l51[0] + many.l52[0] + many.l53[0] + many.l54[0] + many.l55[0] + many.l56[0] + many.l57[0] + many.l58[0] + many.l59[0] + many.l60[0] + many.l61[0] + many.l62[0] + many.l63[0] + many.l64[0]), 0, 0, 1);
+}
+view Show(Many many)
+{
+    Draw.Mesh([Corner { position = float2(0, 0) }, Corner { position = float2(1, 0) }, Corner { position = float2(0, 1) }], [0, 1, 2], Paint);
+}

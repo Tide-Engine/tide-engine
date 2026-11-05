@@ -1305,6 +1305,7 @@ view Setup(mut Meadow meadow)
 - Kernels write `list[i] = value` (past the capacity it goes nowhere, and the count stays as it was), `list.Add(value)` and, on a `GPUList<int>`, atomics.
 - Local code sends a list's elements with `list.Set(items)`, sets the count with `list.Clear()` and `list.SetCount(n)`, in frame order with the draws and runs around them; `list.Resize(capacity)` makes it empty at another capacity, and `list.Dispose()` lets it go.
 - `list.contentRevision` changes when the list was made again empty: a lost device, a `Resize`, or a hot reload that changed its element. A game that filled it once fills it again then.
+- A frag, vert or kernel can name up to 64 GPU lists, and a kernel can `Add` to as many as it names. Lists live side by side in the GPU's memory; one can never read or change another's elements.
 
 Functions the GPU runs take a GPU list as a parameter, `GPUList<T>`, as they take a `List<T>`: the call names one by its field, or passes on its own parameter. What a kernel can do to a list, a function it calls can do to the one it's given, and the kernel then does it to the list it passed: write elements, `Add` and atomics.
 

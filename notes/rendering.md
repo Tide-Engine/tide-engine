@@ -1,5 +1,22 @@
 # The platform layer and the renderer
 
+## GPU lists in pools, on Vulkan (2026-11-05)
+
+`TIDE_GPU_MAX_STORAGE` is 4 (it was 7): a shader's GPU lists are ranges of two pools (`notes/compute.md`, GPU lists in
+pools), so the renderer's pipelines bind 3 storage buffers at the most: the words pool at 33, the ints pool at 34, a
+kernel's run record at 35 (`TIDE_GPU_STORAGE_BINDING` + `TIDE_STORAGE_WORDS`/`_INTS`/`_RUN`; 36 the last a pipeline
+can name). Merged after Sixteen textures a draw (below), whose layout for each pipeline's bindings it keeps: a
+pipeline's layout is 1 + 16 + 16 + 4 = 37 descriptors at the most (it was 40), pushed where it has no more than
+`maxPushDescriptors` and a set of the frame's otherwise, as there; a draw sharing samplers with its lists in pools is
+under 32. (The pools' branch alone had one layout of 29 bindings, 12 texture/sampler pairs then storage at 25..28.)
+Sets as before with `TIDE_VULKAN_DESCRIPTOR_SETS`. The device requirement `maxPerStageDescriptorStorageBuffers` >= 7 became >= 4,
+Vulkan's least, so no conformant device is passed over for storage any more. `gpu.h`'s new `storage_most`
+(`vk_storage_most`) is the least of `maxStorageBufferRange`, `VkPhysicalDeviceVulkan11Properties.maxMemoryAllocationSize`
+and `VkPhysicalDeviceVulkan13Properties.maxBufferSize`, rounded down to 16 bytes: what a pool grows to. Pools grow by a
+new buffer and a `buffer_copy` outside passes; the old buffer is discarded as any is (after the frame's fence). Tests:
+compute.md, GPU lists in pools (validation layer, push descriptors and sets). Merged again after One image a texture
+(below): its textures at 1 + 2i and samplers at 2 + 2j end at 32, so the pools' bindings and the 37 hold.
+
 ## Texture arrays (2026-11-05)
 
 `gpu.h`'s `array`, `array_depth`, `array_layer` and the reads `TIDE_GPU_READ_ARRAY`/`_DEPTH_ARRAY`, on Vulkan, WebGPU
@@ -87,7 +104,7 @@ the language (the spec's count rule is unchanged; only the number is), Provision
 - **Vulkan: a layout for each set of bindings** (`layout_for` in `gpu_vk.c`, `vk_layout`, cached by texture count,
   which textures have their own sampler, and storage count). A pipeline's layout has only the bindings it reads.
   It's pushed where it has no more descriptors than the device's `maxPushDescriptors` (`vk.max_push`), and written
-  as a set of the frame's otherwise (`frame_set` takes the layout): 1 + 16 + 16 + 7 = 40 at the most, more than a
+  as a set of the frame's otherwise (`frame_set` takes the layout): 1 + 16 + 16 + 7 = 40 at the most (37 since GPU lists in pools, above), more than a
   desktop driver's usual 32, though a draw that shares samplers is far under. A device with push descriptors no
   longer needs 32 of them to use them. Pools keep their sizes (16 images and 16 samplers a set).
 - **WebGPU** (`tide.js`): `layoutFor(reads, through, storage, compute)` leaves out a sampler a texture doesn't own,
@@ -100,7 +117,7 @@ the language (the spec's count rule is unchanged; only the number is), Provision
   cube's bind groups when its images are made. Unity's replay (`hlsl.c`) reads each module texture's own slot's
   sampling bits rather than the sampler's, so its blended fallback for a texture without mips stays the texture's.
 - **Tests.** `cmake/web_runtime.test.mjs`: high slots 8..15 of every read kind, the layouts of textures that share
-  (two samplers for 16 textures) and storage at 33..39. `platform/tests/draw.c`'s `shared_shader`: a texture read
+  (two samplers for 16 textures) and storage at 33..39 (33..36 since GPU lists in pools, above). `platform/tests/draw.c`'s `shared_shader`: a texture read
   through another's blended sampler is blended though its draw said the nearest pixel (`tide_platform_draw`, its
   descriptor-set and WebGPU variants). `texture_capacity`'s `CapacitySixteen`: 16 textures, 12 sampled alike through
   one sampler, a depth read and compared, a cube and a list; Textures that say how they're sampled keep their own.
@@ -161,8 +178,8 @@ fallbacks: drawing.md, Listed runs culled on the GPU. `tide_platform_cull` is it
 The owner decided compute is guaranteed on every render backend (`docs/spec.md`, Compute on the GPU; `notes/compute.md` is the contract). This is `gpu.h`'s compute on Vulkan (`platform/src/gpu_vk.c`); every pick below is Claude's, Provisional, behind the language.
 
 - **Storage buffers** (`TIDE_GPU_STORAGE`): usage storage, vertex, index, indirect, transfer source and destination, in device memory from the blocks as other buffers. Made without data, a `vkCmdFillBuffer` of zeros goes outside passes (WebGPU's are zeroed). `storage_of` refuses an id that isn't a storage buffer, so a vertex or index buffer can't be bound as storage, copied or read back (it has none of those usages).
-- **One layout for every pipeline, drawing or computing** (until Sixteen textures a draw, above, made it a layout for each pipeline's bindings, storage at 33..39): 32 bindings of set 0 (the uniforms, 12 texture/sampler pairs, then `TIDE_GPU_MAX_STORAGE` storage buffers at 25..31), each for vertex, fragment and compute. A draw or dispatch pushes the storage it binds, whole (its size, held to `maxStorageBufferRange`), at its binding; a slot with nothing bound is left out, as an unbound texture is. Push descriptors need `maxPushDescriptors` ≥ 32 now, the extension's least: a device with fewer gets descriptor sets, as one without the extension does, from pools that now hold storage buffers too. `TIDE_VULKAN_DESCRIPTOR_SETS` still forces sets.
-- **Device requirements added**: a queue family that draws, computes and presents; `maxPerStageDescriptorStorageBuffers` ≥ 7; workgroups of 256 invocations, 256 × 256 × 64, and 16 KiB of shared memory (WebGPU's default limits, which tidec's kernels keep to). A device without them is passed over with why, on stderr. `drawIndirectFirstInstance` is enabled where the device has it; `gpu.h` has the first instance 0 anyway (but for `draw_indexed_indirect_count`'s records, which take it where `indirect()` says so; since 2026-11-05 `drawIndirectCount` and `multiDrawIndirect` are enabled where there too: drawing.md, Culled runs drawn by a count, joined). `vertexPipelineStoresAndAtomics` and `fragmentStoresAndAtomics` are not enabled: vertex and fragment stages only read storage, which the translator marks `NonWritable`.
+- **One layout for every pipeline, drawing or computing** (until Sixteen textures a draw, above, made it a layout for each pipeline's bindings, storage at 33..39; 33..36 since GPU lists in pools, above): 32 bindings of set 0 (the uniforms, 12 texture/sampler pairs, then `TIDE_GPU_MAX_STORAGE` storage buffers at 25..31), each for vertex, fragment and compute. A draw or dispatch pushes the storage it binds, whole (its size, held to `maxStorageBufferRange`), at its binding; a slot with nothing bound is left out, as an unbound texture is. Push descriptors need `maxPushDescriptors` ≥ 32 now, the extension's least: a device with fewer gets descriptor sets, as one without the extension does, from pools that now hold storage buffers too. `TIDE_VULKAN_DESCRIPTOR_SETS` still forces sets.
+- **Device requirements added**: a queue family that draws, computes and presents; `maxPerStageDescriptorStorageBuffers` ≥ 7 (≥ 4 since GPU lists in pools, above); workgroups of 256 invocations, 256 × 256 × 64, and 16 KiB of shared memory (WebGPU's default limits, which tidec's kernels keep to). A device without them is passed over with why, on stderr. `drawIndirectFirstInstance` is enabled where the device has it; `gpu.h` has the first instance 0 anyway (but for `draw_indexed_indirect_count`'s records, which take it where `indirect()` says so; since 2026-11-05 `drawIndirectCount` and `multiDrawIndirect` are enabled where there too: drawing.md, Culled runs drawn by a count, joined). `vertexPipelineStoresAndAtomics` and `fragmentStoresAndAtomics` are not enabled: vertex and fragment stages only read storage, which the translator marks `NonWritable`.
 - **Compute pipelines**: entry point `compute`, the SPIR-V from `desc.spirv` or a test's `tide_gpu_spirv_of(wgsl)`, through the same `VkPipelineCache` as graphics pipelines (so `pipelines.vulkan` keeps them across runs). `use` refuses a compute pipeline in a pass and a drawing one in a compute pass.
 - **A compute pass is a command buffer of its own, as a pass is.** `compute_begin` closes what was recorded outside passes and begins one; writes and uploads recorded while it's on go into a `before` command buffer queued just ahead of it, as a pass's do (so a pass of either kind sees, from its start, every write recorded before its end, as WebGPU's queue writes are). After `compute_end` its command buffer goes on as the one outside passes. Uniforms come from the frame's ring as a pass's do; a dispatch with no uniforms written in its compute pass does nothing, as a draw without them.
 - **Barriers, by the stages that write and read**:

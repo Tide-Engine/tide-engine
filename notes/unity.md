@@ -1,5 +1,14 @@
 # Unity as a front end
 
+## GPU lists in pools: Unity's replay (2026-11-05)
+
+No packet changed and the embed ABI stays 12 (`notes/compute.md`, GPU lists in pools): the recorder records the same
+calls, with fewer storage buffers a pipeline (the two pools and a kernel's run record). `TideRender.cs`'s `MaxStorage`
+is 4 (gpu.h's `TIDE_GPU_MAX_STORAGE`), and `Supported` asks for 4 storage buffers in compute and fragment stages and 7
+in vertex stages, where it asked for 7 and 10. The recorder has no `storage_most`, so its pools grow to 128 MiB each.
+Gap: a kernel writing a pool after a kept draw read it renames the whole pool (`Written`), where it renamed one list's
+buffer; the Sample's `ComputeReplayTests` weren't run (their commands are hand-made and unchanged).
+
 ## Occlusion culling in Unity (2026-11-05)
 
 `Draw.Occlusion` (drawing.md, Occlusion culling from a depth pyramid) culls only on the GPU, and the recorder never
@@ -157,7 +166,7 @@ stay deferred to the camera, so:
 - `Replay` with no camera still prepares, so compute and reads go on.
 - `Supported` now asks for compute shaders, indirect arguments, shader level 4.5,
   seven storage buffers in compute and fragment stages and ten (three vertex
-  buffers more) in vertex stages, and not OpenGL ES 3: **Unity's OpenGL ES 3.0
+  buffers more) in vertex stages (four and seven since GPU lists in pools, above), and not OpenGL ES 3: **Unity's OpenGL ES 3.0
   and WebGL 2 targets don't take Tide's renderer any more** (owner's rule:
   compute is on every render backend), and draw the views' 2D with the OnGUI
   path (`TideDraw.cs`) as GPUs without constant buffers did. WebGPU, Metal,

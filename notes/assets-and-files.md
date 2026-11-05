@@ -1,5 +1,29 @@
 # Assets and local files
 
+## Build code beside runtime fonts (2026-11-05)
+
+Fixed mount-and-rifle's build-code link failure with Font.Bold. The build executable compiles the whole
+generated game and engine/src, without platform libraries or game C. Its font stand-in still defined the
+old tide_font_bold_ttf byte array after fonts switched to the tide_font object. gen_build_main now defines
+the correctly typed, zero-initialized tide_font_bold instead. Build code cannot draw; this only satisfies
+references from unused runtime routines. Actual games still link the real optional bold-font object.
+No language semantics, runtime API or build-code permissions change.
+
+Audited external engine data declarations: audio settings, mesh limits, task queue, pack region, shard
+and text/heap globals are defined in engine/src; __heap_end is WASM linker-provided. Bold is the optional
+platform data exception. Game extern functions and C systems already receive aborting build-program stubs.
+No missing general engine-library link or additional missing data provider was found.
+
+Regression: e2e/build_code.tide now draws bold text through an ordinary helper called from a GUI view,
+alongside its existing plain/text/list constants, generated assets and game extern C call. Existing value
+checks verify the results. Replacing the fixed stub in its generated build program with the old definition
+reproduces undefined symbol tide_font_bold with Windows Clang 23.1.2.
+
+Validation: built tidec_e2e_build_code in sanitize (Windows ASan) and web-debug (WASM); both
+tidec_e2e_build_code and tidec_build_code_strip pass in each preset (4 CTests total). Configured with
+TIDE_PLATFORM=OFF and TIDE_EXTERNAL_DIRS empty; no game windows or external prototype builds.
+git diff --check passes. Other native operating systems remain CI coverage. mount-and-rifle was not edited.
+
 ## Tide compilation progress labels (2026-11-05)
 
 The terminal build display now receives synchronous compiler progress through

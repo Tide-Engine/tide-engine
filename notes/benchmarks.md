@@ -10,6 +10,15 @@ benchmark records or expected simulation hashes changed.
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## GPU lists in pools (2026-11-05)
+
+The extra add in every GPU list access (each list a range of a pool, notes/compute.md, GPU lists in pools), against
+`dev` before it, each built in a worktree of its own with one scratch `TIDE_EXTERNAL_DIRS` folder (Mount & Rifle's
+game folder copied, a read-heavy measure, the kernels test as it was), release, Vulkan, RTX 4080 SUPER, alternating:
+the read-heavy kernel and frag 1.70 -> 1.63 ms a frame, `bench_occlusion` with occlusion 0.330 -> 0.322 ms, without it
+the same, Mount & Rifle's menu GPU p50 5.05 -> 5.03 ms, the old kernels test the same. Numbers and method:
+compute.md, GPU lists in pools, Measured.
+
 ## Occlusion culling: bench_occlusion and Mount & Rifle's menu (2026-11-05)
 
 `bench_occlusion` (bench/occlusion: a town at street level, 256 lists of props behind houses, alternating blocks of
