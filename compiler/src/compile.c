@@ -211,6 +211,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     }
     if (schedule && opts->spirv_dir) return write_spirv(prog, opts->spirv_dir, schedule);
     if (schedule && opts->hlsl_dir) return write_hlsl(prog, opts->hlsl_dir, schedule);
+    if (schedule && opts->kernels_out) return write_kernels(prog, opts->kernels_out);
     if (opts->shader_out) {
         for (int i = 0; i < prog->shaders.count; i++) {
             opts->shader_out(opts->shader_user, prog->shaders.items[i]->name, prog->shaders.items[i]->wgsl);

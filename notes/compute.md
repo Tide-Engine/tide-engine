@@ -23,7 +23,8 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [x] Engine/renderer: GPU lists in the draw list, compute commands, ordering
 - [x] Indirect draws over a `GPUList` (`Draw.Instanced`; `Draw.Mesh` over GPU lists not built)
 - [ ] GL backends removed
-- [ ] Engine GPU culling of listed runs
+- [x] Engine GPU culling of listed runs, 2026-11-05: notes/drawing.md, Listed runs culled on the GPU (Hi-Z
+      occlusion not built)
 - [x] Docs: `docs/game/shaders.md`, spec, editors
 
 ## Built: the language, the engine and the renderer (2026-11-05)
@@ -157,8 +158,8 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
 
 ### Not built
 
-- GL backends' removal, and the engine's GPU culling of listed runs (the next
-  steps of the plan).
+- GL backends' removal (the next step of the plan; the GPU culling of listed runs is
+  built: notes/drawing.md).
 - `Draw.Mesh` over GPU-list vertices and indices; `DrawIndirectCount`.
 - A frag or vert reading a GPU list through a function given a struct works by
   field; one passed on alone is refused.

@@ -73,9 +73,21 @@ add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
     COMMENT "The platform's bold font as C"
     VERBATIM)
 
-add_library(tide_platform STATIC ${TIDE_PLATFORM_SOURCES} "${TIDE_FONT_C}" "${TIDE_FONT_BOLD_C}")
+# The renderer's own kernels, written in Tide (src/cull.tide): tidec makes them a header of C, each one's WGSL,
+# SPIR-V and tide_shader, which compute.inc includes (notes/drawing.md, Listed runs culled on the GPU).
+set(TIDE_KERNELS_H "${CMAKE_CURRENT_BINARY_DIR}/kernels/cull_kernels.h")
+add_custom_command(OUTPUT "${TIDE_KERNELS_H}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/kernels"
+    COMMAND ${TIDEC_COMMAND} "${CMAKE_CURRENT_SOURCE_DIR}/src/cull.tide" --kernels "${TIDE_KERNELS_H}"
+    DEPENDS ${TIDEC_DEPENDS} src/cull.tide
+    COMMENT "The renderer's kernels as C"
+    VERBATIM)
+add_custom_target(tide_renderer_kernels DEPENDS "${TIDE_KERNELS_H}")
+
+add_library(tide_platform STATIC ${TIDE_PLATFORM_SOURCES} "${TIDE_FONT_C}" "${TIDE_FONT_BOLD_C}" "${TIDE_KERNELS_H}")
+add_dependencies(tide_platform tide_renderer_kernels)
 # Hosts go through include/ only; third_party/ is stb_truetype, for the font.
-target_include_directories(tide_platform PUBLIC include PRIVATE src third_party)
+target_include_directories(tide_platform PUBLIC include PRIVATE src third_party "${CMAKE_CURRENT_BINARY_DIR}/kernels")
 target_link_libraries(tide_platform PUBLIC tide)
 if(TIDE_ANDROID)
     target_link_libraries(tide_platform PUBLIC android log EGL GLESv3 aaudio) # ...and the audio device
@@ -583,6 +595,27 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_kernels_opengl COMMAND tide_platform_kernels)
         tide_gpu_test(tide_platform_kernels)
         tide_gpu_test(tide_platform_kernels_opengl OPENGL)
+    endif()
+endif()
+
+# Listed runs culled on the GPU (tests/cull.tide, src/cull.tide): the same pixels as the CPU's culling, and on
+# Vulkan every instance the CPU draws kept, read back; a lost device and the next. OpenGL culls on the CPU.
+if(NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_cull SOURCES tests/cull.tide NAME game HOST tests/cull.c)
+    target_include_directories(tide_platform_cull PRIVATE src)
+    target_link_libraries(tide_platform_cull PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_cull SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_cull TARGET tide_platform_cull SERVED WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        target_include_directories(tide_platform_cull PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
+        add_test(NAME tide_platform_cull COMMAND tide_platform_cull)
+        add_test(NAME tide_platform_cull_opengl COMMAND tide_platform_cull)
+        # ...and on Vulkan with the renderer's own fallback: the CPU deciding recorded culled runs as it draws
+        add_test(NAME tide_platform_cull_decided COMMAND tide_platform_cull)
+        tide_gpu_test(tide_platform_cull tide_platform_cull_decided)
+        tide_gpu_test(tide_platform_cull_opengl OPENGL)
+        set_property(TEST tide_platform_cull_decided APPEND PROPERTY ENVIRONMENT TIDE_GPU_CULLING=decide)
     endif()
 endif()
 

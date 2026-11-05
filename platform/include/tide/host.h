@@ -1514,6 +1514,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_run_draw.target_pixels = tide_platform_target_pixels;
     tide_run_draw.target_content = tide_platform_target_content;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
+    tide_run_draw.gpu_culling = tide_platform_gpu_culling();
     if (tide_run_view_camera) {
         tide_draw_set_camera_matrices(&tide_run_draw, tide_run_view_camera_transform, tide_run_view_camera_projection);
     }

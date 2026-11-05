@@ -7176,6 +7176,133 @@ bool write_spirv(const program *prog, const char *dir, sb *out)
     return true;
 }
 
+// A name for C made of a Tide name: its letters, digits and underscores as they are.
+static void put_c_name(sb *o, const str name)
+{
+    for (int i = 0; i < name.len; i++) {
+        const char ch = name.ptr[i];
+        const bool word = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+        sb_printf(o, "%c", word ? ch : '_');
+    }
+}
+
+bool write_kernels(const program *prog, const char *path)
+{
+    sb o = {0};
+    sb_put(&o, "// The renderer's own kernels, written by tidec --kernels from their Tide (notes/compute.md): don't edit.\n"
+               "// Each one's WGSL (the web's), SPIR-V (Vulkan's) and tide_shader, and an enum of where its values' fields\n"
+               "// go: _STORAGE_<field> its storage slot, _TEXTURE_<field> its texture and _COUNT_<field> the uniform int\n"
+               "// saying how many elements a list has, _INT_<field> and _FLOAT_<field> where a number's words start.\n\n"
+               "#pragma once\n\n#include \"tide/draw.h\"\n\n");
+    const str *done[64];
+    int done_count = 0;
+    for (int i = 0; i < prog->shaders.count; i++) {
+        const shader *sh = prog->shaders.items[i];
+        if (!sh->compute || !sh->kernel) continue;
+        const str name = sh->kernel->name;
+        bool again = false;
+        for (int k = 0; k < done_count; k++) again |= str_eq(*done[k], name);
+        if (again) continue; // Run more than once: one shader, as each run plans it alike
+        if (done_count == 64) {
+            diag_error(sh->kernel->at, "a file of the renderer's own has more than 64 kernels");
+            return false;
+        }
+        done[done_count++] = &sh->kernel->name;
+        if (sh->rolled_at >= 0 || sh->seed_at >= 0) {
+            diag_error(sh->kernel->at, "the renderer's own kernels can't roll with Random: nothing gives them a frame's");
+            return false;
+        }
+        for (int s = 0; s < sh->storage.count; s++) {
+            if (sh->storage.items[s].add) {
+                diag_error(sh->kernel->at, "the renderer's own kernels can't Add: nothing gives them its scratch");
+                return false;
+            }
+        }
+        sb kernel = {0};
+        sb_put(&kernel, "tide_kernel_");
+        put_c_name(&kernel, name);
+        sb_printf(&o, "#ifdef __wasm__\nstatic const char %s_wgsl[] = {", kernel.data);
+        for (size_t c = 0; sh->wgsl[c]; c++) sb_printf(&o, "%s%d,", c % 40 == 0 ? "\n    " : "", sh->wgsl[c]);
+        sb_put(&o, "0};\n#endif\n#ifdef TIDE_SPIRV\n");
+        char error[256];
+        size_t words = 0;
+        uint32_t *spirv = tide_wgsl_to_spirv(sh->wgsl, &words, error, sizeof error);
+        if (!spirv) {
+            diag_error(sh->kernel->at, "the WGSL tidec wrote for %s didn't become SPIR-V (%s): this is a bug in tidec",
+                       sh->name, error);
+            return false;
+        }
+        sb_printf(&o, "static const uint32_t %s_spirv[%d] = {", kernel.data, (int)words);
+        for (size_t w = 0; w < words; w++) sb_printf(&o, "%s0x%08x,", w % 10 == 0 ? "\n    " : "", spirv[w]);
+        free(spirv);
+        sb_put(&o, "\n};\n#endif\n");
+        // Its id: what the WGSL is and how it's run, as a game's kernel's is
+        uint64_t id = 0xCBF29CE484222325ull;
+        for (size_t c = 0; sh->wgsl[c]; c++) id = (id ^ (uint8_t)sh->wgsl[c]) * 0x100000001B3ull;
+        const int numbers[] = {sh->kernel->group[0], sh->kernel->group[1], sh->kernel->group[2], sh->uniform_floats,
+                               sh->uniform_ints, sh->textures.count, sh->storage.count};
+        for (size_t n = 0; n < sizeof numbers / sizeof *numbers; n++) id = (id ^ (uint32_t)numbers[n]) * 0x100000001B3ull;
+        unsigned writes = 0;
+        for (int s = 0; s < sh->storage.count; s++) writes |= sh->storage.items[s].write ? 1u << s : 0u;
+        sb_printf(&o, "static const tide_shader %s = {\n    .name = \"the renderer's " STR_FMT "\",\n"
+                      "#ifdef __wasm__\n    .wgsl = %s_wgsl,\n#endif\n"
+                      "#ifdef TIDE_SPIRV\n    .spirv = %s_spirv,\n    .spirv_words = %d,\n#endif\n"
+                      "    .id = 0x%llxull,\n    .uniform_floats = %d,\n    .uniform_ints = %d,\n    .texture_count = %d,\n",
+                  kernel.data, STR_ARG(name), kernel.data, kernel.data, (int)words, (unsigned long long)id,
+                  (sh->uniform_floats + 3) / 4, (sh->uniform_ints + 3) / 4, sh->textures.count);
+        if (sh->textures.count) {
+            sb_put(&o, "    .texture_reads = {");
+            for (int t = 0; t < sh->textures.count; t++) {
+                const shader_read read = sh->textures.items[t].read;
+                sb_printf(&o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH"
+                          : read == READ_CUBE ? "CUBE" : read == READ_DATA ? "DATA" : "COLOR");
+            }
+            sb_put(&o, "},\n");
+        }
+        sb_printf(&o, "    .storage_count = %d,\n    .storage_writes = 0x%xu,\n    .compute = true,\n    .group = {%d, %d, %d},\n};\n",
+                  sh->storage.count, writes, sh->kernel->group[0], sh->kernel->group[1], sh->kernel->group[2]);
+        sb_put(&o, "enum {\n");
+        for (int s = 0; s < sh->storage.count; s++) {
+            sb_printf(&o, "    %s_STORAGE_", kernel.data);
+            put_c_name(&o, sh->storage.items[s].field->name);
+            sb_printf(&o, " = %d,\n", s);
+        }
+        for (int t = 0; t < sh->textures.count; t++) {
+            const shader_texture *texture = &sh->textures.items[t];
+            if (!texture->field) continue;
+            sb_printf(&o, "    %s_TEXTURE_", kernel.data);
+            put_c_name(&o, texture->field->name);
+            sb_printf(&o, " = %d,\n", t);
+            if (texture->read != READ_DATA) continue;
+            sb_printf(&o, "    %s_COUNT_", kernel.data);
+            put_c_name(&o, texture->field->name);
+            sb_printf(&o, " = %d,\n", texture->count_at);
+        }
+        for (int v = 0; v < sh->values.count; v++) {
+            const shader_value *value = &sh->values.items[v];
+            if (value->floats) {
+                sb_printf(&o, "    %s_FLOAT_", kernel.data);
+                put_c_name(&o, value->field->name);
+                sb_printf(&o, " = %d,\n", value->float_at);
+            }
+            if (value->ints) {
+                sb_printf(&o, "    %s_INT_", kernel.data);
+                put_c_name(&o, value->field->name);
+                sb_printf(&o, " = %d,\n", value->int_at);
+            }
+        }
+        sb_printf(&o, "    %s_GROUP = %d,\n};\n\n", kernel.data, sh->kernel->group[0] * sh->kernel->group[1] * sh->kernel->group[2]);
+    }
+    FILE *file = fopen(path, "wb");
+    const bool written = file && fwrite(o.data, 1, o.len, file) == o.len;
+    if ((file && fclose(file) != 0) || !written) {
+        diag_error((loc){0}, "can't write %s", path);
+        remove(path);
+        return false;
+    }
+    return true;
+}
+
 bool write_hlsl(const program *prog, const char *dir, sb *out)
 {
     for (int i = 0; i < prog->shaders.count; i++) {

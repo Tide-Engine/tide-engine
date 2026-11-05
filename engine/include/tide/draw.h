@@ -1569,7 +1569,39 @@ typedef struct tide_draw_run {
     // An Instanced draw over a GPU list (shader->instance_storage): that list's id. Its instances are as many as
     // the list's count on the GPU, read from it there, and `first` and `count` name none: it's drawn indirect.
     uint64_t indirect;
+    // A listed run the GPU culls (tide_draw_list.gpu_culling): 1 + the first of its set's draws in
+    // tide_draw_list.culls, and how many there are. Its instances are those of its set's draws that its mesh's level
+    // (tide_draw_mesh_data.level) picks and the frustum keeps, in their order, which the renderer's kernels find
+    // (platform/src/cull.tide) or the CPU does (tide_draw_culled_places): `count` is how many could be, and
+    // `first` names none. 0 for any other run.
+    uint32_t culled, culled_count;
 } tide_draw_run;
+
+// A camera the frame's GPU-culled draws were recorded through (tide_draw_list.gpu_culling): what the CPU would have
+// culled them and picked their levels by, kept for the renderer's kernels and, where they can't run, for the CPU's
+// own decisions (tide_draw_culled_places), which are the CPU path's.
+typedef struct tide_draw_cull_camera {
+    float world_to_clip[16]; // The frustum's (the selected destination's world-to-clip matrix, column-major)...
+    float lod[16];           // ...and what a pick goes by, as tide_draw_list.lod_view has it (scale 0: none picked)
+    uint32_t lod_level;      // 1 + the level every mesh draws at (Draw.LOD), or 0 where each is picked
+    uint32_t pad;
+} tide_draw_cull_camera;
+
+// A draw of a list the list keeps whose instances the GPU culls and picks levels of: its candidates, places `first`
+// to `first + count` of the page that's texture `page` (`packs` pixels each), tested with `bounds` (where its set
+// is 1) through camera `camera` of tide_draw_list.cull_cameras, at the levels of mesh `mesh` (the full one). Its
+// candidates are at levels `low` to `high` at most: its set's runs of the others leave it out.
+typedef struct tide_draw_cull {
+    uint32_t camera, mesh, page, first, count, packs;
+    uint8_t low, high, pad[2];
+    tide_draw_bounds bounds;
+} tide_draw_cull;
+
+// Whether draw `job` of the list is among culled run `run`'s.
+static inline bool tide_draw_cull_in(const tide_draw_cull *job, const uint32_t level)
+{
+    return level >= job->low && level <= job->high;
+}
 
 // How many bytes a run's instances take each in tide_draw_list.instances: a place in a list for a listed one.
 static inline uint32_t tide_draw_run_stride(const tide_draw_run *r)
@@ -1864,8 +1896,18 @@ typedef struct tide_draw_list {
     uint32_t frustum_seen[3]; // Camera, destination and epoch; reset and sizes also invalidate the cached matrix
     tide_float2 frustum_screen;
     tide_draw_frustum frustum;
+    tide_float4x4 frustum_matrix; // ...and the matrix its planes are of
     bool frustum_ready;
     float lod_view[16]; // How many times a pixel a unit of the world is; its camera's w, x and y rows; their lengths
+    // Whether the renderer culls listed runs on the GPU (tide_platform_gpu_culling), which the host says before
+    // views record; with it, a list's draw records its candidates (tide_draw_run.culled) where it can. The frame's
+    // culled draws and the cameras they went through, and the GPU's groups of 64 they make (at most 65,535)
+    bool gpu_culling;
+    tide_draw_cull *culls;
+    uint32_t cull_count, cull_capacity;
+    tide_draw_cull_camera *cull_cameras;
+    uint32_t cull_camera_count, cull_camera_capacity;
+    uint32_t cull_groups;
 } tide_draw_list;
 
 // Empties the list for a new frame. It keeps its memory for the next, and the
@@ -2743,8 +2785,27 @@ void tide_draw_shaded_listed(tide_draw_list *d, const tide_shader *shader, uint3
 const void *tide_draw_run_instance(const tide_draw_list *d, const tide_draw_run *run, uint32_t i);
 
 // A listed run (tide_draw_run.listed) as an ordinary one: its instances' bytes copied after the list's
-// instances, which the run then has. Nothing for another run. For C that moves or reads a run's bytes.
+// instances, which the run then has (a culled one's culled first: tide_draw_run_uncull). Nothing for another run.
+// For C that moves or reads a run's bytes.
 void tide_draw_run_unlist(tide_draw_list *d, uint32_t run);
+
+// A run the GPU culls (tide_draw_run.culled): the places of the instances it draws, as the CPU decides them, which
+// are the decisions the CPU path makes (frustum_cull.h's exact answers, pick_level's picks), in order, into `out`
+// (room for run->count): how many. 0 for another run.
+uint32_t tide_draw_culled_places(const tide_draw_list *d, const tide_draw_run *run, uint32_t *out);
+
+// ...made an ordinary listed run of those places, after the list's instances: for what reads runs' instances and
+// knows nothing of culled ones (tide_draw_append, Render3D's sorting). Nothing for another run.
+void tide_draw_run_uncull(tide_draw_list *d, uint32_t run);
+
+// The same for each of the list's culled runs.
+void tide_draw_uncull(tide_draw_list *d);
+
+// What the renderer's kernels test camera `camera`'s draws with (platform/src/cull.tide, CullCamera): each of six
+// planes' normal and constant, the normal's magnitudes and the test's coefficient of a box's size, and what it's
+// compared with (planes past the frustum's pass everything), as the CPU's quick test has them (frustum_cull.h)
+// with more slack, so the GPU never culls what the CPU would draw. False where the planes cull nothing.
+bool tide_draw_cull_planes(const tide_draw_cull_camera *camera, float planes[72]);
 
 // Runs a frag over the entire selected destination. The fixed Vertex mesh has
 // clip-space positions, top-left uvs, and white color. The camera is identity,

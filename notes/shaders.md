@@ -11,7 +11,9 @@ an indirect draw's shader (`gpu_instances`) reads its instances from storage
 slot 0 into the instance packs. Kernels check in WGSL; `shader_word` says
 "kernel". The goldens `kernels_add` and `kernels_shared` pin both; every other
 golden is unchanged. `expect_hlsl.cmake` compiles a kernel's HLSL as cs_5_0.
-Contracts, layout and tests: `notes/compute.md`, Built.
+Contracts, layout and tests: `notes/compute.md`, Built. `tidec --kernels <file.h>` (`write_kernels`) writes a
+program's kernels as a C header for the renderer's own (`platform/src/cull.tide`): drawing.md, Listed runs culled on
+the GPU.
 
 ## Camera-relative 3D projection (2026-11-02)
 

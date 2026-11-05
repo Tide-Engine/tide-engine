@@ -1918,3 +1918,7 @@ void print_shaders(const program *prog, sb *out);
 bool write_spirv(const program *prog, const char *dir, sb *out);
 // ...or its HLSL, as <n>.hlsl, for `tidec --hlsl` (hlsl.h).
 bool write_hlsl(const program *prog, const char *dir, sb *out);
+// ...or the kernels of a file of the renderer's own (platform/src/cull.tide) as C, for `tidec --kernels`: each
+// one's WGSL, SPIR-V and tide_shader, and an enum of where each field of its values goes (its storage slot, its
+// texture and the uniform int that holds its count, its uniform words), which the renderer binds by.
+bool write_kernels(const program *prog, const char *path);

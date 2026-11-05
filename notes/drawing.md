@@ -1,5 +1,115 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Listed runs culled on the GPU (2026-11-05)
+
+Task (owner, step 1 of compute's plan): cull listed runs on the GPU (frustum), pick their levels and split their
+mirrored instances there, compact survivors in order, draw indirect, the CPU recording one entry per run; the
+culling written as a Tide compute kernel compiled with the engine. Internal: no Tide or generated-C change, the
+same pixels. Every pick below is Claude's, Provisional.
+
+- **The kernels are Tide** (`platform/src/cull.tide`): `CullListed` (a group of 64 candidates of one part: reads
+  each one's transform from its page, picks its level by pick_level's rule and tests its box by the quick test's
+  reject rows, keeps those of its bucket's level the frustum keeps; the group's ranks from a popcount of a shared
+  bit mask, its kept places to its 64 of `scratch`, its count to `groups`), `CullOffsets` (one group a bucket: a
+  blocked prefix sum of its groups' counts, each group's place in `places`, the bucket's count into its indirect
+  arguments) and `CullScatter`. Three dispatches in one compute pass a frame, before its first pass and inside its
+  GPU timing. Survivors are in their candidates' order whatever order the GPU ran them in: bit-stable.
+- **Built with the platform**: `tidec --kernels <file.h>` (`write_kernels`, shader.c) writes each kernel's WGSL
+  (under `__wasm__`), SPIR-V (under `TIDE_SPIRV`), `tide_shader`, and an enum of where each field of its values
+  goes (`_STORAGE_<field>`, `_TEXTURE_<field>`, `_COUNT_<field>`: the uniform int with a list's count). The
+  platform's CMake runs it (`TIDEC_COMMAND`: the host tidec on the web) into `kernels/cull_kernels.h`, and
+  `platform/src/cull.inc` binds by those names, so a layout change is a compile error. Kernels that roll or Add
+  are refused there (nothing gives them a frame's number or Add's scratch). cull.inc packs cull.tide's structs'
+  words (floats, then ints) by hand: `CullCamera` 92 words, `CullJob` 28, parts and buckets 4.
+- **Recording** (`tide_draw_shaded_culled`, draw.c, called by `tide_draw_mesh_shaded_list` once the list's region
+  is written): where the host asks (`tide_draw_list.gpu_culling`, which the standard host sets each frame from
+  `tide_platform_gpu_culling`: a backend that computes, not the recorder, unless `TIDE_GPU_CULLING=0`). A draw is a
+  `tide_draw_cull` (its page and places, its bounds as `draw_bounds` gives them, its camera) and a
+  `tide_draw_cull_camera` (the world-to-clip matrix the frustum is built from, the lod_view's 16 numbers and the
+  forced level), each camera kept once a frame. It records one shaded run a level (`tide_draw_run.culled`,
+  `culled_count`: its set of draws), the level's mesh (made then by level_mesh), listed, `count` the candidates.
+  Not where the CPU path keeps an order the GPU can't: blended Depth.Read draws (`ordered_levels`), a list whose
+  transforms mirror and don't (the CPU interleaves runs; one all mirrored is culled, its runs' cull
+  `TIDE_DRAW_MIRRORED`), a 3D transform set, or the frame's 65,535 groups of 64 used up.
+- **Which levels a draw's runs cover**: a list's numbers are summed up as they're written
+  (`tide_draw_listed_stats`, list_data_cache.h: how many mirror, whether all are affine, the translations' box,
+  the least and the most biggest-column length). `cull_levels` bounds pick_level's `away` over that box widened by
+  how far a transform moves the ball's center (sqrt 3 x biggest column x |center|) and over the radius's range,
+  widened by 2^-12 of the magnitudes summed, and `allowed` by 2^-12 more: every pick, the CPU's or the GPU's in its
+  floats, is within `low..high`. A list surely past one plane (`cull_list_outside`: its translations' box widened
+  by a ball of the bounds' reach, against the exact test's allowance, only where every transform is affine)
+  records nothing, as the CPU culls all of it. Without these the GPU path drew every level of every draw, mostly
+  empty.
+- **Sets** gather as the CPU's `tide_draw_gather_levels` does: a draw just after a set of the same mesh, shader,
+  page, values, textures, sampling, tint and settings, whose lowest level is no lower than the set's first's,
+  joins it (its levels' runs count it; higher levels are appended), so a set's runs are the list's last commands,
+  levels in order, and a level's instances are in draw order, as gathered. A draw whose levels start lower starts
+  a set of its own, where the CPU would have interleaved the runs. Culled runs never join other runs
+  (`shaded_instances`, `level_follows` and the gather skip them).
+- **The GPU's decisions against the CPU's.** Frustum: the quick test's float reject rows (`tide_draw_cull_planes`)
+  with 2^-14 more slack, on the box size's coefficient (of the largest |n|) and on the bound (of |w|), over the
+  quick test's 2^-16 against rounding under 2^-20 whatever the GPU's compiler fuses or reorders. Only transforms
+  whose every number is under 2^40 (by its bits, which WGSL's assumption that nothing is infinite or NaN can't
+  undo) and that are affine are tested, and boxes under 2^40; others are drawn (at level 0 where a number is too
+  big or not finite). So the GPU culls a subset of what the CPU culls. Levels: pick_level's formula in floats; the
+  GPU's sqrt, division and fused multiply-adds can pick the next level for an instance within about 1e-6 of a
+  threshold, the one way GPU and CPU frames can differ in pixels.
+- **The renderer** (`cull.inc`): `cull_plan` (compute, not the recorder, the kernels' pipelines made: on the web
+  in the background), then `upload_shaded` gives a culled run to the GPU where its listed pipeline is made and its
+  page is one of four; otherwise the CPU decides its instances as it's drawn (`tide_draw_culled_places`:
+  frustum_cull.h's exact answers and pick_level, the CPU path's decisions, in order), as places through the listed
+  pipeline or gathered bytes through the ordinary one. `cull_run` packs the frame's cameras, draws, parts (a draw's
+  candidates in a bucket, whole groups) and buckets, writes the lists' headers and dispatches. A GPU-culled step
+  binds `places` at its bucket's region as its instance buffer and draws `draw_indexed_indirect` with its bucket's
+  arguments (first instance 0, as gpu.h has it). Buffers are the renderer's own (`made_buffer`, so counted), kept
+  and grown, made again on another device (`forget_culling`, from forget_compute); the pipelines are prewarmed
+  with the renderer's own (`cull_warm`). `TIDE_GPU_CULLING=decide` has the renderer decide on the CPU, for tests.
+- **What reads runs**: `tide_draw_run_instance` gives nothing for a culled run; `tide_draw_run_uncull`
+  (`tide_draw_uncull` for all) makes one an ordinary listed run of the CPU's places; `tide_draw_append` unculls
+  its source first, and `tide_draw_run_unlist` unculls before unlisting. Render3D's transparent sort only reaches
+  Depth.Read blended runs, which are never culled.
+- **Diagnostics**: `tide_draw_diagnostic.gpu_culled` (`"gpu_culled"` in `--profile`'s report) counts candidates
+  handed to the GPU, neither tested nor submitted on the CPU; a list culled whole counts as tested and rejected.
+  `tide_platform_cull_compare` reads back the last frame's places and counts (where the backend waits for reads)
+  and sets them beside the CPU's decisions.
+- **Layout**: `tide_draw_run` (`culled`, `culled_count`), `tide_draw_list` (`gpu_culling`, `culls`,
+  `cull_cameras`, `cull_groups`, `frustum_matrix`), `tide_draw_listed_entry.stats`, `tide_draw_diagnostic`;
+  hosts, libraries and games rebuild together. Generated code calls nothing new.
+- **Tests**: `tests/test_draw_culled.c`: `draw_culled_runs_draw_what_the_cpu_draws` (12 lists over 7 frames:
+  levels, a forced level, a coarser tolerance, culling off, another camera, a list drawn twice; each level's
+  instances, in order, those of the CPU path after `tide_draw_uncull`; every candidate's pick, the CPU's and the
+  GPU's followed in C with and without fused multiply-adds, within its draw's levels; the GPU's float test, both
+  ways, never culling what the CPU draws, its slack under 1% of candidates); `draw_culled_gpu_never_culls_what_the_cpu_draws`
+  (28,000 boxes bisected onto the exact test's turn, +-3 floats, and the far ones culled);
+  `draw_culled_declines_and_hands_over` (Depth.Read blended, mixed mirrors, a host not asking, append, unlist).
+  Platform: `tide_platform_cull` (`platform/tests/cull.tide`, `cull.c`): 24 patches of boxes with two levels, one
+  patch mirrored and one half mirrored, three cameras and five settings (picked levels, a forced level, coarser,
+  culling off, a render target with a LOD camera of its own), each drawn GPU-culled and CPU-culled: the same pixels
+  byte for byte; on Vulkan the GPU's places read back hold every instance the CPU draws, in order (none extra in
+  any shot); then the device is lost and it's all again. `_decided` (the renderer's CPU fallback) and `_opengl`
+  (the CPU) natively; on the web `tide_platform_cull` (WebGL) and `_webgpu` (pixels, then a lost device).
+- **Measured** (Mount & Rifle 2330682 built with this checkout through a scratch `TIDE_EXTERNAL_DIRS` folder as in
+  benchmarks.md; release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER, `--profile --profile-warmup 300`, 1,500
+  frames, a fresh `--data-dir` each, three alternating pairs, the same binary with `TIDE_GPU_CULLING=0` before).
+  The route (`tools/performance-route.txt`) can't run at this game commit with today's dev: its first click misses
+  the new menu, and past Start new and Begin the world stays at "Drawing the borders" (97%) for 25,000 frames with
+  either culling (a local worker that never returns; not this change). So this is the menu's field scene, DrawFlora
+  about 69,000 candidates a frame (23,000 frustum-tested on the CPU path):
+  - Views: 2.10 / 1.92 / 1.68 -> 1.05 / 1.07 / 0.99 ms (p50 2.02 / 1.59 -> 1.02 / 1.02).
+  - DrawFlora's mesh recording: 0.60 / 0.55 / 0.49 -> 0.045 ms a frame; Present's 0.20 / 0.19 / 0.17 -> 0.03.
+  - Whole CPU work: 4.13 / 3.81 / 3.36 -> 2.85 / 2.93 / 2.76 ms.
+  - Render: 1.89 / 1.75 / 1.57 -> 1.71 / 1.75 / 1.68 ms (draw calls 772 -> 938 a frame).
+  - GPU, the culling's compute pass included: 8.55 (an outlier) / 4.43 / 4.26 -> 4.17 / 4.22 / 4.16 ms.
+  - Captures at frame 600 differ run to run with either culling (91k-136k pixels, at most 9 levels, between two
+    runs of one mode as between modes): the game's own frames aren't bit-stable, as before.
+- **Gaps**: Hi-Z occlusion isn't built (the parts and the kernel's test are where it would go). 166 more draw calls
+  a frame on that scene: levels of a draw's range that end up empty are still indirect draws, sets don't join runs
+  of bytes, and a draw whose levels start lower than its set's starts another. Stats' vertices count a GPU-culled
+  run's index count once (its count is the GPU's), and geometry rows don't see them. Lists that mirror and don't,
+  blended Depth.Read draws and a fifth page stay on the CPU. The web has no read-back comparison (no waiting read).
+  WebGPU's timings, other GPUs, Linux, macOS and Android are unmeasured, and the route waits on the game's loading
+  hang above.
+
 ## Runs, GPU lists and indirect draws in the draw list (2026-11-05)
 
 `TIDE_DRAW_COMPUTE` (a kernel's run, `tide_draw_list.computes`) and
@@ -486,7 +596,7 @@ orthographic destination (with a LOD camera only that camera counts) or a clamp.
 - **Rule (Provisional, spec Levels of detail):** how far is the most of `w - r*|w|`,
   `|x| - r*(|x| + 2|w|)`, `|y| - r*(|y| + 2|w|)` and `-w - 3r*|w|`, `r` the ball's
   radius times the transform's biggest scale and `|row|` a clip row's xyz length. A
-  ball touching the view's sides (x = ±w, y = ±w) or in front of `w = 0` gets `w`'s
+  ball touching the view's sides (x = Â±w, y = Â±w) or in front of `w = 0` gets `w`'s
   term from the max, so every pick the camera could show is the bits it was; the
   others only take over out of view. NaN `w` still draws whole. Around the camera
   (every term under 0) draws whole.
