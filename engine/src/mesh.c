@@ -1496,7 +1496,7 @@ bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, co
                                 const uint32_t *textures, const uint64_t sampling)
 {
     // What the renderer draws a listed run with, and what keeps one from being one
-    if (!d || !shader || !write || !item_size || shader->dims != 3 || !shader->glsl_listed_vertex
+    if (!d || !shader || !write || !item_size || shader->dims != 3 || !shader->listed
         || shader->texture_count >= TIDE_SHADER_TEXTURES || (d->place.moved & TIDE_DRAW_MOVED_3D)) return false;
     const uint32_t size = tide_shader_instance_size(shader), packs = size / 16u;
     const int32_t count = tide_list_count(items);

@@ -767,8 +767,8 @@ foreach(source IN LISTS TIDE_OUTLINE_TESTS)
 endforeach()
 
 # Shader tests: `tidec --shaders` on shaders/<name>.tide must print
-# shaders/<name>.txt exactly: the GLSL and WGSL of each shader its mesh draw
-# calls draw through.
+# shaders/<name>.txt exactly: the WGSL of each shader its mesh draw calls draw
+# through and its GPU runs run.
 file(GLOB TIDE_SHADER_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.tide")
 if(TIDE_NODE)
     add_test(NAME tidec_shader_names_all

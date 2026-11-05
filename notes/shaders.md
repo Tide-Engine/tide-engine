@@ -1,5 +1,64 @@
 # Code the GPU runs: frags and verts
 
+## GLSL removed: tidec writes WGSL alone (2026-11-05)
+
+The owner's decision that compute is guaranteed on every backend removed OpenGL
+3.3, OpenGL ES 3 and WebGL 2 (`notes/rendering.md`), so games' shaders no longer
+carry GLSL. What follows is Claude's, Provisional. Everything below this section
+that describes GLSL output (two languages, `glsl_*` fields, rows for arrays of
+arrays, GLSL-only workarounds) is history.
+
+- **The emitter is WGSL-only.** `write_glsl`, the `lang` enum and `emit.l` are
+  gone, every `wgsl ? a : b` keeps its WGSL side, and GLSL-only machinery went
+  with them: array rows (`in_rows`, `need_row`, `put_row`, `tide_row<n>`
+  structs), `H_INT4_LANE`, `on_a_line` and the `while (true)` for-loop shape,
+  inout parameters and copies through `in_array` (WGSL copies what isn't a whole
+  variable), constant-index clamps, `tide_gpu_height`'s Ddy sign, the GLSL
+  storage stubs ("zeros in GLSL") in `shader_compute.inc`. `put_varyings`,
+  `put_uniforms`, `put_listed_loads`, `put_vertex_main`, `put_fragment_main`,
+  `output_name` and `is_pointer` lost their language parameters.
+- **The checking pass runs in WGSL** (`check_shader`), where frags and verts
+  checked in GLSL before; kernels already did. Its output is thrown away, and
+  the GLSL-only early returns it took in `shader_compute.inc` (shared atomics,
+  `this.index`) are for kernel-only code. No diagnostic changed: every
+  `compiler/tests/errors` test passes unchanged.
+- **Helper texts stay in their C-like notation** (`helper_text`, the families),
+  which `put_helper` spells as WGSL; converting them to WGSL text would only
+  move the same spelling into the strings. The notation is described where they
+  are.
+- **`tide_shader`** (`tide/draw.h`) lost `glsl_vertex`, `glsl_fragment` and
+  `glsl_listed_vertex`; `bool listed` says a shader has a listed vertex stage
+  (`wgsl_listed` on the web, `spirv_listed` elsewhere), which `mesh.c` and
+  `platform.c` read where they tested `glsl_listed_vertex`. The shader `id` is
+  FNV-1a of the WGSL and the numbers (it was of GLSL, GLSL and WGSL), so every
+  id changes, and with it each listed draw's layout (`id ^ id >> 32`).
+- **`tide shaders` / `tidec --shaders`** print `// <name>: WGSL` sections only;
+  `shader_minify_names` runs over WGSL only. Goldens in `compiler/tests/shaders`
+  were regenerated with their package inputs; `shader_names.mjs` splits on WGSL
+  sections.
+- **Identity:** with old and new tidec, every fixture's `--shaders` WGSL section
+  is the same bytes, all 116 `--spirv` modules and all 116 `--hlsl` programs
+  (before the HLSL change below) are the same bytes, and the generated C of all
+  477 live `.sources` lists (`--no-line`) differs only by the GLSL arrays and
+  fields, ids, listed layouts and the compiler-source simulation id.
+- **Tests that read shader text** (`compiler/tests/e2e/*_test.c`,
+  `render3d/test/skinning_test.c`, `wind_test.c`, `platform/tests/shaders.c`'s
+  `roll_site`) read the WGSL, which only web builds keep, under `__wasm__`;
+  natively they check what doesn't need text (skinning by its atlas texture, the
+  roll site from the frag's name). CI's web jobs run them.
+- **HLSL for Unity:** `TIDEHL_TEXTURE_BUFFERS` and `TIDEHL_OWN_SAMPLERS` are
+  gone with their branches, the per-texture `sampler_TideTexture<i>` and every
+  `own` sampler parameter of the prelude's functions; `tide_hlsl_unity_shader`
+  writes one SubShader (target 4.5, `exclude_renderers gles3`) where it wrote a
+  second, target 3.5 for `gles3` alone. Otherwise the HLSL is unchanged.
+  `TideRender.Supported` refuses Unity's OpenGL Core and OpenGL ES 3 (WebGL 2):
+  Tide's drawing replays only on APIs that compute, as `docs/spec.md` lists
+  Unity's WebGL export among the losses. `TIDEHL_REVERSED_Z` keeps its non-GL
+  side and its define. `expect_hlsl.cmake` and `expect_wgsl.cmake` compile for
+  `SHADER_API_D3D11` alone (every API Unity's Tide draws on takes that path).
+  The Sample's checked-in `Resources/TideShaders/*.shader` still have both
+  SubShaders until `tide unity` writes them again.
+
 ## Kernels and GPU lists (2026-11-05)
 
 `compute` declarations write WGSL alone (`shader_compute.inc`: GPU lists as

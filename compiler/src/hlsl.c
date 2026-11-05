@@ -1047,29 +1047,24 @@ static int texture_call(translation *x, const expr *e, hs *o)
     const int f32 = t_simple(x, K_F32), u32 = t_simple(x, K_U32);
     const int result = tex.depth ? f32 : t_vec(x, tex.elem, 4);
     int t = result;
-    // The texture's own sampler, which OpenGL samples with (TIDEHL_OWN_SAMPLERS): sampler_<texture> for a module's
-    // texture, as Unity names a texture's sampler; one of the inline ones for a texture a function was given
-    char own[64];
-    if (strncmp(a.text[0], "_TideTexture", 12) == 0) snprintf(own, sizeof own, "sampler%s", a.text[0]);
-    else snprintf(own, sizeof own, "tidehl_linear_clamp_sampler");
     if (same(n, len, "textureSample") || same(n, len, "textureSampleLevel") || same(n, len, "textureSampleBias")
         || same(n, len, "textureSampleGrad")) {
         if (a.n < 3) fail(x, line, col, "'%.*s' takes a texture, a sampler and where", len, n);
         if (tex.depth) {
-            hprintf(o, "tidehl_depth(%s, %s, %s)", a.text[0], own, a.text[2]);
+            hprintf(o, "tidehl_depth(%s, %s)", a.text[0], a.text[2]);
         } else if (same(n, len, "textureSample")) {
-            hprintf(o, "tidehl_sample(%s, %s, %s, %s)", a.text[0], own, a.text[1], a.text[2]);
+            hprintf(o, "tidehl_sample(%s, %s, %s)", a.text[0], a.text[1], a.text[2]);
         } else if (same(n, len, "textureSampleGrad")) {
             if (a.n != 5) fail(x, line, col, "textureSampleGrad takes 5 arguments");
-            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s, %s)", a.text[0], own, a.text[1], a.text[2], a.text[3], a.text[4]);
+            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s)", a.text[0], a.text[1], a.text[2], a.text[3], a.text[4]);
         } else {
             if (a.n != 4) fail(x, line, col, "'%.*s' takes 4 arguments", len, n);
-            hprintf(o, "tidehl_sample_%s(%s, %s, %s, %s, float(%s))", n[13] == 'L' ? "level" : "bias", a.text[0], own, a.text[1],
-                    a.text[2], a.text[3]);
+            hprintf(o, "tidehl_sample_%s(%s, %s, %s, float(%s))", n[13] == 'L' ? "level" : "bias", a.text[0], a.text[1], a.text[2],
+                    a.text[3]);
         }
     } else if (same(n, len, "textureSampleCompare") || same(n, len, "textureSampleCompareLevel")) {
         if (a.n != 4 || !tex.depth) fail(x, line, col, "'%.*s' takes a depth texture, a sampler, where and a depth", len, n);
-        hprintf(o, "tidehl_compare(%s, %s, %s, %s)", a.text[0], own, a.text[2], a.text[3]);
+        hprintf(o, "tidehl_compare(%s, %s, %s)", a.text[0], a.text[2], a.text[3]);
     } else if (same(n, len, "textureLoad")) {
         if (a.n != 3) fail(x, line, col, "textureLoad takes a texture, where and a level or sample");
         hprintf(o, "tidehl_load(%s, int2(%s), int(%s))", a.text[0], a.text[1], a.text[2]);
@@ -2418,26 +2413,12 @@ static const char *const prelude[] = {
     "#else\n"
     "#define TIDEHL_REVERSED_Z 0 // OpenGL's: clip depth from -w near to w far\n"
     "#endif\n"
-    "#if defined(SHADER_API_GLCORE) || defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)\n"
-    "#define TIDEHL_OWN_SAMPLERS 1 // Unity's OpenGL has no samplers apart from textures: each texture's own\n"
-    "#else\n"
-    "#define TIDEHL_OWN_SAMPLERS 0\n"
-    "#endif\n"
-    "#if defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)\n"
-    "#define TIDEHL_TEXTURE_BUFFERS 1 // OpenGL ES 3.0's and WebGL 2's: buffers as textures, a word a pixel's bytes, 4,096 a row\n"
-    "#else\n"
-    "#define TIDEHL_TEXTURE_BUFFERS 0\n"
-    "#endif\n"
     "float4 _ProjectionParams;\n"
     "float _TideFlip, _TideHeight, _TideLinear;\n"
     "float4 _TideAttributes[16];\n"
     "float4 _TideSlots[3];\n"
     "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh;\n"
-    "#if TIDEHL_TEXTURE_BUFFERS\n"
-    "Texture2D<float4> _TideVertices0, _TideVertices1, _TideVertices2;\n"
-    "#else\n"
     "ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2;\n"
-    "#endif\n"
     "SamplerState tidehl_point_clamp_sampler, tidehl_point_repeat_sampler, tidehl_point_mirror_sampler;\n"
     "SamplerState tidehl_linear_clamp_sampler, tidehl_linear_repeat_sampler, tidehl_linear_mirror_sampler;\n"
     "SamplerState tidehl_trilinear_clamp_sampler, tidehl_trilinear_repeat_sampler, tidehl_trilinear_mirror_sampler;\n"
@@ -2473,20 +2454,6 @@ static const char *const prelude[] = {
     "\n",
     "// Vertices, from their buffers\n"
     "uint tidehl_vertex_of(uint v) { return _TideFirst + v; } // An indexed draw's first is 0: SV_VertexID is the index\n"
-    "#if TIDEHL_TEXTURE_BUFFERS\n"
-    "uint tidehl_word(Texture2D<float4> b, uint at) {\n"
-    "    uint w = at >> 2;\n"
-    "    uint4 bytes = uint4(round(b.Load(int3(int(w & 4095u), int(w >> 12), 0)) * 255.0));\n"
-    "    return bytes.x | bytes.y << 8 | bytes.z << 16 | bytes.w << 24;\n"
-    "}\n"
-    "uint4 tidehl_words(Texture2D<float4> b, uint at, uint n) {\n"
-    "    uint4 r = uint4(tidehl_word(b, at), 0u, 0u, 0u);\n"
-    "    if (n > 1u) r.y = tidehl_word(b, at + 4u);\n"
-    "    if (n > 2u) r.z = tidehl_word(b, at + 8u);\n"
-    "    if (n > 3u) r.w = tidehl_word(b, at + 12u);\n"
-    "    return r;\n"
-    "}\n"
-    "#else\n"
     "uint4 tidehl_words(ByteAddressBuffer b, uint at, uint n) {\n"
     "    uint4 r;\n"
     "    if (n == 1u) r = uint4(b.Load(at), 0u, 0u, 0u);\n"
@@ -2495,7 +2462,6 @@ static const char *const prelude[] = {
     "    else r = b.Load4(at);\n"
     "    return r;\n"
     "}\n"
-    "#endif\n"
     "uint4 tidehl_raw(uint location, uint vertex, uint instance, out uint format) {\n"
     "    float4 a = _TideAttributes[location];\n"
     "    uint slot = min((uint)a.x, 2u);\n"
@@ -2529,20 +2495,8 @@ static const char *const prelude[] = {
     "}\n"
     "\n",
     "// Sampling, as `mode` says (_TideSampling): nearest and linear read a texture's own pixels, mipmaps its smaller ones too\n"
-    "#if TIDEHL_OWN_SAMPLERS\n"
     "#define TIDEHL_SAMPLE(T, C)                                                                            \\\n"
-    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, C dx, C dy) {                        \\\n"
-    "    float4 r;                                                                                          \\\n"
-    "    if ((mode & 3u) == 2u) r = t.SampleGrad(own, at, dx, dy);                                          \\\n"
-    "    else r = t.SampleLevel(own, at, 0.0);                                                              \\\n"
-    "    return r;                                                                                          \\\n"
-    "}                                                                                                      \\\n"
-    "float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \\\n"
-    "    return t.SampleLevel(own, at, (mode & 3u) == 2u ? level : 0.0);                                    \\\n"
-    "}\n"
-    "#else\n"
-    "#define TIDEHL_SAMPLE(T, C)                                                                            \\\n"
-    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, C dx, C dy) {                        \\\n"
+    "float4 tidehl_sample_grad(T t, uint mode, C at, C dx, C dy) {                                          \\\n"
     "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
     "    float4 r;                                                                                          \\\n"
     "    if (filter == 2u) {                                                                                \\\n"
@@ -2560,22 +2514,21 @@ static const char *const prelude[] = {
     "    }                                                                                                  \\\n"
     "    return r;                                                                                          \\\n"
     "}                                                                                                      \\\n"
-    "float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \\\n"
+    "float4 tidehl_sample_level(T t, uint mode, C at, float level) {                                        \\\n"
     "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
     "    float4 r;                                                                                          \\\n"
-    "    if (filter != 2u) r = tidehl_sample_grad(t, own, mode, at, (C)0, (C)0);                            \\\n"
+    "    if (filter != 2u) r = tidehl_sample_grad(t, mode, at, (C)0, (C)0);                                 \\\n"
     "    else if (wrap == 1u) r = t.SampleLevel(tidehl_trilinear_repeat_sampler, at, level);               \\\n"
     "    else if (wrap == 2u) r = t.SampleLevel(tidehl_trilinear_mirror_sampler, at, level);               \\\n"
     "    else r = t.SampleLevel(tidehl_trilinear_clamp_sampler, at, level);                                \\\n"
     "    return r;                                                                                          \\\n"
     "}\n"
-    "#endif\n"
     ,
     "#define TIDEHL_SAMPLE_DERIVED(T, C)                                                                    \\\n"
-    "float4 tidehl_sample(T t, SamplerState own, uint mode, C at) { return tidehl_sample_grad(t, own, mode, at, ddx(at), ddy(at)); } \\\n"
-    "float4 tidehl_sample_bias(T t, SamplerState own, uint mode, C at, float bias) {                        \\\n"
+    "float4 tidehl_sample(T t, uint mode, C at) { return tidehl_sample_grad(t, mode, at, ddx(at), ddy(at)); } \\\n"
+    "float4 tidehl_sample_bias(T t, uint mode, C at, float bias) {                                          \\\n"
     "    float scale = exp2(bias);                                                                          \\\n"
-    "    return tidehl_sample_grad(t, own, mode, at, ddx(at) * scale, ddy(at) * scale);                     \\\n"
+    "    return tidehl_sample_grad(t, mode, at, ddx(at) * scale, ddy(at) * scale);                          \\\n"
     "}\n"
     "TIDEHL_SAMPLE(Texture2D<float4>, float2)\n"
     "TIDEHL_SAMPLE(TextureCube<float4>, float3)\n"
@@ -2583,34 +2536,22 @@ static const char *const prelude[] = {
     "TIDEHL_SAMPLE_DERIVED(TextureCube<float4>, float3)\n"
     "\n",
     "// Depth, 0 near and 1 far whichever way Unity keeps it: the nearest pixel's, or 1 where it isn't nearer than `d`\n"
-    "#if TIDEHL_OWN_SAMPLERS\n"
-    "#define TIDEHL_NEAREST(own) own // A depth texture's own sampler is the nearest pixel's (TideRender.cs)\n"
-    "#else\n"
-    "#define TIDEHL_NEAREST(own) tidehl_point_clamp_sampler\n"
-    "#endif\n"
-    "float tidehl_depth(Texture2D<float> t, SamplerState own, float2 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }\n"
-    "float tidehl_depth(TextureCube<float> t, SamplerState own, float3 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }\n"
-    "float tidehl_compare(Texture2D<float> t, SamplerState own, float2 at, float d) {\n"
+    "float tidehl_depth(Texture2D<float> t, float2 at) { return tidehl_depth_in(t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0)); }\n"
+    "float tidehl_depth(TextureCube<float> t, float3 at) { return tidehl_depth_in(t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0)); }\n"
+    "float tidehl_compare(Texture2D<float> t, float2 at, float d) {\n"
     "    uint w, h;\n"
     "    t.GetDimensions(w, h);\n"
     "    float2 size = float2(w, h);\n"
     "    float2 p = at * size - 0.5;\n"
     "    float2 f = frac(p);\n"
-    "#if TIDEHL_TEXTURE_BUFFERS\n"
-    "    // OpenGL ES 3.0 gathers nothing: the four pixels, each loaded\n"
-    "    int2 i = int2(floor(p)), most = int2(w, h) - 1;\n"
-    "    float4 g = float4(t.Load(int3(clamp(i + int2(0, 1), 0, most), 0)), t.Load(int3(clamp(i + int2(1, 1), 0, most), 0)),\n"
-    "                      t.Load(int3(clamp(i + int2(1, 0), 0, most), 0)), t.Load(int3(clamp(i, 0, most), 0)));\n"
-    "#else\n"
-    "    float4 g = t.GatherRed(TIDEHL_NEAREST(own), (floor(p) + 1.0) / size);\n"
-    "#endif\n"
+    "    float4 g = t.GatherRed(tidehl_point_clamp_sampler, (floor(p) + 1.0) / size);\n"
     "#if TIDEHL_REVERSED_Z\n"
     "    g = 1.0 - g;\n"
     "#endif\n"
     "    float4 lit = step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)\n"
     "    return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);\n"
     "}\n"
-    "float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return d <= tidehl_depth(t, own, at) ? 1.0 : 0.0; }\n"
+    "float tidehl_compare(TextureCube<float> t, float3 at, float d) { return d <= tidehl_depth(t, at) ? 1.0 : 0.0; }\n"
     "\n",
     "// Loads and sizes\n"
     "float4 tidehl_load(Texture2D<float4> t, int2 at, int level) { return t.Load(int3(at, level)); }\n"
@@ -2756,7 +2697,7 @@ static void translate(translation *x, hs *out)
             hput(&globals, ";\n");
         } else if (T(x, t)->kind == K_TEXTURE) {
             put_type(x, &globals, t);
-            hprintf(&globals, " _TideTexture%d;\nSamplerState sampler_TideTexture%d;\n", handle_slot(x, g, false), handle_slot(x, g, false));
+            hprintf(&globals, " _TideTexture%d;\n", handle_slot(x, g, false));
         } else if (T(x, t)->kind == K_SAMPLER || T(x, t)->kind == K_SAMPLER_CMP) {
             handle_slot(x, g, true); // Unity's inline samplers, picked by _TideSampling
         } else if (g->space == SPACE_STORAGE) {
@@ -2858,34 +2799,30 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
             "        _TideAlphaToMask (\"\", Float) = 0\n"
             "    }\n",
             name);
-    // Twice: for GPUs whose shaders read buffers, and for OpenGL ES 3.0 and WebGL 2, which read them as textures
-    // (hlsl.h's TIDEHL_TEXTURE_BUFFERS); once where it reads storage buffers, which those have none of
-    const int count = strstr(hlsl, "_TideStorage") ? 1 : 2;
-    for (int i = 0; i < count; i++) {
-        hput(&o, "    SubShader\n"
-                 "    {\n"
-                 "        Pass\n"
-                 "        {\n"
-                 "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n"
-                 "            ZTest [_TideZTest]\n"
-                 "            ZWrite [_TideZWrite]\n"
-                 "            Cull [_TideCull]\n"
-                 "            AlphaToMask [_TideAlphaToMask]\n"
-                 "            Stencil\n"
-                 "            {\n"
-                 "                Ref [_TideStencilRef]\n"
-                 "                Comp [_TideStencilComp]\n"
-                 "                Pass [_TideStencilPass]\n"
-                 "            }\n"
-                 "            HLSLPROGRAM\n"
-                 "            #pragma vertex tidehl_vertex\n"
-                 "            #pragma fragment tidehl_fragment\n");
-        hput(&o, i == 0 ? "            #pragma target 4.5\n            #pragma exclude_renderers gles3\n"
-                        : "            #pragma target 3.5\n            #pragma only_renderers gles3\n");
-        hput(&o, "            #include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
-        hput(&o, hlsl);
-        hput(&o, "            ENDHLSL\n        }\n    }\n");
-    }
+    // One subshader, for GPUs whose shaders read buffers and compute: Unity's OpenGL ES 3.0 and WebGL 2 have no
+    // Tide drawing (TideRender.Supported), as Tide itself has no backend that can't compute
+    hput(&o, "    SubShader\n"
+             "    {\n"
+             "        Pass\n"
+             "        {\n"
+             "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n"
+             "            ZTest [_TideZTest]\n"
+             "            ZWrite [_TideZWrite]\n"
+             "            Cull [_TideCull]\n"
+             "            AlphaToMask [_TideAlphaToMask]\n"
+             "            Stencil\n"
+             "            {\n"
+             "                Ref [_TideStencilRef]\n"
+             "                Comp [_TideStencilComp]\n"
+             "                Pass [_TideStencilPass]\n"
+             "            }\n"
+             "            HLSLPROGRAM\n"
+             "            #pragma vertex tidehl_vertex\n"
+             "            #pragma fragment tidehl_fragment\n"
+             "            #pragma target 4.5\n            #pragma exclude_renderers gles3\n");
+    hput(&o, "            #include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
+    hput(&o, hlsl);
+    hput(&o, "            ENDHLSL\n        }\n    }\n");
     hput(&o, "}\n");
     return htake(&o);
 }

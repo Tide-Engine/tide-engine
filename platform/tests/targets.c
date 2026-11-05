@@ -113,23 +113,6 @@ static const tide_shader list_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "layout(location=2) in vec4 tint;\n"
-        "out vec2 uv; out vec4 shade;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; shade = tint; }\n",
-    .glsl_fragment =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "uniform sampler2D pixels0;\n"
-        "in vec2 uv; in vec4 shade; out vec4 color;\n"
-        "void main() {\n"
-        "  vec4 sampled = textureLod(pixels0, uv, 0.0) * shade;\n"
-        "  color = settings.x > 1.0 ? vec4(sampled.a, sampled.rg, 1) :\n"
-        "          settings.x > 0.0 ? vec4(gl_FragCoord.x / screen.x / settings.y,\n"
-        "               (screen.z - gl_FragCoord.y) / screen.y / settings.z, screen.z / settings.z, 1) : sampled;\n"
-        "}\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -157,17 +140,6 @@ static const tide_shader depth_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_DEPTH},
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "out vec2 uv;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
-    .glsl_fragment =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "uniform highp sampler2D pixels0;\n"
-        "in vec2 uv; out vec4 color;\n"
-        "void main() { float depth = textureLod(pixels0, uv, 0.0).r; color = vec4(depth, depth, depth, 1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -191,20 +163,6 @@ static const tide_shader compare_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_COMPARE},
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "out vec2 uv;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
-    .glsl_fragment =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "uniform highp sampler2DShadow pixels0;\n"
-        "in vec2 uv; out vec4 color;\n"
-        "void main() {\n"
-        "  float lit = textureLod(pixels0, vec3(uv, clamp(settings.x, 0.0, 1.0)), 0.0);\n"
-        "  color = vec4(lit, lit, lit, 1);\n"
-        "}\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -229,20 +187,6 @@ static const tide_shader caster_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex3, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex3, color)}},
     .instance_floats = 4,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 origin; };\n"
-        "layout(location=0) in vec3 position;\n"
-        "layout(location=3) in vec4 m0;\n"
-        "layout(location=4) in vec4 m1;\n"
-        "layout(location=5) in vec4 m2;\n"
-        "layout(location=6) in vec4 m3;\n"
-        "void main() {\n"
-        "  mat4 relative = mat4(m0 - origin * m0.w, m1 - origin * m1.w, m2 - origin * m2.w, m3 - origin * m3.w);\n"
-        "  gl_Position = camera * (relative * vec4(position, 1));\n"
-        "}\n",
-    .glsl_fragment =
-        "out vec4 color;\n"
-        "void main() { if (gl_FragCoord.x > 2.0) discard; color = vec4(1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, origin: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -2430,14 +2374,6 @@ static const tide_shader two_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .outputs = 2,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); }\n",
-    .glsl_fragment =
-        "layout(location = 0) out vec4 first;\n"
-        "layout(location = 1) out vec4 second;\n"
-        "void main() { first = vec4(1, 1, 0, 1); second = vec4(2, 0.5, -1, 1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -2458,16 +2394,6 @@ static const tide_shader quarter_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .texture_count = 1,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "out vec2 uv;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
-    .glsl_fragment =
-        "uniform sampler2D pixels0;\n"
-        "in vec2 uv; out vec4 color;\n"
-        "void main() { color = vec4(textureLod(pixels0, uv, 0.0).rgb * 0.25 + vec3(0.25), 1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"

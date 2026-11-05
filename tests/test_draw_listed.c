@@ -22,7 +22,7 @@ static const uint32_t faces[] = {0, 1, 2};
 // A transform, a float4 and an int4 an instance: five float packs and one of ints.
 static const tide_shader listed_shader = {
     .name = "listed", .dims = 3, .vertex_size = sizeof(tide_vertex3), .instance_floats = 5, .instance_ints = 1,
-    .bounds_position = 1 + offsetof(tide_vertex3, position), .glsl_listed_vertex = "listed",
+    .bounds_position = 1 + offsetof(tide_vertex3, position), .listed = true,
 };
 // The same, with no listed vertex stage: a game built before it, or a shader whose instances aren't its list's
 static const tide_shader unlisted_shader = {

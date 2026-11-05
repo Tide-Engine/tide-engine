@@ -1,6 +1,6 @@
-// What tidec writes for a vert and a frag, in GLSL and in WGSL: a mut
-// parameter is inout in one and a pointer in the other, a swizzle is assigned
-// a component at a time in WGSL, constants a shader compiler would fold go
+// What tidec writes for a vert and a frag, in WGSL: a mut
+// parameter is a pointer, a swizzle is assigned
+// a component at a time, constants a shader compiler would fold go
 // through tide_f, and what the code reads of a component and of singletons
 // comes as float4s and int4s of the instance and of the uniforms. An enum is
 // an int there, so one from its number is the number, or its low bits when

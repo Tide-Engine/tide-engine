@@ -3543,7 +3543,7 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, cons
 static tide_gpu_id listed_pipeline_for(const tide_shader *shader, const uint32_t blend, const uint32_t depth,
                                        const uint32_t cull, const tide_gpu_target_format into, const uint32_t state)
 {
-    if (!shader->glsl_listed_vertex || shader->texture_count >= TIDE_SHADER_TEXTURES || shader->dims != 3) return 0;
+    if (!shader->listed || shader->texture_count >= TIDE_SHADER_TEXTURES || shader->dims != 3) return 0;
     return shader_pipeline_of(shader, true, false, blend, depth, cull, into, state);
 }
 
@@ -3583,8 +3583,6 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
     const uint32_t instance_size = tide_shader_instance_size(shader);
     tide_gpu_pipeline_desc desc = {
         .name = shader->name ? shader->name : "a shader",
-        .glsl_vertex = shader->glsl_vertex,
-        .glsl_fragment = shader->glsl_fragment,
         .wgsl = shader->wgsl,
         .spirv = shader->spirv,
         .spirv_words = shader->spirv_words,
@@ -3614,7 +3612,6 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
     desc.attribute_count = shader->attribute_count;
     if (listed) { // Its place in its list, and its list's numbers
         desc.name = shader->name ? shader->name : "a listed shader";
-        desc.glsl_vertex = shader->glsl_listed_vertex;
         desc.wgsl = shader->wgsl_listed;
         desc.spirv = shader->spirv_listed;
         desc.spirv_words = shader->spirv_listed_words;
@@ -3778,7 +3775,7 @@ static bool drawn(const tide_shader *shader)
 static tide_gpu_id warm_key(const tide_shader *shader, const used_key *key)
 {
     // ...and its listed pipeline, which its draws of a list go through (tide_draw_run.listed)
-    if (!key->blit && shader->glsl_listed_vertex) {
+    if (!key->blit && shader->listed) {
         warm_ask(listed_pipeline_for(shader, key->blend, key->depth, key->cull, key->into, key->state));
     }
     return pipeline_for(shader, key->blit, key->blend, key->depth, key->cull, key->into, key->state);

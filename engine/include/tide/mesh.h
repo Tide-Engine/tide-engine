@@ -210,7 +210,7 @@ void tide_draw_mesh_shaded_indirect(tide_draw_list *d, const tide_shader *shader
 
 // Draw.Instanced of a list the list keeps: `write` writes an item's instance (tide_shader_instance_size bytes, as
 // ints) from the item alone, and `layout` names that writing (two layouts of one list are kept apart). Where the
-// shader has a listed vertex stage (tide_shader.glsl_listed_vertex...), the items' instances go into a region of
+// shader has a listed vertex stage (tide_shader.listed), the items' instances go into a region of
 // one of the draw list's pages of numbers, kept while a world's list stays as it was the frame before (the frame's
 // own region otherwise), and the runs have only the places of those drawn (tide_draw_run.listed): culled, picked
 // and merged as tide_draw_mesh_shaded_instances's, to the same runs. Otherwise (no listed stage, a 3D transform

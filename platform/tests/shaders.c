@@ -1234,12 +1234,14 @@ static int gpu_roll_below(uint32_t *dice, const uint32_t max)
     return (int)(((uint64_t)gpu_roll(dice) * max) >> 32);
 }
 
-// Which frag or vert a stage's text says it is: the number its generators are made with
-static int32_t roll_site(const char *glsl)
+// The number the generators of the frag or vert called `name` are made with, as tidec works it out
+// (shader.c's roll_site): FNV-1a of its shader name, "ts_" and its own, which has no '_' or '.' here
+static int32_t roll_site(const char *name)
 {
-    const char *made = strstr(glsl, "tide_dice = uint(");
-    const char *with = made ? strstr(made, " ^ ") : NULL;
-    return with ? (int32_t)strtoul(with + 3, NULL, 10) : 0;
+    uint32_t hash = 2166136261u;
+    for (const char *s = "ts_"; *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    for (const char *s = name; *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    return (int32_t)(hash & 0x7FFFFFFFu);
 }
 
 static const tide_shader *shader_named(const char *name)
@@ -1341,28 +1343,28 @@ static void run_roll_checks(const int64_t state, const char *when)
         float want[3] = {0, 255, 0}; // RANGES: green
         int within = 1; // Whole numbers come out as they are; what's blended between corners is the GPU's rounding
         switch (wanted[i].kind) {
-        case BYTES: roll_bytes(x, y, 0, rolled, roll_site(bytes->glsl_fragment), want); break;
-        case FIRST: roll_bytes(x, y, 0, rolled, roll_site(placed->glsl_fragment), want); break;
-        case SECOND: roll_bytes(x, y, 1, rolled, roll_site(placed->glsl_fragment), want); break;
+        case BYTES: roll_bytes(x, y, 0, rolled, roll_site("RollBytes"), want); break;
+        case FIRST: roll_bytes(x, y, 0, rolled, roll_site("RollBytes"), want); break;
+        case SECOND: roll_bytes(x, y, 1, rolled, roll_site("RollBytes"), want); break;
         case TINT:
-            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site(tint->glsl_vertex), want);
+            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site("RollTint"), want);
             within = 3;
             break;
         case SEED: want[0] = SEEDED & 255, want[1] = (SEEDED >> 8) & 255, want[2] = (SEEDED >> 16) & 255; break;
         case OVER: {
             float blended[3];
-            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site(over->glsl_vertex), blended);
-            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(over->glsl_fragment)});
+            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site("RollTint"), blended);
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site("RollOver")});
             want[0] = (float)gpu_roll_below(&pixel, 256), want[1] = blended[1], want[2] = 0;
             within = 3;
             break;
         }
         case FILL: // The image's cells are red and green above blue and white: its blue is 0 above and 1 below
-            roll_bytes(x, y, 0, rolled, roll_site(fill->glsl_fragment), want);
+            roll_bytes(x, y, 0, rolled, roll_site("RollFill"), want);
             want[2] = y < SIZE / 2 ? 0 : 255;
             break;
         case PICK: { // The first roll is picked, the second made and left, and the third is what's rolled after
-            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(pick->glsl_fragment)});
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site("RollPick")});
             want[0] = (float)gpu_roll_below(&pixel, 256);
             (void)gpu_roll_below(&pixel, 256);
             want[1] = (float)gpu_roll_below(&pixel, 256), want[2] = 0;

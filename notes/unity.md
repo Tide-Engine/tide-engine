@@ -1,5 +1,17 @@
 # Unity as a front end
 
+## No Tide drawing on Unity's OpenGL (2026-11-05)
+
+With the GL backends removed (compute is guaranteed on every backend), Tide's
+shaders for Unity have one SubShader (target 4.5, `exclude_renderers gles3`):
+the OpenGL ES 3.0/WebGL 2 one, which read vertices from textures
+(`TIDEHL_TEXTURE_BUFFERS`), and Unity OpenGL's per-texture samplers
+(`TIDEHL_OWN_SAMPLERS`) are gone (`notes/shaders.md`). `TideRender.Supported`
+refuses `OpenGLCore` and `OpenGLES3`, so those players and Unity's WebGL export
+get the OnGUI path (`TideDraw.cs`) only. `textureBuffers`/`ownSamplers` in
+`TideRender.cs` are left for the Unity task to delete. Claude's, Provisional;
+not run in Unity. Below, the GL ES/WebGL paths are history.
+
 ## Compute in the recording (2026-11-05)
 
 The recorder (`gpu_record.c`) writes gpu.h's compute calls as new
