@@ -8325,6 +8325,10 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         static const char *const keywords[] = {"if", "else", "return", "var", "mut", "switch", "case", "default", "break",
                                                "while", "for", "foreach", "continue"};
         for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) item(c, keywords[i], CK_KEYWORD, NULL, NULL, NULL);
+        item(c, "indexed", CK_KEYWORD, "indexed foreach (var row in rows) { ... }",
+             "Promises the loop visits only the rows its guard can pass: an error, with the reason, when it can't. "
+             "Plain loops are indexed too whenever they can be.",
+             NULL);
         // Every cell of a grid or element of a list at once, in a system, view or handler that isn't async
         if (sc.decl && sc.decl->kind == DECL_SYSTEM && !sc.decl->is_async) {
             item(c, "parallel", CK_KEYWORD, "parallel (var at in cells) { ... }",

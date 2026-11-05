@@ -15,6 +15,7 @@
 #include "tide/player.h" // How many players a game can take
 #include "tide/skinned_data.h" // [BlendShapes] keeps some of an imported model's shapes
 #include "types.h"
+#include "indexing.h"
 
 // Semantic analysis: resolves names and types, enforces access and mutability
 // rules, and derives the archetype list from spawn, add and remove sites.
@@ -23554,6 +23555,7 @@ bool check(program *prog)
     }
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
+    plan_loop_indexes(prog);
     collect_device_uses(&c);
     check_workers(&c);
     check_build_code(&c);

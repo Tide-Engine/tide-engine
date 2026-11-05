@@ -57,7 +57,7 @@ Use an absolute executable path to select a particular Tide installation."
                     "async" "virtual" "override" "local" "verified" "mut"
                     "with" "without" "out" "in" "var" "fails" "is" "this"
                     "if" "else" "return" "switch" "case" "default" "break"
-                    "while" "for" "foreach" "parallel" "continue" "fail" "try"
+                    "while" "for" "foreach" "parallel" "indexed" "continue" "fail" "try"
                     "await") 'symbols) . font-lock-keyword-face)
     (,(regexp-opt '("void" "bool" "byte" "ushort" "char" "int" "int2" "int3"
                     "int4" "long" "double" "double2" "double3" "double4" "double2x2" "double3x3" "double4x4" "float" "float2" "float3" "float4" "float2x2"

@@ -201,6 +201,7 @@ const int NEWER = 1;
 system Loops(Field field)
 {
     parallel (var at in field.cells by 2 offset o) { }
+    indexed foreach (var near in field.items) { }
     foreach (var tick in Both(Ticks(), Ticks())) { int in = 1; }
 }
 

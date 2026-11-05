@@ -1516,6 +1516,19 @@ static stmt *parse_stmt(parser *p)
         return s;
     }
 
+    case T_INDEXED: {
+        // indexed foreach (...) or indexed parallel (...): the loop promises to visit only rows its guard can pass
+        advance(p);
+        if (!at(p, T_FOREACH) && !at(p, T_PARALLEL)) {
+            diag_error(peek(p)->at, "'indexed' goes before a loop: write 'indexed foreach (...)' or 'indexed parallel (...)'");
+            longjmp(p->fail, 1);
+        }
+        stmt *s = parse_stmt(p);
+        s->indexed = true;
+        s->indexed_at = t->at;
+        return s;
+    }
+
     case T_PARALLEL: {
         // parallel (var at in cells), or by blocks: parallel (var at in cells by 2 offset shift)
         advance(p);
