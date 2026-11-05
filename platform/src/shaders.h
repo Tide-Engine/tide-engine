@@ -809,7 +809,7 @@ static const char *const add_offsets_wgsl = WGSL(
 // 64 for each of the kernel's.
 static const char *const add_scatter_wgsl = WGSL(
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read_write> scratch: array<u32>;\n"
+    "@group(0) @binding(25) var<storage, read> scratch: array<u32>;\n"
     "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
     "@compute @workgroup_size(64) fn compute(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) w: vec3u,\n"
     "                                        @builtin(num_workgroups) n: vec3u) {\n"

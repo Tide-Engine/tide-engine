@@ -82,7 +82,7 @@ static void check_results(const char *when)
         const float off = fabsf(gpu - cpu) / (1.0f + fabsf(cpu));
         if (off > worst) worst = off;
     }
-    close = close && worst < 2e-4f;
+    close = close && worst < 1e-3f; // WGSL promises sin within 2^-11 only inside [-pi, pi]
     printf("%s: a kernel works out what the same Tide function does on the CPU, for 200 invocations of 4 groups of 64 "
            "(worst %g)%s\n", close ? "ok" : "FAIL", (double)worst, when);
     if (!close) failures++;
@@ -132,66 +132,82 @@ static void check_pixels(const char *when)
     if (!ok) failures++;
 }
 
-// Frames until the read asked for is back, a frame or more later
-static bool read_back(void)
-{
-    const int32_t before = local.Results.reads;
-    local.Lists.read = true;
-    for (int i = 0; i < 120 && local.Results.reads == before; i++) frame_of_game();
-    return local.Results.reads != before;
-}
+// A round of checks, a frame of the game in each of the host's frames: the browser has to run between them, for a
+// read back to arrive there. Two frames, a read asked for, and frames until it's back. True once it's over.
+typedef struct check_round {
+    int frames;
+    int32_t reads;
+} check_round;
 
-static void run_checks(const char *when)
+static bool round_over(check_round *r, const char *when, const bool all)
 {
     frame_of_game();
-    frame_of_game();
-    if (!read_back()) {
-        expect(false, "the reads back were done", when);
-        return;
+    r->frames++;
+    if (r->frames == 2) {
+        r->reads = local.Results.reads;
+        local.Lists.read = true;
+        return false;
     }
-    check_results(when);
-    check_pixels(when);
+    if (r->frames < 2 || (local.Results.reads == r->reads && r->frames < 240)) return false;
+    if (local.Results.reads == r->reads) {
+        expect(false, "the reads back were done", when);
+    } else if (all) {
+        check_results(when);
+        check_pixels(when);
+    }
+    *r = (check_round){0};
+    return true;
 }
 
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
-    static bool said;
-    if (!said) printf("renderer: %s\n", tide_platform_renderer());
-    said = true;
+    static int stage;
+    static check_round r;
+    static int64_t before;
+    if (stage == 0) printf("renderer: %s\n", tide_platform_renderer());
+    const bool computes = !strstr(tide_platform_renderer(), "GL"); // OpenGL's and WebGL's have none
+    if (stage == 0) stage = computes ? 1 : 10;
+    switch (stage) {
+    case 1:
+        if (!round_over(&r, "", true)) return TIDE_KEEP_RUNNING;
+        expect(local.Results.revision > 0 && local.Results.revisionNow == local.Results.revision,
+               "a GPU list's contentRevision stays while its contents do", "");
+        stage = 2;
+        return TIDE_KEEP_RUNNING;
+    case 2:
+        if (!round_over(&r, ", again", true)) return TIDE_KEEP_RUNNING;
 #ifdef __wasm__
-    static int lost; // 1: lost, and waiting for another; 2: checking again
-    if (lost == 1) {
+        if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
+            // WebGPU's device can go away: once everything checked out, the page loses it, and on the next one the
+            // lists are made again, empty, and filled again by the game's frames
+            before = local.Results.revisionNow;
+            tide_web_eval("Tide.loseDevice()");
+            stage = 3;
+            return TIDE_KEEP_RUNNING;
+        }
+#endif
+        return failures;
+#ifdef __wasm__
+    case 3:
         if (!tide_web_eval("Tide.gpuDevices() > 1")) return TIDE_KEEP_RUNNING;
         printf("the device was lost, and the page found another\n");
-        lost = 2;
-    }
-    if (lost == 2) {
-        const int64_t before = local.Results.revisionNow;
-        run_checks(", on another device");
+        stage = 4;
+        return TIDE_KEEP_RUNNING;
+    case 4:
+        if (!round_over(&r, ", on another device", true)) return TIDE_KEEP_RUNNING;
         expect(local.Results.revisionNow != before && local.Results.revisionNow > 0,
                "a GPU list made again on another device has another contentRevision", "");
         return failures;
-    }
 #endif
-    if (strncmp(tide_platform_renderer(), "OpenGL", 6) == 0) { // It has no compute: kernels are passed by, and said so
-        frame_of_game();
-        frame_of_game();
-        expect(read_back() && local.Results.failed, "OpenGL runs no kernels, and a GPU list's read back fails there", "");
+    case 10: // No compute: kernels are passed by, and said so
+        if (!round_over(&r, "", false)) return TIDE_KEEP_RUNNING;
+        expect(local.Results.failed, "OpenGL and WebGL run no kernels, and a GPU list's read back fails there", "");
         return failures;
+    default:
+        (void)before;
+        return failures + 1;
     }
-    run_checks("");
-    expect(local.Results.revision > 0 && local.Results.revisionNow == local.Results.revision,
-           "a GPU list's contentRevision stays while its contents do", "");
-    run_checks(", again");
-#ifdef __wasm__
-    if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
-        tide_web_eval("Tide.loseDevice()");
-        lost = 1;
-        return TIDE_KEEP_RUNNING;
-    }
-#endif
-    return failures;
 }
 
 int main(void)
