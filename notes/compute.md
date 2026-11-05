@@ -28,6 +28,10 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [x] Engine GPU culling of listed runs, 2026-11-05: notes/drawing.md, Listed runs culled on the GPU (Hi-Z
       occlusion not built)
 - [x] Docs: `docs/game/shaders.md`, spec, editors
+- [x] `draw_indexed_indirect_count` (Vulkan's DrawIndexedIndirectCount, WebGPU's multi-draw-indirect or a loop, the
+      recorder's op, embed ABI 12), used by the GPU culling: empty level buckets draw nothing, runs one after another
+      that draw alike are one call, stats from the GPU's counts, 2026-11-05: notes/drawing.md, Culled runs drawn by a
+      count, joined
 
 ## Built: the language, the engine and the renderer (2026-11-05)
 
@@ -161,7 +165,8 @@ has no draw list). (A 2D or 3D `Draw.Instanced` over a GPU list wasn't moved by
 
 ### Not built
 
-- `DrawIndirectCount` (Vulkan's many indirect draws in one call): each indirect draw is a call.
+- (Built 2026-11-05: `draw_indexed_indirect_count`, below and notes/drawing.md.) A game's `Draw.Instanced` over a
+  GPU list is still one indirect draw a call: nothing in the language asks for many records.
 - A frag or vert reading a GPU list through a function given a struct works by
   field; one passed on alone is refused (a GPU list is a storage slot by its source and field, not a value).
 - Instances of an indirect draw whose own transforms mirror aren't drawn apart from the others (the CPU has none to
@@ -257,6 +262,17 @@ Task: finish what "Not built" listed. Every pick is Claude's, Provisional, and i
   one compute pass, between dispatches, compute -> compute).
 - `draw_indirect` (4 u32s), `draw_indexed_indirect` (5 u32s), first instance
   always 0. `dispatch_indirect` (3 u32s).
+- `draw_indexed_indirect_count(buffer, offset, most, counts, count_offset)`:
+  records of 5 u32s 20 bytes apart, as many as the u32 at `count_offset` of
+  storage buffer `counts`, at most `most`; records past the count must be of no
+  instances (a backend without `TIDE_GPU_INDIRECT_COUNT` draws all `most`).
+  `indirect()` gives `TIDE_GPU_INDIRECT_COUNT` (Vulkan `drawIndirectCount`,
+  WebGPU multi-draw-indirect) and `TIDE_GPU_INDIRECT_FIRST_INSTANCE` (Vulkan
+  `drawIndirectFirstInstance`, WebGPU `indirect-first-instance`; else records'
+  first instances must be 0); the recorder says neither. Test:
+  `tide_platform_compute` (two records counted of three, the second's first
+  index and first instance, a count of none).
+- `buffer_copy` copies from an index buffer too, to a storage buffer.
 - `buffer_copy` outside passes, ordered with the passes around it.
 - `buffer_read` begins an asynchronous read (token), `buffer_read_done` polls
   (1 done, 0 not yet, -1 lost), `buffer_read_wait` waits for every pending

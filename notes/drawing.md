@@ -2,6 +2,106 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Culled runs drawn by a count, joined (2026-11-05)
+
+Task (owner: close compute's gaps, "draw indirect count" among them): a multi-draw indirect call whose count the GPU
+writes, used by the GPU culling so empty level buckets cost nothing and runs that draw alike are one call; stats
+from the GPU's own counts. Internal: no Tide or generated-C change, the same pixels. Every pick is Claude's,
+Provisional.
+
+- **gpu.h** (`notes/compute.md`, gpu.h contract): `draw_indexed_indirect_count(buffer, offset, most, counts,
+  count_offset)` draws records of five words, 20 bytes apart, as many as the uint32 at `count_offset` says and at most
+  `most`; records past the count must be of no instances, since a backend without `TIDE_GPU_INDIRECT_COUNT` draws all
+  `most` (a call each). `indirect()` says `TIDE_GPU_INDIRECT_COUNT` (one call the GPU counts) and
+  `TIDE_GPU_INDIRECT_FIRST_INSTANCE` (records' first instances taken as they are; else they're 0). `buffer_copy` may
+  copy from an index buffer too (Vulkan's index buffers gained TRANSFER_SRC, WebGPU's COPY_SRC).
+  - Vulkan: `vkCmdDrawIndexedIndirectCount` where the device has `drawIndirectCount` (Vulkan12Features, enabled where
+    there), else one `vkCmdDrawIndexedIndirect` of `most` records with `multiDrawIndirect`, else a loop.
+    `drawIndirectFirstInstance` was already enabled where there. `TIDE_VULKAN_INDIRECT_COUNT=0` turns the first two off
+    (tests of the loop).
+  - WebGPU: Chrome's `multiDrawIndexedIndirect` where the device has `chromium-experimental-multi-draw-indirect` (or a
+    standard `multi-draw-indirect`) and the method exists; otherwise a `drawIndexedIndirect` per record up to `most`:
+    the cost of the fallback is `most` validated indirect draws a call, zero-instance ones included (Chrome validates
+    each indirect draw on the GPU; with no count, empty buckets cost what they did before). `indirect-first-instance`
+    is requested where the adapter has it. `Tide.gpuIndirect()` on a page says the bits.
+  - Recorder: `TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT` (buffer, offset, most, counts, count_offset), embed ABI
+    12 with `TideLibrary.Abi`; `indirect()` is 0 (Unity's instance ids count from 0 whatever the first instance).
+    TideRender replays it as `most` DrawIndexedIndirect ops (capped at 65,536). The renderer never culls on the GPU
+    under the recorder, so no game sends it yet.
+- **The culling's emission** (`cull.inc`, `cull.tide`). Contract, for the Hi-Z work on the same kernels: CullListed's
+  inputs and `groups`/`scratch` are unchanged; CullOffsets now writes each bucket's kept count to `counts` (not into
+  its draw record); `CullBucket` is two int4 (`a`: first group, groups, places start, 0; `b`: its mesh's index count,
+  its first index in its join's index buffer, 0, 0); a new `CullJoin` (first bucket, buckets, 1 where records carry
+  first instances) list `joins`; `args` holds one 5-word record a bucket, written only by the new fourth kernel
+  CullDraws (an invocation a join: the records of its buckets that kept any, in order, then zero records to its
+  buckets' count) and `draws` one count a join. One compute pass of four dispatches; CullListed and CullScatter are
+  skipped where no draw has candidates (CullOffsets and CullDraws still run, so every count is written).
+  - A **join** (`cull_joins`, made in `cull_run`) is culled steps one after another in `steps` (nothing between) with
+    the same pipeline, destination, stencil, camera, values (bytes), textures (the page too), sampling and tint, whose
+    meshes are levels of one mesh at one index width, all drawable with their pipeline made, on a device with
+    `TIDE_GPU_INDIRECT_FIRST_INSTANCE`, and whose listed vertex stage doesn't read `instance_index` (a vert or frag that
+    rolls: first instances would change its numbers; found once a shader by its listed WGSL). Its first step draws it
+    all (`draw_step.join`, 1 + the join), the others nothing. Records' first instances say where each bucket's places
+    start, the places bound from the list's first. Draw order within the call is the steps' order, so pixels are the
+    per-bucket draws' (the GPU-vs-CPU byte test passes).
+  - Levels of one mesh have their own index buffers, so a join draws through its **family**'s (`cull_family`): the
+    mesh's and its levels' indices one after another in one storage buffer, copied on the GPU from the meshes' index
+    buffers (hollow meshes have no CPU copy) before the frame's first pass, kept per mesh (`gpu_mesh.family`), laid out
+    anew when a level it hasn't is asked for, but after what it holds where a join earlier in the frame already drew
+    through it (each call takes the family's buffer as it is). 256 families, the longest unused let go; one unused for
+    300 frames goes; a device lost forgets them.
+  - Anything else (no first instances, a rolling shader, a span a family can't hold) is a join of one bucket: its own
+    mesh's indices, its places bound where they start, records' first instance 0, still one count call (`most` 1).
+- **Stats** (`counted_*`, cull.inc). `tide_platform_draw_calls` counts a join's call once. As a frame ends its records
+  (every culled join drawn, and each indirect draw over a GPU list's arguments, `counted_step`) are copied into a
+  buffer of its own and read back (four frames' reads at most in flight; with none free the frame isn't counted);
+  `counted_poll` at the next frames' start sums them: `tide_platform_draw_vertices` adds the newest frame read back's
+  index count x instances, and the new `tide_platform_draws` counts calls the CPU knows plus records that drew. A
+  frame with no GPU-decided draw counts none at once. GPU-index draws (`draw_indirect`) count their corners x
+  instances. GPU pass rows (`gpu_passes`) count CPU-known vertices only.
+- **Geometry rows** for culled draws: `tide_draw_shaded_culled` keeps, with diagnostics, each level's row
+  (`tide_draw_cull.rows`, `rows_revision`, by `tide_draw_geometry_row_of`); with diagnostics the frame's read also
+  copies CullListed's `groups`, and each part's (a draw at a level) kept count goes to its row
+  (`tide_draw_geometry_add`, nothing where the diagnostics were cleared since). Runs the CPU decides count each draw's
+  own decisions as they're drawn (`cull_decided_rows`).
+- **Fifth page**: can't arise. Pages are found by one of four ids (`listed_page_id`), so a list has at most four page
+  textures; `cull_page_of`'s refusal stays as a guard.
+- **Layout**: `tide_draw_cull` gains `rows`, `rows_revision`; `tide_platform_cull_report` `calls`, `joined`, `draws`,
+  `misdrawn`; gpu.h `draw_indexed_indirect_count`, `indirect`; embed ABI 12. Hosts, libraries and games rebuild together.
+- **Tests**: `tide_platform_cull` now also checks each call's records against the read-back counts (the runs that kept
+  any, in order, their index counts, first indices and first instances, then zero records, and the join's count:
+  `misdrawn` 0), that runs join where draws take first instances (9 culled runs in 4 calls at the first shot), the
+  stats a frame or more later (vertices those of the CPU's culling exactly, 37,341; draws the calls the CPU knows of
+  plus the runs the GPU drew), and the geometry rows of one GPU-culled frame read back (6,154 instances, the CPU's),
+  again after the device is lost; under `TIDE_GPU_CULLING=decide` the rows of the CPU's decisions. Vulkan with the
+  validation layer: 140 checks, also with `TIDE_VULKAN_DESCRIPTOR_SETS=1` and `TIDE_VULKAN_INDIRECT_COUNT=0` (the
+  draw-a-record loop); WebGPU (Chrome 156 here offers `indirect-first-instance`, not multi-draw: the loop, with joins).
+  `tide_platform_compute`: two records of three counted (the second's first index and first instance), a count of none;
+  `embed_render_compute`: the op's words; Unity `ComputeReplayTests` 4/4 (the new `CountedDrawsDrawTheirRecords`).
+- **Measured** (Mount & Rifle f34b07a, its menu's field scene, built with this checkout and with its parent 6c2b5d53c
+  through a scratch `TIDE_EXTERNAL_DIRS` folder, release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER, 1,800 frames, the
+  first 300 left out, fresh `--data-dir`, three alternating pairs each way):
+  - Draw calls 807.6 -> 719.5 a frame (the game culls its trees' cards with its own kernels since the last
+    measurement, so the base is no longer 938). Vertices 5.28M -> 8.73M a frame: the base counted a culled run's index
+    count once; this is what the GPU drew.
+  - With `--profile`: views 1.07-1.41 -> 0.88-1.35 ms, render 1.86-2.22 -> 1.47-2.06, CPU work 3.05-3.79 -> 2.44-3.54,
+    GPU 5.14-5.19 (one run 8.69) -> 5.19-5.60 (p50 5.11-5.16 -> 5.16-5.19): within the runs' noise. A first version
+    found each culled part's join by going through the joins (render +0.6 ms with diagnostics); now a bit a record.
+    DrawFlora's mesh recording 0.03 -> 0.06-0.08 ms with `--profile` (each culled draw's level rows).
+  - Without `--profile` (the game's PERF probes): frame 4.90-4.92 -> 4.90-4.98 ms (GPU-bound), views 0.67-0.70 ->
+    0.68-0.70 ms.
+- **Not done / gaps**:
+  - Chrome's multi-draw-indirect path is written to its documented signature but unrun: Chrome here doesn't offer the
+    feature, so WebGPU draws a record a call (empty buckets cost a validated zero-instance draw each, as before).
+  - Sets still don't join runs of bytes (a culled set beside an ordinary listed or copied run of the same mesh: a
+    separate pipeline, or places in another buffer); joins are of culled steps alone. A draw whose levels start lower
+    than its set's still starts another set at recording; the renderer joins them back into one call where they're
+    one after another, but they're separate draws in the call.
+  - Levels of different meshes can't share a call (their vertices are other buffers); a shader that rolls is a call a
+    run; a device without draws' first instances (some Android GPUs, Unity's replay) gets a count call a run.
+  - Stats come a frame or two late and the GPU passes' rows count CPU-known vertices only. The recorder draws every
+    record. Lists that mirror and don't, and blended Depth.Read draws, stay on the CPU (not emission).
+
 ## Meshes of a world's lists kept as the game keeps them (2026-11-05)
 
 The owner, after Turning round (below): is 64 MiB enough, and should a game tune it? Ideally games don't worry
@@ -156,7 +256,9 @@ same pixels. Every pick below is Claude's, Provisional.
   a frame on that scene: levels of a draw's range that end up empty are still indirect draws, sets don't join runs
   of bytes, and a draw whose levels start lower than its set's starts another. Stats' vertices count a GPU-culled
   run's index count once (its count is the GPU's), and geometry rows don't see them. Lists that mirror and don't,
-  blended Depth.Read draws and a fifth page stay on the CPU. The web has no read-back comparison (no waiting read).
+  blended Depth.Read draws and a fifth page stay on the CPU. (Since 2026-11-05: Culled runs drawn by a count, joined,
+  above: empty levels draw nothing, runs one after another that draw alike are one call, stats and rows are the
+  GPU's, and a fifth page can't arise.) The web has no read-back comparison (no waiting read).
   WebGPU's timings, other GPUs, Linux, macOS and Android are unmeasured, and the route waits on the game's loading
   hang above.
 

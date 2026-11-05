@@ -27,9 +27,9 @@ public sealed unsafe class ComputeReplayTests
 
     enum Op : uint
     {
-        Buffer = 1, BufferWrite = 2, Pipeline = 10, Begin = 15, End, Scissor, Use, Uniforms = 20, PipelineStorage = 26, Storage,
-        ComputeBegin, ComputeEnd,
-        Dispatch, DispatchIndirect, DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead,
+        Buffer = 1, BufferWrite = 2, Pipeline = 10, Begin = 15, End, Scissor, Use, Uniforms = 20, Indices = 23, PipelineStorage = 26,
+        Storage, ComputeBegin, ComputeEnd,
+        Dispatch, DispatchIndirect, DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount,
     }
 
     // tide_embed_render's commands: an op, its byte count, its words
@@ -243,6 +243,59 @@ public sealed unsafe class ComputeReplayTests
     }
 
     static uint Bits(float f) => (uint)BitConverter.SingleToInt32Bits(f);
+
+    // A draw of records as many as a count says (gpu.h's draw_indexed_indirect_count): each of its records drawn, those
+    // past the count of no instances: the left half's first record draws, the right half's are all of none.
+    [UnityTest]
+    public IEnumerator CountedDrawsDrawTheirRecords()
+    {
+        var camera = new GameObject("Tide count camera").AddComponent<Camera>();
+        var target = new RenderTexture(64, 64, 24);
+        try
+        {
+            camera.targetTexture = target;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            var c = new Commands();
+            c.Buffer(1, 24, new[] { Bits(-1), Bits(-1), Bits(3), Bits(-1), Bits(-1), Bits(3) });
+            c.Buffer(2, 16, new uint[] { 0xff0000ff, 0, 0, 0 });
+            // Records, five words each: three corners once, then none; then two of none
+            c.Buffer(3, 60, new uint[] { 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0 });
+            c.Buffer(4, 16, new uint[] { 1, 0, 0, 0 }); // The counts: one, and none
+            c.Add(Op.Buffer, 5, 1, 12, 1, 0, 1, 2); // The corners' indices, 32 bits each
+            c.Draws(6, Shape, 16, 2);
+            foreach (var half in new uint[] { 0, 32 })
+            {
+                c.Add(Op.Begin, 0, 0);
+                c.Add(Op.Scissor, half, 0, 32, 64);
+                c.Add(Op.Use, 6);
+                c.Add(Op.Uniforms, 16, 0, 0, 0, 0);
+                c.Add(Op.Storage, 0, 1);
+                c.Add(Op.Storage, 1, 2);
+                c.Add(Op.Indices, 5, 1);
+                c.Add(Op.DrawIndexedIndirectCount, 3, half == 0 ? 0u : 20u, 2, 4, half == 0 ? 0u : 4u);
+                c.Add(Op.End);
+            }
+            Replay(c, camera);
+            camera.Render();
+            var read = new Texture2D(64, 64, TextureFormat.RGBA32, false);
+            RenderTexture.active = target;
+            read.ReadPixels(new Rect(0, 0, 64, 64), 0, 0);
+            RenderTexture.active = null;
+            Color32 left = read.GetPixel(16, 32), right = read.GetPixel(48, 32);
+            UnityEngine.Object.Destroy(read);
+            Assert.AreEqual(new Color32(255, 0, 0, 255), left, "the record of three corners");
+            Assert.AreEqual(new Color32(0, 0, 0, 255), right, "records of none");
+            yield return null;
+        }
+        finally
+        {
+            camera.targetTexture = null;
+            UnityEngine.Object.Destroy(camera.gameObject);
+            target.Release();
+            UnityEngine.Object.Destroy(target);
+        }
+    }
 
     // The next frame's commands go on with the objects made, and a storage buffer made with nothing is zeros.
     [UnityTest]

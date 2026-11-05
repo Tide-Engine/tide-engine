@@ -20,6 +20,15 @@ new; the `tide unity --web` program exports `tide_unity_render_read`.
 `TIDE_EMBED_ABI` and Unity's `TideLibrary.Abi` are 11, so hosts, embeds and the
 package move together. Contracts and tests: notes/unity.md, Compute in Unity.
 
+## Culled runs drawn by a count, joined (2026-11-05)
+
+Within the drawing maintenance exception, internal (no Tide or generated-C change, the same pixels): gpu.h's
+`draw_indexed_indirect_count` and `indirect` (every backend and the recorder: embed ABI 12, `TideLibrary.Abi`), the
+culling's fourth kernel and joins (`cull.tide`, `cull.inc`), `tide_draw_cull.rows`/`rows_revision`, the diagnostics'
+`tide_draw_geometry_row_of` and `tide_draw_geometry_add` (`tide/draw_profile.h`), and the platform's
+`tide_platform_draws` (`tide/platform.h`, stats). Generated code calls nothing new. Contracts: drawing.md, Culled runs
+drawn by a count, joined.
+
 ## Listed runs culled on the GPU (2026-11-05)
 
 Within the drawing maintenance exception, an internal performance change (no Tide or generated-C change, the same

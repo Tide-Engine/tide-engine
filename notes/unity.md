@@ -27,6 +27,16 @@ texture's filter and wrap as the draw asks. The Sample's checked-in
 in Unity after the merge: the sampler path is the one the replay was checked
 with on OpenGL Core, now under one define instead of four.
 
+## Counted indirect draws: embed ABI 12 (2026-11-05)
+
+`TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT` (buffer, offset, most, counts, count_offset), appended after
+`BUFFER_READ`: gpu.h's `draw_indexed_indirect_count` (notes/drawing.md, Culled runs drawn by a count, joined).
+`TIDE_EMBED_ABI` and `TideLibrary.Abi` are 12. TideRender replays it as `most` (at most 65,536) DrawIndexedIndirect
+ops at 20-byte steps: records past the count are of no instances, so they draw nothing. The recorder's `indirect()`
+is 0: Unity's instance ids count from 0 whatever a record's first instance, so the renderer gives it none but 0 (and
+doesn't cull on the GPU under the recorder anyway). Test: the Sample's `ComputeReplayTests.CountedDrawsDrawTheirRecords`
+(a record of three corners drawn, records of none not), `embed_render_compute` (the op's words).
+
 ## Meshes over GPU lists in Unity (2026-11-05)
 
 Nothing new crosses the embed (ABI stays 11): a pulled-vertex shader is a pipeline with a vertex slot of stride 0 and

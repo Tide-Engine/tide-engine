@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 11u
+#define TIDE_EMBED_ABI 12u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -226,6 +226,11 @@ typedef enum tide_embed_render_op {
     // token, buffer, offset, size: outside passes, those bytes of a storage buffer read back as they are once
     // everything before is done, which the other program hands over with tide_embed_render_read
     TIDE_EMBED_RENDER_BUFFER_READ,
+    // buffer, offset, most, counts, count_offset: in a pass, DRAW_INDEXED_INDIRECT of each of `most` records from
+    // `offset`, 20 bytes apart, in order, those past the uint32 at `count_offset` of `counts` drawing nothing (their
+    // instances 0); each record's first instance is 0. A program can draw them all, a call each (gpu.h,
+    // draw_indexed_indirect_count)
+    TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
