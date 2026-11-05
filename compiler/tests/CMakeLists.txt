@@ -143,6 +143,7 @@ tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
 target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=15404513570503856259ull)
+tide_e2e_test(foreach_borrow) # A read-only foreach borrows elements that hold lists; one whose body could change them copies
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
 target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=15339636516785361681ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
@@ -157,6 +158,9 @@ tide_e2e_test(default_value)
 tide_e2e_test(math)
 tide_e2e_test(float_bits)
 tide_e2e_test(readonly_aggregates)
+add_test(NAME tidec_readonly_aggregates_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_readonly_aggregates/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/readonly_aggregates_codegen.cmake")
 tide_e2e_test(screen_scale)
 tide_e2e_test(input)
 tide_e2e_test(input_borrows)
