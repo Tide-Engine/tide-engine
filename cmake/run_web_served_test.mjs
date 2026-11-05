@@ -110,7 +110,8 @@ const address = `http://127.0.0.1:${server.address().port}/${words.length ? '?' 
 // gives no WebGPU adapter at all on GitHub's runners, so it's asked for with
 // TIDE_WEB_LINUX_VULKAN=1. TIDE_WEBGPU_FLAGS has other flags tried in their
 // place, like "--enable-unsafe-webgpu" alone for this machine's GPU.
-const flags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
+// --disable-gpu-watchdog: software WebGPU's slow frames on a small runner otherwise get the GPU process killed
+const flags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--disable-gpu-watchdog'];
 if (process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
 if (process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1') {
     flags.push('--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan');

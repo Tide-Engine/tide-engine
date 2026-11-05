@@ -191,12 +191,13 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
             `${target}: ${name} ${release ? "leaked into release metadata" : "missing from debug metadata"}`);
     }
     const shaderNames = ["ShaderSecretHelper924", "ShaderSecretParam012", "ShaderSecretLocal123", "ShaderSecretFrag597", "ShaderSecretField539"];
-    // Only the web ships shader text (WGSL); native builds carry SPIR-V alone, which has no names in any build, but
-    // a debug build's shader keeps its frag's name as its label (tide_shader.name, for what's said of it)
-    const shaderText = target === "web";
+    // Only the web ships shader text (WGSL), which a debug build keeps readable. Native builds carry SPIR-V, which
+    // has no names; a debug one may still hold them through its C (labels, debug information), so there only a
+    // release's having none is checked
     for (const name of shaderNames) {
-        const kept = !release && (shaderText || name === "ShaderSecretFrag597");
-        check(program.includes(Buffer.from(name)) === kept, `${target}: shader identifier ${name} was not stripped correctly`);
+        const present = program.includes(Buffer.from(name));
+        if (target === "web") check(present === !release, `${target}: shader identifier ${name} was not stripped correctly`);
+        else if (release) check(!present, `${target}: shader identifier ${name} was not stripped correctly`);
     }
     for (const path of [join(game, "game.tide"), join(game, "game.tide").replaceAll("\\", "/")]) {
         if (release) check(!program.includes(Buffer.from(path)), `${target}: release leaked its Tide source path`);

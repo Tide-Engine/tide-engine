@@ -64,7 +64,9 @@ await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 // The browser's software WebGPU, which games draw with, and its own drawing where it can show WebGPU's images
 // (as cmake/run_web_served_test.mjs runs it): WARP on Windows, SwiftShader's Vulkan on Linux
-const gpuFlags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader',
+// --disable-gpu-watchdog: a software GPU's slow frames on a small CI runner otherwise get its GPU process killed
+// ("A valid external Instance reference no longer exists"), and the next examples find no adapter
+const gpuFlags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--disable-gpu-watchdog',
     ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
     // SwiftShader's Vulkan shows WebGPU's pixels under WSL but gives no adapter on GitHub's Linux runners, where
     // the default draws them unseen: enough here, which counts frames drawn (cmake/run_web_served_test.mjs)
