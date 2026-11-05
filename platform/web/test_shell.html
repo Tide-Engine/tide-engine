@@ -61,7 +61,7 @@
   };
   // ?bench is --bench; renderer options belong to the page (see tide.js).
   const words = location.search ? location.search.slice(1).split('&')
-    .filter(word => !word.startsWith('texture-compression=')) : [];
+    .filter(word => !word.startsWith('texture-compression=') && !word.startsWith('gpu=')) : [];
   var Tide = {
     canvas: document.getElementById('canvas'),
     checkGL: !words.includes('bench'), // Timings can't: each check waits for the GPU

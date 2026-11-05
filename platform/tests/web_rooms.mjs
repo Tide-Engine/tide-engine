@@ -131,7 +131,7 @@ const said = []; // Every line, as it came
 let finish;
 const result = new Promise(resolve => { finish = resolve; });
 const server = createServer((request, response) => {
-    if (request.url === '/') {
+    if (request.url.split('?')[0] === '/') { // The page, with its query (gpu=none)
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end(page);
     } else if (request.url.startsWith('/game.html')) {

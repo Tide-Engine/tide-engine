@@ -26,7 +26,7 @@ const body = request => new Promise(resolve => {
     request.on('end', () => resolve(text));
 });
 const server = createServer(async (request, response) => {
-    if (request.url === '/') {
+    if (request.url.split('?')[0] === '/') { // The page, with its query (gpu=none)
         response.writeHead(200, {
             'content-type': 'text/html; charset=utf-8',
             // What makes a page cross-origin isolated, so it can share memory

@@ -54,7 +54,7 @@ static void check(const bool ok, const char *what)
 static void stand_in_for_the_browser(void)
 {
     tide_web_eval(
-        "{ window.net = { real: 0, sent: [], held: 0 };"
+        "{ window.net = { real: 0, sent: [], held: 0, helds: [] };"
         "  window.WebSocket = class {"
         "    static CONNECTING = 0; static OPEN = 1;"
         "    constructor() { this.readyState = 0;"
@@ -74,6 +74,7 @@ static void stand_in_for_the_browser(void)
         "      const channel = this.channel = { readyState: 'open', bufferedAmount: 0,"
         "        send(bytes) {"
         "          net.held = performance.now() - net.sent[new DataView(bytes.buffer).getUint32(0, true)];"
+        "          net.helds.push(net.held); if (net.helds.length > 32) net.helds.shift();"
         "          setTimeout(() => channel.onmessage && channel.onmessage({ data: bytes.buffer }), net.real); } };"
         "      return channel; }"
         "    async setLocalDescription() {}"
@@ -90,12 +91,21 @@ static void page_set(const char *what, const int value)
     tide_web_eval(script);
 }
 
-// Whether the page held the last packet back about `ms` before it went.
+// Whether the page held its last packets back about `ms` before they went:
+// the median of the last 32, as one real-time timer can fire tens of ms late.
+// Real time only ever delivers late, so the bound is one-sided.
 static bool held(const double ms)
 {
-    char script[64];
-    snprintf(script, sizeof script, "net.held - %.1f <= 36 && %.1f - net.held <= 12", ms, ms);
-    return tide_web_eval(script);
+    static const char median[] = "(() => { const h = [...net.helds].sort((a, b) => a - b);"
+                                 " return h.length ? h[h.length >> 1] : net.held; })()";
+    char script[256];
+    snprintf(script, sizeof script, "%s - %.1f <= 36 && %.1f - %s <= 12", median, ms, ms, median);
+    const bool ok = tide_web_eval(script);
+    if (!ok) {
+        snprintf(script, sizeof script, "console.log('held: a median of ' + %s.toFixed(1) + ' ms')", median);
+        tide_web_eval(script);
+    }
+    return ok;
 }
 
 // Whether the page says the least a lag can be is about `ms` (`Tide.minLag`).

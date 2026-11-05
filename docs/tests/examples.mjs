@@ -66,7 +66,10 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 // (as cmake/run_web_served_test.mjs runs it): WARP on Windows, SwiftShader's Vulkan on Linux
 const gpuFlags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader',
     ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
-    ...(process.platform === 'linux' ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : [])];
+    // SwiftShader's Vulkan shows WebGPU's pixels under WSL but gives no adapter on GitHub's Linux runners, where
+    // the default draws them unseen: enough here, which counts frames drawn (cmake/run_web_served_test.mjs)
+    ...(process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1'
+        ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : [])];
 // --mute-audio: headless, it still plays through the machine's device once a page's AudioContext runs
 const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--mute-audio', '--remote-debugging-port=0', `--user-data-dir=${profile}`, ...gpuFlags,
