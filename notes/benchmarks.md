@@ -28,8 +28,16 @@ frames past 200 averaged. Its `PerfProbeMark` views bracket the views, Camera to
 - `tide_sample --main` (`bench/profile/sample.c`) samples the program's first thread alone. Suspending
   every thread at 1,000 Hz slowed Mount & Rifle's frames to hundreds of milliseconds; the main thread
   alone at 2,000 Hz left it near its pace. Main-thread samples in the program's own code: `shaded_placed`
-  with its culling 19%, the heap's block hashing (lists' versions: `tide_heap_block_hash`, `in_use`,
-  `tide_block_next`) about 10%, `shaded_instances` 5%.
+  with its culling 19%, `shaded_instances` 5%. (`tide_heap_block` and `tide_block_next`, which first looked
+  like lists' versions being hashed, are every list access; see the next point.)
+- **Lists' versions** (2026-11-05, temporary counters over the run): 3,526 page hashes asked for a frame
+  (`tide_heap_block_hash`), of which 1.9 were worked out again (31 KB a frame): the rest were the page's kept
+  hash. `tide_heap_block_hash` as the outermost function was 3.4% of the program's main-thread samples, about
+  0.05 ms a frame. Each ask bumps `tide_heap.moves`, so tried: a separate `asked` counter that only writing
+  caches (the writable list cache, `CACHE_OWNS`, a grid cache's writes) check. List cache fills went from
+  60.7M to 59.6M over the run (half are scratch lists, never cached; the rest are code reading lists), and
+  three alternating old/new runs had the views at 1.18 / 1.23 / 1.24 against 1.21 / 1.34 / 1.25 ms: no gain,
+  so it was left out. Nothing in lists' versions is worth cutting on this route.
 
 ## Singleton list parallel loops (2026-11-04)
 
