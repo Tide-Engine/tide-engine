@@ -1,4 +1,4 @@
-// A game for a script's leave, drop and rejoin lines, in a run of several
+// A game for a script's leave, drop, rejoin and sleep lines, in a run of several
 // players with no window (platform/tests/players.mjs): Main is the match's, so
 // the run's first player opens it and the others join. Each PlayerID gets a
 // seat the first time it arrives, a row drawn white while it's in the match
@@ -54,12 +54,14 @@ local singleton Why
 {
     bool timedOut;
     bool serverLeft;
+    bool left;
 }
 
 local event(Disconnected gone) Say(mut Why why)
 {
     if (gone.reason == DisconnectReason.TimedOut) why.timedOut = true;
     if (gone.reason == DisconnectReason.ServerLeft) why.serverLeft = true;
+    if (gone.reason == DisconnectReason.Left) why.left = true;
 }
 
 view Background()
@@ -83,4 +85,5 @@ view Stands(Session session, Why why)
     if (session.state == SessionState.Connected) Draw.Rect(float2(300, 20), float2(20, 20), Color(0, 1, 0));
     if (why.timedOut) Draw.Rect(float2(300, 60), float2(20, 20), Color(1, 1, 0));
     if (why.serverLeft) Draw.Rect(float2(300, 100), float2(20, 20), Color(1, 1, 1));
+    if (why.left) Draw.Rect(float2(300, 140), float2(20, 20), Color(0, 1, 1));
 }

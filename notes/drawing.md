@@ -2,6 +2,63 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Occlusion's two pixels on Chrome's D3D12 (2026-11-05)
+
+`tide_platform_occlusion`'s two differing pixels in the hardware web lane (RTX 4080 SUPER, Dawn on D3D12) aren't
+occlusion's: no box it hid is at them, and its culled set, the pyramid's reads of every sample and the measure point
+are as they should be. The measure ends the destination's pass, and that device draws a 4-sample frame a little
+differently when a box is drawn in a pass that loaded an earlier one's (or after another pipeline), with nothing of
+Tide's (`notes/repro/msaa_pass_split.html`). The test now compares such a shot with the CPU's path drawn with its
+passes ended at the same places, byte for byte (`Shot.split`). No renderer change: a measure has to end the pass,
+since WebGPU can't read depth a pass is drawing into. `notes/testing.md`, A 4-sample pass ended and begun again.
+
+## A culling kernel that can't be made (2026-11-05)
+
+Task (owner, through a parent agent): Dawn's D3D11 couldn't compile CullListed and the depth pyramid (FXC: notes/
+shaders.md, Kernels on Dawn's Direct3D 11, fixed there); a pipeline that can't be made must never leave a player with
+a wrong frame. Every pick is Claude's, Provisional.
+
+- **What happened before** (read from the code, and seen in the tests on D3D11): a player's page makes pipelines in
+  the background (`tide/host.h` turns it on unless headless), so a refused kernel's promise rejected, `tide.js` printed
+  `the pipeline of the renderer's CullListed wasn't made: FXC compile failed ...`, and the pipeline was never ready:
+  every frame the CPU decided the culled runs and spans weren't measured, so the frames were right, but nothing said
+  the culling was gone and `tide_platform_prewarm_waiting` counted those pipelines forever (a loading screen waiting
+  for it would never end). A page that makes pipelines at once (headless runs, benchmarks,
+  `tide_platform_background_pipelines(false)`) got an invalid pipeline that was ready at once: each frame's culling
+  pass was an invalid command buffer (an error a frame) and the culled runs drew from records nobody wrote, missing
+  (the D3D11 tests' hundreds of differing pixels), the test pages stopping at the first error.
+- **Now:**
+  - `gpu.h`: `pipeline_failed(id)` (optional; WebGPU's `gpu_pipeline_failed`): true once the backend knows it couldn't
+    make that pipeline. `tide_gpu_pipeline_desc.optional`: one the renderer does without until it's ready; a backend
+    that makes pipelines in the background makes it so whatever `background` says. The culling's four kernels and the
+    pyramid's two are optional (`cull_kernels`), so on WebGPU they're never used before they're known to be made, in
+    any mode; till then (a frame or a few in a headless run) the CPU decides, the same pixels, as it did already while
+    they were being made in the background.
+  - `tide.js` (`addPipeline`): a pipeline whose background promise rejects, or one made at once whose error scopes
+    (`validation`, `internal`, pushed around it) catch an error, is `failed`, its pipeline let go and the reason
+    printed once (a test page stops, as before, unless the page asked for it: below). One made at once is used until
+    its scopes settle, a moment later; only optional pipelines avoid that window, by never being made at once.
+  - The renderer: `pipeline_usable` (compute.inc) is false for a failed pipeline, so a game's `GPU.Run` of a kernel
+    the device refused is left out, not dispatched invalid; a draw step's (`pipeline_made`) the same; prewarm doesn't
+    wait for one (`tide_platform_prewarm_waiting`). `cull_kernels` says once a device `tide: this device can't make
+    the renderer's CullListed, a kernel of the GPU culling: runs recorded to be culled are decided on the CPU as they're
+    drawn`, and for the pyramid `... draws testing occlusion are culled without it`; the culling is then off for the
+    device (`cull_failed`, `hiz_failed`, cleared with a lost device's state, so a new device tries again).
+  - Reports: `tide_platform_cull_report.failed` and `tide_platform_occlusion_report.failed`.
+- **Testing a refusal anywhere:** `fail-pipeline=<parts of names, by commas>` in a page's address makes `tide.js`
+  build those pipelines from a module without their entry point, so making them really fails (a validation error, the
+  promise's rejection) and is reported as asked for. `tide_platform_cull_fallback` (web, `pixels`) is
+  `tide_platform_cull` with `fail-pipeline=CullListed,pyramid`: every shot (3 cameras by 6 settings) is the CPU path's,
+  byte for byte, both failures said once, the reports' `failed` set, the geometry rows the CPU's, no error from a
+  pipeline used that isn't there; as with `TIDE_GPU_CULLING=decide`, it ends before losing the device. On SwiftShader,
+  D3D12 and D3D11.
+- **Layout:** `tide_platform_cull_report.failed`, `tide_platform_occlusion_report.failed`, `tide_gpu.pipeline_failed`,
+  `tide_gpu_pipeline_desc.optional`; the page's `gpu_pipeline_failed` and `gpu_pipeline_optional` imports. Hosts,
+  libraries and games rebuild together; the release runtime was regenerated.
+- **Gaps:** Vulkan aborts on a pipeline it can't make (`gpu_vk.c`, "made no compute pipeline"), unchanged: no Vulkan
+  driver here refuses one. A non-optional pipeline made at once on WebGPU is still used until its error scopes settle.
+  A game kernel that can't be made has no fallback: its runs are left out, said once by the page.
+
 ## Occlusion's measure made cheaper, listed runs in culled runs' calls (2026-11-05)
 
 Task (owner, through a parent agent): make the depth pyramid cheaper without changing results, and let ordinary

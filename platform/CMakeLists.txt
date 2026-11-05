@@ -674,6 +674,10 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_platform_cull SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_cull TARGET tide_platform_cull PIXELS EXPECT "renderer: WebGPU")
+        # ...and where the browser can't make the culling's kernels (as Dawn's FXC on Direct3D 11 couldn't): the CPU's
+        # culling, said once, the same pixels
+        tide_add_web_test(tide_platform_cull_fallback TARGET tide_platform_cull QUERY "fail-pipeline=CullListed,pyramid" PIXELS
+            EXPECT "ok: the culling's kernels and the pyramid's couldn't be made")
     else()
         target_include_directories(tide_platform_cull PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
         add_test(NAME tide_platform_cull COMMAND tide_platform_cull)
@@ -919,6 +923,16 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_test(NAME tide_platform_players_net_control COMMAND tide_platform_players_net control)
     set_tests_properties(tide_platform_players_net_control PROPERTIES TIMEOUT 60)
     set_tests_properties(tide_platform_players_net tide_platform_players_net_ended tide_platform_players_net_drop PROPERTIES TIMEOUT 60)
+
+    # The machine about to sleep, from a logind of the test's own on a D-Bus of its own (tests/sleep_logind.c):
+    # Linux desktops, where logind is. Skipped (77) without dbus-daemon or libdbus.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(tide_platform_sleep_logind tests/sleep_logind.c)
+        target_include_directories(tide_platform_sleep_logind PRIVATE src)
+        target_link_libraries(tide_platform_sleep_logind PRIVATE tide_platform)
+        add_test(NAME tide_platform_sleep_logind COMMAND tide_platform_sleep_logind)
+        set_tests_properties(tide_platform_sleep_logind PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    endif()
 
     tide_add_game(tide_platform_players SOURCES tests/players.tide)
     tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)

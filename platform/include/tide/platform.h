@@ -484,6 +484,8 @@ typedef struct tide_platform_cull_report {
     uint32_t joined;    // The runs drawn by calls of more than one, listed ones too
     uint32_t draws;     // The draws those calls made: runs that kept any instance, listed ones too
     uint32_t misdrawn;  // Draw records that aren't each such run's, in order, then none, with how many
+    bool failed;        // The device can't make the culling's kernels (its driver refused them): every run recorded to
+                        // be culled is decided on the CPU, as it's drawn
 } tide_platform_cull_report;
 bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
 
@@ -500,6 +502,7 @@ typedef struct tide_platform_occlusion_report {
     uint32_t breaks;   // Passes ended for them, where the destination's had ended for nothing else since it was drawn in
     uint64_t serial;   // How many frames' counts have come back: a new number, new counts
     bool counted;
+    bool failed;       // The device can't make the pyramid's kernel: draws testing occlusion are culled without it
 } tide_platform_occlusion_report;
 bool tide_platform_occlusion(tide_platform_occlusion_report *report, bool wait);
 
@@ -624,6 +627,15 @@ typedef enum tide_players_action {
     TIDE_PLAYERS_REJOIN,
 } tide_players_action;
 tide_players_action tide_platform_players_action(void);
+
+// Whether the machine slept since the last call (a Steam Deck's or a laptop's
+// sleep): true once for each sleep, at the first call after it woke. Desktop
+// and Android; always false on the web, where the browser freezes a hidden
+// page instead. The standard host asks once a frame, and leaves a match other
+// machines can be in (tide/host.h, tide_run_slept).
+bool tide_platform_slept(void);
+// The next tide_platform_slept says the machine slept: a script's `sleep`.
+void tide_platform_pretend_sleep(void);
 
 // Threads to run ticks on (tide/jobs.h): a pool with one for each of the
 // CPU's cores, the caller's among them, made on first use. NULL with one core.

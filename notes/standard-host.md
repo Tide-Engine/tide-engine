@@ -76,6 +76,25 @@ The service side is in `Tide-Engine/tide-services` (`notes/managed-hosting.md` t
 - The build ID is the program's hash, not the simulation identity.
 - A game's own personal data in its log (a player's chosen name, chat) is the game's to keep out. The docs say so.
 
+## A machine that slept, and the game's keyboard (2026-11-05)
+
+Steam Deck work, asked for by the owner ("lets work on touchscreen support, on-screen keyboard stuff and the sleep/resume"). Touch is in `notes/input-devices.md`, Steam's keyboard in `notes/lobby-steam-package.md`.
+
+**Sleep.** `tide_platform_slept` (`platform/src/sleep.c`, `tide/platform.h`) is true once after each sleep. Seconds asleep are a clock that counts sleep less one that doesn't (Linux and Android `CLOCK_BOOTTIME - CLOCK_MONOTONIC`, macOS `mach_continuous_time - mach_absolute_time`, Windows `GetTickCount64` less `QueryUnbiasedInterruptTime`), and it's a sleep when that grew by a second or more since the last call (`SLEPT_LEAST`, above the clocks' reading noise: Windows' tick count moves in steps of about 16 ms). Always false on the web. The engine's clock (`tide_time_now_ns`) doesn't count sleep, so before this a session saw no gap at all: a woken client predicted alone until its own 5-second timeout, and a woken host went on with a match its players had left or migrated away from.
+
+`tide_run_frame` asks right after the script's player actions, before the session's update, and `tide_run_slept` leaves (`TIDE_REQUEST_LEAVE`, as `Session.Leave`: `Disconnected` with `Left`) a match others can be in: a client's (`client.state` not offline, or migrating), a server's that's open or has `tide_session_remote_players`, or a hosted one (`tide_run_hosting`). A server alone and closed (single-player) goes on. Not inside another program's frame (`tide_run_embedded`), whose host decides.
+
+**My picks, Provisional, awaiting the owner:** leaving on wake rather than pausing, as AGENTS.md has a phone that goes to the background leave; `Left` as the reason (a new `DisconnectReason` would be a language change); single-player going on; leaving only after the wake. **A goodbye before the sleep, on Linux** (the owner asked for it next, 2026-11-05): logind's `PrepareForSleep` on the system bus, with a `delay` lock on sleep (`Inhibit`), in `sleep.c`. libdbus is `dlopen`ed (`platform/src/dbus.c`, `dbus.h`, declared by hand as its headers aren't everywhere). The connection is made at the first `tide_platform_slept`, never in a quiet run unless `TIDE_SLEEP_BUS` names another bus (tests only), with `exit_on_disconnect` off. The match takes `sender='org.freedesktop.login1'`, which the bus resolves to logind's own connection, so nobody else's signal counts. Inhibit is sent without waiting and its reply found among the popped messages by its serial: `pop_message` hands replies over as ordinary messages, so a pending call never completes (the first version used one and never got its lock). `PrepareForSleep(true)` makes `tide_platform_slept` true; the host leaves that frame, the goodbye going out as the client or server is destroyed, and the lock is closed at the next call. `PrepareForSleep(false)` asks for a new lock; the clock's wake check then finds the machine out of its match already. A bus that goes away closes the connection and the lock. Not on Android (no logind for apps), Windows or macOS, which still leave on waking.
+
+`tide_platform_sleep_logind` (`tests/sleep_logind.c`, Linux, skipped with 77 without `dbus-daemon` or libdbus) starts a `dbus-daemon` of its own and owns logind's name on it: the lock asked for is a sleep delay, held from the start; another connection's `PrepareForSleep` is ignored; logind's is said once, with the lock held that frame and closed at the next; waking takes a second lock; the bus going away lets it go and ends nothing. Passed under ASan and UBSan in WSL (Ubuntu, clang 23), three runs. Against WSL's real logind, an unprivileged program's lock was listed by `systemd-inhibit --list` ("Tide ... sleep, Leaving the match, delay"). Not done: a real suspend; whether Steam's container (pressure-vessel) passes the system bus through.
+
+**Running in the background** (the owner, 2026-11-05: "if we can run it in the background without sacrificing tick rate then we should, we do it for the web"): desktop and Android already do. A window nobody sees waits for the frame the session asks for instead of the display (`step` in `platform.c`), so matches tick at their rate, drawing nothing; the web's hidden page has its worker heartbeat. What stops it is the system: Android freezes apps in the background, which keeping running would need a foreground service for (Java, a notification and Play's foreground-service rules).
+
+A script's `sleep` line (`script.c`, `EVENT_SLEEP`) calls `tide_platform_pretend_sleep`. In a run of several players it needs `player <n>`; in a run of one it takes none. `tide_platform_players` (`players.mjs`, `players_leave.tide`, which now draws a cyan block for `Left`) checks that a sleeping joiner leaves at once, not timing out, and the match hears `PlayerLeft`; that it rejoins as the same seat; that a sleeping host leaves its open match and the other gets `ServerLeft`; and that a run of one, in a closed match, stays connected through a sleep. User docs: Matches, A machine that sleeps; CLI Scripts and Several players; the AI overview.
+
+**The game's keyboard.** `tide/screen_keyboard.h` (`engine/src/screen_keyboard.c`): a game's C registers a `tide_screen_keyboard` (`self`, `typing`) in its own engine copy, as with `tide/voice.h` (`tide_keyboard` is the keyboard device's type), and the host table gains an optional `screen_keyboard` getter (`tide_screen_keyboard_get` in `tide/run.h`). `tide_run_typing`, where `tide_platform_typing` was called, tells it once each time `tide_gui_typing` changes, and tells one that's new (another `self` or function, as after a reload) the current state at once. Never in a run with no window, inside another program's frame, or a quiet run (`TIDE_HIDDEN`): Steam's keyboard is a window of its own. That leaves the host's part without a test; the package's is in its test.
+
+
 ## GPU culling asked each frame (2026-11-05)
 
 The standard host sets `tide_run_draw.gpu_culling = tide_platform_gpu_culling()` beside the screen's scale before
@@ -641,6 +660,9 @@ send nothing for voice. The actual three-process headless capture regression
 and all C/API/lifetime contracts are in `notes/voice-package.md`.
 
 ## Leave, drop and rejoin in a run of several players (2026-10-21)
+
+A fourth line, `sleep`, came later: see A machine that slept, and the game's keyboard (2026-11-05).
+
 
 The owner approved Claude's proposal after AI trials could not test
 `PlayerLeft` or seat reuse: three script lines, each needing `player <n>` and

@@ -44,7 +44,11 @@ static const char square_wgsl[] =
     "}\n";
 
 // Each group of 64 reversed through its shared memory; counts of odd numbers,
-// and the greatest, by atomics on storage and on shared memory.
+// and the greatest, by atomics on storage and on shared memory. The shared
+// atomic is in a struct, its array's 2 elements before a word of no use, as
+// tidec writes one so Dawn's Direct3D 11 compiles it (shared_atomic_length,
+// notes/shaders.md, Kernels on Dawn's Direct3D 11): a bare atomic<u32> FXC
+// refuses there, X4000.
 static const char shared_wgsl[] =
     "struct Uniforms { count: u32, pad0: u32, pad1: u32, pad2: u32 }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -53,18 +57,19 @@ static const char shared_wgsl[] =
     "@group(0) @binding(27) var<storage, read_write> tally: array<atomic<u32>>;\n"
     "@group(0) @binding(28) var<storage, read_write> signed_tally: array<atomic<i32>>;\n"
     "var<workgroup> held: array<u32, 64>;\n"
-    "var<workgroup> odd_here: atomic<u32>;\n"
+    "struct Odd { cells: array<atomic<u32>, 2>, plain: u32 }\n"
+    "var<workgroup> odd_here: Odd;\n"
     "@compute @workgroup_size(64) fn compute(@builtin(global_invocation_id) id: vec3<u32>,\n"
     "                                        @builtin(local_invocation_id) local: vec3<u32>,\n"
     "                                        @builtin(workgroup_id) group: vec3<u32>) {\n"
     "    var value = 0u;\n"
     "    if (id.x < u.count) { value = given[id.x]; }\n"
     "    held[local.x] = value;\n"
-    "    if (id.x < u.count && (value & 1u) == 1u) { atomicAdd(&odd_here, 1u); }\n"
+    "    if (id.x < u.count && (value & 1u) == 1u) { atomicAdd(&odd_here.cells[0], 1u); }\n"
     "    workgroupBarrier();\n"
     "    let mirrored = group.x * 64u + 63u - local.x;\n"
     "    if (mirrored < u.count) { reversed[mirrored] = held[local.x]; }\n"
-    "    if (local.x == 0u) { atomicAdd(&tally[0], atomicLoad(&odd_here)); }\n"
+    "    if (local.x == 0u) { atomicAdd(&tally[0], atomicLoad(&odd_here.cells[0])); }\n"
     "    if (id.x < u.count) {\n"
     "        atomicMax(&tally[1], value);\n"
     "        atomicMin(&signed_tally[0], i32(value) - 500);\n"

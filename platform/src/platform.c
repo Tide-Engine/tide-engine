@@ -2068,9 +2068,10 @@ static void begin_pass(const tide_gpu_id target, const bool clear)
 }
 
 // Whether a step's pipeline is made yet: one the backend makes in the background isn't drawn with till it is, and
-// the step is left out of the frames before (tide_platform_background_pipelines).
+// the step is left out of the frames before (tide_platform_background_pipelines); one it couldn't make, never.
 static bool pipeline_made(const draw_step *s)
 {
+    if (s->pipeline && gpu->pipeline_failed && gpu->pipeline_failed(s->pipeline)) return false;
     return !gpu->pipeline_ready || !s->pipeline || gpu->pipeline_ready(s->pipeline);
 }
 
@@ -3942,7 +3943,10 @@ uint32_t tide_platform_prewarm_waiting(void)
 {
     if (!gpu || !gpu->pipeline_ready || warm_epoch != gpu_epoch) return 0;
     uint32_t waiting = 0;
-    for (uint32_t i = 0; i < warm_asked_count; i++) waiting += !gpu->pipeline_ready(warm_asked[i]);
+    for (uint32_t i = 0; i < warm_asked_count; i++) { // One that can't be made is waited for no more
+        const bool failed = gpu->pipeline_failed && gpu->pipeline_failed(warm_asked[i]);
+        waiting += !failed && !gpu->pipeline_ready(warm_asked[i]);
+    }
     return waiting;
 }
 

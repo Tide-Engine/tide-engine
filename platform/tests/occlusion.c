@@ -38,7 +38,7 @@ static tide_gui gui;
 static tide_devices devices;
 static int failures;
 static tide_float2 points[PIXELS];
-static uint32_t culled[PIXELS], plain[PIXELS];
+static uint32_t culled[PIXELS], plain[PIXELS], split[PIXELS];
 
 static void expect(const bool ok, const char *what, const char *when)
 {
@@ -276,6 +276,9 @@ static bool shots_drawn(const int into, const char *when, shot_tally *tally)
         tide_platform_cull_report culling;
         tide_platform_cull_compare(NULL, &culling);
         if (!culling.runs) return false; // Its culling on the CPU, this frame
+        // ...or its pyramid's kernels still being made, as they are in the background on the web: on the next device,
+        // slower ones (CI's) draw a few frames before they're there, testing nothing
+        if (report.spans && !report.measured && !report.failed && into != 2) return false;
         tally->pyramids += report.pyramids;
         tally->spans += report.spans;
         tally->measured += report.measured;
@@ -327,6 +330,23 @@ static bool shots_drawn(const int into, const char *when, shot_tally *tally)
                  "pixels as the CPU's path (%u differ of %u drawn; %llu hidden of %llu tested)", names[into], i,
                  s->camera, (double)s->slide, width, height, differ, drawn, (unsigned long long)report.hidden,
                  (unsigned long long)report.tested);
+        if (differ && report.breaks) {
+            // Some devices draw a 4-sample frame differently where a pass ends and the next loads it (Chrome's
+            // WebGPU on an RTX 4080 SUPER, D3D12, with nothing of Tide's: notes/testing.md, A 4-sample pass ended
+            // and begun again), and occlusion's measure ends the destination's pass. Then the frame is the CPU's
+            // path's with its passes ended where the measures ended them, byte for byte. Where a pass ending
+            // changes nothing (Vulkan, SwiftShader) that's the frame above, so nothing is loosened there
+            local.Shot.split = true;
+            draw_frame(width, height, false, split);
+            local.Shot.split = false;
+            uint32_t apart = 0;
+            for (int p = 0; p < width * height; p++) apart += culled[p] != split[p];
+            if (!apart) {
+                printf("note: %s: the CPU's path with its passes ended where occlusion's measures ended them draws the "
+                       "same pixels\n", what);
+                continue;
+            }
+        }
         if (differ && into == 2 && explained_by_cpu(width, height)) {
             // The CPU's path draws those pixels so too: notes/testing.md, A GPU whose 4-sample frames differ from
             // themselves

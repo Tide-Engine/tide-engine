@@ -128,9 +128,15 @@ static int frame(void *user, const float seconds)
         check(drew("cpu") && drew("Count"), "the list has what a frame's work takes, and the game's system by name");
         check(drew("render"), "rendering CPU time is shown separately from the frame's total work");
         bool vertices_shown = false;
+        const char *shown = "none";
         for (uint32_t i = 0; i < drawer->line_count; i++) {
             const tide_stats_line *line = &drawer->lines[i];
+            if (strcmp(line->label, "vertices") == 0) shown = line->value;
             if (strcmp(line->label, "vertices") == 0 && strcmp(line->value, "9") == 0) vertices_shown = true;
+        }
+        if (!vertices_shown || tide_platform_draw_vertices() != 9) {
+            printf("vertices: the row says %s, the renderer %llu\n", shown,
+                   (unsigned long long)tide_platform_draw_vertices());
         }
         check(vertices_shown && tide_platform_draw_vertices() == 9,
               "the vertex row counts the game's clear and key block, excluding the drawer's own geometry");

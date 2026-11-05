@@ -373,4 +373,52 @@ if (leaveRan.status === 0) {
     check(leaveAgain.status === 0 && leaveNames.every((name, i) => bytes(name).equals(leaveFirst[i])), 'and that run repeats exactly too');
 }
 
+// ---------------------------------------------------------------------------
+// A machine that slept (a Steam Deck's, a laptop's) leaves a match others can
+// be in, as Session.Leave does, at once rather than timing out: a player who
+// joined, and a host whose match is open. A match alone and closed goes on.
+const sleep = script('sleep.txt', [
+    '40 capture awake.png',
+    '',
+    '# The second sleeps: it leaves, and the match hears it at once',
+    '50 player 2 sleep',
+    '60 capture slept.png',
+    '',
+    '# It comes back, as the same player',
+    '70 player 2 rejoin',
+    '160 capture woke.png',
+    '',
+    "# The host sleeps: it leaves its open match, which ends for the other",
+    '170 player 1 sleep',
+    '200 capture hostslept.png',
+    '210 quit',
+]);
+const sleepRan = run(['--players', '2', '--script', sleep, '--size', '320', '200'], leaveProgram);
+check(sleepRan.status === 0, `a run whose players sleep ends with exit code 0${sleepRan.status === 0 ? '' : `: ${sleepRan.status}\n${sleepRan.err}`}`);
+if (sleepRan.status === 0) {
+    const shot = (name, player) => read(`${name}-${player}.png`);
+    const seat = (png, i) => block(png, 40, 30 + i * 40, 10, white) ? 'in' : block(png, 40, 30 + i * 40, 10, black) ? 'left' : 'none';
+    const seats = png => [0, 1, 2, 3].map(i => seat(png, i)).join(' ');
+    const connected = png => block(png, 300, 20, 10, green), timedOut = png => block(png, 300, 60, 10, yellow);
+    const serverLeft = png => block(png, 300, 100, 10, white), left = png => block(png, 300, 140, 10, cyan);
+
+    check(seats(shot('awake', 1)) === 'in in none none' && connected(shot('awake', 2)), 'both start in the match');
+    check(seats(shot('slept', 1)) === 'in left none none', `the match hears the sleeper leave at once (${seats(shot('slept', 1))})`);
+    check(!connected(shot('slept', 2)) && left(shot('slept', 2)) && !timedOut(shot('slept', 2)),
+          'and the sleeper left its match, rather than timing out');
+    check(seats(shot('woke', 1)) === 'in in none none' && connected(shot('woke', 2)), 'it rejoins as the same player');
+    check(!connected(shot('hostslept', 1)) && left(shot('hostslept', 1)) && serverLeft(shot('hostslept', 2)),
+          "a host that sleeps leaves its open match, which ends for the other, as their server left");
+}
+
+// Alone, in a match nobody else can join (Main isn't opened in a run with no --players), sleeping changes nothing
+const alone = script('alone.txt', ['20 sleep', '40 capture alone.png', '41 quit']);
+const aloneRan = run(['--script', alone, '--size', '320', '200'], leaveProgram);
+check(aloneRan.status === 0, `a run of one that sleeps ends with exit code 0${aloneRan.status === 0 ? '' : `: ${aloneRan.status}\n${aloneRan.err}`}`);
+if (aloneRan.status === 0) {
+    const png = read('alone.png');
+    check(block(png, 300, 20, 10, green) && block(png, 40, 30, 10, white) && !block(png, 300, 140, 10, cyan),
+          'a single-player match goes on through a sleep');
+}
+
 process.exit(failures ? 1 : 0);

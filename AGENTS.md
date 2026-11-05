@@ -41,7 +41,7 @@ Requires CMake 3.25+, Ninja and clang. The toolchain finds clang through `$LLVM_
 | Run selected engine tests with ASan | `build/sanitize/bin/tide_tests [name-filter]` |
 | Configure, build and test web debug | `cmake --workflow --preset web-debug` |
 | Run web tests | `ctest --preset web-debug` |
-| Run web pixel tests on this machine's GPU | `ctest --preset web-hardware` |
+| Run web pixel tests on this machine's GPU (optional: local validation focuses on native tests, owner 2026-11-05) | `ctest --preset web-hardware`, `web-hardware-d3d11` |
 
 Use `sanitize` for routine native correctness validation, including local GPU tests: ASan on Windows, ASan and UBSan on Linux/macOS. Keep ordinary release and web coverage, and measure performance without sanitizers. `debug` has no optimization; `release` and `sanitize` are optimized with debug information. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
 
@@ -60,7 +60,6 @@ Test only what the change needs, once, before merging: the Build workflow runs e
 | Scope | Required validation |
 |---|---|
 | Compiler, engine, platform or build | The affected targets' tests, native and web where the code runs on both; full suites only for broad changes (above) |
-| Rendering that reaches WebGPU | Also the hardware web lane, `ctest --preset web-hardware`: CI tests WebGPU only in software (owner, 2026-11-05) |
 | Repository game, including a benchmark or prototype | Its targets and tests, native and web |
 | `docs/` only | `npm run build` in `docs/` |
 | `relay/` only | `node --test relay/relay.test.mjs relay/lobbies.test.mjs` |

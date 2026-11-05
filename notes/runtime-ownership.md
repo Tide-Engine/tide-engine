@@ -1,5 +1,9 @@
 # Runtime written by Claude for now
 
+## A game's keyboard on screen (2026-11-05)
+
+New and agent-maintained, like `tide/voice.h`: `engine/include/tide/screen_keyboard.h` and `engine/src/screen_keyboard.c` (`tide_screen_keyboard_set`, `tide_screen_keyboard_get`), which a game's C (the steam package) calls, never generated code, and the host table's optional `screen_keyboard` getter. Contracts: notes/standard-host.md, A machine that slept, and the game's keyboard.
+
 ## Indexed loops' indexes and their caches (2026-11-05)
 
 New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `engine/src/index.c`
