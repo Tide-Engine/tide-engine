@@ -197,9 +197,8 @@ jobs:
           restore-keys: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-
 
       # Native tests that open a window (label gpu: the demo's smoke test, the
-      # renderer's) need OpenGL in a window, which no runner has: Windows' and
-      # Linux's have no GPU, and on macOS's GLFW finds no OpenGL to open one
-      # with. The web ones run in headless Chrome.
+      # renderer's) need Vulkan 1.3 on a GPU, which no runner has. The web ones
+      # run in headless Chrome, on its software WebGPU.
       - name: Test (native)
         if: inputs.preset == 'release'
         run: |
@@ -249,9 +248,11 @@ jobs:
           Write-Output "Windows process session: $((Get-Process -Id $PID).SessionId)"
           "TIDE_WEB_BROWSER=$($chromePath.Replace('\', '/'))" >> $env:GITHUB_ENV
 
-      # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
-      # Linux's runners leave them out: without a GPU, Chrome there draws with
-      # WebGPU but gives nothing back when the test reads its pixels.
+      # Every web test draws with the browser's software WebGPU, on every
+      # runner. On Linux the browser's own drawing goes through SwiftShader's
+      # Vulkan (cmake/run_web_served_test.mjs), without which its pages read
+      # WebGPU's pixels back as zeros; the tests that read pixels are labelled
+      # `pixels`, for leaving them out (-LE pixels) where a browser can't.
       - name: Test (web)
         if: inputs.preset == 'web-release'
         run: |
@@ -269,11 +270,7 @@ jobs:
           # Interleave CTest's test indices across independent runners; keep
           # each browser's whole-CPU reservation within its runner.
           shard=(-I '${{ inputs.shard }},,${{ inputs.shards }}')
-          if [ "$RUNNER_OS" = Linux ]; then
-            ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}" -LE webgpu
-          else
-            ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}"
-          fi
+          ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}"
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
         if: inputs.preset == 'mingw-release'
@@ -302,7 +299,10 @@ jobs:
           java-version: 21
       # The Android job runs its suite on the emulator, and Linux's package job
       # tries its Google Play bundle there: each boots it in the background
-      # while it builds, and .github/wait-for-android.sh waits for it.
+      # while it builds, and .github/wait-for-android.sh waits for it. The
+      # suite needs no GPU. SwiftShader's Vulkan there is 1.2, short of the 1.3
+      # Tide draws with, so the bundle's app shows the screen that says so
+      # (platform/android/activity.c), which is all that check asks of it.
       - name: Start the Android emulator
         if: runner.os == 'Linux' && (inputs.preset == 'package' || inputs.preset == 'android')
         run: |
@@ -406,8 +406,9 @@ jobs:
       # Its app and bundle made to ship, checked with Google's tools: apksigner,
       # Java's JAR signatures, and bundletool (pinned), which Play runs on what
       # it's given. Then the APKs bundletool makes of the bundle, signed with
-      # tide's key as Play signs with its own, play on the emulator, which the
-      # Android tests started.
+      # tide's key as Play signs with its own, start on the emulator, which the
+      # Android tests started, and stay resumed (with no Vulkan 1.3 there, on
+      # the screen that says what the game needs: a frame drawn all the same).
       - name: Try the package (Google Play)
         if: runner.os == 'Linux' && inputs.preset == 'package'
         run: |

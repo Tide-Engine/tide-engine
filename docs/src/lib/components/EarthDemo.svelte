@@ -31,7 +31,6 @@
         const asked = ++opening;
         running = true;
         message = 'Loading planet…';
-        const backend = new URLSearchParams(location.search).get('backend');
         let hosted = false;
         try {
             hosted = (await fetch(`${shared}ready`, { signal: AbortSignal.timeout(4000) })).ok;
@@ -44,7 +43,6 @@
         url.searchParams.set('stats', '');
         full = url.href;
         url.searchParams.set('embedded', '');
-        if (backend) url.searchParams.set('backend', backend);
         if (!hosted) url.searchParams.set('wait', '');
         opened.src = url.href;
         opened.addEventListener('load', async () => {

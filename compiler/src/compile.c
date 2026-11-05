@@ -204,8 +204,6 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     if (schedule && opts->strip_names && (opts->shaders || opts->spirv_dir || opts->hlsl_dir)) {
         for (int i = 0; i < prog->shaders.count; i++) {
             shader *sh = prog->shaders.items[i];
-            sh->glsl_vertex = shader_minify_names(sh->glsl_vertex, NULL);
-            sh->glsl_fragment = shader_minify_names(sh->glsl_fragment, NULL);
             sh->wgsl = shader_minify_names(sh->wgsl, NULL);
         }
     }

@@ -9,10 +9,7 @@
 #include "sys.h"
 
 #define TIDE_SHADERS_WGSL 1 // The renderer's WGSL, which only its web build keeps
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-const-variable" // Its GLSL
 #include "../../platform/src/shaders.h"
-#pragma clang diagnostic pop
 
 // FNV-1a's 64 bits.
 static uint64_t fnv(const void *data, const size_t size)

@@ -1,5 +1,32 @@
 # Unity as a front end
 
+## Unity's OpenGL: Core stays, ES 3 and WebGL go (2026-11-05)
+
+With the GL backends removed (compute is guaranteed on every backend), Tide's
+drawing replays in Unity only on graphics APIs that compute. Tide's shaders for
+Unity have one SubShader (target 4.5, `exclude_renderers gles3`): the OpenGL ES
+3.0/WebGL 2 one, which read vertices from textures (`TIDEHL_TEXTURE_BUFFERS`),
+is gone, and so are TideRender's `textureBuffers` path (word textures,
+`VertexWords`, the shadow arrays). `TideRender.Supported` keeps the replay's
+requirements (compute, indirect arguments, level 4.5, the buffer slots below)
+and refuses `OpenGLES3`, so those players and Unity's WebGL export get the
+OnGUI path (`TideDraw.cs`) only.
+
+**Unity's OpenGL Core stays supported** (Claude's pick, Provisional). The
+owner's rule is about backends that can't compute; Unity's OpenGL Core is 4.5,
+which computes, and the replay's `ComputeReplayTests` passed on it (below).
+The GL removal had dropped it with the rest of GL, together with the
+per-texture samplers it needs (Unity's OpenGL has no samplers apart from
+textures); the merge brought those back for Core alone: `TIDEHL_OWN_SAMPLERS`
+under `SHADER_API_GLCORE`, `sampler_TideTexture<i>` beside each module
+texture, the `own` parameter of the prelude's sampling helpers, and
+TideRender's `ownSamplers` (set for `OpenGLCore` only), which sets each
+texture's filter and wrap as the draw asks. The Sample's checked-in
+`Assets/Tests/Resources/TideShaders` files were written again with
+`tide_wgsl_translate --hlsl` (the shader's name set back to its key). Not run
+in Unity after the merge: the sampler path is the one the replay was checked
+with on OpenGL Core, now under one define instead of four.
+
 ## Compute in Unity: embed ABI 11 (2026-11-05)
 
 The recorder (`gpu_record.c`) writes gpu.h's compute calls as
@@ -65,9 +92,8 @@ stay deferred to the camera, so:
   and WebGL 2 targets don't take Tide's renderer any more** (owner's rule:
   compute is on every render backend), and draw the views' 2D with the OnGUI
   path (`TideDraw.cs`) as GPUs without constant buffers did. WebGPU, Metal,
-  Vulkan, Direct3D 11/12 and desktop OpenGL do. `textureBuffers`, the GL ES path,
-  stays in TideRender until the GL backends' removal takes the `gles3` subshaders
-  too.
+  Vulkan, Direct3D 11/12 and desktop OpenGL do. The GL ES path itself went with
+  the GL backends' removal (above).
 
 **Picks (mine, Provisional):** compute in a CommandBuffer of its own run as the
 commands are read, rather than in the camera's (a camera can draw a frame twice,

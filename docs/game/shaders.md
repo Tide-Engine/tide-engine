@@ -1310,10 +1310,10 @@ A frame's GPU work happens as if in the order it was recorded: a draw after a ru
 
 ### Where kernels run
 
-Kernels run on Vulkan (desktop and Android) and WebGPU. OpenGL and WebGL can't, and are going: a game that runs a kernel there passes its runs by and says so once, and its reads back fail. [`tide shaders`](#looking-at-what-s-generated) prints each kernel's WGSL.
+Kernels run everywhere Tide draws: Vulkan (desktop and Android), WebGPU, and Unity's compute-capable graphics APIs. Compute is guaranteed, so a game never needs a path without it. [`tide shaders`](#looking-at-what-s-generated) prints each kernel's WGSL.
 
 ## Looking at what's generated
 
-`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, instance data, vert and frag a mesh draw uses, and each kernel's WGSL.
+`tide shaders` prints each shader Tide writes for the game, as WGSL (which Vulkan's SPIR-V and Unity's HLSL are translated from): one for each combination of vertex struct, instance data, vert and frag a mesh draw uses, and each kernel's WGSL.
 
 [Shipping builds](../tools/cli.md#run-and-build) shorten identifiers derived from your function, type, field, parameter and local names. Shader entry points and renderer bindings retain their names; expressions and layouts are unchanged. The private `game.names` build map records the shortened identifiers by stage. With a custom compiler pipeline, `tidec --shaders --strip-names` shows the shortened form; `--spirv` and `--hlsl` also accept `--strip-names`.

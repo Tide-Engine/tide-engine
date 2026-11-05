@@ -24,8 +24,6 @@ const browser = [process.env.TIDE_BROWSER, '/usr/bin/google-chrome', '/usr/bin/c
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find((path) => path && existsSync(path));
 assert.ok(browser, 'Set TIDE_BROWSER to a Chrome or Edge executable');
-const backend = process.env.TIDE_EXAMPLE_BACKEND ?? 'webgl';
-assert.ok(['webgl', 'webgpu'].includes(backend));
 const profile = mkdtempSync(join(tmpdir(), 'tide-docs-examples-'));
 
 // Every page with an example, in the order its examples are written, from
@@ -64,9 +62,11 @@ const server = createServer((req, res) => {
 });
 await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
-const gpuFlags = backend === 'webgl' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
-    : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader',
-        ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : [])];
+// The browser's software WebGPU, which games draw with, and its own drawing where it can show WebGPU's images
+// (as cmake/run_web_served_test.mjs runs it): WARP on Windows, SwiftShader's Vulkan on Linux
+const gpuFlags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader',
+    ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
+    ...(process.platform === 'linux' ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : [])];
 // --mute-audio: headless, it still plays through the machine's device once a page's AudioContext runs
 const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--mute-audio', '--remote-debugging-port=0', `--user-data-dir=${profile}`, ...gpuFlags,
@@ -145,12 +145,6 @@ try {
     await command('Runtime.enable');
     await command('Page.addScriptToEvaluateOnNewDocument', { source: `
         window.__draws = 0;
-        for (const name of ['drawArraysInstanced', 'drawElementsInstanced', 'drawArrays', 'drawElements']) {
-            const original = WebGL2RenderingContext.prototype[name];
-            WebGL2RenderingContext.prototype[name] = function (...args) {
-                window.__draws++; return original.apply(this, args);
-            };
-        }
         // WebGPU's draws, not its submits: a frame that draws nothing still submits its pass
         if (window.GPURenderPassEncoder) {
             for (const name of ['draw', 'drawIndexed']) {
@@ -169,11 +163,11 @@ try {
                 return Promise.resolve(new Response(null, { status: 503 }));
             return fetchPage(input, ...args);
         };
-        // A GL error stops a game and names the call, where WebGL would only warn
+        // A WebGPU validation error or a shader's warning stops a game, where the browser would only warn
         let config;
         Object.defineProperty(window, 'Tide', { configurable: true, get: () => config, set: value => {
             config = value; config.checkGL = true; config.backgroundPipelines = false;
-            config.relay = ${JSON.stringify(relayUrl)}; config.backend = ${JSON.stringify(backend)};
+            config.relay = ${JSON.stringify(relayUrl)};
         } });
     ` });
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -344,8 +338,7 @@ try {
     }
     const visited = new Set();
     for (const page of pages) {
-        // The page's `backend=` goes on to its games.
-        await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
+        await command('Page.navigate', { url: `${origin}${page}` });
         // The whole page, not what of it has arrived: its examples are listed
         // next, and the last of a long page's comes after the first.
         await until(`location.pathname === '${page}' && document.readyState !== 'loading' && document.querySelector('.tide-example')`, `${page} page`);
@@ -394,7 +387,7 @@ try {
             if (id === 'render3d' || id === 'render3d-materials' || id === 'render3d-effects') await cameraControls(id);
             // Stopped, so that the page runs one game at a time here.
             await evaluate('example.querySelector("[data-example-stop]").click();');
-            console.log(`${id}: source and rendering passed (${backend})`);
+            console.log(`${id}: source and rendering passed`);
         }
         assert.deepEqual([...sourced].sort(), [...new Set(ids)].sort(), `${page} shows the source of every example it runs`);
     }
@@ -413,7 +406,7 @@ try {
         stats(src.href, `${id}: whole game frame`);
         await until(drawn(game), `${id}: draws`);
         await shoot(id);
-        console.log(`${id}: its page's frame draws (${backend})`);
+        console.log(`${id}: its page's frame draws`);
     }
     // The Samples gallery: a card for each game, which links to the game's
     // own page, where it draws.
@@ -430,7 +423,6 @@ try {
         if (only && !only.has(id)) continue;
         const url = new URL(href);
         const path = url.pathname;
-        url.searchParams.set('backend', backend);
         await command('Page.navigate', { url: url.href });
         if (id === 'earth' && path === '/guide/earth') {
             await until(`location.pathname === '${path}' && document.querySelector('.demo .controls button')`, 'Earth demo page');
@@ -449,17 +441,17 @@ try {
             await shoot('sample-earth');
             await evaluate('Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Stop").click()');
             await until('!document.querySelector(".earth iframe")', 'Earth Stop removes the game');
-            console.log(`earth: click-to-play, stats, local rendering and stop passed (${backend})`);
+            console.log(`earth: click-to-play, stats, local rendering and stop passed`);
             continue;
         }
         await until(`location.pathname === '${path}' && window.__draws > 5`, `${id}: its page draws`);
         await shoot(`sample-${id}`);
-        console.log(`${id}: the gallery's game draws on its page (${backend})`);
+        console.log(`${id}: the gallery's game draws on its page`);
     }
     // The playground's edits run the actual WASI compiler tools in its worker.
     // Freeze a known counter, migrate a new field, then break and repair syntax.
     if (!only || only.has('playground')) {
-        await command('Page.navigate', { url: `${origin}/guide/playground?backend=${backend}` });
+        await command('Page.navigate', { url: `${origin}/guide/playground` });
         await until(`location.pathname === '/guide/playground' && document.querySelector('section.playground')?.tideEditor`, 'playground editor');
         // Tide's grammar colors the code: its lines have several token colors.
         await until(`new Set(Array.from(document.querySelectorAll('.playground .view-line span span'), span => span.className)).size > 4`, 'playground highlights Tide');
@@ -520,7 +512,7 @@ try {
         await until('document.querySelector(".sidebar").getBoundingClientRect().right <= 1', 'phone sidebar finishes closing');
         await evaluate(`document.querySelector('.preview').scrollIntoView({block:'center'})`);
         await shoot('playground-phone');
-        console.log(`playground: browser compilation, state migration, diagnostics, recovery and reset passed (${backend})`);
+        console.log(`playground: browser compilation, state migration, diagnostics, recovery and reset passed`);
     }
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');

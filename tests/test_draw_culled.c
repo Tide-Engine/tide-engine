@@ -33,7 +33,7 @@ static const tide_mesh_levels three_levels = {
 
 static const tide_shader listed_shader = {
     .name = "listed", .dims = 3, .vertex_size = sizeof(tide_vertex3), .instance_floats = 5, .instance_ints = 1,
-    .bounds_position = 1 + offsetof(tide_vertex3, position), .glsl_listed_vertex = "listed",
+    .bounds_position = 1 + offsetof(tide_vertex3, position), .listed = true,
 };
 
 typedef struct item {

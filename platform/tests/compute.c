@@ -388,15 +388,8 @@ static int frame(void *user, const float seconds)
     (void)seconds;
     const tide_gpu *gpu = tide_window_gpu();
     if (!gpu->compute_begin) {
-#ifdef __wasm__
-        // The page's WebGL test (tide_add_web_test makes one beside the WebGPU test): WebGL 2 can't compute,
-        // and goes once compute lands
-        printf("SKIPPED: %s can't compute\n", gpu->name);
-        return 0;
-#else
         fprintf(stderr, "%s can't compute: compute is guaranteed on every render backend\n", gpu->name);
         return 1;
-#endif
     }
 #ifdef __wasm__
     if (stage == 3) { // The device lost: its read has to say so, and another device come

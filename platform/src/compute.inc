@@ -20,7 +20,6 @@ static gpu_list_buffer *gpu_list_buffers;
 static uint32_t gpu_list_count, gpu_list_capacity;
 static uint32_t gpu_list_epoch;
 static tide_gpu_id gpu_empty_list; // What a run or a draw reads for a list that isn't there: none, of no capacity
-static bool compute_said;          // That this backend has no compute, said once
 
 static tide_gpu_id *run_buffers; // Each run's record, a buffer of TIDE_GPU_RUN_WORDS words, the frame's k-th run's k-th
 static uint32_t run_buffer_count, run_buffer_capacity, run_buffers_used;
@@ -39,17 +38,6 @@ typedef struct kernel_pipeline {
 static kernel_pipeline *kernel_pipelines;
 static uint32_t kernel_pipeline_count, kernel_pipeline_capacity;
 static tide_gpu_id run_size_pipeline, add_offsets_pipeline, add_scatter_pipeline;
-
-static bool can_compute(void)
-{
-    if (gpu->dispatch) return true;
-    if (!compute_said) {
-        fprintf(stderr, "tide: this game runs kernels (GPU.Run) or reads GPU lists, which %s can't: they're passed by. "
-                        "Compute needs Vulkan 1.3 or WebGPU; OpenGL and WebGL go once compute is everywhere\n", gpu->name);
-        compute_said = true;
-    }
-    return false;
-}
 
 // Everything on the device went with it: lists come back empty (tide_gpu_list_made says so to the game), and reads
 // begun there fail.
@@ -273,7 +261,6 @@ static uint32_t groups_of(const uint32_t size, const uint32_t group)
 // A kernel's run, outside passes: its record, its scratch, and its dispatches, with Add's after it.
 static void run_compute(const tide_draw_list *list, const draw_step *s)
 {
-    if (!can_compute()) return;
     const tide_draw_compute *r = &list->computes[s->first];
     const tide_shader *shader = r->shader;
     if (!shader || !shader->compute || shader->add_count > TIDE_SHADER_STORAGE
@@ -371,7 +358,6 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
 static void run_gpu_op(const tide_draw_list *list, const draw_step *s)
 {
     const tide_draw_gpu_op *op = &list->gpu_ops[s->first];
-    if (!gpu->storage) return; // A backend with no storage keeps no lists
     const tide_gpu_id buffer = list_buffer(op->list);
     const tide_gpu_list_state *state = tide_gpu_list_state_of(op->list);
     if (!buffer || !state) return;
@@ -396,7 +382,6 @@ static void prepare_storage_draws(const tide_draw_list *list, const uint32_t fro
         if (s->kind != STEP_SHADED || !run_draws(list, s->first)) continue;
         const tide_draw_run *run = &list->runs[s->first];
         if (!run->shader->storage_count) continue;
-        if (!can_compute()) continue;
         for (uint32_t k = 0; k < run->shader->storage_count && run->storage; k++) list_buffer(list->storage[run->storage - 1u + k]);
         if (!run->indirect) continue;
         const tide_gpu_id instances = list_buffer(run->indirect);
@@ -417,7 +402,7 @@ static void prepare_storage(const tide_draw_list *list)
         any |= steps[i].kind == STEP_SHADED && list->runs[steps[i].first].shader
             && list->runs[steps[i].first].shader->storage_count;
     }
-    if (any && gpu->storage) empty_list(); // What a draw reads for a list that isn't there, made outside passes
+    if (any) empty_list(); // What a draw reads for a list that isn't there, made outside passes
     prepare_storage_draws(list, 0);
 }
 

@@ -16,7 +16,7 @@ tide <command> [folder] [options]
 | `tide build [folder]` | Builds the game into `<folder>/build`, named after the folder |
 | `tide unity [folder] -o <path>` | Builds the game for the [Tide package in a Unity project](#unity), as its files change |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
-| `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
+| `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as WGSL |
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
@@ -181,7 +181,7 @@ still performs only front-end validation, even with a preview flag.
 | `--release` | Optimizes game and package code for testing and profiling, keeping symbols and diagnostics; standalone builds leave out unused code, data and assets |
 | `--distribution` | Builds for shipping: `--release` plus symbol/name stripping, shader minification and packaging (smaller web pages, Android app bundles) |
 | `-O0`, `-O1`, `-O2`, `-O3` | Overrides engine, game and package C/C++ optimization; deterministic math and the chosen build mode stay unchanged |
-| `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
+| `--web` | A web page (WebGPU), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace |
 | `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined in the default debug mode. `schedule` and `shaders` take it too |
@@ -312,15 +312,15 @@ Standalone release and distribution builds remove unreachable native code and da
 
 A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
 
-A web page draws with WebGPU where the browser has it on a GPU, and with WebGL 2 where it doesn't; games draw the same with either. Adding `?backend=webgl` (or `?backend=webgpu`) to the page's address picks one, for example to check a problem a player reports with the other.
+A web page draws with WebGPU, which every game's shaders and [kernels](../game/shaders.md#compute) need: a current Chrome, Edge or Safari has it, and so does Firefox where WebGPU is on. The page takes whatever device the browser gives, its software one too. A browser without WebGPU shows, in the game's place, a note saying what the game needs.
 
-A desktop game draws with Vulkan where the machine has a Vulkan 1.3 driver, and with OpenGL 3.3 where it doesn't; games draw the same with either, and nothing in a game says which. The `TIDE_BACKEND` environment variable picks one for a run: `TIDE_BACKEND=opengl`, or `TIDE_BACKEND=vulkan`, which ends the program with a message where there's no Vulkan rather than falling back.
+A desktop game draws with Vulkan 1.3, which any GPU of the last decade has with a current driver. A machine without it is told so, in a dialog of the system's (on Linux, the first of `zenity`, `kdialog` and `xmessage` it has) and on the program's error output, and the game ends. There's no other backend to fall back to: OpenGL was removed when compute shaders became something every game can count on.
 
-Where the backend runs compute (Vulkan, WebGPU), the GPU culls a `Draw.Instanced` of a list that stays as it was and picks its instances' levels of detail, and draws the same as when the CPU does it. `TIDE_GPU_CULLING=0` has the CPU do it for a run, to compare the two.
+The GPU culls a `Draw.Instanced` of a list that stays as it was and picks its instances' levels of detail, and draws the same as when the CPU does it. `TIDE_GPU_CULLING=0` has the CPU do it for a run, to compare the two.
 
 On a Mac, Vulkan is MoltenVK, Vulkan on Metal: `tide build` puts `libMoltenVK.dylib` beside the game, which uses it where the Mac has no Vulkan loader of its own. Ship it with the game; its license is in the tide package's `licenses/moltenvk`.
 
-An Android game draws with Vulkan where the device has Vulkan 1.3, and with OpenGL ES 3 where it doesn't. An app started with `adb shell am start` takes the same choice as an extra of its intent: `--es tide.backend opengl` or `--es tide.backend vulkan`.
+An Android game draws with Vulkan 1.3. A device without it shows a screen saying what the game needs until the player leaves it.
 
 ### Stats
 
@@ -335,7 +335,7 @@ settings
 
 They're a drawer. Closed, it's one line: the frame rate, and in a match another machine runs, your ping. A click or a tap on that line opens it, and so does **F8**: the rest is listed above the line, which stays where it is, so a click in the same place closes it again.
 
-Documentation examples, sample games and the playground enable stats by default, including their separate playable pages. A web game's `stats` query option passes `--stats` to the program: `game.html?stats`, or `game.html?backend=webgl&stats` alongside other options. This enables the drawer without changing its configured initial open/closed state; an ordinary standalone page starts with the one line.
+Documentation examples, sample games and the playground enable stats by default, including their separate playable pages. A web game's `stats` query option passes `--stats` to the program: `game.html?stats`, or `game.html?embedded&stats` alongside other options. This enables the drawer without changing its configured initial open/closed state; an ordinary standalone page starts with the one line.
 
 - **It starts closed** when the game asks, with its `stats` setting, and when a build does (`tide build --stats`, CMake's `STATS`): what players get is the one line. **`tide run --stats` starts it open**, since whoever typed that wants to read it. Under `tide run`, a hot reload leaves it as you left it.
 - **A click or a tap on it is never the game's.** Neither the game's input nor its views read that press, from the frame it lands in. A press that began elsewhere and crosses the drawer stays the game's. The game still sees F8, as it sees every key.
@@ -349,7 +349,7 @@ The list is two columns, a label on the left and its value on the right, in four
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu` | What a frame's work takes on its thread, all of it: the ticks it runs, the views and the drawing, without the wait for the display |
 | `render` | Listed under `cpu` as the part of it that prepares and submits the frame's draw list, including its render targets |
-| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android), desktop OpenGL and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the backend has no GPU timer (WebGL 2, OpenGL ES 3), the draw calls have a line of their own, `draw calls` |
+| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android) and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the device has no GPU timer, the draw calls have a line of their own, `draw calls` |
 | `vertices` | Vertices submitted this frame across all render-target passes, counting each index for each instance at its selected LOD. Includes shapes, text, meshes, blits and clear triangles; excludes the host's overlays. A quad counts as six, even with four shared corners. Clipped or culled geometry still counts; this measures submitted geometry, not how many pixels were visible or how often the GPU ran the vertex shader after caching |
 | `ping (delay 3 ticks)` | The network's round trip to the machine running the match, in the list when it's this machine, and in its label the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `network` | What goes over the network each second, up and down: `↑2.0  ↓0.5 KB/s` |
@@ -357,12 +357,12 @@ The list is two columns, a label on the left and its value on the right, in four
 | `threads` | The threads ticks run on |
 | `memory` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
 | `vram` | What the game's drawing has on the GPU, by the engine's own count: every texture, mesh and render target it made, by what each holds. Not the window's own framebuffer, nor what the driver keeps beside them, so it's the same number on every backend |
-| `renderer` | What draws: Vulkan, OpenGL 3.3, OpenGL ES 3, WebGPU or WebGL 2 |
+| `renderer` | What draws: Vulkan or WebGPU |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
 Vertex counts use decimal suffixes: `123.5K` for thousands, `97M` for millions and `4.3B` for billions, continuing with `T`, `P` and `E` for larger counts. Counts below 1,000 stay exact; larger counts round to one decimal, with trailing zeroes omitted.
 
-Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
+Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. A device without timestamp queries has no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
 
 A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game, unless the frame rate in a corner is what you want them to have.
 
@@ -618,8 +618,9 @@ tide writes a Unity shader for each of the game's shaders, a compute shader
 for each kernel, and the same for Tide's own, into
 `Packages/com.tide.game/Resources/TideShaders`, which Unity compiles for every
 graphics API that runs compute shaders: Direct3D 11 and 12, Vulkan, Metal,
-desktop OpenGL and WebGPU. On a GPU without them (OpenGL ES 3 and WebGL 2),
-the views' 2D is drawn with Unity's GL alone. It draws in Unity's built-in render pipeline and in URP,
+desktop OpenGL 4.5 and WebGPU. On a GPU without them (OpenGL ES 3 and WebGL 2),
+which Tide has no renderer for, the views' 2D is drawn with Unity's GL alone.
+It draws in Unity's built-in render pipeline and in URP,
 whose pass the package adds by itself. In Play, the editor's scene view shows
 Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
@@ -640,7 +641,9 @@ Tide for Unity, without building it.
 `--web` builds the game once for a Unity WebGL player instead: `tide-game.js`,
 which Unity's Tide package puts in the player's page beside Unity's own, and
 the map of its prefabs and scenes. The package runs this as a WebGL player
-builds. Serve the player cross-origin isolated, as any Tide page.
+builds. Serve the player cross-origin isolated, as any Tide page. Unity's
+WebGL graphics API can't compute, so a WebGL player draws none of Tide's
+views: its simulation, sound and Unity's own rendering run as before.
 
 ## Dedicated servers
 

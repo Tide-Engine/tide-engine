@@ -59,8 +59,12 @@ const child = spawn(browser, [
     '--disable-extensions',
     '--mute-audio', // Headless, it still plays through the machine's device
     `--user-data-dir=${profileDir}`,
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
+    // WebGPU in software, as cmake/run_web_served_test.mjs runs it: the browser's own drawing through WARP on
+    // Windows, without which Chrome has no WebGPU there, and SwiftShader's Vulkan on Linux
+    '--enable-unsafe-webgpu',
+    '--use-webgpu-adapter=swiftshader',
+    ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
+    ...(process.platform === 'linux' ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : []),
     '--remote-debugging-pipe', // Close the entire browser before reusing its profile.
     `http://127.0.0.1:${server.address().port}/`,
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });

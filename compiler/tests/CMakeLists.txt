@@ -553,7 +553,7 @@ if(TIDE_PLATFORM)
         add_test(NAME tidec_e2e_fetch_web
             COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
                 "$<TARGET_FILE_DIR:tidec_e2e_fetch_web>/tidec_e2e_fetch_web.html"
-                "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser" "backend=webgl"
+                "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser"
                 --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
         # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
         set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
@@ -767,8 +767,8 @@ foreach(source IN LISTS TIDE_OUTLINE_TESTS)
 endforeach()
 
 # Shader tests: `tidec --shaders` on shaders/<name>.tide must print
-# shaders/<name>.txt exactly: the GLSL and WGSL of each shader its mesh draw
-# calls draw through.
+# shaders/<name>.txt exactly: the WGSL of each shader its mesh draw calls draw
+# through and its GPU runs run.
 file(GLOB TIDE_SHADER_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.tide")
 if(TIDE_NODE)
     add_test(NAME tidec_shader_names_all

@@ -2,7 +2,7 @@
 // the GPU's culling and with the CPU's must be the same pixels, byte for byte; on Vulkan what the GPU kept is read
 // back and set beside the CPU's decisions (tide_platform_cull_compare): every instance the CPU draws, in order,
 // and only a few more (its slack at the frustum's edges). Then the device is lost, and it's all again on the next.
-// A backend that can't compute (OpenGL, WebGL) culls on the CPU and draws the same.
+// Under TIDE_GPU_CULLING=decide the renderer has the CPU decide the recorded runs, and draws the same.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,7 +101,7 @@ static int frame(void *user, const float seconds)
     const char *renderer = tide_platform_renderer();
     // TIDE_GPU_CULLING=decide: runs are recorded to be culled, and the renderer has the CPU decide them as it draws
     const char *said = getenv("TIDE_GPU_CULLING");
-    const bool computes = !strstr(renderer, "GL") && !(said && strcmp(said, "decide") == 0);
+    const bool computes = !(said && strcmp(said, "decide") == 0);
     if (stage == 0) {
         printf("renderer: %s\n", renderer);
         draw_shot(0, 0, false, plain); // The field made, and its mesh's levels given

@@ -1,5 +1,5 @@
-// The web's window (see src/window.h): the page's canvas, with a WebGL 2
-// context, and the page's input, both through its JavaScript (tide.js, which
+// The web's window (see src/window.h): the page's canvas, drawn in with
+// WebGPU, and the page's input, both through its JavaScript (tide.js, which
 // tide_web.h declares) instead of Emscripten.
 //
 // The screen is the canvas in CSS pixels, which the program draws and reads
@@ -73,25 +73,22 @@ static const struct {
 
 _Static_assert(COUNT_OF(pad_buttons) == TIDE_PAD_COUNT, "every gamepad button needs the browser's index");
 
-static const tide_gpu *gpu = &tide_gpu_gl;
-
 bool tide_window_open(const tide_window_desc *desc)
 {
     // A resizable window is a canvas that fills the page. Tests keep the size
     // they asked for.
-    const int canvas = tide_web_init_canvas(desc->width, desc->height, !desc->hidden);
-    if (canvas == TIDE_WEB_NO_CANVAS) {
-        fprintf(stderr, "tide: this browser has neither WebGPU nor WebGL 2, or not the one the page asked for\n");
+    if (!tide_web_init_canvas(desc->width, desc->height, !desc->hidden)) {
+        // The page shows why in the canvas's place (tide.js)
+        fprintf(stderr, "tide: this game needs WebGPU, which this browser doesn't have or has turned off\n");
         return false;
     }
-    gpu = canvas == TIDE_WEB_WEBGPU ? &tide_gpu_webgpu : &tide_gpu_gl;
     for (size_t i = 0; i < COUNT_OF(keys); i++) tide_web_watch_key((int)keys[i].key, keys[i].code);
     return true;
 }
 
 const tide_gpu *tide_window_gpu(void)
 {
-    return gpu;
+    return &tide_gpu_webgpu;
 }
 
 // The canvas can't close: the page goes, and the program with it.

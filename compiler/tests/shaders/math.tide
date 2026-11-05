@@ -1,6 +1,6 @@
 // Math on the GPU: what a shader language has no function for, or has one
 // that does otherwise than the CPU's, is a function of the engine's own
-// before the game's, the same formula in GLSL and in WGSL. A hash is unsigned
+// before the game's, the same formula as the CPU's. A hash is unsigned
 // integers, so it's the CPU's number; Min, Max and Clamp tell a NaN by its
 // bits; and each function is only there in a shader that calls it.
 

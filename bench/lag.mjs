@@ -89,7 +89,7 @@ const game = pageSource.replace('printErr: text => console.error(text),', `print
     .replace('device = found;', `device = found;
             window.__lagGpu = { backend: 'WebGPU', vendor: adapter.info?.vendor ?? '',
                 architecture: adapter.info?.architecture ?? '', device: adapter.info?.device ?? '',
-                description: adapter.info?.description ?? '', software: !!software };`);
+                description: adapter.info?.description ?? '', software: !!adapter.info?.isFallbackAdapter };`);
 const hands = `
     Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', { get: () => ${Number(options.threads)} });
     window.__frames = [];
@@ -124,7 +124,7 @@ await new Promise(done => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 
 const gpuFlags = options.gpu === 'software'
-    ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+    ? ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : [])]
     : ['--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', ...(process.platform === 'win32' ? ['--use-angle=d3d11'] : [])];
 
 // Every browser this script has open, so that whatever ends it closes them.
@@ -378,15 +378,7 @@ for (const ping of options.pings.split(',').map(Number)) {
         if (!player.lost) {
             try {
                 (run.time_origins ??= {})[player.who] = await player.evaluate('performance.timeOrigin');
-                (run.renderers ??= {})[player.who] = await player.evaluate(`(() => {
-                    if (window.__lagGpu) return window.__lagGpu;
-                    const canvas = Tide.canvas || document.getElementById('canvas');
-                    const gl = canvas.getContext('webgl2');
-                    if (!gl) return { backend: 'unknown' };
-                    const debug = gl.getExtension('WEBGL_debug_renderer_info');
-                    return { backend: 'WebGL 2', vendor: gl.getParameter(debug ? debug.UNMASKED_VENDOR_WEBGL : gl.VENDOR),
-                        description: gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER) };
-                })()`);
+                (run.renderers ??= {})[player.who] = await player.evaluate('window.__lagGpu || { backend: "unknown" }');
             } catch { /* Timing samples remain useful if renderer metadata is unavailable. */ }
         }
     }

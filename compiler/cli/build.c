@@ -607,7 +607,7 @@ static const char *const release_sections[] = {"-ffunction-sections", "-fdata-se
 // The package holds exactly these libraries (platform/CMakeLists.txt).
 #define NATIVE_TARGET "--target=x86_64-w64-windows-gnu"
 #define NATIVE_RUNTIME "mingw"
-// GLFW, in the platform layer, loads OpenGL at run time.
+// GLFW, in the platform layer, loads Vulkan's loader at run time.
 static const char *const native_libs[] = {"-lmingw32", "-lmingwex", "-lmoldname", "-lmsvcrt", "-lkernel32",
                                           "-luser32", "-lgdi32", "-lshell32", "-ladvapi32", "-lws2_32",
                                           "-lsecur32", "-lole32", NULL};
@@ -622,8 +622,8 @@ static const char *const native_libs[] = {"-framework", "Cocoa", "-framework", "
 #define EXE_SUFFIX ""
 #define LIBRARY_SUFFIX ".dylib"
 #else
-// GLFW, in the platform layer, loads X11 and OpenGL at run time, so games
-// link neither.
+// GLFW, in the platform layer, loads X11 and Vulkan's loader at run time, so
+// games link neither.
 static const char *const native_libs[] = {"-lm", "-lpthread", "-ldl", "-lrt", NULL};
 #define EXE_SUFFIX ""
 #define LIBRARY_SUFFIX ".so"
@@ -1753,7 +1753,7 @@ static void place_moltenvk(const build *b, const char *dir)
     if (data && !lib_universal_slice((const unsigned char *)data, size, target_cpu(b), &at, &length)) at = 0, length = size;
     const bool current = data && sys_file_size(to) == (int64_t)length && sys_mtime(to) >= sys_mtime(from);
     if (data && !current && !sys_write_file(to, data + at, length)) {
-        fprintf(stderr, "tide: can't put MoltenVK next to the game, at %s: the game draws with OpenGL where the Mac has no Vulkan\n", to);
+        fprintf(stderr, "tide: can't put MoltenVK next to the game, at %s: the game can't draw where the Mac has no Vulkan of its own\n", to);
     }
     free(data);
     free(from);
@@ -4372,7 +4372,7 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     // as Android 15's devices can have.
     static const char *const flags[] = {"-fuse-ld=lld", "-Wl,-u,ANativeActivity_onCreate", "-Wl,--no-undefined",
                                         "-Wl,-z,max-page-size=16384", "-nodefaultlibs", "-lc", "-lm", "-ldl",
-                                        "-landroid", "-llog", "-lEGL", "-lGLESv3", "-laaudio", NULL};
+                                        "-landroid", "-llog", "-laaudio", NULL};
     arg_list(&a, flags);
     arg(&a, build_target.builtins);
     const int code = sys_run(a.items, NULL, false);

@@ -6,7 +6,7 @@
 //
 //   node first_tick.mjs <tide_platform_first_tick> <scratch folder>
 //
-// It needs a desktop session with OpenGL, though nothing shows on it.
+// It needs a desktop session with Vulkan, though nothing shows on it.
 
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

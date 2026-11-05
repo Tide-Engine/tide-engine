@@ -111,12 +111,10 @@ static void check_capture(void)
     TIDE_CHECK(memcmp(numeric->pixels, values, sizeof values) == 0);
     for (uint32_t i = 0; i < 3; i++) {
         const tide_shader *shader = runs[i]->shader;
-        TIDE_REQUIRE(shader && shader->texture_count == 3 && shader->glsl_fragment);
-        TIDE_CHECK(strstr(shader->glsl_fragment, "tf_SamplePair") != NULL);
-        TIDE_CHECK(strstr(shader->glsl_fragment, "textureLod(pixels") != NULL);
-        TIDE_CHECK(strstr(shader->glsl_fragment, "tide_straight(") == NULL);
-#ifdef __wasm__
+        TIDE_REQUIRE(shader && shader->texture_count == 3);
+#ifdef __wasm__ // A shader's text is its WGSL, which a build keeps on the web
         TIDE_REQUIRE(shader->wgsl != NULL);
+        TIDE_CHECK(strstr(shader->wgsl, "tf_SamplePair") != NULL);
         TIDE_CHECK(strstr(shader->wgsl, "textureSampleLevel(pixels") != NULL);
         TIDE_CHECK(strstr(shader->wgsl, "tide_straight(") == NULL);
 #endif
@@ -127,7 +125,6 @@ static void check_capture(void)
     TIDE_CHECK(samples(runs[1], grid, TIDE_FILTER_BILINEAR, TIDE_WRAP_REPEAT) == 1);
     TIDE_CHECK(samples(runs[1], grid, TIDE_FILTER_POINT, TIDE_WRAP_MIRROR) == 1);
     TIDE_CHECK(samples(runs[1], grid, TIDE_FILTER_TRILINEAR, TIDE_WRAP_REPEAT) == 1);
-    TIDE_CHECK(strstr(runs[1]->shader->glsl_fragment, "textureGrad(pixels") != NULL);
 #ifdef __wasm__
     TIDE_CHECK(strstr(runs[1]->shader->wgsl, "textureSampleGrad(pixels") != NULL);
 #endif

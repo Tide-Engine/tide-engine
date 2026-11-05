@@ -4,7 +4,7 @@
 // frustum keeps, in their order. Each run is a bucket; its candidates are its parts', a draw's each, a whole
 // number of groups of 64. The frame's are culled at once, before its first pass: CullListed, CullOffsets and
 // CullScatter, one compute pass, then each bucket is an indirect draw of its places through its listed pipeline.
-// Where that can't be (no compute, the recorder, a kernel or the listed pipeline not made yet, a fifth page), the
+// Where that can't be (the recorder, a kernel or the listed pipeline not made yet, a fifth page), the
 // CPU decides a run's instances (tide_draw_culled_places), which are the CPU path's. Included by platform.c, after
 // compute.inc.
 
@@ -62,7 +62,7 @@ static bool cull_kernels(void)
 
 static void cull_warm(void)
 {
-    if (!gpu->dispatch || gpu == &tide_gpu_record) return;
+    if (gpu == &tide_gpu_record) return;
     cull_kernels();
     for (uint32_t k = 0; k < 3; k++) warm_ask(cull_pipelines[k]);
 }
@@ -93,7 +93,7 @@ static void cull_plan(const tide_draw_list *list)
     }
     cull_on = false;
     cull_page_count = 0;
-    if (!list->cull_count || gpu == &tide_gpu_record || !gpu->dispatch || view_only_3d || decide) return;
+    if (!list->cull_count || gpu == &tide_gpu_record || view_only_3d || decide) return;
     cull_on = cull_kernels();
 }
 

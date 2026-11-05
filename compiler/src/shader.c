@@ -11,10 +11,10 @@
 // Tide code the GPU runs: a `frag` for each pixel of a mesh, a `vert` for
 // each of its vertices, and the functions they call. For every combination a
 // mesh draw uses (a vertex struct, with a vert, a frag, both or neither) this
-// writes a shader in each language a renderer takes: GLSL, for OpenGL 3.3,
-// OpenGL ES 3 and WebGL 2, and WGSL, for WebGPU, which spirv.c translates
-// into SPIR-V for Vulkan. Codegen puts them in the generated C as
-// tide_shaders (tide/draw.h).
+// writes a shader in WGSL, for WebGPU, which spirv.c translates into SPIR-V
+// for Vulkan and hlsl.c into HLSL for Unity. Codegen puts them in the
+// generated C as tide_shaders (tide/draw.h). (GLSL, for the OpenGL backends,
+// went with them, 2026-11-05: compute is on every backend there is.)
 //
 // The GPU runs less than the CPU does: bools, ints, floats, vectors,
 // quaternions, matrices, colors and structs of those, locals, `if`, loops
@@ -44,8 +44,6 @@
 // frag reads go from the mesh's corners to its pixels as its vertex's do,
 // blended. The checker saw each written on every path (assigned.c).
 
-typedef enum lang { GLSL, WGSL } lang;
-
 enum { STAGE_VERT, STAGE_FRAG };
 
 // Functions of the engine's own a shader may need defined before the game's:
@@ -65,7 +63,7 @@ enum {
     H_FADE, H_GRAD2, H_GRAD3, H_PERLIN2, H_PERLIN3, H_SIMPLEX2, H_SIMPLEX3, H_NEAREST, H_CELLULAR2, H_CELLULAR3, // noise.c's
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
     H_Q_FROM_M3, H_FROMTO_UNIT3, H_FROMTO_Q, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
-    H_RECIPROCAL, H_INVERSE2, H_INVERSE3, H_INVERSE4, H_INT4_LANE,
+    H_RECIPROCAL, H_INVERSE2, H_INVERSE3, H_INVERSE4,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     H_EASE, // tide_ease(t, kind): Math.EaseIn and the rest, as tide/math.h's
@@ -118,7 +116,6 @@ typedef struct shader_function {
 
 typedef struct emit {
     program *prog;
-    lang l;
     bool checking;     // Reports what the GPU can't run; what it writes is thrown away
     bool failed;
     const shader *sh;  // The shader being written; NULL while checking
@@ -135,8 +132,7 @@ typedef struct emit {
     sb grads;
     int grad_count;
     int lifting; // Writing one of those: a local is written as what it was declared as
-    // The structs the code names, each after the ones it holds. An array type among them is a row: GLSL has no arrays
-    // of arrays, so there an array that's another's element is a struct of that one array (need_row)
+    // The structs the code names, each after the ones it holds
     VEC(const decl *) structs;
     VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
     sb functions;
@@ -164,7 +160,7 @@ typedef struct emit {
 static void ex(emit *em, const expr *e);
 static void ex_as(emit *em, const expr *e, type want);
 static bool is_whole_variable(const expr *e);
-static bool is_pointer(const emit *em, const param *p);
+static bool is_pointer(const param *p);
 static void st(emit *em, const stmt *s);
 static void need_function(emit *em, decl *fn, loc at, const given *spec, const char *suffix);
 static bool is_const(const expr *e);
@@ -204,7 +200,7 @@ static void refuse(emit *em, const loc at, const char *fmt, ...)
 
 // A name of the game's in a shader: a prefix no keyword of either language
 // starts with, then the name, its '_' as "_0" and its '.' as "_1", so no two
-// underscores ever meet (GLSL keeps those for itself) and no two names
+// underscores ever meet (GLSL kept those for itself) and no two names
 // collide.
 static const char *name_of(const char *prefix, const str name)
 {
@@ -500,89 +496,48 @@ static bool type_fits(emit *em, const type t, const loc at)
 
 static void need_struct(emit *em, const decl *d);
 
-// Whether an array's elements of type `element` are rows: arrays, each in a
-// struct of its own, as GLSL has no arrays of arrays. WGSL has them as they are.
-static bool in_rows(const emit *em, const type element)
-{
-    return em->l == GLSL && element.kind == TY_ARRAY;
-}
-
 // The structs a value of type `t` is made of, before whatever holds it.
 static void need_held(emit *em, const type t)
 {
-    if (is_struct_like(t)) {
-        need_struct(em, t.decl);
-    } else if (t.kind == TY_ARRAY) {
-        const type element = t.decl->fields.items[0].type;
-        if (in_rows(em, element)) need_struct(em, element.decl);
-        else need_held(em, element);
-    }
+    if (is_struct_like(t)) need_struct(em, t.decl);
+    else if (t.kind == TY_ARRAY) need_held(em, t.decl->fields.items[0].type);
 }
 
-// A struct, or an array type as a row.
+// A struct, after the structs it holds.
 static void need_struct(emit *em, const decl *d)
 {
     for (int i = 0; i < em->structs.count; i++) {
         if (em->structs.items[i] == d) return;
     }
-    if (d->kind == DECL_ARRAY) {
-        need_held(em, (type){TY_ARRAY, (decl *)d});
-    } else {
-        for (int i = 0; i < d->fields.count; i++) {
-            const field *f = &d->fields.items[i];
-            if (!f->hidden) need_held(em, f->type);
-        }
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (!f->hidden) need_held(em, f->type);
     }
     vec_push(em->structs, d);
 }
 
-// The struct that holds one array of type `array`, where it's another's element in GLSL: its name.
-static const char *need_row(emit *em, const decl *array)
-{
-    need_struct(em, array);
-    int at = 0;
-    while (em->structs.items[at] != array) at++;
-    sb b = {0};
-    sb_printf(&b, "tide_row%d", at);
-    return b.data;
-}
-
-// "tide_row3(" before an element that's a row, which the caller closes: whether it was written.
-static bool put_row(emit *em, const type element)
-{
-    if (!in_rows(em, element)) return false;
-    sb_printf(em->o, "%s(", need_row(em, element.decl));
-    return true;
-}
-
 static const char *ty(emit *em, const type t)
 {
-    static const char *const glsl_f[] = {"", "float", "vec2", "vec3", "vec4"};
-    static const char *const wgsl_f[] = {"", "f32", "vec2f", "vec3f", "vec4f"};
-    static const char *const glsl_i[] = {"", "int", "ivec2", "ivec3", "ivec4"};
-    static const char *const wgsl_i[] = {"", "i32", "vec2i", "vec3i", "vec4i"};
-    static const char *const glsl_m[] = {"", "", "mat2", "mat3", "mat4"};
-    static const char *const wgsl_m[] = {"", "", "mat2x2f", "mat3x3f", "mat4x4f"};
-    const bool wgsl = em->l == WGSL;
-    if (t.kind == TY_BYTE) return wgsl ? "i32" : "int";
+    static const char *const floats[] = {"", "f32", "vec2f", "vec3f", "vec4f"};
+    static const char *const ints[] = {"", "i32", "vec2i", "vec3i", "vec4i"};
+    static const char *const matrices[] = {"", "", "mat2x2f", "mat3x3f", "mat4x4f"};
+    if (t.kind == TY_BYTE) return "i32";
     const int dim = type_dim(t);
-    if (dim > 0) return type_is_float_based(t) ? (wgsl ? wgsl_f : glsl_f)[dim] : (wgsl ? wgsl_i : glsl_i)[dim];
-    if (matrix_dim(t)) return (wgsl ? wgsl_m : glsl_m)[matrix_dim(t)];
-    if (t.kind == TY_COLOR || t.kind == TY_QUATERNION) return wgsl ? "vec4f" : "vec4";
+    if (dim > 0) return type_is_float_based(t) ? floats[dim] : ints[dim];
+    if (matrix_dim(t)) return matrices[matrix_dim(t)];
+    if (t.kind == TY_COLOR || t.kind == TY_QUATERNION) return "vec4f";
     if (t.kind == TY_BOOL) return "bool";
-    if (t.kind == TY_ENUM || t.kind == TY_CHAR) return wgsl ? "i32" : "int"; // A char is its code point there
+    if (t.kind == TY_ENUM || t.kind == TY_CHAR) return "i32"; // A char is its code point there
     if (t.kind == TY_ARRAY) {
         sb b = {0};
-        const type element = t.decl->fields.items[0].type;
-        sb_printf(&b, wgsl ? "array<%s, %d>" : "%s[%d]", in_rows(em, element) ? need_row(em, element.decl) : ty(em, element),
-                  t.decl->array_length);
+        sb_printf(&b, "array<%s, %d>", ty(em, t.decl->fields.items[0].type), t.decl->array_length);
         return b.data;
     }
     if (is_struct_like(t)) {
         need_struct(em, t.decl);
         return struct_name(t.decl);
     }
-    return wgsl ? "f32" : "float"; // Refused already
+    return "f32"; // Refused already
 }
 
 static const char *float_ty(emit *em, const int dim)
@@ -631,7 +586,6 @@ static long long int_literal(const expr *e)
 }
 
 static void put_zero(emit *em, type t);
-static void put_zeros(emit *em, type t);
 
 // The value a field, or a local with none given, starts with.
 static void put_default(emit *em, const type t)
@@ -662,26 +616,7 @@ static void put_zero(emit *em, const type t)
         put_default(em, t);
         return;
     }
-    if (em->l == WGSL) {
-        sb_printf(em->o, "%s()", ty(em, t));
-        return;
-    }
-    if (t.kind == TY_ARRAY) { // Each element, as zeros
-        sb_printf(em->o, "%s(", ty(em, t));
-        for (int i = 0; i < t.decl->array_length; i++) {
-            if (i) sb_put(em->o, ", ");
-            const bool row = put_row(em, t.decl->fields.items[0].type);
-            put_zeros(em, t.decl->fields.items[0].type);
-            if (row) sb_put(em->o, ")");
-        }
-        sb_put(em->o, ")");
-        return;
-    }
-    if (t.kind == TY_BOOL) sb_put(em->o, "false");
-    else if (t.kind == TY_INT || t.kind == TY_ENUM || t.kind == TY_BYTE || t.kind == TY_CHAR) sb_put(em->o, "0");
-    else if (t.kind == TY_FLOAT) sb_put(em->o, "0.0");
-    else if (type_is_int_based(t)) sb_printf(em->o, "%s(0)", ty(em, t));
-    else sb_printf(em->o, "%s(0.0)", ty(em, t));
+    sb_printf(em->o, "%s()", ty(em, t));
 }
 
 // ---------------------------------------------------------------------------
@@ -690,10 +625,12 @@ static void put_zero(emit *em, const type t)
 // What Math does that a shader language doesn't, or doesn't do as the CPU
 // does: tide/math.h's formulas, in its order, so the same code gives the same
 // answer on the CPU and on the GPU up to the GPU's rounding, and Math.Hash,
-// which is integers, the same number. Each is written once, in the GLSL both
-// languages can say, which put_helper turns into WGSL: a function's head on a
-// line of its own, a statement a line, a local declared with its type and a
-// value, no '?:', no parameter assigned to, and atan2 for the atan of two.
+// which is integers, the same number. Each is written in a notation of its
+// own, C-like (GLSL's, when there was a GLSL to write), which put_helper
+// spells as WGSL: a function's head on a line of its own, `float tide_f(float
+// x) {`, a statement a line, a local declared with its type and a value, no
+// '?:', no parameter assigned to, GLSL's names for types, and atan2,
+// inversesqrt, floatBitsToInt and intBitsToFloat for WGSL's functions of them.
 
 static const char *const family_names[FAMILY_COUNT] = {"min", "max", "clamp", "saturate", "smoothstep", "pow", "atan2_"};
 static const int family_args[FAMILY_COUNT] = {2, 2, 3, 1, 3, 2, 2};
@@ -757,9 +694,6 @@ static const char *const family_scalars[FAMILY_COUNT] = {
 };
 
 static const char *const helper_texts[H_COUNT] = {
-    [H_INT4_LANE] = "int tide_int4_lane(ivec4 value, int index) {\n"
-                    "    return index == 0 ? value.x : index == 1 ? value.y : index == 2 ? value.z : value.w;\n"
-                    "}\n",
     // A texture holds colors times their alpha, so that what's blended between two pixels is right (a clear
     // pixel's color counts for nothing). Code reads the color itself. A pixel with no alpha has none
     // tide/math.h's tide_ease_*_f, in the same order: kind 0 in, 1 out, 2 in-out, 3 in-back, 4 out-back. One
@@ -1613,16 +1547,14 @@ static const char *wgsl_type(const char *word, const size_t len)
     return NULL;
 }
 
-// `len` chars of a helper, word by word, as `l` spells them.
-static void put_spelled(sb *o, const lang l, const char *text, const size_t len)
+// `len` chars of a helper, word by word, as WGSL spells them.
+static void put_spelled(sb *o, const char *text, const size_t len)
 {
     for (size_t i = 0; i < len;) {
         size_t n = 1;
         while (word_char(text[i]) && i + n < len && word_char(text[i + n])) n++;
         const char *as = NULL;
-        if (l == GLSL) {
-            if (word_is(text + i, n, "atan2")) as = "atan";
-        } else if (word_is(text + i, n, "inversesqrt")) {
+        if (word_is(text + i, n, "inversesqrt")) {
             as = "inverseSqrt";
         } else if (word_is(text + i, n, "floatBitsToInt")) {
             as = "bitcast<i32>";
@@ -1637,9 +1569,10 @@ static void put_spelled(sb *o, const lang l, const char *text, const size_t len)
     }
 }
 
-// A helper as `l` writes it. WGSL declares the other way around: a
-// function's head is `fn name(a: T) -> T`, and a local `var name: T = value`.
-static void put_helper(sb *o, const lang l, const char *text)
+// A helper, from the notation helper_text writes it in, as WGSL has it. WGSL
+// declares the other way around: a function's head is `fn name(a: T) -> T`,
+// and a local `var name: T = value`.
+static void put_helper(sb *o, const char *text)
 {
     for (const char *line = text; *line;) {
         const char *end = strchr(line, '\n');
@@ -1647,7 +1580,7 @@ static void put_helper(sb *o, const lang l, const char *text)
         while (line[indent] == ' ') indent++;
         while (word_char(line[indent + type_len])) type_len++;
         // What the line declares, if it starts with a type and a name
-        const char *type = l == WGSL && line[indent + type_len] == ' ' ? wgsl_type(line + indent, type_len) : NULL;
+        const char *type = line[indent + type_len] == ' ' ? wgsl_type(line + indent, type_len) : NULL;
         const char *name = line + indent + type_len + 1;
         while (type && word_char(name[name_len])) name_len++;
         if (type && name_len && name[name_len] == '(') {
@@ -1668,10 +1601,10 @@ static void put_helper(sb *o, const lang l, const char *text)
         } else if (type && name_len && strncmp(name + name_len, " = ", 3) == 0) {
             const char *value = name + name_len + 3;
             sb_printf(o, "%.*svar %.*s: %s = ", (int)indent, line, (int)name_len, name, type);
-            put_spelled(o, l, value, (size_t)(end - value));
+            put_spelled(o, value, (size_t)(end - value));
             sb_put(o, "\n");
         } else {
-            put_spelled(o, l, line, (size_t)(end - line));
+            put_spelled(o, line, (size_t)(end - line));
             sb_put(o, "\n");
         }
         line = end + 1;
@@ -1684,7 +1617,7 @@ static void put_helpers(const emit *em, sb *o)
         if (!em->helpers[h]) continue;
         sb text = {0};
         helper_text(h, &text);
-        put_helper(o, em->l, text.data);
+        put_helper(o, text.data);
     }
 }
 
@@ -1697,7 +1630,7 @@ static void put_helpers(const emit *em, sb *o)
 static void put_pack(emit *em, const char stream, const int word)
 {
     const bool uniform = stream == 'u' || stream == 'v';
-    sb_printf(em->o, "%stide_%c%d", uniform && em->l == WGSL ? "tide_block." : "", stream, word / 4);
+    sb_printf(em->o, "%stide_%c%d", uniform ? "tide_block." : "", stream, word / 4);
 }
 
 static void put_word(emit *em, const char stream, const int word)
@@ -1762,9 +1695,7 @@ static void put_value(emit *em, const type t, const char floats, const char ints
         sb_printf(em->o, "%s(", ty(em, t));
         for (int k = 0; k < t.decl->array_length; k++) {
             if (k) sb_put(em->o, ", ");
-            const bool row = put_row(em, t.decl->fields.items[0].type);
             put_value(em, t.decl->fields.items[0].type, floats, ints, f, i);
-            if (row) sb_put(em->o, ")");
         }
         sb_put(em->o, ")");
     } else if (is_struct_like(t)) {
@@ -1824,8 +1755,7 @@ static void put_bound(emit *em, const decl *source, const field *f, const type t
     const shader_value *v = em->sh ? find_value(em->sh, source, f) : NULL;
     if (!v) { // Checking, or a 2D mesh's transform: there's none
         if (!source && !em->checking) {
-            sb_put(em->o, em->l == WGSL ? "mat4x4f(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)"
-                                        : "mat4(1.0)");
+            sb_put(em->o, "mat4x4f(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)");
         } else {
             put_zero(em, t);
         }
@@ -2190,20 +2120,7 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
 // All of a value as zeros, whatever its fields' defaults are.
 static void put_zeros(emit *em, const type t)
 {
-    if (!is_struct_like(t) || em->l == WGSL) {
-        if (em->l == WGSL) sb_printf(em->o, "%s()", ty(em, t));
-        else put_zero(em, t);
-        return;
-    }
-    sb_printf(em->o, "%s(", ty(em, t));
-    bool first = true;
-    for (int i = 0; i < t.decl->fields.count; i++) {
-        if (t.decl->fields.items[i].hidden) continue;
-        if (!first) sb_put(em->o, ", ");
-        first = false;
-        put_zeros(em, t.decl->fields.items[i].type);
-    }
-    sb_put(em->o, ")");
+    sb_printf(em->o, "%s()", ty(em, t));
 }
 
 // How many elements the list has: the uniforms' word that says.
@@ -2229,80 +2146,59 @@ static int data_stride(const int words)
 // when it's before its start or as far past it as the box is long, which is
 // asked with unsigned numbers: a place and the box's start can be further
 // apart than an int says. Those same unsigned numbers are where the cell is
-// in the box, and nothing subtracts the two again as ints: with a place
-// that's written as numbers ('cells[3, 1]'), OpenGL 3.3 on an NVIDIA driver
-// then read another pixel than the one asked for, past the texture's first
-// row (pass 18 of platform/tests/shaders.tide reads cells so).
+// in the box, and nothing subtracts the two again as ints (with a place
+// that's written as numbers, 'cells[3, 1]', OpenGL 3.3 on an NVIDIA driver
+// read another pixel than the one asked for when it did).
 static void need_data(emit *em, const int texture, const type element, const int dims)
 {
     const bool grid = dims > 0;
     if (texture < 0 || em->lists[texture]) return;
     em->lists[texture] = true;
-    const bool wgsl = em->l == WGSL;
     // Only the parts of an element that the game's code reads are in the texture (shader_leaves)
     const bool *leaves = shader_texture_leaves(&em->sh->textures.items[texture]);
     int floats = 0, ints = 0, leaf = 0;
     shader_part_words(element, leaves, &leaf, &floats, &ints);
     const int words = floats + ints;
     const int stride = data_stride(words), pixels = words == 0 ? 0 : stride < 4 ? 1 : stride / 4;
-    if (!wgsl && pixels && stride == 1) need(em, H_INT4_LANE);
     const int count_at = em->sh->textures.items[texture].count_at;
     sb text = {0};
     sb *const out = em->o;
     em->o = &text;
     const char *t = ty(em, element);
-    // One initialized return value avoids FXC's false uninitialized-struct
-    // warning when a bounded read is called from a loop with continue.
-    sb initial = {0};
-    if (!wgsl) {
-        em->o = &initial;
-        sb_printf(&initial, "    %s tide_result = ", t);
-        put_zeros(em, element);
-        sb_put(&initial, ";\n");
-        em->o = &text;
-    }
     if (grid) {
-        const char *vec = dims == 3 ? (wgsl ? "vec3i" : "ivec3") : (wgsl ? "vec2i" : "ivec2");
-        const char *whole = wgsl ? "u32" : "uint";
-        if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: %s) -> %s {\n    let tide_o = ", texture, vec, t);
-        else sb_printf(&text, "%s tide_list%d(%s tide_i) {\n%s    %s tide_o = ", t, texture, vec, initial.data, vec);
+        const char *vec = dims == 3 ? "vec3i" : "vec2i";
+        sb_printf(&text, "fn tide_list%d(tide_i: %s) -> %s {\n    let tide_o = ", texture, vec, t);
         put_words(em, 'v', count_at + dims, dims, vec);
-        if (wgsl) sb_put(&text, ";\n    let tide_e = ");
-        else sb_printf(&text, ";\n    %s tide_e = ", vec);
+        sb_put(&text, ";\n    let tide_e = ");
         put_words(em, 'v', count_at + 2 * dims, dims, vec);
         sb_put(&text, ";\n");
         for (int a = 0; a < dims; a++) {
             const char axis = "xyz"[a];
-            sb_printf(&text, "    %s tide_%c = %s(tide_i.%c) - %s(tide_o.%c);\n", wgsl ? "let" : "uint", axis, whole, axis, whole, axis);
+            sb_printf(&text, "    let tide_%c = u32(tide_i.%c) - u32(tide_o.%c);\n", axis, axis, axis);
         }
-        sb_put(&text, wgsl ? "    if (" : "    if (!(");
+        sb_put(&text, "    if (");
         for (int a = 0; a < dims; a++) {
             const char axis = "xyz"[a];
-            sb_printf(&text, "%stide_i.%c < tide_o.%c || tide_%c >= %s(tide_e.%c)", a ? " || " : "", axis, axis, axis, whole, axis);
+            sb_printf(&text, "%stide_i.%c < tide_o.%c || tide_%c >= u32(tide_e.%c)", a ? " || " : "", axis, axis, axis, axis);
         }
     } else {
-        if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= ", texture, t);
-        else sb_printf(&text, "%s tide_list%d(int tide_i) {\n%s    if (!(tide_i < 0 || tide_i >= ", t, texture, initial.data);
+        sb_printf(&text, "fn tide_list%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= ", texture, t);
         put_word(em, 'v', count_at);
     }
-    if (wgsl) {
-        sb_put(&text, ") {\n        return ");
-        put_zeros(em, element);
-        sb_put(&text, ";\n    }\n");
-    } else sb_put(&text, ")) {\n");
+    sb_put(&text, ") {\n        return ");
+    put_zeros(em, element);
+    sb_put(&text, ";\n    }\n");
     if (pixels) { // Nothing of it is read, where the code only counts its elements, or asks a grid's size
-        const char *number = wgsl ? "let" : "int";
-        const char *whole_int = wgsl ? "i32" : "int";
-        sb_printf(&text, "    %s tide_word = %s%s * %d;\n    %s tide_first = tide_word >> %s;\n", number, grid ? whole_int : "",
-                  grid ? "(tide_x)" : "tide_i", stride, number, wgsl ? "2u" : "2");
+        sb_printf(&text, "    let tide_word = %s%s * %d;\n    let tide_first = tide_word >> 2u;\n", grid ? "i32" : "",
+                  grid ? "(tide_x)" : "tide_i", stride);
         if (dims == 3) { // Its layers side by side, then under each other
-            sb_printf(&text, "    %s tide_layer = %s(tide_z);\n    %s tide_across = ", number, whole_int, number);
+            sb_put(&text, "    let tide_layer = i32(tide_z);\n    let tide_across = ");
             put_word(em, 'v', count_at + 9);
-            sb_printf(&text, ";\n    %s tide_left = (tide_layer %% tide_across) * ((tide_e.x * %d + 3) >> %s);\n"
-                             "    %s tide_row = (tide_layer / tide_across) * tide_e.y + %s(tide_y);\n",
-                      number, stride, wgsl ? "2u" : "2", number, whole_int);
+            sb_printf(&text, ";\n    let tide_left = (tide_layer %% tide_across) * ((tide_e.x * %d + 3) >> 2u);\n"
+                             "    let tide_row = (tide_layer / tide_across) * tide_e.y + i32(tide_y);\n",
+                      stride);
         } else if (grid) {
-            sb_printf(&text, "    %s tide_row = %s(tide_y);\n", number, whole_int);
+            sb_put(&text, "    let tide_row = i32(tide_y);\n");
         }
     }
     for (int k = 0; k < pixels; k++) {
@@ -2312,23 +2208,19 @@ static void need_data(emit *em, const int texture, const type element, const int
         // A list's rows are TIDE_LIST_DATA_ACROSS pixels; a grid's are its own
         if (dims == 3) snprintf(at, sizeof at, "tide_left + tide_first + %d, tide_row", k);
         else if (grid) snprintf(at, sizeof at, "tide_first + %d, tide_row", k);
-        else snprintf(at, sizeof at, "(tide_first + %d) & 1023, (tide_first + %d) >> %s", k, k, wgsl ? "10u" : "10");
-        if (wgsl) sb_printf(&text, "    let %s = textureLoad(pixels%d, vec2i(%s), 0);\n", name, texture, at);
-        else sb_printf(&text, "    ivec4 %s = texelFetch(pixels%d, ivec2(%s), 0);\n", name, texture, at);
+        else snprintf(at, sizeof at, "(tide_first + %d) & 1023, (tide_first + %d) >> 10u", k, k);
+        sb_printf(&text, "    let %s = textureLoad(pixels%d, vec2i(%s), 0);\n", name, texture, at);
         if (stride < 4) { // Several to a pixel: this one's ints, from where it starts in it
-            if (wgsl) sb_printf(&text, "    let tide_q0 = vec4i(tide_r[tide_word & 3], %s, 0, 0);\n",
-                                stride == 2 ? "tide_r[(tide_word & 3) + 1]" : "0");
-            // Static lanes avoid ANGLE's dynamic-vector-index emulation warning.
-            else if (stride == 2) sb_put(&text, "    ivec4 tide_q0 = (tide_word & 2) == 0 ? ivec4(tide_r.xy, 0, 0) : ivec4(tide_r.zw, 0, 0);\n");
-            else sb_put(&text, "    ivec4 tide_q0 = ivec4(tide_int4_lane(tide_r, tide_word & 3), 0, 0, 0);\n");
+            sb_printf(&text, "    let tide_q0 = vec4i(tide_r[tide_word & 3], %s, 0, 0);\n",
+                      stride == 2 ? "tide_r[(tide_word & 3) + 1]" : "0");
         }
-        if (k * 4 < floats) sb_printf(&text, wgsl ? "    let tide_p%d = bitcast<vec4f>(tide_q%d);\n" : "    vec4 tide_p%d = intBitsToFloat(tide_q%d);\n", k, k);
+        if (k * 4 < floats) sb_printf(&text, "    let tide_p%d = bitcast<vec4f>(tide_q%d);\n", k, k);
     }
-    sb_put(&text, wgsl ? "    return " : "    tide_result = ");
+    sb_put(&text, "    return ");
     int f = 0, n = floats;
     leaf = 0;
     put_part(em, element, 'p', 'q', &f, &n, leaves, &leaf);
-    sb_put(&text, wgsl ? ";\n}\n\n" : ";\n    }\n    return tide_result;\n}\n\n");
+    sb_put(&text, ";\n}\n\n");
     em->o = out;
     sb_put(&em->functions, text.data);
 }
@@ -2355,7 +2247,6 @@ static void need_find(emit *em, const data_ref *d)
     if (em->finds[texture]) return;
     em->finds[texture] = true;
     need(em, H_HASH1);
-    const bool wgsl = em->l == WGSL;
     // Where an entry's key is among its words: its ints come after its floats, which are all its value's, and the
     // key is the first of them. Of the value, only the parts that are read are there (need_data)
     int floats = 0, ints = 0, leaf = 0;
@@ -2365,27 +2256,22 @@ static void need_find(emit *em, const data_ref *d)
     sb text = {0};
     sb *const out = em->o;
     em->o = &text;
-    const char *let = wgsl ? "let" : "int", *var = wgsl ? "var" : "int", *two = wgsl ? "2u" : "2";
-    if (wgsl) sb_printf(&text, "fn tide_find%d(tide_key: i32) -> i32 {\n", texture);
-    else sb_printf(&text, "int tide_find%d(int tide_key) {\n", texture);
-    sb_printf(&text, "    %s tide_slots = ", let);
+    sb_printf(&text, "fn tide_find%d(tide_key: i32) -> i32 {\n", texture);
+    sb_put(&text, "    let tide_slots = ");
     put_word(em, 'v', count_at + 1);
-    sb_printf(&text, ";\n    if (tide_slots <= 0) {\n        return -1;\n    }\n    %s tide_base = ((", let);
+    sb_put(&text, ";\n    if (tide_slots <= 0) {\n        return -1;\n    }\n    let tide_base = ((");
     put_word(em, 'v', count_at);
-    sb_printf(&text, " * %d + 3) >> %s) << %s;\n", stride, two, two);
-    sb_printf(&text, "    %s tide_s = tide_hash1(tide_key) & (tide_slots - 1);\n", var);
-    sb_put(&text, wgsl ? "    for (var tide_n: i32 = 0; tide_n < tide_slots; tide_n++) {\n"
-                       : "    for (int tide_n = 0; tide_n < tide_slots; tide_n++) {\n");
-    const char *fetch = wgsl ? "        let %s = textureLoad(pixels%d, vec2i((%s >> 2u) & 1023, %s >> 12u), 0);\n"
-                             : "        ivec4 %s = texelFetch(pixels%d, ivec2((%s >> 2) & 1023, %s >> 12), 0);\n";
-    sb_printf(&text, "        %s tide_w = tide_base + tide_s;\n", let);
+    sb_printf(&text, " * %d + 3) >> 2u) << 2u;\n", stride);
+    sb_put(&text, "    var tide_s = tide_hash1(tide_key) & (tide_slots - 1);\n");
+    sb_put(&text, "    for (var tide_n: i32 = 0; tide_n < tide_slots; tide_n++) {\n");
+    const char *fetch = "        let %s = textureLoad(pixels%d, vec2i((%s >> 2u) & 1023, %s >> 12u), 0);\n";
+    sb_put(&text, "        let tide_w = tide_base + tide_s;\n");
     sb_printf(&text, fetch, "tide_slot", texture, "tide_w", "tide_w");
-    if (!wgsl) need(em, H_INT4_LANE);
-    sb_printf(&text, wgsl ? "        %s tide_e = tide_slot[tide_w & 3];\n" : "        %s tide_e = tide_int4_lane(tide_slot, tide_w & 3);\n", let);
+    sb_put(&text, "        let tide_e = tide_slot[tide_w & 3];\n");
     sb_put(&text, "        if (tide_e == 0) {\n            return -1;\n        }\n");
-    sb_printf(&text, "        %s tide_k = (tide_e - 1) * %d + %d;\n", let, stride, key_word);
+    sb_printf(&text, "        let tide_k = (tide_e - 1) * %d + %d;\n", stride, key_word);
     sb_printf(&text, fetch, "tide_held", texture, "tide_k", "tide_k");
-    sb_put(&text, wgsl ? "        if (tide_held[tide_k & 3] == tide_key) {\n" : "        if (tide_int4_lane(tide_held, tide_k & 3) == tide_key) {\n");
+    sb_put(&text, "        if (tide_held[tide_k & 3] == tide_key) {\n");
     sb_put(&text, "            return tide_e - 1;\n        }\n"
                   "        tide_s = (tide_s + 1) & (tide_slots - 1);\n    }\n    return -1;\n}\n\n");
     em->o = out;
@@ -2401,18 +2287,16 @@ static void need_try(emit *em, const data_ref *d)
     need_find(em, d);
     if (em->tries[texture]) return;
     em->tries[texture] = true;
-    const bool wgsl = em->l == WGSL;
     const type value = d->map->fields.items[1].type;
     sb text = {0};
     sb *const out = em->o;
     em->o = &text;
     const char *t = ty(em, value);
-    if (wgsl) sb_printf(&text, "fn tide_try%d(tide_key: i32, tide_value: ptr<function, %s>) -> bool {\n    let", texture, t);
-    else sb_printf(&text, "bool tide_try%d(int tide_key, inout %s tide_value) {\n    int", texture, t);
-    sb_printf(&text, " tide_e = tide_find%d(tide_key);\n    if (tide_e < 0) {\n        %stide_value = ", texture, wgsl ? "*" : "");
+    sb_printf(&text, "fn tide_try%d(tide_key: i32, tide_value: ptr<function, %s>) -> bool {\n    let", texture, t);
+    sb_printf(&text, " tide_e = tide_find%d(tide_key);\n    if (tide_e < 0) {\n        *tide_value = ", texture);
     put_default(em, value);
-    sb_printf(&text, ";\n        return false;\n    }\n    %stide_value = tide_list%d(tide_e).%s;\n    return true;\n}\n\n",
-              wgsl ? "*" : "", texture, field_name(&d->map->entry->fields.items[1]));
+    sb_printf(&text, ";\n        return false;\n    }\n    *tide_value = tide_list%d(tide_e).%s;\n    return true;\n}\n\n",
+              texture, field_name(&d->map->entry->fields.items[1]));
     em->o = out;
     sb_put(&em->functions, text.data);
 }
@@ -2459,7 +2343,7 @@ static void ex_map_call(emit *em, const expr *e)
     need_try(em, &data);
     sb_printf(em->o, "tide_try%d(", t);
     ex_as(em, e->args.items[0], key);
-    const bool address = em->l == WGSL && !(to->bind == BIND_PARAM && is_pointer(em, to->param));
+    const bool address = !(to->bind == BIND_PARAM && is_pointer(to->param));
     sb_printf(em->o, ", %s%s)", address ? "&" : "", local_name(to->name));
 }
 
@@ -2483,18 +2367,8 @@ static int need_array(emit *em, const decl *array)
     sb *const out = em->o;
     em->o = &text;
     const char *a = ty(em, whole), *t = ty(em, element);
-    if (em->l == WGSL) {
-        sb_printf(&text, "fn tide_el%d(tide_a: %s, tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= %d) {\n        return %s();\n"
-                         "    }\n    var tide_all = tide_a;\n    return tide_all[tide_i];\n}\n\n", n, a, t, array->array_length, t);
-    } else {
-        sb_printf(&text, "%s tide_el%d(%s tide_a, int tide_i) {\n    if (tide_i < 0 || tide_i >= %d) {\n        return ", t, n, a,
-                  array->array_length);
-        put_zeros(em, element);
-        // The place is kept inside the array where it's read too: a compiler that puts the function where it's
-        // called, with a number for the place, refuses one past the ends though the line above keeps it from running
-        sb_printf(&text, ";\n    }\n    return tide_a[clamp(tide_i, 0, %d)]%s;\n}\n\n", array->array_length - 1,
-                  in_rows(em, element) ? ".v" : "");
-    }
+    sb_printf(&text, "fn tide_el%d(tide_a: %s, tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= %d) {\n        return %s();\n"
+                     "    }\n    var tide_all = tide_a;\n    return tide_all[tide_i];\n}\n\n", n, a, t, array->array_length, t);
     em->o = out;
     sb_put(&em->functions, text.data);
     return n;
@@ -2511,11 +2385,7 @@ static int need_pick(emit *em, const type t)
     const int n = em->picks.count - 1;
     const char *name = ty(em, t);
     sb text = {0};
-    if (em->l == WGSL) {
-        sb_printf(&text, "fn tide_pick%d(tide_c: bool, tide_a: %s, tide_b: %s) -> %s {\n", n, name, name, name);
-    } else {
-        sb_printf(&text, "%s tide_pick%d(bool tide_c, %s tide_a, %s tide_b) {\n", name, n, name, name);
-    }
+    sb_printf(&text, "fn tide_pick%d(tide_c: bool, tide_a: %s, tide_b: %s) -> %s {\n", n, name, name, name);
     sb_put(&text, "    if (tide_c) {\n        return tide_a;\n    }\n    return tide_b;\n}\n\n");
     sb_put(&em->functions, text.data);
     return n;
@@ -2532,11 +2402,9 @@ static void ex_array_index(emit *em, const expr *e)
         em->raw = 0; // What says which element is read like anything else
         const bool folds = e->lhs->kind != E_INT && is_const(e->lhs);
         if (folds) em->defuse++;
-        const bool kept = folds && em->l == GLSL; // A constant past the ends is refused there, in code that never runs too
-        sb_put(em->o, kept ? "[clamp(" : "[");
+        sb_put(em->o, "[");
         ex_as(em, e->lhs, (type){TY_INT, NULL});
-        if (kept) sb_printf(em->o, ", 0, %d)", array.decl->array_length - 1);
-        sb_put(em->o, in_rows(em, array.decl->fields.items[0].type) ? "].v" : "]");
+        sb_put(em->o, "]");
         if (folds) em->defuse--;
         em->raw = raw;
         return;
@@ -2664,15 +2532,14 @@ static const char *copy_name(const int arg)
     return local_name(str_from(name));
 }
 
-static bool is_pointer(const emit *em, const param *p)
+static bool is_pointer(const param *p)
 {
-    return em->l == WGSL && p->function_param && p->mode == PARAM_MUT;
+    return p->function_param && p->mode == PARAM_MUT;
 }
 
 static void put_self(emit *em)
 {
-    const bool pointer = em->l == WGSL && em->code->is_mut_method;
-    sb_put(em->o, pointer ? "(*tide_self)" : "tide_self");
+    sb_put(em->o, em->code->is_mut_method ? "(*tide_self)" : "tide_self");
 }
 
 static void ex_name(emit *em, const expr *e)
@@ -2733,7 +2600,7 @@ static void ex_name(emit *em, const expr *e)
             type_fits(em, p->type, e->at);
             return;
         }
-        sb_printf(em->o, is_pointer(em, p) ? "(*%s)" : "%s", local_name(p->name));
+        sb_printf(em->o, is_pointer(p) ? "(*%s)" : "%s", local_name(p->name));
         return;
     }
     case BIND_FIELD:
@@ -2807,13 +2674,10 @@ static void ex_static(emit *em, const expr *e)
 // this.position and the like: what the GPU says of the pixel being drawn.
 static void ex_pixel(emit *em, const expr *e)
 {
-    const bool wgsl = em->l == WGSL;
-    if (str_eq_c(e->member, "position")) {
-        // The screen's pixels from the top left, as the GUI's: OpenGL counts from the bottom
-        if (wgsl) sb_put(em->o, "(tide_at.xy / tide_block.tide_screen.xy)");
-        else sb_put(em->o, "(vec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y) / tide_screen.xy)");
+    if (str_eq_c(e->member, "position")) { // The screen's pixels from the top left, as the GUI's
+        sb_put(em->o, "(tide_at.xy / tide_block.tide_screen.xy)");
     } else if (str_eq_c(e->member, "depth")) {
-        sb_put(em->o, wgsl ? "tide_at.z" : "gl_FragCoord.z");
+        sb_put(em->o, "tide_at.z");
     } else {
         sb_put(em->o, "tide_world");
     }
@@ -2833,13 +2697,13 @@ static void ex_placed(emit *em)
         return;
     }
     const bool flat = position->type.kind != TY_FLOAT3; // A 2D mesh: its camera has its transform in it
-    if (flat) sb_printf(em->o, "(%stide_camera * ", em->l == WGSL ? "tide_block." : "");
+    if (flat) sb_put(em->o, "(tide_block.tide_camera * ");
     else sb_put(em->o, "tide_project(");
     if (!flat) {
         put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
         sb_put(em->o, ", ");
     }
-    sb_printf(em->o, is_pointer(em, vertex) ? "%s((*%s).%s, " : "%s(%s.%s, ", float_ty(em, 4), local_name(vertex->name),
+    sb_printf(em->o, is_pointer(vertex) ? "%s((*%s).%s, " : "%s(%s.%s, ", float_ty(em, 4), local_name(vertex->name),
               field_name(position));
     sb_put(em->o, flat ? "0.0, 1.0))" : "1.0))");
 }
@@ -2918,8 +2782,7 @@ static void ex_member(emit *em, const expr *e)
                     sb *const out = em->o;
                     sb made = {0};
                     em->o = &made;
-                    if (em->l == WGSL) sb_printf(&made, "    var tide_array%d: %s = ", at, ty(em, e->type));
-                    else sb_printf(&made, "    %s tide_array%d = ", ty(em, e->type), at);
+                    sb_printf(&made, "    var tide_array%d: %s = ", at, ty(em, e->type));
                     put_bound(em, p->type.decl, e->field, e->type);
                     sb_put(&made, ";\n");
                     em->o = out;
@@ -2941,7 +2804,7 @@ static void ex_member(emit *em, const expr *e)
             diag_note("a vert can read it; for the pixels, keep it as a float in the vertex");
             return;
         }
-        sb_printf(em->o, is_pointer(em, obj->param) ? "(*%s).%s" : "%s.%s", local_name(obj->param->name), field_name(e->field));
+        sb_printf(em->o, is_pointer(obj->param) ? "(*%s).%s" : "%s.%s", local_name(obj->param->name), field_name(e->field));
         return;
     }
     const type ot = obj->type;
@@ -3046,7 +2909,6 @@ static const char *op_text(const tok_kind op)
 static void put_binary(emit *em, const tok_kind op, const expr *l, const expr *r, const type result, const loc at)
 {
     const type lt = l->type, rt = r->type;
-    const bool wgsl = em->l == WGSL;
     const bool risky = op == T_SLASH || op == T_PERCENT || op == T_SHL || op == T_SHR;
     const bool all_const = is_const(l) && is_const(r);
     if (all_const) em->defuse++;
@@ -3061,7 +2923,7 @@ static void put_binary(emit *em, const tok_kind op, const expr *l, const expr *r
         ex_as(em, l, floats ? as_float(lt) : lt);
         sb_printf(em->o, " %s ", op_text(op));
         ex_as(em, r, floats ? as_float(rt) : rt);
-    } else if (matrix_dim(lt) && op == T_SLASH && wgsl) { // WGSL divides no matrix
+    } else if (matrix_dim(lt) && op == T_SLASH) { // WGSL divides no matrix
         ex(em, l);
         sb_put(em->o, " * (1.0 / ");
         ex_as(em, r, (type){TY_FLOAT, NULL});
@@ -3070,9 +2932,9 @@ static void put_binary(emit *em, const tok_kind op, const expr *l, const expr *r
         ex(em, l);
         sb_printf(em->o, " %s ", op_text(op));
         if (is_const(r) && !all_const) em->defuse++;
-        if (wgsl) sb_put(em->o, "u32(");
+        sb_put(em->o, "u32(");
         ex(em, r);
-        if (wgsl) sb_put(em->o, ")");
+        sb_put(em->o, ")");
         if (is_const(r) && !all_const) em->defuse--;
     } else {
         // Numbers, vectors, matrices and colors: ints become floats beside a float
@@ -3088,22 +2950,21 @@ static void put_binary(emit *em, const tok_kind op, const expr *l, const expr *r
     (void)at;
 }
 
-// Tide's Math functions that are the shader languages' own.
+// Tide's Math functions that are WGSL's own.
 static const struct {
     const char *name;
-    const char *glsl;
     const char *wgsl;
 } same_math[] = {
-    {"Abs", "abs", "abs"}, {"Sign", "sign", "sign"}, {"Min", "min", "min"}, {"Max", "max", "max"},
-    {"Floor", "floor", "floor"}, {"Ceil", "ceil", "ceil"}, {"Round", "roundEven", "round"}, {"Trunc", "trunc", "trunc"},
-    {"Frac", "fract", "fract"}, {"Sqrt", "sqrt", "sqrt"}, {"Rsqrt", "inversesqrt", "inverseSqrt"},
-    {"Radians", "radians", "radians"}, {"Degrees", "degrees", "degrees"}, {"Sin", "sin", "sin"}, {"Cos", "cos", "cos"},
-    {"Tan", "tan", "tan"}, {"Asin", "asin", "asin"}, {"Acos", "acos", "acos"}, {"Atan", "atan", "atan"},
-    {"Exp", "exp", "exp"}, {"Exp2", "exp2", "exp2"}, {"Log", "log", "log"}, {"Log2", "log2", "log2"},
-    {"Step", "step", "step"}, {"Lerp", "mix", "mix"},
-    {"Dot", "dot", "dot"}, {"Length", "length", "length"}, {"Distance", "distance", "distance"},
-    {"Reflect", "reflect", "reflect"}, {"Cross", "cross", "cross"},
-    {"Transpose", "transpose", "transpose"}, {"Determinant", "determinant", "determinant"},
+    {"Abs", "abs"}, {"Sign", "sign"}, {"Min", "min"}, {"Max", "max"},
+    {"Floor", "floor"}, {"Ceil", "ceil"}, {"Round", "round"}, {"Trunc", "trunc"},
+    {"Frac", "fract"}, {"Sqrt", "sqrt"}, {"Rsqrt", "inverseSqrt"},
+    {"Radians", "radians"}, {"Degrees", "degrees"}, {"Sin", "sin"}, {"Cos", "cos"},
+    {"Tan", "tan"}, {"Asin", "asin"}, {"Acos", "acos"}, {"Atan", "atan"},
+    {"Exp", "exp"}, {"Exp2", "exp2"}, {"Log", "log"}, {"Log2", "log2"},
+    {"Step", "step"}, {"Lerp", "mix"},
+    {"Dot", "dot"}, {"Length", "length"}, {"Distance", "distance"},
+    {"Reflect", "reflect"}, {"Cross", "cross"},
+    {"Transpose", "transpose"}, {"Determinant", "determinant"},
 };
 
 // Math's functions on a quaternion that are a function of the engine's own, of the same arguments.
@@ -3171,7 +3032,6 @@ static void put_family_call(emit *em, const expr *e, const int family, const int
 // what the GPU has no way to do: a long's hash.
 static void ex_math(emit *em, const expr *e)
 {
-    const bool wgsl = em->l == WGSL;
     const type first = e->arg_want.count ? e->arg_want.items[0] : (type){TY_ERROR, NULL};
     const bool floats = type_is_float_based(first) || first.kind == TY_COLOR; // A color is four floats here
     const bool quaternion = first.kind == TY_QUATERNION;
@@ -3281,17 +3141,13 @@ static void ex_math(emit *em, const expr *e)
         else sb_put(em->o, "0");
         sb_put(em->o, ")");
     } else if (str_eq_c(e->name, "AsInt") || str_eq_c(e->name, "AsFloat")) {
-        if (em->l == GLSL) sb_put(em->o, str_eq_c(e->name, "AsInt") ? "floatBitsToInt(" : "intBitsToFloat(");
-        else sb_printf(em->o, "bitcast<%s>(", ty(em, e->type));
+        sb_printf(em->o, "bitcast<%s>(", ty(em, e->type));
         put_arg(em, e, 0);
         sb_put(em->o, ")");
     } else if (str_eq_c(e->name, "Hash")) { // xxHash of the same integer or float bits as the CPU
         need(em, H_HASH1 + type_dim(first) - 1);
         sb_printf(em->o, "tide_hash%d(", type_dim(first));
-        if (type_is_float_based(first)) {
-            if (em->l == GLSL) sb_put(em->o, "floatBitsToInt(");
-            else sb_printf(em->o, "bitcast<%s>(", ty(em, vector_type(false, type_dim(first))));
-        }
+        if (type_is_float_based(first)) sb_printf(em->o, "bitcast<%s>(", ty(em, vector_type(false, type_dim(first))));
         put_arg(em, e, 0);
         if (type_is_float_based(first)) sb_put(em->o, ")");
         sb_put(em->o, ")");
@@ -3311,7 +3167,7 @@ static void ex_math(emit *em, const expr *e)
         sb_put(em->o, " * ");
         put_arg(em, e, 1);
         sb_put(em->o, ")");
-    } else if (str_eq_c(e->name, "Inverse") && !quaternion) { // WGSL has none, and GLSL's says nothing of its order
+    } else if (str_eq_c(e->name, "Inverse") && !quaternion) { // WGSL has none
         char name[32];
         snprintf(name, sizeof name, "tide_inverse%d", matrix_dim(first));
         put_helper_call(em, e, H_INVERSE2 + matrix_dim(first) - 2, name);
@@ -3330,7 +3186,7 @@ static void ex_math(emit *em, const expr *e)
             helper = quaternion_math[i].helper;
         }
         for (size_t i = 0; !fn && i < sizeof same_math / sizeof same_math[0]; i++) {
-            if (str_eq_c(e->name, same_math[i].name)) fn = wgsl ? same_math[i].wgsl : same_math[i].glsl;
+            if (str_eq_c(e->name, same_math[i].name)) fn = same_math[i].wgsl;
         }
         if (!fn) { // A function Math gains goes here too, or says why it can't
             em->defuse--;
@@ -3405,11 +3261,9 @@ static void ex_construct(emit *em, const expr *e)
             ex(em, n);
             return;
         }
-        sb_put(em->o, em->l == WGSL ? "select(" : "((");
-        if (em->l == WGSL) {
-            ex(em, n);
-            sb_put(em->o, ", 0, (");
-        }
+        sb_put(em->o, "select(");
+        ex(em, n);
+        sb_put(em->o, ", 0, (");
         ex(em, n);
         sb_put(em->o, " < 0 || ");
         ex(em, n);
@@ -3417,11 +3271,7 @@ static void ex_construct(emit *em, const expr *e)
         ex(em, n);
         sb_put(em->o, " >= 55296 && ");
         ex(em, n);
-        sb_put(em->o, em->l == WGSL ? " < 57344)))" : " < 57344)) ? 0 : ");
-        if (em->l != WGSL) {
-            ex(em, n);
-            sb_put(em->o, ")");
-        }
+        sb_put(em->o, " < 57344)))");
         return;
     }
     case CTOR_ENUM: { // An enum is an int here whatever it's stored as: one stored as less keeps its low bits, as on the CPU
@@ -3974,25 +3824,19 @@ static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampli
         em->defuse = 0;
         em->statement = NULL;
         em->lifting++;
-        sb_printf(em->o, em->l == WGSL ? "    let tide_uv%d: vec3f = " : "    vec3 tide_uv%d = ", at);
+        sb_printf(em->o, "    let tide_uv%d: vec3f = ", at);
         ex_as(em, e->args.items[0], way);
-        if (em->l == WGSL) {
-            sb_printf(em->o, ";\n    let tide_dx%d: vec3f = dpdx(tide_uv%d);\n    let tide_dy%d: vec3f = dpdy(tide_uv%d);\n", at, at, at, at);
-        } else {
-            sb_printf(em->o, ";\n    vec3 tide_dx%d = dFdx(tide_uv%d);\n    vec3 tide_dy%d = dFdy(tide_uv%d);\n", at, at, at, at);
-        }
+        sb_printf(em->o, ";\n    let tide_dx%d: vec3f = dpdx(tide_uv%d);\n    let tide_dy%d: vec3f = dpdy(tide_uv%d);\n", at, at, at, at);
         em->lifting--;
         em->o = out;
         em->defuse = defuse;
         em->statement = statement;
-        if (em->l == WGSL) sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
-        else sb_printf(em->o, "textureGrad(pixels%d, ", slot);
+        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
         ex_as(em, e->args.items[0], way);
         sb_printf(em->o, ", tide_dx%d, tide_dy%d))", at, at);
         return;
     }
-    if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
-    else sb_printf(em->o, "textureLod(pixels%d, ", slot);
+    sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     ex_as(em, e->args.items[0], way);
     sb_put(em->o, ", 0.0))");
 }
@@ -4086,14 +3930,11 @@ static void ex_sample(emit *em, const expr *e)
     if (read == READ_COMPARE) {
         // What it's compared with is between the near plane and the far limit, as what's stored is:
         // past them, GPUs differ in what they make of it
-        if (em->l == WGSL) sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", slot, slot);
-        // Explicit zero gradients keep ANGLE's D3D11 translation at level
-        // zero too; textureLod on a shadow sampler becomes implicit SampleCmp.
-        else sb_printf(em->o, "textureGrad(pixels%d, vec3(", slot);
+        sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", slot, slot);
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
         sb_put(em->o, ", clamp(");
         ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
-        sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), vec2(0.0), vec2(0.0))");
+        sb_put(em->o, ", 0.0, 1.0))");
         return;
     }
     // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
@@ -4103,8 +3944,7 @@ static void ex_sample(emit *em, const expr *e)
         sb_put(em->o, "tide_straight(");
     }
     if (gradients) {
-        if (em->l == WGSL) sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
-        else sb_printf(em->o, "textureGrad(pixels%d, ", slot);
+        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
         for (int i = 0; i < 3; i++) {
             if (i) sb_put(em->o, ", ");
             ex_as(em, e->args.items[i], (type){TY_FLOAT2, NULL});
@@ -4122,54 +3962,43 @@ static void ex_sample(emit *em, const expr *e)
         em->defuse = 0;
         em->statement = NULL;
         em->lifting++;
-        sb_printf(em->o, em->l == WGSL ? "    let tide_uv%d: vec2f = " : "    vec2 tide_uv%d = ", at);
+        sb_printf(em->o, "    let tide_uv%d: vec2f = ", at);
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
-        if (em->l == WGSL) {
-            sb_printf(em->o, ";\n    let tide_dx%d: vec2f = dpdx(tide_uv%d);\n    let tide_dy%d: vec2f = dpdy(tide_uv%d);\n", at, at, at, at);
-        } else {
-            sb_printf(em->o, ";\n    vec2 tide_dx%d = dFdx(tide_uv%d);\n    vec2 tide_dy%d = dFdy(tide_uv%d);\n", at, at, at, at);
-        }
+        sb_printf(em->o, ";\n    let tide_dx%d: vec2f = dpdx(tide_uv%d);\n    let tide_dy%d: vec2f = dpdy(tide_uv%d);\n", at, at, at, at);
         em->lifting--;
         em->o = out;
         em->defuse = defuse;
         em->statement = statement;
-        if (em->l == WGSL) sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
-        else sb_printf(em->o, "textureGrad(pixels%d, ", slot);
+        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
         sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
         return;
     }
     if (em->lifting && em->root->is_frag && read == READ_COLOR && (filter == 2 || (!filter_said && em->prog->names_trilinear))) {
         // Worked out as the frag starts (ex_derivative), outside any branch: the GPU picks its smaller images itself
-        if (em->l == WGSL) sb_printf(em->o, "textureSample(pixels%d, sampler%d, ", slot, slot);
-        else sb_printf(em->o, "texture(pixels%d, ", slot);
+        sb_printf(em->o, "textureSample(pixels%d, sampler%d, ", slot, slot);
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
         sb_put(em->o, straight ? "))" : ")");
         return;
     }
-    if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
-    else sb_printf(em->o, "textureLod(pixels%d, ", slot);
+    sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
-    // A depth is one number: WGSL gives it as that, at a level that's an int, and GLSL as a color's red
-    sb_put(em->o, straight ? ", 0.0))" : read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
+    // A depth is one number, which WGSL reads at a level that's an int
+    sb_put(em->o, straight ? ", 0.0))" : read == READ_COLOR ? ", 0.0)" : ", 0)");
 }
 
 // this.Ddx(v), this.Ddy(v) and this.Fwidth(v), in a frag: a GPU says how fast
 // a value changes from one pixel to the next only outside branches and loops
-// (WGSL refuses the shader otherwise, and GLSL gives anything), and a frag's
+// (WGSL refuses the shader otherwise), and a frag's
 // code can be anywhere. So, as for a Sample between a texture's smaller
 // images, the frag works v out a first time as it starts and asks there
 // (`tide_d<n>`, collected in emit.grads), and the call is that answer. A v it
 // can't work out there is an error. Written while lifting, it's asked in place.
 static void ex_derivative(emit *em, const expr *e)
 {
-    // A pixel down is the next row as `this.position` counts them: WGSL's. OpenGL's rows go up in the window, and
-    // down in a target's pass, which it draws upside down: there `tide_gpu_height` (gpu_gl.c's) is above 0
-    const bool up = em->l != WGSL && str_eq_c(e->name, "Ddy");
-    const char *fn = str_eq_c(e->name, "Ddx") ? (em->l == WGSL ? "dpdx" : "dFdx")
-                   : str_eq_c(e->name, "Ddy") ? (em->l == WGSL ? "dpdy" : "((tide_gpu_height > 0 ? 1.0 : -1.0) * dFdy")
-                   : "fwidth";
-    const char *close = up ? "))" : ")";
+    // A pixel down is the next row as `this.position` counts them: WGSL's
+    const char *fn = str_eq_c(e->name, "Ddx") ? "dpdx" : str_eq_c(e->name, "Ddy") ? "dpdy" : "fwidth";
+    const char *close = ")";
     const expr *v = e->args.items[0];
     if (em->lifting) {
         sb_printf(em->o, "%s(", fn);
@@ -4194,8 +4023,7 @@ static void ex_derivative(emit *em, const expr *e)
     em->statement = NULL;
     em->lifting++;
     const char *t = ty(em, e->type);
-    if (em->l == WGSL) sb_printf(em->o, "    let tide_d%d: %s = %s(", at, t, fn);
-    else sb_printf(em->o, "    %s tide_d%d = %s(", t, at, fn);
+    sb_printf(em->o, "    let tide_d%d: %s = %s(", at, t, fn);
     ex_as(em, v, e->type);
     sb_printf(em->o, "%s;\n", close);
     em->lifting--;
@@ -4228,8 +4056,7 @@ static void refuse_given(emit *em, const expr *arg, const type t)
 }
 
 // A call of a function or method of the game's. A mut argument is the
-// caller's variable: GLSL takes it as it is (inout), and WGSL a pointer to a
-// whole variable, so what isn't one goes through a copy, which only a call
+// caller's variable: WGSL takes a pointer to a whole variable, so what isn't one goes through a copy, which only a call
 // that's a statement of its own can do.
 static void ex_user_call(emit *em, const expr *e)
 {
@@ -4300,17 +4127,12 @@ static void ex_user_call(emit *em, const expr *e)
         const expr *receiver = e->kind == E_METHOD ? e->object : NULL;
         first = false;
         if (!receiver) { // Another of its own type's methods: on the same value
-            const bool pointer = em->l == WGSL && em->code->is_mut_method;
             if (fn->is_mut_method) sb_put(em->o, "tide_self");
-            else sb_put(em->o, pointer ? "(*tide_self)" : "tide_self");
+            else sb_put(em->o, em->code->is_mut_method ? "(*tide_self)" : "tide_self");
         } else if (!fn->is_mut_method) {
             ex(em, receiver);
-        } else if (em->l == GLSL && !in_array(receiver)) {
-            ex(em, receiver);
-        } else if (em->l == GLSL && statement) {
-            sb_put(em->o, copy_name(-1));
         } else if (is_whole_variable(receiver)) {
-            const bool pointer = receiver->bind == BIND_PARAM && is_pointer(em, receiver->param);
+            const bool pointer = receiver->bind == BIND_PARAM && is_pointer(receiver->param);
             sb_printf(em->o, "%s%s", pointer ? "" : "&", local_name(receiver->name));
         } else if (statement) {
             sb_printf(em->o, "&%s", copy_name(-1));
@@ -4336,12 +4158,8 @@ static void ex_user_call(emit *em, const expr *e)
                    STR_ARG(p->name));
             diag_note("write the call on a line by itself, or have the function return the new value");
         }
-        if (em->l == GLSL && !in_array(arg)) {
-            ex(em, arg);
-        } else if (em->l == GLSL) {
-            sb_put(em->o, copy_name(i));
-        } else if (is_whole_variable(arg)) {
-            const bool pointer = arg->bind == BIND_PARAM && is_pointer(em, arg->param);
+        if (is_whole_variable(arg)) {
+            const bool pointer = arg->bind == BIND_PARAM && is_pointer(arg->param);
             sb_printf(em->o, "%s%s", pointer ? "" : "&", local_name(arg->name));
         } else {
             sb_printf(em->o, "&%s", copy_name(i));
@@ -4459,7 +4277,7 @@ static void ex_call(emit *em, const expr *e)
     case CALL_WORLD: what = "change lists or use the World: it reads fields of numbers, lists and maps, and samples grids"; break;
     case CALL_TEXT:
         if (e->object->type.kind == TY_COLOR && str_eq_c(e->name, "WithAlpha")) { // The color with that alpha
-            sb_put(em->o, em->l == WGSL ? "vec4f((" : "vec4((");
+            sb_put(em->o, "vec4f((");
             ex(em, e->object);
             sb_put(em->o, ").rgb, ");
             ex_as(em, e->args.items[0], (type){TY_FLOAT, NULL}); // An int's a float there, as on the CPU
@@ -4539,7 +4357,7 @@ static void ex(emit *em, const expr *e)
         // A number with a minus before it is that number, which no compiler folds into an error
         const bool folds = is_const(e->lhs) && !negated_literal(e);
         if (folds) em->defuse++;
-        if (e->op == T_MINUS && matrix_dim(e->type) && em->l == WGSL) { // WGSL negates no matrix
+        if (e->op == T_MINUS && matrix_dim(e->type)) { // WGSL negates no matrix
             sb_put(em->o, "(");
             ex(em, e->lhs);
             sb_put(em->o, " * -1.0)");
@@ -4552,11 +4370,11 @@ static void ex(emit *em, const expr *e)
         return;
     case E_CONDITIONAL:
         if (!type_fits(em, e->type, e->at)) return;
-        // WGSL's select picks between numbers, vectors and bools, and GLSL's '?:' not between arrays everywhere: a
-        // struct, a matrix or an array is picked by a function of its type. Both sides are worked out either way
-        // ...and so is one with a roll in it, whatever its type: select works both sides out and GLSL's '?:' one, and
-        // each in an order of its own. A function's arguments are worked out left to right in both, so the rolls a
-        // pixel makes there are the same numbers on every backend
+        // WGSL's select picks between numbers, vectors and bools: a struct, a matrix or an array is picked by a
+        // function of its type. Both sides are worked out either way
+        // ...and so is one with a roll in it, whatever its type: select works both sides out in an order of its
+        // own, and a function's arguments are worked out left to right, so the rolls a pixel makes there are the
+        // same numbers on every backend
         if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY || rolls_in(e, false, 0)) {
             sb_printf(em->o, "tide_pick%d(", need_pick(em, e->type));
             ex(em, e->cond);
@@ -4567,23 +4385,13 @@ static void ex(emit *em, const expr *e)
             sb_put(em->o, ")");
             return;
         }
-        if (em->l == WGSL) {
-            sb_put(em->o, "select(");
-            ex_as(em, e->rhs, e->type);
-            sb_put(em->o, ", ");
-            ex_as(em, e->lhs, e->type);
-            sb_put(em->o, ", ");
-            ex(em, e->cond);
-            sb_put(em->o, ")");
-        } else {
-            sb_put(em->o, "(");
-            ex(em, e->cond);
-            sb_put(em->o, " ? ");
-            ex_as(em, e->lhs, e->type);
-            sb_put(em->o, " : ");
-            ex_as(em, e->rhs, e->type);
-            sb_put(em->o, ")");
-        }
+        sb_put(em->o, "select(");
+        ex_as(em, e->rhs, e->type);
+        sb_put(em->o, ", ");
+        ex_as(em, e->lhs, e->type);
+        sb_put(em->o, ", ");
+        ex(em, e->cond);
+        sb_put(em->o, ")");
         return;
     case E_LITERAL: {
         const type t = e->type;
@@ -4657,9 +4465,7 @@ static void ex(emit *em, const expr *e)
             sb_printf(em->o, "%s(", ty(em, e->type));
             for (int i = 0; i < e->args.count; i++) {
                 if (i) sb_put(em->o, ", ");
-                const bool row = put_row(em, e->type.decl->fields.items[0].type);
                 ex_as(em, e->args.items[i], e->type.decl->fields.items[0].type);
-                if (row) sb_put(em->o, ")");
             }
             sb_put(em->o, ")");
             return;
@@ -4777,8 +4583,7 @@ static void st_var(emit *em, const stmt *s)
         return;
     }
     if (!type_fits(em, s->type, s->name_at.line ? s->name_at : s->at)) return;
-    if (em->l == WGSL) sb_printf(em->o, "var %s: %s = ", local_name(s->name), ty(em, s->type));
-    else sb_printf(em->o, "%s %s = ", ty(em, s->type), local_name(s->name));
+    sb_printf(em->o, "var %s: %s = ", local_name(s->name), ty(em, s->type));
     if (!s->value) {
         put_default(em, s->type);
         return;
@@ -4864,7 +4669,7 @@ static void st_assign(emit *em, const stmt *s, const bool statement)
     const int raw = em->raw; // The target is the place; what's stored is read like anything else
     em->raw = 0;
     // WGSL assigns one component at a time, not a swizzle of several
-    if (em->l == WGSL && target->kind == E_MEMBER && target->swizzle_len > 1) {
+    if (target->kind == E_MEMBER && target->swizzle_len > 1) {
         const int temp = em->temps++;
         sb_printf(em->o, "{ var tide_set%d: %s = ", temp, ty(em, target->type));
         put_assigned(em, s);
@@ -4887,17 +4692,16 @@ static void st_assign(emit *em, const stmt *s, const bool statement)
     if (statement) sb_put(em->o, ";\n");
 }
 
-// A call that's a statement: in WGSL, its mut arguments that aren't whole
-// variables go in through copies and come back out after it.
+// A call that's a statement: its mut arguments that aren't whole variables
+// go in through copies and come back out after it, as WGSL hands over only
+// whole variables.
 static void st_call(emit *em, const stmt *s)
 {
     const expr *e = s->value;
     const bool user = (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method;
     const decl *fn = user ? e->method : NULL;
     const bool method = fn && fn->owner && !fn->is_operator && !fn->is_interpolate;
-    // WGSL hands over whole variables; GLSL anything that's a place, which an array's element isn't here
-    const bool wgsl = em->l == WGSL;
-#define COPIED(arg) (wgsl ? !is_whole_variable(arg) : in_array(arg))
+#define COPIED(arg) (!is_whole_variable(arg))
     const expr *receiver = method && fn->is_mut_method && e->kind == E_METHOD && COPIED(e->object) ? e->object : NULL;
     bool copies = receiver != NULL;
     for (int i = 0; fn && i < e->args.count && i < fn->params.count; i++) {
@@ -4905,7 +4709,7 @@ static void st_call(emit *em, const stmt *s)
     }
     em->statement = e;
     if (!copies) {
-        if (em->l == WGSL && !user) sb_put(em->o, "_ = "); // A value WGSL won't let go unused
+        if (!user) sb_put(em->o, "_ = "); // A value WGSL won't let go unused
         ex(em, e);
         sb_put(em->o, ";\n");
         em->statement = NULL;
@@ -4915,16 +4719,14 @@ static void st_call(emit *em, const stmt *s)
     em->indent++;
     if (receiver) {
         line(em);
-        if (wgsl) sb_printf(em->o, "var %s: %s = ", copy_name(-1), ty(em, receiver->type));
-        else sb_printf(em->o, "%s %s = ", ty(em, receiver->type), copy_name(-1));
+        sb_printf(em->o, "var %s: %s = ", copy_name(-1), ty(em, receiver->type));
         ex(em, receiver);
         sb_put(em->o, ";\n");
     }
     for (int i = 0; i < e->args.count && i < fn->params.count; i++) {
         if (fn->params.items[i].mode != PARAM_MUT || !COPIED(e->args.items[i])) continue;
         line(em);
-        if (wgsl) sb_printf(em->o, "var %s: %s = ", copy_name(i), ty(em, e->args.items[i]->type));
-        else sb_printf(em->o, "%s %s = ", ty(em, e->args.items[i]->type), copy_name(i));
+        sb_printf(em->o, "var %s: %s = ", copy_name(i), ty(em, e->args.items[i]->type));
         ex(em, e->args.items[i]);
         sb_put(em->o, ";\n");
     }
@@ -4985,8 +4787,7 @@ static void put_before_loop(emit *em, const expr *value, const type t, const cha
     *local = (stmt){.kind = S_VAR, .at = value->at, .name = {text, n}, .type = t};
     *name = (expr){.kind = E_NAME, .at = value->at, .name = local->name, .bind = BIND_LOCAL, .local = local, .type = t};
     line(em);
-    if (em->l == WGSL) sb_printf(em->o, "var %s: %s = ", local_name(local->name), ty(em, t));
-    else sb_printf(em->o, "%s %s = ", ty(em, t), local_name(local->name));
+    sb_printf(em->o, "var %s: %s = ", local_name(local->name), ty(em, t));
     ex_as(em, value, t);
     sb_put(em->o, ";\n");
 }
@@ -5119,7 +4920,7 @@ static bool has_steps(const expr *e)
 typedef VEC(expr *) step_list;
 
 // Switch values need statements, and SampleGrad's three numeric operands
-// need source-order evaluation even where GLSL leaves argument order open.
+// are worked out in source order, before the statement.
 static bool needs_operand_order(const expr *e)
 {
     if (!e) return false;
@@ -5136,8 +4937,7 @@ static const char *switch_temp(emit *em, const type t)
     sb name = {0};
     sb_printf(&name, "tide_choice%d", em->temps++);
     line(em);
-    if (em->l == WGSL) sb_printf(em->o, "var %s: %s", name.data, ty(em, t));
-    else sb_printf(em->o, "%s %s", ty(em, t), name.data);
+    sb_printf(em->o, "var %s: %s", name.data, ty(em, t));
     return name.data;
 }
 
@@ -5156,8 +4956,7 @@ static void keep_switch_operand(emit *em, expr *e, step_list *made)
 
 // `++i` and `i++` in a statement's expression `e`, each run before the
 // statement, in the order written, into a variable the statement then reads:
-// WGSL has neither as a value, and GLSL leaves open which operand is worked
-// out first. So that the value is the CPU's, the statement names the variable
+// WGSL has neither as a value. So that the value is the CPU's, the statement names the variable
 // nowhere else, and the step isn't in a part that only runs sometimes.
 // `sometimes`: `e` is one.
 static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, step_list *made)
@@ -5177,8 +4976,8 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
         for (int i = 0; i < e->args.count; i++) {
             const expr *label = e->inits.items[i].value;
             line(em);
-            if (label) sb_printf(em->o, em->l == WGSL ? "case %lld {\n" : "case %lld: {\n", (long long)label->int_value);
-            else sb_put(em->o, em->l == WGSL ? "default {\n" : "default: {\n");
+            if (label) sb_printf(em->o, "case %lld {\n", (long long)label->int_value);
+            else sb_put(em->o, "default {\n");
             em->indent++;
             st_outs(em, e->args.items[i]);
             st_steps(em, s, e->args.items[i], false, made);
@@ -5186,7 +4985,6 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
             sb_printf(em->o, "%s = ", name);
             ex_as(em, e->args.items[i], e->type);
             sb_put(em->o, ";\n");
-            if (em->l == GLSL) { line(em); sb_put(em->o, "break;\n"); }
             em->indent--;
             line(em);
             sb_put(em->o, "}\n");
@@ -5256,15 +5054,13 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
             sb_printf(&old, "tide_property_was%d", em->temps);
             sb_printf(&next, "tide_property_next%d", em->temps++);
             line(em);
-            if (em->l == WGSL) sb_printf(em->o, "let %s: %s = ", old.data, ty(em, e->type));
-            else sb_printf(em->o, "%s %s = ", ty(em, e->type), old.data);
+            sb_printf(em->o, "let %s: %s = ", old.data, ty(em, e->type));
             ex(em, e->lhs);
             sb_put(em->o, ";\n");
             expr before = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = old.data};
             expr value = {.kind = E_BINARY, .at = e->at, .type = e->type, .op = compound_op(e->op), .lhs = &before, .rhs = e->step->value};
             line(em);
-            if (em->l == WGSL) sb_printf(em->o, "let %s: %s = ", next.data, ty(em, e->type));
-            else sb_printf(em->o, "%s %s = ", ty(em, e->type), next.data);
+            sb_printf(em->o, "let %s: %s = ", next.data, ty(em, e->type));
             ex(em, &value);
             sb_put(em->o, ";\n");
             expr stepped = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = next.data};
@@ -5283,8 +5079,7 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
         for (int pass = 0; pass < 2; pass++) {
             line(em);
             if ((pass == 0) == e->postfix) {
-                if (em->l == WGSL) sb_printf(em->o, "var %s: %s = ", name.data, ty(em, e->type));
-                else sb_printf(em->o, "%s %s = ", ty(em, e->type), name.data);
+                sb_printf(em->o, "var %s: %s = ", name.data, ty(em, e->type));
                 ex(em, e->lhs);
                 sb_put(em->o, ";\n");
             } else {
@@ -5321,143 +5116,62 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
 
 static void st_one(emit *em, const stmt *s, bool outs_ready);
 
-// Whether GLSL's for takes `s` on its line as it is: not a write into an
-// array, which is a statement there (st_assign), nor a call that changes
-// something in one, which goes through a copy (st_call).
-static bool on_a_line(const stmt *s)
-{
-    if (!s || s->kind == S_VAR) return true;
-    if (s->kind == S_ASSIGN) return !in_array(s->target);
-    if (s->kind != S_EXPR) return false;
-    const expr *e = s->value;
-    if (e->object && in_array(e->object)) return false;
-    for (int i = 0; i < e->args.count; i++) {
-        if (in_array(e->args.items[i])) return false;
-    }
-    return true;
-}
-
 // A for that isn't one that counts (st_for): whatever it starts with, goes on
-// while and steps by. GLSL's own for; in WGSL, whose for takes less on its
-// line, a loop with its step where a `continue` still reaches it.
+// while and steps by. WGSL's for takes less on its line: a loop with its step
+// where a `continue` still reaches it.
 static void st_loop(emit *em, const stmt *s)
 {
-    if (em->l == WGSL) {
-        sb_put(em->o, "{\n");
-        em->indent++;
-        if (s->init) st(em, s->init);
+    sb_put(em->o, "{\n");
+    em->indent++;
+    if (s->init) st(em, s->init);
+    line(em);
+    sb_put(em->o, "loop {\n");
+    em->indent++;
+    if (s->cond) {
         line(em);
-        sb_put(em->o, "loop {\n");
+        sb_put(em->o, "if (!(");
+        ex(em, s->cond);
+        sb_put(em->o, ")) {\n");
         em->indent++;
-        if (s->cond) {
-            line(em);
-            sb_put(em->o, "if (!(");
-            ex(em, s->cond);
-            sb_put(em->o, ")) {\n");
-            em->indent++;
-            line(em);
-            sb_put(em->o, "break;\n");
-            em->indent--;
-            line(em);
-            sb_put(em->o, "}\n");
-        }
         line(em);
-        st_body(em, s->then_stmt);
-        sb_put(em->o, "\n");
-        if (s->step) {
-            line(em);
-            sb_put(em->o, "continuing {\n");
-            em->indent++;
-            st(em, s->step);
-            em->indent--;
-            line(em);
-            sb_put(em->o, "}\n");
-        }
+        sb_put(em->o, "break;\n");
         em->indent--;
         line(em);
         sb_put(em->o, "}\n");
-        em->indent--;
-        line(em);
-        sb_put(em->o, "}\n");
-        return;
     }
-    if (!on_a_line(s->init) || !on_a_line(s->step)) {
-        // What it starts with or steps by is more than GLSL's for takes on its line (a write of an array's element,
-        // which only happens for an element the array has): a loop that steps as each round but the first starts,
-        // which a `continue` comes round to
-        const int first = em->temps++;
-        sb_put(em->o, "{\n");
-        em->indent++;
-        if (s->init) st(em, s->init);
-        line(em);
-        sb_printf(em->o, "bool tide_first%d = true;\n", first);
-        line(em);
-        sb_put(em->o, "while (true) {\n");
-        em->indent++;
-        if (s->step) {
-            line(em);
-            sb_printf(em->o, "if (!tide_first%d) {\n", first);
-            em->indent++;
-            st(em, s->step);
-            em->indent--;
-            line(em);
-            sb_put(em->o, "}\n");
-        }
-        line(em);
-        sb_printf(em->o, "tide_first%d = false;\n", first);
-        if (s->cond) {
-            line(em);
-            sb_put(em->o, "if (!(");
-            ex(em, s->cond);
-            sb_put(em->o, ")) {\n");
-            em->indent++;
-            line(em);
-            sb_put(em->o, "break;\n");
-            em->indent--;
-            line(em);
-            sb_put(em->o, "}\n");
-        }
-        line(em);
-        st_body(em, s->then_stmt);
-        sb_put(em->o, "\n");
-        em->indent--;
-        line(em);
-        sb_put(em->o, "}\n");
-        em->indent--;
-        line(em);
-        sb_put(em->o, "}\n");
-        return;
-    }
-    sb_put(em->o, "for (");
-    if (s->init && s->init->kind == S_VAR) st_var(em, s->init);
-    else if (s->init && s->init->kind == S_ASSIGN) st_assign(em, s->init, false);
-    else if (s->init && s->init->kind == S_EXPR) ex(em, s->init->value);
-    sb_put(em->o, "; ");
-    if (s->cond) ex(em, s->cond);
-    sb_put(em->o, "; ");
-    if (s->step && s->step->kind == S_ASSIGN) st_assign(em, s->step, false);
-    else if (s->step && s->step->kind == S_EXPR) ex(em, s->step->value);
-    sb_put(em->o, ") ");
+    line(em);
     st_body(em, s->then_stmt);
     sb_put(em->o, "\n");
+    if (s->step) {
+        line(em);
+        sb_put(em->o, "continuing {\n");
+        em->indent++;
+        st(em, s->step);
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
+    }
+    em->indent--;
+    line(em);
+    sb_put(em->o, "}\n");
+    em->indent--;
+    line(em);
+    sb_put(em->o, "}\n");
 }
 
 // A foreach over a list the engine supplies: a loop that counts its elements,
 // each read as the loop comes to it.
 static void st_foreach(emit *em, const stmt *s, const data_ref *list)
 {
-    const bool wgsl = em->l == WGSL;
     const int k = em->temps++;
     if (!list) { // An array: each of its elements, by its place
         const type array = s->value->type, element = array.decl->fields.items[0].type;
         if (!type_fits(em, array, s->value->at)) return;
         const int reader = need_array(em, array.decl);
-        sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < %d; tide_k%d++) {\n" : "for (int tide_k%d = 0; tide_k%d < %d; tide_k%d++) {\n",
-                  k, k, array.decl->array_length, k);
+        sb_printf(em->o, "for (var tide_k%d: i32 = 0; tide_k%d < %d; tide_k%d++) {\n", k, k, array.decl->array_length, k);
         em->indent++;
         line(em);
-        if (wgsl) sb_printf(em->o, "var %s: %s = tide_el%d(", local_name(s->name), ty(em, element), reader);
-        else sb_printf(em->o, "%s %s = tide_el%d(", ty(em, element), local_name(s->name), reader);
+        sb_printf(em->o, "var %s: %s = tide_el%d(", local_name(s->name), ty(em, element), reader);
         ex(em, s->value);
         sb_printf(em->o, ", tide_k%d);\n", k);
     } else {
@@ -5467,13 +5181,12 @@ static void st_foreach(emit *em, const stmt *s, const data_ref *list)
         const element_alias each = {s, list->leaves, 0, shader_leaves(element)};
         vec_push(em->elements, each);
         need_data(em, texture, element, 0);
-        sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < " : "for (int tide_k%d = 0; tide_k%d < ", k, k);
+        sb_printf(em->o, "for (var tide_k%d: i32 = 0; tide_k%d < ", k, k);
         put_list_count(em, texture);
         sb_printf(em->o, "; tide_k%d++) {\n", k);
         em->indent++;
         line(em);
-        if (wgsl) sb_printf(em->o, "var %s: %s = tide_list%d(tide_k%d);\n", local_name(s->name), ty(em, element), texture < 0 ? 0 : texture, k);
-        else sb_printf(em->o, "%s %s = tide_list%d(tide_k%d);\n", ty(em, element), local_name(s->name), texture < 0 ? 0 : texture, k);
+        sb_printf(em->o, "var %s: %s = tide_list%d(tide_k%d);\n", local_name(s->name), ty(em, element), texture < 0 ? 0 : texture, k);
     }
     const stmt *body = s->then_stmt;
     for (int i = 0; body && body->kind == S_BLOCK && i < body->stmts.count; i++) {
@@ -5486,46 +5199,35 @@ static void st_foreach(emit *em, const stmt *s, const data_ref *list)
     sb_put(em->o, "}\n");
 }
 
-// A switch on an int, a char or an enum, as each language has its own: a
-// section's labels are constants, and no section goes on into the next.
+// A switch on an int, a char or an enum, as WGSL has its own: a section's
+// labels are constants, and no section goes on into the next.
 static void st_switch(emit *em, const stmt *s)
 {
-    const bool wgsl = em->l == WGSL;
     if (s->cond->type.kind != TY_INT && s->cond->type.kind != TY_ENUM && s->cond->type.kind != TY_CHAR) {
         refuse(em, s->cond->at, "a switch the GPU runs is on an int, a char or an enum, and this is %s", type_name(s->cond->type));
         diag_note("write it as 'if' and 'else if'");
         return;
     }
-    sb_put(em->o, wgsl ? "switch " : "switch (");
+    sb_put(em->o, "switch ");
     ex(em, s->cond);
-    sb_put(em->o, wgsl ? " {\n" : ") {\n");
+    sb_put(em->o, " {\n");
     em->indent++;
     bool has_default = false;
     for (int i = 0; i < s->cases.count; i++) {
         const switch_case *section = &s->cases.items[i];
         line(em);
-        if (wgsl) {
-            bool first = true, cases = false;
-            for (int k = 0; k < section->labels.count; k++) cases |= section->labels.items[k] != NULL;
-            if (cases) sb_put(em->o, "case ");
-            for (int k = 0; k < section->labels.count; k++) {
-                const expr *label = section->labels.items[k];
-                if (!first) sb_put(em->o, ", ");
-                first = false;
-                if (label) sb_printf(em->o, "%lld", (long long)(label->kind == E_INT ? int_literal(label) : label->int_value));
-                else sb_put(em->o, "default");
-                has_default |= !label;
-            }
-            sb_put(em->o, " {\n");
-        } else {
-            for (int k = 0; k < section->labels.count; k++) {
-                const expr *label = section->labels.items[k];
-                if (label) sb_printf(em->o, "case %lld: ", (long long)(label->kind == E_INT ? int_literal(label) : label->int_value));
-                else sb_put(em->o, "default: ");
-                has_default |= !label;
-            }
-            sb_put(em->o, "{\n");
+        bool first = true, cases = false;
+        for (int k = 0; k < section->labels.count; k++) cases |= section->labels.items[k] != NULL;
+        if (cases) sb_put(em->o, "case ");
+        for (int k = 0; k < section->labels.count; k++) {
+            const expr *label = section->labels.items[k];
+            if (!first) sb_put(em->o, ", ");
+            first = false;
+            if (label) sb_printf(em->o, "%lld", (long long)(label->kind == E_INT ? int_literal(label) : label->int_value));
+            else sb_put(em->o, "default");
+            has_default |= !label;
         }
+        sb_put(em->o, " {\n");
         em->indent++;
         bool ended = false;
         for (int k = 0; k < section->body.count && !ended; k++) {
@@ -5534,13 +5236,13 @@ static void st_switch(emit *em, const stmt *s)
         }
         em->indent--;
         line(em);
-        sb_put(em->o, wgsl || ended ? "}\n" : "} break;\n");
+        sb_put(em->o, "}\n");
     }
-    if (!has_default) { // WGSL wants one, and GLSL a statement after its last label
+    if (!has_default) { // WGSL wants one
         line(em);
-        sb_put(em->o, wgsl ? "default {\n" : "default: {\n");
+        sb_put(em->o, "default {\n");
         line(em);
-        sb_put(em->o, wgsl ? "}\n" : "} break;\n");
+        sb_put(em->o, "}\n");
     }
     em->indent--;
     line(em);
@@ -5579,7 +5281,7 @@ static void st(emit *em, const stmt *s)
                 sb_put(em->o, " = true;\n");
             }
             line(em);
-            sb_put(em->o, em->l == WGSL ? "loop {\n" : "while (true) {\n");
+            sb_put(em->o, "loop {\n");
             em->indent++;
             if (s->step) {
                 line(em);
@@ -5665,11 +5367,9 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
             sb_put(em->o, ";\n");
         } else if (s->value->kind == E_METHOD && s->value->call == CALL_DISCARD) {
             if (em->code != em->root) refuse(em, s->at, "a pixel is left undrawn in the frag itself, not in a function it calls");
-            sb_put(em->o, em->l == WGSL ? "discard;\n" : "discard;\n");
-            if (em->l == WGSL) { // WGSL goes on running a discarded pixel's code
-                line(em);
-                sb_put(em->o, "return;\n");
-            }
+            sb_put(em->o, "discard;\n");
+            line(em); // WGSL goes on running a discarded pixel's code
+            sb_put(em->o, "return;\n");
         } else {
             st_call(em, s);
         }
@@ -5801,15 +5501,13 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
     em->failed = false;
     fn->gpu_state = em->checking ? 1 : fn->gpu_state;
 
-    const bool wgsl = em->l == WGSL;
     const bool method = fn->owner && !fn->is_operator && !fn->is_interpolate;
     const bool shader = fn->kind == DECL_SHADER;
     sb head = {0};
     em->o = &head;
     const bool value = fn->return_type.kind != TY_VOID && fn->return_type.kind != TY_ERROR;
     if (value && !type_fits(em, fn->return_type, fn->at)) em->failed = true;
-    if (wgsl) sb_printf(&head, "fn %s%s(", function_name(fn), suffix);
-    else sb_printf(&head, "%s %s%s(", value ? ty(em, fn->return_type) : "void", function_name(fn), suffix);
+    sb_printf(&head, "fn %s%s(", function_name(fn), suffix);
     bool first = true;
     if (method && given_self(fn)) { // Its receiver holds a list: it's handed nothing for it (Structs that hold lists)
         if (fn->is_mut_method) {
@@ -5819,8 +5517,7 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
     } else if (method) {
         const type self = {fn->owner->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, fn->owner};
         if (type_fits(em, self, fn->at)) {
-            if (wgsl) sb_printf(&head, fn->is_mut_method ? "tide_self: ptr<function, %s>" : "tide_self: %s", ty(em, self));
-            else sb_printf(&head, "%s%s tide_self", fn->is_mut_method ? "inout " : "", ty(em, self));
+            sb_printf(&head, fn->is_mut_method ? "tide_self: ptr<function, %s>" : "tide_self: %s", ty(em, self));
         }
         first = false;
     }
@@ -5839,10 +5536,9 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
         if (!first) sb_put(&head, ", ");
         first = false;
         const bool mut = p->mode == PARAM_MUT;
-        if (wgsl) sb_printf(&head, mut ? "%s: ptr<function, %s>" : "%s: %s", local_name(p->name), ty(em, p->type));
-        else sb_printf(&head, "%s%s %s", mut ? "inout " : "", ty(em, p->type), local_name(p->name));
+        sb_printf(&head, mut ? "%s: ptr<function, %s>" : "%s: %s", local_name(p->name), ty(em, p->type));
     }
-    if (wgsl && value) sb_printf(&head, ") -> %s {\n", ty(em, fn->return_type));
+    if (value) sb_printf(&head, ") -> %s {\n", ty(em, fn->return_type));
     else sb_put(&head, ") {\n");
 
     em->o = &body;
@@ -5891,62 +5587,44 @@ static int packs(const int words)
 
 static void put_structs(emit *em, sb *o)
 {
-    const bool wgsl = em->l == WGSL;
     for (int i = 0; i < em->structs.count; i++) {
         const decl *d = em->structs.items[i];
-        if (d->kind == DECL_ARRAY) { // A row
-            sb_printf(o, "struct tide_row%d {\n    %s v;\n};\n", i, ty(em, (type){TY_ARRAY, (decl *)d}));
-            continue;
-        }
         sb_printf(o, "struct %s {\n", struct_name(d));
         for (int k = 0; k < d->fields.count; k++) {
             const field *f = &d->fields.items[k];
             if (f->hidden) continue;
-            if (wgsl) sb_printf(o, "    %s: %s,\n", field_name(f), ty(em, f->type));
-            else sb_printf(o, "    %s %s;\n", ty(em, f->type), field_name(f));
+            sb_printf(o, "    %s: %s,\n", field_name(f), ty(em, f->type));
         }
-        sb_put(o, wgsl ? "}\n" : "};\n");
+        sb_put(o, "}\n");
     }
 }
 
-// The uniform block's members, the same in both stages and both languages:
-// the engine's own, then the game's float4s and int4s.
-static void put_uniforms(const shader *sh, const lang l, sb *o)
+// The uniform block's members, the same in both stages: the engine's own,
+// then the game's float4s and int4s.
+static void put_uniforms(const shader *sh, sb *o)
 {
-    const bool wgsl = l == WGSL;
-    sb_put(o, wgsl ? "struct tide_uniforms {\n    tide_camera: mat4x4f,\n    tide_screen: vec4f,\n    tide_tint: vec4f,\n"
-                   : "layout(std140) uniform uniforms {\n    mat4 tide_camera;\n    vec4 tide_screen;\n    vec4 tide_tint;\n");
-    if (sh->dims == 3) sb_put(o, wgsl ? "    tide_origin: vec4f,\n" : "    vec4 tide_origin;\n");
-    for (int i = 0; i < packs(sh->uniform_floats); i++) sb_printf(o, wgsl ? "    tide_u%d: vec4f,\n" : "    vec4 tide_u%d;\n", i);
-    for (int i = 0; i < packs(sh->uniform_ints); i++) sb_printf(o, wgsl ? "    tide_v%d: vec4i,\n" : "    ivec4 tide_v%d;\n", i);
-    sb_put(o, wgsl ? "}\n@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;\n" : "};\n");
+    sb_put(o, "struct tide_uniforms {\n    tide_camera: mat4x4f,\n    tide_screen: vec4f,\n    tide_tint: vec4f,\n");
+    if (sh->dims == 3) sb_put(o, "    tide_origin: vec4f,\n");
+    for (int i = 0; i < packs(sh->uniform_floats); i++) sb_printf(o, "    tide_u%d: vec4f,\n", i);
+    for (int i = 0; i < packs(sh->uniform_ints); i++) sb_printf(o, "    tide_v%d: vec4i,\n", i);
+    sb_put(o, "}\n@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;\n");
     if (sh->dims == 3) {
         // Rebase the model before applying local geometry, rather than rounding a large
         // world position and subtracting afterward. Its homogeneous row stays unchanged.
-        sb_put(o, wgsl ? "fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {\n"
-                       : "vec4 tide_project(mat4 model, vec4 vertex) {\n");
-        sb_put(o, wgsl ? "    let relative = mat4x4f(\n" : "    mat4 relative = mat4(\n");
+        sb_put(o, "fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {\n");
+        sb_put(o, "    let relative = mat4x4f(\n");
         for (int i = 0; i < 4; i++)
-            sb_printf(o, "        model[%d] - %stide_origin * model[%d].w%s\n", i, wgsl ? "tide_block." : "", i,
-                      i == 3 ? ");" : ",");
-        sb_printf(o, "    return %stide_camera * (relative * vertex);\n}\n", wgsl ? "tide_block." : "");
+            sb_printf(o, "        model[%d] - tide_block.tide_origin * model[%d].w%s\n", i, i, i == 3 ? ");" : ",");
+        sb_put(o, "    return tide_block.tide_camera * (relative * vertex);\n}\n");
     }
     for (int i = 0; i < sh->textures.count; i++) {
         const shader_read read = sh->textures.items[i].read;
         if (read == READ_DATA) { // A list's numbers, with all of their bits, read through no sampler
-            sb_printf(o, wgsl ? "@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n" : "uniform highp isampler2D pixels%d;\n",
-                      wgsl ? 1 + 2 * i : i, i);
-        } else if (wgsl) {
+            sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n", 1 + 2 * i, i);
+        } else {
             sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n@group(0) @binding(%d) var sampler%d: %s;\n",
                       1 + 2 * i, i, read == READ_COLOR ? "texture_2d<f32>" : read == READ_CUBE ? "texture_cube<f32>" : "texture_depth_2d",
                       2 + 2 * i, i, read == READ_COMPARE ? "sampler_comparison" : "sampler");
-        } else if (read == READ_CUBE) {
-            sb_printf(o, "uniform highp samplerCube pixels%d;\n", i); // With all of its bits, for a cube of floats
-        } else if (read != READ_COLOR) {
-            // With all of its bits: a sampler's own precision is the lowest there is, where there's a choice
-            sb_printf(o, "uniform highp %s pixels%d;\n", read == READ_COMPARE ? "sampler2DShadow" : "sampler2D", i);
-        } else {
-            sb_printf(o, "uniform sampler2D pixels%d;\n", i);
         }
     }
 }
@@ -5993,67 +5671,44 @@ static void put_dice(emit *em, sb *o, const int stage, const char *nth)
 {
     const shader *sh = em->sh;
     if (!stage_rolls(sh, stage)) return;
-    const bool wgsl = em->l == WGSL;
     sb *const out = em->o;
     em->o = o;
     need(em, stage == STAGE_VERT ? H_HASH3 : H_HASH4);
-    if (stage == STAGE_VERT) {
-        sb_put(o, wgsl ? "    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), "
-                       : "    tide_dice = uint(tide_hash3(ivec3(gl_VertexID, gl_InstanceID, ");
-    } else if (wgsl) {
-        sb_printf(o, "    tide_dice = u32(tide_hash4(vec4i(vec2i(tide_at.xy), %s, ", nth);
-    } else { // From the top left, as this.position counts: OpenGL counts from the bottom
-        sb_printf(o, "    tide_dice = uint(tide_hash4(ivec4(ivec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y), %s, ", nth);
-    }
+    if (stage == STAGE_VERT) sb_put(o, "    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), ");
+    else sb_printf(o, "    tide_dice = u32(tide_hash4(vec4i(vec2i(tide_at.xy), %s, ", nth);
     put_word(em, 'v', sh->rolled_at);
     sb_printf(o, " ^ %u)));\n", roll_site(stage == STAGE_VERT ? sh->vert : sh->frag));
     em->o = out;
 }
 
-// What the vertex stage passes on to the pixels, as each language declares
-// it: the vertex's fields the pixels read, the fields they read of what the
-// vert wrote for them, where they are in the world, and the instance's
+// What the vertex stage passes on to the pixels, as members of the stage's
+// struct: the vertex's fields the pixels read, the fields they read of what
+// the vert wrote for them, where they are in the world, and the instance's
 // float4s and int4s, which don't blend.
-static void put_varyings(emit *em, sb *o, const char *direction)
+static void put_varyings(emit *em, sb *o)
 {
     const shader *sh = em->sh;
-    const bool wgsl = em->l == WGSL;
     int location = 0;
     for (int i = 0; i < sh->vertex->fields.count; i++) {
         if (!sh->frag_fields[i]) continue;
         const char *t = ty(em, as_float(sh->vertex->fields.items[i].type));
-        if (wgsl) sb_printf(o, "    @location(%d) tide_s%d: %s,\n", location++, i, t);
-        else sb_printf(o, "%s %s tide_s%d;\n", direction, t, i);
+        sb_printf(o, "    @location(%d) tide_s%d: %s,\n", location++, i, t);
     }
     for (int h = 0; h < sh->handed.count; h++) {
         const shader_handed *handed = &sh->handed.items[h];
         for (int i = 0; i < handed->type->fields.count; i++) {
             if (!handed->fields[i]) continue;
             const char *t = ty(em, as_float(handed->type->fields.items[i].type));
-            if (wgsl) sb_printf(o, "    @location(%d) tide_h%d_%d: %s,\n", location++, h, i, t);
-            else sb_printf(o, "%s %s tide_h%d_%d;\n", direction, t, h, i);
+            sb_printf(o, "    @location(%d) tide_h%d_%d: %s,\n", location++, h, i, t);
         }
     }
-    if (sh->frag_world) {
-        if (wgsl) sb_printf(o, "    @location(%d) tide_world: vec3f,\n", location++);
-        else sb_printf(o, "%s vec3 tide_world;\n", direction);
-    }
-    for (int i = 0; sh->frag_normals && i < 3; i++) { // The columns of what normals go through (ex_normal), an instance's own
-        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_normals%d: vec3f,\n", location++, i);
-        else sb_printf(o, "flat %s vec3 tide_normals%d;\n", direction, i);
-    }
-    for (int i = 0; i < packs(sh->frag_floats); i++) {
-        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_f%d: vec4f,\n", location++, i);
-        else sb_printf(o, "flat %s vec4 tide_f%d;\n", direction, i);
-    }
-    for (int i = 0; i < packs(sh->frag_ints); i++) {
-        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_g%d: vec4i,\n", location++, i);
-        else sb_printf(o, "flat %s ivec4 tide_g%d;\n", direction, i);
-    }
-    if (stage_rolls(sh, STAGE_FRAG)) { // Which instance of its draw a pixel is of, for its generator (put_dice)
-        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_nth: i32,\n", location++);
-        else sb_printf(o, "flat %s int tide_nth;\n", direction);
-    }
+    if (sh->frag_world) sb_printf(o, "    @location(%d) tide_world: vec3f,\n", location++);
+    for (int i = 0; sh->frag_normals && i < 3; i++) // The columns of what normals go through (ex_normal), an instance's own
+        sb_printf(o, "    @location(%d) @interpolate(flat) tide_normals%d: vec3f,\n", location++, i);
+    for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(o, "    @location(%d) @interpolate(flat) tide_f%d: vec4f,\n", location++, i);
+    for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(o, "    @location(%d) @interpolate(flat) tide_g%d: vec4i,\n", location++, i);
+    if (stage_rolls(sh, STAGE_FRAG)) // Which instance of its draw a pixel is of, for its generator (put_dice)
+        sb_printf(o, "    @location(%d) @interpolate(flat) tide_nth: i32,\n", location++);
 }
 
 // Where word `word` of what the pixels get of the instance comes from in the
@@ -6082,53 +5737,47 @@ static void put_skin_helpers(emit *em)
         if (sh->textures.items[i].skin == 2) influences = i;
     }
     if (palette < 0 || influences < 0) return;
-    const bool wgsl = em->l == WGSL;
     sb *const old = em->o;
     em->o = &em->functions;
     sb *o = em->o;
+    static const char identity[] = "mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1))";
     for (int which = 0; which < 2; which++) {
         const int slot = which ? influences : palette;
-        sb_printf(o, wgsl ? "fn tide_skin_words%d(p: i32) -> vec4i {\n    return textureLoad(pixels%d, vec2i(p & 1023, p >> 10), 0);\n}\n"
-                          : "ivec4 tide_skin_words%d(int p) {\n    return texelFetch(pixels%d, ivec2(p & 1023, p >> 10), 0);\n}\n", which, slot);
+        sb_printf(o, "fn tide_skin_words%d(p: i32) -> vec4i {\n    return textureLoad(pixels%d, vec2i(p & 1023, p >> 10), 0);\n}\n",
+                  which, slot);
     }
-    sb_put(o, wgsl ? "fn tide_skin_matrix(i: i32) -> mat4x4f {\n" : "mat4 tide_skin_matrix(int i) {\n");
+    sb_put(o, "fn tide_skin_matrix(i: i32) -> mat4x4f {\n");
     sb_put(o, "    if (i < 0 || i >= ");
     put_word(em, 'v', sh->textures.items[palette].count_at);
-    sb_put(o, wgsl ? ") { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n"
-                   : ") return mat4(1.0);\n");
-    sb_put(o, wgsl ? "    let p = " : "    int p = ");
+    sb_printf(o, ") { return %s; }\n", identity);
+    sb_put(o, "    let p = ");
     if (sh->skin_base_at >= 0) {
         sb_put(o, "(");
         put_word(em, 'j', sh->skin_base_at);
         sb_put(o, " + i)");
     } else sb_put(o, "i");
-    sb_put(o, wgsl ? " * 4;\n    return mat4x4f(" : " * 4;\n    return mat4(");
-    for (int column = 0; column < 4; column++) {
-        sb_printf(o, wgsl ? "%sbitcast<vec4f>(tide_skin_words0(p + %d))" : "%sintBitsToFloat(tide_skin_words0(p + %d))",
-                  column ? ", " : "", column);
-    }
+    sb_put(o, " * 4;\n    return mat4x4f(");
+    for (int column = 0; column < 4; column++) sb_printf(o, "%sbitcast<vec4f>(tide_skin_words0(p + %d))", column ? ", " : "", column);
     sb_put(o, ");\n}\n");
-    sb_put(o, wgsl ? "fn tide_skinning(vertex: i32) -> mat4x4f {\n" : "mat4 tide_skinning(int vertex) {\n");
+    sb_put(o, "fn tide_skinning(vertex: i32) -> mat4x4f {\n");
     sb_put(o, "    if (vertex < 0 || vertex >= ");
     put_word(em, 'v', sh->textures.items[influences].count_at);
-    sb_put(o, wgsl ? ") { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n"
-                   : ") return mat4(1.0);\n");
-    sb_put(o, wgsl ? "    let range = tide_skin_words1(vertex).xy;\n    let entries = " : "    ivec2 range = tide_skin_words1(vertex).xy;\n    int entries = ");
+    sb_printf(o, ") { return %s; }\n", identity);
+    sb_put(o, "    let range = tide_skin_words1(vertex).xy;\n    let entries = ");
     put_word(em, 'v', sh->textures.items[influences].count_at + 1);
     sb_put(o, ";\n    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) ");
-    sb_put(o, wgsl ? "{ return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n"
-                   : "return mat4(1.0);\n");
-    for (int c = 0; c < 4; c++) sb_printf(o, wgsl ? "    var c%d = vec4f(0.0);\n" : "    vec4 c%d = vec4(0.0);\n", c);
-    sb_put(o, wgsl ? "    var total = 0.0;\n    for (var n = 0; n < range.y; n++) {\n        let i = range.x + n;\n        let pair = tide_skin_words1("
-                   : "    float total = 0.0;\n    for (int n = 0; n < range.y; n++) {\n        int i = range.x + n;\n        ivec4 pair = tide_skin_words1(");
+    sb_printf(o, "{ return %s; }\n", identity);
+    for (int c = 0; c < 4; c++) sb_printf(o, "    var c%d = vec4f(0.0);\n", c);
+    sb_put(o, "    var total = 0.0;\n    for (var n = 0; n < range.y; n++) {\n        let i = range.x + n;\n        let pair = tide_skin_words1(");
     put_word(em, 'v', sh->textures.items[influences].count_at);
     sb_put(o, " + (i >> 1));\n");
-    sb_put(o, wgsl ? "        let joint = select(pair.x, pair.z, (i & 1) != 0);\n        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));\n        let matrix = tide_skin_matrix(joint);\n"
-                   : "        int joint = (i & 1) == 0 ? pair.x : pair.z;\n        float weight = intBitsToFloat((i & 1) == 0 ? pair.y : pair.w);\n        mat4 matrix = tide_skin_matrix(joint);\n");
+    sb_put(o, "        let joint = select(pair.x, pair.z, (i & 1) != 0);\n"
+              "        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));\n"
+              "        let matrix = tide_skin_matrix(joint);\n");
     for (int c = 0; c < 4; c++) sb_printf(o, "        c%d = c%d + matrix[%d] * weight;\n", c, c, c);
     sb_put(o, "        total = total + weight;\n    }\n");
-    sb_put(o, wgsl ? "    if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);\n}\n"
-                   : "    if (!(total > 0.0)) return mat4(1.0);\n    return mat4(c0 / total, c1 / total, c2 / total, c3 / total);\n}\n");
+    sb_printf(o, "    if (!(total > 0.0)) { return %s; }\n    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);\n}\n",
+              identity);
     em->o = old;
 }
 
@@ -6136,11 +5785,10 @@ static void put_skin_vertex(emit *em, sb *o)
 {
     if (!em->sh->skinned) return;
     put_skin_helpers(em);
-    const bool wgsl = em->l == WGSL;
     const decl *vertex = em->sh->vertex;
-    sb_put(o, wgsl ? "    let tide_skin = tide_skinning(i32(tide_vertex_index));\n" : "    mat4 tide_skin = tide_skinning(gl_VertexID);\n");
-    sb_printf(o, "    tide_vertex.%s = (tide_skin * %s(tide_vertex.%s, 1.0)).xyz;\n",
-              field_name(field_called(vertex, "position")), wgsl ? "vec4f" : "vec4", field_name(field_called(vertex, "position")));
+    sb_put(o, "    let tide_skin = tide_skinning(i32(tide_vertex_index));\n");
+    sb_printf(o, "    tide_vertex.%s = (tide_skin * vec4f(tide_vertex.%s, 1.0)).xyz;\n",
+              field_name(field_called(vertex, "position")), field_name(field_called(vertex, "position")));
     const field *normal = field_called(vertex, "normal"), *tangent = field_called(vertex, "tangent");
     if (normal && normal->type.kind == TY_FLOAT3) {
         need(em, H_NORMALS);
@@ -6150,42 +5798,38 @@ static void put_skin_vertex(emit *em, sb *o)
     if (tangent && (tangent->type.kind == TY_FLOAT3 || tangent->type.kind == TY_FLOAT4)) {
         need(em, H_NORMALIZE3);
         const char *name = field_name(tangent), *xyz = tangent->type.kind == TY_FLOAT4 ? ".xyz" : "";
-        sb_printf(o, wgsl ? "    var tide_tangent = (tide_skin * vec4f(tide_vertex.%s%s, 0.0)).xyz;\n"
-                          : "    vec3 tide_tangent = (tide_skin * vec4(tide_vertex.%s%s, 0.0)).xyz;\n", name, xyz);
+        sb_printf(o, "    var tide_tangent = (tide_skin * vec4f(tide_vertex.%s%s, 0.0)).xyz;\n", name, xyz);
         if (normal && normal->type.kind == TY_FLOAT3) {
             sb_printf(o, "    tide_tangent = tide_tangent - tide_vertex.%s * dot(tide_vertex.%s, tide_tangent);\n", field_name(normal), field_name(normal));
         }
         if (tangent->type.kind == TY_FLOAT4) {
-            sb_put(o, wgsl ? "    let tide_side = select(1.0, -1.0, dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0);\n"
-                           : "    float tide_side = dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0 ? -1.0 : 1.0;\n");
-            sb_printf(o, "    tide_vertex.%s = %s(tide_normalize3(tide_tangent), tide_vertex.%s.w * tide_side);\n", name, wgsl ? "vec4f" : "vec4", name);
+            sb_put(o, "    let tide_side = select(1.0, -1.0, dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0);\n");
+            sb_printf(o, "    tide_vertex.%s = vec4f(tide_normalize3(tide_tangent), tide_vertex.%s.w * tide_side);\n", name, name);
         } else sb_printf(o, "    tide_vertex.%s = tide_normalize3(tide_tangent);\n", name);
     }
 }
 
 // The vertex stage's own code: the vertex from its attributes, through the
 // vert, placed by its instance's transform and the camera, and what goes on
-// to the pixels. `out` is how the language names what it writes: "" for
-// GLSL's globals, "out." for WGSL's struct.
-static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
+// to the pixels, into the stage's struct, `out`.
+static void put_vertex_main(emit *em, sb *o)
 {
     const shader *sh = em->sh;
-    const bool wgsl = em->l == WGSL;
     const decl *v = sh->vertex;
     const type vertex = {TY_STRUCT, (decl *)v};
     const char *f4 = float_ty(em, 4);
+    const char *out = "out.";
     em->stage = STAGE_VERT;
     em->o = o;
     put_dice(em, o, STAGE_VERT, NULL);
-    sb_printf(o, wgsl ? "    var tide_vertex: %s = %s(" : "    %s tide_vertex = %s(", ty(em, vertex), ty(em, vertex));
-    for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%s%stide_a%d", i ? ", " : "", in, i);
+    sb_printf(o, "    var tide_vertex: %s = %s(", ty(em, vertex), ty(em, vertex));
+    for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%stide_a%d", i ? ", " : "", i);
     sb_put(o, ");\n");
     put_skin_vertex(em, o);
     // What the vert writes for the frag: a variable each, in the order it takes them
     for (int h = 0; h < sh->handed.count; h++) {
         const type handed = {TY_STRUCT, (decl *)sh->handed.items[h].type};
-        if (wgsl) sb_printf(o, "    var tide_handed%d: %s = ", h, ty(em, handed));
-        else sb_printf(o, "    %s tide_handed%d = ", ty(em, handed), h);
+        sb_printf(o, "    var tide_handed%d: %s = ", h, ty(em, handed));
         put_zero(em, handed);
         sb_put(o, ";\n");
     }
@@ -6193,17 +5837,17 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     // only for what the pixels read of where they are in the world
     const bool placed = sh->vert && sh->vert->place;
     if (placed) {
-        sb_printf(o, wgsl ? "    var tide_moved: %s = " : "    %s tide_moved = ", f4);
+        sb_printf(o, "    var tide_moved: %s = ", f4);
         put_zero(em, (type){TY_FLOAT4, NULL});
         sb_put(o, ";\n");
     }
     if (sh->vert) { // Called with what it writes after its vertex, in the order it takes them
-        sb_printf(o, "    %s(%stide_vertex", function_name(sh->vert), wgsl ? "&" : "");
+        sb_printf(o, "    %s(&tide_vertex", function_name(sh->vert));
         int h = 0;
         for (int i = 1; i < sh->vert->params.count; i++) {
             const param *p = &sh->vert->params.items[i];
-            if (p->place) sb_printf(o, ", %stide_moved", wgsl ? "&" : "");
-            else if (p->is_out && p->type.kind == TY_STRUCT) sb_printf(o, ", %stide_handed%d", wgsl ? "&" : "", h++);
+            if (p->place) sb_put(o, ", &tide_moved");
+            else if (p->is_out && p->type.kind == TY_STRUCT) sb_printf(o, ", &tide_handed%d", h++);
         }
         sb_put(o, ");\n");
     }
@@ -6211,25 +5855,21 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     if ((placed || sh->dims == 3) && !sh->frag_world) {
         // Nothing reads where the engine would have put it
     } else if (sh->dims == 3) {
-        sb_printf(o, wgsl ? "    let tide_place = " : "    vec4 tide_place = ");
+        sb_put(o, "    let tide_place = ");
         put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
         sb_printf(o, " * %s(tide_vertex.%s, 1.0);\n", f4, position);
     } else {
-        sb_printf(o, wgsl ? "    let tide_place = %s(tide_vertex.%s, 0.0, 1.0);\n" : "    vec4 tide_place = %s(tide_vertex.%s, 0.0, 1.0);\n",
-                  f4, position);
+        sb_printf(o, "    let tide_place = %s(tide_vertex.%s, 0.0, 1.0);\n", f4, position);
     }
     if (!placed && sh->dims == 3) {
-        sb_put(o, wgsl ? "    let tide_projected = tide_project(" : "    vec4 tide_projected = tide_project(");
+        sb_put(o, "    let tide_projected = tide_project(");
         put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
         sb_printf(o, ", %s(tide_vertex.%s, 1.0));\n", f4, position);
     }
-    if (wgsl) { // The camera's clip space is OpenGL's: depth from -1
-        sb_printf(o, "    let tide_clip = %s;\n    var out: tide_corner;\n"
-                     "    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);\n",
-                  placed ? "tide_moved" : sh->dims == 3 ? "tide_projected" : "tide_block.tide_camera * tide_place");
-    } else {
-        sb_put(o, placed ? "    gl_Position = tide_moved;\n" : sh->dims == 3 ? "    gl_Position = tide_projected;\n" : "    gl_Position = tide_camera * tide_place;\n");
-    }
+    // The camera's clip space is OpenGL's: depth from -1
+    sb_printf(o, "    let tide_clip = %s;\n    var out: tide_corner;\n"
+                 "    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);\n",
+              placed ? "tide_moved" : sh->dims == 3 ? "tide_projected" : "tide_block.tide_camera * tide_place");
     for (int i = 0; i < v->fields.count; i++) {
         if (sh->frag_fields[i]) sb_printf(o, "    %stide_s%d = tide_vertex.%s;\n", out, i, field_name(&v->fields.items[i]));
     }
@@ -6243,7 +5883,7 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     if (sh->frag_world) sb_printf(o, "    %stide_world = tide_place.xyz;\n", out);
     if (sh->frag_normals) { // What the frag's instance.Normal multiplies by, worked out here, once a vertex
         need(em, H_NORMALS);
-        sb_put(o, wgsl ? "    let tide_turned = tide_normals(" : "    mat3 tide_turned = tide_normals(");
+        sb_put(o, "    let tide_turned = tide_normals(");
         put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
         sb_put(o, ");\n");
         for (int i = 0; i < 3; i++) sb_printf(o, "    %stide_normals%d = tide_turned[%d];\n", out, i, i);
@@ -6261,9 +5901,7 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
             sb_put(o, ");\n");
         }
     }
-    if (stage_rolls(sh, STAGE_FRAG)) {
-        sb_printf(o, wgsl ? "    %stide_nth = i32(tide_instance_index);\n" : "    %stide_nth = gl_InstanceID;\n", out);
-    }
+    if (stage_rolls(sh, STAGE_FRAG)) sb_printf(o, "    %stide_nth = i32(tide_instance_index);\n", out);
 }
 
 // How many colors a shader's fragment stage writes: its frag's `out Color`
@@ -6273,16 +5911,14 @@ static int shader_outputs(const shader *sh)
     return sh->frag && sh->frag->outputs > 1 ? sh->frag->outputs : 1;
 }
 
-// The variable the fragment stage has its output `k` in (`pixel` false), and
-// what GLSL writes it to (true): the pixel's color first, which has the name
-// there always was.
-static const char *output_name(const bool pixel, const int k)
+// The variable the fragment stage has its output `k` in: the pixel's color
+// first, which has the name there always was.
+static const char *output_name(const int k)
 {
-    static char names[2][4][16];
-    const char *stem = pixel ? "tide_pixel" : "tide_color";
-    if (k == 0) return stem;
-    snprintf(names[pixel][k & 3], sizeof names[0][0], "%s%d", stem, k);
-    return names[pixel][k & 3];
+    static char names[4][16];
+    if (k == 0) return "tide_color";
+    snprintf(names[k & 3], sizeof names[0], "tide_color%d", k);
+    return names[k & 3];
 }
 
 // The fragment stage's own: the vertex as the pixel sees it, blended, then
@@ -6297,10 +5933,10 @@ static const char *output_name(const bool pixel, const int k)
 // `tide_screen.w` says), towards white as it clears, so what's clear changes
 // nothing. A frag's
 // outputs go out at the locations of their order, the pixel's color at 0.
-static void put_fragment_main(emit *em, sb *o, const char *in, const char *result)
+static void put_fragment_main(emit *em, sb *o)
 {
     const shader *sh = em->sh;
-    const bool wgsl = em->l == WGSL;
+    const char *in = "in.";
     const decl *v = sh->vertex;
     const char *f4 = float_ty(em, 4);
     const int outputs = shader_outputs(sh);
@@ -6310,8 +5946,7 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
     sb_printf(&nth, "%stide_nth", in);
     put_dice(em, o, STAGE_FRAG, nth.data);
     for (int k = 0; k < outputs; k++) {
-        sb_printf(o, wgsl ? "    var %s: vec4f = %s(1.0, 1.0, 1.0, 1.0);\n" : "    vec4 %s = %s(1.0, 1.0, 1.0, 1.0);\n",
-                  output_name(false, k), f4);
+        sb_printf(o, "    var %s: vec4f = %s(1.0, 1.0, 1.0, 1.0);\n", output_name(k), f4);
     }
     if (sh->frag && sh->frag->cutout) sb_put(o, "    tide_cover = 1.0;\n"); // Whole, where it doesn't say
     if (sh->frag) {
@@ -6339,7 +5974,7 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
                 }
                 sb_put(o, ")");
             } else if (p->function_param) { // One of the colors it writes
-                sb_printf(o, ", %s%s", wgsl ? "&" : "", output_name(false, p->output));
+                sb_printf(o, ", &%s", output_name(p->output));
             }
         }
         sb_put(o, ");\n");
@@ -6355,20 +5990,16 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
         if (sh->textured) need(em, H_STRAIGHT); // The color itself, where the texture has it times its alpha
         // The draw's own texture is read as it says. In a game that names Filter.Trilinear that can be between
         // its smaller images, which the GPU picks by itself here, before any branch
-        if (sh->textured && em->prog->names_trilinear && wgsl) {
+        if (sh->textured && em->prog->names_trilinear) {
             sb_printf(o, "    tide_color = tide_color * tide_straight(textureSample(pixels%d, sampler%d, %stide_s%d));\n",
                       texture, texture, in, field_index(v, uv));
-        } else if (sh->textured && em->prog->names_trilinear) {
-            sb_printf(o, "    tide_color = tide_color * tide_straight(texture(pixels%d, %stide_s%d));\n", texture, in, field_index(v, uv));
-        } else if (sh->textured && wgsl) {
+        } else if (sh->textured) {
             sb_printf(o, "    tide_color = tide_color * tide_straight(textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0));\n",
                       texture, texture, in, field_index(v, uv));
-        } else if (sh->textured) {
-            sb_printf(o, "    tide_color = tide_color * tide_straight(textureLod(pixels%d, %stide_s%d, 0.0));\n", texture, in, field_index(v, uv));
         }
     }
     for (int k = 0; k < outputs; k++) {
-        const char *color = output_name(false, k);
+        const char *color = output_name(k);
         if (k == 0 && sh->frag && sh->frag->cutout) {
             // A cut-out says how much of the pixel it covers (this.Cutout, this.Coverage), into `tide_cover`, times
             // its tint's alpha. Cutout's is an alpha, sharpened here to a pixel by how fast it changes. The GPU
@@ -6377,59 +6008,35 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
             // so its color's own alpha isn't read, its color isn't times one, and it doesn't go to white for a
             // draw that multiplies
             const bool sharpen = !sh->frag->raw_coverage;
-            if (wgsl) {
-                sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
-                             "    var tide_share: f32 = tide_cover * tide_block.tide_tint.a;\n", color, color);
-                if (sharpen) sb_put(o, "    tide_share = (tide_share - 0.5) / max(fwidth(tide_share), 0.0001) + 0.5;\n");
-                sb_printf(o, "    if (tide_block.tide_screen.w < 0.0) {\n"
-                             "        if (tide_share < 0.5) {\n"
-                             "            discard;\n"
-                             "        }\n"
-                             "        tide_share = 1.0;\n"
-                             "    }\n"
-                             "    %s = vec4f(%s.rgb, clamp(tide_share, 0.0, 1.0));\n", color, color);
-            } else {
-                sb_printf(o, "    %s = %s * tide_tint;\n"
-                             "    float tide_share = tide_cover * tide_tint.a;\n", color, color);
-                if (sharpen) sb_put(o, "    tide_share = (tide_share - 0.5) / max(fwidth(tide_share), 0.0001) + 0.5;\n");
-                sb_printf(o, "    if (tide_screen.w < 0.0) {\n"
-                             "        if (tide_share < 0.5) discard;\n"
-                             "        tide_share = 1.0;\n"
-                             "    }\n"
-                             "    %s.a = clamp(tide_share, 0.0, 1.0);\n", color);
-            }
+            sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
+                         "    var tide_share: f32 = tide_cover * tide_block.tide_tint.a;\n", color, color);
+            if (sharpen) sb_put(o, "    tide_share = (tide_share - 0.5) / max(fwidth(tide_share), 0.0001) + 0.5;\n");
+            sb_printf(o, "    if (tide_block.tide_screen.w < 0.0) {\n"
+                         "        if (tide_share < 0.5) {\n"
+                         "            discard;\n"
+                         "        }\n"
+                         "        tide_share = 1.0;\n"
+                         "    }\n"
+                         "    %s = vec4f(%s.rgb, clamp(tide_share, 0.0, 1.0));\n", color, color);
             continue;
         }
-        if (wgsl) {
-            sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
-                         "    %s = vec4f(%s.rgb * %s.a, %s.a);\n"
-                         "    if (tide_block.tide_screen.w > 0.0) {\n"
-                         "        %s = vec4f(%s.rgb + (1.0 - %s.a), %s.a);\n"
-                         "    }\n", color, color, color, color, color, color, color, color, color, color);
-        } else {
-            sb_printf(o, "    %s = %s * tide_tint;\n"
-                         "    %s.rgb = %s.rgb * %s.a;\n"
-                         "    if (tide_screen.w > 0.0) %s.rgb = %s.rgb + (1.0 - %s.a);\n",
-                      color, color, color, color, color, color, color, color);
-        }
+        sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
+                     "    %s = vec4f(%s.rgb * %s.a, %s.a);\n"
+                     "    if (tide_block.tide_screen.w > 0.0) {\n"
+                     "        %s = vec4f(%s.rgb + (1.0 - %s.a), %s.a);\n"
+                     "    }\n", color, color, color, color, color, color, color, color, color, color);
     }
     if (outputs == 1) {
-        sb_printf(o, "    %s tide_color;\n", result);
-    } else if (wgsl) { // Its struct of them, in order
+        sb_put(o, "    return tide_color;\n");
+    } else { // Its struct of them, in order
         sb_put(o, "    return tide_colors(");
-        for (int k = 0; k < outputs; k++) sb_printf(o, "%s%s", k ? ", " : "", output_name(false, k));
+        for (int k = 0; k < outputs; k++) sb_printf(o, "%s%s", k ? ", " : "", output_name(k));
         sb_put(o, ");\n");
-    } else {
-        for (int k = 0; k < outputs; k++) {
-            const char *color = output_name(false, k);
-            sb_printf(o, "    %s = ", output_name(true, k));
-            sb_printf(o, "%s;\n", color);
-        }
     }
 }
 
 // The private variables WGSL's functions read their stage's inputs through,
-// which the stage sets as it starts: GLSL's are globals already.
+// which the stage sets as it starts.
 static void put_wgsl_inputs(const shader *sh, sb *o)
 {
     for (int i = 0; i < packs(sh->instance_floats); i++) sb_printf(o, "var<private> tide_n%d: vec4f;\n", i);
@@ -6445,12 +6052,12 @@ static void put_wgsl_inputs(const shader *sh, sb *o)
 static void put_dice_variable(const emit *em, sb *o, const bool rolls)
 {
     if (!rolls && !em->helpers[H_ROLL]) return;
-    sb_put(o, em->l == WGSL ? "var<private> tide_dice: u32;\n" : "uint tide_dice;\n");
+    sb_put(o, "var<private> tide_dice: u32;\n");
 }
 
-static emit emitter(program *prog, const shader *sh, const lang l)
+static emit emitter(program *prog, const shader *sh)
 {
-    return (emit){.prog = prog, .sh = sh, .l = l};
+    return (emit){.prog = prog, .sh = sh};
 }
 
 // The functions a stage's code needs, into em->functions.
@@ -6484,83 +6091,18 @@ static bool listable(const shader *sh)
 // The statements that start a listed vertex stage (shader.listed): each of the instance's packs, a pixel of its
 // list's numbers from where its place says, as the attributes of an ordinary one would have them. A list's rows
 // are TIDE_LIST_DATA_ACROSS (1024) pixels.
-static void put_listed_loads(const shader *sh, const lang l, sb *o)
+static void put_listed_loads(const shader *sh, sb *o)
 {
-    const bool wgsl = l == WGSL;
     const int floats = packs(sh->instance_floats), all = floats + packs(sh->instance_ints);
     const int texture = sh->textures.count;
-    sb_printf(o, wgsl ? "    let tide_listed_at = tide_listed * %d;\n" : "    int tide_listed_at = tide_listed * %d;\n", all);
+    sb_printf(o, "    let tide_listed_at = tide_listed * %d;\n", all);
     for (int k = 0; k < all; k++) {
         char at[96];
-        snprintf(at, sizeof at, "(tide_listed_at + %d) & 1023, (tide_listed_at + %d) >> %s", k, k, wgsl ? "10u" : "10");
+        snprintf(at, sizeof at, "(tide_listed_at + %d) & 1023, (tide_listed_at + %d) >> 10u", k, k);
         const bool f = k < floats;
         const int n = f ? k : k - floats;
-        if (wgsl) sb_printf(o, "    tide_%c%d = %stextureLoad(pixels%d, vec2i(%s), 0)%s;\n", f ? 'n' : 'j', n,
-                            f ? "bitcast<vec4f>(" : "", texture, at, f ? ")" : "");
-        else sb_printf(o, "    tide_%c%d = %stexelFetch(pixels%d, ivec2(%s), 0)%s;\n", f ? 'n' : 'j', n,
-                       f ? "intBitsToFloat(" : "", texture, at, f ? ")" : "");
-    }
-}
-
-static void write_glsl(program *prog, shader *sh)
-{
-    for (int stage = STAGE_VERT; stage <= STAGE_FRAG; stage++) {
-        emit em = emitter(prog, sh, GLSL);
-        sb main = {0};
-        if (stage == STAGE_VERT) {
-            write_stage(&em, sh->vert, STAGE_VERT);
-            put_vertex_main(&em, &main, "", "");
-        } else {
-            write_stage(&em, sh->frag, STAGE_FRAG);
-            put_fragment_main(&em, &main, "", "tide_pixel =");
-        }
-        // The vertex stage's attributes are its mesh's, then its instance's: a listed one's are its place in its
-        // list, whose numbers are its packs (put_listed_loads)
-        sb o = {0}, inputs = {0}, listed_inputs = {0}, rest = {0};
-        put_uniforms(sh, GLSL, &o);
-        if (stage == STAGE_VERT) {
-            int location = 0;
-            for (int i = 0; i < sh->vertex->fields.count; i++) {
-                sb_printf(&inputs, "layout(location = %d) in %s tide_a%d;\n", location++, attribute_type(&em, sh->vertex->fields.items[i].type), i);
-            }
-            if (inputs.data) sb_put(&listed_inputs, inputs.data);
-            sb_printf(&listed_inputs, "layout(location = %d) in int tide_listed;\nuniform highp isampler2D pixels%d;\n",
-                      location, sh->textures.count);
-            for (int i = 0; i < packs(sh->instance_floats); i++) {
-                sb_printf(&inputs, "layout(location = %d) in vec4 tide_n%d;\n", location++, i);
-                sb_printf(&listed_inputs, "vec4 tide_n%d;\n", i);
-            }
-            for (int i = 0; i < packs(sh->instance_ints); i++) {
-                sb_printf(&inputs, "layout(location = %d) in ivec4 tide_j%d;\n", location++, i);
-                sb_printf(&listed_inputs, "ivec4 tide_j%d;\n", i);
-            }
-            put_varyings(&em, &rest, "out");
-        } else {
-            put_varyings(&em, &rest, "in");
-            const int outputs = shader_outputs(sh);
-            if (outputs == 1) sb_put(&rest, "out vec4 tide_pixel;\n");
-            // Several say where each goes: a target's color images, in order
-            for (int k = 0; outputs > 1 && k < outputs; k++) {
-                sb_printf(&rest, "layout(location = %d) out vec4 %s;\n", k, output_name(true, k));
-            }
-        }
-        put_dice_variable(&em, &rest, stage_rolls(sh, stage));
-        if (stage == STAGE_FRAG && sh->frag && sh->frag->cutout) sb_put(&rest, "float tide_cover;\n"); // What it covers
-        put_structs(&em, &rest);
-        put_helpers(&em, &rest);
-        if (em.functions.data) sb_put(&rest, em.functions.data);
-        if (stage == STAGE_VERT && sh->listed) {
-            sb listed = {0}, loads = {0};
-            put_listed_loads(sh, GLSL, &loads);
-            sb_printf(&listed, "%s%s%svoid main() {\n%s%s}\n", o.data, listed_inputs.data, rest.data ? rest.data : "",
-                      loads.data, main.data ? main.data : "");
-            sh->glsl_listed_vertex = listed.data;
-        }
-        if (inputs.data) sb_put(&o, inputs.data);
-        if (rest.data) sb_put(&o, rest.data);
-        sb_printf(&o, "void main() {\n%s}\n", main.data);
-        if (stage == STAGE_VERT) sh->glsl_vertex = o.data;
-        else sh->glsl_fragment = o.data;
+        sb_printf(o, "    tide_%c%d = %stextureLoad(pixels%d, vec2i(%s), 0)%s;\n", f ? 'n' : 'j', n,
+                  f ? "bitcast<vec4f>(" : "", texture, at, f ? ")" : "");
     }
 }
 
@@ -6618,16 +6160,16 @@ static void put_instance_loads(emit *em, sb *o)
 
 static void write_wgsl(program *prog, shader *sh)
 {
-    emit em = emitter(prog, sh, WGSL);
+    emit em = emitter(prog, sh);
     sb vertex = {0}, fragment = {0};
     write_stage(&em, sh->vert, STAGE_VERT);
-    put_vertex_main(&em, &vertex, "", "out.");
+    put_vertex_main(&em, &vertex);
     write_stage(&em, sh->frag, STAGE_FRAG);
-    put_fragment_main(&em, &fragment, "in.", "return");
+    put_fragment_main(&em, &fragment);
 
     const bool rolls = stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG);
     sb o = {0}, rest = {0};
-    put_uniforms(sh, WGSL, &o);
+    put_uniforms(sh, &o);
     for (int i = 0; i < sh->storage.count; i++) // The GPU lists its code reads, and an indirect draw's instances
         sb_printf(&o, "@group(0) @binding(%d) var<storage, read> tide_s%d: array<u32>;\n", 25 + i, i);
     sb loads = {0};
@@ -6636,7 +6178,7 @@ static void write_wgsl(program *prog, shader *sh)
     put_dice_variable(&em, &rest, rolls);
     if (sh->frag && sh->frag->cutout) sb_put(&rest, "var<private> tide_cover: f32;\n"); // What it covers
     sb_put(&rest, "struct tide_corner {\n    @builtin(position) tide_at: vec4f,\n");
-    put_varyings(&em, &rest, "");
+    put_varyings(&em, &rest);
     sb_put(&rest, "}\n");
     put_structs(&em, &rest);
     put_helpers(&em, &rest);
@@ -6663,7 +6205,7 @@ static void write_wgsl(program *prog, shader *sh)
     if (sh->listed) {
         sb_printf(&listed, "%s@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n%s@vertex fn vertex(%s, @location(%d) tide_listed: i32%s",
                   o.data, 1 + 2 * sh->textures.count, sh->textures.count, rest.data, corners.data, listed_at, builtins.data);
-        put_listed_loads(sh, WGSL, &listed);
+        put_listed_loads(sh, &listed);
         sb_printf(&listed, "%s    return out;\n}\n", vertex.data ? vertex.data : "");
     }
     sb_printf(&o, "%s@vertex fn vertex(%s%s%s", rest.data, corners.data, after.data ? after.data : "", builtins.data);
@@ -6672,14 +6214,14 @@ static void write_wgsl(program *prog, shader *sh)
     for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
     sb_printf(&o, "%s    return out;\n}\n", vertex.data);
 
-    // The fragment stage, the same for both
+    // The fragment stage, the same for the listed vertex stage and the other
     sb entry = {0};
     const int outputs = shader_outputs(sh);
     if (outputs == 1) {
         sb_put(&entry, "@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n");
     } else { // Several colors, each to the color image of a target that's its place
         sb_put(&entry, "struct tide_colors {\n");
-        for (int k = 0; k < outputs; k++) sb_printf(&entry, "    @location(%d) %s: vec4f,\n", k, output_name(false, k));
+        for (int k = 0; k < outputs; k++) sb_printf(&entry, "    @location(%d) %s: vec4f,\n", k, output_name(k));
         sb_put(&entry, "}\n@fragment fn fragment(in: tide_corner) -> tide_colors {\n    tide_at = in.tide_at;\n");
     }
     if (sh->frag_world) sb_put(&entry, "    tide_world = in.tide_world;\n");
@@ -6709,7 +6251,7 @@ static bool check_shader(program *prog, decl *d)
         const decl *part = fields && p->type.kind != TY_RECORD ? p->type.decl->local_part : NULL;
         if (part && !p->local_reads) p->local_reads = arena_alloc((size_t)(part->fields.count + 1) * sizeof(bool));
     }
-    emit em = emitter(prog, NULL, d->is_compute ? WGSL : GLSL);
+    emit em = emitter(prog, NULL);
     em.checking = true;
     em.root = em.code = d;
     sb scratch = {0};
@@ -7061,7 +6603,6 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         return NULL;
     }
     sh->listed = listable(sh);
-    write_glsl(prog, sh);
     write_wgsl(prog, sh);
     vec_push(prog->shaders, sh);
     return sh;
@@ -7136,12 +6677,7 @@ void print_shaders(const program *prog, sb *out)
 {
     for (int i = 0; i < prog->shaders.count; i++) {
         const shader *sh = prog->shaders.items[i];
-        if (sh->compute) { // A kernel is WGSL alone
-            sb_printf(out, "// %s: WGSL\n%s\n", sh->name, sh->wgsl);
-            continue;
-        }
-        sb_printf(out, "// %s: GLSL, vertex\n%s\n// %s: GLSL, fragment\n%s\n// %s: WGSL\n%s\n", sh->name, sh->glsl_vertex,
-                  sh->name, sh->glsl_fragment, sh->name, sh->wgsl);
+        sb_printf(out, "// %s: WGSL\n%s\n", sh->name, sh->wgsl);
     }
     if (prog->shaders.count == 0) sb_put(out, "// No mesh draw draws through a shader of the game's.\n");
 }

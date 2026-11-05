@@ -8,9 +8,7 @@
 // its elements, `stride` words each, a value's floats' bits then its ints, as
 // put_value reads words everywhere. Each slot has functions of its own, written
 // once a shader: tide_word<s>, tide_count<s>, tide_capacity<s>, tide_get<s> and,
-// in a kernel that writes it, tide_put<s>. GLSL has no storage buffers (OpenGL
-// 3.3, OpenGL ES 3 and WebGL 2, which go once compute lands): its functions
-// there are zeros, and the renderer refuses a draw that reads a GPU list on them.
+// in a kernel that writes it, tide_put<s>.
 
 // The words of an element of type `t`: its floats, then its ints.
 static int element_words(const type t, int *floats)
@@ -50,7 +48,7 @@ static int gpu_list_slot(emit *em, const expr *list)
 
 static bool slot_atomic(const emit *em, const int slot)
 {
-    return em->l == WGSL && em->sh && em->sh->compute && slot >= 0 && em->sh->storage.items[slot].atomic;
+    return em->sh && em->sh->compute && slot >= 0 && em->sh->storage.items[slot].atomic;
 }
 
 // The element type of the GPU list in slot `slot`: its instances' for an Instanced draw's own.
@@ -154,17 +152,6 @@ static void need_storage(emit *em, const int slot)
     const type element = slot_element(em, slot);
     const char *t = ty(em, element);
     sb text = {0};
-    if (em->l == GLSL) { // No storage buffers there: nothing is read (the renderer draws none of this)
-        sb *const out = em->o;
-        em->o = &text;
-        sb_printf(&text, "int tide_count%d() {\n    return 0;\n}\n\nint tide_capacity%d() {\n    return 0;\n}\n\n", slot, slot);
-        sb_printf(&text, "%s tide_get%d(int tide_i) {\n    return ", t, slot);
-        put_zeros(em, element);
-        sb_put(&text, ";\n}\n\n");
-        em->o = out;
-        sb_put(&em->functions, text.data);
-        return;
-    }
     const bool atomic = slot_atomic(em, slot);
     const int words = element_words(element, NULL);
     if (atomic) sb_printf(&text, "fn tide_word%d(tide_k: u32) -> u32 {\n    return bitcast<u32>(atomicLoad(&tide_s%d[tide_k]));\n}\n\n", slot, slot);
@@ -266,7 +253,6 @@ static int add_of(const emit *em, const int slot)
 static bool ex_gpu(emit *em, const expr *e)
 {
     if (e->kind == E_INDEX && shared_atomic(e->object)) {
-        if (em->l != WGSL) return true;
         sb_printf(em->o, "%s(", need_shared_access(em, e->object->local, false));
         ex_as(em, e->lhs, (type){TY_INT, NULL});
         sb_put(em->o, ")");
@@ -309,7 +295,7 @@ static bool ex_gpu(emit *em, const expr *e)
             snprintf(array, sizeof array, "%s", local_name(e->object->name));
             length = e->object->type.decl->array_length;
         }
-        if (em->l != WGSL || em->checking) { // Checked for what it reads; kernels are WGSL alone
+        if (em->checking) { // Checked for what it reads
             for (int i = 0; i < e->args.count; i++) ex_as(em, e->args.items[i], (type){TY_INT, NULL});
             return true;
         }
@@ -342,7 +328,6 @@ static bool st_gpu(emit *em, const stmt *s)
         return true;
     }
     if (s->kind == S_ASSIGN && s->target->kind == E_INDEX && shared_atomic(s->target->object)) {
-        if (em->l != WGSL) return true;
         line(em);
         sb_printf(em->o, "%s(", need_shared_access(em, s->target->object->local, true));
         ex_as(em, s->target->lhs, (type){TY_INT, NULL});
@@ -389,16 +374,13 @@ static bool st_gpu(emit *em, const stmt *s)
         need_storage(em, slot);
         const type element = s->value->type.decl->fields.items[0].type;
         if (!type_fits(em, element, s->value->at)) return true;
-        const bool wgsl = em->l == WGSL;
         const int k = em->temps++;
         const int at = slot < 0 ? 0 : slot;
         line(em);
-        sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < tide_count%d(); tide_k%d++) {\n"
-                              : "for (int tide_k%d = 0; tide_k%d < tide_count%d(); tide_k%d++) {\n", k, k, at, k);
+        sb_printf(em->o, "for (var tide_k%d: i32 = 0; tide_k%d < tide_count%d(); tide_k%d++) {\n", k, k, at, k);
         em->indent++;
         line(em);
-        if (wgsl) sb_printf(em->o, "var %s: %s = tide_get%d(tide_k%d);\n", local_name(s->name), ty(em, element), at, k);
-        else sb_printf(em->o, "%s %s = tide_get%d(tide_k%d);\n", ty(em, element), local_name(s->name), at, k);
+        sb_printf(em->o, "var %s: %s = tide_get%d(tide_k%d);\n", local_name(s->name), ty(em, element), at, k);
         const stmt *body = s->then_stmt;
         for (int i = 0; body && body->kind == S_BLOCK && i < body->stmts.count; i++) {
             st(em, body->stmts.items[i]);
@@ -416,10 +398,6 @@ static bool st_gpu(emit *em, const stmt *s)
 // this.index, this.at...: which invocation of its run a kernel's is, which its entry point sets.
 static void ex_invocation(emit *em, const expr *e)
 {
-    if (em->l != WGSL) {
-        put_zero(em, e->type);
-        return;
-    }
     sb_printf(em->o, "tide_inv_" STR_FMT, STR_ARG(e->member));
 }
 

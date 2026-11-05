@@ -59,9 +59,9 @@ static const command_help commands[] = {
      "Checks the game and shows which systems can run at the same time,\n"
      "and why the others wait. Builds no executable.\n"
      "Use --define and --release to inspect a particular conditional build.", SCHEDULE},
-    {"shaders", "shaders [folder] [options]", "Show generated GLSL and WGSL",
-     "Checks the game and prints the GLSL and WGSL generated from its frags\n"
-     "and verts. Builds no executable.\n"
+    {"shaders", "shaders [folder] [options]", "Show generated WGSL",
+     "Checks the game and prints the WGSL generated from its frags, verts\n"
+     "and kernels. Builds no executable.\n"
      "Use --define and --release to inspect a particular conditional build.", SHADERS},
     {"add", "add <source>", "Add a built-in, local or git package",
      "Adds a package and its dependencies to tide.packages in the current game.\n"
@@ -195,7 +195,7 @@ static const argument_help arguments[] = {
      "generated plumbing -O2; release/distribution all -O2.\n"
      "Explicit levels use separate caches. Example: tide run --release -O3 --stats.", COMPILE},
     {"--web", "--web", "Build a web page",
-     "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
+     "Uses Clang's WebAssembly target. Pages draw with WebGPU.\n"
      "build makes a folder to put online, .build/web: index.html, which shows\n"
      "its download and caches the index.wasm and index.pack it loads.\n"
      "--single-file makes one HTML file instead. run serves the page and opens\n"

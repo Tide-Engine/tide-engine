@@ -501,7 +501,7 @@ static void help(void)
          "Counts are 1 to 10000, at most 16 entries; --modes selects a subset.\n"
          "--save appends bench/results/skinned.jsonl (web prints JSONL).\n"
          "Set TIDE_BENCH_MACHINE and TIDE_BENCH_REVISION to identify hardware and source.\n"
-         "Web: ?bench&counts=1,10,100,1000&frames=100&warmup=20&repeat=3&save=label&backend=webgpu");
+         "Web: ?bench&counts=1,10,100,1000&frames=100&warmup=20&repeat=3&save=label");
 }
 
 int main(const int argc, char **argv)

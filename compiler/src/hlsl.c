@@ -1047,8 +1047,8 @@ static int texture_call(translation *x, const expr *e, hs *o)
     const int f32 = t_simple(x, K_F32), u32 = t_simple(x, K_U32);
     const int result = tex.depth ? f32 : t_vec(x, tex.elem, 4);
     int t = result;
-    // The texture's own sampler, which OpenGL samples with (TIDEHL_OWN_SAMPLERS): sampler_<texture> for a module's
-    // texture, as Unity names a texture's sampler; one of the inline ones for a texture a function was given
+    // The texture's own sampler, which Unity's OpenGL Core samples with (TIDEHL_OWN_SAMPLERS): sampler_<texture> for a
+    // module's texture, as Unity names a texture's sampler; one of the inline ones for a texture a function was given
     char own[64];
     if (strncmp(a.text[0], "_TideTexture", 12) == 0) snprintf(own, sizeof own, "sampler%s", a.text[0]);
     else snprintf(own, sizeof own, "tidehl_linear_clamp_sampler");
@@ -2418,26 +2418,17 @@ static const char *const prelude[] = {
     "#else\n"
     "#define TIDEHL_REVERSED_Z 0 // OpenGL's: clip depth from -w near to w far\n"
     "#endif\n"
-    "#if defined(SHADER_API_GLCORE) || defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)\n"
-    "#define TIDEHL_OWN_SAMPLERS 1 // Unity's OpenGL has no samplers apart from textures: each texture's own\n"
+    "#if defined(SHADER_API_GLCORE)\n"
+    "#define TIDEHL_OWN_SAMPLERS 1 // Unity's OpenGL Core has no samplers apart from textures: each texture's own\n"
     "#else\n"
     "#define TIDEHL_OWN_SAMPLERS 0\n"
-    "#endif\n"
-    "#if defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)\n"
-    "#define TIDEHL_TEXTURE_BUFFERS 1 // OpenGL ES 3.0's and WebGL 2's: buffers as textures, a word a pixel's bytes, 4,096 a row\n"
-    "#else\n"
-    "#define TIDEHL_TEXTURE_BUFFERS 0\n"
     "#endif\n"
     "float4 _ProjectionParams;\n"
     "float _TideFlip, _TideHeight, _TideLinear;\n"
     "float4 _TideAttributes[16];\n"
     "float4 _TideSlots[3];\n"
     "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh;\n"
-    "#if TIDEHL_TEXTURE_BUFFERS\n"
-    "Texture2D<float4> _TideVertices0, _TideVertices1, _TideVertices2;\n"
-    "#else\n"
     "ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2;\n"
-    "#endif\n"
     "SamplerState tidehl_point_clamp_sampler, tidehl_point_repeat_sampler, tidehl_point_mirror_sampler;\n"
     "SamplerState tidehl_linear_clamp_sampler, tidehl_linear_repeat_sampler, tidehl_linear_mirror_sampler;\n"
     "SamplerState tidehl_trilinear_clamp_sampler, tidehl_trilinear_repeat_sampler, tidehl_trilinear_mirror_sampler;\n"
@@ -2473,20 +2464,6 @@ static const char *const prelude[] = {
     "\n",
     "// Vertices, from their buffers\n"
     "uint tidehl_vertex_of(uint v) { return _TideFirst + v; } // An indexed draw's first is 0: SV_VertexID is the index\n"
-    "#if TIDEHL_TEXTURE_BUFFERS\n"
-    "uint tidehl_word(Texture2D<float4> b, uint at) {\n"
-    "    uint w = at >> 2;\n"
-    "    uint4 bytes = uint4(round(b.Load(int3(int(w & 4095u), int(w >> 12), 0)) * 255.0));\n"
-    "    return bytes.x | bytes.y << 8 | bytes.z << 16 | bytes.w << 24;\n"
-    "}\n"
-    "uint4 tidehl_words(Texture2D<float4> b, uint at, uint n) {\n"
-    "    uint4 r = uint4(tidehl_word(b, at), 0u, 0u, 0u);\n"
-    "    if (n > 1u) r.y = tidehl_word(b, at + 4u);\n"
-    "    if (n > 2u) r.z = tidehl_word(b, at + 8u);\n"
-    "    if (n > 3u) r.w = tidehl_word(b, at + 12u);\n"
-    "    return r;\n"
-    "}\n"
-    "#else\n"
     "uint4 tidehl_words(ByteAddressBuffer b, uint at, uint n) {\n"
     "    uint4 r;\n"
     "    if (n == 1u) r = uint4(b.Load(at), 0u, 0u, 0u);\n"
@@ -2495,7 +2472,6 @@ static const char *const prelude[] = {
     "    else r = b.Load4(at);\n"
     "    return r;\n"
     "}\n"
-    "#endif\n"
     "uint4 tidehl_raw(uint location, uint vertex, uint instance, out uint format) {\n"
     "    float4 a = _TideAttributes[location];\n"
     "    uint slot = min((uint)a.x, 2u);\n"
@@ -2596,14 +2572,7 @@ static const char *const prelude[] = {
     "    float2 size = float2(w, h);\n"
     "    float2 p = at * size - 0.5;\n"
     "    float2 f = frac(p);\n"
-    "#if TIDEHL_TEXTURE_BUFFERS\n"
-    "    // OpenGL ES 3.0 gathers nothing: the four pixels, each loaded\n"
-    "    int2 i = int2(floor(p)), most = int2(w, h) - 1;\n"
-    "    float4 g = float4(t.Load(int3(clamp(i + int2(0, 1), 0, most), 0)), t.Load(int3(clamp(i + int2(1, 1), 0, most), 0)),\n"
-    "                      t.Load(int3(clamp(i + int2(1, 0), 0, most), 0)), t.Load(int3(clamp(i, 0, most), 0)));\n"
-    "#else\n"
     "    float4 g = t.GatherRed(TIDEHL_NEAREST(own), (floor(p) + 1.0) / size);\n"
-    "#endif\n"
     "#if TIDEHL_REVERSED_Z\n"
     "    g = 1.0 - g;\n"
     "#endif\n"
@@ -2858,34 +2827,30 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
             "        _TideAlphaToMask (\"\", Float) = 0\n"
             "    }\n",
             name);
-    // Twice: for GPUs whose shaders read buffers, and for OpenGL ES 3.0 and WebGL 2, which read them as textures
-    // (hlsl.h's TIDEHL_TEXTURE_BUFFERS); once where it reads storage buffers, which those have none of
-    const int count = strstr(hlsl, "_TideStorage") ? 1 : 2;
-    for (int i = 0; i < count; i++) {
-        hput(&o, "    SubShader\n"
-                 "    {\n"
-                 "        Pass\n"
-                 "        {\n"
-                 "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n"
-                 "            ZTest [_TideZTest]\n"
-                 "            ZWrite [_TideZWrite]\n"
-                 "            Cull [_TideCull]\n"
-                 "            AlphaToMask [_TideAlphaToMask]\n"
-                 "            Stencil\n"
-                 "            {\n"
-                 "                Ref [_TideStencilRef]\n"
-                 "                Comp [_TideStencilComp]\n"
-                 "                Pass [_TideStencilPass]\n"
-                 "            }\n"
-                 "            HLSLPROGRAM\n"
-                 "            #pragma vertex tidehl_vertex\n"
-                 "            #pragma fragment tidehl_fragment\n");
-        hput(&o, i == 0 ? "            #pragma target 4.5\n            #pragma exclude_renderers gles3\n"
-                        : "            #pragma target 3.5\n            #pragma only_renderers gles3\n");
-        hput(&o, "            #include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
-        hput(&o, hlsl);
-        hput(&o, "            ENDHLSL\n        }\n    }\n");
-    }
+    // One subshader, for GPUs whose shaders read buffers and compute: Unity's OpenGL ES 3.0 and WebGL 2 have no
+    // Tide drawing (TideRender.Supported), as Tide itself has no backend that can't compute
+    hput(&o, "    SubShader\n"
+             "    {\n"
+             "        Pass\n"
+             "        {\n"
+             "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n"
+             "            ZTest [_TideZTest]\n"
+             "            ZWrite [_TideZWrite]\n"
+             "            Cull [_TideCull]\n"
+             "            AlphaToMask [_TideAlphaToMask]\n"
+             "            Stencil\n"
+             "            {\n"
+             "                Ref [_TideStencilRef]\n"
+             "                Comp [_TideStencilComp]\n"
+             "                Pass [_TideStencilPass]\n"
+             "            }\n"
+             "            HLSLPROGRAM\n"
+             "            #pragma vertex tidehl_vertex\n"
+             "            #pragma fragment tidehl_fragment\n"
+             "            #pragma target 4.5\n            #pragma exclude_renderers gles3\n");
+    hput(&o, "            #include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
+    hput(&o, hlsl);
+    hput(&o, "            ENDHLSL\n        }\n    }\n");
     hput(&o, "}\n");
     return htake(&o);
 }

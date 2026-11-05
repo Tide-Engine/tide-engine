@@ -22,7 +22,7 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
       `shared`, `GPU.Barrier`, `await list.Read()`, 2026-11-05 ("Built" below)
 - [x] Engine/renderer: GPU lists in the draw list, compute commands, ordering
 - [x] Indirect draws over a `GPUList` (`Draw.Instanced`; `Draw.Mesh` over GPU lists not built)
-- [ ] GL backends removed
+- [x] GL backends removed, 2026-11-05 (`notes/rendering.md`, GL backends removed)
 - [x] Engine GPU culling of listed runs, 2026-11-05: notes/drawing.md, Listed runs culled on the GPU (Hi-Z
       occlusion not built)
 - [x] Docs: `docs/game/shaders.md`, spec, editors
@@ -67,7 +67,7 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
   names is a storage slot (`shader.storage`, by source decl and field, from
   `plan_reads`), read through per-slot functions (`need_storage`: `tide_word`,
   `tide_count`, `tide_capacity`, `tide_get`, and `tide_put` where a kernel
-  writes it; zeros in GLSL); atomics through `need_atomic` (each `&array[i]`
+  writes it); atomics through `need_atomic` (each `&array[i]`
   inline, as the HLSL translator takes them; capacity-guarded); shared atomic
   arrays through `need_shared_access`. `plan_kernel` plans one shader a kernel
   (`shader.compute`, `.kernel`): its values all uniforms, no engine header,
@@ -132,8 +132,9 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
 - Reads begin at `compute_frame_end` of each drawn frame, poll at the next
   frame's start (`buffer_read_wait` first in headless runs); a device that's
   another fails the begun ones (`forget_compute`).
-- No compute (`gpu->dispatch` NULL: OpenGL, WebGL, and a draw reading storage
-  there): passed by, said once, reads fail.
+- Every backend computes (2026-11-05): the no-compute path (`gpu->dispatch`
+  NULL on OpenGL and WebGL: runs passed by, said once, reads failed) went with
+  the GL backends.
 - The recorder writes the new ops after the existing ones, and a read back as
   `BUFFER_READ`, which the other program answers (`tide_embed_render_read`);
   Unity's TideRender replays them (`notes/unity.md`, Compute in Unity).
@@ -152,14 +153,12 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
   2D run, a chained indirect run, atomics, shared memory with barriers and an
   atomic on shared memory, a struct list sent, changed and read back, Read and
   ReadCount, an indirect draw's pixels, contentRevision; Vulkan with the
-  validation layer (gpu label), OpenGL's refusal, WebGPU with a lost device,
-  and WebGL's refusal.
+  validation layer (gpu label), and WebGPU with a lost device. (Its OpenGL
+  and WebGL refusal checks went with those backends, 2026-11-05.)
 - `lsp_compute_complete`; the grammars' `compute` case and probe line.
 
 ### Not built
 
-- GL backends' removal (the next step of the plan; the GPU culling of listed runs is
-  built: notes/drawing.md).
 - `Draw.Mesh` over GPU-list vertices and indices; `DrawIndirectCount`.
 - A frag or vert reading a GPU list through a function given a struct works by
   field; one passed on alone is refused.
@@ -191,13 +190,14 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
 - `buffer_read` begins an asynchronous read (token), `buffer_read_done` polls
   (1 done, 0 not yet, -1 lost), `buffer_read_wait` waits for every pending
   read (NULL on the web).
-- `tide_gpu_gl` leaves all of these NULL.
+- Every backend has all of these (the GL backend, which left them NULL, is gone).
 - Test: `platform/tests/compute.c` (`tide_platform_compute`, native Vulkan with
   label `gpu`, and a WebGPU page), WGSL written by hand. Pipelines are made
   first and recorded once `pipeline_ready` says they're made. On WebGPU it
   also loses the device with a read pending (which must give -1) and repeats
-  everything on the next device with background pipelines. The page's WebGL
-  test prints `SKIPPED:`; natively a backend that can't compute fails it.
+  everything on the next device with background pipelines. A backend that
+  can't compute fails it (the page's WebGL run, which printed `SKIPPED:`, is
+  gone).
 
 ## Language and runtime design (Claude's, Provisional, 2026-11-05)
 

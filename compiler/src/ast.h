@@ -1523,12 +1523,12 @@ typedef struct shader {
     bool frag_world;            // ...and whether they read where they are in the world
     bool frag_normals;          // ...and whether they call instance.Normal: the vertex stage passes on what normals go through
     const char *name;           // For messages: "Wave and Shade on BoxVertex"
-    const char *glsl_vertex, *glsl_fragment, *wgsl;
+    const char *wgsl;
     // An instanced 3D draw whose instances come from its list's items alone (and constants): its draws can be
     // listed (tide_draw_mesh_shaded_list), with this vertex stage, which reads each instance's packs from texture
     // `textures.count` by the instance's place in the list, an int attribute, and this WGSL module
     bool listed;
-    const char *glsl_listed_vertex, *wgsl_listed;
+    const char *wgsl_listed;
 } shader;
 
 // A mesh draw with a vertex struct of the game's, a vert or a frag, and the
@@ -1876,7 +1876,7 @@ int switch_choice(const expr *e); // A constant switch's selected arm, or -1 for
 
 // Checks every frag and vert, and the functions they call, for what the GPU
 // runs, and plans the shader each mesh draw draws through (program.shaders):
-// what it reads, how that's laid out, and its GLSL and WGSL (shader.c).
+// what it reads, how that's laid out, and its WGSL (shader.c).
 void plan_shaders(program *prog);
 
 // How the declaration of the texture `texture` names says it's sampled: the

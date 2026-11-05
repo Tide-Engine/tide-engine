@@ -155,8 +155,7 @@
             const saved = Number(localStorage.getItem(SPLIT_KEY));
             if (saved >= 30 && saved <= 78) split = saved;
         } catch {}
-        const backend = new URL(location.href).searchParams.get('backend');
-        previewUrl = '/playground/runtime.html?stats' + (backend === 'webgl' || backend === 'webgpu' ? `&backend=${backend}` : '');
+        previewUrl = '/playground/runtime.html?stats';
         const message = ({ origin, source: sender, data }: MessageEvent) => {
             if (origin !== location.origin || sender !== frame?.contentWindow) return;
             if (data.type === 'tide-ready') {

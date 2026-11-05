@@ -1,4 +1,4 @@
-// The engine's skin stage precedes the game's vertex function in GLSL and WGSL.
+// The engine's skin stage precedes the game's vertex function in WGSL.
 scene Main { }
 
 struct Corner

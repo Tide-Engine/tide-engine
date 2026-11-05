@@ -1,5 +1,7 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
 ## Listed runs culled on the GPU (2026-11-05)
 
 Task (owner, step 1 of compute's plan): cull listed runs on the GPU (frustum), pick their levels and split their
@@ -23,7 +25,7 @@ same pixels. Every pick below is Claude's, Provisional.
   words (floats, then ints) by hand: `CullCamera` 92 words, `CullJob` 28, parts and buckets 4.
 - **Recording** (`tide_draw_shaded_culled`, draw.c, called by `tide_draw_mesh_shaded_list` once the list's region
   is written): where the host asks (`tide_draw_list.gpu_culling`, which the standard host sets each frame from
-  `tide_platform_gpu_culling`: a backend that computes, not the recorder, unless `TIDE_GPU_CULLING=0`). A draw is a
+  `tide_platform_gpu_culling`: any backend but the recorder, as every backend computes, unless `TIDE_GPU_CULLING=0`). A draw is a
   `tide_draw_cull` (its page and places, its bounds as `draw_bounds` gives them, its camera) and a
   `tide_draw_cull_camera` (the world-to-clip matrix the frustum is built from, the lod_view's 16 numbers and the
   forced level), each camera kept once a frame. It records one shaded run a level (`tide_draw_run.culled`,
@@ -54,8 +56,8 @@ same pixels. Every pick below is Claude's, Provisional.
   big or not finite). So the GPU culls a subset of what the CPU culls. Levels: pick_level's formula in floats; the
   GPU's sqrt, division and fused multiply-adds can pick the next level for an instance within about 1e-6 of a
   threshold, the one way GPU and CPU frames can differ in pixels.
-- **The renderer** (`cull.inc`): `cull_plan` (compute, not the recorder, the kernels' pipelines made: on the web
-  in the background), then `upload_shaded` gives a culled run to the GPU where its listed pipeline is made and its
+- **The renderer** (`cull.inc`): `cull_plan` (not the recorder, the kernels' pipelines made: on the web in the
+  background), then `upload_shaded` gives a culled run to the GPU where its listed pipeline is made and its
   page is one of four; otherwise the CPU decides its instances as it's drawn (`tide_draw_culled_places`:
   frustum_cull.h's exact answers and pick_level, the CPU path's decisions, in order), as places through the listed
   pipeline or gathered bytes through the ordinary one. `cull_run` packs the frame's cameras, draws, parts (a draw's
@@ -63,7 +65,10 @@ same pixels. Every pick below is Claude's, Provisional.
   binds `places` at its bucket's region as its instance buffer and draws `draw_indexed_indirect` with its bucket's
   arguments (first instance 0, as gpu.h has it). Buffers are the renderer's own (`made_buffer`, so counted), kept
   and grown, made again on another device (`forget_culling`, from forget_compute); the pipelines are prewarmed
-  with the renderer's own (`cull_warm`). `TIDE_GPU_CULLING=decide` has the renderer decide on the CPU, for tests.
+  with the renderer's own (`cull_warm`). `TIDE_GPU_CULLING=decide` has the renderer decide on the CPU, for tests. The CPU's deciding stays for what still
+  needs it: a pipeline or kernel not made yet (the web makes them in the background), a fifth page, and the recorder
+  (Unity's replay, which a host doesn't ask to cull on the GPU anyway); with the GL backends gone (2026-11-05) no
+  backend lacks compute.
 - **What reads runs**: `tide_draw_run_instance` gives nothing for a culled run; `tide_draw_run_uncull`
   (`tide_draw_uncull` for all) makes one an ordinary listed run of the CPU's places; `tide_draw_append` unculls
   its source first, and `tide_draw_run_unlist` unculls before unlisting. Render3D's transparent sort only reaches
@@ -86,8 +91,9 @@ same pixels. Every pick below is Claude's, Provisional.
   patch mirrored and one half mirrored, three cameras and five settings (picked levels, a forced level, coarser,
   culling off, a render target with a LOD camera of its own), each drawn GPU-culled and CPU-culled: the same pixels
   byte for byte; on Vulkan the GPU's places read back hold every instance the CPU draws, in order (none extra in
-  any shot); then the device is lost and it's all again. `_decided` (the renderer's CPU fallback) and `_opengl`
-  (the CPU) natively; on the web `tide_platform_cull` (WebGL) and `_webgpu` (pixels, then a lost device).
+  any shot); then the device is lost and it's all again. Natively `tide_platform_cull` and `_decided` (the renderer's CPU
+  fallback; no device loss), both labelled `gpu`; on the web `tide_platform_cull` (WebGPU, label `pixels`: pixels,
+  then a lost device). The `_opengl` twin (the CPU, OpenGL) and the WebGL page went with the GL backends.
 - **Measured** (Mount & Rifle 2330682 built with this checkout through a scratch `TIDE_EXTERNAL_DIRS` folder as in
   benchmarks.md; release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER, `--profile --profile-warmup 300`, 1,500
   frames, a fresh `--data-dir` each, three alternating pairs, the same binary with `TIDE_GPU_CULLING=0` before).

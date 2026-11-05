@@ -8,26 +8,17 @@
 #else
 #define TIDEHL_REVERSED_Z 0 // OpenGL's: clip depth from -w near to w far
 #endif
-#if defined(SHADER_API_GLCORE) || defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)
-#define TIDEHL_OWN_SAMPLERS 1 // Unity's OpenGL has no samplers apart from textures: each texture's own
+#if defined(SHADER_API_GLCORE)
+#define TIDEHL_OWN_SAMPLERS 1 // Unity's OpenGL Core has no samplers apart from textures: each texture's own
 #else
 #define TIDEHL_OWN_SAMPLERS 0
-#endif
-#if defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)
-#define TIDEHL_TEXTURE_BUFFERS 1 // OpenGL ES 3.0's and WebGL 2's: buffers as textures, a word a pixel's bytes, 4,096 a row
-#else
-#define TIDEHL_TEXTURE_BUFFERS 0
 #endif
 float4 _ProjectionParams;
 float _TideFlip, _TideHeight, _TideLinear;
 float4 _TideAttributes[16];
 float4 _TideSlots[3];
 uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh;
-#if TIDEHL_TEXTURE_BUFFERS
-Texture2D<float4> _TideVertices0, _TideVertices1, _TideVertices2;
-#else
 ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2;
-#endif
 SamplerState tidehl_point_clamp_sampler, tidehl_point_repeat_sampler, tidehl_point_mirror_sampler;
 SamplerState tidehl_linear_clamp_sampler, tidehl_linear_repeat_sampler, tidehl_linear_mirror_sampler;
 SamplerState tidehl_trilinear_clamp_sampler, tidehl_trilinear_repeat_sampler, tidehl_trilinear_mirror_sampler;
@@ -63,20 +54,6 @@ float4 tidehl_output(float4 c) {
 
 // Vertices, from their buffers
 uint tidehl_vertex_of(uint v) { return _TideFirst + v; } // An indexed draw's first is 0: SV_VertexID is the index
-#if TIDEHL_TEXTURE_BUFFERS
-uint tidehl_word(Texture2D<float4> b, uint at) {
-    uint w = at >> 2;
-    uint4 bytes = uint4(round(b.Load(int3(int(w & 4095u), int(w >> 12), 0)) * 255.0));
-    return bytes.x | bytes.y << 8 | bytes.z << 16 | bytes.w << 24;
-}
-uint4 tidehl_words(Texture2D<float4> b, uint at, uint n) {
-    uint4 r = uint4(tidehl_word(b, at), 0u, 0u, 0u);
-    if (n > 1u) r.y = tidehl_word(b, at + 4u);
-    if (n > 2u) r.z = tidehl_word(b, at + 8u);
-    if (n > 3u) r.w = tidehl_word(b, at + 12u);
-    return r;
-}
-#else
 uint4 tidehl_words(ByteAddressBuffer b, uint at, uint n) {
     uint4 r;
     if (n == 1u) r = uint4(b.Load(at), 0u, 0u, 0u);
@@ -85,7 +62,6 @@ uint4 tidehl_words(ByteAddressBuffer b, uint at, uint n) {
     else r = b.Load4(at);
     return r;
 }
-#endif
 uint4 tidehl_raw(uint location, uint vertex, uint instance, out uint format) {
     float4 a = _TideAttributes[location];
     uint slot = min((uint)a.x, 2u);
@@ -185,14 +161,7 @@ float tidehl_compare(Texture2D<float> t, SamplerState own, float2 at, float d) {
     float2 size = float2(w, h);
     float2 p = at * size - 0.5;
     float2 f = frac(p);
-#if TIDEHL_TEXTURE_BUFFERS
-    // OpenGL ES 3.0 gathers nothing: the four pixels, each loaded
-    int2 i = int2(floor(p)), most = int2(w, h) - 1;
-    float4 g = float4(t.Load(int3(clamp(i + int2(0, 1), 0, most), 0)), t.Load(int3(clamp(i + int2(1, 1), 0, most), 0)),
-                      t.Load(int3(clamp(i + int2(1, 0), 0, most), 0)), t.Load(int3(clamp(i, 0, most), 0)));
-#else
     float4 g = t.GatherRed(TIDEHL_NEAREST(own), (floor(p) + 1.0) / size);
-#endif
 #if TIDEHL_REVERSED_Z
     g = 1.0 - g;
 #endif

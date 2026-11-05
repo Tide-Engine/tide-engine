@@ -1,8 +1,8 @@
 // frag and vert, written in Tide (shaders.tide), through the whole path:
-// tidec's GLSL and WGSL, the draw list, the renderer and the GPU, read back
-// from an offscreen render. Every backend compiles every shader the game
-// uses, and has to give the same pixels: OpenGL 3.3 natively, and in a
-// browser WebGL 2 and WebGPU, whose device is then lost and found again.
+// tidec's WGSL (and its SPIR-V), the draw list, the renderer and the GPU, read
+// back from an offscreen render. Every backend compiles every shader the game
+// uses, and has to give the same pixels: Vulkan natively, and in a browser
+// WebGPU, whose device is then lost and found again.
 //
 // The game draws a 24 pixel square in the middle of 32 pixel cells, each
 // through another frag or vert: `cell` is a pixel in one. Its frames are a
@@ -608,7 +608,7 @@ static void run_stencil_checks(const char *when)
 // floats, those images are bytes, and what was drawn is kept from 0 to 1.
 static void run_output_checks(const char *when)
 {
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     static const struct {
         int panel_x, panel_y; // The panel's corner in the window
         float x, y;           // In the panel
@@ -804,7 +804,7 @@ static void run_height_checks(const char *when)
 static void run_mipmap_checks(const float lit, const char *when)
 {
     // A float texture's smaller images are drawn, so made where the device draws into floats
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     const int drawn = (int)(lit * 255.0f / 8.0f + 0.5f);
     const struct {
         float left;
@@ -976,8 +976,8 @@ static void run_cut_checks(const char *when)
         if (!fine) failures++;
     }
 #if !defined(__wasm__) && !defined(__ANDROID__)
-    const bool opaque_samples = strcmp(tide_platform_renderer(), "OpenGL 3.3") == 0 || tide_gpu_vk_alpha_to_one();
-    if (opaque_samples && tide_window_gpu()->float_targets()) {
+    const bool opaque_samples = tide_gpu_vk_alpha_to_one();
+    if (opaque_samples) {
         const uint32_t opaque = got[COUNT + 4], clear = got[COUNT + 5], other = got[COUNT + 6];
         const int coverage = (int)(clear >> 16 & 255u);
         const int opaque_red = (int)(opaque >> 24), opaque_blue = (int)(opaque >> 8 & 255u);
@@ -1046,7 +1046,7 @@ static void run_cube_checks(const float lit, const char *when)
 {
     static const int colors[6][3] = {{255, 0, 0}, {0, 255, 255}, {0, 255, 0}, {255, 0, 255}, {0, 0, 255}, {255, 255, 0}};
     static const char *const sides[6] = {"+x", "-x", "+y", "-y", "+z", "-z"};
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     struct {
         float x, y;
         int want[3];
@@ -1234,12 +1234,14 @@ static int gpu_roll_below(uint32_t *dice, const uint32_t max)
     return (int)(((uint64_t)gpu_roll(dice) * max) >> 32);
 }
 
-// Which frag or vert a stage's text says it is: the number its generators are made with
-static int32_t roll_site(const char *glsl)
+// The number the generators of the frag or vert called `name` are made with, as tidec works it out
+// (shader.c's roll_site): FNV-1a of its shader name, "ts_" and its own, which has no '_' or '.' here
+static int32_t roll_site(const char *name)
 {
-    const char *made = strstr(glsl, "tide_dice = uint(");
-    const char *with = made ? strstr(made, " ^ ") : NULL;
-    return with ? (int32_t)strtoul(with + 3, NULL, 10) : 0;
+    uint32_t hash = 2166136261u;
+    for (const char *s = "ts_"; *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    for (const char *s = name; *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    return (int32_t)(hash & 0x7FFFFFFFu);
 }
 
 static const tide_shader *shader_named(const char *name)
@@ -1341,28 +1343,28 @@ static void run_roll_checks(const int64_t state, const char *when)
         float want[3] = {0, 255, 0}; // RANGES: green
         int within = 1; // Whole numbers come out as they are; what's blended between corners is the GPU's rounding
         switch (wanted[i].kind) {
-        case BYTES: roll_bytes(x, y, 0, rolled, roll_site(bytes->glsl_fragment), want); break;
-        case FIRST: roll_bytes(x, y, 0, rolled, roll_site(placed->glsl_fragment), want); break;
-        case SECOND: roll_bytes(x, y, 1, rolled, roll_site(placed->glsl_fragment), want); break;
+        case BYTES: roll_bytes(x, y, 0, rolled, roll_site("RollBytes"), want); break;
+        case FIRST: roll_bytes(x, y, 0, rolled, roll_site("RollBytes"), want); break;
+        case SECOND: roll_bytes(x, y, 1, rolled, roll_site("RollBytes"), want); break;
         case TINT:
-            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site(tint->glsl_vertex), want);
+            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site("RollTint"), want);
             within = 3;
             break;
         case SEED: want[0] = SEEDED & 255, want[1] = (SEEDED >> 8) & 255, want[2] = (SEEDED >> 16) & 255; break;
         case OVER: {
             float blended[3];
-            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site(over->glsl_vertex), blended);
-            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(over->glsl_fragment)});
+            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site("RollTint"), blended);
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site("RollOver")});
             want[0] = (float)gpu_roll_below(&pixel, 256), want[1] = blended[1], want[2] = 0;
             within = 3;
             break;
         }
         case FILL: // The image's cells are red and green above blue and white: its blue is 0 above and 1 below
-            roll_bytes(x, y, 0, rolled, roll_site(fill->glsl_fragment), want);
+            roll_bytes(x, y, 0, rolled, roll_site("RollFill"), want);
             want[2] = y < SIZE / 2 ? 0 : 255;
             break;
         case PICK: { // The first roll is picked, the second made and left, and the third is what's rolled after
-            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(pick->glsl_fragment)});
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site("RollPick")});
             want[0] = (float)gpu_roll_below(&pixel, 256);
             (void)gpu_roll_below(&pixel, 256);
             want[1] = (float)gpu_roll_below(&pixel, 256), want[2] = 0;

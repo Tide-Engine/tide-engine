@@ -87,6 +87,10 @@ TIDE_TEST(unity_shaders_written)
     TIDE_CHECK(strstr(text, title) != NULL);
     TIDE_CHECK(strstr(text, "#pragma vertex tidehl_vertex") != NULL);
     TIDE_CHECK(strstr(text, "cbuffer TideUniforms") != NULL);
+    // One SubShader, for GPUs that compute: Unity's OpenGL ES 3.0 and WebGL 2 get none
+    const char *sub = strstr(text, "    SubShader\n");
+    TIDE_CHECK(sub && !strstr(sub + 1, "    SubShader\n") && strstr(text, "#pragma exclude_renderers gles3") != NULL);
+    TIDE_CHECK(strstr(text, "TIDEHL_TEXTURE_BUFFERS") == NULL);
     free(text);
 
     // The game's shader gone, its file goes too

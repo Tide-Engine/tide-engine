@@ -1,9 +1,9 @@
 #pragma once
 
 // What the platform layer (platform.c) gets from the system it runs on: a
-// window with what draws in it (Vulkan, or an OpenGL context that's current),
-// and what its input devices say. Each build has one of them: desktop/glfw.c (GLFW), web/canvas.c (the
-// page, through tide.js) or android/activity.c (NativeActivity and EGL).
+// window with what draws in it (Vulkan, or WebGPU on the web), and what its
+// input devices say. Each build has one of them: desktop/glfw.c (GLFW), web/canvas.c (the
+// page, through tide.js) or android/activity.c (NativeActivity).
 //
 // Pixels are the display's logical ones (see tide/platform.h), from the
 // window's top left, y down, but for tide_window_pixel_size.
@@ -15,11 +15,11 @@
 #include "tide/platform.h"
 #include "gpu.h"
 
-// Opens the window, with what draws in it: on desktop Vulkan where the
-// machine has it (TIDE_BACKEND in the environment, `vulkan` or `opengl`,
-// picks one), else an OpenGL 3.3 context that's current; OpenGL ES 3 on
-// Android; and on the web WebGPU where the browser has it, else WebGL 2.
-// False, having said why, if there's none to be had.
+// Opens the window, with what draws in it: Vulkan 1.3 on desktop and
+// Android, and WebGPU on the web. False if there's none to be had, having
+// told whoever's there what the game needs: a dialog of the system's on
+// desktop (none in a quiet run), a screen drawn by the CPU on Android until
+// the player leaves it, and a note in the canvas's place on the web.
 bool tide_window_open(const tide_window_desc *desc);
 void tide_window_close(void);
 

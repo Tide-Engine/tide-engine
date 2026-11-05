@@ -1,6 +1,6 @@
 // Serves a web build's test page to headless Chrome or Edge in real time, and
-// passes once the page exits with 0. WebGPU needs real time, and selected
-// WebGL tests also wait here for their actual result (see WebTest.cmake).
+// passes once the page exits with 0. Every web test draws with WebGPU, which
+// needs real time (see WebTest.cmake).
 // The page's shell sends what the program prints and how it
 // ends back here, as platform/web/test_shell.html does when it's served.
 //
@@ -8,8 +8,7 @@
 // on threads, sharing its memory with them. WebGPU is the browser's software
 // one, so no GPU is needed: SwiftShader, which the flags below turn on.
 //
-//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--routes <module.mjs>] [--angle-backend swiftshader|d3d11-warp]
-// --angle-backend selects the software WebGL backend; it requires backend=webgl.
+//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--seconds <n>] [--routes <module.mjs>]
 //
 // With --routes, the module's default export, `(request, response) => boolean`,
 // answers the requests the page makes beside the test's own (what a program
@@ -34,19 +33,14 @@ import { pathToFileURL } from 'node:url';
 const [browser, pagePath, profile, ...rest] = process.argv.slice(2);
 let expected = null; // A line the program has to print
 let routesPath = null;
-let angleBackend = null;
 let seconds = 100; // How long the page has to give its result
 let query = '';
 for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--expect') expected = rest[++i];
     else if (rest[i] === '--seconds') seconds = Number(rest[++i]);
     else if (rest[i] === '--routes') routesPath = rest[++i];
-    else if (rest[i] === '--angle-backend') angleBackend = rest[++i];
     else query = rest[i];
 }
-const webgl = new URLSearchParams(query).get('backend') === 'webgl';
-if (angleBackend !== null && (!webgl || !['swiftshader', 'd3d11-warp'].includes(angleBackend)))
-    throw new Error('--angle-backend requires backend=webgl and swiftshader or d3d11-warp');
 const routes = routesPath ? (await import(pathToFileURL(resolve(routesPath)).href)).default : null;
 if (!browser || !existsSync(browser)) {
     console.log('SKIPPED: no Chrome or Edge found. Set TIDE_BROWSER to run web tests.');
@@ -105,16 +99,16 @@ await new Promise(done => server.listen(0, '127.0.0.1', done));
 const words = [query, routes ? `port=${server.address().port}` : ''].filter(Boolean);
 const address = `http://127.0.0.1:${server.address().port}/${words.length ? '?' + words.join('&') : ''}`;
 
-// WebGPU in software, and on Windows the browser's own drawing through WARP:
-// with SwiftShader for that too (--use-angle=swiftshader, as the other web
-// tests run), Chrome has no WebGPU at all. TIDE_WEBGPU_FLAGS has other flags
-// tried in their place, like "--enable-unsafe-webgpu" alone for this
-// machine's GPU.
-const flags = webgl ? [`--use-angle=${angleBackend || 'swiftshader'}`]
-    : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
-if (webgl && (!angleBackend || angleBackend === 'swiftshader')) flags.push('--enable-unsafe-swiftshader');
-if (!webgl && process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
-if (!webgl && process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
+// WebGPU in software, and the browser's own drawing where it can take WebGPU's
+// images: on Windows through WARP (with SwiftShader's GL, Chrome has no
+// WebGPU at all), and on Linux through SwiftShader's Vulkan (with its GL,
+// WebGPU draws but the page's canvas never shows it, so pixels read back are
+// zeros). TIDE_WEBGPU_FLAGS has other flags tried in their place, like
+// "--enable-unsafe-webgpu" alone for this machine's GPU.
+const flags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
+if (process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
+if (process.platform === 'linux') flags.push('--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan');
+if (process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
 note(`browser: ${browser}`);
 note(`GPU flags: ${flags.join(' ')}`);
 

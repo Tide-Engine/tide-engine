@@ -121,12 +121,9 @@ export function liveExamples(article: HTMLElement) {
         }
 
         // A game's page, with what this player's frame says in its address:
-        // it's part of this page, which scrolls. `backend=` in this page's own
-        // address goes on to its games.
+        // it's part of this page, which scrolls.
         function page(options: Record<string, string>) {
             const url = new URL(example.dataset.exampleSrc!, location.href);
-            const backend = new URLSearchParams(location.search).get('backend');
-            if (backend) url.searchParams.set('backend', backend);
             url.searchParams.set('embedded', '');
             url.searchParams.set('stats', '');
             for (const [name, value] of Object.entries(options)) url.searchParams.set(name, value);

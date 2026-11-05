@@ -22,7 +22,7 @@ static int kernel_group(const decl *k)
 
 static void write_kernel(program *prog, shader *sh)
 {
-    emit em = emitter(prog, sh, WGSL);
+    emit em = emitter(prog, sh);
     write_stage(&em, sh->kernel, STAGE_VERT);
     const decl *k = sh->kernel;
     const int group = kernel_group(k);
@@ -121,7 +121,6 @@ static void write_kernel(program *prog, shader *sh)
     }
     sb_put(&o, "}\n");
     sh->wgsl = o.data;
-    sh->glsl_vertex = sh->glsl_fragment = "";
 }
 
 // A kernel's shader: one for each kernel that a GPU.Run names, as it reads what it reads whatever runs it.

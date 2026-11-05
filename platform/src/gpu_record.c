@@ -337,11 +337,6 @@ static uint32_t record_target_samples(const tide_gpu_target_format format)
     return asked >= 8u ? 8u : asked >= 4u ? 4u : asked >= 2u ? 2u : 1u;
 }
 
-static bool record_float_targets(void)
-{
-    return true;
-}
-
 static tide_gpu_id record_target_texture(const tide_gpu_id target, const uint32_t color)
 {
     const target_textures *t = find_target(target);
@@ -615,7 +610,6 @@ const tide_gpu tide_gpu_record = {
     .target = record_target,
     .target_limit = record_target_limit,
     .target_samples = record_target_samples,
-    .float_targets = record_float_targets,
     .target_texture = record_target_texture,
     .target_depth = record_target_depth,
     .resolve_depth = record_resolve_depth,

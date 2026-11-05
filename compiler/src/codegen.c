@@ -25153,15 +25153,9 @@ static void gen_shaders(gen *g)
             continue;
         }
         if (g->opts->strip_names) {
-            sb_printf(&g->shader_names, "# shader %d GLSL vertex\n", s);
-            compact.glsl_vertex = shader_minify_names(compact.glsl_vertex, &g->shader_names);
-            sb_printf(&g->shader_names, "# shader %d GLSL fragment\n", s);
-            compact.glsl_fragment = shader_minify_names(compact.glsl_fragment, &g->shader_names);
             sb_printf(&g->shader_names, "# shader %d WGSL\n", s);
             compact.wgsl = shader_minify_names(compact.wgsl, &g->shader_names);
             if (compact.listed) {
-                sb_printf(&g->shader_names, "# shader %d GLSL listed vertex\n", s);
-                compact.glsl_listed_vertex = shader_minify_names(compact.glsl_listed_vertex, &g->shader_names);
                 sb_printf(&g->shader_names, "# shader %d WGSL listed\n", s);
                 compact.wgsl_listed = shader_minify_names(compact.wgsl_listed, &g->shader_names);
             }
@@ -25169,10 +25163,6 @@ static void gen_shaders(gen *g)
         const shader *sh = &compact;
         const char *vertex = type_cname(sh->vertex);
         char name[64];
-        snprintf(name, sizeof name, "tide_shader_%d_vertex", s);
-        gen_shader_text(o, name, sh->glsl_vertex);
-        snprintf(name, sizeof name, "tide_shader_%d_fragment", s);
-        gen_shader_text(o, name, sh->glsl_fragment);
         sb_put(o, "#ifdef __wasm__\n");
         snprintf(name, sizeof name, "tide_shader_%d_wgsl", s);
         gen_shader_text(o, name, sh->wgsl);
@@ -25183,8 +25173,6 @@ static void gen_shaders(gen *g)
         // Its vertex stage for listed runs (tide_draw_mesh_shaded_list), each backend's
         size_t listed_words = 0;
         if (sh->listed) {
-            snprintf(name, sizeof name, "tide_shader_%d_listed_vertex", s);
-            gen_shader_text(o, name, sh->glsl_listed_vertex);
             sb_put(o, "#ifdef __wasm__\n");
             snprintf(name, sizeof name, "tide_shader_%d_listed_wgsl", s);
             gen_shader_text(o, name, sh->wgsl_listed);
@@ -25196,9 +25184,7 @@ static void gen_shaders(gen *g)
 
         const int numbers[] = {sh->dims, sh->vertex->fields.count, sh->instance_floats, sh->instance_ints,
                                sh->uniform_floats, sh->uniform_ints, sh->textures.count};
-        uint64_t id = hash_more(0xCBF29CE484222325ull, sh->glsl_vertex, strlen(sh->glsl_vertex));
-        id = hash_more(id, sh->glsl_fragment, strlen(sh->glsl_fragment));
-        id = hash_more(id, sh->wgsl, strlen(sh->wgsl));
+        uint64_t id = hash_more(0xCBF29CE484222325ull, sh->wgsl, strlen(sh->wgsl));
         id = hash_more(id, numbers, sizeof numbers);
 
         sb_printf(o, "static const tide_shader tide_shader_%d = {\n    .name = ", s);
@@ -25212,7 +25198,7 @@ static void gen_shaders(gen *g)
                     sb_printf(o, ",\n    .bounds_position = 1 + offsetof(%s, %s)", vertex, field_cname(f));
             }
         }
-        sb_printf(o, ",\n    .glsl_vertex = tide_shader_%d_vertex,\n    .glsl_fragment = tide_shader_%d_fragment,\n", s, s);
+        sb_put(o, ",\n");
         sb_printf(o, "#ifdef __wasm__\n    .wgsl = tide_shader_%d_wgsl,\n#endif\n", s);
         sb_printf(o, "#ifdef TIDE_SPIRV\n    .spirv = tide_shader_%d_spirv,\n    .spirv_words = %d,\n#endif\n", s,
                   (int)spirv_words);
@@ -25250,10 +25236,10 @@ static void gen_shaders(gen *g)
         if (sh->storage.count) sb_printf(o, "    .storage_count = %d,\n", sh->storage.count); // The GPU lists it reads
         if (sh->gpu_instances) sb_printf(o, "    .instance_storage = %d,\n", sh->instance_storage + 1);
         if (sh->listed) {
-            sb_printf(o, "    .glsl_listed_vertex = tide_shader_%d_listed_vertex,\n#ifdef __wasm__\n"
+            sb_printf(o, "    .listed = true,\n#ifdef __wasm__\n"
                          "    .wgsl_listed = tide_shader_%d_listed_wgsl,\n#endif\n#ifdef TIDE_SPIRV\n"
                          "    .spirv_listed = tide_shader_%d_listed_spirv,\n    .spirv_listed_words = %d,\n#endif\n",
-                      s, s, s, (int)listed_words);
+                      s, s, (int)listed_words);
         }
         sb_put(o, "};\n\n");
 

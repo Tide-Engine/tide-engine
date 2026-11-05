@@ -181,8 +181,12 @@ const child = spawn(browser, [
     '--disable-extensions',
     '--mute-audio', // Headless, it still plays through the machine's device
     `--user-data-dir=${profileDir}`,
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
+    // WebGPU in software, as cmake/run_web_served_test.mjs runs it: the browser's own drawing through WARP on
+    // Windows, without which Chrome has no WebGPU there, and SwiftShader's Vulkan on Linux
+    '--enable-unsafe-webgpu',
+    '--use-webgpu-adapter=swiftshader',
+    ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
+    ...(process.platform === 'linux' ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : []),
     '--remote-debugging-pipe', // Ask Chrome to close its children and release the profile.
     // Both players are on this machine: let WebRTC use its real addresses
     '--disable-features=WebRtcHideLocalIpsWithMdns',
