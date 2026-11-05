@@ -165,7 +165,7 @@ settings
 
 ## Logging and asserting
 
-`Debug.Log(text)` prints a line: to the terminal under `tide run`, to the browser's console on the web, to the system's log on Android. `Debug.Assert(condition)`, or `Debug.Assert(condition, text)`, stops the program when the condition is false and says where, with the source line and the text. Both go anywhere: systems, views, handlers, functions.
+`Debug.Log(text)` prints a line: to the terminal under `tide run`, to the browser's console on the web, to the system's log on Android. On desktop and Android it also goes into the game's `Player.log`, which a player can send you (see [Logs and crashes](../game/files.md#logs-and-crashes)). `Debug.Assert(condition)`, or `Debug.Assert(condition, text)`, stops the program when the condition is false and says where, with the source line and the text. Both go anywhere: systems, views, handlers, functions.
 
 Standalone [release builds](../tools/cli.md#run-and-build) keep assertions and messages you wrote, but replace the source path with an ID and omit the copied source line. Keep the build's private `game.names` map to resolve reported source IDs and line numbers.
 

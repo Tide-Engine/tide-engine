@@ -313,6 +313,21 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory);
 // across runs (Vulkan's pipelines), the game's temporary cache folder, which
 // is only made once something's kept there. tide_platform_io_init names it too.
 void tide_platform_name_game(const char *app_id);
+// The program's log, and what a crash leaves, for whoever looks into a
+// player's problem: in the game's folder of saved data by its app ID, or in
+// `directory` (--data-dir) in its place. Everything the program writes to
+// stderr (Debug.Log, the engine's messages, a game's C) goes on to where it
+// went and to Player.log there too, and the last run's log is kept as
+// Player-prev.log. A crash writes a folder, Crashes/Crash_<UTC time>, with a
+// copy of the log, the stack and, on Windows, a minidump (crash.dmp); the ten
+// newest are kept. Begins once a program, later calls do nothing. Nothing on
+// the web, where the browser's console has the output. The standard host
+// begins it for a run with a window, not one with none (--frames, --capture,
+// --script) nor inside another program. Android's system log keeps the output too, and its
+// own crash reports what a crash leaves.
+void tide_platform_log_begin(const char *app_id, const char *directory);
+// Player.log's path once tide_platform_log_begin made it, else NULL.
+const char *tide_platform_log_path(void);
 // Whether a GPU pipeline (a shader with how it blends, tests depth and culls)
 // is made in the background where the backend can: WebGPU. Making one takes tens of
 // milliseconds; in the background, nothing that draws with it shows till it's
