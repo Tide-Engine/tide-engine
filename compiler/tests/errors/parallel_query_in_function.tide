@@ -1,0 +1,12 @@
+// expect: a parallel loop goes in a system, view or handler
+component Body { float x; }
+event Hit { }
+scene Main { }
+void Strike(query (Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        if (f.body.x > 1) f.entity.Send(Hit { });
+    }
+}
+system Hits(query (Body body) bodies) { Strike(bodies); }

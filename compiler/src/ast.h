@@ -1404,7 +1404,7 @@ struct stmt {
     loc name_at;
     loc type_qual_at; // Where the type starts: its namespace if it's qualified
 
-    param *query; // S_FOREACH over a query parameter; its compiler-only row is `type`
+    param *query; // S_FOREACH or S_PARALLEL over a query parameter; its compiler-only row is `type`
 
     // S_FOREACH and S_PARALLEL: `indexed` written before the loop (a promise), and what the
     // checker found (compiler/src/indexing.c): the bounds its guard puts on the rows'

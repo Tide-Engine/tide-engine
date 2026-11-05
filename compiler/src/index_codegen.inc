@@ -509,10 +509,12 @@ static uint64_t ix_query_plan(const gen *g, const ix_query *x, const loop_index 
 
 static void gen_query_fresh(gen *g, const param *q, const char *name);
 
-// A foreach over a world's query with an index: its candidates, then the body for each. False: it isn't one.
-static bool gen_indexed_query(gen *g, const stmt *s)
+// A foreach over a world's query with an index: its candidates, then the body for each. With `gather` (a parallel
+// loop's, its row type), each candidate row copied onto the end of tide_rows instead, as tide_rown of tide_rowcap,
+// for the loop's steps (gen_parallel_query_call). False: it isn't one.
+static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
 {
-    if (!g->ix_any || !s->index || g->task || s->kind != S_FOREACH) return false;
+    if (!g->ix_any || !s->index || g->task || s->kind != (gather ? S_PARALLEL : S_FOREACH)) return false;
     const loop_index *plan = s->index;
     if (plan->count < 1 || plan->count > 3) return false;
     ix_query x = {0};
@@ -611,15 +613,19 @@ static bool gen_indexed_query(gen *g, const stmt *s)
     g->indent++;
     line(g, o, "const uint32_t tide_xa = (uint32_t)(tide_xo[tide_xk] >> 32), tide_xr = (uint32_t)tide_xo[tide_xk];");
     line(g, o, "(void)tide_xr;");
-    line(g, o, "struct {");
-    g->indent++;
-    for (int i = 0; i < x.row->fields.count; i++) {
-        const field *f = &x.row->fields.items[i];
-        line(g, o, "%s %s;", c_type(f->type), field_cname(f));
+    if (gather) {
+        line(g, o, "%s %s;", gather, name);
+    } else {
+        line(g, o, "struct {");
+        g->indent++;
+        for (int i = 0; i < x.row->fields.count; i++) {
+            const field *f = &x.row->fields.items[i];
+            line(g, o, "%s %s;", c_type(f->type), field_cname(f));
+        }
+        if (x.q->local_use) line(g, o, "uint32_t tide_born;");
+        g->indent--;
+        line(g, o, "} %s;", name);
     }
-    if (x.q->local_use) line(g, o, "uint32_t tide_born;");
-    g->indent--;
-    line(g, o, "} %s;", name);
     bool first = true;
     for (int a = 0; a < g->prog->archetypes.count; a++) {
         if (!query_admits(g, x.selection, a)) continue;
@@ -652,6 +658,23 @@ static bool gen_indexed_query(gen *g, const stmt *s)
         g->indent--;
     }
     line(g, o, "} else continue;");
+    if (gather) { // Onto the end of the rows the parallel loop goes through
+        line(g, o, "if (tide_rown == tide_rowcap) {");
+        g->indent++;
+        line(g, o, "const uint32_t tide_more = tide_rowcap ? 2u * tide_rowcap : 64u;");
+        line(g, o, "tide_rows = tide_realloc(tide_rows, (size_t)tide_rowcap * sizeof *tide_rows, (size_t)tide_more * sizeof *tide_rows);");
+        line(g, o, "tide_rowcap = tide_more;");
+        g->indent--;
+        line(g, o, "}");
+        line(g, o, "tide_rows[tide_rown++] = %s;", name);
+        g->indent--;
+        line(g, o, "}");
+        g->containers.count = containers - 1;
+        line(g, o, "%s", cleanup.data);
+        g->indent--;
+        line(g, o, "}");
+        return true;
+    }
     line(g, o, "(void)%s;", name);
     gen_query_field_refs(g, x.q, name);
     const gen_target loop = {g->frame, containers, true, true, end, false, made_up(g, "next"), false, true};

@@ -1,0 +1,11 @@
+// expect: a parallel loop's steps run at once, so each changes only its own place
+component Body { float x; }
+singleton Total { float sum; }
+scene Main { }
+system Hits(query (Body body) bodies, mut Total total)
+{
+    parallel (var f in bodies)
+    {
+        total.sum += f.body.x;
+    }
+}
