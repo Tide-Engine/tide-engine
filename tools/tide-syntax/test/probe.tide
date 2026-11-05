@@ -247,6 +247,9 @@ frag Shade(BoxVertex vertex, out Color color, Box box)
     if (this.position.x < 10) this.Discard();
 }
 vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time, Instance instance) { }
+[Group(64)]
+compute Cull(Meadow meadow, Reach reach) { meadow.shown.Add(meadow.blades[this.index]); GPU.Barrier(); }
+local singleton Meadow { GPUList<Blade> blades; }
 float Blend(float frag, float vert)
 {
     float both = frag + vert;

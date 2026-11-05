@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_DRAW_INDEXED + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_BUFFER_COPY + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DRAW_INDEXED) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_BUFFER_COPY) {
             r.whole = false;
             break;
         }

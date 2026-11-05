@@ -539,6 +539,10 @@ const cases = {
             ['mut', 'storage.modifier'], ['out', 'storage.modifier'], ['FromLamp', 'entity.name.type'], ['lamp', '!storage'],
             ['Time', 'support.class'], ['Instance', 'entity.name.type'],
         ]],
+        ['compute Cull(', [
+            ['compute', 'storage.type'], ['Cull', 'entity.name.function'], ['Cull', '!entity.name.function.call'],
+            ['Meadow', 'entity.name.type'],
+        ]],
         ['float Blend(', [['Blend', 'entity.name.function'], ['frag', '!storage'], ['vert', '!storage']]],
         ['float both = frag + vert;', [['frag', '!storage'], ['frag', '!entity'], ['vert', '!storage'], ['vert', '!entity']]],
         ['frag = both;', [['frag', '!storage'], ['frag', '!entity'], ['both', '!entity']]],

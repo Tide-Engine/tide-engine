@@ -174,7 +174,8 @@ const uint8_t *tide_embed_draw(const tide_embed *e, uint32_t *size);
 // other program's own: what the frame draws over, never cleared. The pointer
 // is valid until the next call.
 typedef enum tide_embed_render_op {
-    // id, kind (tide_gpu_buffer_kind: 0 vertices, 1 indices), size, given (0 or 1), then `size` bytes if given
+    // id, kind (tide_gpu_buffer_kind: 0 vertices, 1 indices, 2 storage), size, given (0 or 1), then `size` bytes if
+    // given. A storage buffer is zeroed where none are given.
     TIDE_EMBED_RENDER_BUFFER = 1,
     TIDE_EMBED_RENDER_BUFFER_WRITE, // id, offset, size, then `size` bytes
     TIDE_EMBED_RENDER_BUFFER_FREE,  // id
@@ -209,6 +210,19 @@ typedef enum tide_embed_render_op {
     TIDE_EMBED_RENDER_INDICES,        // buffer, wide (32 bits, or 16)
     TIDE_EMBED_RENDER_DRAW,           // first, count, instances
     TIDE_EMBED_RENDER_DRAW_INDEXED,   // count, instances
+    // Compute (gpu.h's storage buffers, compute passes and indirect draws), after the ops above, whose packets are
+    // as they were. Right after the PIPELINE it's of, for a pipeline that binds storage or computes: id, compute (0
+    // or 1: its kernel's entry point is `compute`, and nothing about vertices, blending or targets is read),
+    // storage_count, and its storage_writes, bit i for storage buffer i (binding 25 + i) that it writes
+    TIDE_EMBED_RENDER_PIPELINE_STORAGE,
+    TIDE_EMBED_RENDER_STORAGE,        // slot, buffer: storage buffer `slot`, all of it, for what follows
+    TIDE_EMBED_RENDER_COMPUTE_BEGIN,  // A compute pass: what came before is done before it, what follows sees it
+    TIDE_EMBED_RENDER_COMPUTE_END,
+    TIDE_EMBED_RENDER_DISPATCH,       // x, y, z: workgroups
+    TIDE_EMBED_RENDER_DISPATCH_INDIRECT,      // buffer, offset: three uint32s there, as the GPU has them
+    TIDE_EMBED_RENDER_DRAW_INDIRECT,          // buffer, offset: four uint32s (count, instances, first, 0)
+    TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT,  // buffer, offset: five uint32s (count, instances, first, base, 0)
+    TIDE_EMBED_RENDER_BUFFER_COPY,    // from, from_offset, to, to_offset, size: outside passes, in order
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);

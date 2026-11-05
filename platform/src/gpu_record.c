@@ -291,6 +291,15 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     u32(desc->alpha_to_coverage);
     u32((uint32_t)name_size);
     bytes(name, name_size);
+    if (desc->compute || desc->storage_count) { // What it binds of storage, and whether it's a kernel's
+        uint32_t writes = 0;
+        for (uint32_t i = 0; i < desc->storage_count && i < TIDE_GPU_MAX_STORAGE; i++) writes |= desc->storage_writes[i] ? 1u << i : 0u;
+        op(TIDE_EMBED_RENDER_PIPELINE_STORAGE, 16u);
+        u32(id);
+        u32(desc->compute);
+        u32(desc->storage_count);
+        u32(writes);
+    }
     return id;
 }
 
@@ -448,6 +457,77 @@ static void record_draw_indexed(const uint32_t count, const uint32_t instances)
     u32(instances);
 }
 
+static void record_storage(const uint32_t slot, const tide_gpu_id buffer)
+{
+    op(TIDE_EMBED_RENDER_STORAGE, 8u);
+    u32(slot);
+    u32(buffer);
+}
+
+static void record_compute_begin(void)
+{
+    op(TIDE_EMBED_RENDER_COMPUTE_BEGIN, 0u);
+}
+
+static void record_compute_end(void)
+{
+    op(TIDE_EMBED_RENDER_COMPUTE_END, 0u);
+}
+
+static void record_dispatch(const uint32_t x, const uint32_t y, const uint32_t z)
+{
+    op(TIDE_EMBED_RENDER_DISPATCH, 12u);
+    u32(x);
+    u32(y);
+    u32(z);
+}
+
+static void record_indirect(const tide_embed_render_op o, const tide_gpu_id buffer, const size_t offset)
+{
+    op(o, 8u);
+    u32(buffer);
+    u32((uint32_t)offset);
+}
+
+static void record_dispatch_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    record_indirect(TIDE_EMBED_RENDER_DISPATCH_INDIRECT, buffer, offset);
+}
+
+static void record_draw_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    record_indirect(TIDE_EMBED_RENDER_DRAW_INDIRECT, buffer, offset);
+}
+
+static void record_draw_indexed_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    record_indirect(TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT, buffer, offset);
+}
+
+static void record_buffer_copy(const tide_gpu_id from, const size_t from_offset, const tide_gpu_id to, const size_t to_offset,
+                               const size_t size)
+{
+    op(TIDE_EMBED_RENDER_BUFFER_COPY, 20u);
+    u32(from);
+    u32((uint32_t)from_offset);
+    u32(to);
+    u32((uint32_t)to_offset);
+    u32((uint32_t)size);
+}
+
+// The other program's GPU has what's read back: nothing begins here, and a GPU list's read fails (tide_gpu_list_read_begin)
+static uint32_t record_buffer_read(const tide_gpu_id buffer, const size_t offset, const size_t size)
+{
+    (void)buffer, (void)offset, (void)size;
+    return 0;
+}
+
+static int record_buffer_read_done(const uint32_t token, void *data)
+{
+    (void)token, (void)data;
+    return -1;
+}
+
 const tide_gpu tide_gpu_record = {
     .name = "Unity",
     .epoch = record_epoch,
@@ -484,6 +564,16 @@ const tide_gpu tide_gpu_record = {
     .indices = record_indices,
     .draw = record_draw,
     .draw_indexed = record_draw_indexed,
+    .storage = record_storage,
+    .compute_begin = record_compute_begin,
+    .compute_end = record_compute_end,
+    .dispatch = record_dispatch,
+    .dispatch_indirect = record_dispatch_indirect,
+    .draw_indirect = record_draw_indirect,
+    .draw_indexed_indirect = record_draw_indexed_indirect,
+    .buffer_copy = record_buffer_copy,
+    .buffer_read = record_buffer_read,
+    .buffer_read_done = record_buffer_read_done,
 };
 
 void tide_gpu_record_begin(void)

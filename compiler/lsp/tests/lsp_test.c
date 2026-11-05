@@ -1495,6 +1495,37 @@ static const char *rename_at(const int line, const int character, const char *na
 }
 
 // Completion in frags and verts: their words, parameters, GPU code, and names at Draw.Mesh.
+// Kernels and GPU lists (docs/spec.md, Compute on the GPU): the declaration, GPU.Run in drawing code and
+// GPU.Barrier in a kernel, a GPU list's members on each side, and `this`'s fields in a kernel.
+TIDE_TEST(lsp_compute_complete)
+{
+    start();
+#define COMPUTE_TYPES                                                                                                 \
+    "scene Main { }\n"                                                                                                \
+    "struct Blade { float3 root; float height; }\n"                                                                   \
+    "local singleton Meadow { GPUList<Blade> blades; GPUList<int> counts; }\n"
+    const char *top = complete(COMPUTE_TYPES "\n$");
+    TIDE_CHECK(offers(top, "compute") && has(top, "compute ${2:Name}($3)"));
+    const char *view = complete(COMPUTE_TYPES "view Show(Meadow meadow)\n{\n    $\n}\n");
+    TIDE_CHECK(offers(view, "GPU"));
+    TIDE_CHECK(offers(complete(COMPUTE_TYPES "view Show(Meadow meadow)\n{\n    GPU.$\n}\n"), "Run"));
+    const char *cpu = complete(COMPUTE_TYPES "view Show(Meadow meadow)\n{\n    meadow.blades.$\n}\n");
+    TIDE_CHECK(offers(cpu, "Set") && offers(cpu, "Clear") && offers(cpu, "SetCount") && offers(cpu, "Resize")
+               && offers(cpu, "Read") && offers(cpu, "ReadCount") && offers(cpu, "capacity") && offers(cpu, "contentRevision"));
+    TIDE_CHECK(!offers(cpu, "count") && !offers(cpu, "Add"));
+#define IN_KERNEL(code) COMPUTE_TYPES "compute Grow(Meadow meadow)\n{\n    " code "\n}\n"
+    const char *gpu = complete(IN_KERNEL("meadow.counts.$"));
+    TIDE_CHECK(offers(gpu, "count") && offers(gpu, "Add") && offers(gpu, "AtomicAdd") && offers(gpu, "AtomicCompareExchange"));
+    TIDE_CHECK(!offers(gpu, "Set") && !offers(gpu, "Read"));
+    TIDE_CHECK(offers(complete(IN_KERNEL("GPU.$")), "Barrier"));
+    const char *self = complete(IN_KERNEL("int i = this.$"));
+    TIDE_CHECK(offers(self, "index") && offers(self, "at") && offers(self, "local") && offers(self, "group") && offers(self, "count"));
+    open_document(IN_KERNEL("meadow.counts[this.index] = 1;"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef IN_KERNEL
+#undef COMPUTE_TYPES
+}
+
 TIDE_TEST(lsp_shaders_complete)
 {
     start();

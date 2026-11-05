@@ -1779,6 +1779,7 @@ static const char *builtin_type_doc(const type_kind kind)
                               "function takes one, and a view passes it `Draw.list`.";
     case TY_ARRAY: return "An array: a fixed number of values side by side in whatever holds it, with nothing in the heap. "
                           "`cells[i]`, `cells[i] = x`, `count`, `foreach`; past the end a read gives zero and a write does nothing.";
+    case TY_GPU_LIST: return "A list that lives on the GPU, this machine's: `GPUList<Blade>(capacity)` makes one, empty, in local code, and a local field or a local singleton keeps it. Kernels write it (`list[i] = v`, `list.Add(v)` in invocation order, and atomics on a `GPUList<int>`); kernels, frags and verts read `list[i]`, `count`, `capacity` and `foreach`. Local code sends elements with `Set(items)`, `Clear()` and `SetCount(n)` in frame order with draws and runs, and reads it back with `await list.Read()` and `await list.ReadCount()`. Copies share the list; `contentRevision` changes when it was made again empty (a lost device, `Resize`).";
     case TY_LIST: return "A list of values, which grows and shrinks: `Count`, `items[i]`, `Add`, `RemoveAt`, `foreach`, "
                          "and `parallel` through its elements by index.";
     case TY_MAP: return "Values by key, in the order the keys were added: `scores[key]` reads (the value type's zero when "
@@ -1825,7 +1826,8 @@ static const char *decl_keyword(const decl *d)
     case DECL_ASSET: return "asset";
     case DECL_ALIAS: return "using";
     case DECL_SETTINGS: return "settings";
-    case DECL_SHADER: return d->is_frag ? "frag" : "vert";
+    case DECL_SHADER: return d->is_compute ? "compute" : d->is_frag ? "frag" : "vert";
+    case DECL_GPU_LIST: return "GPU list";
     case DECL_SYSTEM: return d->is_view ? "view" : d->is_handler ? d->is_command ? "command" : "event" : "system";
     }
     return "";
@@ -2215,6 +2217,15 @@ static const method_form session_calls[] = {
     "have nothing to do with each other."
 #define RANDOM_SEED_DOC     "The match's seed, from 0 to 2147483647: the machine that starts the match picks it, so no two matches go the "     "same, and every player has it with the world. `Random`'s rolls in the match come from it, and the engine "     "seeds the match's `Random` fields from it. 0 where no host picks one, as in tests."
 
+#define COMPUTE_DOC "A kernel: code the GPU runs over a size, tied to no draw, run with `GPU.Run(Name, over[, values])` " \
+    "in drawing code, in order with the draws around it. It takes components and singletons, as a frag does, and one " \
+    "struct of values; `this.index`, `this.at`, `this.local`, `this.group` and `this.count` say which invocation it is. " \
+    "`[Group(x[, y[, z]])]` before it sets its group's size, 64 when it says none."
+#define GPU_RUN_DOC "Runs a kernel over `over`: a count (an int), a size (an int2 or int3), a List<T> (its count) or " \
+    "a GPUList<T> (its count on the GPU, so kernels chain without reading back), with the struct of values it takes " \
+    "after. Draws recorded after it see what it wrote; ones before it don't."
+#define GPU_BARRIER_DOC "Waits until every invocation of the kernel's group reaches it, with what they wrote to shared " \
+    "memory and GPU lists seen. Every invocation reaches it: it goes in no branch, and in loops only of a constant count."
 #define LIST_COUNT_DOC "How many elements the list has."
 #define ARRAY_COUNT_DOC "How many elements the array holds: its length, a constant."
 #define MAP_COUNT_DOC "How many keys it has."
@@ -2423,6 +2434,11 @@ static const method_form instance_calls[] = {
 // A frag's implicit pixel and a frag's or vert's Instance parameter.
 static const char *shader_record_doc(const decl *d)
 {
+    if (d && d == A.prog->invocation) {
+        return "A kernel's `this`: which invocation of its run it is. `index` is its place in the whole run, `at` "
+               "where it is in the run's size, `local` where it is in its group, `group` which group it's in, and "
+               "`count` the run's size. The GPU says them, so nothing is sent for it.";
+    }
     if (d && d == A.prog->pixel) {
         return "A frag's `this`: where its pixel is, on the screen and in the world, and `this.Discard()`, which leaves "
                "it undrawn. Its read-only fields are `position`, `depth` and `world`. The GPU says them, so nothing is sent for it.";
@@ -2493,6 +2509,13 @@ static const char *builtin_field_doc(const decl *d, const str name)
             return "How deep the pixel is, as the depth test has it: from 0, the nearest the camera draws, to 1, the farthest.";
         }
         if (str_eq_c(name, "world")) return "Where the pixel is in the world.";
+    }
+    if (d && d == A.prog->invocation) {
+        if (str_eq_c(name, "index")) return "Its place in the whole run: x + y * count.x + z * count.x * count.y.";
+        if (str_eq_c(name, "at")) return "Where it is in the run's size, along each axis.";
+        if (str_eq_c(name, "local")) return "Where it is in its group ([Group(x, y, z)]), along each axis.";
+        if (str_eq_c(name, "group")) return "Which of the run's groups it's in, along each axis.";
+        if (str_eq_c(name, "count")) return "The run's size: how many invocations along each axis, as GPU.Run was given.";
     }
     if (d && d == A.prog->placed && str_eq_c(name, "clip")) {
         return "Where the engine would put the vertex, in clip space: the camera's `WorldToClip()` times the draw's "
@@ -3679,7 +3702,9 @@ static void describe(const occurrence *o, sb *out)
         }
         sb_printf(&code, "%s this", type_name(o->type));
         code_block(out, code.data);
-        if (is_shader(d) && d->is_frag) {
+        if (is_shader(d) && d->is_compute) {
+            sb_printf(out, "\n\nThe invocation `" STR_FMT "` runs as. %s", STR_ARG(d->name), shader_record_doc(A.prog->invocation));
+        } else if (is_shader(d) && d->is_frag) {
             sb_printf(out, "\n\nThe pixel `" STR_FMT "` runs for. %s", STR_ARG(d->name), shader_record_doc(A.prog->pixel));
         } else if (is_shader(d)) {
             sb_printf(out, "\n\nThe vertex `" STR_FMT "` runs for. %s", STR_ARG(d->name), shader_record_doc(A.prog->placed));
@@ -6421,7 +6446,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_FIELD:
         *type = ST_PROPERTY;
         if (o->decl && o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
-        if (o->decl == A.prog->pixel || o->decl == A.prog->placed) *mods |= SM_READONLY;
+        if (o->decl == A.prog->pixel || o->decl == A.prog->placed || o->decl == A.prog->invocation) *mods |= SM_READONLY;
         if (o->field && o->field->is_local) *mods |= SM_LOCAL;
         break;
     case OCC_PARAM:
@@ -6804,7 +6829,7 @@ static type this_type(const scope *sc)
 {
     const decl *d = sc->decl;
     if (!d || sc->in_input) return (type){TY_ERROR, NULL};
-    if (is_shader(d)) return (type){TY_RECORD, d->is_frag ? A.prog->pixel : A.prog->placed};
+    if (is_shader(d)) return (type){TY_RECORD, d->is_compute ? A.prog->invocation : d->is_frag ? A.prog->pixel : A.prog->placed};
     if (d->kind == DECL_METHOD && !d->is_operator && !d->is_interpolate && d->owner && d->owner->kind == DECL_COMPONENT) {
         return (type){d->owner->is_local ? TY_LOCAL_ENTITY : TY_ENTITY, NULL};
     }
@@ -6905,6 +6930,8 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "color")) return (type){TY_TEXTURE, NULL};
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "depth")) return (type){TY_DEPTH_TEXTURE, NULL};
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
+    if (t.kind == TY_GPU_LIST && (str_eq_c(member, "count") || str_eq_c(member, "capacity"))) return (type){TY_INT, NULL};
+    if (t.kind == TY_GPU_LIST && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
     if (t.kind == TY_CUBEMAP && str_eq_c(member, "faces")) return t; // Of which an index is a RenderTarget
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
@@ -7169,6 +7196,44 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) {
             builtin_list_members(str_from("Draw"), add_target_member, c); // The window's, as its own
         }
+        return;
+    }
+    if (t.kind == TY_GPU_LIST) { // Read on the GPU, and written by kernels; sent, read back and remade on the CPU
+        item(c, "capacity", CK_PROPERTY, "int", "The most elements it holds: what it was made or last resized with.", NULL);
+        if (gpu) {
+            item(c, "count", CK_PROPERTY, "int", "How many elements it has, on the GPU: what Add, Set, Clear and SetCount left.", NULL);
+            if (sc->decl && sc->decl->is_compute) {
+                item(c, "Add", CK_METHOD, "void Add(T value)", "Adds `value` after the elements there are, in invocation "
+                     "order: what invocation 3 adds comes before what invocation 7 adds. Once at the most on any path, "
+                     "never in a loop. Past the capacity, nothing is added.", "Add($1)");
+                static const char *const atomics[] = {"AtomicAdd", "AtomicSub", "AtomicMin", "AtomicMax", "AtomicAnd",
+                                                      "AtomicOr", "AtomicXor", "AtomicExchange"};
+                for (size_t i = 0; i < sizeof atomics / sizeof atomics[0]; i++) {
+                    sb snippet = {0};
+                    sb_printf(&snippet, "%s($1, $2)", atomics[i]);
+                    item(c, atomics[i], CK_METHOD, "int (int index, int value)", "On a GPUList<int>: changes element "
+                         "`index` at once for every invocation, and gives what it was. Results that depend on which "
+                         "invocation came first differ between runs.", snippet.data);
+                }
+                item(c, "AtomicCompareExchange", CK_METHOD, "int AtomicCompareExchange(int index, int compare, int value)",
+                     "On a GPUList<int>: puts `value` at `index` where it's `compare`, and gives what it was.",
+                     "AtomicCompareExchange($1, $2, $3)");
+            }
+            return;
+        }
+        item(c, "contentRevision", CK_PROPERTY, "long", "Its contents' identity: another after a lost device, a Resize or "
+             "a hot reload that changed its element, when it's empty again and the game fills it again.", NULL);
+        item(c, "Set", CK_METHOD, "void Set(List<T> items)", "Sends a list's elements, and its count, in frame order with "
+             "draws and runs.", "Set($1)");
+        item(c, "Clear", CK_METHOD, "void Clear()", "Its count, 0, in frame order with draws and runs.", "Clear()");
+        item(c, "SetCount", CK_METHOD, "void SetCount(int count)", "Its count, from 0 to its capacity, its elements as they "
+             "are: for a list a kernel writes by index.", "SetCount($1)");
+        item(c, "Resize", CK_METHOD, "void Resize(int capacity)", "Another capacity, and empty.", "Resize($1)");
+        item(c, "Dispose", CK_METHOD, "void Dispose()", "Lets the list go: what holds it is empty after.", "Dispose()");
+        item(c, "Read", CK_METHOD, "List<T> fails IOError Read()", "In local async code: `await list.Read()` gives a copy of "
+             "its elements once the frame drawn next is done on the GPU.", "Read()");
+        item(c, "ReadCount", CK_METHOD, "int fails IOError ReadCount()", "In local async code: `await list.ReadCount()` gives "
+             "its count once the frame drawn next is done on the GPU.", "ReadCount()");
         return;
     }
     if (gpu && t.kind == TY_LIST) { // Read by its elements there, and how many: nothing changes it
@@ -7618,6 +7683,14 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             builtin_visit v = {c, false};
             builtin_list_members(base, add_builtin_member, &v);
             item(c, "seed", CK_PROPERTY, "int", RANDOM_SEED_DOC, NULL);
+            return;
+        }
+        if (n == 1 && str_eq_c(base, "GPU")) { // Kernels: run in drawing code, and a group's barrier in one
+            if (gpu && sc.decl && sc.decl->is_compute) {
+                item(c, "Barrier", CK_FUNCTION, "GPU.Barrier()", GPU_BARRIER_DOC, "Barrier();");
+            } else if (!gpu && sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION || sc.decl->is_local)) {
+                item(c, "Run", CK_FUNCTION, "GPU.Run(kernel, over[, values])", GPU_RUN_DOC, "Run(${1:kernel}, ${2:over});");
+            }
             return;
         }
         if (n == 1 && builtin_owner(base)) {
@@ -8147,7 +8220,8 @@ static bool gpu_callable(const decl *d)
 // frame, like Spawn, Draw or Devices.
 static void complete_shader_code(completion *c, const scope *sc, const bool statement)
 {
-    if (sc->decl->is_frag) item(c, "this", CK_KEYWORD, "Pixel", shader_record_doc(A.prog->pixel), NULL);
+    if (sc->decl->is_compute) item(c, "this", CK_KEYWORD, "Invocation", shader_record_doc(A.prog->invocation), NULL);
+    else if (sc->decl->is_frag) item(c, "this", CK_KEYWORD, "Pixel", shader_record_doc(A.prog->pixel), NULL);
     else item(c, "this", CK_KEYWORD, "Its vertex, as it's placed", shader_record_doc(A.prog->placed), NULL);
     if (statement) {
         static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "while", "foreach", "switch", "case", "break",
@@ -8177,6 +8251,7 @@ static void complete_shader_code(completion *c, const scope *sc, const bool stat
     complete_value_types(c, VT_VALUES | VT_GPU | (statement ? VT_BOOL : 0));
     complete_structs(c);
     item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+    if (sc->decl && sc->decl->is_compute) item(c, "GPU", CK_MODULE, "GPU.Barrier(): the group waits for each other", NULL, NULL);
     complete_namespaces(c, false);
 }
 
@@ -8276,7 +8351,8 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     const type self = this_type(&sc);
     if (self.kind != TY_ERROR) {
         item(c, "this", CK_KEYWORD, type_name(self),
-             is_shader(sc.decl) ? shader_record_doc(sc.decl->is_frag ? A.prog->pixel : A.prog->placed)
+             is_shader(sc.decl) ? shader_record_doc(sc.decl->is_compute ? A.prog->invocation : sc.decl->is_frag ? A.prog->pixel
+                                                                                                  : A.prog->placed)
              : sc.decl->kind == DECL_METHOD ? "The entity whose component this is." : "The entity the code runs for.", NULL);
     }
 
@@ -8364,6 +8440,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "GUI", CK_MODULE, "Widgets at a Rect", NULL, NULL);
         item(c, "GUILayout", CK_MODULE, "Widgets laid out automatically", NULL, NULL);
         item(c, "Screen", CK_MODULE, "The window's logical size, pixel scale and Flip for the devices' positions", NULL, NULL);
+        item(c, "GPU", CK_MODULE, "Kernels: GPU.Run(kernel, over[, values]), in order with the draws around it", NULL, NULL);
     }
     // The mouse's cursor: views lock it, and they and the input's Sample read whether it's locked
     if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {
@@ -8393,6 +8470,8 @@ static void complete_declarations(completion *c)
     item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }",
          "Runs on the GPU for each vertex of a mesh a view draws through it, and changes it in place.",
          "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
+    item(c, "compute", CK_SNIPPET, "compute Name(parameters) { ... }", COMPUTE_DOC,
+         "[Group(${1:64})]\ncompute ${2:Name}($3)\n{\n    $0\n}");
     item(c, "input", CK_SNIPPET, "input Name { fields; Sample }", "What a player sends each tick.",
          "input ${1:Name}\n{\n    $0\n\n    Sample(Devices devices)\n    {\n    }\n}");
     item(c, "event", CK_SNIPPET, "event Name { fields }", "Something that happened, sent with Send.",
@@ -8456,6 +8535,8 @@ static void complete_code_declarations(completion *c)
          "frag ${1:Name}(${2:Vertex} vertex, out Color color$3)\n{\n    $0\n}");
     item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }", NULL,
          "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
+    item(c, "compute", CK_SNIPPET, "compute Name(parameters) { ... }", COMPUTE_DOC,
+         "[Group(${1:64})]\ncompute ${2:Name}($3)\n{\n    $0\n}");
     item(c, "event handler", CK_SNIPPET, "event(Event e) Name(parameters) { ... }", NULL,
          "event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
     item(c, "local event handler", CK_SNIPPET, "local event(Event e) Name(parameters) { ... }", NULL,
@@ -8754,7 +8835,8 @@ static header_kind top_header(const int i)
     if (first < 1) return HEADER_ROUTINE;
     const token *keyword = &DOC->toks[first - 1];
     if (keyword->kind == T_RPAREN || keyword->kind == T_SYSTEM) return HEADER_SYSTEM; // event(Hit hit) TakeHit(
-    if (keyword->kind == T_IDENT && (str_eq_c(keyword->text, "frag") || str_eq_c(keyword->text, "vert"))) return HEADER_SHADER;
+    if (keyword->kind == T_IDENT && (str_eq_c(keyword->text, "frag") || str_eq_c(keyword->text, "vert")
+                                     || str_eq_c(keyword->text, "compute"))) return HEADER_SHADER;
     return keyword->kind == T_IDENT && str_eq_c(keyword->text, "view") ? HEADER_SYSTEM : HEADER_ROUTINE;
 }
 
@@ -8847,7 +8929,7 @@ static bool starts_declaration(const int i)
             || str_eq_c(t->text, "event") || str_eq_c(t->text, "command") || str_eq_c(t->text, "enum") || str_eq_c(t->text, "scene")
             || str_eq_c(t->text, "local") || str_eq_c(t->text, "namespace")
             || str_eq_c(t->text, "using") || str_eq_c(t->text, "extern") || str_eq_c(t->text, "frag")
-            || str_eq_c(t->text, "vert"))) {
+            || str_eq_c(t->text, "vert") || str_eq_c(t->text, "compute"))) {
         return true;
     }
     if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && str_eq_c(t->text, "local")
@@ -10625,10 +10707,10 @@ static const char *check_new_name(const occurrence *target, const str name)
     // goes, though the lexer reads them as names. The first ones only start
     // declarations, so parameters and locals can still take them.
     static const char *const contextual[] = {"input", "view", "struct", "event", "command", "enum", "scene", "local", "namespace",
-                                             "using", "extern", "const", "frag", "vert", "async", "settings", "operator",
-                                             "virtual", "override",
+                                             "using", "extern", "const", "frag", "vert", "compute", "async", "settings",
+                                             "operator", "virtual", "override",
                                              "fails", "in", "by", "offset", "void"};
-    enum { DECL_WORDS = 14 };
+    enum { DECL_WORDS = 15 };
     static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Visibility", "VisibilityGroup", "Audience", "Spawn", "Send", "Spawned",
                                            "Destroyed", "Shown", "Hidden", "PlayerJoined", "PlayerLeft", "Scene", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
