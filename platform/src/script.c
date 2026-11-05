@@ -22,6 +22,7 @@
 //     401 capture-audio fight.wav    what played since the last such line (or the start), as a WAV beside it
 //     410 record fight.gif           every second frame from this one, as a GIF beside the script...
 //     470 record stop                ...to this one; or to another `record`, or the run's end
+//     480 sleep                      the machine sleeps and wakes: it leaves a match others can be in
 //     500 quit                       the run ends once this frame drew, with exit code 0
 //
 // What a line does at a frame is in the devices at that frame's poll, as a
@@ -37,6 +38,7 @@
 //     420 player 2 leave             the player leaves its match, as Session.Leave does...
 //     430 player 3 drop              ...or goes silent both ways, as a phone that went away...
 //     480 player 3 rejoin            ...and joins what it joined again, as the same player
+//     490 player 2 sleep             ...or the player's machine sleeps
 //     500 quit                       the run's end is every player's, so it takes none
 
 #include "script.h"
@@ -176,6 +178,7 @@ typedef enum event_kind {
     EVENT_RECORD,
     EVENT_RECORD_STOP,
     EVENT_QUIT,
+    EVENT_SLEEP, // The machine slept (tide_platform_slept): a player's, in a run of several
     EVENT_LEAVE, // A player's match, in a run of several
     EVENT_DROP,
     EVENT_REJOIN,
@@ -273,6 +276,9 @@ static void apply(const event *e)
         made.pad.connected = true;
         if (e->which == 0) made.pad.left_trigger = e->x;
         else made.pad.right_trigger = e->x;
+        break;
+    case EVENT_SLEEP:
+        tide_platform_pretend_sleep();
         break;
     case EVENT_LEAVE:
         tide_platform_players_leave();
@@ -553,12 +559,16 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         e->kind = EVENT_QUIT;
         return ended(&at, error, size);
     }
+    if (strcmp(verb, "sleep") == 0) {
+        e->kind = EVENT_SLEEP;
+        return ended(&at, error, size);
+    }
     if (strcmp(verb, "leave") == 0 || strcmp(verb, "drop") == 0 || strcmp(verb, "rejoin") == 0) {
         e->kind = verb[0] == 'l' ? EVENT_LEAVE : verb[0] == 'd' ? EVENT_DROP : EVENT_REJOIN;
         return ended(&at, error, size);
     }
     return fail(error, size, "'%s' isn't something a line does: that's key, button, mouse, move, scroll, text, touch, pad, capture, "
-                             "capture-audio, record, leave, drop, rejoin or quit",
+                             "capture-audio, record, sleep, leave, drop, rejoin or quit",
                 verb);
 }
 
@@ -568,7 +578,7 @@ bool tide_script_event(const char *text, char *error, const size_t error_size)
     bool ok = parse(text, &e, error, error_size);
     if (ok && e.kind >= EVENT_CAPTURE) {
         ok = fail(error, error_size,
-                  "`capture`, `capture-audio`, `record`, `quit`, `leave`, `drop` and `rejoin` are a script's lines, not input");
+                  "`capture`, `capture-audio`, `record`, `quit`, `sleep`, `leave`, `drop` and `rejoin` are a script's lines, not input");
     }
     if (ok) apply(&e);
     free(e.text);
@@ -709,6 +719,9 @@ bool tide_script_load(const char *path)
             } else if (verb && !e.player) {
                 snprintf(error, sizeof error, "`%s` says whose match it is, after the frame: `%u player 2 %s`", verb,
                          (unsigned)e.frame, verb);
+            } else if (e.kind == EVENT_SLEEP && tide_platform_players() > 1u && !e.player) {
+                snprintf(error, sizeof error, "`sleep` says whose machine sleeps in a run of several players, after the frame: "
+                         "`%u player 2 sleep`", (unsigned)e.frame);
             }
         }
         if (error[0]) {
@@ -834,6 +847,9 @@ static bool interactive_event(const char *line, const uint32_t frame, char *erro
     }
     if (ok && e.kind >= EVENT_LEAVE && (tide_platform_players() < 2u || !e.player)) {
         ok = fail(error, error_size, "leave, drop and rejoin need --players 2 or more and `player <n>` before the event");
+    }
+    if (ok && e.kind == EVENT_SLEEP && tide_platform_players() > 1u && !e.player) {
+        ok = fail(error, error_size, "sleep needs `player <n>` before it in a run of several players");
     }
     if (ok && numbered && script.count >= 65536u) {
         ok = fail(error, error_size, "the queue has 65536 events: step the game before adding more");

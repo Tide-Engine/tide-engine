@@ -2,8 +2,9 @@
 // (src/gpu_vk.c; on a Mac, MoltenVK beside the program), which a game needs:
 // a machine without it is told so, in a dialog of the system's where one can
 // be shown. The keyboard, mouse, gamepads and clipboard go through GLFW. Touchscreens are
-// Windows' own (src/touch_win32.c): GLFW has no touch, so other desktops have
-// none yet.
+// the system's own, as GLFW has no touch: Windows' pointer messages
+// (src/touch_win32.c) and X11's touch events on Linux (src/touch_x11.c). A
+// Mac's have none.
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #define _DEFAULT_SOURCE // readlink and posix_spawnp under strict C
@@ -36,9 +37,12 @@
 #include <unistd.h>
 #endif
 #include "touch_win32.h"
+#include "touch_x11.h"
 
 #ifdef _WIN32
 void *glfwGetWin32Window(GLFWwindow *window); // GLFW's glfw3native.h, without Windows' headers: an HWND
+#elif defined(__linux__)
+unsigned long glfwGetX11Window(GLFWwindow *window); // ...without X11's: a Window
 #endif
 
 #define COUNT_OF(array) (sizeof(array) / sizeof((array)[0]))
@@ -344,6 +348,8 @@ bool tide_window_open(const tide_window_desc *desc)
     locked = false;
 #ifdef _WIN32
     tide_win32_touch_attach(glfwGetWin32Window(window));
+#elif defined(__linux__)
+    tide_x11_touch_attach(glfwGetX11Window(window));
 #endif
 
     if (!hidden) {
@@ -375,6 +381,9 @@ void tide_window_close(void)
 {
     if (vulkan) tide_gpu_vk_close(); // Before the window its surface is of
     vulkan = false;
+#ifdef __linux__
+    tide_x11_touch_detach(); // Before the window it took the touches of
+#endif
     if (window) glfwDestroyWindow(window);
     window = NULL;
     glfwTerminate();
@@ -524,6 +533,8 @@ bool tide_window_touchscreen(void)
 {
 #ifdef _WIN32
     return tide_win32_touchscreen();
+#elif defined(__linux__)
+    return tide_x11_touchscreen();
 #else
     return false;
 #endif
@@ -531,8 +542,14 @@ bool tide_window_touchscreen(void)
 
 bool tide_window_take_touch(tide_touch_report *report)
 {
+#if defined(_WIN32) || defined(__linux__)
 #ifdef _WIN32
     if (!tide_win32_take_touch(report)) return false;
+#else
+    int across = 0, down = 0; // X11's pixels, as the touches are
+    glfwGetWindowSize(window, &across, &down);
+    if (!tide_x11_take_touch(report, across, down)) return false;
+#endif
     int width, height;
     tide_window_size(&width, &height);
     report->x *= (float)width;

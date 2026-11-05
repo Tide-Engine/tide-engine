@@ -269,6 +269,14 @@ Then, when the machine running a room's match leaves or stops answering, another
 
 This migration path requires the full authoritative world. [Visibility-enabled](../game/visibility.md) clients receive partial worlds and cannot currently promote one into a host: Tide refuses that takeover until a trusted complete-state handover exists. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 
+## A machine that sleeps
+
+A machine that sleeps, such as a Steam Deck, a laptop or a phone, is gone from its match all the while, as a phone that goes to the background is. When it wakes, it leaves a match other machines can be in, as `Session.Leave()` does: local code gets `Disconnected` with `Left`, and goes on from there as after any leave. That's a match it joined, or one it runs that's open or has other players in it. The others' match goes on without it, through [host migration](#host-migration) when the game has it, and the player can join again as the same player.
+
+A match a machine runs alone and closed, as single-player is, goes on where it stopped: nobody waited for it.
+
+On the web, the browser freezes a page it hides, and the page's match is noticed the way any silent machine is.
+
 ## Players in the match
 
 In the match, players come and go through the built-in events `PlayerJoined` and `PlayerLeft`, with the player's `PlayerID`. The server's own player joins before the match's first tick.

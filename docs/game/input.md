@@ -221,7 +221,7 @@ input Brush
 }
 ```
 
-Touches come from Android, the web on phones and desktops, and touchscreens on Windows. Native iOS support isn't built yet; other native desktops have no touch support yet. A browser on those desktops can still report touches. Where no touchscreen is available, `connected` is false and no finger ever touches.
+Touches come from Android, the web on phones and desktops, and touchscreens on Windows and Linux, a Steam Deck's among them. On Linux they're X11's touch events, which XWayland has too; on a Steam Deck, Steam may make a mouse of the screen's touches itself unless the game is set to take them as touches. Native iOS support isn't built yet, and a Mac has no touchscreen. A browser on any desktop can still report touches. Where no touchscreen is available, `connected` is false and no finger ever touches.
 
 The cell coordinates above are `[Absolute]` because a prediction should keep the last cell the player pointed at, even after it guesses they stopped painting.
 

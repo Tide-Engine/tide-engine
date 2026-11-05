@@ -62,6 +62,12 @@ Steam starts the first time a player asks something of the lobby (the first sign
 
 `Steam.InviteFriends()` opens Steam's own dialog to ask friends into the lobby this player is in. A player who accepts an invite, or picks **Join game** on a friend, while the game runs leaves the lobby they're in and joins that one, with nothing for the game to write.
 
+## The keyboard on a Steam Deck
+
+On a Steam Deck, and in Steam's Big Picture, there's no keyboard unless the game asks Steam for one. Once Steam has started, the package does that: Steam's keyboard shows over the game while the player types into a field of the GUI, or into what a view said shows the keyboard (`GUI.ShowKeyboard()`), and goes when they stop, as a phone's does. What's typed on it comes to the game as keys and characters. Where Steam shows no keyboard, as on a desktop with Steam in its usual window, nothing changes.
+
+The package does this through `tide/screen_keyboard.h`, which any game's C can use for a keyboard of its own.
+
 ## Host migration
 
 With `settings { hostMigration = true; }`, a lobby's match changes hands when its host goes, and the lobby's owner is who hosts next. Steam is the one authority: it hands a lobby to another member when its owner leaves the lobby or goes offline.
@@ -92,6 +98,8 @@ Nothing below has been done yet. For a first run against the real thing:
 What the stand-in can't tell, and a first run will: whether the accessors' version numbers match the SDK used, whether a Windows game (built for MinGW) links Valve's import library as it is, how long Steam takes to hand a lobby on, and how Steam's relays behave on a real network.
 
 ## Limits for now
+
+- **Steam's keyboard doesn't know where the field is**, so it can cover a field low on the screen.
 
 - **Not run against Steam.**
 - **Launching the game from an invite** (Steam starts it with `+connect_lobby`) isn't read: invites are followed while the game runs.
