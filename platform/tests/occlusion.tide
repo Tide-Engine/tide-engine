@@ -2,7 +2,8 @@
 //
 // Shots: fields of boxes, each a list drawn instanced with Draw.Occlusion on, behind walls and a see-through pane
 // that writes depth, drawn before them; then a draw without it, more with it (another run, its depth measured again)
-// and more after the depth is cleared. Into the window, a target of its own and a target of 4 samples. The host
+// and more after the depth is cleared; in some, something drawn into another target after the walls, which ends the
+// destination's pass there. Into the window, a target of its own and a target of 4 samples. The host
 // draws a run of frames (walls that move, a camera cut, a camera inside the field, a window of another size) with
 // the GPU's culling and occlusion, and each frame again on the CPU's path, which knows nothing of occlusion: the
 // same pixels, byte for byte.
@@ -34,6 +35,7 @@ local singleton Field
     int made;
     RenderTarget single;
     RenderTarget sampled;
+    RenderTarget aside;
 }
 
 // What the host has the frame drawn with
@@ -43,6 +45,7 @@ local singleton Shot
     float slide;   // How far the walls have moved, sideways
     int into;      // 0: the window; 1: a target; 2: a target of 4 samples
     bool occlusion;
+    bool aside;    // Something drawn into another target after the walls: the destination's pass ends there anyway
 }
 
 frag Paint(Corner corner, out Color color, Box box)
@@ -90,7 +93,7 @@ view Make(mut Field field)
     }
 }
 
-void Picture(Field field, Shot shot, RenderTarget into, bool window)
+void Picture(mut Field field, Shot shot, RenderTarget into, bool window)
 {
     float4x4 camera = shot.camera == 0 ? float4x4.TRS(float3(0, 1, -12), quaternion.identity, float3(1, 1, 1))
         : shot.camera == 1 ? float4x4.TRS(float3(4, 3, 110), quaternion.Euler(float3(0.05, 3.1, 0)), float3(1, 1, 1))
@@ -111,6 +114,7 @@ void Picture(Field field, Shot shot, RenderTarget into, bool window)
         // tested against
         Draw.Instanced(field.corners, field.faces, walls, Paint);
         Draw.Instanced(field.corners, field.faces, glass, Paint);
+        if (shot.aside) Aside(field);
         Draw.SetOcclusion(shot.occlusion);
         foreach (List<Box> patch in field.patches) Draw.Instanced(field.corners, field.faces, patch, Paint);
         Draw.SetOcclusion();
@@ -133,6 +137,7 @@ void Picture(Field field, Shot shot, RenderTarget into, bool window)
     into.Clear(Color(0.15, 0.1, 0.1));
     into.Instanced(field.corners, field.faces, walls, Paint);
     into.Instanced(field.corners, field.faces, glass, Paint);
+    if (shot.aside) Aside(field);
     into.SetOcclusion(shot.occlusion);
     foreach (List<Box> patch in field.patches) into.Instanced(field.corners, field.faces, patch, Paint);
     into.SetOcclusion();
@@ -143,6 +148,13 @@ void Picture(Field field, Shot shot, RenderTarget into, bool window)
         into.ClearDepth();
         into.Instanced(field.corners, field.faces, field.patches[6], Paint);
     }
+}
+
+// Something drawn into a target of its own, between the walls and the field
+void Aside(mut Field field)
+{
+    if (!field.aside.valid) field.aside = RenderTarget(8, 8, 1);
+    field.aside.Clear(Color(0.2, 0.3, 0.4));
 }
 
 view Shoot(mut Field field, Shot shot)

@@ -6,18 +6,24 @@
 // CullScatter and CullDraws, one compute pass. Buckets one after another that draw alike, through one pipeline with
 // the same values and textures, of levels of one mesh, are a join (cull_joins), drawn by one
 // draw_indexed_indirect_count through their listed pipeline: CullDraws writes a record for each of its buckets that
-// kept any, in order, and how many. Where that can't be (the recorder, a kernel or the listed pipeline not made
-// yet, a fifth page), the CPU decides a run's instances (tide_draw_culled_places), which are the CPU path's. Then
-// what GPU-decided draws drew is read back for the stats (counted_*). Included by platform.c, after compute.inc.
+// kept any, in order, and how many. An ordinary listed run drawn through its listed pipeline that draws alike beside
+// culled ones is a bucket of the join too, its places the CPU's, written where its bucket's go (cull_fixed). Where
+// that can't be (the recorder, a kernel or the listed pipeline not made yet, a fifth page), the CPU decides a run's
+// instances (tide_draw_culled_places), which are the CPU path's. Then what GPU-decided draws drew is read back for
+// the stats (counted_*). Included by platform.c, after compute.inc.
 //
 // Occlusion (notes/drawing.md, Occlusion culling from a depth pyramid): a run of GPU-culled steps into one
 // destination whose draws all test it (a span: draws with Draw.Occlusion on, with any steps between them but other
-// GPU-culled ones, till the destination is cleared) is culled again just before its first step, once a pyramid has
-// been made of the depth drawn into the destination so far (HiZFirst, HiZDown): CullListed's phase 1 over the span's
-// groups, then CullOffsets and CullScatter over its buckets, into the places and arguments the frame's culling
-// wrote. Depth only gets nearer till a clear, so what that depth hides would fail the depth test anyway.
+// GPU-culled ones, till the destination is cleared) is culled again before its first step, once a pyramid has been
+// made of the depth drawn into the destination so far (the hiz kernel, shaders.h, one dispatch): CullListed's phase 1
+// over the span's groups, then CullOffsets and CullScatter over its buckets, into the places and arguments the
+// frame's culling wrote. Depth only gets nearer till a clear, so what that depth hides would fail the depth test
+// anyway, and what it held at any point since the destination's clear, as where its pass had ended for something
+// else (hiz_plan), is no nearer.
 
 #include "cull_kernels.h"
+
+static bool step_draws(const draw_step *s);
 
 // The kernels' lists, each a GPU list's layout (a header of four words: count, capacity, 0, 0; then elements)
 enum { CULL_CAMERAS, CULL_JOBS, CULL_PARTS, CULL_BUCKETS, CULL_GROUPS, CULL_SCRATCH, CULL_PLACES, CULL_COUNTS,
@@ -25,11 +31,10 @@ enum { CULL_CAMERAS, CULL_JOBS, CULL_PARTS, CULL_BUCKETS, CULL_GROUPS, CULL_SCRA
 // Words an element of each, as cull.tide's structs are (floats, then ints)
 enum { CULL_CAMERA_WORDS = 108, CULL_JOB_WORDS = 28, CULL_PART_WORDS = 4, CULL_BUCKET_WORDS = 8, CULL_GROUP_WORDS = 2,
        CULL_JOIN_WORDS = 4, CULL_ARG_WORDS = 5, CULL_GROUP = 64 };
-enum { CULL_LISTED, CULL_OFFSETS, CULL_SCATTER, CULL_DRAWS_KERNEL, CULL_HIZ_FIRST, CULL_HIZ_DOWN, CULL_KERNELS };
+enum { CULL_LISTED, CULL_OFFSETS, CULL_SCATTER, CULL_DRAWS_KERNEL, CULL_KERNELS };
 _Static_assert(tide_kernel_CullListed_GROUP == CULL_GROUP && tide_kernel_CullOffsets_GROUP == CULL_GROUP
                && tide_kernel_CullScatter_GROUP == CULL_GROUP && tide_kernel_CullDraws_GROUP == CULL_GROUP,
                "cull.tide's kernels run in groups of 64");
-_Static_assert(tide_kernel_HiZFirst_GROUP == 64 && tide_kernel_HiZDown_GROUP == 64, "cull.tide's pyramid's in 8 by 8");
 
 // A frame's join: buckets `first` to `first + count`, drawn through `indices` (`wide` or not) by one call. With
 // `first_instance` its records' first instances say where each bucket's places start, all bound from the first;
@@ -63,8 +68,7 @@ static uint32_t cull_cpu_capacity;
 static int32_t cull_page_counts[4]; // The pages' sizes, as their lists' counts, CullListed's uniforms
 
 static const tide_shader *const cull_shaders[CULL_KERNELS] = {&tide_kernel_CullListed, &tide_kernel_CullOffsets,
-                                                              &tide_kernel_CullScatter, &tide_kernel_CullDraws,
-                                                              &tide_kernel_HiZFirst, &tide_kernel_HiZDown};
+                                                              &tide_kernel_CullScatter, &tide_kernel_CullDraws};
 
 // A mesh's family: its indices and its levels' (the meshes whose vertices are its), one after another in one buffer,
 // so that a join of runs of its levels draws through one index buffer. Made where a join first asks for it, and
@@ -119,19 +123,33 @@ static uint32_t counted_word_capacity;
 static uint32_t *counted_steps; // The frame's indirect draws over GPU lists that were drawn: their steps
 static uint32_t counted_step_count, counted_step_capacity;
 
-// Occlusion's pyramid: in one GPU list of ints (cull.tide's Culling.depths), words 0 to 3 the frame's counts (tested,
-// hidden), then a span's pyramid's levels, the farthest depths of what they cover as bits (occlusion.tide). Each
-// span's is made just before it and read by its culling there, so the frame's spans take turns in the same room.
-enum { HIZ_COUNTS = 4, HIZ_MOST_WORDS = 1u << 24 };
+// Occlusion's pyramids: in one GPU list of ints (cull.tide's Culling.depths), elements 0 to 3 the frame's counts
+// (tested, hidden; 2 is the pyramid kernel's count of its groups done, 0 between dispatches), then a room for each
+// destination a span of the frame measures, its pyramid's levels there, the farthest depths of what they cover as bits
+// (occlusion.tide). A destination's is made where a span measures it, and made again where another does after
+// something was drawn into it (a pass on it began since).
+enum { HIZ_COUNTS = 4, HIZ_DONE = 2, HIZ_MOST_WORDS = 1u << 24 };
 static sized_buffer hiz_buffer;
 static uint32_t hiz_read; // The frame's counts on their way back: a buffer_read token, or 0
 static tide_platform_occlusion_report hiz_report;
+static tide_gpu_id hiz_pipelines[2]; // The pyramid's kernel (shaders.h), reading a depth of one sample and of more
+typedef struct hiz_room {
+    uint32_t target; // 1 + the destination whose pyramid it holds, 0 for none
+    uint32_t at;     // Where in `depths` its level 0 starts, in elements
+    uint32_t passes; // ...made when that many passes on it had begun this frame (frame_target.passes)
+    bool made;
+} hiz_room;
+static hiz_room *hiz_rooms;
+static uint32_t hiz_room_count, hiz_room_capacity;
 
 // A span: its first step and its destination, its buckets, their groups and their joins, one after another (a join
-// is never partly a span's: cull_run)
+// is never partly a span's: cull_run); the step before which it's measured (`at`, no later than its first: where
+// the destination's pass has ended anyway, if one has since something was drawn into it, else its first), and its
+// destination's room. Each is measured once, at `at` or, where that couldn't be, at its first.
 typedef struct cull_span {
-    uint32_t first, target;
+    uint32_t first, target, at, room;
     uint32_t first_bucket, buckets, first_group, groups, first_join, joins;
+    bool done;
 } cull_span;
 static cull_span *cull_spans;
 static uint32_t cull_span_count, cull_span_capacity, cull_span_next;
@@ -141,6 +159,7 @@ static void forget_culling(void)
 {
     memset(cull_buffers, 0, sizeof cull_buffers);
     memset(cull_pipelines, 0, sizeof cull_pipelines);
+    memset(hiz_pipelines, 0, sizeof hiz_pipelines);
     memset(cull_families, 0, sizeof cull_families);
     cull_on = false;
     cull_join_count = 0;
@@ -175,6 +194,21 @@ static bool cull_kernels(void)
         }
         ready &= pipeline_usable(cull_pipelines[k]);
     }
+    if (!hiz_pipelines[0]) { // The pyramid's, which only spans need: a depth of one sample, and samples loaded
+        static char *wgsl[2];
+        const char *const first[2] = {hiz_one_wgsl, hiz_samples_wgsl};
+        const uint32_t *const spirv[2] = {SPIRV_OF(hiz_one), SPIRV_OF(hiz_samples)};
+        const uint32_t words[2] = {SPIRV_WORDS(hiz_one), SPIRV_WORDS(hiz_samples)};
+        for (uint32_t k = 0; k < 2; k++) {
+            tide_gpu_pipeline_desc desc = {.name = k ? "occlusion's pyramid of samples" : "occlusion's pyramid",
+                                           .wgsl = joined(&wgsl[k], first[k], hiz_wgsl), .spirv = spirv[k],
+                                           .spirv_words = words[k], .compute = true, .uniform_size = 32,
+                                           .texture_count = 1, .storage_count = 1};
+            desc.reads[0] = k ? TIDE_GPU_READ_SAMPLES : TIDE_GPU_READ_DEPTH;
+            desc.storage_writes[0] = true;
+            hiz_pipelines[k] = gpu->pipeline(&desc);
+        }
+    }
     return ready;
 }
 
@@ -182,6 +216,7 @@ static void cull_warm(void)
 {
     if (gpu == &tide_gpu_record) return;
     cull_kernels();
+    for (uint32_t k = 0; k < 2; k++) warm_ask(hiz_pipelines[k]);
     for (uint32_t k = 0; k < CULL_KERNELS; k++) warm_ask(cull_pipelines[k]);
 }
 
@@ -228,7 +263,7 @@ static void cull_plan(const tide_draw_list *list)
     cull_page_count = 0;
     cull_join_count = 0;
     cull_span_count = cull_span_next = 0;
-    hiz_report.spans = hiz_report.pyramids = 0;
+    hiz_report.spans = hiz_report.measured = hiz_report.pyramids = hiz_report.breaks = 0;
     hiz_poll();
     if (!list->cull_count || gpu == &tide_gpu_record || view_only_3d || decide) return;
     cull_on = cull_kernels();
@@ -402,10 +437,25 @@ static bool cull_joins_with(const tide_draw_list *list, const draw_step *a, cons
     const uint32_t own = tide_shader_uniform_size(shader);
     if (own && x->uniforms != y->uniforms && memcmp(list->uniforms + x->uniforms, list->uniforms + y->uniforms, own) != 0)
         return false;
+    for (uint32_t k = 0; k < shader->storage_count && k < TIDE_SHADER_STORAGE; k++) { // The GPU lists it reads
+        const uint64_t a = x->storage ? list->storage[x->storage - 1u + k] : 0u, b = y->storage ? list->storage[y->storage - 1u + k] : 0u;
+        if (a != b) return false;
+    }
     if (cull_family_of(list, x->mesh) != cull_family_of(list, y->mesh)) return false;
     if (list->meshes[y->mesh - 1u].level > TIDE_MESH_LEVELS) return false;
     return gpu_meshes[x->mesh - 1u].wide == gpu_meshes[y->mesh - 1u].wide && mesh_drawable(list, y->mesh)
         && pipeline_made(s);
+}
+
+// Whether a step is an ordinary listed run that can be drawn through the frame's culled buckets: drawn through its
+// listed pipeline, its places the list's (none the CPU decided), of a 3D shader's mesh of vertices of its own.
+static bool cull_listed_takes(const tide_draw_list *list, const draw_step *s)
+{
+    if (s->kind != STEP_SHADED || s->culled || s->listed != 1 || s->decided || !frame_targets[s->target].valid) return false;
+    const tide_draw_run *run = &list->runs[s->first];
+    const tide_shader *shader = run->shader;
+    return run->listed && !run->culled && !run->indirect && run->count && shader->dims == 3 && !shader->vertex_storage
+        && !shader->index_storage && (uint64_t)run->first + (uint64_t)run->count * sizeof(uint32_t) <= list->instance_used;
 }
 
 static bool cull_family_has(const cull_family_level *level, const gpu_mesh *g)
@@ -647,53 +697,122 @@ static bool hiz_member(const tide_draw_list *list, const draw_step *s)
     return true;
 }
 
+// Whether a step writes depth where it draws: what a pyramid made after it can measure.
+static bool hiz_writes_depth(const tide_draw_list *list, const draw_step *s)
+{
+    if (s->kind == STEP_MESH_3D) return s->depth == TIDE_DEPTH_READ_WRITE;
+    return s->kind == STEP_SHADED && list->runs[s->first].shader->dims == 3 && s->depth == TIDE_DEPTH_READ_WRITE;
+}
+
+// Whether a step that goes through the frame's culled buckets is an ordinary listed run's, its places the CPU's
+// (cull_run): one of a join, never tested.
+static bool cull_fixed(const tide_draw_list *list, const draw_step *s)
+{
+    return s->kind == STEP_SHADED && s->culled && !list->runs[s->first].culled;
+}
+
+// The room in `depths` for destination `target`'s pyramid, found or made: UINT32_MAX where the frame's are too many
+// words.
+static uint32_t hiz_room_for(const uint32_t target, uint64_t *words)
+{
+    for (uint32_t r = 0; r < hiz_room_count; r++) {
+        if (hiz_rooms[r].target == target + 1u) return r;
+    }
+    const frame_target *f = &frame_targets[target];
+    const uint64_t more = hiz_level_words(f->pixel_width, f->pixel_height);
+    if (HIZ_COUNTS + *words + more > HIZ_MOST_WORDS) return UINT32_MAX; // Too big to measure: tested against nothing
+    if (hiz_room_count == hiz_room_capacity) {
+        const uint32_t capacity = hiz_room_capacity ? hiz_room_capacity * 2u : 4u;
+        hiz_rooms = tide_realloc(hiz_rooms, hiz_room_capacity * sizeof *hiz_rooms, capacity * sizeof *hiz_rooms);
+        hiz_room_capacity = capacity;
+    }
+    hiz_rooms[hiz_room_count] = (hiz_room){.target = target + 1u, .at = HIZ_COUNTS + (uint32_t)*words};
+    *words += more;
+    return hiz_room_count++;
+}
+
 // The frame's spans, once its buckets are known: each from a GPU-culled step that tests occlusion, over those after
-// it into the same destination with nothing GPU-culled that doesn't between them, and no clear of that destination.
-// Their draws' jobs are marked (cull.tide's CullJob.more.w). The most words a span's pyramid takes.
+// it into the same destination with nothing GPU-culled that doesn't between them (ordinary listed runs of the frame's
+// joins aside), and no clear of that destination. Their draws' jobs are marked (cull.tide's CullJob.more.w). None
+// where nothing was drawn into its destination with depth since its last clear: what's measured would hide nothing.
+// Each is measured at the last step before its first where the destination's pass has ended anyway (a step into
+// another destination, or a kernel's run, came before it; nothing since began a pass) after something was drawn into
+// it, so measuring costs the pass no break; else at its first. The words its pyramids take.
 static uint64_t hiz_plan(const tide_draw_list *list)
 {
-    uint64_t most = 0;
+    uint64_t words = 0;
+    hiz_room_count = 0;
     cull_span *open = NULL;
+    bool skipping = false; // The span going on is one measured nowhere: nothing to hide
     const uint32_t *buckets = cull_words[CULL_BUCKETS];
+    const uint32_t targets = list->target_count + 2u;
+    // Per destination: the step that first wrote depth into it since its last clear, or UINT32_MAX for none
+    static uint32_t *written;
+    static uint32_t written_capacity;
+    if (targets > written_capacity) {
+        written = tide_realloc(written, written_capacity * sizeof *written, targets * sizeof *written);
+        written_capacity = targets;
+    }
+    for (uint32_t t = 0; t < targets; t++) written[t] = UINT32_MAX;
+    // Where passes are surely ended: the last step whose pass, at the point it's measured (cull_spans_at), hasn't begun
+    uint32_t idle = UINT32_MAX, before = UINT32_MAX; // ...and the destination of the step before
+    bool live = false, ran = true;
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
-        if (open && s->kind == STEP_CLEAR && s->target == open->target) open = NULL;
-        if (s->kind != STEP_SHADED || !s->culled) continue;
-        if (!hiz_member(list, s) || !frame_targets[s->target].valid) {
-            open = NULL;
+        if (s->kind == STEP_COMPUTE || s->kind == STEP_GPU_OP) { // Outside passes: the one going on ends
+            ran = true;
             continue;
         }
-        const uint32_t b = s->culled - 1u;
-        const uint32_t *bucket = buckets + (size_t)b * CULL_BUCKET_WORDS;
-        if (!open || open->target != s->target) {
-            const frame_target *f = &frame_targets[s->target];
-            const uint64_t words = hiz_level_words(f->pixel_width, f->pixel_height);
-            if (words + HIZ_COUNTS > HIZ_MOST_WORDS) { // A depth too big to measure: tested against nothing
+        if (ran || s->target != before) live = false;
+        ran = false;
+        before = s->target;
+        if (!live) idle = i;
+        if (s->kind == STEP_CLEAR && s->target < targets) {
+            written[s->target] = UINT32_MAX;
+            if (open && s->target == open->target) open = NULL;
+        }
+        const bool member = s->kind == STEP_SHADED && s->culled && !cull_fixed(list, s);
+        if (member) {
+            if (!hiz_member(list, s) || !frame_targets[s->target].valid) {
                 open = NULL;
-                continue;
+            } else {
+                const uint32_t b = s->culled - 1u;
+                const uint32_t *bucket = buckets + (size_t)b * CULL_BUCKET_WORDS;
+                if (!open || open->target != s->target) {
+                    // Nothing drawn with depth since the destination's clear (or this frame): nothing to hide
+                    const uint32_t since = s->target < targets ? written[s->target] : UINT32_MAX;
+                    const uint32_t room = since == UINT32_MAX ? UINT32_MAX : hiz_room_for(s->target, &words);
+                    if (cull_span_count == cull_span_capacity) {
+                        const uint32_t capacity = cull_span_capacity ? cull_span_capacity * 2u : 8u;
+                        cull_spans = tide_realloc(cull_spans, cull_span_capacity * sizeof *cull_spans,
+                                                  capacity * sizeof *cull_spans);
+                        cull_span_capacity = capacity;
+                    }
+                    open = &cull_spans[cull_span_count];
+                    *open = (cull_span){.first = i, .target = s->target, .first_bucket = b, .first_group = bucket[0],
+                                        .room = room, .at = idle != UINT32_MAX && idle > since ? idle : i};
+                    skipping = room == UINT32_MAX;
+                    if (!skipping) cull_span_count++;
+                }
+                if (!skipping) {
+                    open->buckets = b + 1u - open->first_bucket;
+                    open->groups = bucket[0] + bucket[1] - open->first_group;
+                    if (s->join) { // A join's first step: the span's first step is one (a join never crosses its edge)
+                        if (!open->joins) open->first_join = s->join - 1u;
+                        open->joins = s->join - open->first_join;
+                    }
+                    const tide_draw_run *run = &list->runs[s->first];
+                    for (uint32_t j = run->culled - 1u; j < run->culled - 1u + run->culled_count; j++) {
+                        cull_words[CULL_JOBS][(size_t)j * CULL_JOB_WORDS + 27u] = 1u; // CullJob.more.w
+                    }
+                }
             }
-            if (cull_span_count == cull_span_capacity) {
-                const uint32_t capacity = cull_span_capacity ? cull_span_capacity * 2u : 8u;
-                cull_spans = tide_realloc(cull_spans, cull_span_capacity * sizeof *cull_spans, capacity * sizeof *cull_spans);
-                cull_span_capacity = capacity;
-            }
-            open = &cull_spans[cull_span_count++];
-            *open = (cull_span){.first = i, .target = s->target, .first_bucket = b, .first_group = bucket[0]};
-            most = words > most ? words : most;
         }
-        open->buckets = b + 1u - open->first_bucket;
-        open->groups = bucket[0] + bucket[1] - open->first_group;
-        if (s->join) { // A join's first step, so the span's first step is one (a join never crosses a span's edge)
-            if (!open->joins) open->first_join = s->join - 1u;
-            open->joins = s->join - open->first_join;
-        }
-        const tide_draw_run *run = &list->runs[s->first];
-        for (uint32_t j = run->culled - 1u; j < run->culled - 1u + run->culled_count; j++) {
-            cull_words[CULL_JOBS][(size_t)j * CULL_JOB_WORDS + 27u] = 1u; // CullJob.more.w
-        }
+        if (step_draws(s)) live = true;
+        if (s->target < targets && written[s->target] == UINT32_MAX && hiz_writes_depth(list, s)) written[s->target] = i;
     }
     hiz_report.spans = cull_span_count;
-    return most;
+    return words;
 }
 
 static void cull_run(const tide_draw_list *list)
@@ -749,13 +868,48 @@ static void cull_run(const tide_draw_list *list)
         to[26] = job->bounds.set == 1 && cull_box_small(&job->bounds) ? 1u : 0u;
     }
     // The buckets, their parts and their regions, in the steps' order, and the runs of them one after another that
-    // draw alike (in `cull_joins` for now: they're made joins below)
+    // draw alike (in `cull_joins` for now: they're made joins below). Ordinary listed runs drawn through their listed
+    // pipeline go in those runs too, as buckets whose places the CPU writes (cull_fixed): first, which runs of steps
+    // that draw alike have a culled one, as only those gain a call from it
     const bool joining = gpu->indirect && (gpu->indirect() & TIDE_GPU_INDIRECT_FIRST_INSTANCE) != 0;
-    uint32_t groups = 0, total = 0;
-    bool open = false; // The last run of them takes the next culled step, where that draws alike
+    static uint32_t *alike_of; // Per step: 1 + its run of steps that draw alike, 0 for none...
+    static bool *alike_culled; // ...and per run, whether one of its steps is culled
+    static uint32_t alike_capacity;
+    if (step_count > alike_capacity) {
+        alike_of = tide_realloc(alike_of, alike_capacity * sizeof *alike_of, step_count * sizeof *alike_of);
+        alike_culled = tide_realloc(alike_culled, alike_capacity * sizeof *alike_culled, step_count * sizeof *alike_culled);
+        alike_capacity = step_count;
+    }
+    uint32_t runs_alike = 0;
+    bool open = false;  // The last run of them takes the next step, where that draws alike...
+    bool tests = false; // ...and whether its first tests occlusion, which every culled step in it then does
     for (uint32_t i = 0; i < step_count; i++) {
         draw_step *s = &steps[i];
-        if (s->kind != STEP_SHADED || !s->culled) continue;
+        alike_of[i] = 0;
+        const bool culled = s->kind == STEP_SHADED && s->culled;
+        if (!culled && !cull_listed_takes(list, s)) {
+            open = false;
+            continue;
+        }
+        const tide_draw_run *run = &list->runs[s->first];
+        const bool joins = joining && pipeline_made(s) && mesh_drawable(list, run->mesh) && !cull_numbered(run->shader);
+        const bool hiz = culled && hiz_member(list, s);
+        // ...and every culled one tests occlusion or none does: a span (hiz_plan) is culled again before its first
+        // step, so a join drawn before it, or drawn from within it, can't take in steps on the other side of its edge
+        if (open && joins && alike_of[i - 1u] && cull_joins_with(list, &steps[i - 1u], s) && (!culled || hiz == tests)) {
+            alike_of[i] = runs_alike;
+        } else {
+            alike_of[i] = ++runs_alike;
+            alike_culled[runs_alike - 1u] = false;
+            tests = hiz;
+        }
+        alike_culled[alike_of[i] - 1u] |= culled;
+        open = joins;
+    }
+    uint32_t groups = 0, total = 0, last = 0;
+    for (uint32_t i = 0; i < step_count; i++) {
+        draw_step *s = &steps[i];
+        if (!alike_of[i] || !alike_culled[alike_of[i] - 1u]) continue; // Listed runs with no culled one: as they are
         s->join = 0;
         const tide_draw_run *run = &list->runs[s->first];
         const uint32_t level = list->meshes[run->mesh - 1u].level;
@@ -767,28 +921,27 @@ static void cull_run(const tide_draw_list *list)
         const uint32_t b = cull_bucket_count;
         cull_buckets[b] = (cull_bucket){.region = total, .step = i};
         const uint32_t first = groups;
-        for (uint32_t j = run->culled - 1u; j < run->culled - 1u + run->culled_count; j++) {
-            const tide_draw_cull *job = &list->culls[j];
-            if (!tide_draw_cull_in(job, level) || !job->count) continue;
-            uint32_t *part = cull_room(CULL_PARTS, CULL_PART_WORDS);
-            part[0] = j, part[1] = level, part[2] = groups, part[3] = b;
-            groups += (job->count + CULL_GROUP - 1u) / CULL_GROUP;
-            total += job->count;
+        uint32_t fixed = 0;
+        if (s->culled) {
+            for (uint32_t j = run->culled - 1u; j < run->culled - 1u + run->culled_count; j++) {
+                const tide_draw_cull *job = &list->culls[j];
+                if (!tide_draw_cull_in(job, level) || !job->count) continue;
+                uint32_t *part = cull_room(CULL_PARTS, CULL_PART_WORDS);
+                part[0] = j, part[1] = level, part[2] = groups, part[3] = b;
+                groups += (job->count + CULL_GROUP - 1u) / CULL_GROUP;
+                total += job->count;
+            }
+        } else { // An ordinary listed run's: its places, all of them, as the CPU has them (written below)
+            fixed = run->count;
+            total += fixed;
         }
         uint32_t *bucket = cull_room(CULL_BUCKETS, CULL_BUCKET_WORDS);
-        bucket[0] = first, bucket[1] = groups - first, bucket[2] = cull_buckets[b].region;
+        bucket[0] = first, bucket[1] = groups - first, bucket[2] = cull_buckets[b].region, bucket[3] = fixed;
         bucket[4] = gpu_meshes[run->mesh - 1u].index_count;
         s->culled = ++cull_bucket_count;
-        const bool joins = joining && pipeline_made(s) && mesh_drawable(list, run->mesh) && !cull_numbered(run->shader);
-        // ...and both test occlusion or neither: a span (hiz_plan) is culled again at its first step, so a join drawn
-        // before it, or drawn from within it, can't take in steps on the other side of its edge
-        if (open && joins && cull_buckets[b - 1u].step == i - 1u && cull_joins_with(list, &steps[i - 1u], s)
-            && hiz_member(list, &steps[i - 1u]) == hiz_member(list, s)) {
-            cull_joins[cull_join_count - 1u].count++;
-        } else {
-            cull_join_add(b, 1);
-        }
-        open = joins;
+        if (b && alike_of[i] == last && cull_buckets[b - 1u].step == i - 1u) cull_joins[cull_join_count - 1u].count++;
+        else cull_join_add(b, 1);
+        last = alike_of[i];
     }
     if (!cull_bucket_count) return;
     // Each run of more than one whose family's index buffer has every one of its indices is a join; the others are a
@@ -837,6 +990,12 @@ static void cull_run(const tide_draw_list *list)
     cull_buffer(CULL_GROUPS, groups, false);
     cull_buffer(CULL_SCRATCH, groups * CULL_GROUP, false);
     cull_buffer(CULL_PLACES, total, false);
+    for (uint32_t b = 0; b < buckets; b++) { // Ordinary listed runs' places, as they are
+        const draw_step *s = &steps[cull_buckets[b].step];
+        if (!cull_fixed(list, s)) continue;
+        const tide_draw_run *run = &list->runs[s->first];
+        gpu->buffer_write(cull_places(), cull_places_at(b), list->instances + run->first, (size_t)run->count * sizeof(uint32_t));
+    }
     cull_buffer(CULL_COUNTS, buckets, false);
     cull_buffer(CULL_JOINS, cull_join_count, true);
     cull_buffer(CULL_ARGS, buckets * CULL_ARG_WORDS, false);
@@ -869,71 +1028,97 @@ static bool cull_draw(const draw_step *s)
     return true;
 }
 
-// Whether a span starts at step `i`. One whose first step the loop passed by (its destination not drawn) isn't
-// measured: its draws keep the frame's culling.
-static bool cull_span_at(const uint32_t i)
+// Whether span `span` is measured just before step `i` (outside passes): 1 at its first, or from its `at` on where no
+// pass is going on (`active`); 0 not yet; -1 never, the loop having passed its first by (its destination not drawn).
+static int cull_span_due(const cull_span *span, const uint32_t i, const bool active)
 {
-    while (cull_span_next < cull_span_count && cull_spans[cull_span_next].first < i) cull_span_next++;
-    return cull_span_next < cull_span_count && cull_spans[cull_span_next].first == i;
+    if (span->done || i < span->at) return 0;
+    if (i > span->first) return -1;
+    return i == span->first || !active ? 1 : 0;
 }
-// Just before span `cull_span_next`'s first step, outside passes, its destination selected: a pyramid of the depth
-// drawn into it so far (HiZFirst, then HiZDown a level at a time), and its draws culled again against it (phase 1),
-// their joins' records and counts written again from their buckets' new counts (CullDraws).
-// None where the destination hasn't begun a pass yet this frame (`begun`: what it holds may not be what its first
-// pass starts with, as the window's is cleared then), or gives no depth to measure: the frame's culling stands.
-static void cull_span_start(const tide_draw_list *list, const bool begun)
+
+// Whether a span is measured just before step `i`, the pass going on or not: one at its first is, ending the pass,
+// and with it any whose `at` is past.
+static bool cull_spans_at(const uint32_t i, const bool active)
 {
-    const cull_span *span = &cull_spans[cull_span_next++];
-    const frame_target *f = &frame_targets[span->target];
-    const tide_gpu_id depth = begun && f->valid && gpu->depth_far && span->groups ? gpu->depth_far(f->gpu) : 0;
-    if (!depth) return;
-    const int width = f->pixel_width, height = f->pixel_height;
-    const uint32_t levels = hiz_levels(width, height);
-    gpu->compute_begin();
-    uint32_t level_at = HIZ_COUNTS;
-    for (uint32_t k = 0; k < levels; k++) {
-        const uint32_t across = hiz_size(width, k), down = hiz_size(height, k);
-        const tide_gpu_id record = cull_record_of((across + 7u) / 8u, (down + 7u) / 8u, across, down);
-        int32_t uniforms[16] = {0};
-        if (!k) {
-            uniforms[tide_kernel_HiZFirst_INT_width] = width;
-            uniforms[tide_kernel_HiZFirst_INT_height] = height;
-            uniforms[tide_kernel_HiZFirst_INT_to] = (int32_t)level_at;
-            uniforms[tide_kernel_HiZFirst_INT_toWidth] = (int32_t)across;
-            uniforms[tide_kernel_HiZFirst_INT_toHeight] = (int32_t)down;
-            gpu->use(cull_pipelines[CULL_HIZ_FIRST]);
-            gpu->uniforms(uniforms, cull_uniform_size(&tide_kernel_HiZFirst));
-            gpu->sample(tide_kernel_HiZFirst_TEXTURE_depth, depth, gpu_filter(TIDE_FILTER_POINT), gpu_wrap(TIDE_WRAP_CLAMP));
-            gpu->storage(tide_kernel_HiZFirst_STORAGE_depths, hiz_buffer.buffer);
-            gpu->storage(tide_kernel_HiZFirst.storage_count, record);
-        } else {
-            const uint32_t from_across = hiz_size(width, k - 1u), from_down = hiz_size(height, k - 1u);
-            uniforms[tide_kernel_HiZDown_INT_from] = (int32_t)(level_at - from_across * from_down);
-            uniforms[tide_kernel_HiZDown_INT_fromWidth] = (int32_t)from_across;
-            uniforms[tide_kernel_HiZDown_INT_fromHeight] = (int32_t)from_down;
-            uniforms[tide_kernel_HiZDown_INT_to] = (int32_t)level_at;
-            uniforms[tide_kernel_HiZDown_INT_toWidth] = (int32_t)across;
-            uniforms[tide_kernel_HiZDown_INT_toHeight] = (int32_t)down;
-            gpu->use(cull_pipelines[CULL_HIZ_DOWN]);
-            gpu->uniforms(uniforms, cull_uniform_size(&tide_kernel_HiZDown));
-            gpu->storage(tide_kernel_HiZDown_STORAGE_depths, hiz_buffer.buffer);
-            gpu->storage(tide_kernel_HiZDown.storage_count, record);
-        }
-        gpu->dispatch((across + 7u) / 8u, (down + 7u) / 8u, 1);
-        level_at += across * down;
+    bool due = false;
+    for (uint32_t k = cull_span_next; k < cull_span_count; k++) {
+        const int d = cull_span_due(&cull_spans[k], i, active);
+        if (d < 0) cull_spans[k].done = true; // Its draws keep the frame's culling
+        due |= d > 0;
     }
-    // The span's draws culled again, as the frame's were, and against it
-    int32_t uniforms[16] = {0};
-    uniforms[tide_kernel_CullListed_INT_phase] = 1;
-    uniforms[tide_kernel_CullListed_INT_first] = (int32_t)span->first_group;
-    uniforms[tide_kernel_CullListed_INT_width] = width;
-    uniforms[tide_kernel_CullListed_INT_height] = height;
-    uniforms[tide_kernel_CullListed_INT_levels] = (int32_t)levels;
-    uniforms[tide_kernel_CullListed_INT_pyramid] = HIZ_COUNTS;
-    cull_listed(list, uniforms, hiz_buffer.buffer, span->groups);
-    cull_places_of(span->first_bucket, span->buckets, span->first_group, span->groups, span->first_join, span->joins);
+    while (cull_span_next < cull_span_count && cull_spans[cull_span_next].done) cull_span_next++;
+    return due;
+}
+
+// Just before step `i`, outside passes: each span due there measured, its draws culled again against the pyramid of
+// the depth drawn into its destination so far (phase 1), their joins' records and counts written again from their
+// buckets' new counts (CullDraws), in one compute pass. The pyramid is made there (hiz kernel, one dispatch) unless
+// its room holds one made since the last pass on that destination began. None where the destination hasn't begun a
+// pass this frame (what it holds may not be what its first pass starts with, as the window's is cleared then), or
+// gives no depth to measure: the frame's culling stands.
+static void cull_spans_start(const tide_draw_list *list, const uint32_t i)
+{
+    enum { MOST = 16 };
+    uint32_t due[MOST], count = 0;
+    tide_gpu_id depth[MOST];
+    uint32_t samples[MOST];
+    for (uint32_t k = cull_span_next; k < cull_span_count && count < MOST; k++) {
+        cull_span *span = &cull_spans[k];
+        if (cull_span_due(span, i, false) <= 0) continue;
+        span->done = true;
+        const frame_target *f = &frame_targets[span->target];
+        hiz_room *room = &hiz_rooms[span->room];
+        if (!f->begun || !f->valid || !span->groups || !gpu->depth_now) continue;
+        depth[count] = 0;
+        samples[count] = 1;
+        if (!room->made || room->passes != f->passes) { // Drawn into since: made again
+            room->made = false;
+            for (uint32_t j = 0; j < count && !depth[count]; j++) { // Another span here measures the same
+                if (cull_spans[due[j]].room == span->room) depth[count] = depth[j], samples[count] = samples[j];
+            }
+            if (!depth[count]) depth[count] = gpu->depth_now(f->gpu, &samples[count]);
+            if (!depth[count] || !pipeline_usable(hiz_pipelines[samples[count] > 1u])) continue;
+        }
+        due[count++] = k;
+    }
+    while (cull_span_next < cull_span_count && cull_spans[cull_span_next].done) cull_span_next++;
+    if (!count) return;
+    gpu->compute_begin();
+    for (uint32_t d = 0; d < count; d++) {
+        const cull_span *span = &cull_spans[due[d]];
+        hiz_room *room = &hiz_rooms[span->room];
+        if (room->made) continue;
+        const frame_target *f = &frame_targets[span->target];
+        const uint32_t width = (uint32_t)f->pixel_width, height = (uint32_t)f->pixel_height;
+        const uint32_t across = hiz_size((int)width, 4), down = hiz_size((int)height, 4); // A group's level 4 texel
+        const uint32_t uniforms[8] = {width, height, hiz_levels((int)width, (int)height), 0,
+                                      TIDE_GPU_LIST_HEADER_WORDS + room->at, across * down,
+                                      TIDE_GPU_LIST_HEADER_WORDS + HIZ_DONE, 0};
+        gpu->use(hiz_pipelines[samples[d] > 1u]);
+        gpu->uniforms(uniforms, sizeof uniforms);
+        gpu->sample(0, depth[d], gpu_filter(TIDE_FILTER_POINT), gpu_wrap(TIDE_WRAP_CLAMP));
+        gpu->storage(0, hiz_buffer.buffer);
+        gpu->dispatch(across, down, 1);
+        room->made = true;
+        room->passes = f->passes;
+        hiz_report.pyramids++;
+    }
+    for (uint32_t d = 0; d < count; d++) { // Each span's draws culled again, as the frame's were, and against it
+        const cull_span *span = &cull_spans[due[d]];
+        const frame_target *f = &frame_targets[span->target];
+        int32_t uniforms[16] = {0};
+        uniforms[tide_kernel_CullListed_INT_phase] = 1;
+        uniforms[tide_kernel_CullListed_INT_first] = (int32_t)span->first_group;
+        uniforms[tide_kernel_CullListed_INT_width] = f->pixel_width;
+        uniforms[tide_kernel_CullListed_INT_height] = f->pixel_height;
+        uniforms[tide_kernel_CullListed_INT_levels] = (int32_t)hiz_levels(f->pixel_width, f->pixel_height);
+        uniforms[tide_kernel_CullListed_INT_pyramid] = (int32_t)hiz_rooms[span->room].at;
+        cull_listed(list, uniforms, hiz_buffer.buffer, span->groups);
+        cull_places_of(span->first_bucket, span->buckets, span->first_group, span->groups, span->first_join, span->joins);
+        hiz_report.measured++;
+    }
     gpu->compute_end();
-    hiz_report.pyramids++;
 }
 
 // After the frame's steps: the counts its culling found begin their way back, where the last frame's are back.
@@ -956,7 +1141,10 @@ bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_r
 {
     *report = (tide_platform_cull_report){0};
     const uint32_t buckets = cull_bucket_count, joins = cull_join_count;
-    report->runs = buckets;
+    for (uint32_t b = 0; b < buckets; b++) {
+        if (list && cull_fixed(list, &steps[cull_buckets[b].step])) report->listed++;
+        else report->runs++;
+    }
     for (uint32_t k = 0; k < joins; k++) report->calls += cull_joins[k].drawn;
     if (!list || !gpu || !gpu->buffer_read || !gpu->buffer_read_wait || !gpu->buffer_read_done) return false;
     if (!buckets || !cull_args() || !cull_places() || !cull_buffers[CULL_COUNTS].buffer || !cull_buffers[CULL_DRAWS].buffer)
@@ -979,7 +1167,17 @@ bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_r
         const tide_draw_run *run = &list->runs[steps[cull_buckets[b].step].first];
         const uint32_t found = counts[TIDE_GPU_LIST_HEADER_WORDS + b];
         const uint32_t *theirs = places + TIDE_GPU_LIST_HEADER_WORDS + cull_buckets[b].region;
-        const uint32_t n = cull_decide(list, run);
+        uint32_t n;
+        if (cull_fixed(list, &steps[cull_buckets[b].step])) { // An ordinary listed run's: all its places, as they are
+            n = run->count;
+            if (n > cull_cpu_capacity) {
+                cull_cpu = tide_realloc(cull_cpu, (size_t)cull_cpu_capacity * sizeof(uint32_t), (size_t)n * sizeof(uint32_t));
+                cull_cpu_capacity = n;
+            }
+            memcpy(cull_cpu, list->instances + run->first, (size_t)n * sizeof(uint32_t));
+        } else {
+            n = cull_decide(list, run);
+        }
         // The CPU's, in order, among the GPU's
         uint32_t matched = 0;
         for (uint32_t k = 0; k < found && matched < n; k++) matched += theirs[k] == cull_cpu[matched];

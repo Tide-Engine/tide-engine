@@ -71,6 +71,7 @@ static void draw_shot(const int camera, const int setting, const bool gpu, uint3
 static bool shots(const char *when, const bool computes)
 {
     bool all = true;
+    uint32_t listed = 0; // Ordinary listed runs (the half-mirrored patch's, which the CPU culls) drawn by culled runs' calls
     for (int camera = 0; camera < CAMERAS; camera++) {
         for (int setting = 0; setting < SETTINGS; setting++) {
             draw_shot(camera, setting, true, culled);
@@ -84,9 +85,12 @@ static bool shots(const char *when, const bool computes)
                 tide_platform_occlusion_report hidden;
                 tide_platform_occlusion(&hidden, true);
                 snprintf(what, sizeof what, "camera %d, setting %d: occlusion hid %llu of %llu tested, in %u of %u runs "
-                         "testing it measured", camera, setting, (unsigned long long)hidden.hidden,
-                         (unsigned long long)hidden.tested, hidden.pyramids, hidden.spans);
-                expect(hidden.spans == 1 && hidden.pyramids == 1 && (camera != 0 || hidden.hidden > 0), what, when);
+                         "testing it measured, %u pyramids", camera, setting, (unsigned long long)hidden.hidden,
+                         (unsigned long long)hidden.tested, hidden.measured, hidden.spans, hidden.pyramids);
+                // The last camera sees nothing of the wall: nothing drawn before the field, which can hide nothing
+                const uint32_t spans = camera == 2 ? 0u : 1u;
+                expect(hidden.spans == spans && hidden.measured == spans && hidden.pyramids == spans
+                           && (camera != 0 || hidden.hidden > 0), what, when);
             } else if (read) {
                 snprintf(what, sizeof what, "camera %d, setting %d: the GPU kept every instance the CPU draws, in order "
                          "(%llu of %llu, %llu more, in %u runs)", camera, setting,
@@ -95,20 +99,22 @@ static bool shots(const char *when, const bool computes)
                 expect(report.missing == 0 && report.cpu > 0 && report.extra * 20u <= report.cpu, what, when);
             }
             if (read) {
-                snprintf(what, sizeof what, "camera %d, setting %d: %u calls for %u runs drew the %u that kept any (%u joined), "
-                         "their records as they were kept (%u not)", camera, setting, report.calls, report.runs,
-                         report.draws, report.joined, report.misdrawn);
-                expect(report.misdrawn == 0 && report.calls > 0 && report.calls <= report.runs, what, when);
+                snprintf(what, sizeof what, "camera %d, setting %d: %u calls for %u runs and %u listed beside them drew the %u "
+                         "that kept any (%u joined), their records as they were kept (%u not)", camera, setting, report.calls,
+                         report.runs, report.listed, report.draws, report.joined, report.misdrawn);
+                expect(report.misdrawn == 0 && report.calls > 0 && report.calls <= report.runs + report.listed, what, when);
             }
             if (report.runs) {
                 const tide_gpu *gpu = tide_window_gpu();
                 // Where draws take first instances, a set's levels picked one by one are fewer calls
                 const bool joins = gpu->indirect && (gpu->indirect() & TIDE_GPU_INDIRECT_FIRST_INSTANCE);
-                snprintf(what, sizeof what, "camera %d, setting %d: %u calls for %u culled runs, %s", camera, setting,
-                         report.calls, report.runs, joins ? "joined" : "one each");
+                // ...and an ordinary listed run beside culled ones that draw alike is drawn by their call
+                snprintf(what, sizeof what, "camera %d, setting %d: %u calls for %u culled runs and %u listed, %s", camera,
+                         setting, report.calls, report.runs, report.listed, joins ? "joined" : "one each");
                 expect(joins ? report.calls <= report.runs && ((setting != 0 && setting != OCCLUSION) || report.calls < report.runs)
-                             : report.calls == report.runs,
+                             : report.calls == report.runs && report.listed == 0,
                        what, when);
+                listed += report.listed;
             }
             draw_shot(camera, setting, false, plain);
             uint32_t differ = 0, drawn = 0;
@@ -122,6 +128,12 @@ static bool shots(const char *when, const bool computes)
                      camera, setting, report.runs ? "GPU" : "CPU", differ);
             expect(differ == 0, what, when);
         }
+    }
+    const tide_gpu *gpu = tide_window_gpu();
+    if (all && computes && gpu->indirect && (gpu->indirect() & TIDE_GPU_INDIRECT_FIRST_INSTANCE)) {
+        char what[160];
+        snprintf(what, sizeof what, "%u ordinary listed runs drawn by the calls of culled runs beside them", listed);
+        expect(listed > 0, what, when);
     }
     return all;
 }

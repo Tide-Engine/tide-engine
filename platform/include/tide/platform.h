@@ -454,12 +454,13 @@ void tide_platform_read_pixels_as(const tide_draw_list *list, int width, int hei
 // the one drawn, as it was.
 typedef struct tide_platform_cull_report {
     uint32_t runs;      // Culled on the GPU
+    uint32_t listed;    // Ordinary listed runs drawn by the same calls, beside culled ones that draw alike
     uint64_t gpu, cpu;  // The instances each drew
     uint64_t missing;   // The CPU's that the GPU's leave out, or have out of order: none where the decisions agree
     uint64_t extra;     // The GPU's that the CPU's leave out: its slack at the frustum's edges, picks at a threshold
     uint32_t calls;     // The calls that drew them: runs one after another that draw alike are one
-    uint32_t joined;    // The runs drawn by calls of more than one
-    uint32_t draws;     // The draws those calls made: runs that kept any instance
+    uint32_t joined;    // The runs drawn by calls of more than one, listed ones too
+    uint32_t draws;     // The draws those calls made: runs that kept any instance, listed ones too
     uint32_t misdrawn;  // Draw records that aren't each such run's, in order, then none, with how many
 } tide_platform_cull_report;
 bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
@@ -470,8 +471,11 @@ bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_r
 typedef struct tide_platform_occlusion_report {
     uint64_t tested; // Instances the frustum kept that a pyramid of the depth drawn before them was asked about
     uint64_t hidden; // ...that it surely hid: not drawn
-    uint32_t spans;  // Runs of draws testing it in the last frame drawn, each with a pyramid of its own...
-    uint32_t pyramids; // ...and the pyramids made (none where a destination gave no depth to measure, or had none yet)
+    uint32_t spans;  // Runs of draws testing it in the last frame drawn (none where nothing was drawn before to hide them)...
+    uint32_t measured; // ...those culled again against a pyramid (none where a destination gave no depth to measure, or
+                       // had none yet)...
+    uint32_t pyramids; // ...and the pyramids made for them: one serves those of a destination nothing was drawn into between
+    uint32_t breaks;   // Passes ended for them, where the destination's had ended for nothing else since it was drawn in
     uint64_t serial;   // How many frames' counts have come back: a new number, new counts
     bool counted;
 } tide_platform_occlusion_report;

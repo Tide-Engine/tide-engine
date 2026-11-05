@@ -12,9 +12,10 @@
 // cull.inc, cull_joins): an indirect draw record for each of its buckets that kept any, in order, records of none up
 // to its buckets' count, and how many it wrote to `draws`, the count its draw_indexed_indirect_count reads.
 //
-// Occlusion (notes/drawing.md, Occlusion culling from a depth pyramid): just before the first of a run of draws that
-// test it, HiZFirst and HiZDown make a pyramid of the depth drawn so far into their destination, and CullListed runs
-// again over the run's groups (phase 1), leaving out what that depth surely hides as well, before any of them draws.
+// Occlusion (notes/drawing.md, Occlusion culling from a depth pyramid): before the first of a run of draws that test
+// it, the renderer makes a pyramid of the depth drawn so far into their destination (its hiz kernel, shaders.h: one
+// dispatch), and CullListed runs again over the run's groups (phase 1), leaving out what that depth surely hides as
+// well, before any of them draws.
 // Depth only gets nearer until the destination is cleared, so whatever it hides then fails the depth test when it's
 // drawn: the frame's pixels are the same, whatever was drawn before, in whatever order.
 //
@@ -57,8 +58,9 @@ struct CullPart
     int4 a;
 }
 
-// A bucket: a.x its first group, a.y how many, a.z where its places start in `places`; b.x its mesh's index count,
-// b.y where its indices start in its join's index buffer.
+// A bucket: a.x its first group, a.y how many, a.z where its places start in `places`, a.w how many places the CPU
+// wrote there (an ordinary listed run's, drawn by its join's call: no groups); b.x its mesh's index count, b.y where
+// its indices start in its join's index buffer.
 struct CullBucket
 {
     int4 a;
@@ -95,16 +97,10 @@ struct Culling
     int phase;                   // CullListed: 0 the frame's culling, 1 a run of draws' that test occlusion
     int first;                   // Where this run's groups start (CullListed, CullScatter), its buckets (CullOffsets)
                                  // or its joins (CullDraws)
-    int width;                   // The pyramid's depth's pixels (HiZFirst, CullListed's phase 1)
+    int width;                   // CullListed's phase 1: the pyramid's depth's pixels
     int height;
     int levels;                  // ...its levels, and where level 0 starts in `depths`
     int pyramid;
-    int from;                    // HiZDown: the level it halves, where it starts in `depths` and its texels
-    int fromWidth;
-    int fromHeight;
-    int to;                      // HiZFirst and HiZDown: the level they write
-    int toWidth;
-    int toHeight;
 }
 
 // Whether a float's bits are a number under 2^40 each way: finite, and small enough that nothing the test or the
@@ -353,7 +349,7 @@ compute CullOffsets(Culling c)
         c.groups[bucket.a.x + k] = int2(count, at);
         at += count;
     }
-    if (t == 63) c.counts[b] = sums[63];
+    if (t == 63) c.counts[b] = sums[63] + bucket.a.w; // ...and an ordinary listed run's places, the CPU's
 }
 
 [Group(64)]
@@ -404,50 +400,6 @@ compute CullDraws(Culling c)
     c.draws[j] = drawn;
 }
 
-// What HiZFirst reads: a destination's depth, the farthest of each pixel's samples (a singleton, as a kernel's
-// textures are; the renderer binds it).
-local singleton HiZSource
-{
-    DepthTexture depth;
-}
-
-// A destination's pyramid's level 0: each texel the farthest depth of the 2 by 2 pixels of `depth` it covers.
-[Group(8, 8)]
-compute HiZFirst(HiZSource source, Culling c)
-{
-    int x = this.at.x;
-    int y = this.at.y;
-    if (x >= c.toWidth || y >= c.toHeight) return;
-    float w = float(c.width);
-    float h = float(c.height);
-    float left = (float(2 * x) + 0.5) / w;
-    float right = (float(Math.Min(2 * x + 1, c.width - 1)) + 0.5) / w;
-    float up = (float(2 * y) + 0.5) / h;
-    float down = (float(Math.Min(2 * y + 1, c.height - 1)) + 0.5) / h;
-    float a = source.depth.Sample(float2(left, up));
-    float b = source.depth.Sample(float2(right, up));
-    float d = source.depth.Sample(float2(left, down));
-    float e = source.depth.Sample(float2(right, down));
-    c.depths[c.to + y * c.toWidth + x] = Math.AsInt(Math.Max(Math.Max(a, b), Math.Max(d, e)));
-}
-
-// Its next level: each texel the farthest of the 2 by 2 of the level before that it covers. Depths are never under
-// 0, so the greatest bits are the farthest.
-[Group(8, 8)]
-compute HiZDown(Culling c)
-{
-    int x = this.at.x;
-    int y = this.at.y;
-    if (x >= c.toWidth || y >= c.toHeight) return;
-    int x0 = 2 * x;
-    int x1 = Math.Min(2 * x + 1, c.fromWidth - 1);
-    int y0 = (2 * y) * c.fromWidth;
-    int y1 = Math.Min(2 * y + 1, c.fromHeight - 1) * c.fromWidth;
-    int a = Math.Max(c.depths[c.from + y0 + x0], c.depths[c.from + y0 + x1]);
-    int b = Math.Max(c.depths[c.from + y1 + x0], c.depths[c.from + y1 + x1]);
-    c.depths[c.to + y * c.toWidth + x] = Math.Max(a, b);
-}
-
 view RunCulling()
 {
     Culling c = Culling { };
@@ -455,6 +407,4 @@ view RunCulling()
     GPU.Run(CullOffsets, 64, c);
     GPU.Run(CullScatter, 64, c);
     GPU.Run(CullDraws, 64, c);
-    GPU.Run(HiZFirst, int2(8, 8), c);
-    GPU.Run(HiZDown, int2(8, 8), c);
 }

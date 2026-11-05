@@ -510,6 +510,119 @@ static const char *const add_scatter_wgsl = WGSL(
     "    }\n"
     "}\n");
 
+// Occlusion culling's depth pyramid (cull.inc; notes/drawing.md, Occlusion culling from a depth pyramid) in one
+// dispatch, as AMD's single-pass downsampler makes one: each invocation of a group of 256 makes a texel of level 0
+// (the farthest of the 2 by 2 pixels it covers, every sample of each), the group levels 1 to 4 from its 16 by 16 of
+// them in its own memory (a texel of level 4 is the group's), and the last group to finish (a count in `depths`) the
+// levels above from all of theirs. Level k is ((size - 1) >> (k + 1)) + 1 texels across, the last of an odd level
+// covering one less (the one before it read twice), as occlusion.tide's HiZFind reads them; the farthest of depths,
+// which are never under 0, is the greatest of their bits. Every element of `depths` is an atomic: a texel one group
+// writes, another reads, so each is read and written where every group sees it. `u.size`: the depth's pixels
+// across and down, the pyramid's levels; `u.at`: where level 0 starts in `depths` (words), the dispatch's groups,
+// the word of its count (0 before it and after it).
+static const char *const hiz_one_wgsl = WGSL(
+    "@group(0) @binding(1) var depth: texture_depth_2d;\n"
+    "fn pixel(x: u32, y: u32) -> f32 {\n"
+    "    return textureLoad(depth, vec2<i32>(i32(x), i32(y)), 0);\n"
+    "}\n");
+static const char *const hiz_samples_wgsl = WGSL(
+    "@group(0) @binding(1) var depth: texture_depth_multisampled_2d;\n"
+    "fn pixel(x: u32, y: u32) -> f32 {\n"
+    "    let p = vec2<i32>(i32(x), i32(y));\n"
+    "    var far = textureLoad(depth, p, 0);\n"
+    "    let samples = i32(textureNumSamples(depth));\n"
+    "    for (var s = 1; s < samples; s = s + 1) {\n"
+    "        far = max(far, textureLoad(depth, p, s));\n"
+    "    }\n"
+    "    return far;\n"
+    "}\n");
+static const char *const hiz_wgsl = WGSL(
+    "struct HiZ {\n"
+    "    size: vec4<u32>,\n"
+    "    at: vec4<u32>,\n"
+    "}\n"
+    "@group(0) @binding(0) var<uniform> u: HiZ;\n"
+    "@group(0) @binding(25) var<storage, read_write> depths: array<atomic<i32>>;\n"
+    "var<workgroup> tile: array<i32, 256>;\n"
+    "var<workgroup> finished: u32;\n"
+    "fn across(n: u32, k: u32) -> u32 {\n"
+    "    return ((n - 1u) >> (k + 1u)) + 1u;\n"
+    "}\n"
+    "fn level_at(k: u32) -> u32 {\n"
+    "    var at = u.at.x;\n"
+    "    for (var j = 0u; j < k; j = j + 1u) {\n"
+    "        at = at + across(u.size.x, j) * across(u.size.y, j);\n"
+    "    }\n"
+    "    return at;\n"
+    "}\n"
+    "fn put(k: u32, x: u32, y: u32, v: i32) {\n"
+    "    let w = across(u.size.x, k);\n"
+    "    if (k < u.size.z && x < w && y < across(u.size.y, k)) {\n"
+    "        atomicStore(&depths[level_at(k) + y * w + x], v);\n"
+    "    }\n"
+    "}\n"
+    "fn most(k: u32, x: u32, y: u32, a: i32, b: i32, c: i32, d: i32) -> i32 {\n"
+    "    let right = 2u * x + 1u < across(u.size.x, k - 1u);\n"
+    "    let top = select(a, max(a, b), right);\n"
+    "    let bottom = select(c, max(c, d), right);\n"
+    "    return select(top, max(top, bottom), 2u * y + 1u < across(u.size.y, k - 1u));\n"
+    "}\n"
+    "@compute @workgroup_size(256) fn compute(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) g: vec3<u32>) {\n"
+    "    let x = g.x * 16u + t % 16u;\n"
+    "    let y = g.y * 16u + t / 16u;\n"
+    "    var v = 0;\n"
+    "    if (x < across(u.size.x, 0u) && y < across(u.size.y, 0u)) {\n"
+    "        let x1 = min(2u * x + 1u, u.size.x - 1u);\n"
+    "        let y1 = min(2u * y + 1u, u.size.y - 1u);\n"
+    "        v = bitcast<i32>(max(max(pixel(2u * x, 2u * y), pixel(x1, 2u * y)), max(pixel(2u * x, y1), pixel(x1, y1))));\n"
+    "        atomicStore(&depths[u.at.x + y * across(u.size.x, 0u) + x], v);\n"
+    "    }\n"
+    "    tile[t] = v;\n"
+    "    workgroupBarrier();\n"
+    "    for (var k = 1u; k < 5u; k = k + 1u) {\n"
+    "        let n = 16u >> k;\n"
+    "        var m = 0;\n"
+    "        if (t < n * n) {\n"
+    "            let i = 4u * n * (t / n) + 2u * (t % n);\n"
+    "            m = most(k, g.x * n + t % n, g.y * n + t / n, tile[i], tile[i + 1u], tile[i + 2u * n], tile[i + 2u * n + 1u]);\n"
+    "            put(k, g.x * n + t % n, g.y * n + t / n, m);\n"
+    "        }\n"
+    "        workgroupBarrier();\n"
+    "        if (t < n * n) {\n"
+    "            tile[t] = m;\n"
+    "        }\n"
+    "        workgroupBarrier();\n"
+    "    }\n"
+    "    storageBarrier();\n"
+    "    if (t == 0u) {\n"
+    "        finished = select(0u, 1u, u32(atomicAdd(&depths[u.at.z], 1)) + 1u == u.at.y);\n"
+    "    }\n"
+    "    workgroupBarrier();\n"
+    "    let last = finished == 1u;\n"
+    "    for (var k = 5u; k < 16u; k = k + 1u) {\n"
+    "        if (last && k < u.size.z) {\n"
+    "            let w = across(u.size.x, k);\n"
+    "            let pw = across(u.size.x, k - 1u);\n"
+    "            let ph = across(u.size.y, k - 1u);\n"
+    "            let below = level_at(k - 1u);\n"
+    "            let to = level_at(k);\n"
+    "            for (var i = t; i < w * across(u.size.y, k); i = i + 256u) {\n"
+    "                let x0 = 2u * (i % w);\n"
+    "                let y0 = 2u * (i / w);\n"
+    "                let x1 = min(x0 + 1u, pw - 1u);\n"
+    "                let y1 = min(y0 + 1u, ph - 1u);\n"
+    "                let a = max(atomicLoad(&depths[below + y0 * pw + x0]), atomicLoad(&depths[below + y0 * pw + x1]));\n"
+    "                let b = max(atomicLoad(&depths[below + y1 * pw + x0]), atomicLoad(&depths[below + y1 * pw + x1]));\n"
+    "                atomicStore(&depths[to + i], max(a, b));\n"
+    "            }\n"
+    "        }\n"
+    "        storageBarrier();\n"
+    "    }\n"
+    "    if (last && t == 0u) {\n"
+    "        atomicStore(&depths[u.at.z], 0);\n"
+    "    }\n"
+    "}\n");
+
 // Each pipeline's WGSL as the renderer gives it, by the name its SPIR-V has
 // (shaders_spirv.h): one piece, or two it joins (joined in platform.c), whose
 // whole is longer than C promises a string literal can be. What its SPIR-V
@@ -527,4 +640,6 @@ static const char *const add_scatter_wgsl = WGSL(
     X(clear_all, clear_all_wgsl, NULL)                                                                                 \
     X(run_size, run_size_wgsl, NULL)                                                                                   \
     X(add_offsets, add_offsets_wgsl, NULL)                                                                             \
-    X(add_scatter, add_scatter_wgsl, NULL)
+    X(add_scatter, add_scatter_wgsl, NULL)                                                                             \
+    X(hiz_one, hiz_one_wgsl, hiz_wgsl)                                                                                 \
+    X(hiz_samples, hiz_samples_wgsl, hiz_wgsl)

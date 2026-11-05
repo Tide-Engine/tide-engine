@@ -113,9 +113,12 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // A cube (tide_gpu.cube) is read by a direction, as a color.
 // TIDE_GPU_READ_DATA reads a texture of ints (TIDE_GPU_RGBA32I) a pixel at a
 // time, by its place: WGSL's `texture_2d<i32>` with textureLoad, whose sampler
-// binding nothing names.
+// binding nothing names. TIDE_GPU_READ_SAMPLES reads a multisampled target's
+// depth as its samples are (depth_now): `texture_depth_multisampled_2d`, each
+// sample loaded; only the renderer's own kernels read one.
 typedef enum tide_gpu_read {
-    TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA
+    TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA,
+    TIDE_GPU_READ_SAMPLES
 } tide_gpu_read;
 
 // A cube's six faces, in the order it has them: the one each axis points at,
@@ -431,13 +434,15 @@ typedef struct tide_gpu {
     // that isn't multisampled, whose depth is always its texture.
     void (*resolve_depth)(tide_gpu_id target);
     // Optional. Outside a pass: a texture of what `target`'s depth (the window's for 0, as this frame's passes left
-    // it) holds now, read as depth, each pixel the farthest of its samples: for a target of one sample, its own
-    // depth texture; for a multisampled one, or the window, a texture of the backend's own, made the first time and
-    // filled again at each call (not the one resolve_depth fills, whose pixel is a sample's). What occlusion culling
-    // measures the depth drawn so far with (notes/drawing.md, Occlusion culling from a depth pyramid), so it's never
-    // nearer than a sample. 0 where there's none to give (a device that can't take the farthest of samples, a
-    // window nothing drew in yet); NULL where there never is.
-    tide_gpu_id (*depth_far)(tide_gpu_id target);
+    // it) holds now, and in `samples` how many it has a pixel. With 1, it's read as depth (TIDE_GPU_READ_DEPTH):
+    // a target of one sample's own depth texture, or for the window, or a multisampled target on a device that
+    // can't read its samples, a texture of the backend's own filled at each call, each pixel the farthest of its
+    // samples. With more, it's the target's samples themselves (TIDE_GPU_READ_SAMPLES), which a kernel loads one by
+    // one; until the target's next pass, resolve_depth or depth_now. Only compute reads it, before the target is
+    // drawn in again. What occlusion culling measures the depth drawn so far with (notes/drawing.md, Occlusion
+    // culling from a depth pyramid). 0 where there's none to give (a window nothing drew in yet); NULL where there
+    // never is.
+    tide_gpu_id (*depth_now)(tide_gpu_id target, uint32_t *samples);
     void (*target_free)(tide_gpu_id target);
     // Its first color image, read back: 4 bytes a pixel, rows from the top.
     // Zeros for a target whose first isn't 4 bytes a pixel, or that has none:

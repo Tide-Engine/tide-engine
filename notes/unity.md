@@ -4,7 +4,9 @@
 
 `Draw.Occlusion` (drawing.md, Occlusion culling from a depth pyramid) culls only on the GPU, and the recorder never
 does (`cull_plan`): a game's draws with it on are recorded and replayed whole, as with it off, the same pixels.
-`gpu.h depth_far` is NULL in the recorder; nothing new is recorded and the embed ABI is unchanged.
+`gpu.h depth_far` (since `depth_now`) is NULL in the recorder; nothing new is recorded and the embed ABI is unchanged.
+The renderer's pyramid kernel (`hiz_one`, `hiz_samples`, shaders.h) is in the renderer's shaders `tide unity` writes as
+HLSL, though the replay never runs it.
 
 ## Unity's OpenGL: Core stays, ES 3 and WebGL go (2026-11-05)
 

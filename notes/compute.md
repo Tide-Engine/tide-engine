@@ -34,6 +34,9 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
       recorder's op, embed ABI 12), used by the GPU culling: empty level buckets draw nothing, runs one after another
       that draw alike are one call, stats from the GPU's counts, 2026-11-05: notes/drawing.md, Culled runs drawn by a
       count, joined
+- [x] Occlusion's pyramid in one dispatch (a hand-written WGSL kernel, shaders.h), multisampled depth read in place
+      (`gpu.h depth_now`, `TIDE_GPU_READ_SAMPLES`), measured at a pass break the frame has; ordinary listed runs in culled
+      runs' calls, 2026-11-05: notes/drawing.md, Occlusion's measure made cheaper
 
 ## Built: the language, the engine and the renderer (2026-11-05)
 
