@@ -234,7 +234,10 @@ budget like the one inactive pack images have (`notes/textures.md`).
     renderer's spare-buffer reuse for it is unchanged. (Since 2026-11-05 such a
     mesh stays `TIDE_MESH_ONCE_FRAMES` frames within a budget of its own, on
     the GPU too: `notes/drawing.md`, Idle listed regions, held pages and
-    one-frame meshes.)
+    one-frame meshes. A mesh of a world's lists the renderer has keeps no
+    copy in the list while idle, and the renderer's budget is a sixteenth of
+    the device's memory, farthest from the camera first: same file, Turning
+    round.)
   - The frame drew the same lists (space, id, other) at another version. The
     old copy can never draw again. Scratch and pack lists all share one id
     (`mesh3_slot`), so only the budget evicts those.

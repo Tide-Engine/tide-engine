@@ -4361,6 +4361,63 @@ static void transient_data_textures(void)
     tide_draw_free(&extra);
 }
 
+// A frame of a world's square where `drawn` says: the uploads it took, its pixel, and the mesh's place.
+static uint64_t hollow_frame(const bool drawn, const tide_list corners, const tide_list faces, uint32_t *got,
+                             uint32_t *place)
+{
+    const tide_float2 p = at(16, 32);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    tide_draw_set_cull(&list, TIDE_CULL_NONE);
+    if (drawn) {
+        tide_float4x4 transform = tide_identity_f4x4();
+        transform.c3 = tide_f4(p.x, p.y, 5, 1);
+        tide_draw_mesh3_lists(&list, corners, faces, transform);
+        if (place) *place = list.commands[list.count - 1u].mesh3.mesh;
+    }
+    const uint64_t before = tide_mesh_uploads;
+    const tide_float2 point = tide_f2(16, 32);
+    tide_platform_read_pixels(&list, &point, 1, got);
+    return tide_mesh_uploads - before;
+}
+
+// A mesh of a world's lists that a frame skips keeps no copy in the list while the GPU has it (tide/draw.h): drawn
+// again it's drawn from the GPU's, sending nothing; once the GPU lets it go, the list copies it again.
+static void hollow_meshes_kept(void)
+{
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_list corners = {0}, faces = {0};
+    tide_list_resize(&corners, 4, sizeof(tide_vertex3), TIDE_IN_LOCAL);
+    for (int32_t i = 0; i < 4; i++) *(tide_vertex3 *)tide_list_at_mut(corners, i, sizeof(tide_vertex3)) = idle_left[i];
+    tide_list_resize(&faces, 6, sizeof(uint32_t), TIDE_IN_LOCAL);
+    for (int32_t i = 0; i < 6; i++) *(uint32_t *)tide_list_at_mut(faces, i, sizeof(uint32_t)) = idle_indices[i];
+    tide_draw_forget(&list);
+    uint32_t got, place = 0;
+    expect(hollow_frame(true, corners, faces, &got, &place) == 1u && near(got, rgba(red), 0), "a world's mesh is sent and drawn");
+    const uint64_t memory = tide_platform_gpu_memory();
+    hollow_frame(false, corners, faces, &got, NULL);
+    expect(hollow_frame(true, corners, faces, &got, &place) == 0u && near(got, rgba(red), 0),
+           "skipped a frame, it's drawn again from the GPU's copy, sending nothing");
+    expect(place && list.meshes[place - 1u].hollow && list.meshes[place - 1u].vertices == NULL,
+           "and the list kept no copy of its own");
+    expect(tide_platform_gpu_memory() == memory, "its buffers stayed counted");
+    const uint32_t frames = tide_mesh_idle_frames;
+    tide_mesh_idle_frames = 1;
+    for (int i = 0; i < 3; i++) hollow_frame(false, corners, faces, &got, NULL);
+    tide_mesh_idle_frames = frames;
+    expect(tide_platform_gpu_memory() < memory, "unused for longer than the GPU keeps it, its buffers go");
+    expect(hollow_frame(true, corners, faces, &got, &place) == 1u && near(got, rgba(red), 0),
+           "then the list copies it again from its lists, and it's sent and drawn");
+    expect(place && !list.meshes[place - 1u].hollow, "with a copy of the list's own again");
+    tide_draw_forget(&list);
+    tide_list_release(&corners, TIDE_IN_LOCAL);
+    tide_list_release(&faces, TIDE_IN_LOCAL);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
 // A texture the list holds though no step draws with it (a page of listed
 // regions, tide_draw_texture.held) stays on the GPU as it is, counted in its
 // memory, and isn't sent again when it's drawn again; once let go, it goes.
@@ -4902,6 +4959,7 @@ static int frame(void *user, const float seconds)
         cull_settings();
         frustum_culling();
         idle_meshes_kept();
+        hollow_meshes_kept();
         levels_of_detail();
         vertex_counts();
 #ifdef DRAW_VULKAN
@@ -4943,6 +5001,7 @@ static int frame(void *user, const float seconds)
         cull_settings();
         frustum_culling();
         idle_meshes_kept();
+        hollow_meshes_kept();
         levels_of_detail();
         vertex_counts();
         code = run_checks();

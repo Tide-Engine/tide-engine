@@ -1,6 +1,7 @@
 #include "tide/platform.h"
 #include "tide/draw_profile.h"
 
+#include <float.h>
 #include <errno.h>
 #include <math.h>
 #include <stddef.h>
@@ -3297,6 +3298,15 @@ static bool gpu_mesh_current(const tide_draw_list *list, const uint32_t mesh)
         && g->base == (mesh_is_level(list, mesh) ? m->base : 0u);
 }
 
+// Whether the GPU has the list's mesh `mesh` to draw, and its corners' mesh for a level: one whose copy went
+// before it was sent has nothing (mesh_for).
+static bool mesh_drawable(const tide_draw_list *list, const uint32_t mesh)
+{
+    if (!gpu_mesh_current(list, mesh)) return false;
+    const uint32_t base = list->meshes[mesh - 1u].base;
+    return !base || gpu_mesh_current(list, base);
+}
+
 // The GPU's copy of the list's 3D mesh `mesh`, uploaded if it hasn't got it.
 static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
 {
@@ -3310,7 +3320,17 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     g->frame = gpu_frame;
     const bool level = mesh_is_level(list, mesh);
     if (level) mesh_for(list, m->base);
-    if (gpu_mesh_current(list, mesh)) return g;
+    if (gpu_mesh_current(list, mesh)) {
+        if (list->mesh_gpu) list->mesh_gpu[mesh - 1u] = TIDE_MESH_GPU_HAS;
+        return g;
+    }
+    // A mesh whose copy went while this renderer had it (a lost device's, another's): it isn't drawn this frame,
+    // and the list copies it again for the next (TIDE_MESH_GPU_DROPPED)
+    const tide_draw_mesh_data *whole = level && m->base <= list->mesh_count ? &list->meshes[m->base - 1u] : m;
+    if (whole->hollow) {
+        if (list->mesh_gpu) list->mesh_gpu[(level ? m->base : mesh) - 1u] = TIDE_MESH_GPU_DROPPED;
+        return g;
+    }
     if (level && g->vertices) { // The place was a whole mesh's
         spare_buffer_of(g->vertices, TIDE_GPU_VERTICES, g->vertex_capacity);
         g->vertices = 0;
@@ -3365,6 +3385,7 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
     g->index_count = m->index_count;
     g->wide = wide;
     tide_mesh_uploads++;
+    if (list->mesh_gpu) list->mesh_gpu[mesh - 1u] = TIDE_MESH_GPU_HAS;
     return g;
 }
 
@@ -3418,6 +3439,14 @@ static void spare_mesh(gpu_mesh *g)
     *g = (gpu_mesh){0};
 }
 
+// The GPU bytes unused meshes are kept within: TIDE_MESH_IDLE_BYTES, or a sixteenth of a device's own memory where
+// that's more (tide_gpu.device_memory, as idle images are weighed).
+static uint64_t mesh_idle_bytes(void)
+{
+    const uint64_t own = tide_texture_device_memory() / 16u;
+    return own > TIDE_MESH_IDLE_BYTES ? own : TIDE_MESH_IDLE_BYTES;
+}
+
 // The buffers of the places of meshes the list doesn't draw are spares for
 // those it draws that need some, before any is uploaded: but for those the
 // list still has as they are on the GPU, which stay for when they're drawn
@@ -3444,20 +3473,34 @@ static void spare_unused_meshes(const tide_draw_list *list)
             spare_mesh(g);
             continue;
         }
-        const bool once = list->meshes[i].made == list->meshes[i].frame;
+        const tide_draw_mesh_data *m = &list->meshes[i];
+        const bool once = m->made == m->frame;
+        float far = 0.0f; // As the list weighs them (tide/draw.h): the farthest from its camera first
+        if (list->idle_eye_set) {
+            const float x = m->where[0] - list->idle_eye[0], y = m->where[1] - list->idle_eye[1],
+                        z = m->where[2] - list->idle_eye[2];
+            far = m->placed ? x * x + y * y + z * z : FLT_MAX;
+            if (!(far < FLT_MAX)) far = FLT_MAX;
+        }
         idle_meshes[once ? gpu_mesh_count - ++once_count : idle_count++] = (tide_texture_idle){
-            .bytes = (uint64_t)g->vertex_capacity + g->index_capacity, .age = gpu_frame - g->frame, .place = i};
+            .bytes = (uint64_t)g->vertex_capacity + g->index_capacity, .far = far, .age = gpu_frame - g->frame,
+            .place = i};
     }
     tide_texture_idle *once = idle_meshes + gpu_mesh_count - once_count;
     if (idle_count) {
-        tide_texture_idle_trim(idle_meshes, idle_count, TIDE_MESH_IDLE_BYTES, TIDE_MESH_IDLE_COUNT, tide_mesh_idle_frames);
+        tide_texture_idle_trim(idle_meshes, idle_count, mesh_idle_bytes(), TIDE_MESH_IDLE_COUNT, tide_mesh_idle_frames);
     }
     if (once_count) tide_texture_idle_trim(once, once_count, TIDE_MESH_ONCE_BYTES, TIDE_MESH_ONCE_COUNT, TIDE_MESH_ONCE_FRAMES);
+    // What goes and the list still has: the list lets a place go whose copy went (TIDE_MESH_GPU_DROPPED)
     for (uint32_t i = 0; i < idle_count; i++) {
-        if (!idle_meshes[i].keep) spare_mesh(&gpu_meshes[idle_meshes[i].place]);
+        if (idle_meshes[i].keep) continue;
+        spare_mesh(&gpu_meshes[idle_meshes[i].place]);
+        if (list->mesh_gpu) list->mesh_gpu[idle_meshes[i].place] = TIDE_MESH_GPU_DROPPED;
     }
     for (uint32_t i = 0; i < once_count; i++) {
-        if (!once[i].keep) spare_mesh(&gpu_meshes[once[i].place]);
+        if (once[i].keep) continue;
+        spare_mesh(&gpu_meshes[once[i].place]);
+        if (list->mesh_gpu) list->mesh_gpu[once[i].place] = TIDE_MESH_GPU_DROPPED;
     }
 }
 
@@ -5084,17 +5127,17 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             calls++;
             break;
         case STEP_MESH_3D:
-            if (!pipeline_made(s)) break;
+            if (!pipeline_made(s) || !mesh_drawable(list, s->mesh)) break;
             vertices += draw_mesh_3d(list, s);
             calls++;
             break;
         case STEP_SHADED:
-            if (!pipeline_made(s)) break;
+            if (!pipeline_made(s) || !mesh_drawable(list, list->runs[s->first].mesh)) break;
             vertices += draw_shaded(list, s);
             calls++;
             break;
         case STEP_BLIT:
-            if (!pipeline_made(s)) break;
+            if (!pipeline_made(s) || !mesh_drawable(list, list->runs[s->first].mesh)) break;
             clip(&(draw_step){.kind = STEP_NO_CLIP});
             vertices += draw_shaded(list, s);
             calls++;
