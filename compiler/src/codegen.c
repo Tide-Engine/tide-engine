@@ -4508,6 +4508,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         gen_interp(g, o, e);
         break;
     case E_INDEX: // items[i], or its zero past the end
+        if (e->object->kind == E_MEMBER && e->object->target_colors && e->object->type.kind == TY_TEXTURE_ARRAY) {
+            sb_put(o, "tide_texture_array_layer("); // array.layers[2]: that layer, as a RenderTarget
+            gen_expr(g, o, e->object);
+            sb_put(o, ", ");
+            gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->kind == E_MEMBER && e->object->target_colors && e->object->type.kind == TY_CUBEMAP) {
             sb_put(o, "tide_cubemap_face("); // cube.faces[2]: that face, as a RenderTarget
             gen_expr(g, o, e->object);
@@ -4713,6 +4721,22 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (e->target_colors) { // target.colors: the target, of whose color images an index reads one (E_INDEX)
             gen_expr(g, o, e->object);
+            break;
+        }
+        if (e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY) {
+            // array.depth, array.size, array.count, and its depth's size and count
+            const bool depths = e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY;
+            const bool size = str_eq_c(e->member, "size"), count = str_eq_c(e->member, "count");
+            if (depths && size) {
+                sb_put(o, "tide_texture_size((tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (");
+                gen_expr(g, o, e->object);
+                sb_put(o, ").target})");
+                break;
+            }
+            sb_put(o, depths ? "tide_depth_array_count(" : size ? "tide_texture_array_size(" : count ? "tide_texture_array_count("
+                                                                    : "tide_texture_array_depth(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
             break;
         }
         if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
@@ -5329,7 +5353,8 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
     // target.Resize(...) runs on its receiver; RenderTarget.Window(...) has none
-    const bool receiver = e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP);
+    const bool receiver = e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
+                                                                || e->object->type.kind == TY_TEXTURE_ARRAY);
     if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
     else if (e->call == CALL_AUDIO) sb_put(o, "tide_l->tide_audio"); // The frame's audio list, which the host gave the local state
     else if (receiver) gen_expr(g, o, e->object);
@@ -6707,7 +6732,8 @@ static void call_operands(expr *e, operand_list *ops)
         case CALL_PARENT:
         case CALL_SEND: take(ops, e->object); break;
         default:
-            if (e->targeted || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
+            if (e->targeted || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
+                                                                || e->object->type.kind == TY_TEXTURE_ARRAY))) {
                 take(ops, e->object); // A render target
             }
             break; // Math, Scene, GUI and the like: a name, no value
@@ -6840,6 +6866,8 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         const int had = out->items.count;
         collect_ordered(e->object, out, later);
         if (((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size"))
+            || ((e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY)
+                && (str_eq_c(e->member, "size") || str_eq_c(e->member, "count")))
             || (e->object->type.kind == TY_RENDER_TARGET && str_eq_c(e->member, "contentRevision"))) {
             const ordered_item item = {e, false, false};
             vec_push(out->items, item);
@@ -20656,6 +20684,7 @@ static uint32_t asset_pack_kind(const type t)
     if (t.kind == TY_GRID) return TIDE_PACK_GRID;
     if (t.kind == TY_TEXTURE) return TIDE_PACK_TEXTURE;
     if (t.kind == TY_CUBEMAP) return TIDE_PACK_CUBEMAP;
+    if (t.kind == TY_TEXTURE_ARRAY) return TIDE_PACK_TEXTURE_ARRAY;
     if (t.kind == TY_CLIP) return TIDE_PACK_CLIP;
     if (t.kind == TY_FONT) return TIDE_PACK_FONT;
     if (t.kind == TY_MAP) {
@@ -20677,7 +20706,8 @@ static uint32_t asset_decl_pack_kind(const decl *d)
 static const char *asset_ctype(const type t)
 {
     return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
-         : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_FONT ? "tide_font_ref"
+         : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_TEXTURE_ARRAY ? "tide_texture_array_ref"
+         : t.kind == TY_DEPTH_TEXTURE_ARRAY ? "tide_depth_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_FONT ? "tide_font_ref"
          : t.kind == TY_MAP ? "tide_map"
          : t.kind == TY_MESH ? "tide_mesh_lists" : t.kind == TY_STRUCT ? c_type(t) : "tide_list";
 }
@@ -21284,6 +21314,7 @@ static void gen_assets(gen *g)
         if (d->return_type.kind == TY_STRING) sb_printf(o, "    %s = tide_pack_text(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_TEXTURE) sb_printf(o, "    %s = tide_pack_texture_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CUBEMAP) sb_printf(o, "    %s = tide_pack_cubemap_of(e);\n", asset_cname(d));
+        else if (d->return_type.kind == TY_TEXTURE_ARRAY) sb_printf(o, "    %s = tide_pack_texture_array_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CLIP) sb_printf(o, "    %s = tide_pack_clip_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_FONT) sb_printf(o, "    %s = tide_pack_font_of(e);\n", asset_cname(d));
         else if (d->asset_kind == ASSET_ANIMATION)
@@ -21948,6 +21979,16 @@ static void build_pack(gen *g)
             }
             free(meshes);
             free(names);
+            continue;
+        }
+        if (v->kind == ASSET_TEXTURE_ARRAY) { // Its layers' images, each in the pack once, and a block that names them in order
+            uint64_t *layers = arena_alloc(sizeof *layers * (size_t)(v->count ? v->count : 1));
+            uint32_t extra;
+            for (int k = 0; k < v->count; k++) {
+                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, &extra, prog->game_folder, NULL);
+            }
+            tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
+                           (uint32_t)(v->count ? v->items[0].image.width : 0));
             continue;
         }
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
@@ -23702,7 +23743,7 @@ static bool resource_fields(const decl *d)
 static bool resource_type(const type t)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_GPU_LIST) return true;
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_GPU_LIST) return true;
     if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
         || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return resource_fields(t.decl);
     return false;
@@ -23752,6 +23793,22 @@ static void gen_resource_value(gen *g, const type t, const char *at, const char 
         const unsigned stride = gpu_list_stride(t.decl);
         sb_printf(o, "%sif (%s.id) {\n%s    if (same_memory) tide_gpu_list_adopt(&%s, %uu);\n%s    else %s = tide_gpu_list_recreate(%s, %uu);\n%s}\n",
                   pad, at, pad, at, stride, pad, at, at, stride, pad);
+        return;
+    }
+    if (t.kind == TY_TEXTURE_ARRAY) { // One that's drawn into, with its layers: the pack's is a name, as a cube's is
+        sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
+        sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
+        sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s = tide_texture_array_recreate(%s);\n",
+                  pad, at, at, pad, at, at);
+        sb_printf(o, "%s}\n", pad);
+        return;
+    }
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) { // Its array's target, kept or made again
+        sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at);
+        sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at);
+        sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s.target = tide_render_target_recreate(%s.target);\n",
+                  pad, at, at, pad, at, at);
+        sb_printf(o, "%s} else memset(&%s, 0, sizeof %s);\n", pad, at, at);
         return;
     }
     if (t.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
@@ -25137,35 +25194,38 @@ static void gen_shader_skin_bindings(sb *o, const shader *sh)
     }
 }
 
-// What a shader's textures are, for its draw or run: each one's slot of the list's (tide_textures), and how
-// it's sampled, the bits of `blended` and the expressions `carried` adds for what the Texture given says.
+// What a shader's textures are, for its draw or run: each one's slot of the list's (tide_textures), and how each
+// of its samplers samples, the bits of `blended` and the expressions `carried` adds for what a Texture given says.
 static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, uint64_t *blended, sb *carried)
 {
     (void)g;
     (void)s;
-    for (int t = 0; t < sh->textures.count; t++) {
-        const shader_texture *texture = &sh->textures.items[t];
-        if (texture->skin) continue; // Bound after this item's pose is captured
+    for (int j = 0; j < sh->samplers.count; j++) {
+        const shader_sampler *sampler = &sh->samplers.items[j];
+        const shader_texture *texture = &sh->textures.items[sampler->texture];
         const bool own = sh->textured && !texture->source && !texture->asset && !texture->direct; // The draw's own
-        const bool given = own || (texture->read == READ_COLOR && !texture->asset
-                                   && (texture->direct || (texture->field && texture->field->type.kind == TY_TEXTURE)));
-        const bool filter_carried = own || (given && !texture->filter_said), wrap_carried = own || (given && !texture->wrap_said);
+        const bool filter_carried = sampler->carried && (own || !sampler->filter_said);
+        const bool wrap_carried = sampler->carried && (own || !sampler->wrap_said);
         sb from = {0}; // The Texture it's given: the draw's, or the field's
-        if (given && !texture->source) sb_put(&from, "tide_texture");
-        else if (given) {
+        if (sampler->carried && !texture->source) sb_put(&from, "tide_texture");
+        else if (sampler->carried) {
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
             sb_printf(&from, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         }
-        if (filter_carried) sb_printf(carried, " | tide_sampling_filter_of(%du, %s)", (unsigned)t, from.data);
-        if (wrap_carried) sb_printf(carried, " | tide_sampling_wrap_of(%du, %s)", (unsigned)t, from.data);
-        else *blended |= (uint64_t)texture->wrap << (32 * (t / 8) + 8 + 2 * (t % 8)); // TIDE_SAMPLING_WRAP
+        if (filter_carried) sb_printf(carried, " | tide_sampling_filter_of(%du, %s)", (unsigned)j, from.data);
+        if (wrap_carried) sb_printf(carried, " | tide_sampling_wrap_of(%du, %s)", (unsigned)j, from.data);
+        else *blended |= (uint64_t)sampler->wrap << (32 * (j / 8) + 8 + 2 * (j % 8)); // TIDE_SAMPLING_WRAP
         if (filter_carried) {
             // Its bit comes with the texture
-        } else if (texture->filter) {
-            *blended |= UINT64_C(1) << (32 * (t / 8) + t % 8);
-            if (texture->filter == 2) *blended |= UINT64_C(1) << (32 * (t / 8) + 24 + t % 8); // TIDE_SAMPLING_MIPS
+        } else if (sampler->filter) {
+            *blended |= UINT64_C(1) << (32 * (j / 8) + j % 8);
+            if (sampler->filter == 2) *blended |= UINT64_C(1) << (32 * (j / 8) + 24 + j % 8); // TIDE_SAMPLING_MIPS
         }
+    }
+    for (int t = 0; t < sh->textures.count; t++) {
+        const shader_texture *texture = &sh->textures.items[t];
+        if (texture->skin) continue; // Bound after this item's pose is captured
         if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
             const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
             const bool map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET);
@@ -25203,6 +25263,17 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
             sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, %uu, "
                          "%s, &tide_uniforms.i[%d]);\n", t, list.data, elem_ctype(element),
                       (unsigned)(floats + ints), layout, words, texture->count_at);
+            continue;
+        }
+        if (texture->read == READ_ARRAY) { // A TextureArray: an asset's by name, or a field's
+            if (texture->asset) {
+                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+            } else {
+                int b = 0;
+                while (sh->bound.items[b] != texture->source) b++;
+                sb_printf(o, "    tide_textures[%d] = tide_draw_array_source(tide_draw, tide_%sb%d->%s);\n", t,
+                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            }
             continue;
         }
         if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
@@ -25243,7 +25314,7 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
             } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
                              texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         }
-        else if (texture->field->type.kind == TY_DEPTH_TEXTURE)
+        else if (texture->field->type.kind == TY_DEPTH_TEXTURE || texture->field->type.kind == TY_DEPTH_TEXTURE_ARRAY)
             sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                       texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         else
@@ -25851,6 +25922,32 @@ static void order_arrays(program *prog)
 
 #include "editor_codegen.inc"
 
+// Partition names depend on symbols, so a body edit leaves the other parts unchanged.
+static bool write_code_parts(const codegen_options *opts, const sb *text, const char *path,
+                             const char *original, const bool plumbing, sb *manifest)
+{
+    const bool split = opts->split_code && (plumbing || !opts->split_plumbing) && text->len >= opts->split_code_min_bytes;
+    sb halves[2] = {0}, parts[4] = {0};
+    if (split) {
+        if (!split_plumbing(text, NULL, 0, &halves[0], &halves[1], 0)
+            || !split_plumbing(&halves[0], NULL, 0, &parts[0], &parts[1], 1)
+            || !split_plumbing(&halves[1], NULL, 0, &parts[2], &parts[3], 1)) {
+            diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
+            return false;
+        }
+    } else parts[0] = *text;
+    for (int i = 0; i < (split ? 4 : 1); i++) {
+        sb out = {0};
+        if (i) sb_printf(&out, "%.*s_part%d.c", (int)strlen(path) - 2, path, i);
+        else sb_put(&out, path);
+        if (!(opts->line_directives ? write_pinned(out.data, &parts[i], original, forward_slashes(out.data))
+                                    : write_file(out.data, &parts[i]))) return false;
+        const char *name = strrchr(forward_slashes(out.data), '/');
+        sb_printf(manifest, "%d %d %s\n", plumbing, split, name ? name + 1 : out.data);
+    }
+    return true;
+}
+
 bool codegen(program *prog, const codegen_options *opts)
 {
     compile_progress("Generating C", NULL, 0, 0);
@@ -26176,6 +26273,7 @@ bool codegen(program *prog, const codegen_options *opts)
         report_asset(d, type_name(d->return_type), 0, server_cut ? "the server's code never reads it" : "nothing in the game's code, defaults or shaders names it");
     }
     if (diag_error_count()) { free(g.pack_bytes); return false; }
+    sb parts_manifest = {0};
     bool ok = write_file(h_path.data, &g.h), whole = true;
     if (ok && opts->split_plumbing) {
         // A debug build compiles the plumbing optimized, and the game's code as written. Generated C this can't cut
@@ -26184,9 +26282,9 @@ bool codegen(program *prog, const codegen_options *opts)
         sb_printf(&plumbing_path, "%s/%s_plumbing.c", opts->out_dir, opts->name);
         const char *plumbing_c = forward_slashes(plumbing_path.data);
         sb code = {0}, plumbing = {0};
-        if (opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing)) {
-            ok = write_pinned(path.data, &code, g.c_path, g.c_path)
-                 && write_pinned(plumbing_path.data, &plumbing, g.c_path, plumbing_c);
+        if (opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing, -1)) {
+            ok = write_code_parts(opts, &code, path.data, g.c_path, false, &parts_manifest)
+                 && write_code_parts(opts, &plumbing, plumbing_path.data, plumbing_c, true, &parts_manifest);
             whole = false;
         } else {
             // What it couldn't cut, for whoever reads this
@@ -26200,7 +26298,12 @@ bool codegen(program *prog, const codegen_options *opts)
             ok = write_file(plumbing_path.data, &whole);
         }
     }
-    if (ok && whole) ok = opts->line_directives ? write_pinned(path.data, &g.c, g.c_path, g.c_path) : write_file(path.data, &g.c);
+    if (ok && whole) ok = write_code_parts(opts, &g.c, path.data, g.c_path, false, &parts_manifest);
+    if (ok && opts->split_code) {
+        sb manifest_path = {0};
+        sb_printf(&manifest_path, "%s/%s_parts.txt", opts->out_dir, opts->name);
+        ok = write_file(manifest_path.data, &parts_manifest);
+    }
     ok = ok && write_pack(&g) && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
     free(g.pack_bytes);
     return ok;

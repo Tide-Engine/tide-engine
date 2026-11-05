@@ -185,6 +185,21 @@ tide_e2e_test(screen_scale)
 tide_e2e_test(input)
 tide_e2e_test(input_borrows)
 tide_e2e_test(crossplatform)
+if(TIDE_NODE)
+    add_test(NAME tidec_split_code_stable
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/split_code_test.mjs" "${TIDEC_PATH}")
+endif()
+# Real multi-object ThinLTO links, including pinned deterministic math, container ownership and tasks.
+foreach(fixture crossplatform nested tasks compute)
+    tide_add_game(tidec_e2e_${fixture}_split SPLIT_CODE SOURCES e2e/${fixture}.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/${fixture}_test.c)
+    target_include_directories(tidec_e2e_${fixture}_split PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    if(fixture STREQUAL "nested")
+        target_compile_definitions(tidec_e2e_${fixture}_split PRIVATE NESTED_HASH=15404513570503856259ull)
+    endif()
+    add_test(NAME tidec_e2e_${fixture}_split COMMAND tidec_e2e_${fixture}_split)
+endforeach()
+
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
 tide_e2e_test(prototype_codegen) # Nested foreach receivers, stored vector writes and captured numeric literals
 tide_e2e_test(increments) # ++i and i++ as values, in their turn
@@ -331,6 +346,7 @@ tide_e2e_test(render_depth) # What a target holds, said when it's made, and a ta
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
 tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload
 tide_e2e_test(cubemaps) # Cubemaps: an asset's six files and a cube a view draws into a face at a time, read by a direction
+tide_e2e_test(texture_arrays) # Texture arrays: an asset's glob or list of files, and one a view draws into a layer at a time
 tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(ownership_events) # Event-time ownership, lifecycle/availability, replay and recipient privacy
 tide_e2e_test(conditional)
@@ -491,6 +507,13 @@ tide_e2e_test(compute) # GPU.Run, GPU lists' operations and indirect draws: what
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(draw_values) # A draw's values: a struct after its vert and frag, sent once for the draw
 tide_e2e_test(draw_helpers) # Shaded helpers bind only explicit parameters, forwarding attached local fields
+tide_add_game(tidec_e2e_nested_split_debug SPLIT_CODE SPLIT_PLUMBING SOURCES e2e/nested.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" e2e/nested_test.c)
+set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_nested_split_debug/game.c" APPEND PROPERTY COMPILE_OPTIONS -O0)
+target_include_directories(tidec_e2e_nested_split_debug PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_e2e_nested_split_debug PRIVATE NESTED_HASH=15404513570503856259ull)
+add_test(NAME tidec_e2e_nested_split_debug COMMAND tidec_e2e_nested_split_debug)
+
 tide_e2e_test(crossplatform_text)
 tide_e2e_test(devices)
 tide_e2e_test(pause)

@@ -63,6 +63,25 @@ static tide_gpu_id none_cube_face(const tide_gpu_id cube, const uint32_t face)
     return made();
 }
 
+static tide_gpu_id none_array(const tide_gpu_target_format format, const int width, const int height, const uint32_t layers,
+                              const void *const *pixels)
+{
+    (void)format, (void)width, (void)height, (void)layers, (void)pixels;
+    return made();
+}
+
+static tide_gpu_id none_array_depth(const tide_gpu_id array)
+{
+    (void)array;
+    return made();
+}
+
+static tide_gpu_id none_array_layer(const tide_gpu_id array, const uint32_t layer)
+{
+    (void)array, (void)layer;
+    return made();
+}
+
 static tide_gpu_id none_pipeline(const tide_gpu_pipeline_desc *desc)
 {
     (void)desc;
@@ -98,9 +117,11 @@ static void none_scissor(const int x, const int y, const int width, const int he
 static void none_stencil(const uint32_t value) { (void)value; }
 static void none_uniforms(const void *data, const size_t size) { (void)data, (void)size; }
 
-static void none_sample(const uint32_t slot, const tide_gpu_id texture, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+static void none_image(const uint32_t slot, const tide_gpu_id texture) { (void)slot, (void)texture; }
+
+static void none_sampler(const uint32_t slot, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
 {
-    (void)slot, (void)texture, (void)filter, (void)wrap;
+    (void)slot, (void)filter, (void)wrap;
 }
 
 static void none_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset) { (void)slot, (void)buffer, (void)offset; }
@@ -157,6 +178,9 @@ const tide_gpu tide_gpu_none = {
     .texture_free = none_free,
     .cube = none_cube,
     .cube_face = none_cube_face,
+    .array = none_array,
+    .array_depth = none_array_depth,
+    .array_layer = none_array_layer,
     .pipeline = none_pipeline,
     .pipeline_free = none_free,
     .target = none_target,
@@ -173,7 +197,8 @@ const tide_gpu tide_gpu_none = {
     .use = none_free,
     .stencil = none_stencil,
     .uniforms = none_uniforms,
-    .sample = none_sample,
+    .image = none_image,
+    .sampler = none_sampler,
     .vertices = none_vertices,
     .indices = none_indices,
     .draw = none_draw,

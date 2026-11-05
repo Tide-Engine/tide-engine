@@ -9,6 +9,7 @@ struct tide_uniforms {
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(2) var sampler0: sampler;
 @group(0) @binding(3) var pixels1: texture_2d<i32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
@@ -104,6 +105,7 @@ struct tide_uniforms {
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(2) var sampler0: sampler;
 @group(0) @binding(3) var pixels1: texture_2d<i32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;

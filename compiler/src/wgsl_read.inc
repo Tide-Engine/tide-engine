@@ -912,7 +912,7 @@ static int add_type(translation *x, const type t)
     for (int i = 1; i < x->ntypes; i++) {
         const type *o = &x->types[i];
         if (o->kind == t.kind && o->elem == t.elem && o->n == t.n && o->sc == t.sc && o->s == t.s && o->dim == t.dim
-            && o->depth == t.depth && o->multisampled == t.multisampled) {
+            && o->depth == t.depth && o->multisampled == t.multisampled && o->arrayed == t.arrayed) {
             return i;
         }
     }
@@ -1192,16 +1192,20 @@ static int resolve_maybe(translation *x, const tnode *n)
     }
     if (same(s, len, "sampler")) return t_simple(x, K_SAMPLER);
     if (same(s, len, "sampler_comparison")) return t_simple(x, K_SAMPLER_CMP);
-    if (same(s, len, "texture_2d") || same(s, len, "texture_cube") || same(s, len, "texture_multisampled_2d")) {
+    if (same(s, len, "texture_2d") || same(s, len, "texture_cube") || same(s, len, "texture_multisampled_2d")
+        || same(s, len, "texture_2d_array")) {
         const int sampled = resolve_scalar_arg(x, n, 0);
         if (T(x, sampled)->kind == K_BOOL) fail(x, n->line, n->col, "a texture holds numbers");
         return add_type(x, (type){.kind = K_TEXTURE, .elem = sampled, .dim = same(s, len, "texture_cube") ? DIM_CUBE : DIM_2D,
-                                  .multisampled = same(s, len, "texture_multisampled_2d")});
+                                  .multisampled = same(s, len, "texture_multisampled_2d"),
+                                  .arrayed = same(s, len, "texture_2d_array")});
     }
-    if (same(s, len, "texture_depth_2d") || same(s, len, "texture_depth_cube") || same(s, len, "texture_depth_multisampled_2d")) {
+    if (same(s, len, "texture_depth_2d") || same(s, len, "texture_depth_cube") || same(s, len, "texture_depth_multisampled_2d")
+        || same(s, len, "texture_depth_2d_array")) {
         return add_type(x, (type){.kind = K_TEXTURE, .elem = t_simple(x, K_F32), .depth = true,
                                   .dim = same(s, len, "texture_depth_cube") ? DIM_CUBE : DIM_2D,
-                                  .multisampled = same(s, len, "texture_depth_multisampled_2d")});
+                                  .multisampled = same(s, len, "texture_depth_multisampled_2d"),
+                                  .arrayed = same(s, len, "texture_depth_2d_array")});
     }
     sdecl *st = find_struct(x, s, len);
     if (st) return resolve_struct(x, st, n->line, n->col);

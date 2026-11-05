@@ -1,5 +1,15 @@
 # `tide_add_game` and the generated header
 
+## SPLIT_CODE (2026-11-05)
+
+`tide_add_game(... SPLIT_CODE)` passes `tidec --split-code`, declares the three extra generated C outputs, compiles
+all four with ThinLTO and enables it at link time (lld explicitly on non-Apple native targets). CMake opt-in is explicit (the CLI automatically uses a 4 MiB
+threshold). Combined with SPLIT_PLUMBING, only the plumbing is split; all its parts take O2 and ThinLTO while game
+code stays a single source with the target's own flags. Four E2E variants exercise crossplatform, nested, tasks and
+compute, and nested_split_debug explicitly compiles game.c at O0. Stable generation/cache tests and full native/web
+validation are described in language.md and cli-and-packages.md. Manifest files are for the CLI/custom pipelines;
+CMake knows its output names ahead of time and does not glob stale generated files.
+
 ## SPLIT_PLUMBING (2026-11-04)
 
 `tide_add_game(... SPLIT_PLUMBING)` passes `tidec --split-plumbing` and compiles `<name>_plumbing.c` with the

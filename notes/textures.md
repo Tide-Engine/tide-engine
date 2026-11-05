@@ -1,5 +1,110 @@
 # Textures and how they are sampled
 
+## Texture arrays: built (2026-11-05)
+
+What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture arrays), the users' page is
+`docs/game/shaders.md` (Texture arrays) and `docs/game/assets.md`. Everything here is Claude's, Provisional.
+
+- **Runtime values** (`tide/draw.h`): `tide_texture_array_ref` (40 bytes: a target, a pack name, its layers) is Tide's
+  `TextureArray`; `DepthTextureArray` is a `tide_depth_ref` of the array's target. A drawn array is a managed target's
+  state with `layers` (1 to `TIDE_TEXTURE_ARRAY_LAYERS`, 256); its id has `TIDE_RENDER_ARRAY` (bit 52), and a layer as a
+  destination `TIDE_RENDER_LAYER` (bits 53 to 61, 1 + the layer): `tide_render_target_arrayed`, `_layer`, `_array_of`,
+  as a cube's faces. `tide_texture_array_make` (and the `_sized`/`_scaled` wrappers generated C calls), `_layer`,
+  `_depth`, `_resize`, `_dispose`, `_recreate` (a web reload: the layers come in the value), `_size`, `_count`,
+  `tide_depth_array_count`. `tide_render_target_recreate` keeps a layer's bits. Resizing or disposing a layer alone says
+  so and does nothing; a layer's color and depth name no image, as a face's don't.
+- **The draw list:** `TIDE_PIXELS_TARGET_ARRAY` (by the array's id) and `TIDE_PIXELS_PACK_ARRAY` (the pack's pointer to
+  each layer's pixels, as a pack cube's), with `tide_draw_texture.layers`; an array's depth is `TIDE_PIXELS_TARGET_DEPTH`
+  of the array's id. `tide_draw_array_source`. A blit refuses an array a layer of which it draws into; `append` carries
+  both.
+- **The pack:** `TIDE_PACK_TEXTURE_ARRAY` (19), a list block of texture handles, uncompressed (`pack_item` with no
+  compression, `[Raw]` as the declaration says). The loader notes each array whose layers are whole and of one size
+  (`note_arrays`, `tide_pack_texture_array_find`, `tide_pack_texture_array_of`); its version is a hash of its layers'.
+- **tidec:** `TY_TEXTURE_ARRAY`, `TY_DEPTH_TEXTURE_ARRAY`; `ASSET_TEXTURE_ARRAY`, read as Textures (each path a file or a
+  glob, a list of paths as an AnimationCatalog's, no layers merged), with the size and count checked;
+  `check_array_target`, `check_array_sample`, `check_depth_array_read`, `layers[i]` through `colors_indexed` as a cube's
+  `faces`. Shader reads `READ_ARRAY`, `READ_DEPTH_ARRAY` and the compiler-only `READ_COMPARE_ARRAY` (a depth array's
+  texture read, a compared sampler); a way's sampler reads its `base_read`, so arrays share samplers with textures read
+  alike. WGSL: `texture_2d_array<f32>`, `texture_depth_2d_array`, the layer after the uv as
+  `clamp(i32(layer), 0, i32(textureNumLayers(t)) - 1)` (`put_layer`). The SPIR-V and HLSL translators take both
+  (`arrayed` types; vec3/float3 coordinates; `tidehl_layers`; fixtures `compiler/tests/wgsl/texture_arrays*.wgsl`,
+  through spirv-val and fxc). A reload remakes a drawn array from its value (`gen_resource_value`).
+- **gpu.h:** `array(format, width, height, layers, layer_pixels)`, `array_depth`, `array_layer`; reads
+  `TIDE_GPU_READ_ARRAY` (6) and `_DEPTH_ARRAY` (7), whose samplers read COLOR and DEPTH/COMPARE
+  (`tide_gpu_sampler_read`). Vulkan: `make_layers` (one image of `layers`, a `2D_ARRAY` view, a base view, a 2D view a
+  layer to draw into, cleared), color arrays with room for their smaller images from the start where the format blits,
+  a depth array beside (or as) it; a layer's target is a face-like target that attaches that layer of both. WebGPU: the
+  same in `tide.js` (`gpu_array`, `layered` views, which cubes now share, `depthLayers`), its layouts `'2d-array'`.
+  The renderer: `gpu_array`, `array_for` (layers' targets cleared black and far as made), texture reads, sources made
+  before they're read, a layer's pass counted for the array's smaller images, fallbacks (`blank`, a white array of one
+  pixel; `far_array`, a depth array at the far limit). Memory is held as the array's whole.
+- **Unity** (embed ABI 15): notes/unity.md, Texture arrays.
+- **Tests:** `tidec_e2e_texture_arrays` (an asset's glob and list, a list's repeated file one image, counts, layers as
+  destinations, the run's textures and samplers, a reload in other memory, Resize and Dispose, natively and under
+  Node); `compiler/tests/shaders/texture_arrays` (golden, through spirv-val and fxc); `tidec_error_texture_array_*`
+  (7); pass 25 of `platform/tests/shaders.tide` (`run_array_checks`: an asset's six layers, a painted array's four,
+  layers past the last and before the first, a layer that differs across a square, a layer read between its smaller
+  images, a never-made array and depth, a depth array's three layers read and compared), on Vulkan (with the
+  validation layer) and WebGPU, again after device loss on the web; `embed`'s packet reader takes the new ops; LSP
+  (`lsp_texture_arrays`).
+- **Gaps:** layers aren't compressed (BC would need an array upload path on each backend); `size`/`count` aren't read
+  on the GPU; no `Grid3` to array conversion (the proposal's item 5, not built: a grid of layers would need the list's
+  layered copy and partial writes); a layer kept as a `RenderTarget` field and reloaded on the web before its array
+  comes back with as many layers as its index says; Unity's replay wasn't run (no Unity here); Linux, macOS, Android
+  are CI's.
+
+## Texture arrays: the proposal, agreed (2026-11-05)
+
+The owner picked the recommended option of each of the four questions asked (2026-11-05): types of their own
+(`TextureArray`, `DepthTextureArray`); an asset of a glob or a list of paths; one drawn into made by
+`TextureArray(width, height, layers, ...)` with `layers[i]` as targets and `.depth` the depth array; and
+`Sample(uv, layer)` with an int layer, clamped. The rest of the proposal below came with them; its details stay
+Claude's picks, Provisional.
+
+Asked for by the owner ("just cause nothing needs [it] isn't an excuse"), from Mount & Rifle's ground frag (9 material
+scans, two or three shadow cascades and a canopy texture, notes/gaps.md there). The language design is the owner's:
+nothing below is built until it's agreed. Every backend has them: WGSL `texture_2d_array<f32>` and
+`texture_depth_2d_array` (with `textureSample*(t, s, uv, layer)`), Vulkan images of several layers viewed as
+`VK_IMAGE_VIEW_TYPE_2D_ARRAY`, Unity's `Texture2DArray` and `RenderTexture` with `TextureDimension.Tex2DArray`
+(HLSL `Texture2DArray`). The layer limit everywhere is at least 256 (WebGPU's default `maxTextureArrayLayers`,
+Vulkan's least `maxImageArrayLayers`).
+
+1. **Types of their own, `TextureArray` and `DepthTextureArray`,** as `Cubemap` is one (the same argument: every place a
+   `Texture` goes reads it by a `float2`, and an array is read by a `float2` and a layer, so each would refuse one).
+   One array is one of a draw's 16 textures, its ways of reading samplers as a texture's (the rule just built).
+2. **An asset of same-sized images:** `asset TextureArray ground = "art/ground/*.png";`, the glob's files as layers in
+   the order a glob's list has them (by path), or a list of paths, `asset TextureArray ground = ["art/grass.png",
+   "art/rock.png"];`, in its order. Every file the same size (an error naming the one that isn't, with both sizes),
+   1 to 256 of them. `[Filter]`, `[Wrap]`, `[Raw]` and `[Lossless]` are the whole array's, as for a `Texture`. Each
+   layer is compressed (BC1/BC3) as a `Texture` asset is, all layers one format (BC3 if any has alpha). Layer names:
+   the glob's `ground.Layer("rock")`? Not proposed; a game uses the index (or its own `const int`s).
+3. **One a view draws into:** `TextureArray(width, height, layers[, pixelsPerUnit][, format...][, samples: n])`, a
+   constructor as `Cubemap(size)` is, whose `layers[i]` is a `RenderTarget`, a destination as a cube's face is (its own
+   camera, clip and settings, depth and stencil of its own). `array.depth` is its `DepthTextureArray`: each layer's depth.
+   So shadow cascades are `TextureArray(2048, 2048, 3, 1, Format.Depth)`, each cascade drawn into `cascades.layers[c]`,
+   read as `cascades.depth.Compare(uv, c, value)`. `Resize(width, height)` and `Dispose()` as a target's.
+4. **Reading one in a frag or a vert:** `array.Sample(uv, layer[, filter][, wrap])`, `array.SampleGrad(uv, dx, dy,
+   layer[, filter][, wrap])`, `depthArray.Sample(uv, layer)` and `depthArray.Compare(uv, layer, value)`. `layer` is an
+   `int` of any expression, so it can differ from pixel to pixel (a cascade picked by depth, a material by a splat
+   map). One past the layers reads the nearest one: tidec clamps it, as WGSL leaves an out-of-range layer to the GPU.
+   Filters and wraps are a sampler's, so they're the whole array's for that read, never a layer's own: a
+   `Filter.Trilinear` read lifts the uv as a texture's does (the layer needn't be), and the smaller images are made
+   for every layer.
+5. **Where it's read from:** an asset by its name, or a field of a component or a singleton the code takes, as a
+   `Cubemap` or a `DepthTexture` is; a function takes one and reads its call's. A `Grid3<Color>` (z the layer) and a
+   `Grid3<float>` convert to a `TextureArray` where one is wanted, as a `Grid2` converts to a `Texture`: the grid's
+   cells as layers, sent as a grid's texture is (only what changed).
+6. **On the CPU** (local code, as `Texture.size` is): `array.size` (an `int2`, a layer's pixels) and `array.count`
+   (the layers), zeros for none. A `TextureArray` is this machine's, as a `Cubemap` is: no match state holds one.
+7. **Limits:** 256 layers (an error for a constant past it, a line and the most at run time), a side up to the
+   device's 2D limit, and each layer counts towards the image memory budgets as a texture does.
+8. **Unity:** `Texture2DArray` for an asset's, a `RenderTexture` of `Tex2DArray` with `volumeDepth` for one drawn
+   into, read in the HLSL as `Texture2DArray<float4>`/`<float>` with `float3(uv, layer)` (the compare by `GatherRed`
+   as a depth's is now); the embed's texture and target packets gain a layer count, so the ABI moves.
+
+Not proposed: cube arrays (`texture_cube_array` isn't in WebGPU's core); a layer of an array as a `Texture` of its
+own; arrays of more than one color image or as a draw's own texture (`Draw.Mesh(..., texture)`).
+
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
 ## `[Raw]` images compress too; `[Lossless]` keeps one exact (2026-11-04)

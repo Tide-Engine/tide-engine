@@ -13,11 +13,8 @@ struct tide_uniforms {
 @group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d<f32>;
-@group(0) @binding(9) var pixels4: texture_2d<f32>;
+@group(0) @binding(8) var sampler3: sampler;
 @group(0) @binding(10) var sampler4: sampler;
-@group(0) @binding(11) var pixels5: texture_2d<f32>;
-@group(0) @binding(12) var sampler5: sampler;
-@group(0) @binding(13) var pixels6: texture_2d<f32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -30,38 +27,38 @@ struct tt_Vertex {
     m_color: vec4f,
 }
 fn tf_SamplePair_40(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels0, sampler0, t_uv, 0.0) + textureSampleLevel(pixels1, sampler1, t_uv, 0.0));
+    return (textureSampleLevel(pixels0, sampler0, t_uv, 0.0) + textureSampleLevel(pixels0, sampler1, t_uv, 0.0));
 }
 
 fn tf_Forward_3_0Texture_0float2_40(t_uv: vec2f) -> vec4f {
     return tf_SamplePair_40(t_uv);
 }
 
-fn tf_SamplePair_42(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels2, sampler2, t_uv, 0.0) + textureSampleLevel(pixels3, sampler1, t_uv, 0.0));
+fn tf_SamplePair_41(t_uv: vec2f) -> vec4f {
+    return (textureSampleLevel(pixels1, sampler2, t_uv, 0.0) + textureSampleLevel(pixels1, sampler1, t_uv, 0.0));
 }
 
-fn tf_Forward_3_0Texture_0float2_42(t_uv: vec2f) -> vec4f {
-    return tf_SamplePair_42(t_uv);
+fn tf_Forward_3_0Texture_0float2_41(t_uv: vec2f) -> vec4f {
+    return tf_SamplePair_41(t_uv);
 }
 
 fn tf_Moved(t_uv: vec2f) -> vec2f {
     return ((t_uv * 0.5) + vec2f(0.25, 0.25));
 }
 
-fn tf_SamplePair_45(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels5, sampler5, t_uv, 0.0) + textureSampleLevel(pixels6, sampler1, t_uv, 0.0));
+fn tf_SamplePair_43(t_uv: vec2f) -> vec4f {
+    return (textureSampleLevel(pixels3, sampler4, t_uv, 0.0) + textureSampleLevel(pixels3, sampler1, t_uv, 0.0));
 }
 
-fn tf_Forward_3_0Texture_0float2_45(t_uv: vec2f) -> vec4f {
-    return tf_SamplePair_45(t_uv);
+fn tf_Forward_3_0Texture_0float2_43(t_uv: vec2f) -> vec4f {
+    return tf_SamplePair_43(t_uv);
 }
 
 fn ts_ReadFields(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     let tide_uv0: vec2f = tf_Moved(t_vertex.m_uv);
     let tide_dx0: vec2f = dpdx(tide_uv0);
     let tide_dy0: vec2f = dpdy(tide_uv0);
-    (*t_color) = ((((tf_Forward_3_0Texture_0float2_40(t_vertex.m_uv) + tf_Forward_3_0Texture_0float2_42(t_vertex.m_uv)) + textureSampleGrad(pixels4, sampler4, tf_Moved(t_vertex.m_uv), tide_dx0, tide_dy0)) + tf_Forward_3_0Texture_0float2_45(t_vertex.m_uv)) + vec4f(f32(tide_block.tide_v0.xy.x), 0.0, 0.0, 1.0));
+    (*t_color) = ((((tf_Forward_3_0Texture_0float2_40(t_vertex.m_uv) + tf_Forward_3_0Texture_0float2_41(t_vertex.m_uv)) + textureSampleGrad(pixels2, sampler3, tf_Moved(t_vertex.m_uv), tide_dx0, tide_dy0)) + tf_Forward_3_0Texture_0float2_43(t_vertex.m_uv)) + vec4f(f32(tide_block.tide_v0.xy.x), 0.0, 0.0, 1.0));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
@@ -101,11 +98,7 @@ struct tide_uniforms {
 @group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d<f32>;
-@group(0) @binding(9) var pixels4: texture_2d<f32>;
-@group(0) @binding(10) var sampler4: sampler;
-@group(0) @binding(11) var pixels5: texture_2d<f32>;
-@group(0) @binding(13) var pixels6: texture_2d<f32>;
-@group(0) @binding(15) var pixels7: texture_2d<f32>;
+@group(0) @binding(8) var sampler3: sampler;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -122,51 +115,51 @@ fn tide_straight(c: vec4f) -> vec4f {
     return vec4f(c.rgb / c.a, c.a);
 }
 fn tf_SamplePair_40(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels0, sampler0, t_uv, 0.0) + textureSampleLevel(pixels1, sampler1, t_uv, 0.0));
+    return (textureSampleLevel(pixels0, sampler0, t_uv, 0.0) + textureSampleLevel(pixels0, sampler1, t_uv, 0.0));
 }
 
 fn tf_Forward_3_0Texture_0float2_40(t_uv: vec2f) -> vec4f {
     return tf_SamplePair_40(t_uv);
 }
 
+fn tf_SamplePair_41(t_uv: vec2f) -> vec4f {
+    return (tide_straight(textureSampleLevel(pixels1, sampler2, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels1, sampler1, t_uv, 0.0)));
+}
+
+fn tf_Forward_3_0Texture_0float2_41(t_uv: vec2f) -> vec4f {
+    return tf_SamplePair_41(t_uv);
+}
+
 fn tf_SamplePair_42(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels2, sampler2, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels3, sampler1, t_uv, 0.0)));
+    return (textureSampleLevel(pixels2, sampler3, t_uv, 0.0) + textureSampleLevel(pixels2, sampler1, t_uv, 0.0));
 }
 
 fn tf_Forward_3_0Texture_0float2_42(t_uv: vec2f) -> vec4f {
     return tf_SamplePair_42(t_uv);
 }
 
-fn tf_SamplePair_44(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels4, sampler4, t_uv, 0.0) + textureSampleLevel(pixels5, sampler1, t_uv, 0.0));
+fn tf_SamplePair_43(t_uv: vec2f) -> vec4f {
+    return (textureSampleLevel(pixels3, sampler3, t_uv, 0.0) + textureSampleLevel(pixels3, sampler1, t_uv, 0.0));
 }
 
-fn tf_Forward_3_0Texture_0float2_44(t_uv: vec2f) -> vec4f {
-    return tf_SamplePair_44(t_uv);
-}
-
-fn tf_SamplePair_46(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels6, sampler4, t_uv, 0.0) + textureSampleLevel(pixels7, sampler1, t_uv, 0.0));
-}
-
-fn tf_Forward_3_0Texture_0float2_46(t_uv: vec2f) -> vec4f {
-    return tf_SamplePair_46(t_uv);
+fn tf_Forward_3_0Texture_0float2_43(t_uv: vec2f) -> vec4f {
+    return tf_SamplePair_43(t_uv);
 }
 
 fn tf_Dimensions_40() -> vec2i {
     return tide_block.tide_v0.xy;
 }
 
-fn tf_Dimensions_44() -> vec2i {
+fn tf_Dimensions_42() -> vec2i {
     return tide_block.tide_v0.zw;
 }
 
-fn tf_Dimensions_410() -> vec2i {
+fn tf_Dimensions_46() -> vec2i {
     return tide_block.tide_v1.xy;
 }
 
 fn ts_ReadRoles(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
-    (*t_color) = ((((tf_Forward_3_0Texture_0float2_40(t_vertex.m_uv) + tf_Forward_3_0Texture_0float2_42(t_vertex.m_uv)) + tf_Forward_3_0Texture_0float2_44(t_vertex.m_uv)) + tf_Forward_3_0Texture_0float2_46(t_vertex.m_uv)) + vec4f(f32(((tf_Dimensions_40().x + tf_Dimensions_44().x) + tf_Dimensions_410().y)), 0.0, 0.0, 1.0));
+    (*t_color) = ((((tf_Forward_3_0Texture_0float2_40(t_vertex.m_uv) + tf_Forward_3_0Texture_0float2_41(t_vertex.m_uv)) + tf_Forward_3_0Texture_0float2_42(t_vertex.m_uv)) + tf_Forward_3_0Texture_0float2_43(t_vertex.m_uv)) + vec4f(f32(((tf_Dimensions_40().x + tf_Dimensions_42().x) + tf_Dimensions_46().y)), 0.0, 0.0, 1.0));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {

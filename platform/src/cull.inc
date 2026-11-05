@@ -210,10 +210,7 @@ static bool cull_kernels(void)
                                            .texture_count = shader->texture_count,
                                            .storage_count = tide_shader_compute_storage(shader),
                                            .optional = true}; // The CPU decides runs without them
-            for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
-                desc.reads[i] = gpu_read(shader, i);
-                desc.samplers[i] = gpu_sampler(shader, i);
-            }
+            shader_pipeline_textures(&desc, shader);
             desc.storage_writes[TIDE_STORAGE_WORDS] = tide_shader_pool_written(shader, TIDE_STORAGE_WORDS);
             desc.storage_writes[TIDE_STORAGE_INTS] = tide_shader_pool_written(shader, TIDE_STORAGE_INTS);
             cull_pipelines[k] = gpu->pipeline(&desc);
@@ -666,7 +663,7 @@ static void cull_listed(const tide_draw_list *list, int32_t uniforms[CULL_UNIFOR
     for (uint32_t p = 0; p < 4; p++) {
         const tide_gpu_id texture = p < cull_page_count ? texture_to_read(list, cull_pages[p], TIDE_GPU_READ_DATA)
                                                         : texture_to_read(list, 0, TIDE_GPU_READ_DATA);
-        gpu->sample(page_textures[p], texture, gpu_filter(TIDE_FILTER_POINT), gpu_wrap(TIDE_WRAP_CLAMP));
+        gpu->image(page_textures[p], texture);
     }
     const tide_shader *k = &tide_kernel_CullListed;
     cull_list_slot(uniforms, k, tide_kernel_CullListed_STORAGE_cameras, CULL_CAMERAS);
@@ -1191,7 +1188,7 @@ static void cull_spans_start(const tide_draw_list *list, const uint32_t i)
                                       base + HIZ_DONE, 0};
         gpu->use(hiz_pipelines[samples[d] > 1u]);
         gpu->uniforms(uniforms, sizeof uniforms);
-        gpu->sample(0, depth[d], gpu_filter(TIDE_FILTER_POINT), gpu_wrap(TIDE_WRAP_CLAMP));
+        tide_gpu_sample(gpu, 0, depth[d], gpu_filter(TIDE_FILTER_POINT), gpu_wrap(TIDE_WRAP_CLAMP));
         gpu->storage(0, pool_buffer(TIDE_STORAGE_INTS));
         gpu->dispatch(across, down, 1);
         room->made = true;

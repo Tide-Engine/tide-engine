@@ -141,6 +141,8 @@ typedef enum type_kind {
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
     TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
     TY_CUBEMAP,    // Cubemap: a local reference to six images a frag or vert reads by a direction: an asset's, or one drawn into
+    TY_TEXTURE_ARRAY, // TextureArray: a local reference to layers of images a frag or vert reads by a uv and a layer
+    TY_DEPTH_TEXTURE_ARRAY, // DepthTextureArray: a TextureArray's depth, each layer's, which a frag or vert reads
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
     TY_CLIP,       // Clip: a sound of the game's pack, this machine's to play (an asset's, or a copy of one)
     TY_RESIDENT,   // Resident: a C library's state the world keeps as pages (tide/resident.h): a match singleton's field, which only C reads
@@ -483,7 +485,11 @@ typedef enum decl_kind {
 // READ_CUBE is a Cubemap's color, read by a direction.
 // READ_DATA is a list's elements, as numbers: read by their place (shader.c, Lists).
 // READ_SIZE is compiler-only metadata in uniforms, never a runtime texture binding.
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE } shader_read;
+// READ_ARRAY is a TextureArray's colors, READ_DEPTH_ARRAY its depth read as a number and READ_COMPARE_ARRAY compared
+// (a compiler-only kind: the runtime's texture read is DEPTH_ARRAY, its sampler's COMPARE).
+typedef enum shader_read {
+    READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE, READ_ARRAY, READ_DEPTH_ARRAY, READ_COMPARE_ARRAY
+} shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -1468,19 +1474,39 @@ typedef struct shader_value {
     int frag_float_at, frag_int_at; // An instance's that the frag reads: where it is among what the vertex stage passes on
 } shader_value;
 
+// A texture a shader reads: one image, however many ways its code reads it (shader_way), each through a sampler.
 typedef struct shader_texture {
     const struct decl *source;
     const field *field;
-    int filter;  // Its Filter's number, tide_filter's, where it's known here (filter_said)
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
     const struct decl *asset; // A Grid2<Color> or Texture asset, sampled by name: neither a field nor the draw's
-    int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
-    shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
-    bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
+    // How it's read: a color, a cube, a list's numbers, or a depth (the first way it's read: READ_DEPTH or
+    // READ_COMPARE, which its samplers tell apart)
+    shader_read read;
     int count_at; // A list's (READ_DATA): the word of the uniforms' ints that says how many elements it has
     int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
-    int sampler; // 0: read through its own sampler; 1 + j: through texture j's, sampled the same way (share_samplers)
 } shader_texture;
+
+// One way a shader's code reads one of its textures: the texture, how (a color's filter and wrap, a depth read or
+// compared, a cube's filter), and the sampler that reads it so (shader.samplers).
+typedef struct shader_way {
+    int texture;
+    shader_read read;
+    int filter; // Its Filter's number, tide_filter's, where it's known here (filter_said)
+    int wrap;   // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
+    bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
+    int sampler;
+} shader_way;
+
+// A sampler of a shader's, sampler j at binding 2 + 2j. One whose filter or wrap a Texture value carries (`carried`)
+// is that texture's alone, its sampling worked out as each draw goes; any other is how every draw reads, shared by
+// every texture read that way.
+typedef struct shader_sampler {
+    int texture; // The texture it reads first: for a carried one, the one whose Texture says how
+    shader_read read; // READ_COLOR, READ_CUBE, READ_DEPTH or READ_COMPARE
+    int filter, wrap;
+    bool filter_said, wrap_said, carried;
+} shader_sampler;
 
 // A GPU list a shader's code names: a field of what the engine supplies (a
 // component, a singleton, the values), a storage buffer of the shader's.
@@ -1538,6 +1564,8 @@ typedef struct shader {
     const field *instance_list;      // A list its code reads of the instance struct, which no draw can send
     VEC(shader_value) values;
     VEC(shader_texture) textures;
+    VEC(shader_way) ways;         // Each way its code reads a texture, with the sampler that reads it so
+    VEC(shader_sampler) samplers; // Its samplers, apart from its textures: up to 16
     VEC(shader_texture) sizes; // Metadata only: two uniform ints, no sampled texture binding
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
     VEC(shader_handed) handed; // What its vert writes for its frag, in the order the vert takes them

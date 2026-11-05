@@ -638,7 +638,7 @@ Past 0 and 1, `uv` reads what the [wrap](./meshes-and-textures.md#past-the-edges
 - A draw can say it for that draw, after the texture: `Draw.Mesh(corners, faces, tiles, Filter.Bilinear, Wrap.Clamp, Shade)` gives `source` blended and clamped, whatever `tiles` says.
 - A filter and a wrap written at a `Sample` are written out, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs. Where they come with the texture, the engine tells it for each draw.
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: corner.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
-- One texture can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 16 textures a draw samples, and the same way twice counts once. A `Sample` that says nothing and one that says the default are two ways for a `Texture` parameter or field, since the texture may say otherwise.
+- One texture can be read several ways in one frag, clamped here and repeated there. It counts once among the 16 textures a draw reads, however it's read. Each way of reading takes a sampler, and a draw has 16 of those too: textures read the same way share one, and the same way twice is one. A `Texture` parameter or field whose `Sample` leaves its filter or wrap to the texture has a sampler of its own for that, since the texture says how at each draw; so there, a `Sample` that says nothing and one that says the default are two samplers.
 - A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
 
 `Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./meshes-and-textures.md#drawn-smaller):
@@ -781,7 +781,7 @@ float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there
 - **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
 - **`size`** gives the depth image's width and height as an `int2` of physical pixels, on the CPU and GPU. It follows target resize, display scale and the device's size limit; missing or disposed depth gives `int2(0)`. Reading dimensions copies no pixels and uses no texture binding. For pixel-sized shadow offsets, use `float2 texel = 1.0 / float2(lamp.shadow.size)` after checking that the size is nonzero.
 
-`uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [16 textures](#what-the-gpu-runs).
+`uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. A depth is one of its draw's [16 textures](#what-the-gpu-runs) however it's read: sampled and compared, it's one texture through two samplers.
 
 A function reads a depth it takes as a parameter the same two ways, so every frag that's lit shares one lookup. The frag names the depth where it calls:
 
@@ -851,7 +851,7 @@ frag Sky(Corner corner, out Color color)
 
 - **`Sample(direction)`** takes a `float3` of any length, in the world's axes. One face goes on in the next, so there's no edge, and nothing to [wrap](./meshes-and-textures.md#past-the-edges).
 - **`Sample(direction, filter)`** says how it's read between its pixels, written there like a texture's: `Filter.Bilinear` when left out, `Filter.Point` for the nearest pixel, and `Filter.Trilinear` between its [smaller images](#textures) too, in a frag, of a direction the frag can work out as it starts.
-- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too, and so does a function that takes a `Cubemap`, which reads the one its call names (see [In a function](#in-a-function)). Each way a frag reads one is one of its draw's [16 textures](#what-the-gpu-runs).
+- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too, and so does a function that takes a `Cubemap`, which reads the one its call names (see [In a function](#in-a-function)). It's one of its draw's [16 textures](#what-the-gpu-runs), and each filter it's read with is one of its 16 samplers.
 - A cube that was never set reads as black.
 
 There are two kinds, and a frag reads both the same way.
@@ -897,6 +897,54 @@ The scene below has both. The sky is the asset, drawn on a ball around the camer
 - **A reflection is `Math.Reflect`:** the way from the eye to the pixel, bounced off the pixel's normal, is the way the mirror reads.
 - **Six passes a frame is what a live reflection costs.** A cube that only holds what doesn't move is drawn once and kept: its images stay from frame to frame, like any target's.
 - **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. There's no choosing the level yet, so a rough surface's blurred reflection isn't there.
+
+## Texture arrays
+
+Images of one size in layers are a `TextureArray`, read by a uv and a layer. An asset's is a glob's files, in their paths' order, or a list of them in its own:
+
+```tide
+asset TextureArray ground = ["art/grass.png", "art/rock.png", "art/sand.png"];
+
+frag Ground(Vertex3 vertex, out Color color, Terrain terrain)
+{
+    int material = int(terrain.splat.Sample(vertex.uv).r * 2.99); // Any int, which can differ from pixel to pixel
+    color = ground.Sample(vertex.uv * 16, material, Filter.Trilinear, Wrap.Repeat);
+}
+```
+
+- The layer is an int. One past the layers reads the nearest one.
+- The filter and the wrap are written at the `Sample`, as a cube's filter is, or on the asset (`[Filter]`, `[Wrap]`). An array that says none is read blended and clamped. `SampleGrad(uv, dx, dy, layer)` takes its derivatives as a texture's does.
+- An array is one of a draw's [16 textures](#what-the-gpu-runs), however many layers it has.
+
+A view makes one to draw into, a layer at a time: `TextureArray(width, height, layers)`, sized as a [render target](./render-targets.md) is, with a `Format` last when a layer holds anything but `Format.Rgba8`. `array.layers[i]` is a `RenderTarget`, and `array.depth` is a `DepthTextureArray`, each layer's depth, which a frag reads as a [target's depth](#a-target-s-depth) with a layer: `Sample(uv, layer)` and `Compare(uv, layer, value)`. Shadow cascades are layers of depth alone:
+
+```tide
+local singleton Lamp { TextureArray maps; DepthTextureArray cascades; }
+
+view Shadows(mut Lamp lamp)
+{
+    if (lamp.maps.count == 0)
+    {
+        lamp.maps = TextureArray(2048, 2048, 3, 1, Format.Depth);
+        lamp.cascades = lamp.maps.depth;
+    }
+    for (int c = 0; c < 3; c++)
+    {
+        var into = lamp.maps.layers[c];
+        into.Clear(Color.white);
+        // ...each cascade's camera and casters
+    }
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp, Sun sun)
+{
+    int cascade = Cascade(this.world, sun); // Your own choice of cascade, per pixel
+    float lit = lamp.cascades.Compare(ToLamp(this.world, sun, cascade), cascade, Depth(this.world, sun, cascade));
+    color = Color(lit, lit, lit);
+}
+```
+
+`array.size` and `array.count` say a layer's pixels and how many there are, in a view. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
 
 ## Where the pixel is
 
@@ -999,7 +1047,7 @@ A frag says how much it covers one way: `this.Cutout` and `this.Coverage` in one
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, bytes, ints, chars (ints there, their code points), floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int, a char or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 16 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
+- **It has** bools, bytes, ints, chars (ints there, their code points), floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int, a char or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 16 of them to a draw and 16 [ways of reading them](#textures), anywhere in the code: in a branch, in a loop, in a vert.
 - **It doesn't have** text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list, map or set. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.

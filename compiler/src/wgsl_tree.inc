@@ -237,7 +237,7 @@ typedef struct type {
     int sc;    // A pointer's storage class
     sdecl *s;  // A struct's
     dim dim;   // A texture's
-    bool depth, multisampled;
+    bool depth, multisampled, arrayed; // arrayed: a texture_2d_array's, texture_depth_2d_array's
     uint32_t id, laid; // Its SPIR-V type, and the one laid out for a uniform block (structs and arrays)
 } type;
 

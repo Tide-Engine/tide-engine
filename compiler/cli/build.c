@@ -715,6 +715,7 @@ typedef struct build {
     uint64_t headers; // The installed headers, which every compiled file can include
     int jobs;         // How many files compile at once
     bool engine_built;
+    bool generated_lto; // The current generated manifest contains ThinLTO partitions.
     game_info info; // Its settings, from its last generate
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
@@ -1452,7 +1453,7 @@ static uint64_t header_stamp(const char *folder)
 // compiled from, `first` for the one to start ahead of its turn, `optimized`
 // for one compiled as the engine is.
 static void queue_unless_stamped(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                                 const uint64_t h, const bool first, const bool optimized)
+                                 const uint64_t h, const bool first, const bool optimized, const bool thin)
 {
     char stamp[32];
     snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
@@ -1463,6 +1464,10 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
         // if the source is then put back exactly as it was before the failure.
         // The stamp goes as the compile starts (run_compiles).
         compile_job *job = queue_compile_as(list, b, source, object, gen, false, optimized);
+        if (thin) {
+            arg(&job->a, "-flto=thin");
+            job->size = sys_file_size(source);
+        }
         job->stamp_path = stamp_path;
         job->stamp = copy_text(stamp);
         job->first = first;
@@ -1482,7 +1487,7 @@ static void queue_unless_stamped(const build *b, compiles *list, const char *sou
 // debug build compiles as the engine (splits_plumbing). False when the
 // generated files aren't there to read.
 static bool queue_generated(const build *b, compiles *list, const char *source, const char *object, const char *gen,
-                            const bool first, const bool plumbing)
+                            const bool first, const bool plumbing, const bool thin)
 {
     char *text = sys_read_file(source, NULL);
     char *header_path = path_join(gen, "game.h");
@@ -1495,6 +1500,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     }
     char *flags = stamp_of(b, plumbing);
     uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
+    if (thin) h = hash_text(h, "ThinLTO partitions v1");
     h = hash_text(hash_text(h, source), text);
     // Only the managed reactor embeds this macro in its launcher. Ordinary
     // launchers use the game API's identity, so gameplay edits still reuse
@@ -1513,7 +1519,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     free(flags);
     free(text);
     free(header);
-    queue_unless_stamped(b, list, source, object, gen, h, first, plumbing);
+    queue_unless_stamped(b, list, source, object, gen, h, first, plumbing, thin);
     return true;
 }
 
@@ -1610,24 +1616,47 @@ static bool queue_game(build *b, compiles *list, const char *gen, const char *ga
                        const file_list *objects, c_side *c)
 {
     queue_engine(b, list);
-    bool ok = queue_generated(b, list, game_c, objects->items[0], gen, true, false)
-              && queue_generated(b, list, start_c, objects->items[1], gen, false, false);
-    if (ok && splits_plumbing(b)) {
-        // game_plumbing.c, beside game.c, into <game's object>_plumbing.o beside its object
-        char *dir = path_dir(game_c);
-        char *plumbing_c = path_join(dir, "game_plumbing.c");
-        const char *game_o = objects->items[0];
-        const size_t stem = strlen(game_o) - (has_extension(game_o, ".o") ? 2 : 0);
-        char *object = malloc(stem + sizeof "_plumbing.o");
-        if (!object) abort();
-        memcpy(object, game_o, stem);
-        memcpy(object + stem, "_plumbing.o", sizeof "_plumbing.o");
-        ok = queue_generated(b, list, plumbing_c, object, gen, true, true);
-        add_file(&c->objects, object);
-        free(object);
-        free(plumbing_c);
-        free(dir);
+    char *manifest_path = path_join(gen, "game_parts.txt");
+    char *manifest = sys_read_file(manifest_path, NULL);
+    free(manifest_path);
+    bool ok = true;
+    b->generated_lto = false;
+    if (manifest) {
+        for (char *line = manifest; *line && ok;) {
+            char *end = strchr(line, '\n');
+            if (end) *end = '\0';
+            if (strlen(line) < 10 || strncmp(line + 4, "game", 4) != 0 || !has_extension(line + 4, ".c")
+                || (line[0] != '0' && line[0] != '1') || line[1] != ' '
+                || (line[2] != '0' && line[2] != '1') || line[3] != ' '
+                || strchr(line + 4, '/') || strchr(line + 4, '\\') || strstr(line + 4, "..")) {
+                fprintf(stderr, "tide: invalid generated C manifest; rebuild the game\n");
+                ok = false;
+                break;
+            }
+            const bool plumbing = line[0] == '1', thin = line[2] == '1';
+            const char *name = line + 4;
+            const bool main = strcmp(name, "game.c") == 0;
+            char *source = path_join(gen, name);
+            char *stem = copy_text(objects->items[0]);
+            if (has_extension(stem, ".o")) stem[strlen(stem) - 2] = '\0';
+            char *suffix = copy_text(name + 4);
+            if (has_extension(suffix, ".c")) suffix[strlen(suffix) - 2] = '\0';
+            char *object = main ? copy_text(objects->items[0]) : format("%s%s.o", stem, suffix);
+            free(stem);
+            free(suffix);
+            ok = queue_generated(b, list, source, object, gen, main, plumbing, thin);
+            if (!main) add_file(&c->objects, object);
+            b->generated_lto = b->generated_lto || thin;
+            free(source);
+            free(object);
+            line = end ? end + 1 : line + strlen(line);
+        }
+        free(manifest);
+    } else {
+        fprintf(stderr, "tide: the generated C manifest for %s is missing; rebuild the game\n", game_c);
+        ok = false;
     }
+    if (ok) ok = queue_generated(b, list, start_c, objects->items[1], gen, false, false, false);
     if (!ok) {
         free_compiles(list);
         return false;
@@ -1955,6 +1984,47 @@ static uint64_t link_stamp(const args *a, const build *b)
     return h;
 }
 
+// The same ThinLTO policy on native, web and Android links. Cache keys include target and flags.
+static void generated_lto_flags(args *a, const build *b, char **cache_flag, char **jobs_flag)
+{
+    if (!b->generated_lto) return;
+    const build_options *opts = b->opts;
+    char *lto_cache = NULL, *lto_jobs = NULL;
+    arg(a, "-flto=thin");
+#if !defined(__APPLE__)
+    if (!opts->web) arg(a, "-fuse-ld=lld");
+#endif
+    char *cache = path_join(b->cache, "thinlto");
+    sys_mkdirs(cache);
+#if defined(__APPLE__)
+    if (!opts->web && !opts->android) {
+        arg(a, "-Xlinker");
+        arg(a, "-cache_path_lto");
+        lto_cache = copy_text(cache);
+    } else
+#endif
+    {
+        lto_cache = format("--thinlto-cache-dir=%s", cache, NULL);
+    }
+    arg(a, "-Xlinker");
+    arg(a, lto_cache);
+    char jobs[32];
+    snprintf(jobs, sizeof jobs, "%d", b->jobs);
+#if defined(__APPLE__)
+    if (!opts->web && !opts->android) {
+        arg(a, "-Xlinker");
+        arg(a, "-mllvm");
+        lto_jobs = format("-threads=%s", jobs, NULL);
+    } else
+#endif
+    lto_jobs = format("--thinlto-jobs=%s", jobs, NULL);
+    arg(a, "-Xlinker");
+    arg(a, lto_jobs);
+    free(cache);
+    *cache_flag = lto_cache;
+    *jobs_flag = lto_jobs;
+}
+
 // Links `objects`, the game's C (`c`, NULL for tide run's host) and the
 // engine's objects into `output`: a program, with the platform layer, or with
 // `shared`, a library of the game for a host to load (see tide/host.h), whose
@@ -1973,6 +2043,8 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
         arg(&a, build_target.sysroot_flag);
     }
     if (shared) arg(&a, "-shared");
+    char *lto_cache = NULL, *lto_jobs = NULL;
+    generated_lto_flags(&a, b, &lto_cache, &lto_jobs);
     for (int i = 0; i < objects->count; i++) arg(&a, objects->items[i]);
     for (int i = 0; c && i < c->objects.count; i++) arg(&a, c->objects.items[i]);
     for (int i = 0; c && i < c->link.count; i++) arg(&a, c->link.items[i]);
@@ -1988,7 +2060,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     if (!opts->managed && (!shared || b->info.bold)) arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
-    build_flags(&a, opts, false);
+    build_flags(&a, opts, b->generated_lto && splits_plumbing(b));
     // Hot-reload libraries keep their public symbols and their existing link
     // policy. Standalone releases only need code reachable from their entry;
     // distributions also strip their symbols.
@@ -2074,6 +2146,8 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     free(ld_flag);
     free(imports_flag);
     free(natvis);
+    free(lto_cache);
+    free(lto_jobs);
     if (code == -1) fprintf(stderr, "tide: couldn't start %s; check that the compiler exists and can run on this machine\n", b->compiler);
     return code == 0;
 }
@@ -2564,6 +2638,7 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
 #endif
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .split_plumbing = splits_plumbing(b),
+                                     .split_code = true, .split_code_min_bytes = 4u * 1024u * 1024u,
                                      .build_cc = build_cc, .build_flags = native_flags, .build_libs = build_libs,
                                      .build_include = b->include, .build_engine = engine_src,
                                      .visualizers = b->views != NULL,
@@ -3131,7 +3206,7 @@ static bool queue_host(run *r, compiles *list, file_list *objects)
     const uint64_t h = hash_text(hash_text(hash_text(0xCBF29CE484222325ull, flags), host_c), text);
     free(flags);
     bool ok = sys_write_text(host_c, text);
-    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false, false);
+    if (ok) queue_unless_stamped(&r->b, list, host_c, objects->items[0], NULL, h, false, false, false);
     free(host_c);
     return ok;
 }
@@ -4441,6 +4516,8 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     arg(&a, build_target.flag);
     arg(&a, build_target.sysroot_flag);
     arg(&a, "-shared");
+    char *lto_cache = NULL, *lto_jobs = NULL;
+    generated_lto_flags(&a, b, &lto_cache, &lto_jobs);
     for (int i = 0; i < objects->count; i++) arg(&a, objects->items[i]);
     for (int i = 0; i < c->objects.count; i++) arg(&a, c->objects.items[i]);
     for (int i = 0; i < c->link.count; i++) arg(&a, c->link.items[i]);
@@ -4448,7 +4525,7 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
-    build_flags(&a, b->opts, false);
+    build_flags(&a, b->opts, b->generated_lto && splits_plumbing(b));
     char *exports = NULL;
     // A release collects unused sections; a distribution also strips its
     // symbols and exports only the activity's way in.
@@ -4460,6 +4537,9 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
             free(exports);
             free(abi_dir);
             free(platform_lib);
+            free(lto_cache);
+            free(lto_jobs);
+            free(a.items);
             return false;
         }
         arg(&a, "-Wl,--gc-sections,-s");
@@ -4496,6 +4576,8 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     }
     if (code > 0) explain_link(b, a.items);
     free(a.items);
+    free(lto_cache);
+    free(lto_jobs);
     return code == 0;
 }
 

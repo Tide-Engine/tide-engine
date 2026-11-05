@@ -20,9 +20,8 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
 }
 @group(0) @binding(1) var pixels0: texture_depth_2d;
 @group(0) @binding(2) var sampler0: sampler_comparison;
-@group(0) @binding(3) var pixels1: texture_depth_2d;
+@group(0) @binding(3) var pixels1: texture_2d<f32>;
 @group(0) @binding(4) var sampler1: sampler;
-@group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
@@ -58,8 +57,8 @@ fn ts_Lit(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {
     if ((t_lit < 1.0)) {
         t_lit = ((t_lit * 0.5) + (textureSampleCompareLevel(pixels0, sampler0, (t_at.xy + vec2f(0.01, 0.0)), clamp((t_at.z - 0.01), 0.0, 1.0)) * 0.5));
     }
-    var t_far: f32 = textureSampleLevel(pixels1, sampler1, t_at.xy, 0);
-    (*t_color) = ((tide_straight(textureSampleLevel(pixels2, sampler2, t_vertex.m_uv, 0.0)) * (0.25 + (0.75 * t_lit))) * select(0.5, 1.0, (t_far < 1.0)));
+    var t_far: f32 = textureSampleLevel(pixels0, sampler1, t_at.xy, 0);
+    (*t_color) = ((tide_straight(textureSampleLevel(pixels1, sampler2, t_vertex.m_uv, 0.0)) * (0.25 + (0.75 * t_lit))) * select(0.5, 1.0, (t_far < 1.0)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f) -> tide_corner {
@@ -112,9 +111,8 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
 }
 @group(0) @binding(1) var pixels0: texture_depth_2d;
 @group(0) @binding(2) var sampler0: sampler;
-@group(0) @binding(3) var pixels1: texture_depth_2d;
+@group(0) @binding(3) var pixels1: texture_2d<f32>;
 @group(0) @binding(4) var sampler1: sampler_comparison;
-@group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
@@ -150,12 +148,12 @@ fn tf_FromLamp(t_world: vec3f, t_toLamp: mat4x4f) -> vec3f {
 
 fn ts_Lit(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {
     var t_at: vec3f = tf_FromLamp(tide_world, mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3));
-    var t_lit: f32 = textureSampleCompareLevel(pixels1, sampler1, t_at.xy, clamp((t_at.z - 0.01), 0.0, 1.0));
+    var t_lit: f32 = textureSampleCompareLevel(pixels0, sampler1, t_at.xy, clamp((t_at.z - 0.01), 0.0, 1.0));
     if ((t_lit < 1.0)) {
-        t_lit = ((t_lit * 0.5) + (textureSampleCompareLevel(pixels1, sampler1, (t_at.xy + vec2f(0.01, 0.0)), clamp((t_at.z - 0.01), 0.0, 1.0)) * 0.5));
+        t_lit = ((t_lit * 0.5) + (textureSampleCompareLevel(pixels0, sampler1, (t_at.xy + vec2f(0.01, 0.0)), clamp((t_at.z - 0.01), 0.0, 1.0)) * 0.5));
     }
     var t_far: f32 = textureSampleLevel(pixels0, sampler0, t_at.xy, 0);
-    (*t_color) = ((tide_straight(textureSampleLevel(pixels2, sampler2, t_vertex.m_uv, 0.0)) * (0.25 + (0.75 * t_lit))) * select(0.5, 1.0, (t_far < 1.0)));
+    (*t_color) = ((tide_straight(textureSampleLevel(pixels1, sampler2, t_vertex.m_uv, 0.0)) * (0.25 + (0.75 * t_lit))) * select(0.5, 1.0, (t_far < 1.0)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f) -> tide_corner {

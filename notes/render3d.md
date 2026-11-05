@@ -1,5 +1,12 @@
 # Render3D package
 
+## Post test sampler mapping (2026-11-05)
+
+The full native/web validation of generated-C partitioning found the post tests still indexing run sampling by
+texture slot after dev's separate image/sampler change. The test now visits the samplers in each texture's mask
+(`tide_shader_texture_samplers`) when checking bilinear/clamp. Routing, filters and rendering are unchanged; this
+retains the assertions for every sampler used by a bound source. Focused native-ASan and web post tests pass.
+
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
 ## Forest depth order after quiet measurements (2026-11-02)

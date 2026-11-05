@@ -1112,6 +1112,65 @@ static void run_cube_checks(const float lit, const char *when)
     if (runs != 12) failures++;
 }
 
+// Texture arrays (pass 25: `LayersPaint` and `LayersRead` in shaders.tide): an asset's six layers, a painted array's
+// four, a layer that differs across a square, layers past the last and before the first, a layer read between its
+// smaller images, an array never made and its depth, and a depth array's three layers read as numbers and compared.
+// Each square is 8 pixels; two pixels of each are read, its corner and one inside, which may want another color.
+static void run_array_checks(const char *when)
+{
+    static const int sky[6][3] = {{0, 255, 255}, {255, 0, 255}, {255, 255, 0}, {255, 0, 0}, {0, 255, 0}, {0, 0, 255}};
+    static const int painted[4][3] = {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}, {255, 255, 0}};
+    struct {
+        float x, y;
+        int want[3];
+        const char *what;
+        int layer;
+    } wanted[64];
+    int count = 0;
+#define WANT(at_x, at_y, r, g, b, text, n) wanted[count++] = (__typeof__(wanted[0])){(float)(at_x), (float)(at_y), {(r), (g), (b)}, (text), (n)}
+    for (int layer = 0; layer < 6; layer++) {
+        WANT(8 + layer * 32, 8, 255, 255, 255, "an asset's array, a layer's top left quarter, which is white: layer", layer);
+        WANT(13 + layer * 32, 12, 255, 255, 255, "an asset's array, a layer's top left quarter, inside: layer", layer);
+        WANT(24 + layer * 32, 8, sky[layer][0], sky[layer][1], sky[layer][2], "and its bottom right, its file's color: layer", layer);
+        WANT(29 + layer * 32, 12, sky[layer][0], sky[layer][1], sky[layer][2], "and its bottom right, inside: layer", layer);
+    }
+    for (int layer = 0; layer < 4; layer++) {
+        WANT(8 + layer * 32, 24, 255, 255, 255, "an array a view painted, a layer's top left quarter: layer", layer);
+        WANT(24 + layer * 32, 24, painted[layer][0], painted[layer][1], painted[layer][2], "and its bottom right: layer", layer);
+    }
+    WANT(136, 24, 255, 255, 0, "a layer past the last reads the last", 9);
+    WANT(152, 24, 255, 0, 0, "and one before the first, the first", -2);
+    WANT(8, 40, 255, 0, 0, "a layer that differs across a square: its left quarter reads the first", 0);
+    WANT(13, 40, 0, 0, 255, "and at two thirds across, the third", 2);
+    WANT(24, 40, 0, 255, 0, "a layer read between its smaller images: one color however small", 1);
+    WANT(29, 44, 0, 255, 0, "a layer read between its smaller images, inside", 1);
+    WANT(40, 40, 255, 255, 255, "an array that was never made reads white, and its depth the far limit", 0);
+    WANT(8, 56, 0, 42, 0, "a depth array's layer, a plane 5 away: nearer than 0.4, and its depth", 0);
+    WANT(24, 56, 0, 84, 0, "the next, 10 away: still nearer than 0.4", 1);
+    WANT(40, 56, 255, 127, 0, "the last, 15 away: not nearer than 0.4", 2);
+#undef WANT
+    local.Art.targetPass = 25;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[64];
+    uint32_t got[64];
+    for (int i = 0; i < count; i++) points[i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, (uint32_t)count, got);
+    for (int i = 0; i < count; i++) {
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - wanted[i].want[c];
+            ok = ok && d >= -6 && d <= 6;
+        }
+        printf("%s: %s %d%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, wanted[i].layer, when,
+               (unsigned)got[i], (unsigned)wanted[i].want[0], (unsigned)wanted[i].want[1], (unsigned)wanted[i].want[2]);
+        if (!ok) failures++;
+    }
+}
+
 // Lists (`ListReads` and `ListOwners` in shaders.tide): frags and a
 // vert read lists by an element, a count and foreach. Squares of 8 pixels, 16
 // apart. `turn` is what the first color's green is that frame.
@@ -1729,6 +1788,7 @@ static void run_prewarmed_checks(void)
     run_cut_checks(when);
     run_raw_checks(when);
     run_cube_checks(2, when);
+    run_array_checks(when);
     run_list_checks(0, when);
     run_roll_checks(1234, when);
     run_normal_checks(when);
@@ -1760,6 +1820,7 @@ static void run_again(const int roll, const char *when)
     run_cut_checks(when);
     run_raw_checks(when);
     run_cube_checks(2, when);
+    run_array_checks(when);
     run_list_checks(0, when);
     run_roll_checks(roll, when);
     run_normal_checks(when);
@@ -1823,6 +1884,8 @@ static int frame(void *user, const float seconds)
     run_cube_checks(2, "");
     run_cube_checks(2, ", again");
     run_cube_checks(6, ", with other pixels drawn into the cube");
+    run_array_checks("");
+    run_array_checks(", again");
     run_list_checks(0, "");
     run_list_checks(0, ", again");
     run_list_checks(1, ", with another element written");

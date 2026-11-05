@@ -11,7 +11,19 @@ number). A pool made again bigger frees its old buffer after the copy's submit (
 ends, so a buffer destroyed then is one no unsubmitted work names). Each pool is bound whole; a kernel that writes
 one binds it once, as `storage`, so no binding aliases another (Dawn's writable-aliasing check). Tests (web-debug,
 SwiftShader): `tide_platform_kernels` through its lost device, `_compute`, `_cull`, `_cull_fallback`, `_occlusion`,
-`_draw`. The real-GPU lanes (`web-hardware`, `web-hardware-d3d11`) weren't run (optional).
+`_draw`. The real-GPU lanes (`web-hardware`, `web-hardware-d3d11`) weren't run (optional). After Textures and
+samplers apart (below), a bind group is the uniforms, 16 textures, 16 samplers and 3 storage buffers at the most.
+
+## Texture arrays (2026-11-05)
+
+Imports `gpu_array`, `gpu_array_depth`, `gpu_array_layer`; reads 6 and 7 are `'2d-array'` in a layout. A cube's and an
+array's per-layer views are `layered`. Details: notes/textures.md, Texture arrays: built.
+
+## Textures and samplers apart (2026-11-05)
+
+`gpu_image(slot, id)` and `gpu_sampler(slot, filter, wrap)` replace `gpu_sample`; `gpu_pipeline_samplers(count, low,
+high)` gives each sampler's read, 3 bits each, where a pipeline's samplers aren't its textures' own (`ownSamplers`).
+Layout keys are `reads/samplerReads`. Details: notes/rendering.md, One image a texture.
 
 ## Pipelines the browser can't make, and Dawn's Direct3D 11 (2026-11-05)
 

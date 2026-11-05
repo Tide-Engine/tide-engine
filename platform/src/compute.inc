@@ -485,10 +485,7 @@ static tide_gpu_id kernel_pipeline_for(const tide_shader *shader)
                                    .spirv = shader->spirv, .spirv_words = shader->spirv_words, .compute = true,
                                    .uniform_size = tide_shader_uniform_size(shader) ? tide_shader_uniform_size(shader) : 16u,
                                    .texture_count = shader->texture_count, .storage_count = tide_shader_compute_storage(shader)};
-    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
-        desc.reads[i] = gpu_read(shader, i);
-        desc.samplers[i] = gpu_sampler(shader, i);
-    }
+    shader_pipeline_textures(&desc, shader);
     desc.storage_writes[TIDE_STORAGE_WORDS] = tide_shader_pool_written(shader, TIDE_STORAGE_WORDS);
     desc.storage_writes[TIDE_STORAGE_INTS] = tide_shader_pool_written(shader, TIDE_STORAGE_INTS);
     if (kernel_pipeline_count == kernel_pipeline_capacity) {
@@ -593,10 +590,7 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
     gpu->compute_begin();
     gpu->use(pipeline);
     gpu->uniforms(block, own ? own : 16u);
-    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_SHADER_TEXTURES; i++) {
-        gpu->sample(i, texture_to_read(list, r->textures[i], gpu_read(shader, i)),
-                    gpu_filter(tide_sampling_filter(r->sampling, i)), gpu_wrap(tide_sampling_wrap(r->sampling, i)));
-    }
+    bind_shader_textures(list, shader, r->textures, r->sampling);
     bind_pools();
     gpu->storage(TIDE_STORAGE_RUN, record);
     if (over) gpu->dispatch_indirect(record, 0);

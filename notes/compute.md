@@ -175,6 +175,22 @@ an error with its fix past it), a kernel has any number of Adds, and nothing els
   kernels, cull, cull_decided and occlusion with `TIDE_VULKAN_DESCRIPTOR_SETS=1`; web-debug `tide_platform_kernels`
   (through its lost device), `_compute`, `_cull`, `_cull_fallback`, `_occlusion`, `_draw`, `_shaders`,
   `tide_web_runtime` (its storage layout test now 4 at 33..36); the docs build.
+- **Merged after dev's samplers apart and texture arrays** (2026-11-05): dev's textures are images at 1 + 2i and its
+  samplers, counted apart, at 2 + 2j, 16 of each (the last 32), so the pools stay at 33 and 34 and a run's record at
+  35; a Vulkan layout is still 1 + 16 + 16 + 4 = 37 at the most (dev's alone was 40 with 7 storage buffers), pushed
+  where it fits and a set otherwise; WebGPU's bind group 16 textures, 16 samplers and 3 storage buffers, within its
+  defaults. Kernel pipelines and the culling's take their textures from dev's `shader_pipeline_textures` and bind them
+  with `bind_shader_textures` (`image`/`sampler` in place of `sample`); their storage is the pools as before. A texture
+  array is one texture of the 16, so nothing about storage changed. Golden `kernels_shared` written again (dev's new
+  sampler declaration with the pools; every other golden matched as merged). Tests (sanitize): every `tidec_*` with
+  `tide_tests` and `tide_cli_tests` (2,920); with the validation layer `tide_platform_embed`, `_draw`,
+  `_draw_vulkan_sets`, `_targets`, `_compute`, `_compute_vulkan_sets`, `_kernels`, `_occlusion`, `_cull`,
+  `_cull_decided`, `_shaders` (dev's texture-array draws among them), `_prewarm`, `_texture_capacity`,
+  `_gpu_functions`, `_reload_reads`, `tide_editor_embed` and every `tidec_safety_*_gpu` (22); kernels, cull,
+  cull_decided and occlusion with `TIDE_VULKAN_DESCRIPTOR_SETS=1` too (4); web-debug (SwiftShader)
+  `tide_platform_kernels`, `_compute`, `_cull`, `_cull_fallback`, `_occlusion`, `_draw`, `_targets`, `_shaders`,
+  `_texture_capacity`, `tide_web_runtime` and the e2e texture tests (`texture_arrays`, `texture_capacity`, `textures`,
+  `asset_textures`, `raw_texture_fields`, `mipmaps`, `wrap`, `render_depth`, `compute`) (19); the docs build.
 - **Gaps:**
   - Unity's replay renames a buffer a kernel or copy writes after a draw of the frame read it (`Written`, notes/unity.md):
     with pools, a kernel writing any list after a draw read another of the same pool copies the whole pool there, where

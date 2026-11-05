@@ -229,6 +229,43 @@ static target_textures *find_target(const tide_gpu_id id)
     return NULL;
 }
 
+// An array: its depth array's id is given with it, kept as a target's depth is (array_depth).
+static tide_gpu_id record_array(const tide_gpu_target_format format, const int width, const int height, const uint32_t layers,
+                                const void *const *pixels)
+{
+    const uint32_t id = ++next_id;
+    const size_t layer = (size_t)width * (size_t)height * 4u;
+    target_textures *t = add_target(id);
+    if (!pixels) t->depth = ++next_id;
+    op(TIDE_EMBED_RENDER_ARRAY, 28u + (pixels ? layer * layers : 0u));
+    u32(id);
+    u32((uint32_t)format);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(layers);
+    u32(pixels != NULL);
+    u32(t->depth);
+    for (uint32_t i = 0; pixels && i < layers; i++) bytes(pixels[i], layer);
+    return id;
+}
+
+static tide_gpu_id record_array_depth(const tide_gpu_id array)
+{
+    const target_textures *t = find_target(array);
+    return t ? t->depth : 0;
+}
+
+static tide_gpu_id record_array_layer(const tide_gpu_id array, const uint32_t layer)
+{
+    const uint32_t id = ++next_id;
+    add_target(id); // Its color and its depth are the array's: neither is a texture by itself
+    op(TIDE_EMBED_RENDER_ARRAY_LAYER, 12u);
+    u32(id);
+    u32(array);
+    u32(layer);
+    return id;
+}
+
 static tide_gpu_id record_cube_face(const tide_gpu_id cube, const uint32_t face)
 {
     const uint32_t id = ++next_id;
@@ -261,8 +298,10 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     const char *name = desc->name ? desc->name : "";
     const size_t name_size = strlen(name);
     const uint32_t textures = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
+    uint8_t sampler_reads[TIDE_GPU_MAX_TEXTURES];
+    const uint32_t samplers = tide_gpu_samplers(desc, sampler_reads);
     op(TIDE_EMBED_RENDER_PIPELINE, 4u * (3u + 1u + 2u * TIDE_GPU_MAX_SLOTS + 1u + 3u * TIDE_GPU_MAX_ATTRIBUTES + 2u
-                                         + textures + 8u + 1u) + name_size);
+                                         + textures + 1u + samplers + textures + 8u + 1u) + name_size);
     u32(id);
     u32((uint32_t)key);
     u32((uint32_t)(key >> 32));
@@ -281,6 +320,9 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
     u32(desc->uniform_size);
     u32(textures);
     for (uint32_t i = 0; i < textures; i++) u32(desc->reads[i]);
+    u32(samplers); // Its samplers, apart from its textures: how each reads (TIDE_GPU_READ_DATA for none)...
+    for (uint32_t j = 0; j < samplers; j++) u32(sampler_reads[j]);
+    for (uint32_t i = 0; i < textures; i++) u32(tide_gpu_texture_samplers(desc, i)); // ...and which read each texture
     u32((uint32_t)desc->blend);
     u32((uint32_t)desc->depth);
     u32((uint32_t)desc->cull);
@@ -413,11 +455,17 @@ static void record_uniforms(const void *data, const size_t size)
     bytes(data, size);
 }
 
-static void record_sample(const uint32_t slot, const tide_gpu_id texture, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+static void record_image(const uint32_t slot, const tide_gpu_id texture)
 {
-    op(TIDE_EMBED_RENDER_SAMPLE, 16u);
+    op(TIDE_EMBED_RENDER_IMAGE, 8u);
     u32(slot);
     u32(texture);
+}
+
+static void record_sampler(const uint32_t slot, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+{
+    op(TIDE_EMBED_RENDER_SAMPLER, 12u);
+    u32(slot);
     u32((uint32_t)filter);
     u32((uint32_t)wrap);
 }
@@ -622,6 +670,9 @@ const tide_gpu tide_gpu_record = {
     .texture_free = record_texture_free,
     .cube = record_cube,
     .cube_face = record_cube_face,
+    .array = record_array,
+    .array_depth = record_array_depth,
+    .array_layer = record_array_layer,
     .pipeline = record_pipeline,
     .pipeline_free = record_pipeline_free,
     .target = record_target,
@@ -638,7 +689,8 @@ const tide_gpu tide_gpu_record = {
     .use = record_use,
     .stencil = record_stencil,
     .uniforms = record_uniforms,
-    .sample = record_sample,
+    .image = record_image,
+    .sampler = record_sampler,
     .vertices = record_vertices,
     .indices = record_indices,
     .draw = record_draw,

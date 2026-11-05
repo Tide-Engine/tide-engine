@@ -420,8 +420,8 @@ static uint32_t spv_type(translation *x, const int t)
     case K_TEXTURE: {
         const uint32_t sampled = spv_type(x, ty.elem);
         id = new_id(x);
-        INS(&x->globals_words, OP_TYPE_IMAGE, id, sampled, ty.dim == DIM_CUBE ? 3u : 1u, ty.depth ? 1u : 0u, 0u,
-            ty.multisampled ? 1u : 0u, 1u, 0u);
+        INS(&x->globals_words, OP_TYPE_IMAGE, id, sampled, ty.dim == DIM_CUBE ? 3u : 1u, ty.depth ? 1u : 0u,
+            ty.arrayed ? 1u : 0u, ty.multisampled ? 1u : 0u, 1u, 0u);
         break;
     }
     default:
@@ -1937,6 +1937,17 @@ static uint32_t level_value(translation *x, const expr *e)
     return convert(x, v, f32, e->line, e->col).id;
 }
 
+// An array texture's coordinates: where in a layer, then the layer, as SPIR-V's
+// image instructions take them (a float to sample, rounded and clamped by the
+// device; an int to load).
+static uint32_t with_layer(translation *x, const val at, const expr *layer, const bool sampled)
+{
+    val l = int_value(x, layer, 1);
+    const int scalar = sampled ? t_simple(x, K_F32) : scalar_of(x, at.t);
+    l = convert(x, l, scalar, layer->line, layer->col);
+    return EMIT(x, OP_COMPOSITE_CONSTRUCT, t_vec(x, scalar, 3), at.id, l.id);
+}
+
 static val texture_call(translation *x, const expr *e)
 {
     const char *n = e->name;
@@ -1951,17 +1962,22 @@ static val texture_call(translation *x, const expr *e)
     const bool sample = same(n, len, "textureSample"), level = same(n, len, "textureSampleLevel");
     const bool grad = same(n, len, "textureSampleGrad"), bias = same(n, len, "textureSampleBias");
     const bool compare = same(n, len, "textureSampleCompare"), compare_level = same(n, len, "textureSampleCompareLevel");
+    const int arrayed = tex.arrayed ? 1 : 0; // The layer is the argument after the coordinates
     if (sample || level || grad || bias || compare || compare_level) {
-        const int wanted = sample || compare || compare_level ? (compare || compare_level ? 4 : 3) : grad ? 5 : 4;
+        const int wanted = (sample || compare || compare_level ? (compare || compare_level ? 4 : 3) : grad ? 5 : 4) + arrayed;
         if (count != wanted) fail(x, line, col, "'%.*s' takes %d arguments here", len, n, wanted);
         if (tex.multisampled) fail(x, line, col, "a multisampled texture is loaded, not sampled");
         const val s = handle(x, e->args[1], K_SAMPLER);
         // Everything worked out before the sampled image, which is in the block that samples it
-        const uint32_t at = float_value(x, e->args[2], coords).id;
+        const val where = float_value(x, e->args[2], coords);
+        const uint32_t at = arrayed ? with_layer(x, load(x, where), e->args[3], true) : where.id;
+        const int next = 3 + arrayed;
         uint32_t extra[2] = {0, 0};
-        if (compare || compare_level || bias) extra[0] = float_value(x, e->args[3], f32).id;
-        else if (level) extra[0] = level_value(x, e->args[3]);
-        else if (grad) extra[0] = float_value(x, e->args[3], coords).id, extra[1] = float_value(x, e->args[4], coords).id;
+        if (compare || compare_level || bias) extra[0] = float_value(x, e->args[next], f32).id;
+        else if (level) extra[0] = level_value(x, e->args[next]);
+        else if (grad) {
+            extra[0] = float_value(x, e->args[next], coords).id, extra[1] = float_value(x, e->args[next + 1], coords).id;
+        }
         const uint32_t sampled_type = sampled_image_type(x, spv_type(x, image.t));
         const uint32_t sampled = new_id(x);
         INS(&x->fn->body, OP_SAMPLED_IMAGE, sampled_type, sampled, image.id, s.id);
@@ -1979,11 +1995,15 @@ static val texture_call(translation *x, const expr *e)
         return (val){.t = result, .id = id};
     }
     if (same(n, len, "textureLoad")) {
-        if (count != 3) fail(x, line, col, "textureLoad takes a texture, where and a level or sample");
+        if (count != 3 + arrayed) {
+            fail(x, line, col, arrayed ? "textureLoad takes a texture, where, a layer and a level"
+                                       : "textureLoad takes a texture, where and a level or sample");
+        }
         if (tex.dim == DIM_CUBE) fail(x, line, col, "a cube isn't loaded");
         const val at = int_value(x, e->args[1], 2);
-        const val third = int_value(x, e->args[2], 1);
-        uint32_t id = EMIT(x, OP_IMAGE_FETCH, vec4, image.id, at.id, tex.multisampled ? IMAGE_SAMPLE : IMAGE_LOD, third.id);
+        const uint32_t where = arrayed ? with_layer(x, at, e->args[2], false) : at.id;
+        const val third = int_value(x, e->args[2 + arrayed], 1);
+        uint32_t id = EMIT(x, OP_IMAGE_FETCH, vec4, image.id, where, tex.multisampled ? IMAGE_SAMPLE : IMAGE_LOD, third.id);
         if (tex.depth) id = EMIT(x, OP_COMPOSITE_EXTRACT, f32, id, 0);
         return (val){.t = result, .id = id};
     }
@@ -1996,7 +2016,15 @@ static val texture_call(translation *x, const expr *e)
             return (val){.t = t, .id = EMIT(x, OP_IMAGE_QUERY_SIZE, t, image.id)};
         }
         const uint32_t at_level = count > 1 ? int_value(x, e->args[1], 1).id : const_u32(x, 0);
-        return (val){.t = t, .id = EMIT(x, OP_IMAGE_QUERY_SIZE_LOD, t, image.id, at_level)};
+        if (!arrayed) return (val){.t = t, .id = EMIT(x, OP_IMAGE_QUERY_SIZE_LOD, t, image.id, at_level)};
+        const uint32_t size = EMIT(x, OP_IMAGE_QUERY_SIZE_LOD, t_vec(x, u32, 3), image.id, at_level); // Width, height, layers
+        return (val){.t = t, .id = EMIT(x, OP_VECTOR_SHUFFLE, t, size, size, 0, 1)};
+    }
+    if (same(n, len, "textureNumLayers")) {
+        if (!arrayed) fail(x, line, col, "textureNumLayers takes an array texture");
+        if (count != 1) fail(x, line, col, "textureNumLayers takes a texture");
+        const uint32_t size = EMIT(x, OP_IMAGE_QUERY_SIZE_LOD, t_vec(x, u32, 3), image.id, const_u32(x, 0));
+        return (val){.t = u32, .id = EMIT(x, OP_COMPOSITE_EXTRACT, u32, size, 2)};
     }
     if (same(n, len, "textureNumLevels")) return (val){.t = u32, .id = EMIT(x, OP_IMAGE_QUERY_LEVELS, u32, image.id)};
     if (same(n, len, "textureNumSamples")) return (val){.t = u32, .id = EMIT(x, OP_IMAGE_QUERY_SAMPLES, u32, image.id)};

@@ -476,8 +476,8 @@ enum { TIDE_SHADER_STORAGE = 64 };
 // atomics declares that pool atomic), and for a kernel its run's record (TIDE_GPU_RUN_WORDS).
 enum { TIDE_STORAGE_WORDS = 0, TIDE_STORAGE_INTS = 1, TIDE_STORAGE_RUN = 2 };
 
-// How a shader's textures are sampled, two eight-texture banks (a
-// tide_draw_run's `sampling`): bit i is set for texture i read blended with
+// How a shader's samplers sample, two banks of eight (a tide_draw_run's
+// `sampling`, by tide_shader's samplers): bit i is set for sampler i read blended with
 // its neighbors, and clear for the nearest pixel, and the two bits from
 // TIDE_SAMPLING_WRAP + 2 * i are its tide_wrap. So a word with only its low
 // bits set clamps every texture. Bit TIDE_SAMPLING_MIPS + i is set, with bit
@@ -622,6 +622,7 @@ typedef struct tide_render_target_state {
     void *memory;       // What it was allocated in, to free: the state is on a boundary inside it
     bool alive;
     bool cube; // A cube's: six images of its size, a face each (TIDE_RENDER_CUBE)
+    uint16_t layers; // An array's: how many images of its size (TIDE_RENDER_ARRAY), 0 for anything else
     uint16_t holds; // What it holds and its samples, as its id says them (TIDE_RENDER_FORMAT, TIDE_RENDER_SAMPLES)
 } tide_render_target_state;
 
@@ -654,6 +655,13 @@ typedef struct tide_render_target_state {
 #define TIDE_RENDER_FACE (UINT64_C(7) << TIDE_RENDER_FACE_SHIFT)
 #define TIDE_RENDER_CUBE (UINT64_C(1) << 51)
 enum { TIDE_CUBE_FACES = 6 }; // +x, -x, +y, -y, +z, -z
+// A texture array's (tide_texture_array_ref): layers of one size, read by a uv and a layer, each drawn into as a
+// target of its own. Its id says so above where an address ends: that it's an array's, and for one of its layers
+// as a destination, which, 1 + its number. The array's own id, with no layer, is what's sampled.
+#define TIDE_RENDER_ARRAY (UINT64_C(1) << 52)
+#define TIDE_RENDER_LAYER_SHIFT 53
+#define TIDE_RENDER_LAYER (UINT64_C(0x1FF) << TIDE_RENDER_LAYER_SHIFT)
+enum { TIDE_TEXTURE_ARRAY_LAYERS = 256 }; // The most layers an array has: what every GPU Tide draws with takes
 
 static inline bool tide_render_target_managed(const uint64_t id)
 {
@@ -663,7 +671,8 @@ static inline bool tide_render_target_managed(const uint64_t id)
 static inline tide_render_target_state *tide_render_target_state_of(const uint64_t id)
 {
     return tide_render_target_managed(id)
-        ? (tide_render_target_state *)(uintptr_t)(id & ~(TIDE_RENDER_MANAGED | TIDE_RENDER_BITS | TIDE_RENDER_CUBE | TIDE_RENDER_FACE))
+        ? (tide_render_target_state *)(uintptr_t)(id & ~(TIDE_RENDER_MANAGED | TIDE_RENDER_BITS | TIDE_RENDER_CUBE | TIDE_RENDER_FACE
+                                                         | TIDE_RENDER_ARRAY | TIDE_RENDER_LAYER))
         : NULL;
 }
 
@@ -671,6 +680,24 @@ static inline tide_render_target_state *tide_render_target_state_of(const uint64
 static inline bool tide_render_target_cubic(const uint64_t id)
 {
     return tide_render_target_managed(id) && (id & TIDE_RENDER_CUBE);
+}
+
+// Whether the target `id` is a texture array, or one of an array's layers.
+static inline bool tide_render_target_arrayed(const uint64_t id)
+{
+    return tide_render_target_managed(id) && (id & TIDE_RENDER_ARRAY);
+}
+
+// Which of its array's layers the destination `id` is, from 0, or -1 for what's no layer.
+static inline int32_t tide_render_target_layer(const uint64_t id)
+{
+    return tide_render_target_arrayed(id) ? (int32_t)((id & TIDE_RENDER_LAYER) >> TIDE_RENDER_LAYER_SHIFT) - 1 : -1;
+}
+
+// The array a layer is of: the array's own id.
+static inline uint64_t tide_render_target_array_of(const uint64_t id)
+{
+    return tide_render_target_arrayed(id) ? id & ~(TIDE_RENDER_LAYER | TIDE_RENDER_IMAGE) : id;
 }
 
 // Which of its cube's faces the destination `id` is, from 0, or -1 for what's no face: any other target, and a cube itself.
@@ -954,9 +981,10 @@ static inline tide_render_target tide_render_target_resolve(tide_render_target t
 static inline tide_texture_ref tide_render_target_color(const tide_render_target target)
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
-    // A cube's face has no color of two dimensions to hand out: the cube is what's sampled
+    // A cube's face has no color of two dimensions to hand out: the cube is what's sampled, as an array's layer's
     return (tide_texture_ref){
         .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW && !tide_render_target_cubic(resolved.id)
+                             && !tide_render_target_arrayed(resolved.id)
                              ? resolved.id : TIDE_RENDER_INVALID,
                    .size = resolved.size}};
 }
@@ -982,6 +1010,7 @@ static inline tide_depth_ref tide_render_target_depth(const tide_render_target t
     const tide_render_target resolved = tide_render_target_resolve(target);
     return (tide_depth_ref){
         .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW && !tide_render_target_cubic(resolved.id)
+                             && !tide_render_target_arrayed(resolved.id)
                              ? tide_render_target_whole(resolved.id) : TIDE_RENDER_INVALID,
                    .size = resolved.size}};
 }
@@ -1021,6 +1050,58 @@ void tide_cubemap_resize(tide_cubemap_ref cube, float size); // Another size, an
 void tide_cubemap_dispose(tide_cubemap_ref cube);
 tide_cubemap_ref tide_cubemap_recreate(tide_cubemap_ref previous); // Web reload: as tide_render_target_recreate
 
+// Images of one size in layers, for a shader to read by a uv and a layer: Tide's TextureArray. One of the game's
+// pack (an `asset TextureArray`: no target, and `named`, as a cube of the pack's), or one that's drawn into
+// (tide_texture_array_make: `target` is the array's own, whose layers are destinations), with `layers` of them;
+// its depth, each layer's, is Tide's DepthTextureArray (a tide_depth_ref of the array's target). Copying it never
+// copies an image, and a zeroed one is no array: it reads as white.
+typedef struct tide_texture_array_ref {
+    tide_render_target target; // An array that's drawn into; its id is 0 for the pack's
+    uint64_t named;            // The pack's: what its declaration is named by
+    uint32_t layers;           // One that's drawn into: how many (the pack's says its own)
+    uint32_t reserved;
+} tide_texture_array_ref;
+
+// An array to draw into: `layers` images (1 to TIDE_TEXTURE_ARRAY_LAYERS) of `size` (a target's: logical pixels
+// at the display's scale, or its own pixels a unit), each holding `format` (a color's, or TIDE_TARGET_DEPTH for
+// depth alone), black until drawn into, with a depth array beside them. A dead one, having said so, for a size
+// or a count there's no image of.
+tide_texture_array_ref tide_texture_array_make(tide_target_size size, uint32_t layers, tide_target_format format);
+// Tide's TextureArray(width, height, layers[, pixelsPerUnit][, format]): logical pixels at the display's scale, or its own.
+static inline tide_texture_array_ref tide_texture_array_make_sized_as(const float width, const float height, const int32_t layers,
+                                                                      const tide_target_format format)
+{
+    return tide_texture_array_make((tide_target_size){.width = width, .height = height}, layers > 0 ? (uint32_t)layers : 0u, format);
+}
+static inline tide_texture_array_ref tide_texture_array_make_sized(const float width, const float height, const int32_t layers)
+{
+    return tide_texture_array_make_sized_as(width, height, layers, TIDE_TARGET_RGBA8);
+}
+static inline tide_texture_array_ref tide_texture_array_make_scaled_as(const float width, const float height, const int32_t layers,
+                                                                       const float scale, const tide_target_format format)
+{
+    // A scale of 0 is the display's in a size, which this never asks for
+    return tide_texture_array_make((tide_target_size){.width = scale > 0.0f ? width : 0.0f, .height = height, .scale = scale},
+                                   layers > 0 ? (uint32_t)layers : 0u, format);
+}
+static inline tide_texture_array_ref tide_texture_array_make_scaled(const float width, const float height, const int32_t layers,
+                                                                    const float scale)
+{
+    return tide_texture_array_make_scaled_as(width, height, layers, scale, TIDE_TARGET_RGBA8);
+}
+// A DepthTextureArray's layers: how many its array has.
+int32_t tide_depth_array_count(tide_depth_ref depths);
+// Its layer `layer` as a destination. No destination (draws into it are passed by) for a layer there's none of, and
+// for an array of the pack's.
+tide_render_target tide_texture_array_layer(tide_texture_array_ref array, int32_t layer);
+tide_depth_ref tide_texture_array_depth(tide_texture_array_ref array); // Its depth array; none for the pack's
+void tide_texture_array_resize(tide_texture_array_ref array, float width, float height); // Empty images of another size
+void tide_texture_array_dispose(tide_texture_array_ref array);
+tide_texture_array_ref tide_texture_array_recreate(tide_texture_array_ref previous); // Web reload
+// Its layers' size in pixels, and how many there are, for CPU code (Tide's `size` and `count`): zeros for none.
+tide_int2 tide_texture_array_size(tide_texture_array_ref array);
+int32_t tide_texture_array_count(tide_texture_array_ref array);
+
 // Some of a texture's pixels: `width` by `height` of them, from (x, y).
 typedef struct tide_draw_area {
     int32_t x, y, width, height;
@@ -1059,6 +1140,7 @@ typedef struct tide_draw_texture {
     uint32_t held;     // Nonzero: kept by frames that don't draw with it (a page of listed regions, tide/mesh.h)
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
     uint32_t capacity; // Bytes `pixels` has room for: 0 where they aren't the list's own
+    uint32_t layers;   // An array's: how many images of `width` by `height` (TIDE_PIXELS_*_ARRAY)
     // width * height pixels, rows from the first, 4 bytes each or 2 (tide_texels_bytes): the list's own copy,
     // or for TIDE_PIXELS_PACK the pack's, where the pack has them, noted again by each frame that draws with them
     uint8_t *pixels;
@@ -1086,6 +1168,11 @@ enum {
     TIDE_PIXELS_TARGET_CUBE,
     TIDE_PIXELS_PACK_CUBE,
     TIDE_PIXELS_LIST, // A list's elements as numbers (TIDE_TEXELS_INTS), which only a TIDE_SHADER_READ_DATA read is given
+    // A texture array that's drawn into (its id the array's own, `layers` of them), and one of the pack's (its id its
+    // version, `pixels` the pack's pointer to each layer's pixels, as a cube's): only a TIDE_SHADER_READ_ARRAY read
+    // is given either. An array's depth is TIDE_PIXELS_TARGET_DEPTH of the array's id (TIDE_SHADER_READ_DEPTH_ARRAY)
+    TIDE_PIXELS_TARGET_ARRAY,
+    TIDE_PIXELS_PACK_ARRAY,
 };
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a
@@ -1438,6 +1525,11 @@ typedef enum tide_shader_read {
     // A list's elements, four ints a pixel, each pixel by its place: an `isampler2D` read with texelFetch, and a
     // `texture_2d<i32>` read with textureLoad
     TIDE_SHADER_READ_DATA,
+    // A texture array's layers (TIDE_PIXELS_*_ARRAY), by a uv and a layer: a `texture_2d_array<f32>` read through a
+    // color's sampler; and an array's depth, a `texture_depth_2d_array`, through a depth's sampler or a compared one's
+    // (sampler_reads say which). 6 and 7, as gpu.h's TIDE_GPU_READ_ARRAY and _DEPTH_ARRAY
+    TIDE_SHADER_READ_ARRAY = 6,
+    TIDE_SHADER_READ_DEPTH_ARRAY = 7,
 } tide_shader_read;
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's
@@ -1471,9 +1563,10 @@ typedef enum tide_shader_read {
 //   After them, `uniform_floats` float4s and `uniform_ints` int4s of the
 //   game's.
 // - `texture_count` textures: `pixels0`, `pixels1`... each read as
-//   `texture_reads` says, a color where it says nothing. One read as depth is
-//   a `texture_depth_2d` with a `sampler`; one that's compared is a
-//   `texture_depth_2d` with a `sampler_comparison`.
+//   `texture_reads` says, a color where it says nothing, and its samplers
+//   (`sampler0`, `sampler1`...: see `sampler_count`). A depth is a
+//   `texture_depth_2d`, read as a number through a `sampler` and compared
+//   through a `sampler_comparison`.
 //
 // Its fragment stage writes `outputs` colors, at locations 0 on (one, for 0):
 // the first is the pixel's in the window and in a target's first color image,
@@ -1482,8 +1575,8 @@ typedef enum tide_shader_read {
 // nowhere, and the images past them are left as they were.
 //
 // WGSL has both stages, `vertex` and `fragment`, its uniforms at
-// binding 0 of group 0, and texture i and its sampler at bindings 1 + 2i and
-// 2 + 2i; it's NULL off the web. SPIR-V, for Vulkan, is the WGSL's (tidec
+// binding 0 of group 0, and texture i at binding 1 + 2i and sampler j at
+// 2 + 2j; it's NULL off the web. SPIR-V, for Vulkan, is the WGSL's (tidec
 // translates it): its entry points `vertex` and `fragment`, its bindings
 // those of descriptor set 0; it's NULL where no build draws with Vulkan
 // (where TIDE_SPIRV isn't defined).
@@ -1507,9 +1600,15 @@ typedef struct tide_shader {
     uint32_t uniform_floats, uniform_ints;
     uint32_t texture_count;
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
-    // Through which sampler each is read: 0 for its own, or 1 + the texture j before it whose sampler it shares,
-    // which the compiler gives only one sampled the same way as j in every draw (its filter, wrap and read)
-    uint8_t texture_samplers[TIDE_SHADER_TEXTURES];
+    // Its samplers, apart from its textures: `sampler_count` of them, sampler j at binding 2 + 2j, read as
+    // `sampler_reads[j]` says (a color, a cube, a depth as a number or compared), and `texture_samplers[i]` the
+    // samplers texture i is read through (bit j for sampler j). So one texture read several ways is one image and
+    // several samplers, and textures every draw reads the same way share one. A run's `sampling` is by sampler.
+    // With `sampler_count` 0 a texture that's sampled has one of its own, sampler i for texture i, read as the
+    // texture is, and a list's (TIDE_SHADER_READ_DATA) none (tide_shader_samplers).
+    uint8_t sampler_count;
+    uint8_t sampler_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
+    uint16_t texture_samplers[TIDE_SHADER_TEXTURES];
     uint8_t outputs; // The colors its fragment stage writes: 1 for 0, TIDE_TARGET_COLORS at the most
     bool blit;       // Drawn by blits (tide_draw_blit) over a whole destination, rather than as a mesh
     // A cut-out ([Cutout]): its fragment stage writes how much of a pixel it covers as its first color's alpha,
@@ -1569,6 +1668,46 @@ typedef struct tide_shader {
     } adds[TIDE_SHADER_STORAGE];
 } tide_shader;
 
+// A shader's samplers (tide_shader.sampler_count): how many slots they span, and in `reads` how sampler j reads,
+// TIDE_SHADER_READ_DATA for a slot with none. With none said, sampler i is texture i's, where that's sampled.
+static inline uint32_t tide_shader_samplers(const tide_shader *s, uint8_t reads[TIDE_SHADER_TEXTURES])
+{
+    if (s->sampler_count) {
+        const uint32_t count = s->sampler_count < TIDE_SHADER_TEXTURES ? s->sampler_count : TIDE_SHADER_TEXTURES;
+        for (uint32_t j = 0; j < count; j++) reads[j] = s->sampler_reads[j];
+        return count;
+    }
+    const uint32_t count = s->texture_count < TIDE_SHADER_TEXTURES ? s->texture_count : TIDE_SHADER_TEXTURES;
+    for (uint32_t i = 0; i < count; i++) { // An array's is read through a color's or a depth's
+        const uint8_t read = s->texture_reads[i];
+        reads[i] = read == TIDE_SHADER_READ_ARRAY ? (uint8_t)TIDE_SHADER_READ_COLOR
+                 : read == TIDE_SHADER_READ_DEPTH_ARRAY ? (uint8_t)TIDE_SHADER_READ_DEPTH : read;
+    }
+    return count;
+}
+
+// The samplers texture `i` of a shader is read through: bit j for sampler j.
+static inline uint32_t tide_shader_texture_samplers(const tide_shader *s, const uint32_t i)
+{
+    if (i >= TIDE_SHADER_TEXTURES || i >= s->texture_count) return 0;
+    if (s->sampler_count) return s->texture_samplers[i];
+    return s->texture_reads[i] == TIDE_SHADER_READ_DATA ? 0u : 1u << i;
+}
+
+// The most a run reads texture `i` of its shader between (by its samplers' filters in `sampling`): what its
+// smaller images are made for.
+static inline tide_filter tide_shader_texture_filter(const tide_shader *s, const uint64_t sampling, const uint32_t i)
+{
+    tide_filter most = TIDE_FILTER_POINT;
+    const uint32_t samplers = tide_shader_texture_samplers(s, i);
+    for (uint32_t j = 0; j < TIDE_SHADER_TEXTURES; j++) {
+        if (!(samplers >> j & 1u)) continue;
+        const tide_filter filter = tide_sampling_filter(sampling, j);
+        if (filter == TIDE_FILTER_TRILINEAR || (filter == TIDE_FILTER_BILINEAR && most == TIDE_FILTER_POINT)) most = filter;
+    }
+    return most;
+}
+
 // The storage buffers a shader's pipeline binds: both pools for one that names a GPU list, and a kernel's run
 // record after them.
 static inline uint32_t tide_shader_compute_storage(const tide_shader *s)
@@ -1621,7 +1760,7 @@ typedef struct tide_draw_run {
     uint32_t first;    // Its instances: where they start in tide_draw_list.instances, in bytes...
     uint32_t count;    // ...and how many, tide_shader_instance_size each
     uint32_t uniforms; // Its uniforms of the game's: where they start in tide_draw_list.uniforms, in bytes
-    uint64_t sampling; // Two eight-texture sampling banks (see TIDE_SAMPLING_WRAP).
+    uint64_t sampling; // How each of its shader's samplers samples, two banks of eight (see TIDE_SAMPLING_WRAP).
     uint32_t textures[TIDE_SHADER_TEXTURES]; // 1 + each one's place in tide_draw_list.textures, or 0 for none: white
     tide_color tint;   // What its pixels' colors are multiplied by
     uint32_t moved;    // Whether a 2D shader's mesh goes through `transform` before the camera
@@ -2075,6 +2214,8 @@ uint32_t tide_draw_depth_source(tide_draw_list *d, tide_depth_ref depth);
 // A cube, for a shader that reads that texture as one: 0, no texture, for one that's no cube, and for one of
 // the pack's that the loaded pack hasn't got.
 uint32_t tide_draw_cube_source(tide_draw_list *d, tide_cubemap_ref cube);
+// A texture array's texture of the list's, for a shader that reads it by a uv and a layer: 0 for none.
+uint32_t tide_draw_array_source(tide_draw_list *d, tide_texture_array_ref array);
 
 // Fills the whole screen, or what the clip leaves of it, with `color` as it
 // is: no blend, tint or transform changes a clear.

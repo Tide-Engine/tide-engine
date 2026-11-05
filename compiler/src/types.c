@@ -41,6 +41,8 @@ static const struct {
     {"Texture", TY_TEXTURE, "texture", "tide_texture_ref"},
     {"DepthTexture", TY_DEPTH_TEXTURE, "depth", "tide_depth_ref"},
     {"Cubemap", TY_CUBEMAP, "cubemap", "tide_cubemap_ref"},
+    {"TextureArray", TY_TEXTURE_ARRAY, "array", "tide_texture_array_ref"},
+    {"DepthTextureArray", TY_DEPTH_TEXTURE_ARRAY, "depths", "tide_depth_ref"},
     {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
     {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
     {"Font", TY_FONT, "font", "tide_font_ref"},
@@ -184,6 +186,8 @@ layout type_layout(const type t)
     if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
     if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
     if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
+    if (t.kind == TY_TEXTURE_ARRAY) return (layout){40, 8}; // tide_texture_array_ref: a target, a name, its layers
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) return (layout){24, 8}; // tide_depth_ref: the array's target
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_FONT) return (layout){8, 8};           // tide_font_ref: a number of the registry's
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers

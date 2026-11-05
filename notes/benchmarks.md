@@ -1,5 +1,13 @@
 # Benchmarks
 
+## Generated C partition experiment (2026-11-05)
+
+`bench/results/generated-c-partitions-2026-11-05.json` retains the exploratory compilation/link samples and source
+identities for the four-part ThinLTO implementation. `generated-c-runtime-2026-11-05.json` keeps three alternating
+whole/split release particles runs, full stdout and executable identities. Scope, load limitations, rejected
+shader-data-only split and validation are in cli-and-packages.md, Parallel generated C with ThinLTO. No old
+benchmark records or expected simulation hashes changed.
+
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
 ## GPU lists in pools (2026-11-05)

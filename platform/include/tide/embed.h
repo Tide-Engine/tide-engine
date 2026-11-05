@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 13u
+#define TIDE_EMBED_ABI 15u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -190,8 +190,10 @@ typedef enum tide_embed_render_op {
     TIDE_EMBED_RENDER_CUBE_FACE, // target id, cube id, face, its depth texture's id
     // id, its shaders' key as two uint32_ts (low first: FNV-1a's 64 bits of its SPIR-V words, or of its WGSL where
     // it has none, which tide unity names the shader it writes by), slot_count, 3 slots of stride and per_instance,
-    // attribute_count, 16 attributes of slot, format and offset, uniform_size, texture_count, texture_count reads, blend,
-    // depth, cull, stencil_test, stencil_op, into, outputs, alpha_to_coverage, then its name's length and bytes
+    // attribute_count, 16 attributes of slot, format and offset, uniform_size, texture_count, texture_count reads,
+    // sampler_count, sampler_count reads (sampler j at binding 2 + 2j; 4, TIDE_GPU_READ_DATA, for none), and for each
+    // texture the samplers it's read through (bit j for sampler j), blend, depth, cull, stencil_test, stencil_op,
+    // into, outputs, alpha_to_coverage, then its name's length and bytes
     TIDE_EMBED_RENDER_PIPELINE,
     TIDE_EMBED_RENDER_PIPELINE_FREE, // id
     // id, format (tide_gpu_target_format), width, height, then the ids of its 4 color textures (0 past its colors)
@@ -205,7 +207,7 @@ typedef enum tide_embed_render_op {
     TIDE_EMBED_RENDER_USE,            // pipeline
     TIDE_EMBED_RENDER_STENCIL,        // value
     TIDE_EMBED_RENDER_UNIFORMS,       // size, then `size` bytes
-    TIDE_EMBED_RENDER_SAMPLE,         // slot, texture, filter (tide_gpu_filter), wrap (tide_gpu_wrap)
+    TIDE_EMBED_RENDER_IMAGE,          // slot, texture: the pipeline's texture `slot` (its samplers: SAMPLER)
     TIDE_EMBED_RENDER_VERTICES,       // slot, buffer, offset
     TIDE_EMBED_RENDER_INDICES,        // buffer, wide (32 bits, or 16)
     TIDE_EMBED_RENDER_DRAW,           // first, count, instances
@@ -231,6 +233,12 @@ typedef enum tide_embed_render_op {
     // instances 0); each record's first instance is 0. A program can draw them all, a call each (gpu.h,
     // draw_indexed_indirect_count)
     TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT,
+    TIDE_EMBED_RENDER_SAMPLER, // slot, filter (tide_gpu_filter), wrap (tide_gpu_wrap): how the pipeline's sampler `slot` samples
+    // id, format (tide_gpu_target_format; TIDE_GPU_TARGET_COLOR for one of pixels), width, height, layers, given, its
+    // depth array's id (0 for one of pixels), then if given each layer's pixels, 4 bytes each, rows from the top: a
+    // texture array, read by a uv and a layer (TIDE_GPU_READ_ARRAY), its depth TIDE_GPU_READ_DEPTH_ARRAY
+    TIDE_EMBED_RENDER_ARRAY,
+    TIDE_EMBED_RENDER_ARRAY_LAYER, // target id, array id, layer: a target whose color and depth are that layer of the array's
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);

@@ -11875,6 +11875,117 @@ TIDE_TEST(lsp_cubemaps)
     TIDE_CHECK(has(last_sent(), "use local placement and access for this component"));
 }
 
+// Texture arrays: the types, an asset of a glob's images, an array a view draws into, what a frag reads.
+TIDE_TEST(lsp_texture_arrays)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_ta");
+    make_folder("lsp_ta/ground");
+    static const unsigned char png[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x12, 0x49,
+        0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x0c, 0x81, 0x34, 0x18, 0x00, 0x00, 0x49, 0xc8,
+        0x09, 0xf7, 0x03, 0xd9, 0x64, 0xf1, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+    write_bytes("lsp_ta/ground/grass.png", (const char *)png, sizeof png);
+    write_bytes("lsp_ta/ground/rock.png", (const char *)png, sizeof png);
+    write_file("lsp_ta/ground/notes.txt", "text");
+    static const char main_file[] = "asset TextureArray ground = \"ground/*.png\";\n"
+                                    "scene Main { }\n"
+                                    "local singleton Room\n"
+                                    "{\n"
+                                    "    TextureArray paint;\n"
+                                    "    DepthTextureArray depths;\n"
+                                    "    List<Vertex3> ball;\n"
+                                    "}\n"
+                                    "frag Shade(Vertex3 vertex, out Color color, Room room)\n"
+                                    "{\n"
+                                    "    float lit = room.depths.Compare(vertex.uv, 1, 0.5);\n"
+                                    "    color = (room.paint.Sample(vertex.uv, 2) + ground.Sample(vertex.uv, 0, Filter.Trilinear)) * lit;\n"
+                                    "}\n"
+                                    "view V(mut Room room)\n"
+                                    "{\n"
+                                    "    room.paint = TextureArray(64, 64, 3, Format.Rgba16f);\n"
+                                    "    room.depths = room.paint.depth;\n"
+                                    "    room.paint.layers[1].Clear(Color.black);\n"
+                                    "    Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Shade);\n"
+                                    "    room.paint.Resize(32, 32);\n"
+                                    "}\n";
+    write_file("lsp_ta/main.tide", main_file);
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_ta", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_ta/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *hover = request_at(uri_main, "textDocument/hover", 0, 21, "");
+    TIDE_CHECK(has(hover, "asset TextureArray ground") && has(hover, "images of one size as its layers"));
+    hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
+    TIDE_CHECK(has(hover, "layers of images of one size") && has(hover, "TextureArray(width, height, layers)"));
+    hover = request_at(uri_main, "textDocument/hover", 5, 6, "");
+    TIDE_CHECK(has(hover, "a TextureArray's depth"));
+    hover = request_at(uri_main, "textDocument/hover", 10, 30, "");
+    TIDE_CHECK(has(hover, "Compare(float2 uv, int layer, float value) -> float"));
+    hover = request_at(uri_main, "textDocument/hover", 11, 26, "");
+    TIDE_CHECK(has(hover, "TextureArray.Sample(float2 uv, int layer, Filter filter = the array's, Wrap wrap = the array's) -> Color")
+               && has(hover, "one past the layers reads the nearest"));
+    hover = request_at(uri_main, "textDocument/hover", 16, 30, "");
+    TIDE_CHECK(has(hover, "DepthTextureArray depth") && has(hover, "Each layer's depth"));
+    hover = request_at(uri_main, "textDocument/hover", 19, 17, "");
+    TIDE_CHECK(has(hover, "Resize(float width, float height)") && has(hover, "every layer"));
+    const char *help = request_at(uri_main, "textDocument/signatureHelp", 15, 39, "");
+    TIDE_CHECK(has(help, "TextureArray(float width, float height, int layers, Format format)") && has(help, "array.layers[0]"));
+    help = request_at(uri_main, "textDocument/signatureHelp", 11, 31, "");
+    TIDE_CHECK(has(help, "Sample(float2 uv, int layer, Filter filter = the array's, Wrap wrap = the array's) -> Color"));
+
+    static const char paths[] = "asset TextureArray ground = \"ground/\";\nscene Main { }\n";
+    open_uri(uri_main, paths);
+    const char *completion = request_at(uri_main, "textDocument/completion", 0, 36, "");
+    TIDE_CHECK(offers(completion, "rock.png") && !offers(completion, "notes.txt") && offers(completion, "*.png"));
+
+    remove_game_file("lsp_ta/ground/grass.png");
+    remove_game_file("lsp_ta/ground/rock.png");
+    remove_game_file("lsp_ta/ground/notes.txt");
+    remove_game_file("lsp_ta/main.tide");
+    remove_game_file("lsp_ta/.tide/assets.sha256");
+    remove_game_file("lsp_ta/.tide/.gitignore");
+    remove_folder("lsp_ta/.tide");
+    remove_folder("lsp_ta/ground");
+    remove_folder("lsp_ta");
+    clear_sent();
+    lsp_free(&server);
+
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Room { TextureArray paint; DepthTextureArray depths; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.paint.$\n}\n", types);
+    const char *members = complete(program);
+    TIDE_CHECK(offers(members, "layers") && offers(members, "depth") && offers(members, "size") && offers(members, "count"));
+    TIDE_CHECK(offers(members, "Resize") && offers(members, "Dispose") && !offers(members, "Sample") && has(members, "layers[$1]"));
+    snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n    color = room.paint.$\n}\n", types);
+    members = complete(program);
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "SampleGrad") && !offers(members, "layers") && !offers(members, "Dispose"));
+    TIDE_CHECK(has(members, "Sample($1, $2)"));
+    snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n    float d = room.depths.$\n}\n", types);
+    members = complete(program);
+    TIDE_CHECK(offers(members, "Sample") && offers(members, "Compare") && !offers(members, "count"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var n = room.depths.$\n}\n", types);
+    members = complete(program);
+    TIDE_CHECK(offers(members, "size") && offers(members, "count") && !offers(members, "Compare"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    TextureA$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "TextureArray"));
+    snprintf(program, sizeof program, "scene Main { }\nlocal singleton Room\n{\n    DepthTextureA$\n}\n");
+    TIDE_CHECK(offers(complete(program), "DepthTextureArray"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.paint = TextureArray($);\n}\n", types);
+    open_document(program);
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "TextureArray(float width, float height, int layers)")
+               && has(help, "TextureArray(float width, float height, int layers, float pixelsPerUnit, Format format)"));
+    TIDE_CHECK(offers(complete("asset Texture$\nscene Main { }\n"), "TextureArray"));
+}
+
 // A game with no asset registers nothing and makes no .tide/; an editor that takes no registration is asked about every rename.
 TIDE_TEST(lsp_game_without_assets_changes_nothing)
 {

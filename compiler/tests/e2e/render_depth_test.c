@@ -65,24 +65,28 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
     TIDE_REQUIRE(entity.generation != 0);
     TIDE_CHECK(tide_get_Caster_local(&local, entity).seen.target.id == lamp->exact.id);
 
-    // A frag's depths are textures of the list's, each read the way the frag reads it: compared,
-    // or as a number, which are two textures of one depth
+    // A frag's depths are textures of the list's, one for each depth however it's read, each way it's read (compared,
+    // or as a number) a sampler: one depth read both ways is one texture through two samplers, and the number's
+    // sampler is the other depth's too
     const tide_draw_run *lit = run_through("Lit on Vertex3");
-    TIDE_REQUIRE(lit && lit->shader->texture_count == 3);
-    TIDE_CHECK(lit->shader->texture_reads[0] == TIDE_SHADER_READ_COMPARE && lit->shader->texture_reads[1] == TIDE_SHADER_READ_DEPTH
-               && lit->shader->texture_reads[2] == TIDE_SHADER_READ_DEPTH);
-    for (uint32_t i = 0; i < 3; i++) {
+    TIDE_REQUIRE(lit && lit->shader->texture_count == 2);
+    TIDE_CHECK(lit->shader->texture_reads[0] == TIDE_SHADER_READ_COMPARE && lit->shader->texture_reads[1] == TIDE_SHADER_READ_DEPTH);
+    TIDE_REQUIRE(lit->shader->sampler_count == 2);
+    TIDE_CHECK(lit->shader->sampler_reads[0] == TIDE_SHADER_READ_COMPARE && lit->shader->sampler_reads[1] == TIDE_SHADER_READ_DEPTH);
+    TIDE_CHECK(lit->shader->texture_samplers[0] == 3u && lit->shader->texture_samplers[1] == 2u);
+    for (uint32_t i = 0; i < 2; i++) {
         const tide_draw_texture *t = texture_of(lit, i);
         TIDE_REQUIRE(t != NULL);
         TIDE_CHECK(t->space == TIDE_PIXELS_TARGET_DEPTH && t->pixels == NULL);
         TIDE_CHECK(t->id == (i == 1 ? lamp->scene.id : lamp->map.id));
     }
-    TIDE_CHECK(lit->textures[0] == lit->textures[2] && lit->sampling == 0);
+    TIDE_CHECK(lit->sampling == 0);
     // A vert's come first
     const tide_draw_run *sunk = run_through("Sink and Lit on Vertex3");
-    TIDE_REQUIRE(sunk && sunk->shader->texture_count == 3);
-    TIDE_CHECK(sunk->shader->texture_reads[0] == TIDE_SHADER_READ_DEPTH && sunk->shader->texture_reads[1] == TIDE_SHADER_READ_COMPARE
-               && sunk->shader->texture_reads[2] == TIDE_SHADER_READ_DEPTH);
+    TIDE_REQUIRE(sunk && sunk->shader->texture_count == 2 && sunk->shader->sampler_count == 2);
+    TIDE_CHECK(sunk->shader->texture_reads[0] == TIDE_SHADER_READ_DEPTH && sunk->shader->texture_reads[1] == TIDE_SHADER_READ_DEPTH);
+    TIDE_CHECK(sunk->shader->sampler_reads[0] == TIDE_SHADER_READ_DEPTH && sunk->shader->sampler_reads[1] == TIDE_SHADER_READ_COMPARE);
+    TIDE_CHECK(sunk->shader->texture_samplers[0] == 3u && sunk->shader->texture_samplers[1] == 1u);
     // ...and one in a component's local field is its entity's
     const tide_draw_run *seen = run_through("Seen on Vertex3");
     TIDE_REQUIRE(seen && seen->shader->texture_count == 1 && seen->shader->texture_reads[0] == TIDE_SHADER_READ_COMPARE);
