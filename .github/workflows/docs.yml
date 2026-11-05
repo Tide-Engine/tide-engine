@@ -132,14 +132,59 @@ jobs:
           npm run test:seo
           npm run test:access-http
           npm run test:admin-http
+      # The built site, for the examples' job and the deploy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: |
+            docs/build
+            docs/static
+            docs/prototypes.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  # Every example draws, in a browser's software WebGPU. On Windows: Linux's
+  # runners draw WebGPU there but the page never shows it (the render3d
+  # examples compare what they show), where Windows has WARP.
+  examples:
+    name: Examples
+    needs: build
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '^24.22.1'
+          check-latest: true
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-site
+          path: docs
+      - name: Test the examples
+        working-directory: docs
+        shell: bash
+        run: |
+          npm ci
           npm run test:examples
 
-      # The image takes what the build made (docs/Dockerfile). The token is
-      # a deploy token for the app: fly tokens create deploy -a tide-website
+  # The image takes what the build made (docs/Dockerfile). The token is
+  # a deploy token for the app: fly tokens create deploy -a tide-website
+  deploy:
+    name: Deploy
+    needs: [build, examples]
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-site
+          path: docs
       - uses: superfly/flyctl-actions/setup-flyctl@master
-        if: github.ref == 'refs/heads/dev'
       - name: Deploy
-        if: github.ref == 'refs/heads/dev'
         working-directory: docs
         run: flyctl deploy --remote-only --ha=false
         env:

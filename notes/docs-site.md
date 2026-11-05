@@ -1,5 +1,15 @@
 # The docs site
 
+## The examples' test runs on Windows (2026-11-05)
+
+With WebGL gone, the docs' examples draw with WebGPU, and GitHub's Linux runners draw it without the page ever
+showing it (Chrome's software WebGPU; notes/testing.md, GL backends removed), so `npm run test:examples` failed
+there: the render3d examples compare what they show, and Chrome's GPU process also lost its device after a few
+examples. `.github/workflows/docs.yml` now has three jobs: Build (Linux: the examples, the site and its other
+tests, uploading `docs/build`, `docs/static` and `docs/prototypes.json` as the `docs-site` artifact), Examples
+(windows-2025, whose Chrome draws WebGPU through WARP: `npm ci`, the artifact, `npm run test:examples`) and Deploy
+(dev only, after both: the artifact into `docs/`, `flyctl deploy`). The site deploys only once every example drew.
+
 ## Playground editor: Monaco, Tide colors and the browser language server (2026-11-04)
 
 The owner asked for Tide colors and completion in the playground, and for a wider
