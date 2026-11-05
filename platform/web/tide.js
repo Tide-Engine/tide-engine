@@ -1373,9 +1373,20 @@
                 ...['indirect-first-instance', 'chromium-experimental-multi-draw-indirect', 'multi-draw-indirect']
                     .filter(name => adapter.features.has(name))];
             const requiredFeatures = optional(adapter);
+            // As big a storage buffer as the adapter binds: the pools GPU lists are ranges of grow to it (gpu.h,
+            // storage_most), where the defaults would stop them at 128 MiB. Only what the adapter says it has
+            const limits = adapter => Object.fromEntries(['maxStorageBufferBindingSize', 'maxBufferSize']
+                .filter(name => adapter.limits && adapter.limits[name]).map(name => [name, adapter.limits[name]]));
+            // ...and the features: no descriptor where there's nothing to ask for
+            const asked = (adapter, features) => {
+                const requiredLimits = limits(adapter), descriptor = {};
+                if (features.length) descriptor.requiredFeatures = features;
+                if (Object.keys(requiredLimits).length) descriptor.requiredLimits = requiredLimits;
+                return Object.keys(descriptor).length ? descriptor : undefined;
+            };
             if (adapter.features.has('timestamp-query')) {
                 try {
-                    found = await adapter.requestDevice({ requiredFeatures: [...requiredFeatures, 'timestamp-query'] });
+                    found = await adapter.requestDevice(asked(adapter, [...requiredFeatures, 'timestamp-query']));
                 } catch {
                     // Timing is optional. Ask anew: a request can consume its adapter.
                     adapter = await navigator.gpu.requestAdapter();
@@ -1383,10 +1394,9 @@
                         noDevice = 'the browser gave no GPU adapter';
                         return;
                     }
-                    const features = optional(adapter);
-                    found = await adapter.requestDevice(features.length ? { requiredFeatures: features } : undefined);
+                    found = await adapter.requestDevice(asked(adapter, optional(adapter)));
                 }
-            } else found = await adapter.requestDevice(requiredFeatures.length ? { requiredFeatures } : undefined);
+            } else found = await adapter.requestDevice(asked(adapter, requiredFeatures));
             // A mistake in how the program uses it: test pages stop at one
             found.onuncapturederror = event => {
                 if (config.checkGL) fail(new Error('WebGPU: ' + event.error.message));
@@ -1503,7 +1513,7 @@
     const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
     const READ_DATA = 4;        // TIDE_GPU_READ_DATA: ints, each pixel by its place
     const READ_SAMPLES = 5;     // TIDE_GPU_READ_SAMPLES: a multisampled depth, each sample loaded
-    const MAX_STORAGE = 7;      // TIDE_GPU_MAX_STORAGE
+    const MAX_STORAGE = 4;      // TIDE_GPU_MAX_STORAGE
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const READ_ARRAY = 6, READ_DEPTH_ARRAY = 7; // TIDE_GPU_READ_ARRAY, _DEPTH_ARRAY: an array's colors, or its depth
     const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES || read === READ_DEPTH_ARRAY;
@@ -2062,6 +2072,62 @@
             if (!pixelsPtr) made.depthArray = platform.gpu_array(0, width, height, layers, 0);
             return id;
         },
+        // An array of blocks: each layer's whole chain, `bytes` each, one after another (gpu_texture_blocks's, in layers)
+        gpu_array_blocks(width, height, layers, format, levels, bytes, ptr) {
+            const rgba = format === 4;
+            if (!rgba && (config.textureCompression === false || !device.features.has('texture-compression-bc'))) return 0;
+            const block = format === 1 ? 8 : 16;
+            const kind = rgba ? 'rgba8unorm' : format === 1 ? 'bc1-rgba-unorm' : 'bc3-rgba-unorm';
+            const texture = device.createTexture({ size: [width, height, layers], format: kind, mipLevelCount: levels,
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+            for (let layer = 0; layer < layers; layer++) {
+                let w = width, h = height, offset = ptr + bytes * layer;
+                for (let level = 0; level < levels; level++) {
+                    const blocksWide = Math.ceil(w / 4), blocksHigh = Math.ceil(h / 4);
+                    const size = rgba ? w * h * 4 : blocksWide * blocksHigh * block;
+                    const [data, dataOffset] = memoryBytes(offset, size);
+                    device.queue.writeTexture({ texture, mipLevel: level, origin: [0, 0, layer] }, data,
+                        { offset: dataOffset, bytesPerRow: rgba ? w * 4 : blocksWide * block, rowsPerImage: rgba ? h : blocksHigh * 4 },
+                        rgba ? [w, h] : [blocksWide * 4, blocksHigh * 4]);
+                    offset += size;
+                    w = Math.max(1, w >> 1); h = Math.max(1, h >> 1);
+                }
+            }
+            return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array' }), width, height, row: 0,
+                format: kind, mipped: true, groups: new Set() });
+        },
+        // An array of a format (tide_gpu_format's numbers), zeros, with room for its smaller images, written a part at a time
+        gpu_array_of(format, width, height, layers) {
+            const pixel = [4, 1, 2, 16][format];
+            const kind = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint'][format];
+            const levels = 1 + Math.floor(Math.log2(Math.max(width, height)));
+            const texture = device.createTexture({ size: [width, height, layers], format: kind, mipLevelCount: levels,
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
+            const each = [];
+            for (let layer = 0; layer < layers; layer++) {
+                const images = [];
+                for (let level = 0; level < levels; level++) {
+                    images.push(texture.createView({ dimension: '2d', baseArrayLayer: layer, arrayLayerCount: 1,
+                        baseMipLevel: level, mipLevelCount: 1 }));
+                }
+                each.push(images);
+            }
+            return gpuAdd('texture', { texture, view: texture.createView({ dimension: '2d-array' }),
+                base: texture.createView({ dimension: '2d-array', mipLevelCount: 1 }), width, height, row: width * pixel,
+                format: kind, layered: each, groups: new Set() });
+        },
+        gpu_array_write(id, layer, ptr, x, y, width, height) {
+            const t = gpuTables.texture[id];
+            const pixel = t.row / t.width;
+            const [data, offset] = memoryBytes(ptr + y * t.row + x * pixel, t.row * (height - 1) + width * pixel);
+            device.queue.writeTexture({ texture: t.texture, origin: [x, y, layer] }, data,
+                { offset, bytesPerRow: t.row, rowsPerImage: height }, [width, height]);
+            if (t.mipped) { // Its smaller images are made again, of what's written, when next read between them
+                t.mipped = false;
+                for (const key of t.groups) bindGroups.delete(key);
+                t.groups.clear();
+            }
+        },
         gpu_array_depth(id) {
             const t = gpuTables.texture[id];
             return !t ? 0 : t.depthLayers ? id : t.depthArray || 0;
@@ -2268,6 +2334,8 @@
             return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth, width, height, canvas: null, context: null });
         },
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
+        // What the renderer's pools of GPU lists grow to at most (gpu.h, storage_most): a buffer bound whole
+        gpu_storage_most: () => Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize),
         gpu_target_texture: (id, color) => gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
         gpu_target_depth: id => gpuTables.target[id].depth,
         // A multisampled target's depth as a texture: WebGPU resolves none, so a pass over a texture of one

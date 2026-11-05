@@ -10257,10 +10257,11 @@ static type check_member(checker *c, expr *e)
 
     if (obj.kind == TY_TEXTURE_ARRAY || obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
         const bool depths = obj.kind == TY_DEPTH_TEXTURE_ARRAY;
-        if (gpu_code(c)) {
-            diag_error(e->at, "a %s reads a %s with '%s': its layers, their size and count are the view's", shader_word(gpu_code(c)),
-                       depths ? "DepthTextureArray" : "TextureArray", depths ? "Sample(uv, layer)" : "Sample(uv, layer)");
-            diag_note("pass what the frag needs to know of them in a singleton's field");
+        const bool metadata = str_eq_c(e->member, "size") || str_eq_c(e->member, "count");
+        if (gpu_code(c) && !metadata) {
+            diag_error(e->at, "a %s reads a %s with '%s', and its 'size' and 'count': its layers%s are the view's",
+                       shader_word(gpu_code(c)), depths ? "DepthTextureArray" : "TextureArray",
+                       depths ? "Sample(uv, layer)' or 'Compare(uv, layer, value)" : "Sample(uv, layer)", depths ? "" : " and its depth");
             return T_ERR;
         }
         if (str_eq_c(e->member, "size")) return (type){TY_INT2, NULL}; // A layer's pixels
@@ -15660,7 +15661,7 @@ static void check_lossless_attribute(decl *d, const attribute *attr)
         return;
     }
     if (d->return_type.kind == TY_ERROR) return; // Its type said why
-    if (d->asset_kind != ASSET_TEXTURE) {
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_TEXTURE_ARRAY) {
         diag_error(attr->at, "Lossless keeps a Texture asset's pixels exact, and '" STR_FMT "' is %s, which is never compressed",
                    STR_ARG(d->name), type_name(d->return_type));
         diag_note("%s", usage);

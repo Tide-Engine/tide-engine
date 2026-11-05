@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## GPU lists in pools (2026-11-05)
+
+Under compute's pre-approved boundary, owner-approved lifting of the storage limit: `tide_shader` gains
+`storage_ints` and `storage_table` and its `storage_writes` is 64 bits, its `adds` lose `scratch`; `TIDE_SHADER_STORAGE`
+is 64; `TIDE_STORAGE_WORDS`/`INTS`/`RUN`, `tide_shader_table_words`, `tide_shader_storage_ints`,
+`tide_shader_pool_written` and `TIDE_GPU_LIST_INTS` (tide/draw.h); `tide_gpu_list_state.ints`. Generated code calls
+nothing new: `tide_gpu_list_make`, `_adopt` and `_recreate` take `TIDE_GPU_LIST_INTS` in their stride. gpu.h's
+`TIDE_GPU_MAX_STORAGE` is 4 and it gains the optional `storage_most` (every backend; NULL in the recorder and
+`gpu_none`). No embed op, packet or ABI change. Hosts, libraries and games rebuild together for `tide_shader`'s
+layout. Contracts: notes/compute.md, GPU lists in pools.
+
 ## Texture arrays and samplers apart (2026-11-05)
 
 Within the drawing maintenance exception, with the owner's go-ahead for both pieces ("just cause nothing needs [it]
@@ -12,6 +23,12 @@ and `tide_pack_texture_array_of` (`tide/draw.h`, `tide/pack.h`; engine/src/draw.
 reads `TIDE_SHADER_READ_ARRAY`/`_DEPTH_ARRAY`. gpu.h: `image`/`sampler` in place of `sample`, `array`,
 `array_depth`, `array_layer`. Embed ABI 15. Contracts and tests: notes/rendering.md, One image a texture, and
 notes/textures.md, Texture arrays: built.
+
+Closing their gaps (the owner: "work on the gaps"): generated code also calls `tide_texture_array_of_grid`
+(`tide/mesh.h`), and the draw list `tide_pack_texture_array_blocks` (`tide/pack.h`), `tide_draw_grid_array_texture`
+and `tide_grid_array_extent`; `tide_draw_texture` gains `layer_blocks` and the space `TIDE_PIXELS_GRID_ARRAY`;
+`tide/texture_blocks.h` `tide_texture_blocks_bc1_to_bc3`. gpu.h: `array_blocks`, `array_of`, `array_write`. Embed ABI
+16. Details: notes/textures.md, The gaps closed.
 
 ## Sixteen textures, shared samplers (2026-11-05)
 

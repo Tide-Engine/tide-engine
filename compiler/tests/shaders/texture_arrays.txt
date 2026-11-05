@@ -5,6 +5,8 @@ struct tide_uniforms {
     tide_tint: vec4f,
     tide_origin: vec4f,
     tide_v0: vec4i,
+    tide_v1: vec4i,
+    tide_v2: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
@@ -64,7 +66,7 @@ fn ts_Ground(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {
     var t_steep: vec4f = tide_straight(textureSampleGrad(pixels0, sampler0, tide_choice0, clamp(t_layer, 0, i32(textureNumLayers(pixels0)) - 1), tide_choice3, tide_choice6));
     var t_lit: f32 = textureSampleCompareLevel(pixels1, sampler4, t_vertex.m_uv, clamp(tide_block.tide_v0.x, 0, i32(textureNumLayers(pixels1)) - 1), clamp(0.5, 0.0, 1.0));
     var t_depth: f32 = textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, clamp(1, 0, i32(textureNumLayers(pixels1)) - 1), 0);
-    (*t_color) = ((t_said * t_blended) + (((t_far * t_steep) * t_lit) * t_depth));
+    (*t_color) = ((t_said * t_blended) + ((((t_far * t_steep) * t_lit) * t_depth) * f32(((tide_block.tide_v0.w + tide_block.tide_v1.xy.x) + tide_block.tide_v2.y))));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f) -> tide_corner {

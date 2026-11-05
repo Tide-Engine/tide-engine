@@ -1,8 +1,25 @@
 # Web builds
 
+## GPU lists in pools, on WebGPU (2026-11-05)
+
+A shader's GPU lists are ranges of two pools (`notes/compute.md`, GPU lists in pools): `MAX_STORAGE` in `tide.js` is 4
+(`TIDE_GPU_MAX_STORAGE`), and a pipeline binds the two pools (and a kernel its run record), so a bind group holds 3
+storage buffers at the most, within WebGPU's default 8 a stage. `requestDevice` now asks for the adapter's
+`maxStorageBufferBindingSize` and `maxBufferSize` (`requiredLimits`, those the adapter has, in every request it makes; still no descriptor where nothing is asked), as the pools grow to
+what one binding reaches (`gpu_storage_most`, the least of the two, which `gpu_web.c` takes as a double: a JavaScript
+number). A pool made again bigger frees its old buffer after the copy's submit (each pass and copy is submitted as it
+ends, so a buffer destroyed then is one no unsubmitted work names). Each pool is bound whole; a kernel that writes
+one binds it once, as `storage`, so no binding aliases another (Dawn's writable-aliasing check). Tests (web-debug,
+SwiftShader): `tide_platform_kernels` through its lost device, `_compute`, `_cull`, `_cull_fallback`, `_occlusion`,
+`_draw`. The real-GPU lanes (`web-hardware`, `web-hardware-d3d11`) weren't run (optional). After Textures and
+samplers apart (below), a bind group is the uniforms, 16 textures, 16 samplers and 3 storage buffers at the most.
+
 ## Texture arrays (2026-11-05)
 
-Imports `gpu_array`, `gpu_array_depth`, `gpu_array_layer`; reads 6 and 7 are `'2d-array'` in a layout. A cube's and an
+Imports `gpu_array`, `gpu_array_depth`, `gpu_array_layer`, and since the gaps were closed `gpu_array_blocks` (BC
+layers, each a whole chain), `gpu_array_of` and `gpu_array_write` (a `Grid3`'s: `writeTexture` at `[x, y, layer]`,
+dropping the bind groups that read its smaller images, made again when next read); reads 6 and 7 are `'2d-array'` in a
+layout. A cube's and an
 array's per-layer views are `layered`. Details: notes/textures.md, Texture arrays: built.
 
 ## Textures and samplers apart (2026-11-05)

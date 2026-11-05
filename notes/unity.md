@@ -1,5 +1,14 @@
 # Unity as a front end
 
+## GPU lists in pools: Unity's replay (2026-11-05)
+
+No packet changed and the embed ABI stays 12 (`notes/compute.md`, GPU lists in pools): the recorder records the same
+calls, with fewer storage buffers a pipeline (the two pools and a kernel's run record). `TideRender.cs`'s `MaxStorage`
+is 4 (gpu.h's `TIDE_GPU_MAX_STORAGE`), and `Supported` asks for 4 storage buffers in compute and fragment stages and 7
+in vertex stages, where it asked for 7 and 10. The recorder has no `storage_most`, so its pools grow to 128 MiB each.
+Gap: a kernel writing a pool after a kept draw read it renames the whole pool (`Written`), where it renamed one list's
+buffer; the Sample's `ComputeReplayTests` weren't run (their commands are hand-made and unchanged).
+
 ## Occlusion culling in Unity (2026-11-05)
 
 `Draw.Occlusion` (drawing.md, Occlusion culling from a depth pyramid) culls only on the GPU, and the recorder never
@@ -44,6 +53,14 @@ and `TIDE_EMBED_RENDER_ARRAY_LAYER` (target, array, layer), after SAMPLER. TideR
 layer of both (`RenderTargetIdentifier(rt, 0, CubemapFace.Unknown, layer)`); freeing the array frees its depth. The HLSL
 reads `Texture2DArray<float4>`/`<float>` with `float3(uv, layer)` (notes/shaders.md). `TIDE_EMBED_ABI` and
 `TideLibrary.Abi` are 15. Not run in Unity.
+
+ABI 16 (the same day, a `Grid3` as an array): `TIDE_EMBED_RENDER_ARRAY_OF` (id, format, width, height, layers: zeros)
+and `TIDE_EMBED_RENDER_ARRAY_WRITE` (id, layer, x, y, width, height, then that part's rows packed, padded to 4 bytes).
+TideRender's `MakeArrayOf` makes a `Texture2DArray` of the format (RGBA32 or RHalf, `TextureFormat`) with a mip chain
+and keeps its pixels (`Image.layers`); `WriteArray` copies the part into them and sets that layer's
+(`SetPixelData(pixels, 0, layer, offset)`), or makes a new array when a draw of this frame already reads it, as
+`WriteTexture` does; `Mipmaps` applies a `Texture2DArray`'s. Compressed pack layers reach Unity decoded, through
+`ARRAY`. Compiled, not run in Unity.
 
 ## One image a texture: embed ABI 14 (2026-11-05)
 
@@ -149,7 +166,7 @@ stay deferred to the camera, so:
 - `Replay` with no camera still prepares, so compute and reads go on.
 - `Supported` now asks for compute shaders, indirect arguments, shader level 4.5,
   seven storage buffers in compute and fragment stages and ten (three vertex
-  buffers more) in vertex stages, and not OpenGL ES 3: **Unity's OpenGL ES 3.0
+  buffers more) in vertex stages (four and seven since GPU lists in pools, above), and not OpenGL ES 3: **Unity's OpenGL ES 3.0
   and WebGL 2 targets don't take Tide's renderer any more** (owner's rule:
   compute is on every render backend), and draw the views' 2D with the OnGUI
   path (`TideDraw.cs`) as GPUs without constant buffers did. WebGPU, Metal,

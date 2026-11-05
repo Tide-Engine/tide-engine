@@ -42,6 +42,7 @@ namespace Tide
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Image, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
             DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler, Array, ArrayLayer,
+            ArrayOf, ArrayWrite,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -65,7 +66,7 @@ namespace Tide
             public Texture texture;
             public RenderTextureSubElement element = RenderTextureSubElement.Default;
             public byte[] pixels; // A Texture2D's, which a part is written into
-            public int format, pixelBytes, width, height;
+            public int format, pixelBytes, width, height, layers; // An array written a part at a time: its layers
             public bool mips;  // Its smaller images are made
             public bool owned; // Destroyed when it's freed: a target's go with the target
             public RenderTexture arrayDepth; // An array drawn into: its depth array, freed with it...
@@ -195,7 +196,7 @@ namespace Tide
         int uniformAt, uniformSize;
         int stencil;
         bool inPass, flipped, inCompute;
-        const int MaxStorage = 7; // gpu.h's TIDE_GPU_MAX_STORAGE
+        const int MaxStorage = 4; // gpu.h's TIDE_GPU_MAX_STORAGE
         readonly uint[] storageBound = new uint[MaxStorage];
 
         static readonly int SrcColor = Shader.PropertyToID("_TideSrcColor"), DstColor = Shader.PropertyToID("_TideDstColor");
@@ -216,8 +217,7 @@ namespace Tide
         static readonly int[] Storage =
         {
             Shader.PropertyToID("_TideStorage0"), Shader.PropertyToID("_TideStorage1"), Shader.PropertyToID("_TideStorage2"),
-            Shader.PropertyToID("_TideStorage3"), Shader.PropertyToID("_TideStorage4"), Shader.PropertyToID("_TideStorage5"),
-            Shader.PropertyToID("_TideStorage6"),
+            Shader.PropertyToID("_TideStorage3"),
         };
         static readonly int Groups = Shader.PropertyToID("TideGroups");
         static readonly int CopyFrom = Shader.PropertyToID("_TideFrom"), CopyTo = Shader.PropertyToID("_TideTo");
@@ -234,7 +234,7 @@ namespace Tide
         };
 
         // Whether this GPU replays Tide's drawing: it computes, as each of Tide's renderers does, and its shaders read
-        // raw buffers, three of vertices and seven of storage a stage. Unity's OpenGL Core (4.5) does; OpenGL ES 3.0 and
+        // raw buffers, three of vertices and four of storage a stage. Unity's OpenGL Core (4.5) does; OpenGL ES 3.0 and
         // WebGL 2 don't, as Tide has no backend that can't compute.
         public static bool Supported =>
             SystemInfo.supportsSetConstantBuffer && SystemInfo.supportsComputeShaders && SystemInfo.supportsIndirectArgumentsBuffer
@@ -561,6 +561,11 @@ namespace Tide
                     break;
                 case Op.Array: MakeArray(W(0), W(1), (int)W(2), (int)W(3), (int)W(4), W(5) != 0 ? p + 28 : null, W(6)); break;
                 case Op.ArrayLayer: MakeArrayLayer(W(0), W(1), (int)W(2)); break;
+                case Op.ArrayOf: MakeArrayOf(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4)); break;
+                case Op.ArrayWrite:
+                    Flush(); // After the work before it, which may sample it
+                    WriteArray(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), (int)W(5), p + 24);
+                    break;
                 case Op.Cube: MakeCube(W(0), (int)W(1), (int)W(2), W(3) != 0 ? p + 16 : null); break;
                 case Op.CubeFace: MakeCubeFace(W(0), W(1), (int)W(2), W(3)); break;
                 case Op.Pipeline: MakePipeline(p); break;
@@ -792,6 +797,7 @@ namespace Tide
         {
             if (!images.TryGetValue(id, out var image)) return;
             if (image.texture is Texture2D texture && texture.mipmapCount > 1) texture.Apply(true, false);
+            else if (image.texture is Texture2DArray array && array.mipmapCount > 1) array.Apply(true, false);
             else if (image.texture is Cubemap cube) cube.Apply(true, false);
             else if (image.texture is RenderTexture rt && rt.useMipMap) into.commands.Add(new Command { kind = Kind.Mipmaps, mipmapped = rt });
             else return;
@@ -867,6 +873,54 @@ namespace Tide
             color.Create();
             images[id] = new Image { texture = color, width = width, height = height, owned = true, arrayDepth = depth, arrayDepthId = depthId };
             images[depthId] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = width, height = height };
+        }
+
+        // An array of a format, zeros until written a part at a time (a Grid3's): its pixels kept here, each write a layer's
+        static Texture2DArray NewArray(int format, int width, int height, int layers) =>
+            new Texture2DArray(Math.Max(1, width), Math.Max(1, height), Math.Max(1, layers), TextureFormat(format), TextureCreationFlags.MipChain)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+            };
+
+        void MakeArrayOf(uint id, int format, int width, int height, int layers)
+        {
+            var bytes = PixelBytes(format);
+            var image = new Image
+            {
+                texture = NewArray(format, width, height, layers), format = format, pixelBytes = bytes, width = width, height = height,
+                layers = Math.Max(1, layers), owned = true,
+            };
+            image.pixels = new byte[Math.Max(1, width * height * bytes * image.layers)];
+            var array = (Texture2DArray)image.texture;
+            for (var i = 0; i < image.layers; i++) array.SetPixelData(image.pixels, 0, i, i * width * height * bytes);
+            array.Apply(false, false);
+            if (images.TryGetValue(id, out var had) && had.owned) Doom(had.texture);
+            images[id] = image;
+        }
+
+        void WriteArray(uint id, int layer, int x, int y, int width, int height, byte* pixels)
+        {
+            if (!images.TryGetValue(id, out var image) || image.pixels == null || !(image.texture is Texture2DArray array)
+                || layer < 0 || layer >= image.layers) return;
+            var row = width * image.pixelBytes;
+            var each = image.width * image.height * image.pixelBytes;
+            for (var r = 0; r < height; r++)
+            {
+                Marshal.Copy((IntPtr)(pixels + r * row), image.pixels, layer * each + ((y + r) * image.width + x) * image.pixelBytes, row);
+            }
+            if (image.used == Time.frameCount)
+            {
+                // A draw of this frame reads it as it was: a new array from here
+                Doom(array);
+                array = NewArray(image.format, image.width, image.height, image.layers);
+                image.texture = array;
+                image.used = -1;
+                for (var i = 0; i < image.layers; i++) array.SetPixelData(image.pixels, 0, i, i * each);
+                array.Apply(image.mips, false);
+                return;
+            }
+            array.SetPixelData(image.pixels, 0, layer, layer * each);
+            array.Apply(false, false); // Its smaller images stay as they were made
         }
 
         // An array's layer as a target: that layer of its colors and of its depth, neither its own to free

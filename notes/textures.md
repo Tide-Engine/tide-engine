@@ -38,7 +38,7 @@ What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture
   The renderer: `gpu_array`, `array_for` (layers' targets cleared black and far as made), texture reads, sources made
   before they're read, a layer's pass counted for the array's smaller images, fallbacks (`blank`, a white array of one
   pixel; `far_array`, a depth array at the far limit). Memory is held as the array's whole.
-- **Unity** (embed ABI 15): notes/unity.md, Texture arrays.
+- **Unity** (embed ABI 15, 16 for a grid's arrays): notes/unity.md, Texture arrays.
 - **Tests:** `tidec_e2e_texture_arrays` (an asset's glob and list, a list's repeated file one image, counts, layers as
   destinations, the run's textures and samplers, a reload in other memory, Resize and Dispose, natively and under
   Node); `compiler/tests/shaders/texture_arrays` (golden, through spirv-val and fxc); `tidec_error_texture_array_*`
@@ -47,11 +47,48 @@ What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture
   images, a never-made array and depth, a depth array's three layers read and compared), on Vulkan (with the
   validation layer) and WebGPU, again after device loss on the web; `embed`'s packet reader takes the new ops; LSP
   (`lsp_texture_arrays`).
-- **Gaps:** layers aren't compressed (BC would need an array upload path on each backend); `size`/`count` aren't read
-  on the GPU; no `Grid3` to array conversion (the proposal's item 5, not built: a grid of layers would need the list's
-  layered copy and partial writes); a layer kept as a `RenderTarget` field and reloaded on the web before its array
-  comes back with as many layers as its index says; Unity's replay wasn't run (no Unity here); Linux, macOS, Android
-  are CI's.
+- **Gaps:** see the follow-up below.
+
+### The gaps closed (2026-11-05, the owner: "work on the gaps")
+
+- **Compressed layers.** The pack writes each layer as a `Texture` asset's (`compress = !lossless`), so a layer of 128
+  or more, a power of two a side, is BC1 or BC3 with its chain made in the build; `[Lossless]` is allowed on
+  `ASSET_TEXTURE_ARRAY` and keeps them all RGBA8. `note_arrays` takes layers that are blocks alone (their pixels NULL)
+  and `tide_pack_texture_array_blocks(named)` gives each layer's `tide_texture_blocks` (`blocks_at`, shared with
+  `tide_pack_texture_blocks_find`); the draw list hands them on as `tide_draw_texture.layer_blocks`. gpu.h's
+  `array_blocks(width, height, layers, blocks)` takes one format a call, each layer a whole chain `bytes` apart. The
+  renderer's `pack_array_texture` makes the GPU one: all BC1 stays BC1, a mix is BC3 throughout
+  (`tide_texture_blocks_bc1_to_bc3`, `tide/texture_blocks.h`, puts an opaque alpha block before each BC1 one: exact),
+  without BC every level decoded to an RGBA8 chain (the same mips a `Texture`'s fallback has, not regenerated), and an
+  array of RGBA8 layers as before. Vulkan `vk_array_blocks`, WebGPU `gpu_array_blocks`; the recorder decodes to pixels
+  (Unity's arrays aren't compressed).
+- **`size` and `count` on the GPU.** A shader texture's size words are three for an array (`shader_size_words`): its
+  width, height and layers, from `tide_texture_array_size`/`_count` (`gen_array_size`), read by `ex_texture_size`
+  as uniform words, as a texture's size already is.
+- **`Grid3` to `TextureArray`.** `type_is_array_grid` (`Grid3<Color>` or `Grid3<float>`) is assignable to
+  `TY_TEXTURE_ARRAY`; `gen_as` makes `tide_texture_array_of_grid(grid, &shape)`, a value naming the grid
+  (`reserved == TIDE_TEXTURE_ARRAY_GRID`, `named` the handle, `layers` the cell kind and the chunk shifts;
+  `tide_texture_array_grid` reads it back). The draw list's `TIDE_PIXELS_GRID_ARRAY` (`tide_draw_grid_array_texture`,
+  mesh.c) is `width` by `height * layers` pixels, the layers one under another, through `grid_cells` with a box of
+  three dimensions and `across` 1, so its changed areas follow the chunks as a grid texture's do; `layers` set. gpu.h
+  `array_of(format, width, height, layers)` (RGBA8 or R16F, zeros, room for smaller images) and
+  `array_write(array, layer, pixels, x, y, width, height)`; the renderer's `grid_array_texture` writes it whole when
+  made, else each changed area split by the layers it crosses. Vulkan `vk_array_of`/`vk_array_write`
+  (`write_pixels` with a layer), WebGPU `gpu_array_of`/`gpu_array_write` (`writeTexture` at `[x, y, layer]`, its
+  smaller images made again when next read), the recorder `ARRAY_OF`/`ARRAY_WRITE` (embed ABI 16, notes/unity.md).
+- **Tests:** `tidec_e2e_texture_arrays` (BC1 and BC3 layers with no pixels, a `[Lossless]` array's pixels and no
+  blocks, the blocks handed to the list, a `Grid3<float>`'s array: count, size, no destination, the list's halves
+  stacked by layer); `compiler/tests/shaders/texture_arrays` (`count` and `size` in a frag); pass 25 of
+  `platform/tests/shaders.tide`: a compressed array's opaque and alpha layers against the same files as `Texture`s,
+  its smaller images, a frag's `size`/`count`, a `Grid3<Color>`'s three layers and a `Grid3<float>`'s fourth, a cell
+  changed then changed back between frames (a partial write; a broken one leaves the old color, checked by breaking
+  it), on Vulkan and WebGPU, and `tide_platform_shaders_rgba_fallback` (WebGPU with `texture-compression=off`);
+  `embed_render_array_written_in_parts`.
+- **Still gaps:** `[Raw]` arrays (refused as before); Unity's arrays are uncompressed RGBA8 and its replay of all of
+  this wasn't run (no Unity here; a compile check only); Unity's OpenGL Core samples one texture read two ways with
+  its first sampler (Unity's GL keeps sampling on the texture: not fixable from the replay); Linux, macOS and Android
+  are CI's. The layer-before-array reload case above turned out to need nothing: recreating the array reconciles its
+  layer count.
 
 ## Texture arrays: the proposal, agreed (2026-11-05)
 

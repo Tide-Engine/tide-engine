@@ -40,6 +40,166 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [x] Kernels on Dawn's Direct3D 11 (shared atomics in a struct, the pyramid's levels unrolled), a kernel the browser
       can't make done without, the D3D11 hardware lane, 2026-11-05: notes/shaders.md, Kernels on Dawn's Direct3D 11;
       notes/drawing.md, A culling kernel that can't be made
+- [x] GPU lists in two pools: a shader names any number of GPU lists (64 at the most), a kernel adds to any number,
+      Vulkan's storage requirement 7 -> 4, 2026-11-05 ("GPU lists in pools" below)
+
+## GPU lists in pools: no limit on the lists a shader names (2026-11-05)
+
+The owner approved lifting the limit of 7 storage buffers a frag, vert or kernel bound (each GPU list one, and a
+kernel's run record and each Add's scratch more), and Claude's design: GPU lists suballocated from a few large pooled
+storage buffers, each list's place given to shaders in their uniforms. The details are Claude's, Provisional. What
+changed for games: a shader names up to 64 GPU lists (the table's limit, `SHADER_STORAGE_MOST` / `TIDE_SHADER_STORAGE`,
+an error with its fix past it), a kernel has any number of Adds, and nothing else (the same pixels and results).
+
+- **Two pools** (`compute.inc`, `gpu_pools`): `TIDE_STORAGE_INTS` holds the lists whose element is `int`
+  (`GPUList<int>`), `TIDE_STORAGE_WORDS` every other. Why two: WGSL types a storage binding whole, `array<u32>` or
+  `array<atomic<i32>>`, and WebGPU refuses one buffer bound twice in a dispatch where either binding writes (a usage
+  scope, and writable aliasing). Atomics are only on `GPUList<int>`, so a kernel that uses atomics declares the pool of
+  ints `array<atomic<i32>>` and its other lists stay plain loads in the other pool; its lists of ints are read and
+  written through `atomicLoad`/`atomicStore`, as one list with atomics was before. Which pool is static, the element
+  type: generated code passes `TIDE_GPU_LIST_INTS` in the stride to `tide_gpu_list_make`, `_adopt` and `_recreate`
+  (`tide_gpu_list_state.ints`; another kind across a hot reload is another version, made again empty), and
+  `tide_shader.storage_ints` says each slot's pool. A list read through a slot of the other kind is the empty list.
+- **A list is a range** of its pool: 4 + capacity * stride words, rounded up to 4 (16 bytes), its header then its
+  elements as before. Words 0 to 3 of each pool are an empty list's header, zeros, so a table of zeros names a list of
+  nothing (what a slot reads where its list isn't there, disposed, or can't be held).
+- **The table** (`shader.storage_at`, `tide_shader.storage_table`: bytes into the game's uniforms, after the floats'
+  packs): two int words a slot, its range's first word and its capacity, then for a kernel a word an Add, its
+  scratch's first word. Generated code leaves them zero; the renderer writes them into its copy of the uniforms as it
+  draws (`draw_shaded`) or runs (`run_compute`, `cull_slot` for the culling's kernels). The recorded uniforms, runs'
+  joins and the Unity recording keep their shape.
+- **What a shader reads and writes stays in its list's range** (`need_storage`, shader_compute.inc):
+  `tide_word<s>(k)` is `pool[tide_base<s>() + k]`; `tide_count<s>` is min(the header's count, the table's capacity) (one
+  storage load, where it was two); `tide_capacity<s>` is min(the header's capacity, the table's). The header's word
+  keeps FXC's X3694 away from a write every invocation makes to one place (it can't see what storage holds: "Kernels on
+  Dawn's Direct3D 11", notes/shaders.md), and the table's keeps a header written wrong from reaching another list.
+  `tide_get` gives zeros past the count, `tide_put` and atomics do nothing past the capacity, under 0 either; an
+  indirect draw's instance index is held to its capacity (its count is the header's, which the GPU draws as many of);
+  Adds' scatter to the header's capacity. The translators' clamp of a runtime array's index keeps it in the pool.
+- **Bindings** (`put_pools`; `tide_shader_compute_storage`): 33 the words pool, 34 the ints pool (read in draws; in a
+  kernel read_write where it writes a list of that pool, `tide_shader_pool_written`), and a kernel's run record at 35
+  (25 to 27 on the pools' branch, before it was merged after Sixteen textures a draw, notes/rendering.md),
+  read. The engine's kernels (shaders.h) bind the pool of the list they work on and take its first word in their
+  uniforms: `run_size` (pool, record), `add_offsets` (pool, record), `add_scatter` (pool), the new `zero_words`
+  (pool), and occlusion's pyramid (the ints pool, its levels' words offset). Each Add's scratch is a range of its
+  list's pool (`take_add_scratch`, taken in turn each frame, never zeroed: each group writes its region before it's
+  read), so the offsets and the scatter bind one pool, and an indirect run's `dispatch_indirect` reads the record,
+  which no binding of the same dispatch writes.
+- **Adds:** any number, four lists a scan (`tide_scan`, `tide_scan1`, ...: `scan_lanes`, `scan_type`), all in one
+  Hillis-Steele loop, so its barriers are once whatever the count; every scan counts against the 16 KiB.
+- **The allocator** (`pool_take`, `pool_give`): first fit over the ranges let go of (in order, joined where they touch),
+  else the pool's tail, which has never been a range's since it was made (zeros). A pool grows by being made again
+  twice as big (256 KiB first) with its used words copied on the GPU (`buffer_copy`, in order with the frame's work), so
+  a range's place never changes; only outside passes (`passing`, set by `begin_pass`/`end_pass`), and never in a
+  compute pass (every range a run needs is taken before its first). Up to gpu.h's new optional `storage_most`: Vulkan's
+  least of `maxStorageBufferRange`, `maxMemoryAllocationSize` and `maxBufferSize`; WebGPU's least of
+  `maxStorageBufferBindingSize` and `maxBufferSize`, which `tide.js` now asks the adapter for at its most; 128 MiB
+  where it's NULL (the recorder). `TIDE_GPU_POOL_MOST` (bytes) is less, for a test. A list's range taken where another
+  list had one is zeroed first, by `zero_words` (or from the CPU while that pipeline isn't made).
+  - **Why growth by making the pool again, not by adding pools:** WGSL can't choose a binding as it runs, so a list in a
+    second pool would cost every access a branch (or a pipeline for each way lists fall between pools); one pool of
+    each kind keeps one add. The copy is once a doubling.
+- **What doesn't fit:** a list past what the device binds as one buffer, counting every list of its kind, is the empty
+  list on the GPU (zeros read, nothing written, capacity 0 there) and the pool says so once; `capacity` on the CPU is
+  still what it was made with. Every device binds 128 MiB (a list's most is 128 MiB, as before); this machine's Vulkan
+  4 GiB. Before, each list had a buffer of its own and only the device's memory bounded them all.
+- **The culling's lists** (cull.inc): each of cull.tide's lists is a range of the pool its elements say
+  (`cull_pool_of`), grown by doubling (rewritten each frame, so nothing is copied); `depths` too, in the pool of ints;
+  the places and arguments its draws read as vertices and indirect records are at their ranges' offsets
+  (`cull_at`). `tidec --kernels` writes `.storage_ints` and `.storage_table` beside the slots' enums. A frame whose
+  lists its pools can't hold draws its culled runs nothing and the later frames' are the CPU's (`cull_failed`, said).
+- **gpu.h:** `TIDE_GPU_MAX_STORAGE` 7 -> 4 (Vulkan's least `maxPerStageDescriptorStorageBuffers`, so no conformant
+  device is refused for storage now; the renderer binds 3 at the most), a pipeline's layout 37 bindings at the most
+  with 16 textures and samplers (pushed where `maxPushDescriptors` takes it, a set otherwise: rendering.md), `storage_most`. The recorder's ops and packets are as they were: no embed ABI change (TideRender.cs's
+  `MaxStorage` 4, and `Supported` asks for 4 storage buffers a stage).
+- **GPU memory** (`tide_platform_gpu_memory`): the pools are buffers the renderer made, so it counts each pool's size,
+  not each list's.
+- **Hot reload, device loss, Dispose:** lists' records by id as before (`list_range`); a list not named since a reload,
+  disposed or gone gives its range back as the frame ends; a lost device forgets the pools, and lists are made again
+  (their contentRevision changes). Reads back read their list's range (`buffer_read` at its offset, at most its bytes).
+- **Tests** (sanitize, this machine; every one passes):
+  - Goldens `kernels_add`, `kernels_helpers`, `kernels_shared`, `kernels_shared_races`, `gpu_meshes` written again (the
+    pools and tables alone), and the new `kernels_many` (20 lists, 6 Adds, atomics, a frag of 10); every golden's
+    SPIR-V through spirv-val and HLSL through fxc (cs_5_0 for kernels), the renderer's shaders too
+    (`tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid`, `zero_words` among them).
+  - Errors: `kernel_storage_limit` (65 lists: "names 65 GPU lists, and a kernel names 64 at the most") and
+    `gpu_list_draw_limit` (a draw of 65), where the first was the 8-buffer error.
+  - `tidec_e2e_compute`: the kernel's table (5 words, after its values, zeros as recorded), its pools, the atomic
+    kernel's list in the pool of ints.
+  - `tide_platform_kernels`: `Spread`, a kernel of 20 lists over 100 invocations in 2 groups (3 read, 6 written by
+    index, 4 with atomics, 6 Adds in two scans, ints and float2s, one list of structs), and `ShowWide`, a frag reading 10
+    of them (a pixel); `Trespass`, every way past a full list's ends (under 0, at and past its capacity, the ints'
+    limits, many capacities on; writes, reads, atomics, Adds) between neighbours in both pools: every list's words and
+    header count kept, and zeros read. With `tide_put`'s guard made `>` for `>=` by hand, the fence fails (checked).
+    Native Vulkan with the validation layer, and with `TIDE_VULKAN_DESCRIPTOR_SETS=1`; WebGPU (web-debug, SwiftShader)
+    through its lost device.
+  - `tide_platform_compute`, `_compute_vulkan_sets`, `_cull`, `_cull_decided`, `_occlusion`, `_draw`,
+    `_draw_vulkan_sets`, `_shaders`, `_prewarm`, `_gpu_functions`, `_embed` (Vulkan, validation layer); on web-debug
+    `tide_platform_kernels`, `_compute`, `_cull`, `_cull_fallback`, `_occlusion`, `_draw`.
+  - Whole suites (sanitize): every `tidec_*` test (2,900), and the other 280 but `tide_server_smoke`, whose port 7777
+    another program's UDP socket held (it can't listen; nothing of this). `tide_cli_tests`' `unity_shaders_written`
+    counts the renderer's kernels, 6 with `zero_words`; `tide_platform_gpu_timing_web`'s fake adapter has no limits, so
+    `tide.js` asks only for the limits an adapter says it has, and for no descriptor where there's nothing to ask.
+    The docs build (`npm run build`) passes.
+  - Safety: `compiler/tests/safety/gpu_lists` (capacities of none, under none, the ints' limit and past a GPU's
+    binding, sent more than they hold, counted past both ends, resized and let go of while kernels run over them and a
+    frag reads them, a read of one let go of; kernels indexing at the ints' limits), also through the renderer
+    (`_gpu`, Vulkan, validation layer).
+- **Measured** (release, hidden, Vulkan, RTX 4080 SUPER; `dev` at 12fcc04bc in a temporary worktree against this, each
+  built with the same scratch `TIDE_EXTERNAL_DIRS` folder, run alternately; the cost of the add in every access):
+  - A read-heavy measure (scratch, not committed: a kernel of 1,048,576 invocations gathering four lists 16 times each,
+    eight runs a frame, and a frag over 1920x1080 reading four lists 8 times a pixel; within 7 buffers, so both builds
+    run it), 600 frames, three pairs: GPU 1.705 / 1.701 / 1.701 -> 1.630 / 1.633 / 1.632 ms a frame (median), 4%
+    less: the count's check loads one header word where it loaded two, which more than pays for the add.
+  - `bench_occlusion` (4 blocks of 300 frames), six pairs, both orders: with occlusion (the culling's kernels and the
+    pyramid's) 0.329-0.331 -> 0.322-0.323 ms median, 2.4% less; without it the frame is the draws' (3.76-3.99 ms either
+    way, drifting over the runs, the later of each pair the higher whichever was later), the same bytes on and off.
+  - Mount & Rifle (D:/Projects/mount-and-rifle at 45c7cff, a copy of its `game` folder built only), its menu field scene,
+    1920x1080, `--profile --profile-warmup 300`, 1,500 frames, fresh `--data-dir`: GPU p50 5.038 / 5.065 / 5.048 ->
+    5.063 / 5.027 / 5.006 / 5.013 ms (three runs, one each way, had another program's GPU work in them, 9-10 ms, and
+    are left out); views and render as noisy as before (0.82-1.11 ms, 1.23-1.73 ms both ways).
+  - `tide_platform_kernels` as it was before (its sources, built in both): 820-860 ms a run both ways (six pairs, the
+    outliers either way), its 45 checks passing on both.
+- **Merged after dev's sixteen textures, D3D11 kernels and list reload fixes** (2026-11-05): storage after the 16
+  textures' and samplers' bindings, so the pools are at 33 and 34 and a run's record at 35 (`SHADER_STORAGE_BINDING` +
+  `TIDE_STORAGE_*` in `put_pools`; `shaders.h`'s kernels at 33/34), a pipeline's Vulkan layout its own bindings
+  (37 at the most, pushed where it fits); WebGPU binds at most 3 storage buffers of its default 8 and 16 textures and
+  samplers. Dev's "a list made where a freed one was gets its own buffer" holds as a range: `list_range` makes a new
+  range where the state isn't `made`, or its words (capacity times stride) or pool changed, and a range taken where
+  another list's was is zeroed (`zero_words`). The goldens changed from the pools' branch in their storage bindings
+  alone. Tests after the merge (sanitize, Vulkan validation layer): every `tidec_shaders_*`, `_spirv_*`, `_hlsl_*`
+  (fxc), `wgsl_*`, `tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid` (196); `tide_tests`, `tide_cli_tests`, every
+  `tidec_safety_*` (`gpu_lists_gpu` too), `tidec_error_kernel*`/`_gpu*`, `tide_platform_kernels` (61 checks, dev's
+  freed-list check among them), `_compute`, `_cull`, `_cull_decided`, `_occlusion`, `_draw`, `_targets`, `_shaders`,
+  `_prewarm`, `_gpu_functions`, `_reload_reads`, `_embed`, `tide_editor_embed` and their `_vulkan_sets` (182);
+  kernels, cull, cull_decided and occlusion with `TIDE_VULKAN_DESCRIPTOR_SETS=1`; web-debug `tide_platform_kernels`
+  (through its lost device), `_compute`, `_cull`, `_cull_fallback`, `_occlusion`, `_draw`, `_shaders`,
+  `tide_web_runtime` (its storage layout test now 4 at 33..36); the docs build.
+- **Merged after dev's samplers apart and texture arrays** (2026-11-05): dev's textures are images at 1 + 2i and its
+  samplers, counted apart, at 2 + 2j, 16 of each (the last 32), so the pools stay at 33 and 34 and a run's record at
+  35; a Vulkan layout is still 1 + 16 + 16 + 4 = 37 at the most (dev's alone was 40 with 7 storage buffers), pushed
+  where it fits and a set otherwise; WebGPU's bind group 16 textures, 16 samplers and 3 storage buffers, within its
+  defaults. Kernel pipelines and the culling's take their textures from dev's `shader_pipeline_textures` and bind them
+  with `bind_shader_textures` (`image`/`sampler` in place of `sample`); their storage is the pools as before. A texture
+  array is one texture of the 16, so nothing about storage changed. Golden `kernels_shared` written again (dev's new
+  sampler declaration with the pools; every other golden matched as merged). Tests (sanitize): every `tidec_*` with
+  `tide_tests` and `tide_cli_tests` (2,920); with the validation layer `tide_platform_embed`, `_draw`,
+  `_draw_vulkan_sets`, `_targets`, `_compute`, `_compute_vulkan_sets`, `_kernels`, `_occlusion`, `_cull`,
+  `_cull_decided`, `_shaders` (dev's texture-array draws among them), `_prewarm`, `_texture_capacity`,
+  `_gpu_functions`, `_reload_reads`, `tide_editor_embed` and every `tidec_safety_*_gpu` (22); kernels, cull,
+  cull_decided and occlusion with `TIDE_VULKAN_DESCRIPTOR_SETS=1` too (4); web-debug (SwiftShader)
+  `tide_platform_kernels`, `_compute`, `_cull`, `_cull_fallback`, `_occlusion`, `_draw`, `_targets`, `_shaders`,
+  `_texture_capacity`, `tide_web_runtime` and the e2e texture tests (`texture_arrays`, `texture_capacity`, `textures`,
+  `asset_textures`, `raw_texture_fields`, `mipmaps`, `wrap`, `render_depth`, `compute`) (19); the docs build.
+- **Gaps:**
+  - Unity's replay renames a buffer a kernel or copy writes after a draw of the frame read it (`Written`, notes/unity.md):
+    with pools, a kernel writing any list after a draw read another of the same pool copies the whole pool there, where
+    it copied one list. The same pictures; not measured in Unity, and the Sample's `ComputeReplayTests` weren't run
+    (no packet changed).
+  - A pool never shrinks: its size is the most its lists took at once (ranges let go of are taken again).
+  - A kernel that uses atomics reads its other lists of ints through `atomicLoad` (Tint's HLSL makes that an
+    `InterlockedOr` on Direct3D): CullListed's `depths`, `scratch` and the like. Measured on Vulkan only (above).
+  - Real-GPU WebGPU lanes and Android/Linux/macOS weren't run here (CI's, optional lanes).
 
 ## GPU lists under the library host (2026-11-05)
 
@@ -121,7 +281,8 @@ has no draw list). (A 2D or 3D `Draw.Instanced` over a GPU list wasn't moved by
   inline, as the HLSL translator takes them; capacity-guarded); shared atomic
   arrays through `need_shared_access`. `plan_kernel` plans one shader a kernel
   (`shader.compute`, `.kernel`): its values all uniforms, no engine header,
-  storage slots [lists][Add scratch][run record], at most 7, and `write_kernel`
+  storage slots [lists][Add scratch][run record], at most 7 (since "GPU lists in pools": two pools and the run
+  record, lists and scratch ranges of the pools, found by a table in the uniforms), and `write_kernel`
   writes its WGSL: the entry point sets `tide_inv_*`, calls the body (guarded by
   the run's size unless it waits), then each Add's scan of the group's flags
   (`tide_scan`, Hillis-Steele with barriers in uniform control flow) and its
@@ -334,7 +495,8 @@ culling and indirect emission), which this leaves alone. Every pick is Claude's,
   `kernels_shared_races`, whose HLSL fxc compiles (tidec_hlsl_kernels_shared_races). Cost: a shared load and a branch
   a write.
 - **Adds share one scan** in the kernel: `tide_scan` is `array<vec2u>` or `array<vec4u>` for 2 or 3 lists (a lane
-  each; at most 3, as 7 storage buffers bind a list and a scratch each and the run's record), one Hillis-Steele loop
+  each; at most 3, as 7 storage buffers bind a list and a scratch each and the run's record; since "GPU lists in
+  pools", any number, four a scan, `tide_scan1` and on), one Hillis-Steele loop
   for all of them, then each list's survivors and count by its lane. One list's WGSL is unchanged. The group's shared
   bytes now count the scan and `tide_zero` against 16 KiB (`plan_kernel`, an error at the run), which they didn't.
 - **Draw.Bounds for GPU vertices over CPU instances:** already worked (`draw_bounds` takes the place's bounds where
@@ -360,9 +522,12 @@ culling and indirect emission), which this leaves alone. Every pick is Claude's,
 - `TIDE_GPU_STORAGE` buffers: storage, vertices, indices, indirect arguments,
   copy source/destination, readback. Zeroed when made with no data.
 - Storage buffer `i` of a pipeline is at binding `TIDE_GPU_STORAGE_BINDING + i`
-  (33 + i since 2026-11-05, 25 + i before) of group 0, at most `TIDE_GPU_MAX_STORAGE` (7), after the uniform
-  block (0) and 16 textures' and samplers' bindings (1..32): notes/rendering.md, Sixteen textures a draw. A pipeline's layout is explicit (not
-  WGSL's `auto`), so a binding the shader leaves unused is still bound.
+  (33 + i since 2026-11-05, 25 + i before) of group 0, at most `TIDE_GPU_MAX_STORAGE` (4 since "GPU lists in
+  pools", 7 before), after the uniform block (0) and 16 textures' and samplers' bindings (1..32): notes/rendering.md,
+  Sixteen textures a draw. A pipeline's layout is explicit (not WGSL's `auto`), so a binding the shader leaves unused
+  is still bound.
+- `storage_most` (optional): the most bytes a storage buffer bound whole can be,
+  a multiple of 16; NULL for 128 MiB. What the pools grow to.
 - `tide_gpu_pipeline_desc.storage_count`, `.storage_writes[i]`: read-only
   (`var<storage, read>`) or written (`var<storage, read_write>`). Only compute
   pipelines write. Vertex and fragment stages read storage.
@@ -423,7 +588,8 @@ the spec is updated with the pick.
   element layout is another stride: the renderer makes the buffer again,
   empty, and the revision changes.
 - GPU layout: one `TIDE_GPU_STORAGE` buffer, 16 + capacity * stride * 4
-  bytes. Words 0..3 are a header: count, capacity, 0, 0. Element i starts at
+  bytes (since "GPU lists in pools", a range of one of two pools, as many words
+  rounded up to 4). Words 0..3 are a header: count, capacity, 0, 0. Element i starts at
   word 4 + i * stride. An element's words are its floats' then its ints'
   (`put_value`'s order, whole elements: no parts are left out, since kernels
   write them). stride is the element's word count exactly.
@@ -447,9 +613,11 @@ the spec is updated with the pick.
 - GPU code reaches a GPUList through a field of a component, singleton or
   values struct it takes (local fields included), or a function's GPUList
   parameter (since "Closing the gaps"). Each distinct list a
-  shader names is one storage slot (at most 7 with the engine's own, below);
+  shader names is one storage slot (at most 7 with the engine's own, below;
+  since "GPU lists in pools", 64, each a range of a pool);
   the slot is written (`read_write`) only in a kernel that writes it, and
-  declared `array<atomic<i32>>` in a kernel that uses atomics on it.
+  declared `array<atomic<i32>>` in a kernel that uses atomics on it (since, the
+  pool of ints is, in a kernel that uses atomics on any list of it).
 
 ### Kernels
 
@@ -487,7 +655,7 @@ the spec is updated with the pick.
   the size: an int, int2 or int3 of invocations, a `List<T>`'s count, or a
   GPUList's GPU-side count (indirect).
 - The run record: every kernel binds an engine storage buffer at the last
-  storage slot it uses + 1 (`tide_run`): words 0..2 the dispatch's groups,
+  storage slot it uses + 1 (`tide_run`; since "GPU lists in pools", at binding 35): words 0..2 the dispatch's groups,
   3 the total, 4..6 the size. A direct run's is written by the CPU; an
   indirect run's by the engine's `tide_run_size` compute pipeline from the
   list's count (groups = ceil(count / group size)), then `dispatch_indirect`

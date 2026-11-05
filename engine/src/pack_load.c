@@ -78,8 +78,11 @@ typedef struct packed_array {
     uint64_t version; // What's in its layers
     int32_t width, height;
     uint32_t layers;
-    const uint8_t **pixels; // Its own allocation: a pointer for each layer
+    const uint8_t **pixels;      // Its own allocation: a pointer for each layer, NULL for one kept as blocks alone
+    tide_texture_blocks *blocks; // ...and each layer's blocks, none for one kept as RGBA alone
 } packed_array;
+
+static tide_texture_blocks blocks_at(const packed_texture *t);
 
 // Only canonical blobs that passed full skinned-record validation are here.
 // Ordinary packed byte lists do not establish this provenance.
@@ -756,6 +759,7 @@ static void note_arrays(void)
         if (count == 0 || count > TIDE_TEXTURE_ARRAY_LAYERS) continue;
         packed_array array = {.named = texture_name(e->name, ALONE, NULL, 0), .layers = (uint32_t)count};
         array.pixels = tide_alloc_zeroed(count, sizeof *array.pixels);
+        array.blocks = tide_alloc_zeroed(count, sizeof *array.blocks);
         tide_sha256 s;
         tide_sha256_init(&s);
         bool whole = true;
@@ -764,16 +768,19 @@ static void note_arrays(void)
             memcpy(&handle, pack.region + e->offset + sizeof(tide_block) + (size_t)layer * sizeof handle, sizeof handle);
             packed_texture t;
             const uint64_t at = place_of(handle, pack.size);
-            whole = at != NOWHERE && texture_at(pack.region, pack.size, at, &t) && !t.blocks_only
+            whole = at != NOWHERE && texture_at(pack.region, pack.size, at, &t)
                  && (layer == 0 || (t.width == array.width && t.height == array.height));
+            if (whole) array.blocks[layer] = blocks_at(&t);
+            whole = whole && (!t.blocks_only || array.blocks[layer].pixels); // Blocks alone are its image: whole ones
             if (!whole) break;
             array.width = t.width;
             array.height = t.height;
-            array.pixels[layer] = pack.region + at + sizeof(tide_block) + 2u * sizeof(int32_t);
+            array.pixels[layer] = t.blocks_only ? NULL : pack.region + at + sizeof(tide_block) + 2u * sizeof(int32_t);
             tide_sha256_add(&s, &t.version, sizeof t.version);
         }
         if (!whole) {
             free(array.pixels);
+            free(array.blocks);
             continue;
         }
         uint8_t out[32];
@@ -833,7 +840,10 @@ void tide_pack_unload(void)
     free(pack.entries);
     free(pack.textures);
     free(pack.cubes);
-    for (uint32_t i = 0; i < pack.array_count; i++) free(pack.arrays[i].pixels);
+    for (uint32_t i = 0; i < pack.array_count; i++) {
+        free(pack.arrays[i].pixels);
+        free(pack.arrays[i].blocks);
+    }
     free(pack.arrays);
     pack.arrays = NULL;
     pack.array_count = 0;
@@ -1233,11 +1243,9 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
     return true;
 }
 
-tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
+// The blocks an image of the pack's keeps (its trailer's), or none.
+static tide_texture_blocks blocks_at(const packed_texture *t)
 {
-    if (!named || !pack.texture_places) return (tide_texture_blocks){0};
-    const packed_texture *t = texture_place(named);
-    if (t->named != named || t->clip) return (tide_texture_blocks){0};
     const uint64_t rgba_bytes = t->blocks_only ? 0u : (uint64_t)(uint32_t)t->width * (uint32_t)t->height * 4u;
     const uint64_t trailer_at = (uint64_t)t->offset + sizeof(tide_block) + 8u + rgba_bytes;
     tide_block block;
@@ -1251,6 +1259,22 @@ tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
         || metadata[2] != levels || metadata[3] != bytes
         || 8u + rgba_bytes + 16u + bytes > next) return (tide_texture_blocks){0};
     return (tide_texture_blocks){pack.region + (size_t)trailer_at + 16u, metadata[1], levels, bytes};
+}
+
+tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
+{
+    if (!named || !pack.texture_places) return (tide_texture_blocks){0};
+    const packed_texture *t = texture_place(named);
+    if (t->named != named || t->clip) return (tide_texture_blocks){0};
+    return blocks_at(t);
+}
+
+const tide_texture_blocks *tide_pack_texture_array_blocks(const uint64_t named)
+{
+    for (uint32_t i = 0; named && i < pack.array_count; i++) {
+        if (pack.arrays[i].named == named) return pack.arrays[i].blocks;
+    }
+    return NULL;
 }
 
 tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e)

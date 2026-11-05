@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 15u
+#define TIDE_EMBED_ABI 16u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -239,6 +239,10 @@ typedef enum tide_embed_render_op {
     // texture array, read by a uv and a layer (TIDE_GPU_READ_ARRAY), its depth TIDE_GPU_READ_DEPTH_ARRAY
     TIDE_EMBED_RENDER_ARRAY,
     TIDE_EMBED_RENDER_ARRAY_LAYER, // target id, array id, layer: a target whose color and depth are that layer of the array's
+    // id, format (tide_gpu_format: 0 RGBA8, 2 R16F), width, height, layers: an array of zeros, written a part at a time
+    TIDE_EMBED_RENDER_ARRAY_OF,
+    // id, layer, x, y, width, height, then that part's pixels, its rows one after another, padded to 4 bytes
+    TIDE_EMBED_RENDER_ARRAY_WRITE,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);

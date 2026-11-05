@@ -197,6 +197,12 @@ tide_int2 tide_texture_size(const tide_texture_ref texture)
 
 tide_int2 tide_texture_array_size(const tide_texture_array_ref array)
 {
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_array_grid(array, &grid, &shape)) {
+        const tide_int3 extent = tide_grid_array_extent(grid, &shape);
+        return tide_i2(extent.x, extent.y);
+    }
     if (!array.target.id) {
         int32_t width, height;
         uint32_t layers;
@@ -426,6 +432,50 @@ static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_gr
     const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_GRID, g.at, version, width, height,
                                                  colors ? TIDE_TEXELS_BYTES : TIDE_TEXELS_HALF,
                                                  !colors ? KIND_FLOATS : raw ? KIND_RAW : KIND_COLORS, &pixels, &kept);
+    if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
+    return slot;
+}
+
+// A Grid3's cells as an array's layers: one under another, written where its chunks changed, as a grid's texture is
+static bool see_grid_array(const tide_grid g, const tide_grid_shape *s, grid_seen *v)
+{
+    const bool colors = s->cell == sizeof(tide_color);
+    if (s->dims != 3u || (!colors && s->cell != sizeof(float)) || !see_grid(g, s, v)) return false;
+    const int32_t width = v->dir.size[0], height = v->dir.size[1], depth = v->dir.size[2];
+    if (width <= 0 || height <= 0 || depth <= 0 || width > TIDE_GRID_TEXTURE_MOST || height > TIDE_GRID_TEXTURE_MOST
+        || depth > TIDE_TEXTURE_ARRAY_LAYERS) return false;
+    const uint64_t across = ((uint64_t)width + (1u << s->shift[0]) - 1u) >> s->shift[0];
+    const uint64_t down = ((uint64_t)height + (1u << s->shift[1]) - 1u) >> s->shift[1];
+    const uint64_t deep = ((uint64_t)depth + (1u << s->shift[2]) - 1u) >> s->shift[2];
+    return v->dir.records <= across * down * deep;
+}
+
+tide_int3 tide_grid_array_extent(const tide_grid g, const tide_grid_shape *s)
+{
+    grid_seen v;
+    if (!see_grid_array(g, s, &v)) return (tide_int3){0, 0, 0};
+    return (tide_int3){v.dir.size[0], v.dir.size[1], v.dir.size[2]};
+}
+
+#define KIND_ARRAY_COLORS UINT64_C(0x4741434C)
+#define KIND_ARRAY_FLOATS UINT64_C(0x4741464C)
+
+uint32_t tide_draw_grid_array_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+{
+    grid_seen v;
+    if (!see_grid_array(g, s, &v)) return 0;
+    const bool colors = s->cell == sizeof(tide_color);
+    const int32_t width = v.dir.size[0], height = v.dir.size[1], depth = v.dir.size[2];
+    const uint64_t version = (v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g)) ^ UINT64_C(0x4152524159); // Not its Texture's
+    const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u};
+    // Its layers one under another: a row of the texture is a row of a layer
+    const cells_box box = {.dims = 3u, .extent = {width, height, depth}, .across = 1, .wide = (size_t)width * w.bytes};
+    uint8_t *pixels;
+    bool kept;
+    const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_GRID_ARRAY, g.at, version, width, height * depth,
+                                                 colors ? TIDE_TEXELS_BYTES : TIDE_TEXELS_HALF,
+                                                 colors ? KIND_ARRAY_COLORS : KIND_ARRAY_FLOATS, &pixels, &kept);
+    if (slot) d->textures[slot - 1u].layers = (uint32_t)depth;
     if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
     return slot;
 }

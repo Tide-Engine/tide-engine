@@ -468,8 +468,13 @@ static inline tide_wrap tide_wrap_of(const int32_t wrap)
 }
 
 enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 16 };
-// The most storage buffers a shader binds (gpu.h's TIDE_GPU_MAX_STORAGE): GPU lists, and a kernel's own.
-enum { TIDE_SHADER_STORAGE = 7 };
+// The most GPU lists one shader names: a shader binds the lists' pools (TIDE_STORAGE_WORDS, TIDE_STORAGE_INTS) and
+// finds each list by its place in them, so this is a table's, not the GPU's (gpu.h's TIDE_GPU_MAX_STORAGE).
+enum { TIDE_SHADER_STORAGE = 64 };
+// The storage buffers a shader binds, at gpu.h's TIDE_GPU_STORAGE_BINDING + these: the pool of the GPU lists whose
+// elements aren't ints, the pool of those whose elements are (GPUList<int>, which atomics take: a kernel that uses
+// atomics declares that pool atomic), and for a kernel its run's record (TIDE_GPU_RUN_WORDS).
+enum { TIDE_STORAGE_WORDS = 0, TIDE_STORAGE_INTS = 1, TIDE_STORAGE_RUN = 2 };
 
 // How a shader's samplers sample, two banks of eight (a tide_draw_run's
 // `sampling`, by tide_shader's samplers): bit i is set for sampler i read blended with
@@ -1054,8 +1059,9 @@ typedef struct tide_texture_array_ref {
     tide_render_target target; // An array that's drawn into; its id is 0 for the pack's
     uint64_t named;            // The pack's: what its declaration is named by
     uint32_t layers;           // One that's drawn into: how many (the pack's says its own)
-    uint32_t reserved;
+    uint32_t reserved;         // TIDE_TEXTURE_ARRAY_GRID for a Grid3's: `named` its handle, `layers` its cells' shape
 } tide_texture_array_ref;
+#define TIDE_TEXTURE_ARRAY_GRID 0x47524944u
 
 // An array to draw into: `layers` images (1 to TIDE_TEXTURE_ARRAY_LAYERS) of `size` (a target's: logical pixels
 // at the display's scale, or its own pixels a unit), each holding `format` (a color's, or TIDE_TARGET_DEPTH for
@@ -1136,6 +1142,9 @@ typedef struct tide_draw_texture {
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
     uint32_t capacity; // Bytes `pixels` has room for: 0 where they aren't the list's own
     uint32_t layers;   // An array's: how many images of `width` by `height` (TIDE_PIXELS_*_ARRAY)
+    // An array of the pack's: each layer's blocks where it keeps them (tide_pack_texture_array_blocks), where `pixels`
+    // has NULL for a layer kept as blocks alone
+    const tide_texture_blocks *layer_blocks;
     // width * height pixels, rows from the first, 4 bytes each or 2 (tide_texels_bytes): the list's own copy,
     // or for TIDE_PIXELS_PACK the pack's, where the pack has them, noted again by each frame that draws with them
     uint8_t *pixels;
@@ -1168,6 +1177,10 @@ enum {
     // is given either. An array's depth is TIDE_PIXELS_TARGET_DEPTH of the array's id (TIDE_SHADER_READ_DEPTH_ARRAY)
     TIDE_PIXELS_TARGET_ARRAY,
     TIDE_PIXELS_PACK_ARRAY,
+    // A Grid3's cells as an array (tide_texture_array_of_grid): `width` by `height` pixels holding its `layers` one
+    // under another, each `height / layers` rows, bytes or halves as a grid's texture's are, kept and written where
+    // its chunks changed
+    TIDE_PIXELS_GRID_ARRAY,
 };
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a
@@ -1621,11 +1634,17 @@ typedef struct tide_shader {
     const char *wgsl_listed;
     const uint32_t *spirv_listed;
     uint32_t spirv_listed_words;
-    // The GPU lists it reads, and a kernel's writes too (tide_gpu_list), each a storage buffer at storage slot 0
-    // on (gpu.h's TIDE_GPU_STORAGE_BINDING + slot): what a run's `storage` names, in that order. Bit i of
-    // `storage_writes` is set for one a kernel writes. None for a shader of no GPU list's.
+    // The GPU lists it reads, and a kernel's writes too (tide_gpu_list), its slots 0 on: what a run's `storage`
+    // names, in that order. Bit i of `storage_writes` is set for one a kernel writes, and of `storage_ints` for one
+    // whose elements are ints, which is in the pool of ints (TIDE_STORAGE_INTS; the others are in TIDE_STORAGE_WORDS).
+    // It finds each by a table in its uniforms, from `storage_table` (bytes into the game's uniforms) on: each slot's
+    // list's place in its pool (the word its header starts at) and capacity, two words a slot, which the renderer
+    // writes as it draws or runs it; then for a kernel each of its Adds' scratch's place in that list's pool, a word
+    // each. None for a shader of no GPU list's.
     uint32_t storage_count;
-    uint32_t storage_writes;
+    uint64_t storage_writes;
+    uint64_t storage_ints;
+    uint32_t storage_table;
     // An Instanced draw over a GPU list's: 1 + the storage slot its instances are read from, each by its place,
     // and the draw is indirect (tide_draw_run.indirect). 0 for another. In 3D, 1 + the float word of its uniforms
     // where Draw.Transform's matrix goes, which its instances' transforms go through on the GPU: written as the
@@ -1644,15 +1663,15 @@ typedef struct tide_shader {
     uint32_t index_storage;
     // A kernel (Tide's `compute`): code run over a size, not tied to a draw. Its WGSL's entry point is `compute`,
     // with `group` invocations a workgroup, and nothing above about vertices, instances, outputs or blits is read.
-    // Its uniforms are the game's alone (no engine header). After its lists, at the storage slots that follow
-    // them: each of its ordered Adds' scratch (`adds`), then its run record (TIDE_GPU_RUN_WORDS words: the
-    // dispatch's groups, the invocations, the size), which every kernel reads.
+    // Its uniforms are the game's alone (no engine header). Each of its ordered Adds (`adds`) has a scratch in the
+    // pool of the list it adds to, each group's survivors compacted (tide_gpu_add_group_words), and it binds its run
+    // record (TIDE_STORAGE_RUN: TIDE_GPU_RUN_WORDS words, the dispatch's groups, the invocations, the size), which
+    // every kernel reads.
     bool compute;
     uint32_t group[3];
     uint32_t add_count;
     struct {
-        uint8_t list;    // The storage slot of the list it adds to
-        uint8_t scratch; // ...and its scratch's: each group's survivors, compacted (TIDE_GPU_ADD_GROUP_WORDS)
+        uint8_t list;    // The slot of the list it adds to
         uint16_t stride; // Words an element
     } adds[TIDE_SHADER_STORAGE];
 } tide_shader;
@@ -1697,10 +1716,33 @@ static inline tide_filter tide_shader_texture_filter(const tide_shader *s, const
     return most;
 }
 
-// The storage slots a kernel binds: its lists, its Adds' scratch, then its run record.
+// The storage buffers a shader's pipeline binds: both pools for one that names a GPU list, and a kernel's run
+// record after them.
 static inline uint32_t tide_shader_compute_storage(const tide_shader *s)
 {
-    return s->storage_count + s->add_count + 1u;
+    return s->compute ? TIDE_STORAGE_RUN + 1u : s->storage_count ? TIDE_STORAGE_INTS + 1u : 0u;
+}
+
+// The words of its table (storage_table): two a list, and a kernel's one an Add.
+static inline uint32_t tide_shader_table_words(const tide_shader *s)
+{
+    return 2u * s->storage_count + (s->compute ? s->add_count : 0u);
+}
+
+// Whether slot `slot`'s list is one of ints, in that pool.
+static inline bool tide_shader_storage_ints(const tide_shader *s, const uint32_t slot)
+{
+    return slot < 64u && (s->storage_ints >> slot & 1u) != 0;
+}
+
+// Whether a kernel writes pool `pool` (TIDE_STORAGE_WORDS or TIDE_STORAGE_INTS): a list of it, by index, an Add or
+// an atomic.
+static inline bool tide_shader_pool_written(const tide_shader *s, const uint32_t pool)
+{
+    for (uint32_t k = 0; k < s->storage_count && k < 64u; k++) {
+        if ((s->storage_writes >> k & 1u) && tide_shader_storage_ints(s, k) == (pool == TIDE_STORAGE_INTS)) return true;
+    }
+    return false;
 }
 
 static inline uint32_t tide_shader_outputs(const tide_shader *s)
@@ -1792,20 +1834,27 @@ static inline uint32_t tide_draw_run_stride(const tide_draw_run *r)
 // write and shaders read, and whose count is on the GPU too. Machine-local, as
 // render targets are: never match state.
 //
-// On the GPU a list is one storage buffer (gpu.h's TIDE_GPU_STORAGE) of
-// 16 + capacity * stride * 4 bytes: words 0 to 3 are its header, the count
-// (0 to the capacity), the capacity, and two zeros; element i's `stride`
-// words start at word 4 + i * stride, its floats' bits, then its ints, as a
-// value's words are everywhere in shaders (shader.c, put_value).
+// On the GPU a list is a range of 4 + capacity * stride words in one of the
+// renderer's two pools (storage buffers, gpu.h's TIDE_GPU_STORAGE): that of
+// lists of ints (GPUList<int>, made with TIDE_GPU_LIST_INTS), or that of the
+// others. Words 0 to 3 of its range are its header, the count (0 to the
+// capacity), the capacity, and two zeros; element i's `stride` words start at
+// word 4 + i * stride, its floats' bits, then its ints, as a value's words are
+// everywhere in shaders (shader.c, put_value). A shader binds the pools, and
+// finds a list by its range's place there and its capacity in its uniforms
+// (tide_shader.storage_table); what it reads and writes stays in that range.
 //
 // A made list's id is its state's address with TIDE_GPU_LIST_MANAGED set; 0
 // is no list, which runs over and draws of treat as empty. Copies share the
 // list. Its contents stay from frame to frame until something writes them; a
-// renderer that makes its buffer again (a device that was lost, a Resize,
+// renderer that makes its range again (a device that was lost, a Resize,
 // another stride across a hot reload) makes it empty, and its
 // content_revision changes so that the game knows to fill it again.
 #define TIDE_GPU_LIST_MANAGED (UINT64_C(1) << 63)
 #define TIDE_GPU_LIST_HEADER_WORDS 4u
+// In the stride tide_gpu_list_make, _adopt and _recreate take: the elements are ints (a GPUList<int>'s), and the list
+// is in the pool of ints. The stride is the other bits.
+#define TIDE_GPU_LIST_INTS (UINT32_C(1) << 31)
 // The most words a list's elements take, so that its bytes, with its header, fit what every backend binds as one
 // storage buffer: 128 MiB, WebGPU's default maxStorageBufferBindingSize and Vulkan's least maxStorageBufferRange
 #define TIDE_GPU_STORAGE_MOST_BYTES (UINT32_C(1) << 27)
@@ -1816,7 +1865,8 @@ typedef struct tide_gpu_list_state {
     struct tide_gpu_list_state **owner;
     uint32_t capacity;  // Elements
     uint32_t stride;    // Words an element
-    uint64_t version;   // Changed where the renderer makes its buffer again, empty: a Resize, another stride
+    bool ints;          // Its elements are ints (TIDE_GPU_LIST_INTS): it's in the pool of ints
+    uint64_t version;   // Changed where the renderer makes its range again, empty: a Resize, another stride or kind
     uint64_t reload_id; // Temporary opaque identity while restoring another address space
     int64_t content_revision;
     bool made; // A renderer has made its buffer once: one made again is the list emptied (tide_gpu_list_made)
@@ -1827,7 +1877,8 @@ typedef struct tide_gpu_list_state {
 typedef struct tide_gpu_list {
     uint64_t id;
     // Its capacity as last made or resized through this reference: what a web reload, which can't read the
-    // state of another address space, makes it again with (tide_gpu_list_recreate)
+    // state of another address space, makes it again with (tide_gpu_list_recreate), and its stride as it was made
+    // (TIDE_GPU_LIST_INTS in it for ints)
     int32_t capacity;
     uint32_t stride;
 } tide_gpu_list;

@@ -1487,6 +1487,10 @@ typedef struct shader_texture {
     int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
 } shader_texture;
 
+// The uniform ints a size (shader.sizes) takes: a texture's two, its width and height, and an array's three, its
+// layers' count after them.
+int shader_size_words(const shader_texture *t);
+
 // One way a shader's code reads one of its textures: the texture, how (a color's filter and wrap, a depth read or
 // compared, a cube's filter), and the sampler that reads it so (shader.samplers).
 typedef struct shader_way {
@@ -1516,9 +1520,10 @@ typedef struct shader_storage {
     const struct decl *source;
     const field *field;
     storage_role role; // A field's list, or one the draw gives: its instances, its vertices or its indices (no field)
-    bool write;  // A kernel writes it: var<storage, read_write>
-    bool atomic; // ...with atomics: its words are array<atomic<i32>>
-    bool add;    // ...and Adds to it: in invocation order, through a scratch buffer after the lists
+    bool ints;   // Its elements are ints (a GPUList<int>'s): it's in the pool of ints, the other's otherwise
+    bool write;  // A kernel writes it: its pool is var<storage, read_write>
+    bool atomic; // ...with atomics: the pool of ints is array<atomic<i32>> in that kernel
+    bool add;    // ...and Adds to it: in invocation order, through a scratch in its pool
 } shader_storage;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1546,7 +1551,8 @@ typedef struct shader {
     bool gpu_instances;  // ...a GPU list's, read from its storage slot (instance_storage), drawn indirect
     bool compute;        // A kernel's: `kernel`, run by GPU.Run, with no vertex, vert or frag
     struct decl *kernel;
-    VEC(shader_storage) storage; // The GPU lists its code names, a storage buffer each, in slot order
+    VEC(shader_storage) storage; // The GPU lists its code names, in slot order, each a range of one of two pools
+    int storage_at;              // The uniforms' int word its table starts at (tide_shader.storage_table), or -1
     int instance_storage;        // gpu_instances: the slot of the list its instances are read from
     bool gpu_vertices;           // Its vertices are a GPU list's, read by their index from slot vertex_storage: no attributes
     bool gpu_indices;            // ...and its indices too, from slot index_storage, each vertex by its place among them

@@ -2311,6 +2311,12 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         gen_mesh_of_asset(g, o, e, want);
         return;
     }
+    if (want.kind == TY_TEXTURE_ARRAY && have.kind == TY_GRID) { // A Grid3 where an array goes: its layers, its z
+        sb_put(o, "tide_texture_array_of_grid(");
+        gen_expr(g, o, e);
+        sb_printf(o, ", &%s)", grid_shape_name(have.decl));
+        return;
+    }
     if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
         // A grid of colors or of floats where a Texture goes: the texture it is, sampled as its declaration
         // says ([Filter], [Wrap]), which the value then carries
@@ -4221,11 +4227,13 @@ static void gen_lod_layout(sb *o, const decl *vertex)
 // ---------------------------------------------------------------------------
 // GPU lists and kernels' runs, in local code (notes/compute.md)
 
-static int gpu_list_stride(const decl *list)
+// A GPU list's stride as tide_gpu_list_make takes it: its element's words, and TIDE_GPU_LIST_INTS for a
+// GPUList<int>, which the renderer keeps in its pool of ints (what kernels' atomics are on).
+static unsigned gpu_list_stride(const decl *list)
 {
     int floats = 0, ints = 0;
     shader_part_words(list->fields.items[0].type, NULL, &(int){0}, &floats, &ints);
-    return floats + ints;
+    return (unsigned)(floats + ints) | (list->fields.items[0].type.kind == TY_INT ? 0x80000000u : 0u);
 }
 
 static void gen_shader_value(sb *o, const char *to, type t, const char *access, int *f, int *i);
@@ -4321,7 +4329,7 @@ static bool gen_gpu(gen *g, sb *o, const expr *e)
     case GPU_MAKE:
         sb_put(o, "tide_gpu_list_make(");
         gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
-        sb_printf(o, ", %du)", gpu_list_stride(e->type.decl));
+        sb_printf(o, ", %uu)", gpu_list_stride(e->type.decl));
         return true;
     case GPU_CAPACITY:
     case GPU_REVISION:
@@ -21983,7 +21991,7 @@ static void build_pack(gen *g)
             uint64_t *layers = arena_alloc(sizeof *layers * (size_t)(v->count ? v->count : 1));
             uint32_t extra;
             for (int k = 0; k < v->count; k++) {
-                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, &extra, prog->game_folder, NULL);
+                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, &extra, prog->game_folder, NULL);
             }
             tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
                            (uint32_t)(v->count ? v->items[0].image.width : 0));
@@ -23788,8 +23796,8 @@ static void gen_resource_value(gen *g, const type t, const char *at, const char 
         return;
     }
     if (t.kind == TY_GPU_LIST) { // Kept, or made again empty where its elements' words changed (tide_gpu_list_adopt)
-        const int stride = gpu_list_stride(t.decl);
-        sb_printf(o, "%sif (%s.id) {\n%s    if (same_memory) tide_gpu_list_adopt(&%s, %du);\n%s    else %s = tide_gpu_list_recreate(%s, %du);\n%s}\n",
+        const unsigned stride = gpu_list_stride(t.decl);
+        sb_printf(o, "%sif (%s.id) {\n%s    if (same_memory) tide_gpu_list_adopt(&%s, %uu);\n%s    else %s = tide_gpu_list_recreate(%s, %uu);\n%s}\n",
                   pad, at, pad, at, stride, pad, at, at, stride, pad);
         return;
     }
@@ -25192,6 +25200,19 @@ static void gen_shader_skin_bindings(sb *o, const shader *sh)
     }
 }
 
+// An array's size and count, for code the GPU runs that reads them: three of the uniforms' ints from `at`.
+static void gen_array_size(sb *o, const int t, const char *from, const type held, const int at)
+{
+    if (held.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size((tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, "
+                     ".target = (%s).target});\n    tide_uniforms.i[%d] = tide_depth_array_count(%s);\n", t, from, at + 2, from);
+    } else {
+        sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_array_size(%s);\n    tide_uniforms.i[%d] = tide_texture_array_count(%s);\n",
+                  t, from, at + 2, from);
+    }
+    sb_printf(o, "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n", at, t, at + 1, t);
+}
+
 // What a shader's textures are, for its draw or run: each one's slot of the list's (tide_textures), and how each
 // of its samplers samples, the bits of `blended` and the expressions `carried` adds for what a Texture given says.
 static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, uint64_t *blended, sb *carried)
@@ -25339,6 +25360,22 @@ static void gen_storage_source(sb *o, const shader *sh, const int i)
     sb_printf(o, "tide_%sb%d->%s", st->field->is_local ? "l" : "", b, field_cname(st->field));
 }
 
+// A tide_shader's GPU lists: how many, which a kernel writes, which are of ints, and where its table starts in its
+// uniforms of the game's, in bytes (the floats' packs, then the ints' words before it).
+static void gen_shader_storage(sb *o, const shader *sh)
+{
+    if (!sh->storage.count) return;
+    uint64_t writes = 0, ints = 0;
+    for (int i = 0; i < sh->storage.count && i < 64; i++) {
+        if (sh->storage.items[i].write) writes |= UINT64_C(1) << i;
+        if (sh->storage.items[i].ints) ints |= UINT64_C(1) << i;
+    }
+    sb_printf(o, "    .storage_count = %d,\n", sh->storage.count);
+    if (writes) sb_printf(o, "    .storage_writes = 0x%llxull,\n", (unsigned long long)writes);
+    if (ints) sb_printf(o, "    .storage_ints = 0x%llxull,\n", (unsigned long long)ints);
+    sb_printf(o, "    .storage_table = %d,\n", 16 * word_packs(sh->uniform_floats) + 4 * sh->storage_at);
+}
+
 // The GPU lists a shader reads and writes, as its wrapper hands them on: `tide_storage`.
 static void gen_storage_array(sb *o, const shader *sh)
 {
@@ -25377,14 +25414,10 @@ static void gen_kernel(gen *g, const shader *sh, const int s)
     sb_printf(o, "    .id = 0x%llxull,\n    .uniform_floats = %d,\n    .uniform_ints = %d,\n    .texture_count = %d,\n",
               (unsigned long long)id, word_packs(sh->uniform_floats), word_packs(sh->uniform_ints), sh->textures.count);
     shader_put_texture_reads(o, sh);
-    unsigned writes = 0;
     int adds = 0;
-    for (int i = 0; i < sh->storage.count; i++) {
-        if (sh->storage.items[i].write) writes |= 1u << i;
-        adds += sh->storage.items[i].add;
-    }
-    sb_printf(o, "    .storage_count = %d,\n    .storage_writes = 0x%xu,\n    .compute = true,\n    .group = {%d, %d, %d},\n",
-              sh->storage.count, writes, k->group[0], k->group[1], k->group[2]);
+    for (int i = 0; i < sh->storage.count; i++) adds += sh->storage.items[i].add;
+    gen_shader_storage(o, sh);
+    sb_printf(o, "    .compute = true,\n    .group = {%d, %d, %d},\n", k->group[0], k->group[1], k->group[2]);
     if (adds) {
         sb_printf(o, "    .add_count = %d,\n    .adds = {", adds);
         for (int i = 0, a = 0; i < sh->storage.count; i++) {
@@ -25392,7 +25425,7 @@ static void gen_kernel(gen *g, const shader *sh, const int s)
             const type element = sh->storage.items[i].field->type.decl->fields.items[0].type;
             int floats = 0, ints = 0;
             shader_part_words(element, NULL, &(int){0}, &floats, &ints);
-            sb_printf(o, "%s{%d, %d, %d}", a ? ", " : "", i, sh->storage.count + a, floats + ints);
+            sb_printf(o, "%s{%d, %d}", a ? ", " : "", i, floats + ints);
             a++;
         }
         sb_put(o, "},\n");
@@ -25463,6 +25496,10 @@ static void gen_kernel(gen *g, const shader *sh, const int s)
             sb converted = {0};
             sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
             from = converted;
+        }
+        if (source_type.kind == TY_TEXTURE_ARRAY || source_type.kind == TY_DEPTH_TEXTURE_ARRAY) { // ...and its layers
+            gen_array_size(o, t, from.data, source_type, texture->count_at);
+            continue;
         }
         sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"
                      "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n",
@@ -25579,7 +25616,7 @@ static void gen_shaders(gen *g)
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
         if (sh->blit) sb_put(o, "    .blit = true,\n");
         if (sh->frag && sh->frag->cutout) sb_put(o, "    .cutout = true,\n"); // Its alpha is its coverage
-        if (sh->storage.count) sb_printf(o, "    .storage_count = %d,\n", sh->storage.count); // The GPU lists it reads
+        gen_shader_storage(o, sh); // The GPU lists it reads
         if (sh->gpu_instances) sb_printf(o, "    .instance_storage = %d,\n", sh->instance_storage + 1);
         if (sh->through_at >= 0) sb_printf(o, "    .instance_through = %d,\n", sh->through_at + 1);
         if (sh->sides_at >= 0) sb_printf(o, "    .instance_sides = %d,\n", sh->sides_at + 1);
@@ -25748,6 +25785,10 @@ static void gen_shaders(gen *g)
                 sb converted = {0};
                 sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
                 from = converted;
+            }
+            if (source_type.kind == TY_TEXTURE_ARRAY || source_type.kind == TY_DEPTH_TEXTURE_ARRAY) { // ...and its layers
+                gen_array_size(o, t, from.data, source_type, texture->count_at);
+                continue;
             }
             if (source_type.kind == TY_DEPTH_TEXTURE) {
                 sb converted = {0};

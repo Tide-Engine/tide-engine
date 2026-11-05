@@ -944,7 +944,21 @@ frag Lit(Vertex3 vertex, out Color color, Lamp lamp, Sun sun)
 }
 ```
 
-`array.size` and `array.count` say a layer's pixels and how many there are, in a view. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
+`array.size` and `array.count` say a layer's pixels and how many there are, in a view or a frag. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
+
+An asset's layers are compressed as a [`Texture` asset's](./assets.md) are, where they're big enough; `[Lossless]` before it keeps them exact.
+
+A `Grid3<Color>` or a `Grid3<float>` is an array wherever one goes, its z its layers, as a `Grid2` of them is a texture: the GPU gets the parts whose cells changed.
+
+```tide
+local singleton Terrain { Grid3<Color> paint = Grid3(256, 256, 4); TextureArray layers; }
+
+view Paint(mut Terrain terrain)
+{
+    terrain.paint[10, 20, 2] = Color.red; // Layer 2, sent as that part alone
+    terrain.layers = terrain.paint;
+}
+```
 
 ## Where the pixel is
 
@@ -1291,6 +1305,7 @@ view Setup(mut Meadow meadow)
 - Kernels write `list[i] = value` (past the capacity it goes nowhere, and the count stays as it was), `list.Add(value)` and, on a `GPUList<int>`, atomics.
 - Local code sends a list's elements with `list.Set(items)`, sets the count with `list.Clear()` and `list.SetCount(n)`, in frame order with the draws and runs around them; `list.Resize(capacity)` makes it empty at another capacity, and `list.Dispose()` lets it go.
 - `list.contentRevision` changes when the list was made again empty: a lost device, a `Resize`, or a hot reload that changed its element. A game that filled it once fills it again then.
+- A frag, vert or kernel can name up to 64 GPU lists, and a kernel can `Add` to as many as it names. Lists live side by side in the GPU's memory; one can never read or change another's elements.
 
 Functions the GPU runs take a GPU list as a parameter, `GPUList<T>`, as they take a `List<T>`: the call names one by its field, or passes on its own parameter. What a kernel can do to a list, a function it calls can do to the one it's given, and the kernel then does it to the list it passed: write elements, `Add` and atomics.
 

@@ -4,6 +4,10 @@ scene Main { }
 // with its depth beside it, each read by a uv and a layer.
 asset TextureArray sky = "cubes/sky/sky_??.png";
 asset TextureArray picked = ["cubes/sky/sky_pz.png", "cubes/sky/sky_px.png", "cubes/sky/sky_pz.png"];
+// Images big enough to be compressed, each as a Texture's is: one opaque (BC1), one with alpha (BC3); and kept exact
+asset TextureArray packed = ["texture_compression_assets/opaque.png", "texture_compression_assets/alpha.png"];
+[Lossless]
+asset TextureArray exact = ["texture_compression_assets/opaque.png", "texture_compression_assets/alpha.png"];
 
 local singleton Art
 {
@@ -11,6 +15,9 @@ local singleton Art
     TextureArray shadows;
     DepthTextureArray depths;
     TextureArray kept;
+    Grid3<float> heights = Grid3(5, 3, 4); // A Grid3 of floats...
+    TextureArray fromGrid;                 // ...as an array, its z its layers
+    int gridCount;
     List<Vertex> quad;
     List<int> indices;
     int count;
@@ -24,12 +31,14 @@ local singleton Art
 frag Show(Vertex vertex, out Color color, Art art)
 {
     float lit = art.depths.Compare(vertex.uv, 2, 0.5);
-    color = art.drawn.Sample(vertex.uv, 1) * art.kept.Sample(vertex.uv, 0) + Color(lit, art.depths.Sample(vertex.uv, 0), 0);
+    color = art.drawn.Sample(vertex.uv, 1) * art.kept.Sample(vertex.uv, 0)
+        + Color(lit, art.depths.Sample(vertex.uv, 0), art.fromGrid.Sample(vertex.uv, 3).r);
 }
 
 frag Packed(Vertex vertex, out Color color)
 {
-    color = sky.Sample(vertex.uv, 3) + picked.Sample(vertex.uv, int(vertex.uv.x * 3), Filter.Point, Wrap.Repeat);
+    color = sky.Sample(vertex.uv, 3) + picked.Sample(vertex.uv, int(vertex.uv.x * 3), Filter.Point, Wrap.Repeat)
+        + packed.Sample(vertex.uv, 1) + exact.Sample(vertex.uv, 0);
 }
 
 view Make(mut Art art)
@@ -40,6 +49,8 @@ view Make(mut Art art)
         art.shadows = TextureArray(64, 64, 4, 1, Format.Depth);
         art.depths = art.shadows.depth;
         art.kept = sky;
+        art.heights[4, 2, 3] = 0.5;
+        art.fromGrid = art.heights;
         art.quad = [Vertex { position = float2(0, 0), uv = float2(0, 0) },
                     Vertex { position = float2(32, 0), uv = float2(1, 0) },
                     Vertex { position = float2(32, 32), uv = float2(1, 1) },
@@ -53,6 +64,7 @@ view Make(mut Art art)
     art.depthCount = art.depths.count;
     art.assetCount = sky.count;
     art.pickedCount = picked.count;
+    art.gridCount = art.fromGrid.count;
     TextureArray empty = default;
     art.none = empty.count;
     art.drawn.layers[1].Clear(Color.red);

@@ -315,6 +315,9 @@ tide_texture_array_ref tide_pack_texture_array_of(const tide_pack_entry *e);
 // under that name, or one whose layers aren't of one size. They stay where they are until another pack is loaded.
 bool tide_pack_texture_array_find(uint64_t named, int32_t *width, int32_t *height, uint32_t *layers, uint64_t *version,
                                   const uint8_t *const **pixels);
+// ...and each layer's blocks (compressed, or authored mip chains), as long as its pixels stay: a layer kept as blocks
+// alone has NULL pixels above, and one kept as RGBA alone no blocks. NULL for no array under that name.
+const tide_texture_blocks *tide_pack_texture_array_blocks(uint64_t named);
 
 // A clip's entry as the value the game reads: a Clip that names its sound by
 // its declaration, as a Texture names its image (above). Lists and maps of

@@ -440,6 +440,9 @@ int32_t tide_depth_array_count(const tide_depth_ref depths)
 
 int32_t tide_texture_array_count(const tide_texture_array_ref array)
 {
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_array_grid(array, &grid, &shape)) return tide_grid_array_extent(grid, &shape).z;
     if (!array.target.id) {
         int32_t width, height;
         uint32_t layers;
@@ -2639,7 +2642,7 @@ static uint32_t pack_cube(tide_draw_list *d, const uint64_t version, const int32
 
 // The list's texture for an array of the pack's, whose layers' pixels are where the pack has them.
 static uint32_t pack_array(tide_draw_list *d, const uint64_t version, const int32_t width, const int32_t height,
-                           const uint32_t layers, const uint8_t *const *pixels)
+                           const uint32_t layers, const uint8_t *const *pixels, const tide_texture_blocks *blocks)
 {
     tide_draw_texture *t = find_texture(d, TIDE_PIXELS_PACK_ARRAY, version);
     if (!t) t = add_texture(d, (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK_ARRAY, .epoch = d->epoch});
@@ -2650,18 +2653,22 @@ static uint32_t pack_array(tide_draw_list *d, const uint64_t version, const int3
     t->layers = layers;
     t->frame = d->frame;
     t->pixels = (uint8_t *)(uintptr_t)pixels; // The pack's pointers: `capacity` stays 0, and nothing here frees them
+    t->layer_blocks = blocks;
     return (uint32_t)(t - d->textures) + 1u;
 }
 
 uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref array)
 {
+    tide_grid grid;
+    tide_grid_shape shape;
+    if (tide_texture_array_grid(array, &grid, &shape)) return tide_draw_grid_array_texture(d, grid, &shape);
     if (!array.target.id) {
         int32_t width, height;
         uint32_t layers;
         uint64_t version;
         const uint8_t *const *pixels;
         if (!tide_pack_texture_array_find(array.named, &width, &height, &layers, &version, &pixels)) return 0;
-        return pack_array(d, version, width, height, layers, pixels);
+        return pack_array(d, version, width, height, layers, pixels, tide_pack_texture_array_blocks(array.named));
     }
     const tide_render_target target = tide_render_target_resolve(array.target);
     const tide_render_target_state *s = tide_render_target_state_of(target.id);
@@ -4842,7 +4849,7 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
         return slot;
     }
     if (t->space == TIDE_PIXELS_PACK_ARRAY) {
-        return pack_array(d, t->id, t->width, t->height, t->layers, (const uint8_t *const *)(uintptr_t)t->pixels);
+        return pack_array(d, t->id, t->width, t->height, t->layers, (const uint8_t *const *)(uintptr_t)t->pixels, t->layer_blocks);
     }
     if (t->space == TIDE_PIXELS_PACK) {
         const uint32_t slot = pack_texture(d, t->id, t->width, t->height, t->pixels);
@@ -4867,6 +4874,7 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     const uint32_t slot = kind ? tide_draw_texture_edit(d, t->space, id, t->version, t->width, t->height, t->format, kind,
                                                         &pixels, &kept)
                                : texture_place(d, t->space, id, t->version, t->width, t->height, t->format, 0, &pixels, &kept);
+    if (slot) d->textures[slot - 1u].layers = t->layers; // A grid's array's
     if (!pixels) return slot;
     const size_t pixel = tide_texels_bytes(t->format), row = (size_t)t->width * pixel;
     const tide_draw_area *areas;
