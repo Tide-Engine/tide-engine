@@ -17,6 +17,7 @@
 #include "fetch.h"
 #include "folders.h"
 #include "install.h"
+#include "json.h"
 #include "libraries.h"
 #include "line.h"
 #include "packages.h"
@@ -116,6 +117,22 @@ static void build_step(const char *step)
     if (sys_is_terminal()) return;
     fprintf(stderr, "tide: %s\n", step);
     fflush(stderr);
+}
+
+static void tide_progress(const char *stage, const char *detail, const int completed, const int total)
+{
+    if (!build_activity) return;
+    // Keep the filename visible even when the source is an absolute path.
+    if (detail) {
+        for (const char *p = detail; *p; p++) {
+            if (*p == '/' || *p == '\\') detail = p + 1;
+        }
+    }
+    lock_feedback();
+    snprintf(feedback.label, sizeof feedback.label, "%s%s%s", stage, detail && *detail ? ": " : "", detail ? detail : "");
+    feedback.completed = completed;
+    feedback.total = total;
+    unlock_feedback();
 }
 
 static void build_progress(const int completed, const int total, const char *files)
@@ -1760,6 +1777,55 @@ static void place_moltenvk(const build *b, const char *dir)
     free(to);
 }
 
+// Whether `text` is a report key as the hosting service makes them: base64url
+static bool report_key(const char *text)
+{
+    const size_t length = text ? strlen(text) : 0;
+    return length >= 16 && length <= 64
+           && strspn(text, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_") == length;
+}
+
+// crash.json beside tide-crash, for a game whose folder is linked to a hosting
+// project with crash reports on (tide.deploy.json's "reports", the project's
+// report key, which tide deploy keeps): where tide-crash sends a crash's
+// report, and which build crashed, the program's SHA-256. A game that isn't
+// linked has none, and one a build before left goes.
+static void place_report_link(const build *b, const char *dir, const char *program)
+{
+    char *link = path_join(b->folder, "tide.deploy.json");
+    char *to = path_join(dir, "crash.json");
+    size_t length = 0;
+    char *text = sys_exists(link) && sys_file_size(link) <= 4096 ? sys_read_file(link, &length) : NULL;
+    const json *config = text ? json_parse(text, length) : NULL;
+    const char *origin = json_str(json_get(config, "origin")), *key = json_str(json_get(config, "reports"));
+    const bool local = origin && (strncmp(origin, "http://localhost:", 17) == 0 || strncmp(origin, "http://127.0.0.1:", 17) == 0);
+    const bool linked = origin && (local || strncmp(origin, "https://", 8) == 0) && !strpbrk(origin, "\"\\\r\n")
+                        && strlen(origin) < 256 && report_key(key);
+    if (linked) {
+        size_t size = 0;
+        char *bytes = sys_read_file(program, &size);
+        char build_id[65] = "";
+        if (bytes) {
+            uint8_t hash[32];
+            tide_sha256_of(bytes, size, hash);
+            for (int i = 0; i < 32; i++) snprintf(build_id + i * 2, 3, "%02x", hash[i]);
+        }
+        free(bytes);
+        char body[512];
+        snprintf(body, sizeof body, "{\n  \"origin\": \"%s\",\n  \"reports\": \"%s\",\n  \"build\": \"%s\"\n}\n", origin, key,
+                 build_id);
+        if (!sys_write_text(to, body)) {
+            fprintf(stderr, "tide: can't write %s: this build's crashes won't be sent to %s\n", to, origin);
+        }
+    } else if (sys_exists(to)) {
+        sys_remove(to);
+    }
+    json_release();
+    free(text);
+    free(link);
+    free(to);
+}
+
 // tide-crash (from lib/native) goes beside a desktop game: what a player sees
 // after it crashed, which asks to zip the crash's report for the game's makers
 // (platform/crash/crash.c). Not beside `tide run`'s, whose maker has the
@@ -2517,7 +2583,9 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
                                      .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
                                      .editor_source = b->opts->editor_source, .editor_text = editor_text,
                                      .declarations_only = b->opts->declarations};
+    compile_set_progress(tide_progress);
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
+    compile_set_progress(NULL);
     if (!ok) telemetry_fail(TELEMETRY_ERROR_COMPILE);
     free(editor_text);
     free(engine_src);
@@ -2783,6 +2851,9 @@ static char *build_game(const char *root, const build_options *opts, const char 
     if (!opts->server) {
         place_moltenvk(&b, output_dir);
         place_crash_reporter(&b, output_dir);
+        if (target_platform(&b) == LIB_WINDOWS || target_platform(&b) == LIB_MACOS || target_platform(&b) == LIB_LINUX) {
+            place_report_link(&b, output_dir, output);
+        }
     }
     free_game_c(&c);
     if (build_report_current()) {

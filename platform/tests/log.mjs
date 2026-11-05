@@ -9,11 +9,15 @@
 // stack and a copy of the log, and on Windows a minidump. Every run has
 // TIDE_HIDDEN, so no crash shows the system's dialog, and tide-crash, which
 // the crash starts from beside the program, shows no window either: it zips
-// the folder beside it, as Show report would, which is checked here.
+// the folder beside it, as Show report would, which is checked here, with
+// what would say who the player is masked. A copy of tide-crash with a
+// crash.json beside it sends a report to a server here (--send).
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const [programArg, scratchArg] = process.argv.slice(2);
 const program = resolve(programArg), scratch = resolve(scratchArg);
@@ -126,9 +130,69 @@ else {
         const files = unzip(bytes);
         const expected = ['crash.txt', 'system.txt', 'Player.log', ...(process.platform === 'win32' ? ['crash.dmp'] : [])];
         check(expected.every(file => files.has(file)), `with ${expected.join(', ')}: it has ${[...files.keys()].join(', ')}`);
-        check(files.get('crash.txt')?.equals(readFileSync(join(crashes, name, 'crash.txt'))), 'each as it is in the folder');
+        check(files.get('crash.txt')?.equals(readFileSync(join(crashes, name, 'crash.txt'))), 'crash.txt as it is in the folder: it has nothing to mask');
+        // The log names this scratch folder, inside the home folder: its name is masked in the zip, not in the folder
+        const home = basename(homedir());
+        const inPath = text => text.toLowerCase().replaceAll('\\', '/').match(/\/(users|home)\/([^/]+)\//g)
+            ?.some(found => found.split('/')[2] === home.toLowerCase());
+        const kept = read(join(crashes, name, 'Player.log')), sent = files.get('Player.log')?.toString() || '';
+        if (inPath(kept)) check(!inPath(sent) && /[\\/](users|home)[\\/]\*+[\\/]/i.test(sent), `the home folder's name (${home}) is masked in the zip's log`);
+        else console.log('skipped: the log names no path in the home folder here');
+        const dump = files.get('crash.dmp');
+        if (dump && home.length >= 3) { // Its modules' paths, UTF-16 at any offset, and its stacks
+            const named = [home, home.toLowerCase(), home.toUpperCase()].some(name =>
+                dump.includes(Buffer.from(name)) || dump.includes(Buffer.from(name, 'utf16le')));
+            check(dump.subarray(0, 4).toString() === 'MDMP' && !named, `the zip's minidump doesn't name ${home}`);
+        }
         check(/^system: /m.test(files.get('system.txt')?.toString() || ''), `and system.txt says what the machine is: ${(files.get('system.txt') || '').toString().split('\n')[0]}`);
     }
+}
+
+// Sending: a copy of tide-crash with crash.json beside it, and a server here
+const folder = [...crashed, ...after][0];
+if (existsSync(reporter) && folder) {
+    const sendDir = join(scratch, 'send');
+    mkdirSync(sendDir, { recursive: true });
+    const copy = join(sendDir, basename(reporter));
+    copyFileSync(reporter, copy);
+    chmodSync(copy, 0o755);
+    const requests = [];
+    let answer = 200;
+    const server = createServer((request, response) => {
+        const chunks = [];
+        request.on('data', chunk => chunks.push(chunk));
+        request.on('end', () => {
+            requests.push({ method: request.method, url: request.url, headers: request.headers, body: Buffer.concat(chunks) });
+            response.writeHead(answer, { 'Content-Type': 'application/json' });
+            response.end(answer === 200 ? '{"report":"r1"}' : '{"error":"no"}');
+        });
+    });
+    await new Promise(done => server.listen(0, '127.0.0.1', done));
+    const send = () => new Promise(done => {
+        const child = spawn(copy, ['--send', join(crashes, folder)], { env: { ...process.env, TIDE_HIDDEN: '1' } });
+        let out = '';
+        child.stdout.on('data', data => out += data);
+        child.stderr.on('data', data => out += data);
+        const timer = setTimeout(() => child.kill(), 60000);
+        child.on('close', status => { clearTimeout(timer); done({ status, out }); });
+    });
+    const none = await send();
+    check(none.status !== 0 && none.out.includes("not sent: there's no crash.json"), `without crash.json nothing is sent: ${none.out.trim().split('\n').pop()}`);
+    const key = 'TestReportKey_0123456789-abc';
+    writeFileSync(join(sendDir, 'crash.json'), JSON.stringify({ origin: `http://127.0.0.1:${server.address().port}`, reports: key, build: 'ab12cd' }));
+    const sent = await send();
+    check(sent.status === 0 && sent.out.trim().endsWith('sent'), `with it, it's sent: ${sent.out.trim().split('\n').pop()}`);
+    const got = requests[0];
+    check(got?.method === 'POST' && got?.url === '/api/reports', `to <origin>/api/reports: ${got?.method} ${got?.url}`);
+    check(got?.headers['x-tide-report-key'] === key && got?.headers['x-tide-build'] === 'ab12cd'
+        && got?.headers['content-type'] === 'application/zip', "with the key, the build and the zip's type");
+    const zip = join(crashes, `${folder}.zip`);
+    check(got && existsSync(zip) && got.body.equals(readFileSync(zip)), 'the same zip it left beside the folder');
+    check(got && unzip(got.body).has('crash.txt'), 'with crash.txt');
+    answer = 402;
+    const refused = await send();
+    check(refused.status !== 0 && refused.out.includes('not sent: the service answered 402'), `a refusal says so: ${refused.out.trim().split('\n').pop()}`);
+    server.close();
 }
 
 console.log(failures ? `${failures} failed` : 'all passed');

@@ -110,6 +110,11 @@ void diag_reset(void);
 // that just ended took (the time since the last call), under `what`; NULL
 // starts the clock.
 void diag_phase(const char *what);
+// Optional synchronous build feedback. Counts are completed items in this stage;
+// total == 0 means indeterminate. The receiver copies borrowed strings.
+typedef void (*compile_progress_sink)(const char *stage, const char *detail, int completed, int total);
+void compile_set_progress(compile_progress_sink sink);
+void compile_progress(const char *stage, const char *detail, int completed, int total);
 // Registers a source file and sets src->file: locations in it carry that index.
 void diag_add_source(source *src);
 const source *diag_source(int file);
