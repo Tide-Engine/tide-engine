@@ -320,7 +320,7 @@ The GPU culls a `Draw.Instanced` of a list that stays as it was and picks its in
 
 On a Mac, Vulkan is MoltenVK, Vulkan on Metal: `tide build` puts `libMoltenVK.dylib` beside the game, which uses it where the Mac has no Vulkan loader of its own. Ship it with the game; its license is in the tide package's `licenses/moltenvk`.
 
-An Android game draws with Vulkan 1.3. A device without it shows a screen saying what the game needs until the player leaves it.
+An Android game draws with Vulkan 1.3, and its manifest says so, so Google Play offers it only to devices that have it. A device without it that has the game anyway (installed from its APK) shows a screen saying what the game needs until the player leaves it.
 
 ### Stats
 
@@ -408,7 +408,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 3. Upload `.build/<name>.aab` to a release: internal testing is the quickest way to try it on your own phone. Play signs the APKs it makes with a key of its own, which it keeps (Play App Signing); `~/.android/tide.pem` is then your upload key, and Play only takes uploads signed with it.
 4. For an update, build again and upload the new `.aab`: its version code is higher than the last one's.
 
-Play's other requirements, like the version of Android an app is made for (Android 16) and support for phones with 16 KiB memory pages, `tide` meets itself. A library the game brings has to be linked for those pages too, and `tide` warns when one isn't (see [Calling C](../c/functions.md#android)). If you lose your upload key, Play can take a new one (the app's **App integrity** page asks for its certificate: the part of the key's file from `-----BEGIN CERTIFICATE-----` on).
+Play leaves out devices without Vulkan 1.3, which the game needs to draw. Play's other requirements, like the version of Android an app is made for (Android 16) and support for phones with 16 KiB memory pages, `tide` meets itself. A library the game brings has to be linked for those pages too, and `tide` warns when one isn't (see [Calling C](../c/functions.md#android)). If you lose your upload key, Play can take a new one (the app's **App integrity** page asks for its certificate: the part of the key's file from `-----BEGIN CERTIFICATE-----` on).
 
 ## Hot reload
 

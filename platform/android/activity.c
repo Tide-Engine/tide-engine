@@ -17,6 +17,8 @@
 // The screen is the window in the display's logical pixels, as a browser's CSS
 // pixels are: its own pixels over (dpi / 160). It renders the window's own
 // pixels, so it's sharp.
+//
+// An app ends with _exit, never exit: see __wrap_exit, at the end.
 
 #include "window.h"
 
@@ -33,6 +35,7 @@
 #include <jni.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,6 +123,9 @@ static void *log_lines(void *pipe_read)
     }
 }
 
+static pthread_t log_thread;
+static bool logging; // log_thread runs: what's written reaches the log once it has read it
+
 static void log_output(void)
 {
     int fds[2];
@@ -129,8 +135,22 @@ static void log_output(void)
     dup2(fds[1], STDOUT_FILENO);
     dup2(fds[1], STDERR_FILENO);
     close(fds[1]);
-    pthread_t thread;
-    if (pthread_create(&thread, NULL, log_lines, (void *)(intptr_t)fds[0]) == 0) pthread_detach(thread);
+    logging = pthread_create(&log_thread, NULL, log_lines, (void *)(intptr_t)fds[0]) == 0;
+}
+
+// The program's last output into the log, before the process goes: the pipe's
+// writing ends go, so the thread reads the rest and stops.
+static void end_output(void)
+{
+    fflush(NULL);
+    if (!logging) return;
+    const int none = open("/dev/null", O_WRONLY);
+    if (none >= 0) {
+        dup2(none, STDOUT_FILENO);
+        dup2(none, STDERR_FILENO);
+        close(none);
+    }
+    pthread_join(log_thread, NULL);
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +209,7 @@ static void on_destroy(ANativeActivity *activity)
     app.destroyed = true;
     app.activity = NULL;
     wake();
+    pthread_cond_broadcast(&app.taken); // An app that's ending waits for this (__wrap_exit)
     pthread_mutex_unlock(&app.lock);
 }
 
@@ -199,6 +220,7 @@ static void on_configuration_changed(ANativeActivity *activity)
 }
 
 static JavaVM *java_vm; // The app's, for code that calls Java (rooms' TLS: platform/src/rtc/tls.c)
+static pthread_t main_thread; // Android's, which the activity's callbacks run on
 static int ui_pipe[2] = {-1, -1}; // The program's asks of the main thread: the keyboard, and copying
 static int on_ui_asked(int fd, int events, void *data);
 
@@ -281,14 +303,7 @@ static void *run_program(void *unused)
     static char text[1024];
     char *argv[16];
     const int argc = intent_args(text, sizeof text, argv, 16);
-    const int code = main(argc, argv);
-    // main returned without closing a window (see tide_window_close): the app ends
-    pthread_mutex_lock(&app.lock);
-    app.running = false;
-    if (app.activity) ANativeActivity_finish(app.activity);
-    pthread_cond_broadcast(&app.taken);
-    pthread_mutex_unlock(&app.lock);
-    exit(code);
+    exit(main(argc, argv)); // Which ends the activity too (__wrap_exit)
 }
 
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity *activity, void *saved, size_t size)
@@ -304,6 +319,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
     pthread_mutex_lock(&app.lock);
     app.activity = activity;
     java_vm = activity->vm;
+    main_thread = pthread_self();
     const bool started = app.running;
     pthread_mutex_unlock(&app.lock);
     if (started) return; // The process outlived an activity: the program goes on in this one
@@ -1014,7 +1030,8 @@ static void draw_message(const char *text)
 }
 
 // A device without what the game needs is told so on its screen, until the player leaves (the back button, or
-// the activity going): never a window that stays black, or an app that's gone before anyone sees why.
+// the activity going): never a window that stays black, or an app that's gone before anyone sees why. Tests of
+// apps that draw stop at its "needs Vulkan 1.3" (cmake/run_android.mjs --vulkan).
 static void say_needs_vulkan(const char *why)
 {
     char text[512];
@@ -1097,4 +1114,37 @@ uint8_t *tide_window_pack(size_t *size, uint64_t progress[2])
     }
     *size = (size_t)length;
     return bytes;
+}
+
+// ---------------------------------------------------------------------------
+// The app's end
+
+// exit() would run the destructors of every library in the process, Android's
+// own too, while its threads still run: HWUI's workers (hwuiTask0, ...) then
+// lock a mutex its destructors destroyed, and the app aborts as it ends. So an
+// app links with --wrap=exit (tide_android_app in platform/CMakeLists.txt, and
+// `tide build --android`), and every exit() in its library comes here: its own
+// exit handlers run (atexit's, C++ destructors), its output reaches the log,
+// the activity finishes and goes, and then the process, with _exit.
+_Noreturn void __wrap_exit(int code) __attribute__((visibility("hidden")));
+extern void *__dso_handle __attribute__((visibility("hidden"))); // This library's, which its handlers have
+void __cxa_finalize(void *dso);
+
+_Noreturn void __wrap_exit(const int code)
+{
+    static atomic_flag ending = ATOMIC_FLAG_INIT;
+    if (atomic_flag_test_and_set(&ending)) {
+        for (;;) pause(); // Another thread is ending the app, which this one goes with
+    }
+    __cxa_finalize(&__dso_handle);
+    pthread_mutex_lock(&app.lock);
+    app.running = false; // The activity's callbacks that take things away don't wait for the program
+    if (app.activity) ANativeActivity_finish(app.activity);
+    pthread_cond_broadcast(&app.taken);
+    // The activity goes first, unless this is its thread, which can't wait for itself
+    const bool wait = app.activity && !pthread_equal(pthread_self(), main_thread);
+    while (wait && !app.destroyed) pthread_cond_wait(&app.taken, &app.lock);
+    pthread_mutex_unlock(&app.lock);
+    end_output();
+    _exit(code);
 }
