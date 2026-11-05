@@ -1,7 +1,8 @@
 // WGSL to SPIR-V (see spirv.h): the text is read into a tree, which is then
 // written out as SPIR-V, its types worked out on the way, as a WGSL compiler
-// would. It takes the WGSL that WebGPU takes, as far as frags, verts and the
-// renderer's shaders go: no storage buffers, atomics, workgroups or compute.
+// would. It takes the WGSL that WebGPU takes, as far as frags, verts, the
+// renderer's shaders and compute kernels go (notes/compute.md: storage
+// buffers, workgroup memory, barriers and atomics).
 //
 // Everything a translation makes comes from one arena of its own, freed as it
 // ends, but the words it hands back.
@@ -53,6 +54,9 @@ typedef struct val {
     int len;
     bool negated;     // ...with a minus before it
     bool is_const_id; // `id` is a constant's
+    bool readonly;    // A place in var<storage, read>
+    bool wrapped;     // A name's: `id` is a variable whose struct holds what's named, as its member 0
+    uint32_t block;   // A runtime-sized array's place: the variable of the struct it's in, for its length
 } val;
 
 // A name in scope: a value, a place, or a constant.
@@ -88,6 +92,7 @@ typedef struct fn_state {
     uint32_t inputs[64];
     int input_count;
     bool uses_frag_depth;
+    uint32_t local_index; // A compute entry point's @builtin(local_invocation_index) variable, or 0
 } fn_state;
 
 struct translation {
@@ -136,6 +141,12 @@ struct translation {
     binding *globals_scope;
     int nglobal_bindings, cap_global_bindings;
     fn_state *fn;
+    // The module's var<workgroup>s, which a compute entry point zeroes as it starts, as WebGPU's are
+    struct {
+        uint32_t id;
+        int t;
+    } workgroup[64];
+    int nworkgroup;
 };
 
 #include "wgsl_read.inc"
@@ -147,10 +158,10 @@ enum {
     OP_EXT_INST_IMPORT = 11, OP_EXT_INST = 12, OP_MEMORY_MODEL = 14, OP_ENTRY_POINT = 15, OP_EXECUTION_MODE = 16,
     OP_CAPABILITY = 17, OP_TYPE_VOID = 19, OP_TYPE_BOOL = 20, OP_TYPE_INT = 21, OP_TYPE_FLOAT = 22,
     OP_TYPE_VECTOR = 23, OP_TYPE_MATRIX = 24, OP_TYPE_IMAGE = 25, OP_TYPE_SAMPLER = 26, OP_TYPE_SAMPLED_IMAGE = 27,
-    OP_TYPE_ARRAY = 28, OP_TYPE_STRUCT = 30, OP_TYPE_POINTER = 32, OP_TYPE_FUNCTION = 33, OP_CONSTANT_TRUE = 41,
+    OP_TYPE_ARRAY = 28, OP_TYPE_RUNTIME_ARRAY = 29, OP_TYPE_STRUCT = 30, OP_TYPE_POINTER = 32, OP_TYPE_FUNCTION = 33, OP_CONSTANT_TRUE = 41,
     OP_CONSTANT_FALSE = 42, OP_CONSTANT = 43, OP_CONSTANT_COMPOSITE = 44, OP_CONSTANT_NULL = 46, OP_FUNCTION = 54,
     OP_FUNCTION_PARAMETER = 55, OP_FUNCTION_END = 56, OP_FUNCTION_CALL = 57, OP_VARIABLE = 59, OP_LOAD = 61,
-    OP_STORE = 62, OP_ACCESS_CHAIN = 65, OP_DECORATE = 71, OP_MEMBER_DECORATE = 72, OP_VECTOR_EXTRACT_DYNAMIC = 77,
+    OP_STORE = 62, OP_ACCESS_CHAIN = 65, OP_ARRAY_LENGTH = 68, OP_DECORATE = 71, OP_MEMBER_DECORATE = 72, OP_VECTOR_EXTRACT_DYNAMIC = 77,
     OP_VECTOR_SHUFFLE = 79, OP_COMPOSITE_CONSTRUCT = 80, OP_COMPOSITE_EXTRACT = 81, OP_TRANSPOSE = 84,
     OP_SAMPLED_IMAGE = 86, OP_IMAGE_SAMPLE_IMPLICIT_LOD = 87, OP_IMAGE_SAMPLE_EXPLICIT_LOD = 88,
     OP_IMAGE_SAMPLE_DREF_IMPLICIT_LOD = 89, OP_IMAGE_SAMPLE_DREF_EXPLICIT_LOD = 90, OP_IMAGE_FETCH = 95,
@@ -171,7 +182,10 @@ enum {
     OP_BITWISE_AND = 199, OP_NOT = 200, OP_BIT_FIELD_INSERT = 201, OP_BIT_FIELD_S_EXTRACT = 202,
     OP_BIT_FIELD_U_EXTRACT = 203, OP_BIT_REVERSE = 204, OP_BIT_COUNT = 205, OP_DPDX = 207, OP_DPDY = 208,
     OP_FWIDTH = 209, OP_DPDX_FINE = 210, OP_DPDY_FINE = 211, OP_FWIDTH_FINE = 212, OP_DPDX_COARSE = 213,
-    OP_DPDY_COARSE = 214, OP_FWIDTH_COARSE = 215, OP_PHI = 245, OP_LOOP_MERGE = 246, OP_SELECTION_MERGE = 247,
+    OP_DPDY_COARSE = 214, OP_FWIDTH_COARSE = 215, OP_CONTROL_BARRIER = 224, OP_ATOMIC_LOAD = 227,
+    OP_ATOMIC_STORE = 228, OP_ATOMIC_EXCHANGE = 229, OP_ATOMIC_COMPARE_EXCHANGE = 230, OP_ATOMIC_I_ADD = 234,
+    OP_ATOMIC_I_SUB = 235, OP_ATOMIC_S_MIN = 236, OP_ATOMIC_U_MIN = 237, OP_ATOMIC_S_MAX = 238, OP_ATOMIC_U_MAX = 239,
+    OP_ATOMIC_AND = 240, OP_ATOMIC_OR = 241, OP_ATOMIC_XOR = 242, OP_PHI = 245, OP_LOOP_MERGE = 246, OP_SELECTION_MERGE = 247,
     OP_LABEL = 248, OP_BRANCH = 249, OP_BRANCH_CONDITIONAL = 250, OP_SWITCH = 251, OP_KILL = 252, OP_RETURN = 253,
     OP_RETURN_VALUE = 254, OP_UNREACHABLE = 255,
 };
@@ -179,10 +193,16 @@ enum {
 
 enum {
     DEC_BLOCK = 2, DEC_COL_MAJOR = 5, DEC_ARRAY_STRIDE = 6, DEC_MATRIX_STRIDE = 7, DEC_BUILTIN = 11, DEC_FLAT = 14,
-    DEC_LOCATION = 30, DEC_BINDING = 33, DEC_DESCRIPTOR_SET = 34, DEC_OFFSET = 35,
+    DEC_NON_WRITABLE = 24, DEC_LOCATION = 30, DEC_BINDING = 33, DEC_DESCRIPTOR_SET = 34, DEC_OFFSET = 35,
 };
 
-enum { BUILTIN_POSITION = 0, BUILTIN_FRAG_COORD = 15, BUILTIN_FRAG_DEPTH = 22 };
+enum { BUILTIN_POSITION = 0, BUILTIN_FRAG_COORD = 15, BUILTIN_FRAG_DEPTH = 22, BUILTIN_LOCAL_INVOCATION_INDEX = 29 };
+
+// Scopes and memory semantics, as Tint writes them for WGSL's barriers and atomics
+enum {
+    SCOPE_DEVICE = 1, SCOPE_WORKGROUP = 2, SEMANTICS_RELAXED = 0, SEMANTICS_ACQUIRE_RELEASE = 0x8,
+    SEMANTICS_UNIFORM_MEMORY = 0x40, SEMANTICS_WORKGROUP_MEMORY = 0x100,
+};
 
 enum { CAP_SHADER = 1, CAP_IMAGE_QUERY = 50, CAP_DERIVATIVE_CONTROL = 51 };
 
@@ -243,6 +263,31 @@ static int string_words(const int len)
 
 static uint32_t spv_type(translation *x, int t);
 static uint32_t const_u32(translation *x, uint32_t v);
+
+// A type with its atomics as what they hold, which SPIR-V's are: one
+// SPIR-V type for an atomic<u32> and a u32, and for arrays of them.
+static int plain(translation *x, const int t)
+{
+    const type ty = *T(x, t);
+    if (ty.kind == K_ATOMIC) return ty.elem;
+    if (ty.kind == K_ARRAY) {
+        const int elem = plain(x, ty.elem);
+        return elem == ty.elem ? t : t_array(x, elem, ty.n);
+    }
+    return t;
+}
+
+// How far apart a storage buffer's elements are: scalars and vectors, as WGSL lays them out.
+static uint32_t storage_stride(translation *x, const int elem)
+{
+    const kind k = T(x, elem)->kind;
+    if ((k != K_VEC && !is_scalar(x, elem) && k != K_ATOMIC) || is_bool(x, elem)) {
+        fail(x, 0, 0, "a storage buffer here holds numbers, vectors or atomics");
+    }
+    uint32_t align, size;
+    layout_of(x, elem, &align, &size);
+    return (size + align - 1u) / align * align;
+}
 
 // What a uniform block has: its structs with each member's offset, its arrays
 // with how far apart their elements are.
@@ -320,12 +365,26 @@ static uint32_t spv_type(translation *x, const int t)
         break;
     }
     case K_ARRAY: {
+        const int canonical = plain(x, t);
+        if (canonical != t) {
+            id = spv_type(x, canonical);
+            break;
+        }
         const uint32_t elem = spv_type(x, ty.elem);
+        if (!ty.n) { // Runtime-sized, which only a storage buffer holds: laid out as it is
+            id = new_id(x);
+            INS(&x->globals_words, OP_TYPE_RUNTIME_ARRAY, id, elem);
+            INS(&x->decorations, OP_DECORATE, id, DEC_ARRAY_STRIDE, storage_stride(x, ty.elem));
+            break;
+        }
         const uint32_t count_id = const_u32(x, (uint32_t)ty.n);
         id = new_id(x);
         INS(&x->globals_words, OP_TYPE_ARRAY, id, elem, count_id);
         break;
     }
+    case K_ATOMIC:
+        id = spv_type(x, ty.elem);
+        break;
     case K_STRUCT: {
         const sdecl *s = ty.s;
         uint32_t members[WGSL_MEMBERS_MOST];
@@ -337,6 +396,11 @@ static uint32_t spv_type(translation *x, const int t)
         break;
     }
     case K_PTR: {
+        const int canonical = plain(x, ty.elem);
+        if (canonical != ty.elem) {
+            id = spv_type(x, t_ptr(x, ty.sc, canonical));
+            break;
+        }
         const uint32_t elem = ty.sc == SC_UNIFORM ? spv_laid(x, ty.elem) : spv_type(x, ty.elem);
         id = new_id(x);
         INS(&x->globals_words, OP_TYPE_POINTER, id, (uint32_t)ty.sc, elem);
@@ -586,6 +650,7 @@ static void branch(translation *x, const uint32_t to)
 // A variable of the function's, in its first block.
 static uint32_t local_var(translation *x, const int t)
 {
+    if (T(x, t)->kind == K_ARRAY && !T(x, t)->n) fail(x, 0, 0, "a runtime-sized array is a storage buffer's alone");
     const uint32_t ptr = spv_type(x, t_ptr(x, SC_FUNCTION, t));
     const uint32_t id = new_id(x);
     INS(&x->fn->vars, OP_VARIABLE, ptr, id, SC_FUNCTION);
@@ -805,7 +870,8 @@ static val deref(translation *x, val v)
 static val access(translation *x, const val base, const int elem, const uint32_t index)
 {
     const int ptr = t_ptr(x, base.sc, elem);
-    return (val){.t = elem, .id = EMIT(x, OP_ACCESS_CHAIN, ptr, base.id, index), .ref = true, .sc = base.sc};
+    return (val){.t = elem, .id = EMIT(x, OP_ACCESS_CHAIN, ptr, base.id, index), .ref = true, .sc = base.sc,
+                 .readonly = base.readonly};
 }
 
 static int swizzle_component(const char c)
@@ -885,6 +951,17 @@ static val index_expr(translation *x, const expr *e)
         fail(x, e->line, e->col, "%s isn't indexed", found);
         return base;
     }
+    }
+    if (bt.kind == K_ARRAY && !bt.n) { // A storage buffer's, clamped to its length as it runs, as Tint does
+        if (!base.ref || !base.block) fail(x, e->line, e->col, "a runtime-sized array is indexed through its storage buffer's name");
+        const int u32 = t_simple(x, K_U32);
+        val at = i.constant ? concrete(x, (val){.t = i.t, .constant = true, .i = i.i < 0 ? 0 : i.i}, u32) : load(x, i);
+        if (!is_int(x, at.t) || !is_scalar(x, at.t)) fail(x, e->line, e->col, "an index is an i32 or a u32");
+        uint32_t id = at.id;
+        if (T(x, at.t)->kind == K_I32) id = EMIT(x, OP_BITCAST, u32, id);
+        const uint32_t length = EMIT(x, OP_ARRAY_LENGTH, u32, base.block, 0);
+        const uint32_t args[2] = {id, EMIT(x, OP_I_SUB, u32, length, const_u32(x, 1))};
+        return access(x, base, elem, glsl(x, u32, GLSL_U_MIN, args, 2));
     }
     if (i.constant) {
         if (T(x, i.t)->kind != K_AINT) fail(x, e->line, e->col, "an index is an int");
@@ -1216,6 +1293,12 @@ static val eval(translation *x, const expr *e)
     case X_NAME: {
         const binding *b = lookup(x, e->name, e->len);
         if (!b) fail(x, e->line, e->col, "'%.*s' isn't declared", e->len, e->name);
+        if (b->v.wrapped) { // A storage buffer, or a uniform block that isn't a struct: its struct's member 0
+            const val v = b->v;
+            const uint32_t place = EMIT(x, OP_ACCESS_CHAIN, t_ptr(x, v.sc, v.t), v.id, const_u32(x, 0));
+            return (val){.t = v.t, .id = place, .ref = true, .sc = v.sc, .readonly = v.readonly,
+                         .block = T(x, v.t)->kind == K_ARRAY && !T(x, v.t)->n ? v.id : 0};
+        }
         return b->v;
     }
     case X_MEMBER:
@@ -1534,11 +1617,99 @@ static const math_fn math_fns[] = {
 
 static val texture_call(translation *x, const expr *e);
 
+// WGSL's atomic functions: their name, SPIR-V's instruction (for i32s, then
+// u32s), and how many values they take after the pointer.
+static const struct {
+    const char *name;
+    int op, unsigned_op, values;
+} atomics[] = {
+    {"atomicLoad", OP_ATOMIC_LOAD, OP_ATOMIC_LOAD, 0},
+    {"atomicStore", OP_ATOMIC_STORE, OP_ATOMIC_STORE, 1},
+    {"atomicAdd", OP_ATOMIC_I_ADD, OP_ATOMIC_I_ADD, 1},
+    {"atomicSub", OP_ATOMIC_I_SUB, OP_ATOMIC_I_SUB, 1},
+    {"atomicMax", OP_ATOMIC_S_MAX, OP_ATOMIC_U_MAX, 1},
+    {"atomicMin", OP_ATOMIC_S_MIN, OP_ATOMIC_U_MIN, 1},
+    {"atomicAnd", OP_ATOMIC_AND, OP_ATOMIC_AND, 1},
+    {"atomicOr", OP_ATOMIC_OR, OP_ATOMIC_OR, 1},
+    {"atomicXor", OP_ATOMIC_XOR, OP_ATOMIC_XOR, 1},
+    {"atomicExchange", OP_ATOMIC_EXCHANGE, OP_ATOMIC_EXCHANGE, 1},
+    {"atomicCompareExchangeWeak", OP_ATOMIC_COMPARE_EXCHANGE, OP_ATOMIC_COMPARE_EXCHANGE, 2},
+};
+
+// Barriers, atomics and arrayLength, if `e` calls one: as Tint writes them,
+// relaxed, at the device's scope for storage and the workgroup's for its memory.
+static bool compute_call(translation *x, const expr *e, val *out)
+{
+    const char *n = e->name;
+    const int len = e->len, line = e->line, col = e->col;
+    if (same(n, len, "workgroupBarrier") || same(n, len, "storageBarrier")) {
+        if (e->nargs) fail(x, line, col, "%.*s takes nothing", len, n);
+        const uint32_t memory = n[0] == 'w' ? SEMANTICS_WORKGROUP_MEMORY : SEMANTICS_UNIFORM_MEMORY;
+        INS(&x->fn->body, OP_CONTROL_BARRIER, const_u32(x, SCOPE_WORKGROUP), const_u32(x, SCOPE_WORKGROUP),
+            const_u32(x, SEMANTICS_ACQUIRE_RELEASE | memory));
+        *out = (val){.t = t_simple(x, K_VOID)};
+        return true;
+    }
+    if (same(n, len, "arrayLength")) {
+        const expr *a = e->nargs == 1 && e->args[0]->kind == X_ADDR ? e->args[0]->a : NULL;
+        const binding *b = a && a->kind == X_NAME ? lookup(x, a->name, a->len) : NULL;
+        if (!b || !b->v.wrapped || T(x, b->v.t)->kind != K_ARRAY || T(x, b->v.t)->n) {
+            fail(x, line, col, "arrayLength takes a storage buffer's array: &name");
+        }
+        const int u32 = t_simple(x, K_U32);
+        *out = (val){.t = u32, .id = EMIT(x, OP_ARRAY_LENGTH, u32, b->v.id, 0)};
+        return true;
+    }
+    int which = -1;
+    for (int i = 0; i < (int)(sizeof atomics / sizeof atomics[0]); i++) {
+        if (same(n, len, atomics[i].name)) which = i;
+    }
+    if (which < 0) return false;
+    if (e->nargs != 1 + atomics[which].values) fail(x, line, col, "%s takes %d arguments", atomics[which].name, 1 + atomics[which].values);
+    const val p = rv(x, e->args[0]);
+    if (p.constant || T(x, p.t)->kind != K_PTR || T(x, T(x, p.t)->elem)->kind != K_ATOMIC) {
+        fail(x, line, col, "%s takes a pointer to an atomic: &name or &name[i]", atomics[which].name);
+    }
+    const int sc = T(x, p.t)->sc;
+    if (sc != SC_STORAGE && sc != SC_WORKGROUP) fail(x, line, col, "an atomic is in storage or a workgroup's memory");
+    const int scalar = T(x, T(x, p.t)->elem)->elem;
+    const uint32_t scope = const_u32(x, sc == SC_WORKGROUP ? SCOPE_WORKGROUP : SCOPE_DEVICE);
+    const uint32_t relaxed = const_u32(x, SEMANTICS_RELAXED);
+    uint32_t values[2];
+    for (int i = 0; i < atomics[which].values; i++) {
+        values[i] = coerce(x, rv(x, e->args[1 + i]), scalar, e->args[1 + i]->line, e->args[1 + i]->col).id;
+    }
+    const int op = T(x, scalar)->kind == K_I32 ? atomics[which].op : atomics[which].unsigned_op;
+    switch (op) {
+    case OP_ATOMIC_LOAD:
+        *out = (val){.t = scalar, .id = EMIT(x, OP_ATOMIC_LOAD, scalar, p.id, scope, relaxed)};
+        return true;
+    case OP_ATOMIC_STORE:
+        INS(&x->fn->body, OP_ATOMIC_STORE, p.id, scope, relaxed, values[0]);
+        *out = (val){.t = t_simple(x, K_VOID)};
+        return true;
+    case OP_ATOMIC_COMPARE_EXCHANGE: {
+        // Its value and comparator the other way round from WGSL's
+        const uint32_t old = EMIT(x, OP_ATOMIC_COMPARE_EXCHANGE, scalar, p.id, scope, relaxed, relaxed, values[1], values[0]);
+        const int boolean = t_simple(x, K_BOOL);
+        const uint32_t parts[2] = {old, EMIT(x, OP_I_EQUAL, boolean, old, values[0])};
+        const int result = exchange_result(x, scalar);
+        *out = (val){.t = result, .id = emit(x, OP_COMPOSITE_CONSTRUCT, result, parts, 2)};
+        return true;
+    }
+    default:
+        *out = (val){.t = scalar, .id = EMIT(x, (uint32_t)op, scalar, p.id, scope, relaxed, values[0])};
+        return true;
+    }
+}
+
 static val builtin(translation *x, const expr *e)
 {
     const char *n = e->name;
     const int len = e->len;
     if (len > 7 && memcmp(n, "texture", 7) == 0) return texture_call(x, e);
+    val made;
+    if (compute_call(x, e, &made)) return made;
     val args[8];
     eval_args(x, e, args, 8);
     const int count = e->nargs;
@@ -1850,7 +2021,7 @@ static void statements(translation *x, const stmt *block)
 
 static void store(translation *x, const val place, const val v)
 {
-    if (place.sc == SC_UNIFORM || place.sc == SC_INPUT || place.sc == SC_UNIFORM_CONSTANT) {
+    if (place.sc == SC_UNIFORM || place.sc == SC_INPUT || place.sc == SC_UNIFORM_CONSTANT || place.readonly) {
         fail(x, 0, 0, "that's read-only");
     }
     INS(&x->fn->body, OP_STORE, place.id, v.id);
@@ -1860,7 +2031,7 @@ static val place_of(translation *x, const expr *e)
 {
     const val v = eval(x, e);
     if (!v.ref) fail(x, e->line, e->col, "that isn't a variable, or a part of one");
-    if (v.sc == SC_UNIFORM || v.sc == SC_INPUT || v.sc == SC_UNIFORM_CONSTANT) fail(x, e->line, e->col, "that's read-only");
+    if (v.sc == SC_UNIFORM || v.sc == SC_INPUT || v.sc == SC_UNIFORM_CONSTANT || v.readonly) fail(x, e->line, e->col, "that's read-only");
     return v;
 }
 
@@ -2157,9 +2328,67 @@ static uint32_t interface_var(translation *x, const int sc, const int t, const a
     } else {
         fail(x, 0, 0, "an entry point's input or output says where it is: @location or @builtin");
     }
+    if (at.builtin == BUILTIN_LOCAL_INVOCATION_INDEX && sc == SC_INPUT) x->fn->local_index = id;
     if (x->fn->input_count == 64) fail(x, 0, 0, "an entry point with more than 64 inputs and outputs");
     x->fn->inputs[x->fn->input_count++] = id;
     return id;
+}
+
+// The module's workgroup memory zeroed, as WebGPU has it when a compute
+// entry point starts, and as Tint zeroes it: each invocation the elements
+// of an array its index reaches by the workgroup's size, the first one
+// everything else; then a barrier, before anything reads it.
+static void zero_workgroup(translation *x, const fdecl *f)
+{
+    if (!x->nworkgroup) return;
+    const int u32 = t_simple(x, K_U32), boolean = t_simple(x, K_BOOL);
+    if (!x->fn->local_index) {
+        attrs at = no_attrs();
+        at.builtin = BUILTIN_LOCAL_INVOCATION_INDEX;
+        interface_var(x, SC_INPUT, u32, at, false);
+    }
+    const uint32_t index = EMIT(x, OP_LOAD, u32, x->fn->local_index);
+    const uint32_t total = const_u32(x, (uint32_t)(f->at.size[0] * f->at.size[1] * f->at.size[2]));
+    for (int i = 0; i < x->nworkgroup; i++) {
+        const int t = x->workgroup[i].t;
+        const val whole = {.t = t, .id = x->workgroup[i].id, .ref = true, .sc = SC_WORKGROUP};
+        if (T(x, t)->kind == K_ARRAY) {
+            const int elem = T(x, t)->elem;
+            const uint32_t counter = local_var(x, u32);
+            INS(&x->fn->body, OP_STORE, counter, index);
+            const uint32_t header = new_id(x), check = new_id(x), body = new_id(x), cont = new_id(x), merge = new_id(x);
+            branch(x, header);
+            start_block(x, header);
+            INS(&x->fn->body, OP_LOOP_MERGE, merge, cont, 0);
+            INS(&x->fn->body, OP_BRANCH, check);
+            x->fn->ended = true;
+            start_block(x, check);
+            const uint32_t at = EMIT(x, OP_LOAD, u32, counter);
+            const uint32_t inside = EMIT(x, OP_U_LESS_THAN, boolean, at, const_u32(x, (uint32_t)T(x, t)->n));
+            INS(&x->fn->body, OP_BRANCH_CONDITIONAL, inside, body, merge);
+            x->fn->ended = true;
+            start_block(x, body);
+            store(x, access(x, whole, elem, at), (val){.t = elem, .id = const_null(x, plain(x, elem))});
+            branch(x, cont);
+            start_block(x, cont);
+            const uint32_t now = EMIT(x, OP_LOAD, u32, counter);
+            INS(&x->fn->body, OP_STORE, counter, EMIT(x, OP_I_ADD, u32, now, total));
+            branch(x, header);
+            start_block(x, merge);
+        } else {
+            const uint32_t first = EMIT(x, OP_I_EQUAL, boolean, index, const_u32(x, 0));
+            const uint32_t then = new_id(x), merge = new_id(x);
+            INS(&x->fn->body, OP_SELECTION_MERGE, merge, 0);
+            INS(&x->fn->body, OP_BRANCH_CONDITIONAL, first, then, merge);
+            x->fn->ended = true;
+            start_block(x, then);
+            store(x, whole, (val){.t = t, .id = const_null(x, plain(x, t))});
+            branch(x, merge);
+            start_block(x, merge);
+        }
+    }
+    INS(&x->fn->body, OP_CONTROL_BARRIER, const_u32(x, SCOPE_WORKGROUP), const_u32(x, SCOPE_WORKGROUP),
+        const_u32(x, SEMANTICS_ACQUIRE_RELEASE | SEMANTICS_WORKGROUP_MEMORY));
 }
 
 static void emit_function(translation *x, fdecl *f)
@@ -2170,7 +2399,9 @@ static void emit_function(translation *x, fdecl *f)
     x->fn = st;
     signature(x, f);
     words *out = &x->functions;
-    const bool entry = f->at.stage != 0, fragment = f->at.stage == 2;
+    const bool entry = f->at.stage != 0, fragment = f->at.stage == 2, compute = f->at.stage == 3;
+    if (compute && !same(f->name, f->len, "compute")) fail(x, f->line, f->col, "a compute entry point is named compute");
+    if (compute && !f->at.size[0]) fail(x, f->line, f->col, "a compute entry point says its @workgroup_size");
     const int void_t = t_simple(x, K_VOID);
     INS(out, OP_FUNCTION, spv_type(x, entry ? void_t : f->result_type), f->id, 0, f->type_id);
     if (!entry) {
@@ -2217,6 +2448,7 @@ static void emit_function(translation *x, fdecl *f)
             st->output_count = 1;
             st->whole_output = true;
         }
+        if (compute) zero_workgroup(x, f);
     }
     statements(x, f->body);
     if (!st->ended) {
@@ -2228,13 +2460,16 @@ static void emit_function(translation *x, fdecl *f)
     ins(out, OP_FUNCTION_END, NULL, 0);
     if (entry) {
         put(&x->entries, OP_ENTRY_POINT | (uint32_t)(3 + string_words(f->len) + st->input_count) << 16);
-        put(&x->entries, fragment ? 4u : 0u);
+        put(&x->entries, fragment ? 4u : compute ? 5u : 0u); // Fragment, GLCompute, Vertex
         put(&x->entries, f->id);
         put_string(&x->entries, f->name, f->len);
         for (int i = 0; i < st->input_count; i++) put(&x->entries, st->inputs[i]);
         if (fragment) {
             INS(&x->modes, OP_EXECUTION_MODE, f->id, 7); // OriginUpperLeft
             if (st->uses_frag_depth) INS(&x->modes, OP_EXECUTION_MODE, f->id, 12); // DepthReplacing
+        }
+        if (compute) {
+            INS(&x->modes, OP_EXECUTION_MODE, f->id, 17, (uint32_t)f->at.size[0], (uint32_t)f->at.size[1], (uint32_t)f->at.size[2]); // LocalSize
         }
     }
     free(st->vars.w);
@@ -2297,9 +2532,56 @@ static void emit_global(translation *x, const gdecl *g)
     }
     case SPACE_UNIFORM:
         sc = SC_UNIFORM;
-        if (T(x, t)->kind != K_STRUCT) fail(x, g->line, g->col, "a uniform block is a struct");
+        if (T(x, t)->kind != K_STRUCT) { // A number, a vector or a matrix: in a struct of its own, as Vulkan's blocks are
+            const kind k = T(x, t)->kind;
+            if (k != K_VEC && k != K_MAT && !is_scalar(x, t)) fail(x, g->line, g->col, "a uniform block is a struct, a number, a vector or a matrix");
+            const uint32_t member = spv_laid(x, t), block = new_id(x), pointer = new_id(x);
+            INS(&x->globals_words, OP_TYPE_STRUCT, block, member);
+            INS(&x->globals_words, OP_TYPE_POINTER, pointer, (uint32_t)sc, block);
+            INS(&x->globals_words, OP_VARIABLE, pointer, id, (uint32_t)sc);
+            INS(&x->decorations, OP_DECORATE, block, DEC_BLOCK);
+            INS(&x->decorations, OP_MEMBER_DECORATE, block, 0, DEC_OFFSET, 0);
+            if (k == K_MAT) {
+                uint32_t align, size;
+                layout_of(x, T(x, t)->elem, &align, &size);
+                INS(&x->decorations, OP_MEMBER_DECORATE, block, 0, DEC_COL_MAJOR);
+                INS(&x->decorations, OP_MEMBER_DECORATE, block, 0, DEC_MATRIX_STRIDE, align);
+            }
+            if (g->at.group < 0 || g->at.binding < 0) fail(x, g->line, g->col, "'%.*s' says its @group and @binding", g->len, g->name);
+            INS(&x->decorations, OP_DECORATE, id, DEC_DESCRIPTOR_SET, (uint32_t)g->at.group);
+            INS(&x->decorations, OP_DECORATE, id, DEC_BINDING, (uint32_t)g->at.binding);
+            bind(x, g->name, g->len, (val){.t = t, .id = id, .ref = true, .sc = sc, .wrapped = true});
+            return;
+        }
         INS(&x->globals_words, OP_VARIABLE, spv_type(x, t_ptr(x, sc, t)), id, (uint32_t)sc);
         INS(&x->decorations, OP_DECORATE, spv_laid(x, t), DEC_BLOCK);
+        break;
+    case SPACE_STORAGE: {
+        // A runtime-sized array, in a struct of its own: Vulkan's storage block
+        sc = SC_STORAGE;
+        if (T(x, t)->kind != K_ARRAY || T(x, t)->n) fail(x, g->line, g->col, "a storage buffer here is a runtime-sized array");
+        if (g->at.group < 0 || g->at.binding < 0) fail(x, g->line, g->col, "'%.*s' says its @group and @binding", g->len, g->name);
+        const uint32_t array = spv_type(x, t), block = new_id(x), pointer = new_id(x);
+        INS(&x->globals_words, OP_TYPE_STRUCT, block, array);
+        INS(&x->globals_words, OP_TYPE_POINTER, pointer, (uint32_t)sc, block);
+        INS(&x->globals_words, OP_VARIABLE, pointer, id, (uint32_t)sc);
+        INS(&x->decorations, OP_DECORATE, block, DEC_BLOCK);
+        INS(&x->decorations, OP_MEMBER_DECORATE, block, 0, DEC_OFFSET, 0);
+        if (!g->writable) INS(&x->decorations, OP_DECORATE, id, DEC_NON_WRITABLE);
+        INS(&x->decorations, OP_DECORATE, id, DEC_DESCRIPTOR_SET, (uint32_t)g->at.group);
+        INS(&x->decorations, OP_DECORATE, id, DEC_BINDING, (uint32_t)g->at.binding);
+        bind(x, g->name, g->len, (val){.t = t, .id = id, .ref = true, .sc = sc, .wrapped = true, .readonly = !g->writable});
+        return;
+    }
+    case SPACE_WORKGROUP:
+        sc = SC_WORKGROUP;
+        if (g->init) fail(x, g->line, g->col, "a workgroup's variable starts as zeros");
+        if (T(x, t)->kind == K_ARRAY && !T(x, t)->n) fail(x, g->line, g->col, "a workgroup's array has a count");
+        if (x->nworkgroup == 64) fail(x, g->line, g->col, "more than 64 workgroup variables");
+        INS(&x->globals_words, OP_VARIABLE, spv_type(x, t_ptr(x, sc, t)), id, (uint32_t)sc);
+        x->workgroup[x->nworkgroup].id = id;
+        x->workgroup[x->nworkgroup].t = t;
+        x->nworkgroup++;
         break;
     default: {
         sc = SC_UNIFORM_CONSTANT;

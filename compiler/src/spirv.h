@@ -10,6 +10,13 @@
 // past the width, floats to ints past their range and indices past an
 // array's end, so a shader reads the same on both.
 //
+// It takes compute kernels too (notes/compute.md): a module whose entry point
+// is `@compute fn compute`, GLCompute with its @workgroup_size; storage
+// buffers (runtime-sized arrays, each in a Block struct of its own, a
+// read-only one NonWritable), workgroup memory, which the kernel zeroes as it
+// starts as WebGPU has it, barriers and atomics as Tint writes them. Vertex
+// and fragment stages read storage buffers too.
+//
 // SPIR-V 1.3, for Vulkan 1.1 and later.
 
 #include <stdbool.h>

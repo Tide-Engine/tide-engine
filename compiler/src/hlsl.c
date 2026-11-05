@@ -236,9 +236,11 @@ static void put_type(translation *x, hs *o, int t)
     case K_VEC: hprintf(o, "%s%d", scalar_spelling(x, ty.elem), ty.n); return;
     case K_MAT: hprintf(o, "float%dx%d", ty.n, T(x, ty.elem)->n); return;
     case K_ARRAY:
+        if (!ty.n) fail(x, 0, 0, "a runtime-sized array is a storage buffer's alone");
         declare(x, t);
         hprintf(o, "tidehl_a%d", t);
         return;
+    case K_ATOMIC: put_type(x, o, ty.elem); return; // Interlocked* take the number itself
     case K_STRUCT:
         declare(x, t);
         put_name(o, ty.s->name, ty.s->len);
@@ -369,6 +371,106 @@ static int global_type(translation *x, const gdecl *g)
     return 0;
 }
 
+// A storage buffer that `e` names: a module's var<storage>, not a local of that name.
+static const gdecl *storage_global(translation *x, const expr *e)
+{
+    if (e->kind != X_NAME || find_local(x, e->name, e->len)) return NULL;
+    const gdecl *g = find_global(x, e->name, e->len);
+    return g && !g->is_const && g->space == SPACE_STORAGE ? g : NULL;
+}
+
+// A workgroup's variable that `e` names.
+static const gdecl *workgroup_global(translation *x, const expr *e)
+{
+    if (e->kind != X_NAME || find_local(x, e->name, e->len)) return NULL;
+    const gdecl *g = find_global(x, e->name, e->len);
+    return g && !g->is_const && g->space == SPACE_WORKGROUP ? g : NULL;
+}
+
+// Storage buffer i of a pipeline is at binding 25 + i (gpu.h's TIDE_GPU_STORAGE_BINDING), at most 7: `_TideStorage<i>`.
+static int storage_slot(translation *x, const gdecl *g)
+{
+    if (g->at.group != 0 || g->at.binding < 25 || g->at.binding > 31) {
+        fail(x, g->line, g->col, "'%.*s' isn't at a binding a storage buffer has here: 25 to 31", g->len, g->name);
+    }
+    return g->at.binding - 25;
+}
+
+// A storage buffer's elements' type.
+static int storage_element(translation *x, const gdecl *g)
+{
+    const int t = resolve(x, g->type);
+    if (T(x, t)->kind != K_ARRAY || T(x, t)->n) fail(x, g->line, g->col, "a storage buffer here is a runtime-sized array");
+    return T(x, t)->elem;
+}
+
+// How far apart a storage buffer's elements are, as WGSL lays them out.
+static uint32_t storage_stride(translation *x, const int elem)
+{
+    uint32_t align, size;
+    layout_of(x, elem, &align, &size);
+    return (size + align - 1u) / align * align;
+}
+
+// The helpers that read storage buffer `slot`'s length, and where element i
+// is, as WebGPU (Tint) clamps it: the last one where i is past the end.
+static void storage_helpers(translation *x, const int slot, const int elem)
+{
+    char name[32];
+    snprintf(name, sizeof name, "tidehl_length%d", slot);
+    if (!first_time(x, name)) return;
+    const uint32_t stride = storage_stride(x, elem);
+    hprintf(&x->helpers, "uint tidehl_length%d() { uint n; _TideStorage%d.GetDimensions(n); return n / %uu; }\n", slot, slot, stride);
+    hprintf(&x->helpers, "uint tidehl_at%d(uint i) { return min(i, tidehl_length%d() - 1u) * %uu; }\n", slot, slot, stride);
+}
+
+// A storage element's value of type `t`, a number or a vector, at the byte `at`.
+static void put_storage_load(translation *x, hs *o, const int slot, const int t, const char *at)
+{
+    const int w = width_of(x, t);
+    const kind k = T(x, scalar_of(x, t))->kind;
+    const char *cast = k == K_F32 ? "asfloat" : k == K_I32 ? "asint" : "";
+    hprintf(o, "%s(_TideStorage%d.Load%s(%s))", cast, slot, w == 1 ? "" : w == 2 ? "2" : w == 3 ? "3" : "4", at);
+}
+
+static void put_storage_store(translation *x, hs *o, const int slot, const int t, const char *at, const char *v)
+{
+    const int w = width_of(x, t);
+    hprintf(o, "_TideStorage%d.Store%s(%s, asuint((", slot, w == 1 ? "" : w == 2 ? "2" : w == 3 ? "3" : "4", at);
+    put_type(x, o, t);
+    hprintf(o, ")(%s)))", v);
+}
+
+static int ex_text(translation *x, const expr *e, char **text);
+static int swizzle_component(char c);
+
+// Where a storage element, or one of its vector's components, is: `e` as
+// name[i] or name[i].c. Its buffer, its type, and its byte's expression.
+static bool storage_place(translation *x, const expr *e, const gdecl **g, int *slot, int *t, hs *at)
+{
+    int component = -1;
+    if (e->kind == X_MEMBER && e->a->kind == X_INDEX && storage_global(x, e->a->a)) {
+        if (e->len != 1) fail(x, e->line, e->col, "a storage vector's components are written one at a time");
+        component = swizzle_component(e->name[0]);
+        e = e->a;
+    }
+    if (e->kind != X_INDEX || !(*g = storage_global(x, e->a))) return false;
+    *slot = storage_slot(x, *g);
+    const int elem = storage_element(x, *g);
+    *t = elem;
+    if (component >= 0) {
+        if (T(x, elem)->kind != K_VEC || component >= T(x, elem)->n) fail(x, e->line, e->col, "that isn't a component of the storage's vectors");
+        *t = T(x, elem)->elem;
+    }
+    storage_helpers(x, *slot, elem);
+    char *index;
+    ex_text(x, e->b, &index);
+    if (component > 0) hprintf(at, "(tidehl_at%d((uint)(%s)) + %du)", *slot, index, 4 * component);
+    else hprintf(at, "tidehl_at%d((uint)(%s))", *slot, index);
+    free(index);
+    return true;
+}
+
 // The slot of a texture or a sampler, by its binding: texture i at 1 + 2i, its sampler at 2 + 2i.
 static int handle_slot(translation *x, const gdecl *g, const bool sampler)
 {
@@ -452,7 +554,12 @@ static int name_expr(translation *x, const expr *e, hs *o)
     }
     default: break;
     }
-    if (g->space == SPACE_UNIFORM) fail(x, e->line, e->col, "the uniform block is read by its members here");
+    if (g->space == SPACE_UNIFORM) {
+        if (T(x, t)->kind == K_STRUCT) fail(x, e->line, e->col, "the uniform block is read by its members here");
+        hput(o, "tidehl_u");
+        return t;
+    }
+    if (g->space == SPACE_STORAGE) fail(x, e->line, e->col, "a storage buffer is read by its elements here");
     put_name(o, g->name, g->len);
     return t;
 }
@@ -462,7 +569,7 @@ static int member_expr(translation *x, const expr *e, hs *o)
     // The uniform block's members are the cbuffer's
     if (e->a->kind == X_NAME && !find_local(x, e->a->name, e->a->len)) {
         const gdecl *g = find_global(x, e->a->name, e->a->len);
-        if (g && !g->is_const && g->space == SPACE_UNIFORM) {
+        if (g && !g->is_const && g->space == SPACE_UNIFORM && T(x, resolve(x, g->type))->kind == K_STRUCT) {
             const sdecl *s = T(x, resolve(x, g->type))->s;
             for (int i = 0; i < s->count; i++) {
                 if (s->members[i].len == e->len
@@ -507,6 +614,21 @@ static int member_expr(translation *x, const expr *e, hs *o)
 // An index past the end, as WebGPU has it: the last element instead.
 static int index_expr(translation *x, const expr *e, hs *o)
 {
+    const gdecl *storage = storage_global(x, e->a);
+    if (storage) { // A storage buffer's element, read at its byte
+        const int slot = storage_slot(x, storage), elem = storage_element(x, storage);
+        if (T(x, elem)->kind == K_ATOMIC) fail(x, e->line, e->col, "an atomic is read by atomicLoad");
+        storage_helpers(x, slot, elem);
+        char *index;
+        const int it = ex_text(x, e->b, &index);
+        if (!is_int(x, it) || !is_scalar(x, it)) fail(x, e->line, e->col, "an index is an i32 or a u32");
+        hs at = {0};
+        hprintf(&at, "tidehl_at%d((uint)(%s))", slot, index);
+        put_storage_load(x, o, slot, elem, at.s);
+        free(at.s);
+        free(index);
+        return elem;
+    }
     char *base, *at;
     const int bt = deref_type(x, ex_text(x, e->a, &base));
     const int it = ex_text(x, e->b, &at);
@@ -998,11 +1120,148 @@ static const struct {
     {"fwidthFine", "tidehl_fwidth_fine", 1, true, false}, {"fwidthCoarse", "tidehl_fwidth_coarse", 1, true, false},
 };
 
+// WGSL's atomics: the Interlocked function each is, and how many values it takes after the pointer.
+static const struct {
+    const char *wgsl, *hlsl;
+    int values;
+} atomics[] = {
+    {"atomicLoad", "InterlockedOr", 0}, // Or with 0, as Tint reads one: an atomic read, which a load isn't
+    {"atomicStore", "InterlockedExchange", 1},
+    {"atomicAdd", "InterlockedAdd", 1},
+    {"atomicSub", "InterlockedAdd", 1}, // Of its negative
+    {"atomicMax", "InterlockedMax", 1},
+    {"atomicMin", "InterlockedMin", 1},
+    {"atomicAnd", "InterlockedAnd", 1},
+    {"atomicOr", "InterlockedOr", 1},
+    {"atomicXor", "InterlockedXor", 1},
+    {"atomicExchange", "InterlockedExchange", 1},
+    {"atomicCompareExchangeWeak", "InterlockedCompareExchange", 2},
+};
+
+// An atomic's helper, which gives what Interlocked* puts in its last
+// argument: for storage buffer `slot`'s element at a byte (`dest` NULL), or
+// a workgroup's variable `dest` (with `indexed`, its element .v[i]).
+static void atomic_helper(translation *x, const int which, const char *name, const int scalar, const int slot, const char *dest,
+                          const bool indexed)
+{
+    if (!first_time(x, name)) return;
+    const char *s = scalar_spelling(x, scalar);
+    const bool store = which == 1, exchange = which == 10;
+    const int result = exchange ? exchange_result(x, scalar) : scalar;
+    hs h = {0};
+    if (store) hput(&h, "void");
+    else put_type(x, &h, result);
+    hprintf(&h, " %s(", name);
+    if (!dest) hput(&h, "uint at");
+    else if (indexed) hput(&h, "uint i");
+    if (atomics[which].values) hprintf(&h, "%s%s v", !dest || indexed ? ", " : "", s);
+    if (exchange) hprintf(&h, ", %s w", s);
+    hprintf(&h, ") {\n    %s r;\n    ", s);
+    if (dest) hprintf(&h, "%s(%s%s, ", atomics[which].hlsl, dest, indexed ? ".v[i]" : "");
+    else hprintf(&h, "_TideStorage%d.%s(at, ", slot, atomics[which].hlsl);
+    if (which == 0) hprintf(&h, "(%s)0, r);\n", s);
+    else if (which == 3) hprintf(&h, "(%s)0 - v, r);\n", s);
+    else if (exchange) hput(&h, "v, w, r);\n"); // Compared with v, w where it was
+    else hput(&h, "v, r);\n");
+    if (exchange) {
+        hput(&h, "    ");
+        put_type(x, &h, result);
+        hput(&h, " e;\n    e.old_value = r;\n    e.exchanged = r == v;\n    return e;\n");
+    } else if (!store) {
+        hput(&h, "    return r;\n");
+    }
+    hput(&h, "}\n");
+    hput(&x->helpers, h.s);
+    free(h.s);
+}
+
+// Barriers, atomics and arrayLength, if `e` calls one.
+static bool compute_call(translation *x, const expr *e, hs *o, int *t)
+{
+    const char *n = e->name;
+    const int len = e->len, line = e->line, col = e->col;
+    if (same(n, len, "workgroupBarrier") || same(n, len, "storageBarrier")) {
+        if (e->nargs) fail(x, line, col, "%.*s takes nothing", len, n);
+        hput(o, n[0] == 'w' ? "GroupMemoryBarrierWithGroupSync()" : "DeviceMemoryBarrierWithGroupSync()");
+        *t = t_simple(x, K_VOID);
+        return true;
+    }
+    if (same(n, len, "arrayLength")) {
+        const gdecl *g = e->nargs == 1 && e->args[0]->kind == X_ADDR ? storage_global(x, e->args[0]->a) : NULL;
+        if (!g) fail(x, line, col, "arrayLength takes a storage buffer's array: &name");
+        const int slot = storage_slot(x, g);
+        storage_helpers(x, slot, storage_element(x, g));
+        hprintf(o, "tidehl_length%d()", slot);
+        *t = t_simple(x, K_U32);
+        return true;
+    }
+    int which = -1;
+    for (int i = 0; i < (int)(sizeof atomics / sizeof atomics[0]); i++) {
+        if (same(n, len, atomics[i].wgsl)) which = i;
+    }
+    if (which < 0) return false;
+    if (e->nargs != 1 + atomics[which].values) fail(x, line, col, "%s takes %d arguments", atomics[which].wgsl, 1 + atomics[which].values);
+    const expr *place = e->args[0]->kind == X_ADDR ? e->args[0]->a : NULL;
+    int held = 0;
+    hs call = {0};
+    if (place && place->kind == X_INDEX && storage_global(x, place->a)) { // Storage's: at its element's byte
+        const gdecl *g;
+        int slot;
+        hs at = {0};
+        storage_place(x, place, &g, &slot, &held, &at);
+        if (T(x, held)->kind != K_ATOMIC) fail(x, line, col, "%s takes a pointer to an atomic", atomics[which].wgsl);
+        char name[64];
+        snprintf(name, sizeof name, "tidehl_%s%d", atomics[which].wgsl, slot);
+        atomic_helper(x, which, name, T(x, held)->elem, slot, NULL, false);
+        hprintf(&call, "%s(%s", name, at.s);
+        free(at.s);
+    } else {
+        const bool indexed = place && place->kind == X_INDEX;
+        const gdecl *g = place ? workgroup_global(x, indexed ? place->a : place) : NULL;
+        if (!g) fail(x, line, col, "%s takes an atomic in storage or a workgroup's memory: &name or &name[i]", atomics[which].wgsl);
+        const int gt = resolve(x, g->type);
+        held = indexed ? (T(x, gt)->kind == K_ARRAY ? T(x, gt)->elem : 0) : gt;
+        if (!held || T(x, held)->kind != K_ATOMIC) fail(x, line, col, "%s takes a pointer to an atomic", atomics[which].wgsl);
+        hs dest = {0}, name = {0};
+        put_name(&dest, g->name, g->len);
+        hprintf(&name, "tidehl_%s_%s", atomics[which].wgsl, dest.s);
+        atomic_helper(x, which, name.s, T(x, held)->elem, 0, dest.s, indexed);
+        hput(&call, name.s);
+        hput(&call, "(");
+        if (indexed) {
+            char *index;
+            const int it = ex_text(x, place->b, &index);
+            if (!is_int(x, it) || !is_scalar(x, it)) fail(x, line, col, "an index is an i32 or a u32");
+            if (place->b->kind == X_INT) hprintf(&call, "%lldu", (long long)(place->b->i >= T(x, gt)->n ? T(x, gt)->n - 1 : place->b->i));
+            else hprintf(&call, "min((uint)(%s), %du)", index, T(x, gt)->n - 1);
+            free(index);
+        }
+        free(dest.s);
+        free(name.s);
+    }
+    const int scalar = T(x, held)->elem;
+    bool first = call.s[call.n - 1] == '(';
+    for (int i = 0; i < atomics[which].values; i++) {
+        char *v;
+        ex_text(x, e->args[1 + i], &v);
+        hprintf(&call, "%s(%s)(%s)", first ? "" : ", ", scalar_spelling(x, scalar), v);
+        first = false;
+        free(v);
+    }
+    hputn(o, call.s, call.n);
+    hput(o, ")");
+    free(call.s);
+    *t = which == 1 ? t_simple(x, K_VOID) : which == 10 ? exchange_result(x, scalar) : scalar;
+    return true;
+}
+
 static int builtin(translation *x, const expr *e, hs *o)
 {
     const char *n = e->name;
     const int len = e->len, line = e->line, col = e->col;
     if (len > 7 && memcmp(n, "texture", 7) == 0) return texture_call(x, e, o);
+    int made;
+    if (compute_call(x, e, o, &made)) return made;
     args a;
     eval_args(x, e, &a);
     int t = 0;
@@ -1407,6 +1666,10 @@ static void simple(translation *x, const stmt *s, hs *o);
 // can't write: a loop over each such index's elements that writes the one it is.
 static bool unrolled(translation *x, const stmt *s, hs *o)
 {
+    // A workgroup's memory is written by any index, as storage is: only a function's own arrays aren't
+    const expr *root = s->e;
+    while (root && (root->kind == X_MEMBER || root->kind == X_INDEX || root->kind == X_DEREF)) root = root->a;
+    if (root && workgroup_global(x, root)) return false;
     const expr *found[4];
     int counts[4];
     const int n = dynamic_indices(x, s->e, found, counts, 4);
@@ -1450,9 +1713,53 @@ static bool unrolled(translation *x, const stmt *s, hs *o)
     return true;
 }
 
+// An assignment, ++ or -- of a storage element or one of its components, at its byte: whether `s` is one.
+static bool storage_write(translation *x, const stmt *s, hs *o)
+{
+    const gdecl *g;
+    int slot, t;
+    hs at = {0};
+    if (!storage_place(x, s->e, &g, &slot, &t, &at)) return false;
+    if (!g->writable) fail(x, s->line, s->col, "that's read-only");
+    if (T(x, t)->kind == K_ATOMIC) fail(x, s->line, s->col, "an atomic is written by atomicStore");
+    if (s->kind == S_ASSIGN && s->op == P_ASSIGN) {
+        char *v;
+        ex_text(x, s->e2, &v);
+        put_storage_store(x, o, slot, t, at.s, v);
+        free(v);
+    } else { // Read and written at one byte, worked out once
+        const int id = ++x->temps;
+        char name[32];
+        snprintf(name, sizeof name, "tidehl_s%d", id);
+        hprintf(o, "{ uint %s = %s; ", name, at.s);
+        hs now = {0}, value = {0};
+        put_storage_load(x, &now, slot, t, name);
+        char *v;
+        int vt;
+        if (s->kind == S_ASSIGN) {
+            vt = deref_type(x, ex_text(x, s->e2, &v));
+        } else {
+            v = malloc(2);
+            if (!v) abort();
+            strcpy(v, "1");
+            vt = t_simple(x, K_AINT);
+        }
+        const punct op = s->kind == S_ASSIGN ? compound_op(s->op) : s->kind == S_INC ? P_PLUS : P_MINUS;
+        binop(x, op, t, now.s, vt, v, &value, s->line, s->col);
+        put_storage_store(x, o, slot, t, name, value.s);
+        hput(o, "; }");
+        free(v);
+        free(now.s);
+        free(value.s);
+    }
+    free(at.s);
+    return true;
+}
+
 // A statement as a `for` has its first and third parts: no `;`.
 static void simple(translation *x, const stmt *s, hs *o)
 {
+    if ((s->kind == S_ASSIGN || s->kind == S_INC || s->kind == S_DEC) && storage_write(x, s, o)) return;
     if ((s->kind == S_ASSIGN || s->kind == S_INC || s->kind == S_DEC) && !x->nfixed && unrolled(x, s, o)) return;
     switch (s->kind) {
     case S_VAR: {
@@ -1810,7 +2117,16 @@ static void uniform_block(translation *x, const gdecl *g, hs *o)
 {
     if (g->at.group != 0 || g->at.binding != 0) fail(x, g->line, g->col, "the uniform block is at group 0, binding 0");
     const int t = resolve(x, g->type);
-    if (T(x, t)->kind != K_STRUCT) fail(x, g->line, g->col, "a uniform block is a struct");
+    if (T(x, t)->kind != K_STRUCT) { // A number, a vector or a matrix, alone: tidehl_u
+        const type m = *T(x, t);
+        if (m.kind != K_VEC && m.kind != K_MAT && !is_scalar(x, t)) fail(x, g->line, g->col, "a uniform block is a struct, a number, a vector or a matrix");
+        if (m.kind == K_MAT && T(x, m.elem)->n == 2) fail(x, g->line, g->col, "a matrix of vec2 columns in the uniform block isn't taken here");
+        hput(o, "cbuffer TideUniforms {\n    ");
+        if (m.kind == K_MAT) hput(o, "row_major ");
+        put_type(x, o, t);
+        hput(o, " tidehl_u;\n};\n");
+        return;
+    }
     const sdecl *s = T(x, t)->s;
     hput(o, "cbuffer TideUniforms {\n");
     uint32_t at = 0; // Where HLSL would put the next member
@@ -1885,7 +2201,11 @@ static int ios(translation *x, const int t, const attrs at, const char *name, co
     return 1;
 }
 
-enum { BUILTIN_POSITION = 0, BUILTIN_FRONT_FACING = 17, BUILTIN_FRAG_DEPTH = 22, BUILTIN_VERTEX_INDEX = 42, BUILTIN_INSTANCE_INDEX = 43 };
+enum {
+    BUILTIN_POSITION = 0, BUILTIN_FRONT_FACING = 17, BUILTIN_FRAG_DEPTH = 22, BUILTIN_NUM_WORKGROUPS = 24, BUILTIN_WORKGROUP_ID = 26,
+    BUILTIN_LOCAL_INVOCATION_ID = 27, BUILTIN_GLOBAL_INVOCATION_ID = 28, BUILTIN_LOCAL_INVOCATION_INDEX = 29,
+    BUILTIN_VERTEX_INDEX = 42, BUILTIN_INSTANCE_INDEX = 43,
+};
 
 // What the vertex stage gives the fragment stage: its position, and each @location.
 static void varyings(translation *x, const io *outs, const int count, hs *o)
@@ -2021,6 +2341,70 @@ static void entry_points(translation *x, fdecl *vertex, fdecl *fragment, hs *o)
         hput(o, "    return tidehl_o;\n");
     }
     hput(o, "}\n");
+}
+
+// A compute entry point: tidehl_compute, around the WGSL's `compute`, whose
+// built-ins are its system values but num_workgroups, which is the cbuffer
+// TideGroups's `_TideGroups`. A workgroup's memory is zeroed first, as WebGPU
+// (and Tint) zeroes it: an array's elements by the invocation's index across
+// the workgroup's size, anything else by the first invocation; then a barrier.
+static void compute_entry(translation *x, fdecl *f, hs *o)
+{
+    signature(x, f);
+    if (!f->at.size[0]) fail(x, f->line, f->col, "a compute entry point says its @workgroup_size");
+    if (!same(f->name, f->len, "compute")) fail(x, f->line, f->col, "a compute entry point is named compute");
+    if (T(x, f->result_type)->kind != K_VOID) fail(x, f->line, f->col, "a compute entry point gives nothing");
+    const int total = f->at.size[0] * f->at.size[1] * f->at.size[2];
+    hprintf(o, "[numthreads(%d, %d, %d)]\n", f->at.size[0], f->at.size[1], f->at.size[2]);
+    hput(o, "void tidehl_compute(uint3 tidehl_global : SV_DispatchThreadID, uint3 tidehl_local : SV_GroupThreadID,\n"
+            "                    uint tidehl_index : SV_GroupIndex, uint3 tidehl_group : SV_GroupID) {\n");
+    bool zeroed = false;
+    for (int i = 0; i < x->nglobals; i++) {
+        const gdecl *g = x->globals[i];
+        if (g->is_const || g->space != SPACE_WORKGROUP) continue;
+        const int t = resolve(x, g->type);
+        zeroed = true;
+        if (T(x, t)->kind == K_ARRAY) {
+            hprintf(o, "    { [loop] for (uint tidehl_z = tidehl_index; tidehl_z < %du; tidehl_z += %du) ", T(x, t)->n, total); // fxc's for-scope
+            put_name(o, g->name, g->len);
+            hput(o, ".v[tidehl_z] = ");
+            zero_of(x, T(x, t)->elem, o);
+            hput(o, "; }");
+        } else {
+            hput(o, "    if (tidehl_index == 0u) ");
+            put_name(o, g->name, g->len);
+            hput(o, " = ");
+            zero_of(x, t, o);
+        }
+        hput(o, ";\n");
+    }
+    if (zeroed) hput(o, "    GroupMemoryBarrierWithGroupSync();\n");
+    for (int p = 0; p < f->count; p++) {
+        io ins[32];
+        const int n = ios(x, f->param_types[p], f->params[p].at, "tidehl_p", 8, ins, 32);
+        hprintf(o, "    ");
+        put_type(x, o, f->param_types[p]);
+        hprintf(o, " tidehl_p%d = ", p);
+        zero_of(x, f->param_types[p], o);
+        hput(o, ";\n");
+        for (int i = 0; i < n; i++) {
+            const char *value;
+            switch (ins[i].at.builtin) {
+            case BUILTIN_GLOBAL_INVOCATION_ID: value = "tidehl_global"; break;
+            case BUILTIN_LOCAL_INVOCATION_ID: value = "tidehl_local"; break;
+            case BUILTIN_LOCAL_INVOCATION_INDEX: value = "tidehl_index"; break;
+            case BUILTIN_WORKGROUP_ID: value = "tidehl_group"; break;
+            case BUILTIN_NUM_WORKGROUPS: value = "_TideGroups"; break;
+            default: fail(x, f->line, f->col, "a compute entry point takes compute's built-ins alone"); value = "";
+            }
+            hprintf(o, "    tidehl_p%d%s = %s;\n", p, ins[i].path + 8, value);
+        }
+    }
+    hput(o, "    ");
+    put_name(o, f->name, f->len);
+    hput(o, "(");
+    for (int p = 0; p < f->count; p++) hprintf(o, "%stidehl_p%d", p ? ", " : "", p);
+    hput(o, ");\n}\n");
 }
 
 // What every program has: Unity's platforms' depth, the names TideRender.cs
@@ -2315,7 +2699,7 @@ static void translate(translation *x, hs *out)
     add_type(x, (type){.kind = K_NONE}); // Type 0 is none
     tokenize(x);
     parse_module(x);
-    fdecl *vertex = NULL, *fragment = NULL;
+    fdecl *vertex = NULL, *fragment = NULL, *compute = NULL;
     for (int i = 0; i < x->nfns; i++) {
         fdecl *f = x->fns[i];
         if (f->at.stage == 1) {
@@ -2324,9 +2708,12 @@ static void translate(translation *x, hs *out)
         } else if (f->at.stage == 2) {
             if (fragment) fail(x, f->line, f->col, "a second fragment stage");
             fragment = f;
+        } else if (f->at.stage == 3) {
+            if (compute) fail(x, f->line, f->col, "a second compute entry point");
+            compute = f;
         }
     }
-    if (!vertex || !fragment) fail(x, 1, 1, "a module here has a @vertex and a @fragment function");
+    if (!vertex != !fragment || (!vertex && !compute)) fail(x, 1, 1, "a module here has a @vertex and a @fragment function, or a @compute one");
     // The module's structs, each after what it holds
     for (int i = 0; i < x->nstructs; i++) declare(x, resolve_struct(x, x->structs[i], 0, 0));
     // Its globals: the uniform block, textures (named by their slots), constants and private variables
@@ -2372,6 +2759,22 @@ static void translate(translation *x, hs *out)
             hprintf(&globals, " _TideTexture%d;\nSamplerState sampler_TideTexture%d;\n", handle_slot(x, g, false), handle_slot(x, g, false));
         } else if (T(x, t)->kind == K_SAMPLER || T(x, t)->kind == K_SAMPLER_CMP) {
             handle_slot(x, g, true); // Unity's inline samplers, picked by _TideSampling
+        } else if (g->space == SPACE_STORAGE) {
+            const int slot = storage_slot(x, g), elem = storage_element(x, g);
+            const int held = T(x, elem)->kind == K_ATOMIC ? T(x, elem)->elem : elem;
+            if ((T(x, held)->kind != K_VEC && !is_scalar(x, held)) || is_bool(x, held)) {
+                fail(x, g->line, g->col, "a storage buffer here holds numbers, vectors or atomics");
+            }
+            // Raw: one buffer is storage, vertices, indices and indirect arguments, whichever a draw or a dispatch reads it as
+            hprintf(&globals, "%sByteAddressBuffer _TideStorage%d;\n", g->writable ? "RW" : "", slot);
+        } else if (g->space == SPACE_WORKGROUP) {
+            if (g->init) fail(x, g->line, g->col, "a workgroup's variable starts as zeros");
+            if (T(x, t)->kind == K_ARRAY && !T(x, t)->n) fail(x, g->line, g->col, "a workgroup's array has a count");
+            hput(&globals, "groupshared ");
+            put_type(x, &globals, t);
+            hput(&globals, " ");
+            put_name(&globals, g->name, g->len);
+            hput(&globals, ";\n");
         } else {
             fail(x, g->line, g->col, "a module's variable here is a texture, a sampler, var<uniform> or var<private>");
         }
@@ -2383,8 +2786,10 @@ static void translate(translation *x, hs *out)
         hput(&prototypes, ";\n");
     }
     for (int i = 0; i < x->nfns; i++) function(x, x->fns[i], &functions);
+    if (compute) hput(&globals, "cbuffer TideGroups {\n    uint3 _TideGroups; // num_workgroups: the dispatch's size, in workgroups\n};\n");
     hs entries = {0};
-    entry_points(x, vertex, fragment, &entries);
+    if (vertex) entry_points(x, vertex, fragment, &entries);
+    if (compute) compute_entry(x, compute, &entries);
     for (int i = 0; prelude[i]; i++) hput(out, prelude[i]);
     if (x->decls.s) hput(out, x->decls.s);
     hput(out, "\n");
@@ -2454,8 +2859,9 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
             "    }\n",
             name);
     // Twice: for GPUs whose shaders read buffers, and for OpenGL ES 3.0 and WebGL 2, which read them as textures
-    // (hlsl.h's TIDEHL_TEXTURE_BUFFERS)
-    for (int i = 0; i < 2; i++) {
+    // (hlsl.h's TIDEHL_TEXTURE_BUFFERS); once where it reads storage buffers, which those have none of
+    const int count = strstr(hlsl, "_TideStorage") ? 1 : 2;
+    for (int i = 0; i < count; i++) {
         hput(&o, "    SubShader\n"
                  "    {\n"
                  "        Pass\n"
@@ -2481,5 +2887,15 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
         hput(&o, "            ENDHLSL\n        }\n    }\n");
     }
     hput(&o, "}\n");
+    return htake(&o);
+}
+
+char *tide_hlsl_unity_compute(const char *hlsl)
+{
+    hs o = {0};
+    hput(&o, "// Made by tide unity from the game's WGSL. Do not edit: it's made again as the game is built.\n"
+             "#pragma kernel tidehl_compute\n"
+             "#include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
+    hput(&o, hlsl);
     return htake(&o);
 }
