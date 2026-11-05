@@ -71,7 +71,7 @@ It masks them in the log, in `crash.txt` and `system.txt`, and in the minidump: 
 
 ### Receiving reports
 
-A game linked to a hosting project with crash reports on sends each report there by itself, without asking the player. Its window then says the report was sent, and still shows what it says. Turn reports on for the project in the [hosting console](../multiplayer/hosting.md), which shows the project's report key. `tide deploy` writes the key into the game's `tide.deploy.json` as `"reports"`, or you can add it there yourself:
+A game linked to a hosting project with crash reports on sends each report there by itself, without asking the player. Its window then says the report was sent, and still shows what it says. Turn reports on in the project's **Settings** tab in the [hosting console](../multiplayer/hosting.md), which shows the project's report key. `tide deploy` writes the key into the game's `tide.deploy.json` as `"reports"`, or you can add it there yourself:
 
 ```json
 {
@@ -81,7 +81,7 @@ A game linked to a hosting project with crash reports on sends each report there
 }
 ```
 
-`tide build` then puts `crash.json` beside the game, with the key, the service's address and the build's ID (the SHA-256 of the game's program), and `tide-crash` sends there. Ship `crash.json` with the game. The console groups reports by what crashed and where, with how often and on which builds, systems and GPUs, and keeps each report's files. Reports are billed with the project's hosting.
+`tide build` then puts `crash.json` beside the game, with the key, the service's address and the build's ID (the SHA-256 of the game's program), and `tide-crash` sends there. Ship `crash.json` with the game. The console groups reports by what crashed and where, with how often and on which builds, systems and GPUs, and keeps each report's files. The hosting plan includes a monthly number of reports; past it, reports are dropped unless extra usage is on.
 
 The key ships inside the game, so all it can do is add reports to its project. Replacing it in the console stops the old one, and the next build carries the new one. Turning reports off and building again removes `crash.json`. A run with `TIDE_HIDDEN` set never sends.
 

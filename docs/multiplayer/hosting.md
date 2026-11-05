@@ -51,7 +51,7 @@ An invalid link, a link to a different service or a project your account cannot
 access requires an explicit selection. The dashboard still lets you create a
 project with custom settings before deploying.
 
-With **Crash reports** on for the project in the console, each deploy also saves
+With crash reports on in the project's **Settings** tab, each deploy also saves
 the project's report key in `tide.deploy.json`, and desktop builds then send
 their players' crash reports to the project, where the console groups them. See
 [Receiving reports](../game/files.md#receiving-reports).
@@ -121,32 +121,38 @@ Matches end after all player connections leave and the empty grace passes
 ended. Its owner can change this policy or suspend/end/resume a match through
 the dashboard/API. Admission remains separate from ending a world.
 
-Hosting uses a monthly subscription with an included usage allowance. The
-allowance resets each paid billing cycle; unused monthly allowance expires.
-Purchased extra credit is separate and carries forward. Monthly allowance is
-used first. Hosting requires an active paid period, including when purchased
-credit remains after a subscription ends. Canceling renewal keeps access until
-the end of the paid period. Deploying artifacts does not start a subscription.
+Hosting uses a monthly subscription. Each paid period includes an allowance of
+each kind of usage: match hours (a Standard match uses two an hour), crash
+reports, storage (releases, saves and reports) and outgoing traffic. The
+console's **Overview** shows this period's usage against each, and warns at 80%.
+Allowances reset each paid period and don't carry over. Hosting requires an
+active paid period. Canceling renewal keeps access until the end of the paid
+period. Deploying artifacts does not start a subscription.
 
-Extra usage starts disabled. In **Plan & extra credit**, you can enable it,
-choose an automatic prepaid top-up amount and set the maximum additional
-purchases per billing cycle. This authorizes payments against your saved Stripe
-payment method when credit runs low. Manual and automatic purchases share the
-same cap, including pending purchases. Payment must succeed before credit is
-available; authentication failures pause automatic purchases and show guidance.
-Purchased credit from earlier cycles does not count as a new purchase.
+Extra usage starts off, so each allowance is a hard limit. At an allowance:
 
-The dashboard shows configured prices, capacity,
-WASM memory, sampled CPU use, logs, saves, incidents and billing history. At low
-credit it warns; exhaustion saves and suspends even long-lived worlds. Capacity,
-bandwidth, storage and operator limits also apply. Included allowances are hard
-limits, rather than automatic paid overages.
+- new matches are refused, and running ones end, or save and suspend if they're
+  long-lived worlds
+- crash reports are refused and counted as dropped
+- uploads past the storage allowance are refused
 
-Select **Plan & extra credit** beside your balance to subscribe or manage
-billing. After enabling extra usage, you can also buy credit manually through
-Stripe Checkout, within the same cap. Credit appears after payment is confirmed. Sandbox payments
-are labeled and charge no real money. If payments are unavailable, the panel
-explains this instead of showing an empty amount selector.
+In **Billing**, you can turn extra usage on. Usage past an allowance is then
+charged per unit from prepaid credit, at the prices **Billing** lists. You can
+choose an automatic top-up amount and the maximum additional purchases per
+billing cycle; this authorizes payments against your saved Stripe payment
+method when credit runs low. Manual and automatic purchases share the same cap,
+including pending purchases. Payment must succeed before credit is available,
+and authentication failures pause automatic purchases and show guidance.
+Purchased credit carries forward. Sandbox payments are labeled and charge no
+real money.
+
+The console has a page for each project, with tabs:
+
+- **Overview**: the play link, latest release and deploy command
+- **Matches**
+- **Crash reports**
+- **Settings**: size, maximum matches, lifetime, CI tokens, runtime credentials
+  and the crash report key
 
 Long-lived worlds save periodically and recover on the same release and match
 ID after a worker or host restart. Recovery has bounded retries and reports the
