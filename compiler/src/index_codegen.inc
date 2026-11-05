@@ -75,6 +75,15 @@ static int ix_site(gen *g, const stmt *s)
     return g->ix_loops.count - 1;
 }
 
+// Whether the code being generated is a system's own, for one run of it a tick: what its loops read can't change
+// while it runs, as only it could, and it doesn't (indexing.c), so an index found to hold holds till it's done.
+static bool ix_fast(const gen *g)
+{
+    const decl *code = g->code;
+    return code && code->kind == DECL_SYSTEM && !code->is_handler && !code->is_view && !code->is_local && !g->borrow
+        && !g->routine && !g->frame && !g->task && !g->par_loop;
+}
+
 // What the generated code needs of every cached index, once (after the columns: they read tables).
 static void gen_index_helpers(gen *g)
 {
@@ -89,6 +98,7 @@ static void gen_index_helpers(gen *g)
         "    uint32_t ready;     // `ix` is of what `fact` says\n"
         "    uint32_t facts, fact_room, holds, hold_room;\n"
         "    uint64_t plan;      // What the code that made it reads, which a reload can change\n"
+        "    uint64_t valid;     // A system's own loop's: the tick's run (epoch) its index was found to hold in\n"
         "    uint64_t *fact;     // What it was made from: numbers, and pages as numbers, in the order they're checked\n"
         "    tide_page **held;   // The pages among them, each with a reference of the site's (NULL: none taken)\n"
         "    tide_index *ix;\n"
@@ -100,7 +110,7 @@ static void gen_index_helpers(gen *g)
         "};\n"
         "static uint32_t tide_index_sites(void);\n"
         "static uint32_t tide_ix_refs; // Page references the sites take or let go of, one at a time\n"
-        "static uint64_t tide_ix_made; // Rows made for views, counted: an index of a view's rows holds while they're the last\n\n");
+        "static uint64_t tide_ix_made __attribute__((unused)); // Rows made for views, counted: an index of a view's rows holds while they're the last\n\n");
     sb_put(o,
         "TIDE_HELPER double tide_ix_min(const double a, const double b)\n{\n"
         "    return a != a || b != b ? __builtin_nan(\"\") : a < b ? a : b;\n}\n\n"
@@ -139,7 +149,8 @@ static void gen_index_helpers(gen *g)
         "TIDE_HELPER tide_ix_walk tide_ix_walk_begin(tide_ix_site *s, const uint64_t plan)\n{\n"
         "    if (s->plan != plan) {\n"
         "        tide_ix_let_go(s->held, 0u, s->holds);\n"
-        "        s->holds = s->facts = s->ready = 0u;\n        s->plan = plan;\n    }\n"
+        "        s->holds = s->facts = s->ready = 0u;\n        s->plan = plan;\n"
+        "        __atomic_store_n(&s->valid, 0u, __ATOMIC_RELEASE);\n    }\n"
         "    return (tide_ix_walk){s, 0u, 0u, true, false};\n}\n\n"
         "TIDE_HELPER void tide_ix_differ(tide_ix_walk *w)\n{\n"
         "    tide_ix_site *s = w->s;\n"
@@ -177,7 +188,8 @@ static void gen_index_helpers(gen *g)
         "    if (room) tide_page_retain(p);\n"
         "    tide_index_unlock(&tide_ix_refs);\n"
         "    w->full |= !room;\n"
-        "    s->held[s->holds++] = room ? p : NULL;\n    w->held++;\n}\n\n"
+        "    s->held[s->holds++] = room ? p : NULL;\n    w->held++;\n}\n\n");
+    sb_put(o,
         "// Whether the site's index is of what was walked\n"
         "TIDE_HELPER bool tide_ix_walk_end(tide_ix_walk *w)\n{\n"
         "    if (w->same && w->at != w->s->facts) tide_ix_differ(w);\n"
@@ -188,16 +200,28 @@ static void gen_index_helpers(gen *g)
         "    *own = true;\n    *build = true;\n"
         "    if (!s) return tide_index_make();\n"
         "    if (tide_ix_walk_end(w)) {\n        *own = *build = false;\n        return s->ix;\n    }\n"
+        "    __atomic_store_n(&s->valid, 0u, __ATOMIC_RELEASE);\n"
         "    if (__atomic_load_n(&s->readers, __ATOMIC_ACQUIRE) == 0u) {\n"
         "        if (!s->ix) s->ix = tide_index_make();\n"
         "        s->ready = !w->full;\n        *own = false;\n        return s->ix;\n    }\n"
         "    s->ready = 0u;\n    return tide_index_make();\n}\n\n"
+        "// Whether a site's index is to be searched as it is, with no lock: with `fast`, a system's own loop's that\n"
+        "// was found to hold in this run of the tick, which nothing can change till the system is done (the tick's\n"
+        "// schedule: the system only reads what the index is of). Otherwise its lock is taken, for checking it\n"
+        "TIDE_HELPER bool tide_ix_hold(tide_ix_site *s, const struct tide_index_cache *c, const bool fast)\n{\n"
+        "    if (!s) return false;\n"
+        "    if (fast && __atomic_load_n(&s->valid, __ATOMIC_ACQUIRE) == c->epoch) return true;\n"
+        "    tide_index_lock(&s->lock);\n"
+        "    if (!fast || __atomic_load_n(&s->valid, __ATOMIC_ACQUIRE) != c->epoch) return false;\n"
+        "    tide_index_unlock(&s->lock);\n    return true;\n}\n\n"
         "// Built: searched outside the lock\n"
-        "TIDE_HELPER void tide_ix_searching(tide_ix_site *s, const bool own)\n{\n"
+        "TIDE_HELPER void tide_ix_searching(tide_ix_site *s, const bool own, const struct tide_index_cache *c, const bool fast)\n{\n"
         "    if (!s) return;\n"
         "    if (!own) __atomic_add_fetch(&s->readers, 1u, __ATOMIC_ACQ_REL);\n"
+        "    if (fast && !own && s->ready) __atomic_store_n(&s->valid, c->epoch, __ATOMIC_RELEASE);\n"
         "    tide_index_unlock(&s->lock);\n}\n\n"
-        "TIDE_HELPER void tide_ix_searched(tide_ix_site *s, tide_index *ix, const bool own)\n{\n"
+        "TIDE_HELPER void tide_ix_searched(tide_ix_site *s, tide_index *ix, const bool own, const bool held)\n{\n"
+        "    if (held) return;\n"
         "    if (own) tide_index_free(ix);\n"
         "    else __atomic_sub_fetch(&s->readers, 1u, __ATOMIC_ACQ_REL);\n}\n\n");
 }
@@ -539,17 +563,22 @@ static bool gen_indexed_query(gen *g, const stmt *s)
     sb_put(o, ";\n");
     line(g, o, "if (tide_xrows >= TIDE_IX_LEAST) {");
     g->indent++;
+    const char *fast = ix_fast(g) && strcmp(x.world, "tide_w") == 0 ? "true" : "false";
     line(g, o, "tide_ix_site *const tide_xs = tide_ix_site_at(%s->tide_index_cache, %du);", x.world, site);
+    line(g, o, "const bool tide_xheld = tide_ix_hold(tide_xs, %s->tide_index_cache, %s);", x.world, fast);
+    line(g, o, "tide_index *tide_xi = tide_xheld ? tide_xs->ix : NULL;");
+    line(g, o, "bool tide_xown = false;");
+    line(g, o, "if (!tide_xheld) {");
+    g->indent++;
     line(g, o, "tide_ix_walk tide_xw = {0};");
     line(g, o, "if (tide_xs) {");
     g->indent++;
-    line(g, o, "tide_index_lock(&tide_xs->lock);");
     line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, %lluull);", (unsigned long long)ix_query_plan(g, &x, plan));
     gen_ix_query_facts(g, &x, plan);
     g->indent--;
     line(g, o, "}");
-    line(g, o, "bool tide_xown, tide_xbuild;");
-    line(g, o, "tide_index *const tide_xi = tide_ix_take(tide_xs, &tide_xw, &tide_xown, &tide_xbuild);");
+    line(g, o, "bool tide_xbuild;");
+    line(g, o, "tide_xi = tide_ix_take(tide_xs, &tide_xw, &tide_xown, &tide_xbuild);");
     line(g, o, "if (tide_xbuild) {");
     g->indent++;
     line(g, o, "tide_index_begin(tide_xi, %du);", plan->count);
@@ -557,9 +586,11 @@ static bool gen_indexed_query(gen *g, const stmt *s)
     line(g, o, "tide_index_end(tide_xi);");
     g->indent--;
     line(g, o, "}");
-    line(g, o, "tide_ix_searching(tide_xs, tide_xown);");
+    line(g, o, "tide_ix_searching(tide_xs, tide_xown, %s->tide_index_cache, %s);", x.world, fast);
+    g->indent--;
+    line(g, o, "}");
     line(g, o, "tide_index_find(tide_xi, tide_xlo, tide_xhi, &%s);", hits);
-    line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown);");
+    line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown, tide_xheld);");
     line(g, o, "tide_xo = %s.items;", hits);
     line(g, o, "tide_xn = %s.count;", hits);
     g->indent--;
@@ -722,9 +753,9 @@ static bool gen_indexed_rows(gen *g, const stmt *s)
     line(g, o, "tide_index_end(tide_xi);");
     g->indent--;
     line(g, o, "}");
-    line(g, o, "tide_ix_searching(tide_xs, tide_xown);");
+    line(g, o, "tide_ix_searching(tide_xs, tide_xown, NULL, false);");
     line(g, o, "tide_index_find(tide_xi, tide_xlo, tide_xhi, &%s);", hits);
-    line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown);");
+    line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown, false);");
     line(g, o, "tide_xo = %s.items;", hits);
     line(g, o, "tide_xn = %s.count;", hits);
     g->indent--;
@@ -822,9 +853,16 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "uint32_t tide_xn = (uint32_t)tide_xcount;");
     line(g, o, "tide_ix_site *const tide_xs = tide_xcount >= (int32_t)TIDE_IX_LEAST ? tide_ix_site_at(%s->tide_index_cache, %du) : NULL;",
          world, site);
-    line(g, o, "if (tide_xs) {");
+    const char *fast = ix_fast(g) && strcmp(world, "tide_w") == 0 ? "true" : "false";
+    line(g, o, "const bool tide_xheld = tide_ix_hold(tide_xs, %s->tide_index_cache, %s);", world, fast);
+    line(g, o, "if (tide_xheld) {");
     g->indent++;
-    line(g, o, "tide_index_lock(&tide_xs->lock);");
+    line(g, o, "tide_index_find(tide_xs->ix, tide_xlo, tide_xhi, &%s);", hits);
+    line(g, o, "tide_xo = %s.items;", hits);
+    line(g, o, "tide_xn = %s.count;", hits);
+    g->indent--;
+    line(g, o, "} else if (tide_xs) {");
+    g->indent++;
     line(g, o, "tide_ix_walk tide_xw = tide_ix_walk_begin(tide_xs, %lluull);",
          (unsigned long long)ix_hash(c_type(s->type)) ^ (unsigned long long)plan->count);
     line(g, o, "tide_ix_num(&tide_xw, %s->tide_index_cache->epoch);", world);
@@ -846,9 +884,9 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "tide_index_end(tide_xi);");
     g->indent--;
     line(g, o, "}");
-    line(g, o, "tide_ix_searching(tide_xs, tide_xown);");
+    line(g, o, "tide_ix_searching(tide_xs, tide_xown, %s->tide_index_cache, %s);", world, fast);
     line(g, o, "tide_index_find(tide_xi, tide_xlo, tide_xhi, &%s);", hits);
-    line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown);");
+    line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown, false);");
     line(g, o, "tide_xo = %s.items;", hits);
     line(g, o, "tide_xn = %s.count;", hits);
     g->indent--;
