@@ -1,5 +1,81 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Crash reports sent to a hosting project, masked (2026-11-05)
+
+The owner's decisions:
+- a game linked to a hosting project sends reports "directly without even prompting the user"
+- the window still shows, with "some preview of the reports/logs" so a player may see what led to the crash
+- personal data is avoided automatically ("full paths for example can include their name")
+- all relevant data is sent, the dump included
+- reports are billed
+
+The service side is in `Tide-Engine/tide-services` (`notes/managed-hosting.md` there): ingestion, grouping, the console and billing.
+
+**Masking** (`platform/crash/scrub.c`, `scrub.h`)
+- Same-length `*` masking, so a dump's structure stays.
+- Rules:
+  - the path folder after `Users`/`home`/`Documents and Settings`, with spaces allowed in it (`John Smith`); `Public`, `Default`, `Default User`, `All Users` and `Shared` are kept
+  - the user's name, the home folder's last name and the machine's name, as whole words, where only ASCII letters/digits/`_` continue a word. That applies only to names of 3 or more characters and not to common words like `user`, `admin` or `player`.
+  - IPv4, except `127.*`, `0.0.0.0` and broadcast, and not inside a longer dotted run such as `1.2.3.4.5`, or with a part over 255
+  - IPv6, with one `::` or all 8 groups; not `::1`, times, or C++ `a::b::c`
+  - email addresses, with a final label of 2+ letters
+- Text files get every rule.
+- `crash.dmp` gets the path and name rules over the whole file, in bytes and in UTF-16 from both offsets.
+- The text rules also apply inside the memory ranges of `MemoryListStream` and `Memory64ListStream`.
+- Two findings during testing:
+  - The dump's UTF-16 module paths sat at odd file offsets, so even-only scanning missed 3 of 4.
+  - A stack held a truncated `s\<name>` followed by binary, which a "≥0x80 continues a word" rule left unmasked.
+  - With both fixed, the log test asserts the zip's dump never contains the home folder's name in either encoding.
+- Only the zip is masked; the crash folder keeps the originals.
+
+**tide-crash** (`crash.c`)
+- It reads the folder's files into memory, with Player.log's last 4 MiB cut to a line start, masks them, and builds the stored zip in memory. It writes that zip beside the folder and sends the same bytes.
+- `crash.json` beside the program holds `{origin, reports, build}`:
+  - `origin`: https, or `http://localhost`/`127.0.0.1`
+  - `reports`: a 16–64 character base64url key
+  - `build`: lowercase hex
+- With `crash.json`, it starts `POST <origin>/api/reports` at once, using the engine's HTTP client (`src/fetch.c` over `src/rtc/tls.c`'s system TLS, linked into tide-crash with `net.c` and the engine library). The request carries:
+  - headers `X-Tide-Report-Key`, `X-Tide-Build` and `Content-Type: application/zip`
+  - a 30 s limit
+- If the player closes the window first, the send still finishes.
+- Modes:
+  - `--zip`, and hidden runs, only zip and never send, as with telemetry.
+  - `--send <folder>` zips and sends with no window, printing the zip's path and then `sent` or `not sent: <why>`.
+- The window is `crash_show(view, status, user)`:
+  - heading `<title> stopped unexpectedly.`
+  - a status line polled every 100 ms: Sending… / sent / couldn't be sent, or the old "A report was saved…" line without a link
+  - a read-only monospace preview of `crash.txt` plus the log's last 80 lines
+  - **Show report** (reveal the zip) and **Close**
+- Per system:
+  - Win32: an EDIT control (selectable, copyable), resizable window, Enter/Escape caught in the loop.
+  - X11: drawn lines, scrolled with the wheel, arrows, PgUp/PgDn and Home/End; no selection.
+  - Mac: an `NSAlert` with an `NSScrollView`/`NSTextView` accessory, shown after the status settles, because an alert's text can't change while it runs modally. It has never been built or run here, and only CI compiles it.
+
+**Linking**
+- `tide deploy` saves the account's `projects[].reports` key in `tide.deploy.json` as `"reports"`, rewriting it on every deploy, so a key turned off or replaced reaches the file.
+- `tide build`, for desktop non-server builds, writes `crash.json` beside the game from that file, with `build` set to the program's SHA-256 (`place_report_link`). It removes a stale `crash.json` when the folder isn't linked.
+
+**Tests**
+- `tide_platform_scrub` (`tests/scrub.c`): every rule, plus a synthetic dump with a UTF-16 path at an odd offset, addresses inside a memory range, and an unchanged header and directory.
+- `log.mjs`:
+  - the zip's log has the home folder's name masked
+  - the dump never names it
+  - a copy of tide-crash with no `crash.json` reports "not sent"
+  - with a `crash.json` pointing at a local server, it sends: the POST path and headers are checked, and the body is byte-identical to the zip beside the folder
+  - a 402 answer reports "not sent: the service answered 402"
+
+**Validation**
+- Windows debug: passed.
+- Windows sanitize (ASan): passed. The crash case is skipped there, so the send runs on the abort's folder.
+- The docs build passes.
+- WSL clang 18: `ui_x11.c` and `scrub.c` pass `-Werror`, and the scrub test passes there. `crash.c` was checked against a stub `fetch.h`, because WSL's clang 18 can't read the engine headers.
+- The macOS window and Linux's full link are CI's.
+
+**Gaps**
+- Builds have no symbols upload, so the console shows module+offset.
+- The build ID is the program's hash, not the simulation identity.
+- A game's own personal data in its log (a player's chosen name, chat) is the game's to keep out. The docs say so.
+
 ## GPU culling asked each frame (2026-11-05)
 
 The standard host sets `tide_run_draw.gpu_culling = tide_platform_gpu_culling()` beside the screen's scale before

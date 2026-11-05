@@ -51,6 +51,11 @@ An invalid link, a link to a different service or a project your account cannot
 access requires an explicit selection. The dashboard still lets you create a
 project with custom settings before deploying.
 
+With **Crash reports** on for the project in the console, each deploy also saves
+the project's report key in `tide.deploy.json`, and desktop builds then send
+their players' crash reports to the project, where the console groups them. See
+[Receiving reports](../game/files.md#receiving-reports).
+
 `TIDE_HOSTING_URL` selects another configured service origin. A normal developer CLI
 credential expires after 30 days and can be revoked with `tide logout`.
 

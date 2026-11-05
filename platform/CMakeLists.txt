@@ -282,18 +282,22 @@ endif()
 # the package (lib/native) beside every desktop game; repository games find
 # it in bin/, beside them.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    # It sends a report with the engine's HTTP (src/fetch.c) over the system's TLS (src/rtc/tls.c)
+    set(TIDE_CRASH_SOURCES crash/crash.c crash/scrub.c src/fetch.c src/rtc/net.c src/rtc/tls.c)
     if(WIN32)
-        add_executable(tide-crash WIN32 crash/crash.c crash/ui_win32.c)
-        target_link_libraries(tide-crash PRIVATE user32 gdi32 shell32 advapi32)
+        add_executable(tide-crash WIN32 ${TIDE_CRASH_SOURCES} crash/ui_win32.c)
+        target_link_libraries(tide-crash PRIVATE user32 gdi32 shell32 advapi32 ws2_32 secur32 crypt32)
     elseif(APPLE)
-        add_executable(tide-crash crash/crash.c crash/ui_mac.c)
-        target_link_libraries(tide-crash PRIVATE "-framework AppKit" objc)
+        add_executable(tide-crash ${TIDE_CRASH_SOURCES} crash/ui_mac.c)
+        target_link_libraries(tide-crash PRIVATE "-framework AppKit" "-framework Security" objc)
     else()
         find_package(X11 REQUIRED)
-        add_executable(tide-crash crash/crash.c crash/ui_x11.c)
-        target_link_libraries(tide-crash PRIVATE X11::X11)
+        find_package(Threads REQUIRED)
+        add_executable(tide-crash ${TIDE_CRASH_SOURCES} crash/ui_x11.c)
+        target_link_libraries(tide-crash PRIVATE X11::X11 Threads::Threads ${CMAKE_DL_LIBS})
     endif()
-    target_link_libraries(tide-crash PRIVATE tide_flags)
+    target_include_directories(tide-crash PRIVATE src include)
+    target_link_libraries(tide-crash PRIVATE tide tide_flags)
     add_dependencies(tide_platform tide-crash) # Built with the platform, so every game beside it has it
     if(TIDE_PACKAGE_LIBS)
         install(TARGETS tide-crash RUNTIME DESTINATION ${TIDE_PACKAGE_LIBS} COMPONENT tide)
@@ -966,6 +970,13 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_log
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/log.mjs" $<TARGET_FILE:tide_platform_log>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_log-runs")
+    endif()
+
+    # What tide-crash masks before a report leaves the machine (crash/scrub.c)
+    if(TARGET tide-crash)
+        add_executable(tide_platform_scrub tests/scrub.c crash/scrub.c)
+        target_link_libraries(tide_platform_scrub PRIVATE tide_flags)
+        add_test(NAME tide_platform_scrub COMMAND tide_platform_scrub)
     endif()
 
     # The window's images on Vulkan: made again when the window is resized and
