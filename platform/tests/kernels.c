@@ -12,7 +12,9 @@
 // pass: two passes, the second after the run a draw waits for. Functions given
 // GPU lists alone write, add to and use atomics on them; a kernel adds to two
 // lists in order; and a 3D indirect draw's instances whose own transforms
-// mirror the mesh are drawn, culled, as those that don't are.
+// mirror the mesh are drawn, culled, as those that don't are. A kernel naming
+// 20 GPU lists writes, adds to (six lists, two scans) and uses atomics on them,
+// and a frag reads 10: each list a range of the renderer's pools.
 // On WebGPU the page then loses its device, and every check runs again on the
 // next one, with the lists made again (their contentRevision changed).
 
@@ -77,9 +79,83 @@ static bool kept_in_order(const tide_list kept, const int scale, int *count)
     return ok && tide_list_count(kept) == n;
 }
 
+static float float_at(const tide_list l, const int32_t i)
+{
+    return *(const float *)tide_list_at(l, i, sizeof(float));
+}
+
+// Spread (kernels.tide), its 20 lists: what each invocation of 100 wrote, added and counted
+static void check_wide(const char *when)
+{
+    const WideResults *w = &local.WideResults;
+    static const float in0[3] = {0.5f, 1.5f, 2.5f};
+    bool written = tide_list_count(w->f0) == 100 && tide_list_count(w->f5) == 100;
+    for (int32_t i = 0; written && i < 100; i++)
+        written = float_at(w->f0, i) == (float)i + in0[i % 3] + 10.0f && float_at(w->f5, i) == (float)i * 6.0f;
+    expect(written, "a kernel naming 20 GPU lists reads three and writes others by index", when);
+    bool atomics = tide_list_count(w->c0) == 4 && tide_list_count(w->c1) == 4 && tide_list_count(w->c2) == 1
+                && tide_list_count(w->c3) == 1 && int_at(w->c2, 0) == 99 && int_at(w->c3, 0) == 0x7FFFFFFF;
+    for (int32_t j = 0; atomics && j < 4; j++) atomics = int_at(w->c0, j) == 25 && int_at(w->c1, j) == 25 * (j + 1);
+    expect(atomics, "and uses atomics on four lists of ints, beside its plain lists", when);
+    // Six Adds: two scans (four lists, then two), each list in invocation order across both groups
+    const tide_list adds[5] = {w->a0, w->a1, w->a2, w->a3, w->a4};
+    static const int every[5] = {2, 3, 5, 7, 11};
+    bool added = true;
+    for (int k = 0; k < 5; k++) {
+        int32_t n = 0;
+        for (int i = 0; i < 100; i++) {
+            if (i % every[k] != 0) continue;
+            const int want = k == 0 || k == 4 ? i : k == 1 ? i * 2 : k == 2 ? i + i % 4 + 1 : -i;
+            added = added && n < tide_list_count(adds[k]) && int_at(adds[k], n) == want;
+            n++;
+        }
+        added = added && tide_list_count(adds[k]) == n;
+    }
+    bool pairs = tide_list_count(w->pairs) == 25;
+    for (int32_t p = 0; pairs && p < 25; p++) {
+        const tide_float2 *v = tide_list_at(w->pairs, p, sizeof(tide_float2));
+        const int i = 4 * p + 1;
+        pairs = v->x == (float)i && v->y == in0[i % 3] + 10.0f;
+    }
+    expect(added && pairs, "and adds to six lists, ints and float2s, in invocation order through two scans", when);
+    bool items = tide_list_count(w->items) == 100;
+    for (int32_t i = 0; items && i < 100; i++) {
+        const Item *it = tide_list_at(w->items, i, sizeof(Item));
+        items = it->a == in0[i % 3] + 10.0f && it->b == i % 4 + 1 && it->p.x == (float)i && it->p.y == 1.0f
+             && it->on == (i % 2 == 0);
+    }
+    expect(items, "and writes a list of structs, every list in its own range of a pool", when);
+}
+
+// Trespass (kernels.tide): writes, reads, atomics and Adds past a full list's ends changed no other list's words, nor
+// its own, and read zeros
+static void check_fence(const char *when)
+{
+    const FenceResults *f = &local.FenceResults;
+    const tide_list ints[3] = {f->before, f->mid, f->after};
+    bool kept = true;
+    for (int k = 0; k < 6; k++) kept = kept && f->counts.at[k] == (k < 3 ? 16 : 8); // No header written over either
+    for (int k = 0; k < 3; k++) {
+        kept = kept && tide_list_count(ints[k]) == 16;
+        for (int32_t i = 0; kept && i < 16; i++) kept = int_at(ints[k], i) == 1001 + 1000 * k + i;
+    }
+    const tide_list items[3] = {f->itemsBefore, f->items, f->itemsAfter};
+    for (int k = 0; k < 3; k++) {
+        kept = kept && tide_list_count(items[k]) == 8;
+        for (int32_t i = 0; kept && i < 8; i++) {
+            const Item *it = tide_list_at(items[k], i, sizeof(Item));
+            kept = it->a == (float)i && it->b == 100 + i && it->p.x == (float)i && it->p.y == 1.0f && it->on;
+        }
+    }
+    expect(kept, "writes, atomics and Adds past a full list's ends leave its words and its neighbours' as they were", when);
+    expect(tide_list_count(f->seen) == 1 && int_at(f->seen, 0) == 0, "and reads past them give zeros", when);
+}
+
 static void check_results(const char *when)
 {
     const Results *r = &local.Results;
+    check_wide(when);
+    check_fence(when);
     expect(!r->failed, "every read back was done", when);
     // Values on the GPU, the same function's on the CPU: within what the GPU's sin and sqrt are off by
     bool close = tide_list_count(r->shapes) == 200 && tide_list_count(r->expected) == 200;
@@ -177,6 +253,10 @@ static void check_pixels(const char *when)
     static const tide_float2 turned[] = {{51, 8}, {40, 8}, {45, 8}};
     static const uint32_t turned_are[] = {0x00FFFFFFu, 0xFF00FFFFu, 0x000000FFu};
     pixels_are(turned, turned_are, 3, "an indirect draw's instances whose own transforms mirror its mesh are drawn, culled", when);
+    // A frag reading 10 GPU lists, which the kernel of 20 wrote: 0.25, 0.5 and 0.75
+    static const tide_float2 wide[] = {{58, 44}};
+    static const uint32_t wide_is[] = {0x4080BFFFu};
+    pixels_are(wide, wide_is, 1, "a frag reads 10 GPU lists, each by its range of a pool", when);
     // The first square again, after a run made every corner white, 20 across and 12 up: the draws before it kept red
     static const tide_float2 after[] = {{32, 44}};
     static const uint32_t after_is[] = {0xFFFFFFFFu};

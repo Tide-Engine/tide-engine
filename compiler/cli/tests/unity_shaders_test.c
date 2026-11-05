@@ -74,9 +74,9 @@ TIDE_TEST(unity_shaders_written)
     listed l = {0};
     sys_list(shaders, count, &l);
     TIDE_CHECK(l.shaders == 11); // The renderer's 10, and the game's
-    TIDE_CHECK(l.computes == 5); // ...and the renderer's kernels, a .compute each
+    TIDE_CHECK(l.computes == 6); // ...and the renderer's kernels, a .compute each
     TIDE_CHECK(l.metas == 0 && !l.stale);
-    TIDE_CHECK(key_lines(shaders) == 16);
+    TIDE_CHECK(key_lines(shaders) == 17);
 
     snprintf(path, sizeof path, "%s/%016llx.shader", shaders, (unsigned long long)key);
     char *text = sys_read_file(path, NULL);
@@ -97,8 +97,8 @@ TIDE_TEST(unity_shaders_written)
     TIDE_REQUIRE(unity_shaders_write(dir, NULL, 0));
     l = (listed){0};
     sys_list(shaders, count, &l);
-    TIDE_CHECK(l.shaders == 10 && l.computes == 5);
+    TIDE_CHECK(l.shaders == 10 && l.computes == 6);
     TIDE_CHECK(!sys_exists(path));
-    TIDE_CHECK(key_lines(shaders) == 15);
+    TIDE_CHECK(key_lines(shaders) == 16);
     sys_remove_tree(dir);
 }

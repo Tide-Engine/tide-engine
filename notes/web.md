@@ -1,5 +1,18 @@
 # Web builds
 
+## GPU lists in pools, on WebGPU (2026-11-05)
+
+A shader's GPU lists are ranges of two pools (`notes/compute.md`, GPU lists in pools): `MAX_STORAGE` in `tide.js` is 4
+(`TIDE_GPU_MAX_STORAGE`), and a pipeline binds the two pools (and a kernel its run record), so a bind group holds 3
+storage buffers at the most, within WebGPU's default 8 a stage. `requestDevice` now asks for the adapter's
+`maxStorageBufferBindingSize` and `maxBufferSize` (`requiredLimits`, those the adapter has, in every request it makes; still no descriptor where nothing is asked), as the pools grow to
+what one binding reaches (`gpu_storage_most`, the least of the two, which `gpu_web.c` takes as a double: a JavaScript
+number). A pool made again bigger frees its old buffer after the copy's submit (each pass and copy is submitted as it
+ends, so a buffer destroyed then is one no unsubmitted work names). Each pool is bound whole; a kernel that writes
+one binds it once, as `storage`, so no binding aliases another (Dawn's writable-aliasing check). Tests (web-debug,
+SwiftShader): `tide_platform_kernels` through its lost device, `_compute`, `_cull`, `_cull_fallback`, `_occlusion`,
+`_draw`. The real-GPU lanes (`web-hardware`, `web-hardware-d3d11`) weren't run (optional).
+
 ## Pipelines the browser can't make, and Dawn's Direct3D 11 (2026-11-05)
 
 `tide.js`: a pipeline made at once is made inside `validation` and `internal` error scopes, and one whose scopes

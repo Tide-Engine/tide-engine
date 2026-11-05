@@ -1,5 +1,18 @@
 # No Tide code can corrupt memory
 
+## GPU lists side by side in pools (2026-11-05)
+
+Since GPU lists in pools (`notes/compute.md`), lists share two storage buffers, so the clamp of a runtime array's index
+(Tint's, and the translators') keeps a shader inside a pool but not inside its list: each list's range is held by
+generated WGSL. Reads past the count (min of the header's and the table's capacity) give zeros, writes and atomics
+past the capacity (min of the header's and the table's) or under 0 do nothing, an indirect draw's instance index is
+held to the capacity, Adds' scatter drops past the header's capacity; the header is written only by the renderer
+(a kernel's writes start at word 4 of its range). A slot of the other pool's kind than its list's, or a list not there,
+reads the empty list at each pool's word 0. Tests: `tide_platform_kernels`' `Trespass` (every way past a full list's
+ends between neighbours in both pools, their words and counts read back: a guard made `>` for `>=` fails it), and the
+`gpu_lists` safety fixture (capacities and counts of any int, through the renderer under ASan and the Vulkan
+validation layer).
+
 ## Commands' lists of values (2026-11-04)
 
 A command's `List<T>` from the wire (`gen_bits_list`, `notes/netcode.md`, Commands holding lists of values) is

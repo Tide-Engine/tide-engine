@@ -7,8 +7,9 @@
 #include "tide/page.h"
 
 // GPU lists' states (tide/draw.h, GPU lists), and reads of them back. What's
-// on the GPU is the renderer's (platform.c), which finds a list's buffer by
-// its id and makes it again where its version or the device changed.
+// on the GPU is the renderer's (platform.c, compute.inc), which finds a list's
+// range in its pools by its id and makes it again where its version or the
+// device changed.
 
 static tide_gpu_list_state *gpu_lists;
 
@@ -25,13 +26,16 @@ static uint32_t clamped_capacity(const int32_t capacity, const uint32_t stride)
     return (uint32_t)capacity;
 }
 
+// `stride` as tide_gpu_list_make takes it: words an element, and TIDE_GPU_LIST_INTS for ints.
 static tide_gpu_list made(const uint32_t capacity, const uint32_t stride)
 {
     void *memory = calloc(1, sizeof(tide_gpu_list_state));
     if (!memory) tide_out_of_memory();
     tide_gpu_list_state *s = memory;
-    *s = (tide_gpu_list_state){.next = gpu_lists, .owner = &gpu_lists, .capacity = capacity, .stride = stride, .version = 1,
-                               .content_revision = tide_render_revision_next(), .alive = true, .memory = memory};
+    *s = (tide_gpu_list_state){.next = gpu_lists, .owner = &gpu_lists, .capacity = capacity,
+                               .stride = stride & ~TIDE_GPU_LIST_INTS, .ints = (stride & TIDE_GPU_LIST_INTS) != 0,
+                               .version = 1, .content_revision = tide_render_revision_next(), .alive = true,
+                               .memory = memory};
     gpu_lists = s;
     return (tide_gpu_list){.id = TIDE_GPU_LIST_MANAGED | (uint64_t)(uintptr_t)s, .capacity = (int32_t)capacity, .stride = stride};
 }
@@ -40,7 +44,7 @@ tide_gpu_list tide_gpu_list_make(const int32_t capacity, const uint32_t stride)
 {
     if (capacity < 0) fprintf(stderr, "GPUList(capacity): a capacity is 0 or more, and this asked for %d: it holds none\n",
                               (int)capacity);
-    return made(clamped_capacity(capacity, stride), stride);
+    return made(clamped_capacity(capacity, stride & ~TIDE_GPU_LIST_INTS), stride);
 }
 
 void tide_gpu_list_resize(const tide_gpu_list list, const int32_t capacity)
@@ -95,9 +99,12 @@ void tide_gpu_list_adopt(tide_gpu_list *list, const uint32_t stride)
         s->next = gpu_lists;
         gpu_lists = s;
     }
-    if (s->stride != stride) { // Another element: another buffer, empty, of as many elements as fit
-        s->stride = stride;
-        s->capacity = clamped_capacity((int32_t)s->capacity, stride);
+    const uint32_t words = stride & ~TIDE_GPU_LIST_INTS;
+    const bool ints = (stride & TIDE_GPU_LIST_INTS) != 0;
+    if (s->stride != words || s->ints != ints) { // Another element: another range, empty, of as many elements as fit
+        s->stride = words;
+        s->ints = ints;
+        s->capacity = clamped_capacity((int32_t)s->capacity, words);
         s->version++;
         s->content_revision = tide_render_revision_next();
     }
@@ -111,9 +118,9 @@ tide_gpu_list tide_gpu_list_recreate(const tide_gpu_list previous, const uint32_
     for (const tide_gpu_list_state *s = gpu_lists; s; s = s->next) {
         if (s->reload_id == previous.id)
             return (tide_gpu_list){.id = TIDE_GPU_LIST_MANAGED | (uint64_t)(uintptr_t)s, .capacity = (int32_t)s->capacity,
-                                   .stride = s->stride};
+                                   .stride = s->stride | (s->ints ? TIDE_GPU_LIST_INTS : 0u)};
     }
-    tide_gpu_list next = made(clamped_capacity(previous.capacity, stride), stride);
+    tide_gpu_list next = made(clamped_capacity(previous.capacity, stride & ~TIDE_GPU_LIST_INTS), stride);
     tide_gpu_list_state_of(next.id)->reload_id = previous.id;
     return next;
 }
@@ -168,7 +175,7 @@ uint32_t tide_gpu_list_read_begin(const tide_gpu_list list, const bool count_onl
         *r = (tide_gpu_read_request){.list = list.id, .bytes = (uint32_t)bytes, .state = TIDE_GPU_READ_ASKED,
                                      .serial = read_serial, .count_only = count_only};
         if (bytes) {
-            r->data = malloc((size_t)bytes);
+            r->data = calloc(1, (size_t)bytes); // Zeros past what the renderer reads of a range smaller than asked
             if (!r->data) tide_out_of_memory();
         } else {
             r->state = TIDE_GPU_READ_FAILED; // No list to read

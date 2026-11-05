@@ -2,13 +2,18 @@
 // storage buffers, kernels' WGSL, ordered Add's compaction, atomics, shared
 // memory and barriers. Included by shader.c.
 //
-// A GPU list a shader's code names is its storage buffer `tide_s<slot>`, at
-// binding 25 + slot: an array of u32 words (array<atomic<i32>> in a kernel that
-// uses atomics on it), a header of 4 words (its count, its capacity) and then
-// its elements, `stride` words each, a value's floats' bits then its ints, as
-// put_value reads words everywhere. Each slot has functions of its own, written
-// once a shader: tide_word<s>, tide_count<s>, tide_capacity<s>, tide_get<s> and,
-// in a kernel that writes it, tide_put<s>.
+// A GPU list a shader's code names is its slot: a range of one of the
+// renderer's two pools, `tide_ints` (at binding 26: lists of ints, which atomics
+// take; array<atomic<i32>> in a kernel that uses atomics) and `tide_words` (at
+// 25: the others), arrays of u32 words. A range is a header of 4 words (its
+// count, its capacity) and then its elements, `stride` words each, a value's
+// floats' bits then its ints, as put_value reads words everywhere. Where each
+// slot's range starts and its capacity are two words of the uniforms' ints from
+// `storage_at` on (the table, which the renderer writes: tide_shader's
+// storage_table), and every read and write is held inside it. Each slot has
+// functions of its own, written once a shader: tide_base<s>, tide_word<s>,
+// tide_count<s>, tide_capacity<s>, tide_get<s> and, in a kernel that writes it,
+// tide_put<s>.
 
 // The words of an element of type `t`: its floats, then its ints.
 static int element_words(const type t, int *floats)
@@ -51,9 +56,59 @@ static int gpu_list_slot(emit *em, const expr *list)
     return -1;
 }
 
+// Whether a kernel's pool of ints is atomic: it uses atomics on a list of it. Then every list of ints it names is
+// read and written through atomics, as WGSL takes an atomic array no other way.
+static bool ints_atomic(const shader *sh)
+{
+    for (int i = 0; sh && sh->compute && i < sh->storage.count; i++) {
+        if (sh->storage.items[i].ints && sh->storage.items[i].atomic) return true;
+    }
+    return false;
+}
+
 static bool slot_atomic(const emit *em, const int slot)
 {
-    return em->sh && em->sh->compute && slot >= 0 && em->sh->storage.items[slot].atomic;
+    return em->sh && slot >= 0 && em->sh->storage.items[slot].ints && ints_atomic(em->sh);
+}
+
+// The pool slot `slot`'s list is a range of, as the shader declares it.
+static const char *slot_pool(const emit *em, const int slot)
+{
+    return slot >= 0 && em->sh->storage.items[slot].ints ? "tide_ints" : "tide_words";
+}
+
+// The pools a shader's GPU lists are ranges of, each one it names: `tide_words` at binding 25, `tide_ints` at 26
+// (tide/draw.h's TIDE_STORAGE_WORDS, TIDE_STORAGE_INTS), read in a frag or a vert; in a kernel read_write where it
+// writes a list of it (an Add's scratch is in its list's pool), and the pool of ints array<atomic<i32>> where it uses
+// atomics on one. Then a kernel's run record, at 27 (TIDE_STORAGE_RUN).
+static void put_pools(const shader *sh, sb *o)
+{
+    bool words = false, ints = false, words_written = false, ints_written = false;
+    for (int i = 0; i < sh->storage.count; i++) {
+        const shader_storage *s = &sh->storage.items[i];
+        if (s->ints) ints = true, ints_written |= s->write;
+        else words = true, words_written |= s->write;
+    }
+    if (words) {
+        sb_printf(o, "@group(0) @binding(25) var<storage, %s> tide_words: array<u32>;\n",
+                  sh->compute && words_written ? "read_write" : "read");
+    }
+    if (ints) {
+        sb_printf(o, "@group(0) @binding(26) var<storage, %s> tide_ints: array<%s>;\n",
+                  sh->compute && ints_written ? "read_write" : "read", ints_atomic(sh) ? "atomic<i32>" : "u32");
+    }
+    if (sh->compute) sb_put(o, "@group(0) @binding(27) var<storage, read> tide_run: array<u32>;\n");
+}
+
+// A word of the uniforms' table, as a u32: `word` of their ints.
+static void put_table_word(emit *em, sb *text, const int word)
+{
+    sb *const out = em->o;
+    em->o = text;
+    sb_put(text, "u32(");
+    put_word(em, 'v', word);
+    sb_put(text, ")");
+    em->o = out;
 }
 
 // The element type of the GPU list in slot `slot`: for a list the draw gives, its instances', its vertices' or its
@@ -154,18 +209,31 @@ static void put_load(emit *em, sb *text, const type element, const char *word, c
 // The functions that read and write slot `slot`, written once before the code that calls them.
 static void need_storage(emit *em, const int slot)
 {
-    if (slot < 0 || em->storage_done[slot]) return;
+    if (slot < 0 || slot >= SHADER_STORAGE_MOST || em->storage_done[slot]) return;
     em->storage_done[slot] = true;
     const shader_storage *s = &em->sh->storage.items[slot];
     const type element = slot_element(em, slot);
     const char *t = ty(em, element);
     sb text = {0};
     const bool atomic = slot_atomic(em, slot);
+    const char *pool = slot_pool(em, slot);
     const int words = element_words(element, NULL);
-    if (atomic) sb_printf(&text, "fn tide_word%d(tide_k: u32) -> u32 {\n    return bitcast<u32>(atomicLoad(&tide_s%d[tide_k]));\n}\n\n", slot, slot);
-    else sb_printf(&text, "fn tide_word%d(tide_k: u32) -> u32 {\n    return tide_s%d[tide_k];\n}\n\n", slot, slot);
-    sb_printf(&text, "fn tide_count%d() -> i32 {\n    return i32(min(tide_word%d(0u), tide_word%d(1u)));\n}\n\n", slot, slot, slot);
-    sb_printf(&text, "fn tide_capacity%d() -> i32 {\n    return i32(min(tide_word%d(1u), 0x7fffffffu));\n}\n\n", slot, slot);
+    // Its range's first word and its capacity, as the table has them: the count is no more than that capacity, and
+    // the capacity that's held to is the header's too, a word of storage (so Direct3D 11's FXC, which can't see what
+    // storage holds, takes a write every invocation makes to one place under it: notes/compute.md)
+    const int at = em->sh->storage_at + 2 * slot;
+    sb_printf(&text, "fn tide_base%d() -> u32 {\n    return ", slot);
+    put_table_word(em, &text, at);
+    sb_put(&text, ";\n}\n\n");
+    if (atomic) sb_printf(&text, "fn tide_word%d(tide_k: u32) -> u32 {\n    let tide_at = tide_base%d() + tide_k;\n"
+                                 "    return bitcast<u32>(atomicLoad(&%s[tide_at]));\n}\n\n", slot, slot, pool);
+    else sb_printf(&text, "fn tide_word%d(tide_k: u32) -> u32 {\n    return %s[tide_base%d() + tide_k];\n}\n\n", slot, pool, slot);
+    sb_printf(&text, "fn tide_count%d() -> i32 {\n    return i32(min(tide_word%d(0u), ", slot, slot);
+    put_table_word(em, &text, at + 1);
+    sb_put(&text, "));\n}\n\n");
+    sb_printf(&text, "fn tide_capacity%d() -> i32 {\n    return i32(min(tide_word%d(1u), ", slot, slot);
+    put_table_word(em, &text, at + 1);
+    sb_put(&text, "));\n}\n\n");
     sb_printf(&text, "fn tide_get%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= tide_count%d()) {\n        return ", slot, t, slot);
     sb *const out = em->o;
     em->o = &text;
@@ -178,25 +246,26 @@ static void need_storage(emit *em, const int slot)
     sb_put(&text, "}\n\n");
     if (s->write) {
         sb_printf(&text, "fn tide_put%d(tide_i: i32, tide_v: %s) {\n    if (tide_i < 0 || tide_i >= tide_capacity%d()) {\n"
-                         "        return;\n    }\n    let tide_b = 4u + u32(tide_i) * %du;\n", slot, t, slot, words);
+                         "        return;\n    }\n    let tide_b = tide_base%d() + 4u + u32(tide_i) * %du;\n", slot, t, slot,
+                  slot, words);
         em->o = &text;
         int f = 0, i = 0;
         element_words(element, &i);
-        char array[16];
-        snprintf(array, sizeof array, "tide_s%d", slot);
-        put_store(em, element, "tide_v", &f, &i, array, "tide_b", atomic);
+        put_store(em, element, "tide_v", &f, &i, pool, "tide_b", atomic);
         em->o = out;
         sb_put(&text, "}\n\n");
     }
     sb_put(&em->functions, text.data);
 }
 
-// An atomic on an element of slot `slot`'s list (a GPUList<int>): the function that does it, which leaves an element
-// past the capacity alone and gives 0 there, written once.
+// An atomic on an element of slot `slot`'s list (a GPUList<int>, in the pool of ints) or, for a slot of -1, of the
+// shared array `array`: the function that does it, which leaves an element past the capacity alone and gives 0
+// there, written once.
 static const char *need_atomic(emit *em, const int slot, const str name, const char *array, const int length)
 {
     sb fn = {0};
-    sb_printf(&fn, "tide_atomic_%s_" STR_FMT, array, STR_ARG(name));
+    if (slot >= 0) sb_printf(&fn, "tide_atomic%d_" STR_FMT, slot, STR_ARG(name));
+    else sb_printf(&fn, "tide_atomic_%s_" STR_FMT, array, STR_ARG(name));
     for (int i = 0; i < em->atomic_fns.count; i++) {
         if (!strcmp(em->atomic_fns.items[i], fn.data)) return fn.data;
     }
@@ -213,8 +282,9 @@ static const char *need_atomic(emit *em, const int slot, const str name, const c
     sb_printf(&text, "fn %s(tide_i: i32, %stide_v: i32) -> i32 {\n", fn.data, exchange ? "tide_c: i32, " : "");
     char place[96]; // Each atomic names its element itself, as the translators take them
     if (slot >= 0) {
-        sb_printf(&text, "    if (tide_i < 0 || tide_i >= tide_capacity%d()) {\n        return 0;\n    }\n", slot);
-        snprintf(place, sizeof place, "&%s[4u + u32(tide_i)]", array);
+        sb_printf(&text, "    if (tide_i < 0 || tide_i >= tide_capacity%d()) {\n        return 0;\n    }\n"
+                         "    let tide_at = tide_base%d() + 4u + u32(tide_i);\n", slot, slot);
+        snprintf(place, sizeof place, "&tide_ints[tide_at]");
     } else {
         sb_printf(&text, "    if (tide_i < 0 || tide_i >= %d) {\n        return 0;\n    }\n", length);
         snprintf(place, sizeof place, "&%s.tide_cells[tide_i]", array); // A shared array, its struct (shared_atomic_length)
@@ -310,12 +380,12 @@ static bool ex_gpu(emit *em, const expr *e)
     case GPU_ATOMIC:
     case GPU_SHARED_ATOMIC: {
         int slot = -1;
-        char array[96] = "tide_s0";
+        char array[96] = "tide_ints";
         int length = 0;
         if (e->gpu == GPU_ATOMIC) {
             slot = gpu_list_slot(em, e->object);
             need_storage(em, slot);
-            snprintf(array, sizeof array, "tide_s%d", slot < 0 ? 0 : slot);
+            if (slot < 0) slot = 0;
         } else {
             snprintf(array, sizeof array, "%s", local_name(e->object->name));
             length = e->object->type.decl->array_length;

@@ -189,7 +189,7 @@ namespace Tide
         int uniformAt, uniformSize;
         int stencil;
         bool inPass, flipped, inCompute;
-        const int MaxStorage = 7; // gpu.h's TIDE_GPU_MAX_STORAGE
+        const int MaxStorage = 4; // gpu.h's TIDE_GPU_MAX_STORAGE
         readonly uint[] storageBound = new uint[MaxStorage];
 
         static readonly int SrcColor = Shader.PropertyToID("_TideSrcColor"), DstColor = Shader.PropertyToID("_TideDstColor");
@@ -209,8 +209,7 @@ namespace Tide
         static readonly int[] Storage =
         {
             Shader.PropertyToID("_TideStorage0"), Shader.PropertyToID("_TideStorage1"), Shader.PropertyToID("_TideStorage2"),
-            Shader.PropertyToID("_TideStorage3"), Shader.PropertyToID("_TideStorage4"), Shader.PropertyToID("_TideStorage5"),
-            Shader.PropertyToID("_TideStorage6"),
+            Shader.PropertyToID("_TideStorage3"),
         };
         static readonly int Groups = Shader.PropertyToID("TideGroups");
         static readonly int CopyFrom = Shader.PropertyToID("_TideFrom"), CopyTo = Shader.PropertyToID("_TideTo");
@@ -225,7 +224,7 @@ namespace Tide
         };
 
         // Whether this GPU replays Tide's drawing: it computes, as each of Tide's renderers does, and its shaders read
-        // raw buffers, three of vertices and seven of storage a stage. Unity's OpenGL Core (4.5) does; OpenGL ES 3.0 and
+        // raw buffers, three of vertices and four of storage a stage. Unity's OpenGL Core (4.5) does; OpenGL ES 3.0 and
         // WebGL 2 don't, as Tide has no backend that can't compute.
         public static bool Supported =>
             SystemInfo.supportsSetConstantBuffer && SystemInfo.supportsComputeShaders && SystemInfo.supportsIndirectArgumentsBuffer

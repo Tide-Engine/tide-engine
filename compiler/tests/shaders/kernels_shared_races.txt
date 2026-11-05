@@ -3,8 +3,8 @@ struct tide_uniforms {
     tide_v0: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
-@group(0) @binding(25) var<storage, read_write> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_run: array<u32>;
+@group(0) @binding(26) var<storage, read_write> tide_ints: array<u32>;
+@group(0) @binding(27) var<storage, read> tide_run: array<u32>;
 var<private> tide_inv_index: i32;
 var<private> tide_inv_at: vec3i;
 var<private> tide_inv_local: vec3i;
@@ -41,16 +41,20 @@ fn tide_atomic_t_counted_AtomicAdd(tide_i: i32, tide_v: i32) -> i32 {
     return atomicAdd(&t_counted.tide_cells[tide_i], tide_v);
 }
 
+fn tide_base0() -> u32 {
+    return u32(tide_block.tide_v0.z);
+}
+
 fn tide_word0(tide_k: u32) -> u32 {
-    return tide_s0[tide_k];
+    return tide_ints[tide_base0() + tide_k];
 }
 
 fn tide_count0() -> i32 {
-    return i32(min(tide_word0(0u), tide_word0(1u)));
+    return i32(min(tide_word0(0u), u32(tide_block.tide_v0.w)));
 }
 
 fn tide_capacity0() -> i32 {
-    return i32(min(tide_word0(1u), 0x7fffffffu));
+    return i32(min(tide_word0(1u), u32(tide_block.tide_v0.w)));
 }
 
 fn tide_get0(tide_i: i32) -> i32 {
@@ -66,8 +70,8 @@ fn tide_put0(tide_i: i32, tide_v: i32) {
     if (tide_i < 0 || tide_i >= tide_capacity0()) {
         return;
     }
-    let tide_b = 4u + u32(tide_i) * 1u;
-    tide_s0[tide_b + 0u] = bitcast<u32>(tide_v);
+    let tide_b = tide_base0() + 4u + u32(tide_i) * 1u;
+    tide_ints[tide_b + 0u] = bitcast<u32>(tide_v);
 }
 
 fn tide_load_t_counted(tide_i: i32) -> i32 {

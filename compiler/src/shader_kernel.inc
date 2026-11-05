@@ -37,11 +37,31 @@ static int shared_atomic_length(const decl *k, const stmt *s)
     return n;
 }
 
-// The scan of a kernel's Adds' flags, a lane a list, where there are several (at most 3: a kernel binds 7 storage
-// buffers, a list and its scratch for each, and its run's record).
-static const char *kernel_scan(const int adds)
+// The scans of a kernel's Adds' flags, a lane a list, four lists a scan at the most: scan `b`'s lanes, of `adds`.
+static int scan_lanes(const int adds, const int b)
 {
-    return adds == 2 ? "vec2u" : "vec4u";
+    return adds - 4 * b < 4 ? adds - 4 * b : 4;
+}
+
+// ...its type, an element of its array (a vector of 4 for 3 lanes, the last of no use)...
+static const char *scan_type(const int lanes)
+{
+    return lanes == 1 ? "u32" : lanes == 2 ? "vec2u" : "vec4u";
+}
+
+// ...and the bytes a group's scans share, `group` invocations each.
+static int scan_bytes(const int adds, const int group)
+{
+    int bytes = 0;
+    for (int b = 0; 4 * b < adds; b++) bytes += group * 4 * (scan_lanes(adds, b) == 1 ? 1 : scan_lanes(adds, b) == 2 ? 2 : 4);
+    return bytes;
+}
+
+// The name of scan `b`'s array: tide_scan for the first, as for a kernel of one scan.
+static void put_scan(sb *o, const int b)
+{
+    if (b) sb_printf(o, "tide_scan%d", b);
+    else sb_put(o, "tide_scan");
 }
 
 static void write_kernel(program *prog, shader *sh)
@@ -59,16 +79,9 @@ static void write_kernel(program *prog, shader *sh)
                        read == READ_COLOR ? "texture_2d<f32>" : read == READ_CUBE ? "texture_cube<f32>" : "texture_depth_2d",
                        2 + 2 * i, i, read == READ_COMPARE ? "sampler_comparison" : "sampler");
     }
-    int binding = 25, adds = 0;
-    for (int i = 0; i < sh->storage.count; i++, binding++) {
-        const shader_storage *s = &sh->storage.items[i];
-        sb_printf(&o, "@group(0) @binding(%d) var<storage, %s> tide_s%d: array<%s>;\n", binding, s->write ? "read_write" : "read",
-                  i, s->atomic ? "atomic<i32>" : "u32");
-        adds += s->add;
-    }
-    for (int i = 0; i < adds; i++, binding++)
-        sb_printf(&o, "@group(0) @binding(%d) var<storage, read_write> tide_scratch%d: array<u32>;\n", binding, i);
-    sb_printf(&o, "@group(0) @binding(%d) var<storage, read> tide_run: array<u32>;\n", binding);
+    int adds = 0;
+    for (int i = 0; i < sh->storage.count; i++) adds += sh->storage.items[i].add;
+    put_pools(sh, &o);
     sb_put(&o, "var<private> tide_inv_index: i32;\nvar<private> tide_inv_at: vec3i;\nvar<private> tide_inv_local: vec3i;\n"
                "var<private> tide_inv_group: vec3i;\nvar<private> tide_inv_count: vec3i;\n");
     put_dice_variable(&em, &o, k->rolls);
@@ -77,7 +90,11 @@ static void write_kernel(program *prog, shader *sh)
         sb_printf(&o, "var<private> tide_adding%d: bool;\nvar<private> tide_added%d: %s;\n", a, a, ty(&em, slot_element(&em, i)));
         a++;
     }
-    if (adds) sb_printf(&o, "var<workgroup> tide_scan: array<%s, %d>;\n", adds > 1 ? kernel_scan(adds) : "u32", group);
+    for (int b = 0; 4 * b < adds; b++) {
+        sb_put(&o, "var<workgroup> ");
+        put_scan(&o, b);
+        sb_printf(&o, ": array<%s, %d>;\n", scan_type(scan_lanes(adds, b)), group);
+    }
     if (em.guards_shared) sb_put(&o, "var<workgroup> tide_zero: u32;\n"); // Never written: its shared writes are under it
     for (int i = 0; k->body && i < k->body->stmts.count; i++) { // Its shared locals, the group's
         const stmt *s = k->body->stmts.items[i];
@@ -113,32 +130,60 @@ static void write_kernel(program *prog, shader *sh)
     // A barrier needs every invocation of a group: the kernel checks where it is itself then
     if (k->barrier) sb_printf(&o, "    %s();\n", function_name(k));
     else sb_printf(&o, "    if (all(tide_gid < tide_size)) {\n        %s();\n    }\n", function_name(k));
-    // Ordered Adds: each group's survivors in its order, by a scan of their flags, to its region of the scratch. One
-    // scan for all of them, a lane a list (tide_scan's type, kernel_scan), so its barriers are once whatever the count
+    // Ordered Adds: each group's survivors in its order, by a scan of their flags, to its region of the scratch. Four
+    // lists a scan, a lane each (scan_type), all in one loop, so its barriers are once whatever the count
     if (adds) {
-        sb_put(&o, "    tide_scan[tide_lix] = ");
-        if (adds > 1) sb_printf(&o, "%s(", kernel_scan(adds));
-        for (int a = 0; a < adds; a++) sb_printf(&o, "%sselect(0u, 1u, tide_adding%d)", a ? ", " : "", a);
-        for (int a = adds; adds > 1 && a < (adds == 2 ? 2 : 4); a++) sb_put(&o, ", 0u");
-        sb_printf(&o, "%s;\n    workgroupBarrier();\n", adds > 1 ? ")" : "");
-        sb_printf(&o, "    for (var tide_d = 1u; tide_d < %du; tide_d = tide_d * 2u) {\n        var tide_v = %s%s0u%s;\n"
-                      "        if (tide_lix >= tide_d) {\n            tide_v = tide_scan[tide_lix - tide_d];\n        }\n"
-                      "        workgroupBarrier();\n        tide_scan[tide_lix] = tide_scan[tide_lix] + tide_v;\n"
-                      "        workgroupBarrier();\n    }\n", group, adds > 1 ? kernel_scan(adds) : "", adds > 1 ? "(" : "",
-                  adds > 1 ? ")" : "");
+        for (int b = 0; 4 * b < adds; b++) {
+            const int lanes = scan_lanes(adds, b);
+            sb_put(&o, "    ");
+            put_scan(&o, b);
+            sb_put(&o, "[tide_lix] = ");
+            if (lanes > 1) sb_printf(&o, "%s(", scan_type(lanes));
+            for (int a = 4 * b; a < 4 * b + lanes; a++) sb_printf(&o, "%sselect(0u, 1u, tide_adding%d)", a > 4 * b ? ", " : "", a);
+            if (lanes == 3) sb_put(&o, ", 0u");
+            sb_printf(&o, "%s;\n", lanes > 1 ? ")" : "");
+        }
+        sb_printf(&o, "    workgroupBarrier();\n    for (var tide_d = 1u; tide_d < %du; tide_d = tide_d * 2u) {\n", group);
+        for (int b = 0; 4 * b < adds; b++) {
+            const int lanes = scan_lanes(adds, b);
+            sb_printf(&o, "        var tide_v%.0d = %s%s0u%s;\n", b, lanes > 1 ? scan_type(lanes) : "", lanes > 1 ? "(" : "",
+                      lanes > 1 ? ")" : "");
+        }
+        sb_put(&o, "        if (tide_lix >= tide_d) {\n");
+        for (int b = 0; 4 * b < adds; b++) {
+            sb_printf(&o, "            tide_v%.0d = ", b);
+            put_scan(&o, b);
+            sb_put(&o, "[tide_lix - tide_d];\n");
+        }
+        sb_put(&o, "        }\n        workgroupBarrier();\n");
+        for (int b = 0; 4 * b < adds; b++) {
+            sb_put(&o, "        ");
+            put_scan(&o, b);
+            sb_put(&o, "[tide_lix] = ");
+            put_scan(&o, b);
+            sb_printf(&o, "[tide_lix] + tide_v%.0d;\n", b);
+        }
+        sb_put(&o, "        workgroupBarrier();\n    }\n");
     }
     for (int i = 0, a = 0; i < sh->storage.count; i++) {
         if (!sh->storage.items[i].add) continue;
         const int stride = element_words(slot_element(&em, i), NULL);
-        const char *lane = adds == 1 ? "" : a == 0 ? ".x" : a == 1 ? ".y" : ".z";
-        sb_printf(&o, "    let tide_region%d = (tide_wid.x + tide_groups.x * (tide_wid.y + tide_groups.y * tide_wid.z)) * %uu;\n", a,
+        const int lanes = scan_lanes(adds, a / 4);
+        const char *lane = lanes == 1 ? "" : (const char *[]){".x", ".y", ".z", ".w"}[a % 4];
+        sb scan = {0};
+        put_scan(&scan, a / 4);
+        // Its scratch is in its list's pool, where the table's word after the lists' says
+        const char *pool = slot_pool(&em, i);
+        const bool atomic = slot_atomic(&em, i);
+        sb_printf(&o, "    let tide_region%d = ", a);
+        put_table_word(&em, &o, sh->storage_at + 2 * sh->storage.count + a);
+        sb_printf(&o, " + (tide_wid.x + tide_groups.x * (tide_wid.y + tide_groups.y * tide_wid.z)) * %uu;\n",
                   (unsigned)(2 + group * stride));
-        sb_printf(&o, "    if (tide_adding%d) {\n        let tide_o%d = tide_region%d + 2u + (tide_scan[tide_lix]%s - 1u) * %du;\n", a, a, a,
-                  lane, stride);
+        sb_printf(&o, "    if (tide_adding%d) {\n        let tide_o%d = tide_region%d + 2u + (%s[tide_lix]%s - 1u) * %du;\n", a, a, a,
+                  scan.data, lane, stride);
         em.o = &o;
         em.indent = 1;
-        char array[32], base[32];
-        snprintf(array, sizeof array, "tide_scratch%d", a);
+        char base[32];
         snprintf(base, sizeof base, "tide_o%d", a);
         char value[32];
         snprintf(value, sizeof value, "tide_added%d", a);
@@ -146,14 +191,16 @@ static void write_kernel(program *prog, shader *sh)
         element_words(slot_element(&em, i), &n);
         sb store = {0};
         em.o = &store;
-        put_store(&em, slot_element(&em, i), value, &f, &n, array, base, false);
+        put_store(&em, slot_element(&em, i), value, &f, &n, pool, base, atomic);
         // Indented once more, inside the if
         for (const char *c = store.data; c && *c; c++) {
             if (c == store.data || c[-1] == '\n') sb_put(&o, "    ");
             sb_putn(&o, c, 1);
         }
-        sb_printf(&o, "    }\n    if (tide_lix == %du) {\n        tide_scratch%d[tide_region%d] = tide_scan[tide_lix]%s;\n    }\n"
-                      "    workgroupBarrier();\n", group - 1, a, a, lane);
+        if (atomic) sb_printf(&o, "    }\n    if (tide_lix == %du) {\n        atomicStore(&%s[tide_region%d], bitcast<i32>(%s[tide_lix]%s));\n"
+                                  "    }\n    workgroupBarrier();\n", group - 1, pool, a, scan.data, lane);
+        else sb_printf(&o, "    }\n    if (tide_lix == %du) {\n        %s[tide_region%d] = %s[tide_lix]%s;\n    }\n"
+                           "    workgroupBarrier();\n", group - 1, pool, a, scan.data, lane);
         a++;
     }
     sb_put(&o, "}\n");
@@ -171,7 +218,7 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
     sh->compute = true;
     sh->kernel = k;
     sh->dims = 0;
-    sh->skin_base_at = -1;
+    sh->skin_base_at = sh->storage_at = -1;
     const param *values = NULL;
     for (int i = 0; i < k->params.count; i++) {
         if (k->params.items[i].type.kind == TY_STRUCT) values = &k->params.items[i];
@@ -213,8 +260,20 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
         s->write |= s->add || s->atomic;
         adds += s->add;
     }
-    // What the group shares: its shared locals (within 16 KiB, check_kernel_flow), and its Adds' scan, a lane each
-    int shared_bytes = adds ? kernel_group(k) * 4 * (adds == 1 ? 1 : adds == 2 ? 2 : 4) : 0;
+    if (sh->storage.count > SHADER_STORAGE_MOST) {
+        diag_error(call->at, "kernel '" STR_FMT "' names %d GPU lists, and a kernel names %d at the most", STR_ARG(k->name),
+                   sh->storage.count, SHADER_STORAGE_MOST);
+        diag_note("keep what several lists hold in one list of a struct, or split it in two runs");
+        return NULL;
+    }
+    // Where each list is in its pool and its capacity, two words of its ints a list, then each Add's scratch's place,
+    // a word each, which the renderer writes as it runs it (tide_shader.storage_table)
+    if (sh->storage.count) {
+        sh->storage_at = sh->uniform_ints;
+        sh->uniform_ints += 2 * sh->storage.count + adds;
+    }
+    // What the group shares: its shared locals (within 16 KiB, check_kernel_flow), and its Adds' scans, a lane each
+    int shared_bytes = scan_bytes(adds, kernel_group(k));
     bool shares = false;
     for (int i = 0; k->body && i < k->body->stmts.count; i++) {
         const stmt *s = k->body->stmts.items[i];
@@ -225,16 +284,10 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
     }
     shared_bytes += shares ? 4 : 0; // ...and the word its writes to them are under (writes_shared)
     if (shared_bytes > 16384) {
-        diag_error(call->at, "kernel '" STR_FMT "' shares %d bytes within a group with its Adds' scan (%d bytes a list), and a "
-                   "group has 16384 (16 KiB) on every GPU", STR_ARG(k->name), shared_bytes, kernel_group(k) * 4);
+        diag_error(call->at, "kernel '" STR_FMT "' shares %d bytes within a group with its Adds' scans (%d bytes a list, "
+                   "four lists a scan), and a group has 16384 (16 KiB) on every GPU", STR_ARG(k->name), shared_bytes,
+                   kernel_group(k) * 4);
         diag_note("share less in it, or give it a smaller group");
-        return NULL;
-    }
-    const int bound = sh->storage.count + adds + 1;
-    if (bound > 7) {
-        diag_error(call->at, "kernel '" STR_FMT "' binds %d storage buffers, and a GPU binds 7: %d GPU lists, %d for its Adds "
-                   "and its run's record", STR_ARG(k->name), bound, sh->storage.count, adds);
-        diag_note("name fewer GPU lists in one kernel, or split it in two runs");
         return NULL;
     }
     const int uniform_bytes = 16 * (packs(sh->uniform_floats) + packs(sh->uniform_ints));

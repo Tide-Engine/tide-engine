@@ -424,16 +424,19 @@ static const char *const clear_all_wgsl = WGSL(
 
 // The renderer's own kernels (compute.inc, notes/compute.md), WGSL alone: no GL backend runs kernels.
 //
+// GPU lists are ranges of a pool (compute.inc): each kernel below binds the pool of the list it works on, and finds
+// the list by its first word there (its header's), which its uniforms say.
+//
 // A run over a GPU list's count, on the GPU: its record (TIDE_GPU_RUN_WORDS words: the dispatch's groups, its
-// invocations, its size) from the list's count, for a kernel of `u.x` invocations a group along x. At most 65535
-// groups, what every GPU dispatches along an axis.
+// invocations, its size) from the list's count, for a kernel of `u.x` invocations a group along x, the list at word
+// `u.y` of the pool. At most 65535 groups, what every GPU dispatches along an axis.
 static const char *const run_size_wgsl = WGSL(
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read> list: array<u32>;\n"
+    "@group(0) @binding(25) var<storage, read> pool: array<u32>;\n"
     "@group(0) @binding(26) var<storage, read_write> run: array<u32>;\n"
     "@compute @workgroup_size(1) fn compute(@builtin(local_invocation_index) i: u32) {\n"
     "    if (i == 0u) {\n"
-    "        let count = min(list[0], list[1]);\n"
+    "        let count = min(pool[u.y], pool[u.y + 1u]);\n"
     "        let groups = min((count + u.x - 1u) / u.x, 65535u);\n"
     "        run[0] = groups;\n"
     "        run[1] = 1u;\n"
@@ -447,25 +450,24 @@ static const char *const run_size_wgsl = WGSL(
     "}\n");
 
 // Ordered Add, once a kernel's groups have each written their survivors to their region of the scratch (`u.x`
-// words each: how many, where they go, then them): where each group's go in the list, after what it holds (an
-// exclusive prefix of the groups' counts, from the list's count), and the list's new count, no more than its
-// capacity. One group of 256, each invocation a run of the groups.
+// words each: how many, where they go, then them; the scratch at word `u.y` of the pool, the list at `u.z`): where
+// each group's go in the list, after what it holds (an exclusive prefix of the groups' counts, from the list's
+// count), and the list's new count, no more than its capacity. One group of 256, each invocation a run of the groups.
 static const char *const add_offsets_wgsl = WGSL(
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read_write> scratch: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
-    "@group(0) @binding(27) var<storage, read> run: array<u32>;\n"
+    "@group(0) @binding(25) var<storage, read_write> pool: array<u32>;\n"
+    "@group(0) @binding(26) var<storage, read> run: array<u32>;\n"
     "var<workgroup> sums: array<u32, 256>;\n"
     "@compute @workgroup_size(256) fn compute(@builtin(local_invocation_index) t: u32) {\n"
     "    let groups = run[0] * run[1] * run[2];\n"
     "    let each = (groups + 255u) / 256u;\n"
     "    let first = t * each;\n"
     "    let last = min(first + each, groups);\n"
-    "    let base = list[0];\n"
-    "    let capacity = list[1];\n"
+    "    let base = pool[u.z];\n"
+    "    let capacity = pool[u.z + 1u];\n"
     "    var mine = 0u;\n"
     "    for (var g = first; g < last; g = g + 1u) {\n"
-    "        mine = mine + scratch[g * u.x];\n"
+    "        mine = mine + pool[u.y + g * u.x];\n"
     "    }\n"
     "    sums[t] = mine;\n"
     "    workgroupBarrier();\n"
@@ -480,33 +482,44 @@ static const char *const add_offsets_wgsl = WGSL(
     "    }\n"
     "    var at = base + sums[t] - mine;\n"
     "    for (var g = first; g < last; g = g + 1u) {\n"
-    "        scratch[g * u.x + 1u] = at;\n"
-    "        at = at + scratch[g * u.x];\n"
+    "        pool[u.y + g * u.x + 1u] = at;\n"
+    "        at = at + pool[u.y + g * u.x];\n"
     "    }\n"
     "    if (t == 255u) {\n"
-    "        list[0] = min(base + sums[255], capacity);\n"
+    "        pool[u.z] = min(base + sums[255], capacity);\n"
     "    }\n"
     "}\n");
 
-// ...then each group's survivors to where they go, `u.y` words each, those past the capacity dropped: one group of
-// 64 for each of the kernel's.
+// ...then each group's survivors to where they go, `u.y` words each, those past the capacity dropped (the scratch at
+// word `u.z` of the pool, the list at `u.w`): one group of 64 for each of the kernel's.
 static const char *const add_scatter_wgsl = WGSL(
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read> scratch: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
+    "@group(0) @binding(25) var<storage, read_write> pool: array<u32>;\n"
     "@compute @workgroup_size(64) fn compute(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) w: vec3u,\n"
     "                                        @builtin(num_workgroups) n: vec3u) {\n"
-    "    let region = (w.x + n.x * (w.y + n.y * w.z)) * u.x;\n"
-    "    let count = scratch[region];\n"
-    "    let at = scratch[region + 1u];\n"
-    "    let capacity = list[1];\n"
+    "    let region = u.z + (w.x + n.x * (w.y + n.y * w.z)) * u.x;\n"
+    "    let count = pool[region];\n"
+    "    let at = pool[region + 1u];\n"
+    "    let capacity = pool[u.w + 1u];\n"
     "    for (var j = t; j < count; j = j + 64u) {\n"
     "        let to = at + j;\n"
     "        if (to < capacity) {\n"
     "            for (var k = 0u; k < u.y; k = k + 1u) {\n"
-    "                list[4u + to * u.y + k] = scratch[region + 2u + j * u.y + k];\n"
+    "                pool[u.w + 4u + to * u.y + k] = pool[region + 2u + j * u.y + k];\n"
     "            }\n"
     "        }\n"
+    "    }\n"
+    "}\n");
+
+// A range of a pool zeroed, `u.y` words from word `u.x`: a list's taken again where another's was. Each invocation
+// zeroes words the dispatch's width apart, so a dispatch of any number of groups (65535 at the most) does it all.
+static const char *const zero_words_wgsl = WGSL(
+    "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
+    "@group(0) @binding(25) var<storage, read_write> pool: array<u32>;\n"
+    "@compute @workgroup_size(256) fn compute(@builtin(global_invocation_id) g: vec3u, @builtin(num_workgroups) n: vec3u) {\n"
+    "    let width = n.x * 256u;\n"
+    "    for (var i = g.x; i < u.y; i = i + width) {\n"
+    "        pool[u.x + i] = 0u;\n"
     "    }\n"
     "}\n");
 
@@ -663,5 +676,6 @@ static const char *const hiz_wgsl = WGSL(
     X(run_size, run_size_wgsl, NULL)                                                                                   \
     X(add_offsets, add_offsets_wgsl, NULL)                                                                             \
     X(add_scatter, add_scatter_wgsl, NULL)                                                                             \
+    X(zero_words, zero_words_wgsl, NULL)                                                                               \
     X(hiz_one, hiz_one_wgsl, hiz_wgsl)                                                                                 \
     X(hiz_samples, hiz_samples_wgsl, hiz_wgsl)

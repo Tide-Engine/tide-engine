@@ -57,7 +57,18 @@ static uint32_t cull_bucket_count, cull_bucket_capacity;
 static cull_join *cull_joins;
 static uint32_t cull_join_count, cull_join_capacity;
 
-static sized_buffer cull_buffers[CULL_LISTS];
+// Each list's range of the pools (compute.inc), and how many elements it's said to hold (its header's count and
+// capacity, which the kernels' tables say too)
+static gpu_range cull_ranges[CULL_LISTS];
+static uint32_t cull_counts[CULL_LISTS];
+// The pool each is in, by its elements as cull.tide has them: its GPUList<int>s in the pool of ints
+static const uint8_t cull_pool_of[CULL_LISTS] = {
+    [CULL_CAMERAS] = TIDE_STORAGE_WORDS, [CULL_JOBS] = TIDE_STORAGE_WORDS, [CULL_PARTS] = TIDE_STORAGE_WORDS,
+    [CULL_BUCKETS] = TIDE_STORAGE_WORDS, [CULL_GROUPS] = TIDE_STORAGE_WORDS, [CULL_SCRATCH] = TIDE_STORAGE_INTS,
+    [CULL_PLACES] = TIDE_STORAGE_INTS, [CULL_COUNTS] = TIDE_STORAGE_INTS, [CULL_JOINS] = TIDE_STORAGE_WORDS,
+    [CULL_ARGS] = TIDE_STORAGE_INTS, [CULL_DRAWS] = TIDE_STORAGE_INTS};
+// The ints a kernel's uniforms take here at the most (its values, then its table: cull_uniform_size)
+enum { CULL_UNIFORM_INTS = 256 };
 static tide_gpu_id cull_pipelines[CULL_KERNELS];
 static bool cull_on;                   // This frame's culled runs may be culled on the GPU (cull_plan)
 static uint32_t cull_pages[4], cull_page_count; // The pages they read, the textures K1 samples
@@ -129,7 +140,7 @@ static uint32_t counted_step_count, counted_step_capacity;
 // (occlusion.tide). A destination's is made where a span measures it, and made again where another does after
 // something was drawn into it (a pass on it began since).
 enum { HIZ_COUNTS = 4, HIZ_DONE = 2, HIZ_MOST_WORDS = 1u << 24 };
-static sized_buffer hiz_buffer;
+static gpu_range hiz_range; // Of the pool of ints, as cull.tide's Culling.depths is a GPUList<int>
 static uint32_t hiz_read; // The frame's counts on their way back: a buffer_read token, or 0
 static tide_platform_occlusion_report hiz_report;
 static tide_gpu_id hiz_pipelines[2]; // The pyramid's kernel (shaders.h), reading a depth of one sample and of more
@@ -160,7 +171,8 @@ static uint32_t cull_span_count, cull_span_capacity, cull_span_next;
 // Everything on the device went with it.
 static void forget_culling(void)
 {
-    memset(cull_buffers, 0, sizeof cull_buffers);
+    memset(cull_ranges, 0, sizeof cull_ranges);
+    memset(cull_counts, 0, sizeof cull_counts);
     memset(cull_pipelines, 0, sizeof cull_pipelines);
     memset(hiz_pipelines, 0, sizeof hiz_pipelines);
     cull_failed = hiz_failed = false;
@@ -169,7 +181,7 @@ static void forget_culling(void)
     cull_join_count = 0;
     for (uint32_t i = 0; i < COUNTED_FRAMES; i++) counted[i].token = 0, counted[i].buffer = 0, counted[i].capacity = 0;
     counted_step_count = 0;
-    hiz_buffer = (sized_buffer){0};
+    hiz_range = (gpu_range){0};
     hiz_read = 0;
 }
 
@@ -186,15 +198,21 @@ static bool cull_kernels(void)
     for (uint32_t k = 0; k < CULL_KERNELS; k++) {
         const tide_shader *shader = cull_shaders[k];
         if (!cull_pipelines[k]) {
-            const uint32_t storage = tide_shader_compute_storage(shader);
+            if (cull_uniform_size(shader) > CULL_UNIFORM_INTS * 4u) { // cull.tide grew past what's kept for its uniforms
+                fprintf(stderr, "tide: %s takes more uniforms than the renderer holds for it: runs recorded to be culled "
+                                "are decided on the CPU\n", shader->name);
+                cull_failed = true;
+                return false;
+            }
             tide_gpu_pipeline_desc desc = {.name = shader->name, .wgsl = shader->wgsl, .spirv = shader->spirv,
                                            .spirv_words = shader->spirv_words, .compute = true,
                                            .uniform_size = cull_uniform_size(shader),
-                                           .texture_count = shader->texture_count, .storage_count = storage,
+                                           .texture_count = shader->texture_count,
+                                           .storage_count = tide_shader_compute_storage(shader),
                                            .optional = true}; // The CPU decides runs without them
             for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc.reads[i] = gpu_read(shader, i);
-            for (uint32_t i = 0; i < storage && i < TIDE_GPU_MAX_STORAGE; i++)
-                desc.storage_writes[i] = i < shader->storage_count && (shader->storage_writes >> i & 1u) != 0;
+            desc.storage_writes[TIDE_STORAGE_WORDS] = tide_shader_pool_written(shader, TIDE_STORAGE_WORDS);
+            desc.storage_writes[TIDE_STORAGE_INTS] = tide_shader_pool_written(shader, TIDE_STORAGE_INTS);
             cull_pipelines[k] = gpu->pipeline(&desc);
         }
         ready &= pipeline_usable(cull_pipelines[k]);
@@ -351,45 +369,75 @@ static void cull_put_float(uint32_t *to, const float v)
     memcpy(to, &v, sizeof v);
 }
 
-// A list's buffer, with room for its words after its header, written: its count and capacity, `count` elements.
-static tide_gpu_id cull_buffer(const uint32_t list, const uint32_t count, const bool write)
+// A list's range, with room for its words after its header, written: its count and capacity, `count` elements. False
+// where its pool can't hold it (said once by the pool). Outside passes: a pool may grow.
+static bool cull_buffer(const uint32_t list, const uint32_t count, const bool write)
 {
-    sized_buffer *b = &cull_buffers[list];
-    const uint64_t bytes = (uint64_t)(TIDE_GPU_LIST_HEADER_WORDS + cull_word_count[list]) * 4u;
-    if (b->bytes < bytes || !b->buffer) {
-        if (b->buffer) free_buffer(b->buffer);
-        uint64_t room = b->bytes ? b->bytes : 4096u;
-        while (room < bytes) room *= 2u;
-        if (room > TIDE_GPU_STORAGE_MOST_BYTES) room = bytes;
-        b->buffer = made_buffer(TIDE_GPU_STORAGE, (size_t)room, NULL);
-        b->bytes = room;
+    gpu_range *r = &cull_ranges[list];
+    const uint64_t words = (uint64_t)TIDE_GPU_LIST_HEADER_WORDS + cull_word_count[list];
+    cull_counts[list] = 0;
+    if (r->words < words) {
+        pool_give(*r);
+        uint64_t room = r->words ? r->words : 1024u;
+        while (room < words) room *= 2u;
+        if (room * 4u > TIDE_GPU_STORAGE_MOST_BYTES) room = words;
+        bool dirty; // What it held isn't read: every word of it the kernels read is written each frame first
+        *r = pool_range(cull_pool_of[list], room, &dirty);
+        if (!r->words) return false;
     }
+    cull_counts[list] = count;
     const uint32_t header[TIDE_GPU_LIST_HEADER_WORDS] = {count, count, 0, 0};
-    gpu->buffer_write(b->buffer, 0, header, sizeof header);
+    const tide_gpu_id buffer = pool_buffer(r->pool);
+    gpu->buffer_write(buffer, (size_t)r->at * 4u, header, sizeof header);
     if (write && cull_word_count[list]) {
-        gpu->buffer_write(b->buffer, sizeof header, cull_words[list], (size_t)cull_word_count[list] * 4u);
+        gpu->buffer_write(buffer, ((size_t)r->at + TIDE_GPU_LIST_HEADER_WORDS) * 4u, cull_words[list],
+                          (size_t)cull_word_count[list] * 4u);
     }
-    return b->buffer;
+    return true;
+}
+
+// Where element `at` of list `list` starts in its pool, in bytes.
+static size_t cull_at(const uint32_t list, const size_t at)
+{
+    return ((size_t)cull_ranges[list].at + TIDE_GPU_LIST_HEADER_WORDS + at) * sizeof(uint32_t);
 }
 
 static tide_gpu_id cull_places(void)
 {
-    return cull_buffers[CULL_PLACES].buffer;
+    return cull_ranges[CULL_PLACES].words ? pool_buffer(cull_ranges[CULL_PLACES].pool) : 0u;
 }
 
 static size_t cull_places_at(const uint32_t bucket)
 {
-    return ((size_t)TIDE_GPU_LIST_HEADER_WORDS + cull_buckets[bucket].region) * sizeof(uint32_t);
+    return cull_at(CULL_PLACES, cull_buckets[bucket].region);
 }
 
 static tide_gpu_id cull_args(void)
 {
-    return cull_buffers[CULL_ARGS].buffer;
+    return cull_ranges[CULL_ARGS].words ? pool_buffer(cull_ranges[CULL_ARGS].pool) : 0u;
 }
 
 static size_t cull_args_at(const uint32_t bucket)
 {
-    return ((size_t)TIDE_GPU_LIST_HEADER_WORDS + (size_t)bucket * CULL_ARG_WORDS) * sizeof(uint32_t);
+    return cull_at(CULL_ARGS, (size_t)bucket * CULL_ARG_WORDS);
+}
+
+// A kernel's slot `slot` in its table (uniforms, its ints): `range`'s first word and `count`, or the empty list's
+// where the range is of the other pool than the slot's (which cull_pool_of keeps from being).
+static void cull_slot(int32_t *uniforms, const tide_shader *shader, const uint32_t slot, const gpu_range range,
+                      const uint32_t count)
+{
+    const uint32_t pool = tide_shader_storage_ints(shader, slot) ? TIDE_STORAGE_INTS : TIDE_STORAGE_WORDS;
+    const uint32_t at = shader->storage_table / 4u + 2u * slot;
+    if (at + 1u >= CULL_UNIFORM_INTS) return;
+    const bool fits = range.words && range.pool == pool;
+    uniforms[at] = fits ? (int32_t)range.at : 0;
+    uniforms[at + 1u] = fits ? (int32_t)count : 0;
+}
+
+static void cull_list_slot(int32_t *uniforms, const tide_shader *shader, const uint32_t slot, const uint32_t list)
+{
+    cull_slot(uniforms, shader, slot, cull_ranges[list], cull_counts[list]);
 }
 
 // The record of a run of `x` by `y` groups, `width` by `height` invocations (TIDE_GPU_RUN_WORDS).
@@ -594,8 +642,14 @@ static tide_gpu_id cull_record(const uint32_t groups, const uint32_t size)
     return cull_record_of(groups, 1, size, 1);
 }
 
+// The elements of the pyramids' list (Culling.depths): its range after its header.
+static uint32_t hiz_elements(void)
+{
+    return hiz_range.words > TIDE_GPU_LIST_HEADER_WORDS ? hiz_range.words - TIDE_GPU_LIST_HEADER_WORDS : 0u;
+}
+
 // CullListed bound to the frame's lists and pages, with `uniforms` (the pages' counts written in).
-static void cull_listed(const tide_draw_list *list, int32_t uniforms[16], const tide_gpu_id depths, const uint32_t groups)
+static void cull_listed(const tide_draw_list *list, int32_t uniforms[CULL_UNIFORM_INTS], const uint32_t groups)
 {
     uniforms[tide_kernel_CullListed_COUNT_page0] = cull_page_counts[0];
     uniforms[tide_kernel_CullListed_COUNT_page1] = cull_page_counts[1];
@@ -606,19 +660,21 @@ static void cull_listed(const tide_draw_list *list, int32_t uniforms[16], const 
     static const int32_t none[4] = {0, 0, 0, 0};
     if (!gpu_state.nothing) gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, none); // For pages it hasn't
     gpu->use(cull_pipelines[CULL_LISTED]);
-    gpu->uniforms(uniforms, cull_uniform_size(&tide_kernel_CullListed));
     for (uint32_t p = 0; p < 4; p++) {
         const tide_gpu_id texture = p < cull_page_count ? texture_to_read(list, cull_pages[p], TIDE_GPU_READ_DATA)
                                                         : texture_to_read(list, 0, TIDE_GPU_READ_DATA);
         gpu->sample(page_textures[p], texture, gpu_filter(TIDE_FILTER_POINT), gpu_wrap(TIDE_WRAP_CLAMP));
     }
-    gpu->storage(tide_kernel_CullListed_STORAGE_cameras, cull_buffers[CULL_CAMERAS].buffer);
-    gpu->storage(tide_kernel_CullListed_STORAGE_jobs, cull_buffers[CULL_JOBS].buffer);
-    gpu->storage(tide_kernel_CullListed_STORAGE_parts, cull_buffers[CULL_PARTS].buffer);
-    gpu->storage(tide_kernel_CullListed_STORAGE_groups, cull_buffers[CULL_GROUPS].buffer);
-    gpu->storage(tide_kernel_CullListed_STORAGE_scratch, cull_buffers[CULL_SCRATCH].buffer);
-    gpu->storage(tide_kernel_CullListed_STORAGE_depths, depths);
-    gpu->storage(tide_kernel_CullListed.storage_count, cull_record(groups, groups * CULL_GROUP));
+    const tide_shader *k = &tide_kernel_CullListed;
+    cull_list_slot(uniforms, k, tide_kernel_CullListed_STORAGE_cameras, CULL_CAMERAS);
+    cull_list_slot(uniforms, k, tide_kernel_CullListed_STORAGE_jobs, CULL_JOBS);
+    cull_list_slot(uniforms, k, tide_kernel_CullListed_STORAGE_parts, CULL_PARTS);
+    cull_list_slot(uniforms, k, tide_kernel_CullListed_STORAGE_groups, CULL_GROUPS);
+    cull_list_slot(uniforms, k, tide_kernel_CullListed_STORAGE_scratch, CULL_SCRATCH);
+    cull_slot(uniforms, k, tide_kernel_CullListed_STORAGE_depths, hiz_range, hiz_elements());
+    gpu->uniforms(uniforms, cull_uniform_size(k));
+    bind_pools();
+    gpu->storage(TIDE_STORAGE_RUN, cull_record(groups, groups * CULL_GROUP));
     gpu->dispatch(groups, 1, 1);
 }
 
@@ -627,38 +683,44 @@ static void cull_listed(const tide_draw_list *list, int32_t uniforms[16], const 
 static void cull_places_of(const uint32_t first, const uint32_t buckets, const uint32_t first_group, const uint32_t groups,
                            const uint32_t first_join, const uint32_t joins)
 {
-    int32_t uniforms[16] = {0};
+    int32_t uniforms[CULL_UNIFORM_INTS] = {0};
+    const tide_shader *k = &tide_kernel_CullOffsets;
     uniforms[tide_kernel_CullOffsets_INT_first] = (int32_t)first;
+    cull_list_slot(uniforms, k, tide_kernel_CullOffsets_STORAGE_buckets, CULL_BUCKETS);
+    cull_list_slot(uniforms, k, tide_kernel_CullOffsets_STORAGE_groups, CULL_GROUPS);
+    cull_list_slot(uniforms, k, tide_kernel_CullOffsets_STORAGE_counts, CULL_COUNTS);
     gpu->use(cull_pipelines[CULL_OFFSETS]);
-    gpu->uniforms(uniforms, cull_uniform_size(&tide_kernel_CullOffsets));
-    gpu->storage(tide_kernel_CullOffsets_STORAGE_buckets, cull_buffers[CULL_BUCKETS].buffer);
-    gpu->storage(tide_kernel_CullOffsets_STORAGE_groups, cull_buffers[CULL_GROUPS].buffer);
-    gpu->storage(tide_kernel_CullOffsets_STORAGE_counts, cull_buffers[CULL_COUNTS].buffer);
-    gpu->storage(tide_kernel_CullOffsets.storage_count, cull_record(buckets, buckets * CULL_GROUP));
+    gpu->uniforms(uniforms, cull_uniform_size(k));
+    bind_pools();
+    gpu->storage(TIDE_STORAGE_RUN, cull_record(buckets, buckets * CULL_GROUP));
     gpu->dispatch(buckets, 1, 1);
     if (groups) { // ...where there's any candidate: every bucket's count is CullOffsets' either way
         memset(uniforms, 0, sizeof uniforms);
+        k = &tide_kernel_CullScatter;
         uniforms[tide_kernel_CullScatter_INT_first] = (int32_t)first_group;
+        cull_list_slot(uniforms, k, tide_kernel_CullScatter_STORAGE_groups, CULL_GROUPS);
+        cull_list_slot(uniforms, k, tide_kernel_CullScatter_STORAGE_scratch, CULL_SCRATCH);
+        cull_list_slot(uniforms, k, tide_kernel_CullScatter_STORAGE_places, CULL_PLACES);
         gpu->use(cull_pipelines[CULL_SCATTER]);
-        gpu->uniforms(uniforms, cull_uniform_size(&tide_kernel_CullScatter));
-        gpu->storage(tide_kernel_CullScatter_STORAGE_groups, cull_buffers[CULL_GROUPS].buffer);
-        gpu->storage(tide_kernel_CullScatter_STORAGE_scratch, cull_buffers[CULL_SCRATCH].buffer);
-        gpu->storage(tide_kernel_CullScatter_STORAGE_places, cull_buffers[CULL_PLACES].buffer);
-        gpu->storage(tide_kernel_CullScatter.storage_count, cull_record(groups, groups * CULL_GROUP));
+        gpu->uniforms(uniforms, cull_uniform_size(k));
+        bind_pools();
+        gpu->storage(TIDE_STORAGE_RUN, cull_record(groups, groups * CULL_GROUP));
         gpu->dispatch(groups, 1, 1);
     }
     if (!joins) return;
     const uint32_t join_groups = (joins + CULL_GROUP - 1u) / CULL_GROUP;
     memset(uniforms, 0, sizeof uniforms);
+    k = &tide_kernel_CullDraws;
     uniforms[tide_kernel_CullDraws_INT_first] = (int32_t)first_join;
+    cull_list_slot(uniforms, k, tide_kernel_CullDraws_STORAGE_joins, CULL_JOINS);
+    cull_list_slot(uniforms, k, tide_kernel_CullDraws_STORAGE_counts, CULL_COUNTS);
+    cull_list_slot(uniforms, k, tide_kernel_CullDraws_STORAGE_buckets, CULL_BUCKETS);
+    cull_list_slot(uniforms, k, tide_kernel_CullDraws_STORAGE_args, CULL_ARGS);
+    cull_list_slot(uniforms, k, tide_kernel_CullDraws_STORAGE_draws, CULL_DRAWS);
     gpu->use(cull_pipelines[CULL_DRAWS_KERNEL]);
-    gpu->uniforms(uniforms, cull_uniform_size(&tide_kernel_CullDraws));
-    gpu->storage(tide_kernel_CullDraws_STORAGE_joins, cull_buffers[CULL_JOINS].buffer);
-    gpu->storage(tide_kernel_CullDraws_STORAGE_counts, cull_buffers[CULL_COUNTS].buffer);
-    gpu->storage(tide_kernel_CullDraws_STORAGE_buckets, cull_buffers[CULL_BUCKETS].buffer);
-    gpu->storage(tide_kernel_CullDraws_STORAGE_args, cull_buffers[CULL_ARGS].buffer);
-    gpu->storage(tide_kernel_CullDraws_STORAGE_draws, cull_buffers[CULL_DRAWS].buffer);
-    gpu->storage(tide_kernel_CullDraws.storage_count, cull_record(join_groups, joins));
+    gpu->uniforms(uniforms, cull_uniform_size(k));
+    bind_pools();
+    gpu->storage(TIDE_STORAGE_RUN, cull_record(join_groups, joins));
     gpu->dispatch(join_groups, 1, 1);
 }
 
@@ -687,21 +749,23 @@ static uint64_t hiz_level_words(const int width, const int height)
     return words;
 }
 
-// The pyramid's buffer, with room for the biggest of the frame's: its header's count is all of it, and the frame's
-// counts are 0.
-static tide_gpu_id hiz_buffer_for(const uint64_t words)
+// The pyramids' range, with room for the biggest of the frame's: its header's count is all of it, and the frame's
+// counts are 0. False where the pool of ints can't hold it.
+static bool hiz_buffer_for(const uint64_t words)
 {
-    const uint64_t bytes = (uint64_t)(TIDE_GPU_LIST_HEADER_WORDS + HIZ_COUNTS + words) * 4u;
-    if (hiz_buffer.bytes < bytes || !hiz_buffer.buffer) {
-        if (hiz_buffer.buffer) free_buffer(hiz_buffer.buffer);
-        uint64_t room = hiz_buffer.bytes ? hiz_buffer.bytes : 65536u;
-        while (room < bytes) room *= 2u;
-        hiz_buffer = (sized_buffer){.buffer = made_buffer(TIDE_GPU_STORAGE, (size_t)room, NULL), .bytes = room};
+    const uint64_t need = (uint64_t)TIDE_GPU_LIST_HEADER_WORDS + HIZ_COUNTS + words;
+    if (hiz_range.words < need) {
+        pool_give(hiz_range);
+        uint64_t room = hiz_range.words ? hiz_range.words : 16384u;
+        while (room < need) room *= 2u;
+        bool dirty; // Each pyramid's texels are written before they're read, and the counts below
+        hiz_range = pool_range(TIDE_STORAGE_INTS, room, &dirty);
+        if (!hiz_range.words) return false;
     }
-    const uint32_t elements = (uint32_t)(hiz_buffer.bytes / 4u) - TIDE_GPU_LIST_HEADER_WORDS;
+    const uint32_t elements = hiz_elements();
     const uint32_t header[TIDE_GPU_LIST_HEADER_WORDS + HIZ_COUNTS] = {elements, elements, 0, 0, 0, 0, 0, 0};
-    gpu->buffer_write(hiz_buffer.buffer, 0, header, sizeof header);
-    return hiz_buffer.buffer;
+    gpu->buffer_write(pool_buffer(TIDE_STORAGE_INTS), (size_t)hiz_range.at * 4u, header, sizeof header);
+    return true;
 }
 
 // Whether a GPU-culled step tests occlusion: every draw of its run with it on, and a depth test to fail.
@@ -993,7 +1057,8 @@ static void cull_run(const tide_draw_list *list)
             cull_words[CULL_BUCKETS][b * CULL_BUCKET_WORDS + 5u] = cull_buckets[b].first_index;
         }
     }
-    const tide_gpu_id depths = hiz_buffer_for(hiz_plan(list));
+    bool held = pools_ready(); // What its kernels bind, both pools
+    held &= hiz_buffer_for(hiz_plan(list));
     // What the kernels write: room alone
     const uint32_t buckets = cull_bucket_count;
     cull_word_count[CULL_GROUPS] = groups * CULL_GROUP_WORDS;
@@ -1002,31 +1067,38 @@ static void cull_run(const tide_draw_list *list)
     cull_word_count[CULL_COUNTS] = buckets;
     cull_word_count[CULL_ARGS] = buckets * CULL_ARG_WORDS;
     cull_word_count[CULL_DRAWS] = cull_join_count;
-    cull_buffer(CULL_CAMERAS, list->cull_camera_count, true);
-    cull_buffer(CULL_JOBS, list->cull_count, true);
-    cull_buffer(CULL_PARTS, cull_word_count[CULL_PARTS] / CULL_PART_WORDS, true);
-    cull_buffer(CULL_BUCKETS, buckets, true);
-    cull_buffer(CULL_GROUPS, groups, false);
-    cull_buffer(CULL_SCRATCH, groups * CULL_GROUP, false);
-    cull_buffer(CULL_PLACES, total, false);
+    held &= cull_buffer(CULL_CAMERAS, list->cull_camera_count, true);
+    held &= cull_buffer(CULL_JOBS, list->cull_count, true);
+    held &= cull_buffer(CULL_PARTS, cull_word_count[CULL_PARTS] / CULL_PART_WORDS, true);
+    held &= cull_buffer(CULL_BUCKETS, buckets, true);
+    held &= cull_buffer(CULL_GROUPS, groups, false);
+    held &= cull_buffer(CULL_SCRATCH, groups * CULL_GROUP, false);
+    held &= cull_buffer(CULL_PLACES, total, false);
+    held &= cull_buffer(CULL_COUNTS, buckets, false);
+    held &= cull_buffer(CULL_JOINS, cull_join_count, true);
+    held &= cull_buffer(CULL_ARGS, buckets * CULL_ARG_WORDS, false);
+    held &= cull_buffer(CULL_DRAWS, cull_join_count, false);
+    if (!held) { // A pool can't hold them (it said so): the frame's culled runs draw nothing, and later frames' are the CPU's
+        fprintf(stderr, "tide: the GPU culling's lists don't fit the GPU's pools: runs recorded to be culled are decided on "
+                        "the CPU from the next frame\n");
+        cull_failed = true;
+        cull_join_count = 0;
+        return;
+    }
     for (uint32_t b = 0; b < buckets; b++) { // Ordinary listed runs' places, as they are
         const draw_step *s = &steps[cull_buckets[b].step];
         if (!cull_fixed(list, s)) continue;
         const tide_draw_run *run = &list->runs[s->first];
         gpu->buffer_write(cull_places(), cull_places_at(b), list->instances + run->first, (size_t)run->count * sizeof(uint32_t));
     }
-    cull_buffer(CULL_COUNTS, buckets, false);
-    cull_buffer(CULL_JOINS, cull_join_count, true);
-    cull_buffer(CULL_ARGS, buckets * CULL_ARG_WORDS, false);
-    cull_buffer(CULL_DRAWS, cull_join_count, false);
     // The pages' sizes, as their lists' counts, where CullListed's uniforms have them
     for (uint32_t p = 0; p < 4; p++) {
         const tide_draw_texture *t = p < cull_page_count ? &list->textures[cull_pages[p] - 1u] : NULL;
         cull_page_counts[p] = t && t->width > 0 && t->height > 0 ? t->width * t->height : 0;
     }
-    int32_t uniforms[16] = {0};
+    int32_t uniforms[CULL_UNIFORM_INTS] = {0};
     gpu->compute_begin();
-    if (groups) cull_listed(list, uniforms, depths, groups);
+    if (groups) cull_listed(list, uniforms, groups);
     cull_places_of(0, buckets, 0, groups, 0, cull_join_count);
     gpu->compute_end();
 }
@@ -1038,11 +1110,10 @@ static bool cull_draw(const draw_step *s)
     if (!s->join || s->join > cull_join_count) return false;
     cull_join *j = &cull_joins[s->join - 1u];
     // With first instances each record's places start where its own do, all bound from the first; else its one's
-    gpu->vertices(1, cull_places(), j->first_instance ? (size_t)TIDE_GPU_LIST_HEADER_WORDS * sizeof(uint32_t)
-                                                      : cull_places_at(j->first));
+    gpu->vertices(1, cull_places(), j->first_instance ? cull_at(CULL_PLACES, 0) : cull_places_at(j->first));
     gpu->indices(j->family ? cull_families[j->family - 1u].buffer : j->indices, j->wide);
-    gpu->draw_indexed_indirect_count(cull_args(), cull_args_at(j->first), j->count, cull_buffers[CULL_DRAWS].buffer,
-                                     ((size_t)TIDE_GPU_LIST_HEADER_WORDS + s->join - 1u) * sizeof(uint32_t));
+    gpu->draw_indexed_indirect_count(cull_args(), cull_args_at(j->first), j->count, pool_buffer(cull_ranges[CULL_DRAWS].pool),
+                                     cull_at(CULL_DRAWS, s->join - 1u));
     j->drawn = true;
     return true;
 }
@@ -1111,13 +1182,14 @@ static void cull_spans_start(const tide_draw_list *list, const uint32_t i)
         const frame_target *f = &frame_targets[span->target];
         const uint32_t width = (uint32_t)f->pixel_width, height = (uint32_t)f->pixel_height;
         const uint32_t across = hiz_size((int)width, 4), down = hiz_size((int)height, 4); // A group's level 4 texel
-        const uint32_t uniforms[8] = {width, height, hiz_levels((int)width, (int)height), 0,
-                                      TIDE_GPU_LIST_HEADER_WORDS + room->at, across * down,
-                                      TIDE_GPU_LIST_HEADER_WORDS + HIZ_DONE, 0};
+        // Its words where the pool of ints has them: level 0 and the count of its groups done
+        const uint32_t base = hiz_range.at + TIDE_GPU_LIST_HEADER_WORDS;
+        const uint32_t uniforms[8] = {width, height, hiz_levels((int)width, (int)height), 0, base + room->at, across * down,
+                                      base + HIZ_DONE, 0};
         gpu->use(hiz_pipelines[samples[d] > 1u]);
         gpu->uniforms(uniforms, sizeof uniforms);
         gpu->sample(0, depth[d], gpu_filter(TIDE_FILTER_POINT), gpu_wrap(TIDE_WRAP_CLAMP));
-        gpu->storage(0, hiz_buffer.buffer);
+        gpu->storage(0, pool_buffer(TIDE_STORAGE_INTS));
         gpu->dispatch(across, down, 1);
         room->made = true;
         room->passes = f->passes;
@@ -1126,14 +1198,14 @@ static void cull_spans_start(const tide_draw_list *list, const uint32_t i)
     for (uint32_t d = 0; d < count; d++) { // Each span's draws culled again, as the frame's were, and against it
         const cull_span *span = &cull_spans[due[d]];
         const frame_target *f = &frame_targets[span->target];
-        int32_t uniforms[16] = {0};
+        int32_t uniforms[CULL_UNIFORM_INTS] = {0};
         uniforms[tide_kernel_CullListed_INT_phase] = 1;
         uniforms[tide_kernel_CullListed_INT_first] = (int32_t)span->first_group;
         uniforms[tide_kernel_CullListed_INT_width] = f->pixel_width;
         uniforms[tide_kernel_CullListed_INT_height] = f->pixel_height;
         uniforms[tide_kernel_CullListed_INT_levels] = (int32_t)hiz_levels(f->pixel_width, f->pixel_height);
         uniforms[tide_kernel_CullListed_INT_pyramid] = (int32_t)hiz_rooms[span->room].at;
-        cull_listed(list, uniforms, hiz_buffer.buffer, span->groups);
+        cull_listed(list, uniforms, span->groups);
         cull_places_of(span->first_bucket, span->buckets, span->first_group, span->groups, span->first_join, span->joins);
         hiz_report.measured++;
     }
@@ -1143,8 +1215,9 @@ static void cull_spans_start(const tide_draw_list *list, const uint32_t i)
 // After the frame's steps: the counts its culling found begin their way back, where the last frame's are back.
 static void cull_frame_end(void)
 {
-    if (!cull_on || !hiz_report.pyramids || hiz_read || !hiz_buffer.buffer || !gpu->buffer_read) return;
-    hiz_read = gpu->buffer_read(hiz_buffer.buffer, (size_t)TIDE_GPU_LIST_HEADER_WORDS * 4u, HIZ_COUNTS * 4u);
+    if (!cull_on || !hiz_report.pyramids || hiz_read || !hiz_range.words || !gpu->buffer_read) return;
+    hiz_read = gpu->buffer_read(pool_buffer(TIDE_STORAGE_INTS), ((size_t)hiz_range.at + TIDE_GPU_LIST_HEADER_WORDS) * 4u,
+                                HIZ_COUNTS * 4u);
 }
 
 bool tide_platform_occlusion(tide_platform_occlusion_report *report, const bool wait)
@@ -1166,7 +1239,7 @@ bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_r
     }
     for (uint32_t k = 0; k < joins; k++) report->calls += cull_joins[k].drawn;
     if (!list || !gpu || !gpu->buffer_read || !gpu->buffer_read_wait || !gpu->buffer_read_done) return false;
-    if (!buckets || !cull_args() || !cull_places() || !cull_buffers[CULL_COUNTS].buffer || !cull_buffers[CULL_DRAWS].buffer)
+    if (!buckets || !cull_args() || !cull_places() || !cull_ranges[CULL_COUNTS].words || !cull_ranges[CULL_DRAWS].words)
         return false;
     const size_t args_bytes = cull_args_at(buckets), places_bytes = (size_t)TIDE_GPU_LIST_HEADER_WORDS * 4u
                                                                     + (size_t)cull_word_count[CULL_PLACES] * 4u;
@@ -1174,9 +1247,13 @@ bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_r
     const size_t draws_bytes = ((size_t)TIDE_GPU_LIST_HEADER_WORDS + joins) * 4u;
     uint32_t *args = tide_alloc(args_bytes), *places = tide_alloc(places_bytes), *counts = tide_alloc(counts_bytes);
     uint32_t *draws = tide_alloc(draws_bytes);
-    const uint32_t reads[4] = {gpu->buffer_read(cull_args(), 0, args_bytes), gpu->buffer_read(cull_places(), 0, places_bytes),
-                               gpu->buffer_read(cull_buffers[CULL_COUNTS].buffer, 0, counts_bytes),
-                               gpu->buffer_read(cull_buffers[CULL_DRAWS].buffer, 0, draws_bytes)};
+    // Each from its header on, as the lists' layout is
+    const uint32_t reads[4] = {gpu->buffer_read(cull_args(), cull_at(CULL_ARGS, 0) - 16u, args_bytes),
+                               gpu->buffer_read(cull_places(), cull_at(CULL_PLACES, 0) - 16u, places_bytes),
+                               gpu->buffer_read(pool_buffer(cull_ranges[CULL_COUNTS].pool), cull_at(CULL_COUNTS, 0) - 16u,
+                                                counts_bytes),
+                               gpu->buffer_read(pool_buffer(cull_ranges[CULL_DRAWS].pool), cull_at(CULL_DRAWS, 0) - 16u,
+                                                draws_bytes)};
     gpu->buffer_read_wait();
     bool read = true;
     uint32_t *const into[4] = {args, places, counts, draws};
@@ -1357,7 +1434,7 @@ static void counted_frame_end(const tide_draw_list *list)
                 c->drawn[r / 32u] |= 1u << (r % 32u);
             }
             if (group_count) { // Each culled draw's, at each level, for its geometry rows
-                gpu->buffer_copy(cull_buffers[CULL_GROUPS].buffer, (size_t)TIDE_GPU_LIST_HEADER_WORDS * sizeof(uint32_t),
+                gpu->buffer_copy(pool_buffer(cull_ranges[CULL_GROUPS].pool), cull_at(CULL_GROUPS, 0),
                                  c->buffer, (size_t)records * CULL_ARG_WORDS * sizeof(uint32_t),
                                  (size_t)group_count * CULL_GROUP_WORDS * sizeof(uint32_t));
                 const uint32_t parts = cull_word_count[CULL_PARTS] / CULL_PART_WORDS;

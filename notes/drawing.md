@@ -2,6 +2,18 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## The culling's lists in the pools (2026-11-05)
+
+cull.tide's lists (and occlusion's `depths`) are ranges of the renderer's two pools since GPU lists in pools
+(`notes/compute.md`): `cull_ranges` and `cull_counts` for `cull_buffers`, the pool each is in by its elements
+(`cull_pool_of`: its `GPUList<int>`s in the pool of ints), its kernels' tables written by `cull_slot`, and what its
+draws read at their ranges' offsets (`cull_at`: the places as instance vertices, the arguments and the counts of
+`draw_indexed_indirect_count`, the reads back for stats and `tide_platform_cull_compare`). The pyramid kernel binds the
+pool of ints and takes its levels' words offset by the range. Lists a frame's pools can't hold leave the frame's culled
+runs undrawn and the CPU deciding the frames after (`cull_failed`, said). The same pixels and counts:
+`tide_platform_cull`, `_cull_decided`, `_occlusion` (Vulkan with the validation layer, sets too) and on web-debug
+`_cull`, `_cull_fallback`, `_occlusion`.
+
 ## Occlusion's two pixels on Chrome's D3D12 (2026-11-05)
 
 `tide_platform_occlusion`'s two differing pixels in the hardware web lane (RTX 4080 SUPER, Dawn on D3D12) aren't

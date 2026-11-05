@@ -2050,8 +2050,11 @@ static void profile_pass_draw(const tide_draw_list *list, const draw_step *s, co
     gpu_passes[at].used += (uint32_t)bytes + (used ? 1u : 0u);
 }
 
+static bool passing; // A pass of begin_pass's is going on: compute.inc's pools neither grow nor are zeroed in one
+
 static void end_pass(void)
 {
+    passing = false;
     gpu->end();
     if (gpu_pass_active) {
         gpu->pass_time_end();
@@ -2064,6 +2067,7 @@ static void begin_pass(const tide_gpu_id target, const bool clear)
 {
     profile_pass_begin();
     gpu->begin(target, clear);
+    passing = true;
     pass_stencil = 0;
 }
 
@@ -3665,7 +3669,7 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
         .stencil_op = (tide_gpu_stencil_op)(state >> 4),
         .into = into,
         .outputs = tide_shader_outputs(shader),
-        .storage_count = shader->storage_count, // The GPU lists it reads, a storage buffer each
+        .storage_count = tide_shader_compute_storage(shader), // The pools its GPU lists are ranges of, read
     };
     if (shader->cutout) { // What a cut-out covers it covers wholly, its alpha the share of the samples it covers
         if (desc.blend == TIDE_GPU_BLEND_ALPHA) desc.blend = TIDE_GPU_BLEND_REPLACE;
@@ -4752,6 +4756,8 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
     block.engine.tint[2] = run->tint.b, block.engine.tint[3] = run->tint.a;
     if (shader->dims == 3) memcpy(block.bytes + sizeof(shaded_uniforms), &origin, sizeof origin);
     if (own) memcpy(block.bytes + header, list->uniforms + run->uniforms, own);
+    // Its GPU lists' places in the pools, in its uniforms (made before its pass: prepare_storage_draws)
+    if (shader->storage_count) put_table(block.bytes + header, own, shader, slot_ids(list, run->storage), false, NULL);
     use_pipeline(s);
     gpu->uniforms(&block, header + own);
     for (uint32_t i = 0; i < shader->texture_count; i++) {
@@ -4763,7 +4769,7 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
         gpu->sample(t, texture_to_read(list, run->textures[t], TIDE_GPU_READ_DATA), gpu_filter(TIDE_FILTER_POINT),
                     gpu_wrap(TIDE_WRAP_CLAMP));
     }
-    if (shader->storage_count) bind_storage(list, run);
+    if (shader->storage_count) bind_pools();
     gpu->vertices(0, corners_of(g), 0);
     // How many the GPU draws of those below isn't the CPU's to know: it's read back (counted_*, cull.inc)
     if (s->culled) { // Its join's places as the GPU found them, as many as it found

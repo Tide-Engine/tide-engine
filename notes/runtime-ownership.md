@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## GPU lists in pools (2026-11-05)
+
+Under compute's pre-approved boundary, owner-approved lifting of the storage limit: `tide_shader` gains
+`storage_ints` and `storage_table` and its `storage_writes` is 64 bits, its `adds` lose `scratch`; `TIDE_SHADER_STORAGE`
+is 64; `TIDE_STORAGE_WORDS`/`INTS`/`RUN`, `tide_shader_table_words`, `tide_shader_storage_ints`,
+`tide_shader_pool_written` and `TIDE_GPU_LIST_INTS` (tide/draw.h); `tide_gpu_list_state.ints`. Generated code calls
+nothing new: `tide_gpu_list_make`, `_adopt` and `_recreate` take `TIDE_GPU_LIST_INTS` in their stride. gpu.h's
+`TIDE_GPU_MAX_STORAGE` is 4 and it gains the optional `storage_most` (every backend; NULL in the recorder and
+`gpu_none`). No embed op, packet or ABI change. Hosts, libraries and games rebuild together for `tide_shader`'s
+layout. Contracts: notes/compute.md, GPU lists in pools.
+
 ## Indexed loops' indexes and their caches (2026-11-05)
 
 New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `engine/src/index.c`
