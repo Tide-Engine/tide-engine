@@ -320,6 +320,8 @@ The GPU culls a `Draw.Instanced` of a list that stays as it was and picks its in
 
 On a Mac, Vulkan is MoltenVK, Vulkan on Metal: `tide build` puts `libMoltenVK.dylib` beside the game, which uses it where the Mac has no Vulkan loader of its own. Ship it with the game; its license is in the tide package's `licenses/moltenvk`.
 
+On desktop, `tide build` also puts `tide-crash` (`tide-crash.exe` on Windows) beside the game. If the game crashes, it opens a small window that asks the player to show the crash report, then zips it for them to send you (see [Logs and crashes](../game/files.md#logs-and-crashes)). Ship it with the game. Without it, a crash still leaves its report but asks nothing. `tide run` doesn't put it beside the game it runs, so a crash while you work shows in the terminal, not in a window.
+
 An Android game draws with Vulkan 1.3, and its manifest says so, so Google Play offers it only to devices that have it. A device without it that has the game anyway (installed from its APK) shows a screen saying what the game needs until the player leaves it.
 
 ### Stats

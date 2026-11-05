@@ -19,7 +19,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: tide_platform_log <folder> end|crash|abort\n");
         return 2;
     }
-    tide_platform_log_begin("dev.tide.logtest", argv[1]);
+    tide_platform_log_begin("dev.tide.logtest", "Log Test", argv[1]);
     const char *path = tide_platform_log_path();
 #if __has_feature(address_sanitizer)
     printf("sanitized\n"); // AddressSanitizer catches a crash first, and ends the program itself

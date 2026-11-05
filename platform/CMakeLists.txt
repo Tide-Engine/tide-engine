@@ -277,6 +277,29 @@ if(TIDE_PACKAGE_LIBS)
     unset(stbtt_old)
 endif()
 
+# tide-crash (crash/): what a player sees after a game crashed, a program of
+# its own beside the game's, which src/log.c starts. tide build copies it from
+# the package (lib/native) beside every desktop game; repository games find
+# it in bin/, beside them.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    if(WIN32)
+        add_executable(tide-crash WIN32 crash/crash.c crash/ui_win32.c)
+        target_link_libraries(tide-crash PRIVATE user32 gdi32 shell32 advapi32)
+    elseif(APPLE)
+        add_executable(tide-crash crash/crash.c crash/ui_mac.c)
+        target_link_libraries(tide-crash PRIVATE "-framework AppKit" objc)
+    else()
+        find_package(X11 REQUIRED)
+        add_executable(tide-crash crash/crash.c crash/ui_x11.c)
+        target_link_libraries(tide-crash PRIVATE X11::X11)
+    endif()
+    target_link_libraries(tide-crash PRIVATE tide_flags)
+    add_dependencies(tide_platform tide-crash) # Built with the platform, so every game beside it has it
+    if(TIDE_PACKAGE_LIBS)
+        install(TARGETS tide-crash RUNTIME DESTINATION ${TIDE_PACKAGE_LIBS} COMPONENT tide)
+    endif()
+endif()
+
 # Carrying a world over to a build whose data layout changed, for hot
 # reloading: on layouts written by hand, and on a game's, as tidec describes it.
 tide_add_game(tide_platform_migrate SOURCES tests/migrate.tide NAME game LAYOUT

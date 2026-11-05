@@ -320,14 +320,21 @@ void tide_platform_name_game(const char *app_id);
 // went and to Player.log there too, and the last run's log is kept as
 // Player-prev.log. A crash writes a folder, Crashes/Crash_<UTC time>, with a
 // copy of the log, the stack and, on Windows, a minidump (crash.dmp); the ten
-// newest are kept. Begins once a program, later calls do nothing. Nothing on
-// the web, where the browser's console has the output. The standard host
-// begins it for a run with a window, not one with none (--frames, --capture,
-// --script) nor inside another program. Android's system log keeps the output too, and its
-// own crash reports what a crash leaves.
-void tide_platform_log_begin(const char *app_id, const char *directory);
+// newest are kept. Where tide-crash is beside the program (tide build puts
+// it there), a crash starts it, which asks the player, in a window titled
+// `title`, whether to zip the folder for the game's makers. Begins once a
+// program, later calls do nothing. Nothing on the web, where the browser's
+// console has the output. The standard host begins it for a run with a
+// window, not one with none (--frames, --capture, --script) nor inside
+// another program. Android's system log keeps the output too, and its own
+// crash reports what a crash leaves.
+void tide_platform_log_begin(const char *app_id, const char *title, const char *directory);
 // Player.log's path once tide_platform_log_begin made it, else NULL.
 const char *tide_platform_log_path(void);
+// A line in the log alone, not on stderr: what's worth knowing of a player's
+// problem and nothing to whoever runs the game (the GPU it draws with).
+// Nothing before tide_platform_log_begin, or where there's no log.
+void tide_platform_log_note(const char *text);
 // Whether a GPU pipeline (a shader with how it blends, tests depth and culls)
 // is made in the background where the backend can: WebGPU. Making one takes tens of
 // milliseconds; in the background, nothing that draws with it shows till it's

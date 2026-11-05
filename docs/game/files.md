@@ -55,7 +55,11 @@ A crash on Windows, macOS or Linux leaves a folder of its own in `Crashes`, name
 - `Player.log`: a copy of the log up to the crash
 - `crash.dmp` on Windows: a minidump, which Visual Studio, WinDbg or CLion open with the build's PDB
 
-The ten newest crash folders are kept. Under a debugger the debugger has the crash instead. A run with no window (`--frames`, `--capture`, `--script`) writes no log, as its output is the test's.
+The log also notes the GPU the game draws with and its driver, which isn't printed to the terminal.
+
+A game built with `tide build` has `tide-crash` beside it, which a crash opens. It's a small window of its own, so it opens at once however big the game is. It names the game by its title, says a report was saved, and offers **Show report** and **Close**. Show report adds `system.txt` (the system's version, processor and memory) to the crash's folder, zips the folder beside it as `Crash_<UTC date>_<time>.zip`, and opens the file manager there, so the player can send you the zip. On Linux it needs an X display, which Wayland desktops provide too; without one it opens nothing. `tide run` doesn't put it beside the game, so a crash while you work goes to the terminal.
+
+The ten newest crash folders and their zips are kept. Under a debugger the debugger has the crash instead. A run with no window (`--frames`, `--capture`, `--script`) writes no log, as its output is the test's.
 
 ## Whole-file operations
 

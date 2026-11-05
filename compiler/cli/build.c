@@ -1760,6 +1760,33 @@ static void place_moltenvk(const build *b, const char *dir)
     free(to);
 }
 
+// tide-crash (from lib/native) goes beside a desktop game: what a player sees
+// after it crashed, which asks to zip the crash's report for the game's makers
+// (platform/crash/crash.c). Not beside `tide run`'s, whose maker has the
+// terminal. One already there and up to date stays.
+static void place_crash_reporter(const build *b, const char *dir)
+{
+    const lib_platform platform = target_platform(b);
+    if (platform != LIB_WINDOWS && platform != LIB_MACOS && platform != LIB_LINUX) return;
+    const char *name = platform == LIB_WINDOWS ? "tide-crash.exe" : "tide-crash";
+    char *native = path_join(b->root, "lib/native");
+    char *from = path_join(native, name);
+    char *to = path_join(dir, name);
+    const bool current = sys_file_size(to) == sys_file_size(from) && sys_mtime(to) >= sys_mtime(from);
+    if (sys_exists(from) && !current) {
+        size_t size = 0;
+        char *data = sys_read_file(from, &size);
+        if (!data || !sys_write_file(to, data, size) || !sys_make_executable(to)) {
+            fprintf(stderr, "tide: can't put tide-crash next to the game, at %s: a crash will leave its report "
+                            "without asking the player to send it\n", to);
+        }
+        free(data);
+    }
+    free(native);
+    free(from);
+    free(to);
+}
+
 // Copies the game's dynamic libraries into `dir`, next to its program. Ones
 // already there and up to date stay: the running game may have them open.
 static void copy_dynamic(const c_side *c, const char *dir)
@@ -2753,7 +2780,10 @@ static char *build_game(const char *root, const build_options *opts, const char 
     free(identity);
     if (!wrote_identity) return NULL;
     copy_dynamic(&c, output_dir);
-    if (!opts->server) place_moltenvk(&b, output_dir);
+    if (!opts->server) {
+        place_moltenvk(&b, output_dir);
+        place_crash_reporter(&b, output_dir);
+    }
     free_game_c(&c);
     if (build_report_current()) {
         // What a build put where it went: the program and what goes beside it. A page's own folder has only its files.

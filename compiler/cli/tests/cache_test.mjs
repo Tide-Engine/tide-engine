@@ -206,6 +206,11 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
     const map = join(cache, "gen", "game.names");
     check(existsSync(map) === release, `${target}: unexpected private name map policy`);
     const stem = output.replace(/\.(html|exe)$/, "");
+    if (target === "native") {
+        const reporter = join(dirname(output), process.platform === "win32" ? "tide-crash.exe" : "tide-crash");
+        check(existsSync(reporter) && (process.platform === "win32" || (statSync(reporter).mode & 0o111) !== 0),
+            `${target}: tide-crash isn't beside the game, runnable, at ${reporter}`);
+    }
     if (!release && target === "native") {
         for (const suffix of [".natvis", "_lldb.py", ...(process.platform === "win32" ? [".pdb"] : [])])
             check(existsSync(stem + suffix), `debug fixture didn't produce ${suffix} before the release replaced it`);

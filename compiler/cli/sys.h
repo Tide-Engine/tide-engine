@@ -26,6 +26,7 @@ bool sys_remove_tree(const char *path); // A file, or a folder and everything in
 char *sys_read_file(const char *path, size_t *len);
 bool sys_write_file(const char *path, const char *data, size_t len);
 bool sys_write_text(const char *path, const char *text);
+bool sys_make_executable(const char *path); // Runnable by everyone, on Linux and macOS; nothing on Windows
 
 // Calls `found` with the name of every entry of `dir` (not "." or "..").
 typedef void (*sys_entry_fn)(void *user, const char *name, bool is_dir);
