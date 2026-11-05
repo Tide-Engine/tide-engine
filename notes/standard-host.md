@@ -94,7 +94,6 @@ A script's `sleep` line (`script.c`, `EVENT_SLEEP`) calls `tide_platform_pretend
 
 **The game's keyboard.** `tide/screen_keyboard.h` (`engine/src/screen_keyboard.c`): a game's C registers a `tide_screen_keyboard` (`self`, `typing`) in its own engine copy, as with `tide/voice.h` (`tide_keyboard` is the keyboard device's type), and the host table gains an optional `screen_keyboard` getter (`tide_screen_keyboard_get` in `tide/run.h`). `tide_run_typing`, where `tide_platform_typing` was called, tells it once each time `tide_gui_typing` changes, and tells one that's new (another `self` or function, as after a reload) the current state at once. Never in a run with no window, inside another program's frame, or a quiet run (`TIDE_HIDDEN`): Steam's keyboard is a window of its own. That leaves the host's part without a test; the package's is in its test.
 
-
 ## GPU culling asked each frame (2026-11-05)
 
 The standard host sets `tide_run_draw.gpu_culling = tide_platform_gpu_culling()` beside the screen's scale before
