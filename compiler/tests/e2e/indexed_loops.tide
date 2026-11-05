@@ -54,6 +54,17 @@ singleton Field
     int made;
 }
 
+struct Spark
+{
+    float2 at;
+    float heat;
+}
+
+singleton Sparks
+{
+    List<Spark> items;
+}
+
 singleton Stats
 {
     int teams;
@@ -109,9 +120,10 @@ event(Spawned) Setup(with Main)
 }
 
 // The lists, once
-system Fill(mut Field field)
+system Fill(mut Field field, mut Sparks sparks)
 {
     if (field.made > 0) return;
+    for (var i = 0; i < 500; i++) sparks.items.Add(Spark { at = float2(Spread(i, 16) * 40.0f - 20.0f, Spread(i, 17) * 4.0f) });
     field.made = 1;
     field.reach = 3.5f;
     for (var i = 0; i < 400; i++)
@@ -283,5 +295,17 @@ system Ping(Time time, query (Body other, Unit u) units)
     {
         if (Math.Distance(r.other.position, float3(2.0f, 3.0f, 1.0f)) > 6.0f) continue;
         r.entity.Send(Hit { amount = float(r.u.level) + float(time.tick % 7) * 0.25f });
+    }
+}
+
+// A parallel loop over a list: its steps run for the elements the index gives
+system Glow(mut Sparks sparks, Time time)
+{
+    parallel (var i in sparks.items)
+    {
+        if (Math.Abs(sparks.items[i].at.x - 3.0f) > 4.0f) continue;
+        mut var spark = sparks.items[i];
+        spark.heat += float(time.tick % 5) * 0.5f + spark.at.y;
+        sparks.items[i] = spark;
     }
 }

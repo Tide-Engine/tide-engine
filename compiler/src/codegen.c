@@ -7483,6 +7483,8 @@ static void gen_map_foreach(gen *g, const stmt *s);
 static void gen_query_foreach(gen *g, const stmt *s);
 static bool gen_indexed_list(gen *g, const stmt *s);
 static bool gen_indexed_query(gen *g, const stmt *s, const char *gather);
+static bool ix_par_list(const gen *g, const stmt *s);
+static void gen_ix_par_marks(gen *g, const stmt *s);
 static void gen_query_walk(gen *g, const stmt *s, const char *gather);
 static void gen_sort_call(gen *g, const expr *sort);
 static uint64_t step_cost(const stmt *s);
@@ -14469,6 +14471,8 @@ static void gen_par_heads(gen *g, const decl *sys)
         for (int k = 0; k < caps.count; k++) sb_printf(o, "    %s%s%s;\n", caps.items[k].ctype,
                                                        caps.items[k].ctype[strlen(caps.items[k].ctype) - 1] == '*' ? "" : " ",
                                                        caps.items[k].name);
+        // An indexed loop's: the elements that can pass its guard, a bit each, or NULL for every one (gen_ix_par_marks)
+        if (ix_par_list(g, g->pars.items[i])) sb_put(o, "    const uint64_t *tide_xm;\n    int32_t tide_xmn;\n");
         sb_printf(o, "} %s_ctx;\n\nstatic void %s(void *tide_ctx, uint32_t tide_task);\n\n", name, name);
     }
 }
@@ -14826,14 +14830,19 @@ static void gen_parallel_call(gen *g, const stmt *s)
                  elem_ctype(list_elem(grid)), elem_ctype(list_elem(grid)));
         }
         if (stmt_rolls(s->then_stmt)) line(g, o, "const tide_random tide_par_dice = tide_random_fork(tide_dice);");
+        const bool marks = ix_par_list(g, s);
+        if (marks && !(g->routine && g->routine->is_worker)) gen_ix_par_marks(g, s); // Before the steps: which can pass
+        else if (marks) line(g, o, "const uint64_t *const tide_xm = NULL;\nconst int32_t tide_xmn = 0;");
         indent(g, o);
         sb_printf(o, "const %s_ctx tide_cx = {&tide_pl", name);
         if (flat) sb_put(o, ", tide_in, tide_count");
         for (int k = 0; k < caps.count; k++) sb_printf(o, ", %s", caps.items[k].name);
+        if (marks) sb_put(o, ", tide_xm, tide_xmn");
         sb_put(o, "};\n");
         line(g, o, "tide_parallel_for(tide_pl.tasks, %s, (void *)(uintptr_t)&tide_cx, tide_pl.steps * %lluu);", name,
              (unsigned long long)(cost < 1000000u ? cost : 1000000u));
         line(g, o, "tide_par_list_end(&tide_pl);");
+        if (marks) line(g, o, "free((void *)(uintptr_t)tide_xm);");
         if (flat) line(g, o, "tide_list_unflatten(*tide_pl.list, (void *)(uintptr_t)tide_in, sizeof(%s), false, tide_copied);",
                        elem_ctype(list_elem(grid)));
         g->indent--;
@@ -14907,6 +14916,11 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
     const char *at = local_cname(g, s->name);
     if (list) {
         line(g, o, "const int32_t %s = tide_o0 + tide_k0 * %d;", at, b[0]);
+        // An indexed loop's element that can't pass its guard: nothing to do (gen_ix_par_marks)
+        if (ix_par_list(g, s)) {
+            line(g, o, "if (tide_cx->tide_xm && %s >= 0 && %s < tide_cx->tide_xmn && !(tide_cx->tide_xm[(uint32_t)%s >> 6] >> ((uint32_t)%s & 63u) & 1u)) continue;",
+                 at, at, at, at);
+        }
     } else if (three) {
         line(g, o, "const tide_int3 %s = {tide_o[0] + tide_k0 * %d, tide_o[1] + tide_k1 * %d, tide_o[2] + tide_k2 * %d};", at,
              b[0], b[1], b[2]);
@@ -15161,7 +15175,7 @@ static void gen_par_steps(gen *g, const decl *sys)
             sb_printf(o, "    %s *restrict const tide_wout = tide_par_list_task(tide_pl, tide_task, &tide_x0, &tide_x1);\n", element);
             sb_printf(o, "    const int32_t tide_o0 = tide_pl->offset, tide_lo = tide_o0 + tide_x0 * %d;\n", s->block[0]);
             sb_put(o, "    (void)tide_wout;\n    (void)tide_lo;\n");
-            const int inner = batch_list_inner(s);
+            const int inner = ix_par_list(g, s) ? -1 : batch_list_inner(s); // An indexed one's steps are skipped one by one
             if (inner >= 0) gen_par_list_batch(g, sys, s, caps, inner);
             gen_par_nest(g, sys, s, 1, false, inner >= 0);
             close_list_caches(g); // Its caches' count, in its own text, before that's used anywhere else

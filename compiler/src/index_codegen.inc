@@ -943,3 +943,59 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "}");
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// A parallel loop over a list: its steps for the elements the index gives
+
+static bool ix_par_list(const gen *g, const stmt *s)
+{
+    return g->ix_any && s->kind == S_PARALLEL && s->index && s->index->count >= 1 && s->index->count <= 3 && s->value
+        && s->value->type.kind == TY_LIST;
+}
+
+// Before the steps: tide_xm, a bit for each element the index gives (NULL: every element, for a short list), of
+// tide_xmn. The steps change elements, so the index is the loop's own, made from the list as the loop starts.
+static void gen_ix_par_marks(gen *g, const stmt *s)
+{
+    sb *o = &g->c;
+    const loop_index *plan = s->index;
+    const int k = s->value->type.decl->index;
+    const char *list = expr_text(g, s->value);
+    line(g, o, "uint64_t *tide_xm = NULL;");
+    line(g, o, "int32_t tide_xmn = 0;");
+    line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
+    g->indent++;
+    gen_ix_bounds(g, plan, "tide_xlo", "tide_xhi");
+    line(g, o, "const int32_t tide_xcount = tide_list_count(%s);", list);
+    line(g, o, "if (tide_xcount >= (int32_t)TIDE_IX_LEAST) {");
+    g->indent++;
+    line(g, o, "tide_index *const tide_xi = tide_index_make();");
+    line(g, o, "tide_index_begin(tide_xi, %du);", plan->count);
+    line(g, o, "for (int32_t tide_xe = 0; tide_xe < tide_xcount; tide_xe++) {");
+    g->indent++;
+    line(g, o, "const %s tide_xel = tide_list%d_get(%s, tide_xe);", elem_vtype(list_elem(s->value->type.decl)), k, list);
+    gen_ix_keys(g, plan, "tide_xel", "tide_xkey");
+    line(g, o, "tide_index_add(tide_xi, tide_xkey, (uint64_t)tide_xe);");
+    g->indent--;
+    line(g, o, "}");
+    line(g, o, "tide_index_end(tide_xi);");
+    line(g, o, "tide_index_hits tide_xh;");
+    line(g, o, "tide_index_hits_init(&tide_xh);");
+    line(g, o, "tide_index_find(tide_xi, tide_xlo, tide_xhi, &tide_xh);");
+    line(g, o, "tide_xm = tide_alloc_zeroed(((size_t)tide_xcount + 63u) / 64u, sizeof *tide_xm);");
+    line(g, o, "for (uint32_t tide_xk = 0; tide_xk < tide_xh.count; tide_xk++) {");
+    g->indent++;
+    line(g, o, "const uint64_t tide_xo = tide_xh.items[tide_xk];");
+    line(g, o, "if (tide_xo < (uint64_t)tide_xcount) tide_xm[tide_xo >> 6] |= (uint64_t)1 << (tide_xo & 63u);");
+    g->indent--;
+    line(g, o, "}");
+    line(g, o, "tide_xmn = tide_xcount;");
+    line(g, o, "tide_index_hits_free(&tide_xh);");
+    line(g, o, "tide_index_free(tide_xi);");
+    g->indent--;
+    line(g, o, "}");
+    line(g, o, "(void)tide_xlo;");
+    line(g, o, "(void)tide_xhi;");
+    g->indent--;
+    line(g, o, "}");
+}
