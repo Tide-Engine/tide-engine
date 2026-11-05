@@ -67,7 +67,8 @@ function to a `tide.js` import of the same name (`gpu_storage`,
   between `gpu_pipeline_begin` and `gpu_pipeline_end`,
   `gpu_pipeline_storage(count, writes, compute)`, called only for a pipeline
   with storage or a compute one, so `gpu_pipeline_begin` kept its arguments.
-  `layoutFor(reads, storage, compute)` adds buffer entries at 25 + i
+  `layoutFor(reads, through, storage, compute)` (`through`: which sampler each texture is read through, since
+  2026-11-05: notes/rendering.md, Sixteen textures a draw) adds buffer entries at 33 + i (25 + i before)
   (`STORAGE_BINDING`), `storage` for one written and `read-only-storage`
   otherwise. Only compute pipelines write: the C side sends no write bits for
   a render pipeline and the page ignores any it gets (WebGPU has no written
@@ -283,7 +284,7 @@ self-contained page as an option.
 The existing gpu_pipeline_begin bridge carries two eight-slot banks of three-bit
 read kinds, as two uint32 arguments. JavaScript decodes each bank with shifts
 below thirty-two; no BigInt or retained WASM pointer crosses the call. WebGPU's
-bound arrays hold twelve slots while layouts/bind groups use the actual count.
+bound arrays hold twelve slots (sixteen since 2026-11-05) while layouts/bind groups use the actual count.
 The runtime fixture exercises every read kind independently in slots 8..11;
 the texture-capacity pixel fixture compares high-slot sampling against low-slot
 references and repeats after device loss. The release runtime was regenerated

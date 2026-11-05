@@ -1,13 +1,13 @@
 // Every storage element type, its arrayLength, and its elements read and
 // written by constant, u32 and i32 indices, as a whole and a component at
 // a time, with compound assignments, ++ and --.
-@group(0) @binding(25) var<storage, read_write> words: array<u32>;
-@group(0) @binding(26) var<storage, read_write> ints: array<i32>;
-@group(0) @binding(27) var<storage, read_write> floats: array<f32>;
-@group(0) @binding(28) var<storage, read_write> points: array<vec2<f32>>;
-@group(0) @binding(29) var<storage, read> quads: array<vec4<u32>>;
-@group(0) @binding(30) var<storage, read_write> colors: array<vec4<f32>>;
-@group(0) @binding(31) var<storage, read_write> pairs: array<vec2<u32>>;
+@group(0) @binding(33) var<storage, read_write> words: array<u32>;
+@group(0) @binding(34) var<storage, read_write> ints: array<i32>;
+@group(0) @binding(35) var<storage, read_write> floats: array<f32>;
+@group(0) @binding(36) var<storage, read_write> points: array<vec2<f32>>;
+@group(0) @binding(37) var<storage, read> quads: array<vec4<u32>>;
+@group(0) @binding(38) var<storage, read_write> colors: array<vec4<f32>>;
+@group(0) @binding(39) var<storage, read_write> pairs: array<vec2<u32>>;
 
 fn count_all() -> u32 {
     return arrayLength(&words) + arrayLength(&ints) + arrayLength(&floats) + arrayLength(&points)

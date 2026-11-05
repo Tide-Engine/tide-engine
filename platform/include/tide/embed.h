@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 12u
+#define TIDE_EMBED_ABI 13u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -213,7 +213,7 @@ typedef enum tide_embed_render_op {
     // Compute (gpu.h's storage buffers, compute passes and indirect draws), after the ops above, whose packets are
     // as they were. Right after the PIPELINE it's of, for a pipeline that binds storage or computes: id, compute (0
     // or 1: its kernel's entry point is `compute`, and nothing about vertices, blending or targets is read),
-    // storage_count, and its storage_writes, bit i for storage buffer i (binding 25 + i) that it writes
+    // storage_count, and its storage_writes, bit i for storage buffer i (binding 33 + i) that it writes
     TIDE_EMBED_RENDER_PIPELINE_STORAGE,
     TIDE_EMBED_RENDER_STORAGE,        // slot, buffer: storage buffer `slot`, all of it, for what follows
     TIDE_EMBED_RENDER_COMPUTE_BEGIN,  // A compute pass: what came before is done before it, what follows sees it

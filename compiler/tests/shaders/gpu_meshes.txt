@@ -5,8 +5,8 @@ struct tide_uniforms {
     tide_tint: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_s1: array<u32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -92,8 +92,8 @@ struct tide_uniforms {
     tide_v0: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_s1: array<u32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 var<private> tide_dice: u32;
@@ -217,7 +217,7 @@ struct tide_uniforms {
     tide_u0: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -285,8 +285,8 @@ struct tide_uniforms {
     tide_tint: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_s1: array<u32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -384,8 +384,8 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
         model[3] - tide_block.tide_origin * model[3].w);
     return tide_block.tide_camera * (relative * vertex);
 }
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_s1: array<u32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -505,7 +505,7 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
         model[3] - tide_block.tide_origin * model[3].w);
     return tide_block.tide_camera * (relative * vertex);
 }
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -610,8 +610,8 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
         model[3] - tide_block.tide_origin * model[3].w);
     return tide_block.tide_camera * (relative * vertex);
 }
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_s1: array<u32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -727,9 +727,9 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
         model[3] - tide_block.tide_origin * model[3].w);
     return tide_block.tide_camera * (relative * vertex);
 }
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
-@group(0) @binding(27) var<storage, read> tide_s2: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(35) var<storage, read> tide_s2: array<u32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -905,7 +905,7 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
         model[3] - tide_block.tide_origin * model[3].w);
     return tide_block.tide_camera * (relative * vertex);
 }
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;

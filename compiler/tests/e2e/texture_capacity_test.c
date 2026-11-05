@@ -22,7 +22,7 @@ static void frame(const int mode)
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
 }
-TIDE_TEST(texture_capacity_twelve_and_skinned_ten_capture_every_binding)
+TIDE_TEST(texture_capacity_sixteen_twelve_and_skinned_ten_capture_every_binding)
 {
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     tide_world_init(&world, 1.0f / 60.0f);
@@ -58,6 +58,33 @@ TIDE_TEST(texture_capacity_twelve_and_skinned_ten_capture_every_binding)
     TIDE_REQUIRE(kinds && kinds->shader->texture_count == 12);
     const uint8_t expected[] = {TIDE_SHADER_READ_DATA, TIDE_SHADER_READ_DEPTH, TIDE_SHADER_READ_COMPARE, TIDE_SHADER_READ_CUBE};
     for (uint32_t i = 0; i < 4; i++) TIDE_CHECK(kinds->shader->texture_reads[8 + i] == expected[i]);
+    // Sixteen, the twelve that every draw samples the same way through one sampler
+    frame(5);
+    const tide_draw_run *sixteen = find_run("CapacitySixteen on Vertex");
+    TIDE_REQUIRE(sixteen && sixteen->shader->texture_count == 16);
+    uint32_t own = 0, shared = 0;
+    for (uint32_t i = 0; i < 16; i++) {
+        TIDE_CHECK(sixteen->textures[i] != 0);
+        const uint8_t read = sixteen->shader->texture_reads[i], sampler = sixteen->shader->texture_samplers[i];
+        if (sampler) { // Another's, before it, read the same way, which has its own
+            TIDE_REQUIRE(sampler <= i);
+            TIDE_CHECK(sixteen->shader->texture_samplers[sampler - 1u] == 0);
+            TIDE_CHECK(sixteen->shader->texture_reads[sampler - 1u] == read && read == TIDE_SHADER_READ_COLOR);
+            TIDE_CHECK(tide_sampling_filter(sixteen->sampling, i) == tide_sampling_filter(sixteen->sampling, sampler - 1u));
+            TIDE_CHECK(tide_sampling_wrap(sixteen->sampling, i) == tide_sampling_wrap(sixteen->sampling, sampler - 1u));
+            shared++;
+        } else if (read != TIDE_SHADER_READ_DATA) {
+            own++;
+        }
+    }
+    TIDE_CHECK(shared == 11); // Through the first of the twelve's
+    TIDE_CHECK(own == 4);     // ...and it, the depth, the depth compared and the cube; the list has none
+    // A Texture that says how it's sampled itself keeps a sampler of its own, the draw setting it as it goes
+    const tide_draw_run *twelve = NULL;
+    frame(0);
+    twelve = find_run("CapacityTwelve on Vertex");
+    TIDE_REQUIRE(twelve);
+    for (uint32_t i = 0; i < 12; i++) TIDE_CHECK(twelve->shader->texture_samplers[i] == 0);
     frame(3);
     tide_draw_prepare(&draw, NULL);
     const tide_draw_run *skin = find_run("CapacitySkin on Vertex3");

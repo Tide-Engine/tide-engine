@@ -1218,6 +1218,40 @@ static const tide_shader halves_shader = {
     .texture_count = 2,
 };
 
+// The same, but its second texture is read through the first's sampler (tide_shader.texture_samplers), which the
+// compiler gives two textures every draw samples the same way: whatever the draw says of the second, it's sampled
+// as the first is.
+static const tide_shader shared_shader = {
+    .name = "shared",
+    .wgsl = WGSL(WGSL_UNIFORMS("")
+        "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+        "@group(0) @binding(2) var how0: sampler;\n"
+        "@group(0) @binding(3) var pixels1: texture_2d<f32>;\n"
+        "struct Corner {\n"
+        "    @builtin(position) position: vec4f,\n"
+        "    @location(0) at: vec2f,\n"
+        "}\n"
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) uv: vec2f) -> Corner {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    var out: Corner;\n"
+        "    out.at = uv;\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return out;\n"
+        "}\n"
+        "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
+        "    let left = textureSample(pixels0, how0, vec2f(in.at.x * 2.0, in.at.y));\n"
+        "    let right = textureSample(pixels1, how0, vec2f(in.at.x * 2.0 - 1.0, in.at.y));\n"
+        "    return select(right, left, in.at.x < 0.5);\n"
+        "}\n"),
+    .id = 0x7E575A4E,
+    .dims = 2,
+    .vertex_size = sizeof(uv_vertex),
+    .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(uv_vertex, position)}, {TIDE_SHADER_FLOAT2, offsetof(uv_vertex, uv)}},
+    .texture_count = 2,
+    .texture_samplers = {0, 1},
+};
+
 // A texture read for each corner: an instance says where it goes, then where
 // in the texture its color is.
 static const tide_shader sampled_shader = {
@@ -1370,6 +1404,9 @@ static void shaded_scene(void)
                      (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot, pair_slot}, 2);
     tide_draw_shaded(&list, &halves_shader, quad_uv(7, at(176, 112), at(240, 144)), NULL, NULL,
                      (const uint32_t[TIDE_SHADER_TEXTURES]){0, quarters_slot}, 0);
+    // ...and the second through the first's sampler: blended, as the first is, though the draw says it's nearest
+    tide_draw_shaded(&list, &shared_shader, quad_uv(37, at(96, 240), at(160, 272)), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot, pair_slot}, 1);
 
     // A texture read in the vertex shader: each instance its pixel
     const uint32_t sampled_quad = quad_2d(8, at(16, 160), at(32, 176));
@@ -1433,6 +1470,9 @@ static void shaded_checks(void)
         {144, 128, between, "blended with its last, between them"},
         {159, 128, red, "and its last"},
         {192, 128, white, "a shader's texture that's none: white"},
+        {129, 256, yellow, "a texture read through another's sampler: its first pixel"},
+        {144, 256, between, "blended as the other is, though its draw said the nearest pixel"},
+        {159, 256, red, "and its last"},
         {216, 120, red, "and the second beside it, the nearest pixel"},
         {232, 120, green, "and the one beside that"},
         {24, 168, red, "a texture read in the vertex shader"},
@@ -4663,7 +4703,7 @@ static int prewarm_frame(void)
     static uint32_t warmed; // The pipelines the table's prewarming made
     static tide_shader drawn_blit, warm_blit; // Blits through the flat shader: the instance's color over the window
     static tide_shader lit_again; // The lit shader's name, with other code
-    static const tide_shader *table[8];
+    static const tide_shader *table[9];
     const tide_float2 orange_at = tide_f2(32, 32), lit_at = seen(0, 2, 0);
     uint32_t got = 0;
     if (frames == 0) {
@@ -4677,8 +4717,8 @@ static int prewarm_frame(void)
         warm_blit.id = 0x7E57B1A5;
         lit_again = lit_shader;
         lit_again.id = 0x7E57A6A1;
-        const tide_shader *const shaders[8] = {&picked_shader, &many_shader, &counted_shader, &halves_shader,
-                                               &sampled_shader, &placed_shader, &lit_again, &warm_blit};
+        const tide_shader *const shaders[9] = {&picked_shader, &many_shader, &counted_shader, &halves_shader,
+                                               &sampled_shader, &placed_shader, &lit_again, &warm_blit, &shared_shader};
         memcpy(table, shaders, sizeof table);
         tide_draw_forget(&list);
         tide_draw_reset(&list);
@@ -4688,14 +4728,14 @@ static int prewarm_frame(void)
         tide_platform_draw(&list); // Through one shader of each kind: the others' pipelines go
         const uint32_t before = tide_platform_shader_pipelines();
         tide_platform_background_pipelines(true);
-        tide_platform_prewarm(table, 8);
+        tide_platform_prewarm(table, 9);
         warmed = tide_platform_shader_pipelines() - before;
-        expect(warmed >= 8u, "prewarming makes a pipeline for each shader it's given");
+        expect(warmed >= 9u, "prewarming makes a pipeline for each shader it's given");
 #ifdef __wasm__
         if (strcmp(tide_platform_renderer(), "WebGPU") == 0)
             expect(tide_platform_prewarm_waiting() > 0, "WebGPU makes prewarmed pipelines in the background");
 #endif
-        tide_platform_prewarm(table, 8);
+        tide_platform_prewarm(table, 9);
         expect(tide_platform_shader_pipelines() == before + warmed, "prewarming the same table again makes nothing");
         frames++;
         return TIDE_KEEP_RUNNING;

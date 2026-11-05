@@ -36,8 +36,8 @@ static void fail(const char *what, const unsigned at, const unsigned got, const 
 static const char square_wgsl[] =
     "struct Uniforms { add: u32, count: u32, pad0: u32, pad1: u32 }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
-    "@group(0) @binding(25) var<storage, read> given: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> made: array<u32>;\n"
+    "@group(0) @binding(33) var<storage, read> given: array<u32>;\n"
+    "@group(0) @binding(34) var<storage, read_write> made: array<u32>;\n"
     "@compute @workgroup_size(64) fn compute(@builtin(global_invocation_id) id: vec3<u32>) {\n"
     "    if (id.x >= u.count) { return; }\n"
     "    made[id.x] = given[id.x] * given[id.x] + u.add;\n"
@@ -52,10 +52,10 @@ static const char square_wgsl[] =
 static const char shared_wgsl[] =
     "struct Uniforms { count: u32, pad0: u32, pad1: u32, pad2: u32 }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
-    "@group(0) @binding(25) var<storage, read> given: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> reversed: array<u32>;\n"
-    "@group(0) @binding(27) var<storage, read_write> tally: array<atomic<u32>>;\n"
-    "@group(0) @binding(28) var<storage, read_write> signed_tally: array<atomic<i32>>;\n"
+    "@group(0) @binding(33) var<storage, read> given: array<u32>;\n"
+    "@group(0) @binding(34) var<storage, read_write> reversed: array<u32>;\n"
+    "@group(0) @binding(35) var<storage, read_write> tally: array<atomic<u32>>;\n"
+    "@group(0) @binding(36) var<storage, read_write> signed_tally: array<atomic<i32>>;\n"
     "var<workgroup> held: array<u32, 64>;\n"
     "struct Odd { cells: array<atomic<u32>, 2>, plain: u32 }\n"
     "var<workgroup> odd_here: Odd;\n"
@@ -85,8 +85,8 @@ static const char shared_wgsl[] =
 // and its three corners.
 static const char setup_wgsl[] =
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read_write> sizes: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> corners: array<vec2<f32>>;\n"
+    "@group(0) @binding(33) var<storage, read_write> sizes: array<u32>;\n"
+    "@group(0) @binding(34) var<storage, read_write> corners: array<vec2<f32>>;\n"
     "@compute @workgroup_size(1) fn compute() {\n"
     "    sizes[0] = 3u; sizes[1] = 1u; sizes[2] = 1u;\n"            // dispatch_indirect
     "    sizes[4] = 3u; sizes[5] = 1u; sizes[6] = 0u; sizes[7] = 0u;\n" // draw_indirect
@@ -98,7 +98,7 @@ static const char setup_wgsl[] =
 // Marks the groups it ran in, 3D: each invocation adds its own place's number.
 static const char marks_wgsl[] =
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read_write> marks: array<atomic<u32>>;\n"
+    "@group(0) @binding(33) var<storage, read_write> marks: array<atomic<u32>>;\n"
     "@compute @workgroup_size(2, 2, 2) fn compute(@builtin(workgroup_id) group: vec3<u32>,\n"
     "                                             @builtin(num_workgroups) groups: vec3<u32>,\n"
     "                                             @builtin(local_invocation_index) local: u32) {\n"
@@ -111,8 +111,8 @@ static const char marks_wgsl[] =
 // the vertex stage, and whose color is read from storage by the fragment's.
 static const char storage_draw_wgsl[] =
     "@group(0) @binding(0) var<uniform> u: vec4<f32>;\n"
-    "@group(0) @binding(25) var<storage, read> corners: array<vec2<f32>>;\n"
-    "@group(0) @binding(26) var<storage, read> colors: array<u32>;\n"
+    "@group(0) @binding(33) var<storage, read> corners: array<vec2<f32>>;\n"
+    "@group(0) @binding(34) var<storage, read> colors: array<u32>;\n"
     "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {\n"
     "    return vec4<f32>(corners[i], 0.5, 1.0);\n"
     "}\n"

@@ -52,14 +52,8 @@ static void write_kernel(program *prog, shader *sh)
     const int group = kernel_group(k);
     sb o = {0};
     put_kernel_uniforms(sh, &o);
-    for (int i = 0; i < sh->textures.count; i++) { // As put_uniforms writes a frag's
-        const shader_read read = sh->textures.items[i].read;
-        if (read == READ_DATA) sb_printf(&o, "@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n", 1 + 2 * i, i);
-        else sb_printf(&o, "@group(0) @binding(%d) var pixels%d: %s;\n@group(0) @binding(%d) var sampler%d: %s;\n", 1 + 2 * i, i,
-                       read == READ_COLOR ? "texture_2d<f32>" : read == READ_CUBE ? "texture_cube<f32>" : "texture_depth_2d",
-                       2 + 2 * i, i, read == READ_COMPARE ? "sampler_comparison" : "sampler");
-    }
-    int binding = 25, adds = 0;
+    for (int i = 0; i < sh->textures.count; i++) put_texture(&o, sh, i); // As put_uniforms writes a frag's
+    int binding = SHADER_STORAGE_BINDING, adds = 0;
     for (int i = 0; i < sh->storage.count; i++, binding++) {
         const shader_storage *s = &sh->storage.items[i];
         sb_printf(&o, "@group(0) @binding(%d) var<storage, %s> tide_s%d: array<%s>;\n", binding, s->write ? "read_write" : "read",
@@ -243,10 +237,12 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
                    STR_ARG(k->name), uniform_bytes);
         return NULL;
     }
-    if (sh->textures.count > 12) {
-        diag_error(call->at, "kernel '" STR_FMT "' samples %d textures, and a run takes 12", STR_ARG(k->name), sh->textures.count);
+    if (sh->textures.count > SHADER_TEXTURES) {
+        diag_error(call->at, "kernel '" STR_FMT "' samples %d textures, and a run takes %d", STR_ARG(k->name), sh->textures.count,
+                   SHADER_TEXTURES);
         return NULL;
     }
+    share_samplers(sh);
     write_kernel(prog, sh);
     vec_push(prog->shaders, sh);
     return sh;

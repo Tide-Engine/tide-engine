@@ -4,7 +4,7 @@ struct Ids {
     @builtin(workgroup_id) group: vec3<u32>,
     @builtin(local_invocation_index) index: u32,
 }
-@group(0) @binding(25) var<storage, read_write> written: array<vec4<u32>>;
+@group(0) @binding(33) var<storage, read_write> written: array<vec4<u32>>;
 @compute @workgroup_size(32, 1, 1) fn compute(@builtin(num_workgroups) groups: vec3<u32>, ids: Ids,
                                               @builtin(local_invocation_id) local: vec3<u32>,
                                               @builtin(global_invocation_id) global: vec3<u32>) {

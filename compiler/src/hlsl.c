@@ -410,13 +410,13 @@ static int workgroup_place(translation *x, const expr *e, hs *dest)
     return 0;
 }
 
-// Storage buffer i of a pipeline is at binding 25 + i (gpu.h's TIDE_GPU_STORAGE_BINDING), at most 7: `_TideStorage<i>`.
+// Storage buffer i of a pipeline is at binding 33 + i (gpu.h's TIDE_GPU_STORAGE_BINDING), at most 7: `_TideStorage<i>`.
 static int storage_slot(translation *x, const gdecl *g)
 {
-    if (g->at.group != 0 || g->at.binding < 25 || g->at.binding > 31) {
-        fail(x, g->line, g->col, "'%.*s' isn't at a binding a storage buffer has here: 25 to 31", g->len, g->name);
+    if (g->at.group != 0 || g->at.binding < 33 || g->at.binding > 39) {
+        fail(x, g->line, g->col, "'%.*s' isn't at a binding a storage buffer has here: 33 to 39", g->len, g->name);
     }
-    return g->at.binding - 25;
+    return g->at.binding - 33;
 }
 
 // A storage buffer's elements' type.
@@ -494,11 +494,12 @@ static bool storage_place(translation *x, const expr *e, const gdecl **g, int *s
     return true;
 }
 
-// The slot of a texture or a sampler, by its binding: texture i at 1 + 2i, its sampler at 2 + 2i.
+// The slot of a texture or a sampler, by its binding: texture i at 1 + 2i, its sampler at 2 + 2i, 16 of them. A
+// texture read through another's sampler is sampled as that one's slot says, which the two share (gpu.h, samplers).
 static int handle_slot(translation *x, const gdecl *g, const bool sampler)
 {
     const int b = g->at.binding;
-    if (g->at.group != 0 || b < 1 || b > 2 * 12 || (b % 2 == 0) != sampler) {
+    if (g->at.group != 0 || b < 1 || b > 2 * 16 || (b % 2 == 0) != sampler) {
         fail(x, g->line, g->col, "'%.*s' isn't at a binding a texture or its sampler has here", g->len, g->name);
     }
     return sampler ? (b - 2) / 2 : (b - 1) / 2;
@@ -1075,19 +1076,29 @@ static int texture_call(translation *x, const expr *e, hs *o)
     char own[64];
     if (strncmp(a.text[0], "_TideTexture", 12) == 0) snprintf(own, sizeof own, "sampler%s", a.text[0]);
     else snprintf(own, sizeof own, "tidehl_linear_clamp_sampler");
+    // How it's sampled: as its own slot says, for a module's texture, where it may be read through another's sampler
+    // (gpu.h, samplers). The two are sampled the same way, but for one whose smaller images aren't made yet, which
+    // TideRender.cs has blended, as the other backends do
+    char mode[64];
+    const char *how = a.n > 1 ? a.text[1] : "";
+    int slot = -1, end = 0;
+    if (sscanf(a.text[0], "_TideTexture%d%n", &slot, &end) == 1 && a.text[0][end] == '\0' && slot >= 0 && slot < 16) {
+        snprintf(mode, sizeof mode, "((%s >> %du) & 15u)", slot < 8 ? "_TideSampling" : "_TideSamplingHigh", 4 * (slot % 8));
+        how = mode;
+    }
     if (same(n, len, "textureSample") || same(n, len, "textureSampleLevel") || same(n, len, "textureSampleBias")
         || same(n, len, "textureSampleGrad")) {
         if (a.n < 3) fail(x, line, col, "'%.*s' takes a texture, a sampler and where", len, n);
         if (tex.depth) {
             hprintf(o, "tidehl_depth(%s, %s, %s)", a.text[0], own, a.text[2]);
         } else if (same(n, len, "textureSample")) {
-            hprintf(o, "tidehl_sample(%s, %s, %s, %s)", a.text[0], own, a.text[1], a.text[2]);
+            hprintf(o, "tidehl_sample(%s, %s, %s, %s)", a.text[0], own, how, a.text[2]);
         } else if (same(n, len, "textureSampleGrad")) {
             if (a.n != 5) fail(x, line, col, "textureSampleGrad takes 5 arguments");
-            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s, %s)", a.text[0], own, a.text[1], a.text[2], a.text[3], a.text[4]);
+            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s, %s)", a.text[0], own, how, a.text[2], a.text[3], a.text[4]);
         } else {
             if (a.n != 4) fail(x, line, col, "'%.*s' takes 4 arguments", len, n);
-            hprintf(o, "tidehl_sample_%s(%s, %s, %s, %s, float(%s))", n[13] == 'L' ? "level" : "bias", a.text[0], own, a.text[1],
+            hprintf(o, "tidehl_sample_%s(%s, %s, %s, %s, float(%s))", n[13] == 'L' ? "level" : "bias", a.text[0], own, how,
                     a.text[2], a.text[3]);
         }
     } else if (same(n, len, "textureSampleCompare") || same(n, len, "textureSampleCompareLevel")) {

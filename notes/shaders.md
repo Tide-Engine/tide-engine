@@ -1,5 +1,16 @@
 # Code the GPU runs: frags and verts
 
+## Sixteen textures, shared samplers (2026-11-05)
+
+A draw or a kernel samples 16 textures (`SHADER_TEXTURES`), and its storage starts at binding 33
+(`SHADER_STORAGE_BINDING`). After a draw's textures are planned, `share_samplers` gives each texture that every draw
+samples the same way the first earlier one sampled as it is (`shader_texture.sampler`, 1 + that one): `put_texture`
+then declares no sampler for it, every sample of it names that one's (`sampler_of`), and `shader_put_texture_reads`
+writes `.texture_samplers` into its `tide_shader` (with `.texture_reads`, both only where needed, so most games' C
+is as it was). Why and the backends: notes/rendering.md, Sixteen textures a draw. `hlsl.c` takes bindings to 32 and
+storage at 33..39, and samples a module texture by its own slot's bits. Goldens in `compiler/tests/shaders` were
+written again: their storage bindings, and samplers shared where textures are sampled alike.
+
 ## Kernels on Dawn's Direct3D 11 (2026-11-05)
 
 Chrome's WebGPU on Dawn's D3D11 adapter turns WGSL into HLSL (Tint) and compiles it with FXC (`d3dcompiler_47`,
@@ -595,7 +606,7 @@ translation` of their own whose first fields the reader uses.
   does the same for the renderer's shaders, through `TIDE_RENDERER_WGSL` (`platform/src/shaders.h`:
   each pipeline's WGSL pieces by name), which the SPIR-V tool and `tide unity` use too.
 - **Compute and storage (2026-11-05, `notes/compute.md` has the replay's contract):**
-  - Storage buffer i (binding 25 + i) is `_TideStorage<i>`, a `ByteAddressBuffer` (`read`) or `RWByteAddressBuffer` (`read_write`), in any stage. Raw rather than structured so one Unity `GraphicsBuffer` is storage, vertices, indices and indirect arguments (D3D11 has no buffer both structured and raw) and its stride never matters. Element i is at `tidehl_at<i>(i)`, `min(i, tidehl_length<i>() - 1) * stride`, the length `GetDimensions` over WGSL's stride (`arrayLength`); a value is `Load`/`Load2`/`Load4` through `asfloat`/`asint`, a write `Store*(at, asuint((T)(v)))`, a component's write the scalar at 4 bytes a component on, a compound assignment one statement whose byte is worked out once. Helpers are made on first use.
+  - Storage buffer i (binding 33 + i since 2026-11-05) is `_TideStorage<i>`, a `ByteAddressBuffer` (`read`) or `RWByteAddressBuffer` (`read_write`), in any stage. Raw rather than structured so one Unity `GraphicsBuffer` is storage, vertices, indices and indirect arguments (D3D11 has no buffer both structured and raw) and its stride never matters. Element i is at `tidehl_at<i>(i)`, `min(i, tidehl_length<i>() - 1) * stride`, the length `GetDimensions` over WGSL's stride (`arrayLength`); a value is `Load`/`Load2`/`Load4` through `asfloat`/`asint`, a write `Store*(at, asuint((T)(v)))`, a component's write the scalar at 4 bytes a component on, a compound assignment one statement whose byte is worked out once. Helpers are made on first use.
   - `var<workgroup>` is `groupshared`, zeroed by `tidehl_compute` before it calls the WGSL's `compute` (as SPIR-V's is), and written at any index directly: `unrolled` (fxc's local-array writes) leaves workgroup and storage places alone.
   - Atomics are helpers, made on first use, around `Interlocked*`, which give the old value through an out argument: `tidehl_<atomicOp><i>(at, ...)` on storage, `tidehl_<atomicOp>_<variable>([i, ]...)` on workgroup memory. `atomicLoad` is `InterlockedOr(..., 0)` and `atomicStore` `InterlockedExchange`, as Tint has them; `atomicSub` adds `0 - v`; i32's min and max are signed (`imm_atomic_imax/imin` in fxc's output, checked). `atomicCompareExchangeWeak` gives the struct `__atomic_compare_exchange_result_<u32|i32>`.
   - `workgroupBarrier()` is `GroupMemoryBarrierWithGroupSync()`, `storageBarrier()` `DeviceMemoryBarrierWithGroupSync()`.

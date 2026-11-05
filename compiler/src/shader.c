@@ -8,6 +8,12 @@
 #include "spirv.h"
 #include "types.h"
 
+// The most textures a draw or a run samples (tide/draw.h's TIDE_SHADER_TEXTURES, gpu.h's TIDE_GPU_MAX_TEXTURES:
+// what every backend takes in a stage, and as many samplers), and where its storage buffers start, after their
+// bindings (TIDE_GPU_STORAGE_BINDING).
+#define SHADER_TEXTURES 16
+#define SHADER_STORAGE_BINDING (1 + 2 * SHADER_TEXTURES)
+
 // Tide code the GPU runs: a `frag` for each pixel of a mesh, a `vert` for
 // each of its vertices, and the functions they call. For every combination a
 // mesh draw uses (a vertex struct, with a vert, a frag, both or neither) this
@@ -138,10 +144,10 @@ typedef struct emit {
     VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
     sb functions;
     bool helpers[H_COUNT];
-    // A draw's textures, up to 12 (TIDE_SHADER_TEXTURES)
-    bool lists[12]; // The shader's textures that are lists or grids whose reader is written (need_data)
-    bool finds[12]; // ...that are maps or sets whose lookup is written (need_find)
-    bool tries[12]; // ...that are maps whose TryGet is written (need_try)
+    // A draw's textures, up to SHADER_TEXTURES
+    bool lists[SHADER_TEXTURES]; // The shader's textures that are lists or grids whose reader is written (need_data)
+    bool finds[SHADER_TEXTURES]; // ...that are maps or sets whose lookup is written (need_find)
+    bool tries[SHADER_TEXTURES]; // ...that are maps whose TryGet is written (need_try)
     VEC(data_alias) aliases;   // The locals of the code being written that name a list or a grid (data_of)
     const given *spec;         // By the parameter of the function being written: the list, grid or texture it's called with
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
@@ -175,6 +181,96 @@ static void ex_invocation(emit *em, const expr *e);
 static void put_assigned(emit *em, const stmt *s);
 static bool writes_shared(const stmt *s);
 static int gpu_list_slot(emit *em, const expr *list);
+
+// Samplers. Texture i is at binding 1 + 2i, and the sampler it's read through at 2 + 2i: its own, or that of an
+// earlier texture that every draw samples the same way (shader_texture.sampler), so that a draw's samplers are
+// as many as the ways its textures are sampled, a sampler for each of those a draw sets as it goes (a Texture it's
+// given that says how it's sampled itself), and none for a list's, which is loaded. tide_shader.texture_samplers
+// carries this to the backends, which bind no sampler for a texture that has none of its own.
+
+// Whether every draw samples texture `t` the same way: what it's read as, its filter and its wrap are its code's
+// or its declaration's, never a Texture's that the draw or a field gives it as it's drawn (gen_shader_textures).
+static bool sampled_alike(const shader *sh, const shader_texture *t)
+{
+    if (t->read == READ_COMPARE || t->read == READ_DEPTH) return true; // Its sampler is how it's read alone
+    const bool own = sh->textured && !t->source && !t->asset && !t->direct; // The draw's own
+    const bool given = own || (t->read == READ_COLOR && !t->asset
+                               && (t->direct || (t->field && t->field->type.kind == TY_TEXTURE)));
+    return !own && !(given && (!t->filter_said || !t->wrap_said));
+}
+
+// Whether two textures that are each sampled alike in every draw are sampled the same way as each other.
+static bool sampled_as(const shader_texture *a, const shader_texture *b)
+{
+    if (a->read != b->read) return false;
+    if (a->read == READ_COMPARE || a->read == READ_DEPTH) return true;
+    if (a->read == READ_CUBE) return a->filter == b->filter; // A cube has no edge to wrap past
+    return a->filter == b->filter && a->wrap == b->wrap;
+}
+
+static void share_samplers(shader *sh)
+{
+    for (int i = 0; i < sh->textures.count; i++) {
+        shader_texture *t = &sh->textures.items[i];
+        t->sampler = 0;
+        if (t->read == READ_DATA || !sampled_alike(sh, t)) continue;
+        for (int j = 0; j < i; j++) {
+            const shader_texture *u = &sh->textures.items[j];
+            if (u->sampler || u->read == READ_DATA || !sampled_alike(sh, u) || !sampled_as(t, u)) continue;
+            t->sampler = 1 + j;
+            break;
+        }
+    }
+}
+
+// The sampler texture `slot` of the shader being written is read through: the texture whose binding is after it.
+static int sampler_of(const emit *em, const int slot)
+{
+    if (!em->sh || slot < 0 || slot >= em->sh->textures.count) return slot;
+    const int sampler = em->sh->textures.items[slot].sampler;
+    return sampler ? sampler - 1 : slot;
+}
+
+// Texture i's declaration, and its sampler's where it has one of its own.
+static void put_texture(sb *o, const shader *sh, const int i)
+{
+    const shader_texture *t = &sh->textures.items[i];
+    if (t->read == READ_DATA) { // A list's numbers, with all of their bits, read through no sampler
+        sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n", 1 + 2 * i, i);
+        return;
+    }
+    sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n", 1 + 2 * i, i,
+              t->read == READ_COLOR ? "texture_2d<f32>" : t->read == READ_CUBE ? "texture_cube<f32>" : "texture_depth_2d");
+    if (!t->sampler) {
+        sb_printf(o, "@group(0) @binding(%d) var sampler%d: %s;\n", 2 + 2 * i, i,
+                  t->read == READ_COMPARE ? "sampler_comparison" : "sampler");
+    }
+}
+
+// What a shader's tide_shader says of its textures where any isn't a color read through its own sampler: how each
+// is read, and through which sampler.
+void shader_put_texture_reads(sb *o, const shader *sh)
+{
+    bool reads = false, samplers = false;
+    for (int t = 0; t < sh->textures.count; t++) {
+        reads |= sh->textures.items[t].read != READ_COLOR;
+        samplers |= sh->textures.items[t].sampler != 0;
+    }
+    if (reads) {
+        sb_put(o, "    .texture_reads = {");
+        for (int t = 0; t < sh->textures.count; t++) {
+            const shader_read read = sh->textures.items[t].read;
+            sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH"
+                      : read == READ_CUBE ? "CUBE" : read == READ_DATA ? "DATA" : "COLOR");
+        }
+        sb_put(o, "},\n");
+    }
+    if (samplers) {
+        sb_put(o, "    .texture_samplers = {");
+        for (int t = 0; t < sh->textures.count; t++) sb_printf(o, "%s%d", t ? ", " : "", sh->textures.items[t].sampler);
+        sb_put(o, "},\n");
+    }
+}
 
 static const char *shader_word(const decl *d)
 {
@@ -3835,12 +3931,12 @@ static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampli
         em->o = out;
         em->defuse = defuse;
         em->statement = statement;
-        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
+        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, sampler_of(em, slot));
         ex_as(em, e->args.items[0], way);
         sb_printf(em->o, ", tide_dx%d, tide_dy%d))", at, at);
         return;
     }
-    sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
+    sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, sampler_of(em, slot));
     ex_as(em, e->args.items[0], way);
     sb_put(em->o, ", 0.0))");
 }
@@ -3934,7 +4030,7 @@ static void ex_sample(emit *em, const expr *e)
     if (read == READ_COMPARE) {
         // What it's compared with is between the near plane and the far limit, as what's stored is:
         // past them, GPUs differ in what they make of it
-        sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", slot, slot);
+        sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", slot, sampler_of(em, slot));
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
         sb_put(em->o, ", clamp(");
         ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
@@ -3948,7 +4044,7 @@ static void ex_sample(emit *em, const expr *e)
         sb_put(em->o, "tide_straight(");
     }
     if (gradients) {
-        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
+        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, sampler_of(em, slot));
         for (int i = 0; i < 3; i++) {
             if (i) sb_put(em->o, ", ");
             ex_as(em, e->args.items[i], (type){TY_FLOAT2, NULL});
@@ -3973,19 +4069,19 @@ static void ex_sample(emit *em, const expr *e)
         em->o = out;
         em->defuse = defuse;
         em->statement = statement;
-        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
+        sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, sampler_of(em, slot));
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
         sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
         return;
     }
     if (em->lifting && em->root->is_frag && read == READ_COLOR && (filter == 2 || (!filter_said && em->prog->names_trilinear))) {
         // Worked out as the frag starts (ex_derivative), outside any branch: the GPU picks its smaller images itself
-        sb_printf(em->o, "textureSample(pixels%d, sampler%d, ", slot, slot);
+        sb_printf(em->o, "textureSample(pixels%d, sampler%d, ", slot, sampler_of(em, slot));
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
         sb_put(em->o, straight ? "))" : ")");
         return;
     }
-    sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
+    sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, sampler_of(em, slot));
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
     // A depth is one number, which WGSL reads at a level that's an int
     sb_put(em->o, straight ? ", 0.0))" : read == READ_COLOR ? ", 0.0)" : ", 0)");
@@ -5639,16 +5735,7 @@ static void put_uniforms(const shader *sh, sb *o)
             sb_printf(o, "        model[%d] - tide_block.tide_origin * model[%d].w%s\n", i, i, i == 3 ? ");" : ",");
         sb_put(o, "    return tide_block.tide_camera * (relative * vertex);\n}\n");
     }
-    for (int i = 0; i < sh->textures.count; i++) {
-        const shader_read read = sh->textures.items[i].read;
-        if (read == READ_DATA) { // A list's numbers, with all of their bits, read through no sampler
-            sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n", 1 + 2 * i, i);
-        } else {
-            sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n@group(0) @binding(%d) var sampler%d: %s;\n",
-                      1 + 2 * i, i, read == READ_COLOR ? "texture_2d<f32>" : read == READ_CUBE ? "texture_cube<f32>" : "texture_depth_2d",
-                      2 + 2 * i, i, read == READ_COMPARE ? "sampler_comparison" : "sampler");
-        }
-    }
+    for (int i = 0; i < sh->textures.count; i++) put_texture(o, sh, i);
 }
 
 static const field *field_called(const decl *d, const char *name)
@@ -6024,10 +6111,10 @@ static void put_fragment_main(emit *em, sb *o)
         // its smaller images, which the GPU picks by itself here, before any branch
         if (sh->textured && em->prog->names_trilinear) {
             sb_printf(o, "    tide_color = tide_color * tide_straight(textureSample(pixels%d, sampler%d, %stide_s%d));\n",
-                      texture, texture, in, field_index(v, uv));
+                      texture, sampler_of(em, texture), in, field_index(v, uv));
         } else if (sh->textured) {
             sb_printf(o, "    tide_color = tide_color * tide_straight(textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0));\n",
-                      texture, texture, in, field_index(v, uv));
+                      texture, sampler_of(em, texture), in, field_index(v, uv));
         }
     }
     for (int k = 0; k < outputs; k++) {
@@ -6111,7 +6198,7 @@ static const char *attribute_type(emit *em, const type t)
 // texture left for the list's numbers.
 static bool listable(const shader *sh)
 {
-    if (!sh->instanced || sh->skinned || sh->blit || sh->dims != 3 || sh->textures.count >= 12
+    if (!sh->instanced || sh->skinned || sh->blit || sh->dims != 3 || sh->textures.count >= SHADER_TEXTURES
         || packs(sh->instance_floats) < 4 || sh->storage.count) return false;
     for (int i = 0; i < sh->values.count; i++) {
         const shader_value *v = &sh->values.items[i];
@@ -6221,7 +6308,7 @@ static void write_wgsl(program *prog, shader *sh)
     sb o = {0}, rest = {0};
     put_uniforms(sh, &o);
     for (int i = 0; i < sh->storage.count; i++) // The GPU lists its code reads, and an indirect draw's instances
-        sb_printf(&o, "@group(0) @binding(%d) var<storage, read> tide_s%d: array<u32>;\n", 25 + i, i);
+        sb_printf(&o, "@group(0) @binding(%d) var<storage, read> tide_s%d: array<u32>;\n", SHADER_STORAGE_BINDING + i, i);
     sb loads = {0};
     if (sh->gpu_instances) put_instance_loads(&em, &loads);
     put_wgsl_inputs(sh, &rest);
@@ -6678,12 +6765,13 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         diag_note("read fewer of their fields in the frag and the vert: only what they read is sent");
         return NULL;
     }
-    if (sh->textures.count > 12) {
-        diag_error(call->at, "this draw samples %d textures, and a draw takes 12", sh->textures.count);
+    if (sh->textures.count > SHADER_TEXTURES) {
+        diag_error(call->at, "this draw samples %d textures, and a draw takes %d", sh->textures.count, SHADER_TEXTURES);
         diag_note("a texture sampled with another filter or another wrap counts again, and so does a depth that's both read "
                   "and compared, and each list the code reads is one; put several images side by side in one texture");
         return NULL;
     }
+    share_samplers(sh);
     sh->listed = listable(sh);
     write_wgsl(prog, sh);
     vec_push(prog->shaders, sh);
@@ -6868,15 +6956,7 @@ bool write_kernels(const program *prog, const char *path)
                       "    .id = 0x%llxull,\n    .uniform_floats = %d,\n    .uniform_ints = %d,\n    .texture_count = %d,\n",
                   kernel.data, STR_ARG(name), kernel.data, kernel.data, (int)words, (unsigned long long)id,
                   (sh->uniform_floats + 3) / 4, (sh->uniform_ints + 3) / 4, sh->textures.count);
-        if (sh->textures.count) {
-            sb_put(&o, "    .texture_reads = {");
-            for (int t = 0; t < sh->textures.count; t++) {
-                const shader_read read = sh->textures.items[t].read;
-                sb_printf(&o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH"
-                          : read == READ_CUBE ? "CUBE" : read == READ_DATA ? "DATA" : "COLOR");
-            }
-            sb_put(&o, "},\n");
-        }
+        shader_put_texture_reads(&o, sh);
         sb_printf(&o, "    .storage_count = %d,\n    .storage_writes = 0x%xu,\n    .compute = true,\n    .group = {%d, %d, %d},\n};\n",
                   sh->storage.count, writes, sh->kernel->group[0], sh->kernel->group[1], sh->kernel->group[2]);
         sb_put(&o, "enum {\n");

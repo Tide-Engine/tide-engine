@@ -9,9 +9,9 @@ struct Varyings {
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var picture: texture_2d<f32>;
 @group(0) @binding(2) var picture_sampler: sampler;
-@group(0) @binding(25) var<storage, read> places: array<vec4<f32>>;
-@group(0) @binding(26) var<storage, read> colors: array<u32>;
-@group(0) @binding(27) var<storage, read> weights: array<f32>;
+@group(0) @binding(33) var<storage, read> places: array<vec4<f32>>;
+@group(0) @binding(34) var<storage, read> colors: array<u32>;
+@group(0) @binding(35) var<storage, read> weights: array<f32>;
 
 @vertex fn vertex(@builtin(vertex_index) v: u32, @builtin(instance_index) n: u32) -> Varyings {
     var result: Varyings;

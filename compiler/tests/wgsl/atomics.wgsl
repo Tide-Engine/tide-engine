@@ -1,10 +1,10 @@
 // Every atomic on storage (u32 and i32) and on workgroup memory (a scalar and
 // arrays of each), by constant and worked-out indices; atomicCompareExchangeWeak's
 // result bound to a let and read inline.
-@group(0) @binding(25) var<storage, read_write> counts: array<atomic<u32>>;
-@group(0) @binding(26) var<storage, read_write> signed_counts: array<atomic<i32>>;
-@group(0) @binding(27) var<storage, read_write> results: array<u32>;
-@group(0) @binding(28) var<storage, read_write> signed_results: array<i32>;
+@group(0) @binding(33) var<storage, read_write> counts: array<atomic<u32>>;
+@group(0) @binding(34) var<storage, read_write> signed_counts: array<atomic<i32>>;
+@group(0) @binding(35) var<storage, read_write> results: array<u32>;
+@group(0) @binding(36) var<storage, read_write> signed_results: array<i32>;
 var<workgroup> one: atomic<u32>;
 var<workgroup> signed_one: atomic<i32>;
 var<workgroup> many: array<atomic<u32>, 16>;

@@ -18,7 +18,9 @@
 // - The uniform block is the cbuffer `TideUniforms`, its bytes as WGSL lays
 //   them out. Texture i is `_TideTexture<i>`; its sampler is how
 //   `_TideSampling`'s 4 bits from 4i say (2 bits of tide_gpu_filter, then 2
-//   of tide_gpu_wrap), through Unity's inline sampler states; on OpenGL
+//   of tide_gpu_wrap; textures 8 to 15 `_TideSamplingHigh`'s, from 4(i - 8)),
+//   or texture j's where it's read through j's sampler (WGSL's at binding
+//   2 + 2j), through Unity's inline sampler states; on OpenGL
 //   Core, whose Unity has no samplers apart from textures, through the
 //   texture's own (`sampler_TideTexture<i>`), which TideRender.cs sets as
 //   the draw asks. A depth texture reads and compares as gpu.h says,
@@ -29,7 +31,7 @@
 //   A fragment's position is in the target's pixels from its top
 //   (`_TideHeight` high), depth from 0 near.
 //
-// - Storage buffer i, WGSL's `@group(0) @binding(25 + i)` (gpu.h's
+// - Storage buffer i, WGSL's `@group(0) @binding(33 + i)` (gpu.h's
 //   TIDE_GPU_STORAGE_BINDING), is `_TideStorage<i>`: a ByteAddressBuffer
 //   where it's var<storage, read>, a RWByteAddressBuffer where it's
 //   read_write. Raw, so that one Unity buffer (GraphicsBuffer.Target.Raw)

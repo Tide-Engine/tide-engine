@@ -1,7 +1,7 @@
 // platform/tests/compute.c's setup_wgsl
 @group(0) @binding(0) var<uniform> u: vec4<u32>;
-@group(0) @binding(25) var<storage, read_write> sizes: array<u32>;
-@group(0) @binding(26) var<storage, read_write> corners: array<vec2<f32>>;
+@group(0) @binding(33) var<storage, read_write> sizes: array<u32>;
+@group(0) @binding(34) var<storage, read_write> corners: array<vec2<f32>>;
 @compute @workgroup_size(1) fn compute() {
     sizes[0] = 3u; sizes[1] = 1u; sizes[2] = 1u;
     sizes[4] = 3u; sizes[5] = 1u; sizes[6] = 0u; sizes[7] = 0u;

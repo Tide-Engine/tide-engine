@@ -35,6 +35,17 @@ texture's filter and wrap as the draw asks. The Sample's checked-in
 in Unity after the merge: the sampler path is the one the replay was checked
 with on OpenGL Core, now under one define instead of four.
 
+## Sixteen textures: embed ABI 13 (2026-11-05)
+
+A pipeline samples 16 textures (notes/rendering.md, Sixteen textures a draw), so TideRender's `MaxTextures` is 16,
+with `_TideTexture12` to `_TideTexture15`; textures 8 to 15 take `_TideSamplingHigh`'s bits as 8 to 11 did. Storage
+buffer i is at WGSL's binding 33 + i (`hlsl.c`'s `storage_slot`). The packets are as they were (a pipeline's reads
+are counted), but a library with 16 slots and a package with 12 would drop four, so `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 13. A texture the shader reads through another's sampler is still sampled by its own slot's
+bits (`texture_call`): the two say the same but for TideRender's blended fallback for a texture without mips, which
+stays the texture's. The Sample's `ComputeReplayTests` WGSL moved its storage to 33. Not run in Unity: the Sample's
+checked-in shaders weren't written again, and no Unity run was made for this change.
+
 ## Counted indirect draws: embed ABI 12 (2026-11-05)
 
 `TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT` (buffer, offset, most, counts, count_offset), appended after

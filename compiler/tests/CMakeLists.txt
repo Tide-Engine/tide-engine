@@ -116,7 +116,7 @@ tide_e2e_test(function_acts) # Functions and methods that send, spawn and change
 tide_e2e_test(component_values SOURCES e2e/component_values.tide e2e/component_values.tprefab) # Copied component and payload values
 tide_e2e_test(texture_size) # Metadata-only CPU/GPU image dimensions, aliases and resource lifetime
 tide_e2e_test(depth_size) # Physical depth dimensions reuse target metadata, including device limits
-tide_e2e_test(texture_capacity SOURCES shaders/texture_capacity.tide) # Twelve bindings, high sampling banks and ten-binding skinning.
+tide_e2e_test(texture_capacity SOURCES shaders/texture_capacity.tide) # Sixteen bindings sharing samplers, twelve, high sampling banks and ten-binding skinning.
 tide_e2e_test(raw_texture_fields LAYOUT) # Raw texture references, captures, pack lifetime and role migration
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_raw_texture_fields PRIVATE tide_platform)

@@ -207,7 +207,10 @@ static tide_gpu_id kernel_pipeline_for(const tide_shader *shader)
                                    .spirv = shader->spirv, .spirv_words = shader->spirv_words, .compute = true,
                                    .uniform_size = tide_shader_uniform_size(shader) ? tide_shader_uniform_size(shader) : 16u,
                                    .texture_count = shader->texture_count, .storage_count = storage};
-    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc.reads[i] = gpu_read(shader, i);
+    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
+        desc.reads[i] = gpu_read(shader, i);
+        desc.samplers[i] = gpu_sampler(shader, i);
+    }
     for (uint32_t i = 0; i < storage && i < TIDE_GPU_MAX_STORAGE; i++)
         desc.storage_writes[i] = i >= shader->storage_count ? i < storage - 1u : (shader->storage_writes >> i & 1u) != 0;
     if (kernel_pipeline_count == kernel_pipeline_capacity) {

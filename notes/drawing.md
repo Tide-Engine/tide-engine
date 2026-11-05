@@ -838,7 +838,7 @@ task's authorization for internal choices.
   (`shaded_from`), where it copied instances twice.
 - **The GPU side.** tidec writes a second vertex stage for eligible shaders
   (`shader.listed`: instanced, 3D, not skinned, every per-instance value the
-  item's or the identity transform, fewer than 12 textures). Its fields are
+  item's or the identity transform, fewer than 16 textures). Its fields are
   `tide_shader.glsl_listed_vertex`, `wgsl_listed` and `spirv_listed`. They
   hold one int instance attribute where the packs were, and load each pack
   with `texelFetch` / `textureLoad` and a bitcast into the same private values.

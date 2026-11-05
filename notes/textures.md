@@ -277,7 +277,7 @@ local coverage limits are recorded with the Render3D change in render3d.md.
 
 ## Twelve shader slots (2026-10-25)
 
-The internal draw capacity is twelve. Individual Texture references retain
+The internal draw capacity is twelve (sixteen since 2026-11-05: notes/rendering.md, Sixteen textures a draw). Individual Texture references retain
 their existing four sampling bits, Raw role and ownership. A run's sampling
 value is uint64_t: slots 0..7 retain their original low bank and slots 8..11 use
 the same layout in the high bank. Existing filters, wraps, mip preparation and

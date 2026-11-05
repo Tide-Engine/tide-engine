@@ -10,8 +10,8 @@ struct Particle {
 }
 struct Uniforms { scale: f32, count: u32, pad0: u32, pad1: u32 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(25) var<storage, read> given: array<vec4<f32>>;
-@group(0) @binding(26) var<storage, read_write> made: array<vec4<f32>>;
+@group(0) @binding(33) var<storage, read> given: array<vec4<f32>>;
+@group(0) @binding(34) var<storage, read_write> made: array<vec4<f32>>;
 var<workgroup> particles: array<Particle, 32>;
 var<workgroup> leader: Particle;
 var<workgroup> grid: array<array<i32, 4>, 8>;

@@ -3,7 +3,7 @@
 // memory and barriers. Included by shader.c.
 //
 // A GPU list a shader's code names is its storage buffer `tide_s<slot>`, at
-// binding 25 + slot: an array of u32 words (array<atomic<i32>> in a kernel that
+// binding 33 + slot: an array of u32 words (array<atomic<i32>> in a kernel that
 // uses atomics on it), a header of 4 words (its count, its capacity) and then
 // its elements, `stride` words each, a value's floats' bits then its ints, as
 // put_value reads words everywhere. Each slot has functions of its own, written

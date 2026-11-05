@@ -93,11 +93,9 @@ struct tide_uniforms {
 @group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d<f32>;
-@group(0) @binding(8) var sampler3: sampler;
 @group(0) @binding(9) var pixels4: texture_2d<f32>;
 @group(0) @binding(10) var sampler4: sampler;
 @group(0) @binding(11) var pixels5: texture_2d<f32>;
-@group(0) @binding(12) var sampler5: sampler;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -137,7 +135,7 @@ fn tf_Gradient_42(t_uv: vec2f, t_dx: vec2f, t_dy: vec2f) -> vec4f {
     var tide_choice12: vec2f = t_uv;
     var tide_choice13: vec2f = t_dx;
     var tide_choice14: vec2f = t_dy;
-    var tide_choice15: vec4f = textureSampleGrad(pixels3, sampler3, tide_choice12, tide_choice13, tide_choice14);
+    var tide_choice15: vec4f = textureSampleGrad(pixels3, sampler1, tide_choice12, tide_choice13, tide_choice14);
     return (tide_choice11 + tide_choice15);
 }
 
@@ -153,7 +151,7 @@ fn tf_Gradient_44(t_uv: vec2f, t_dx: vec2f, t_dy: vec2f) -> vec4f {
     var tide_choice20: vec2f = t_uv;
     var tide_choice21: vec2f = t_dx;
     var tide_choice22: vec2f = t_dy;
-    var tide_choice23: vec4f = textureSampleGrad(pixels5, sampler5, tide_choice20, tide_choice21, tide_choice22);
+    var tide_choice23: vec4f = textureSampleGrad(pixels5, sampler1, tide_choice20, tide_choice21, tide_choice22);
     return (tide_choice19 + tide_choice23);
 }
 

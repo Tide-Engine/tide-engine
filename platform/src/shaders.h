@@ -429,8 +429,8 @@ static const char *const clear_all_wgsl = WGSL(
 // groups, what every GPU dispatches along an axis.
 static const char *const run_size_wgsl = WGSL(
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read> list: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> run: array<u32>;\n"
+    "@group(0) @binding(33) var<storage, read> list: array<u32>;\n"
+    "@group(0) @binding(34) var<storage, read_write> run: array<u32>;\n"
     "@compute @workgroup_size(1) fn compute(@builtin(local_invocation_index) i: u32) {\n"
     "    if (i == 0u) {\n"
     "        let count = min(list[0], list[1]);\n"
@@ -452,9 +452,9 @@ static const char *const run_size_wgsl = WGSL(
 // capacity. One group of 256, each invocation a run of the groups.
 static const char *const add_offsets_wgsl = WGSL(
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read_write> scratch: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
-    "@group(0) @binding(27) var<storage, read> run: array<u32>;\n"
+    "@group(0) @binding(33) var<storage, read_write> scratch: array<u32>;\n"
+    "@group(0) @binding(34) var<storage, read_write> list: array<u32>;\n"
+    "@group(0) @binding(35) var<storage, read> run: array<u32>;\n"
     "var<workgroup> sums: array<u32, 256>;\n"
     "@compute @workgroup_size(256) fn compute(@builtin(local_invocation_index) t: u32) {\n"
     "    let groups = run[0] * run[1] * run[2];\n"
@@ -492,8 +492,8 @@ static const char *const add_offsets_wgsl = WGSL(
 // 64 for each of the kernel's.
 static const char *const add_scatter_wgsl = WGSL(
     "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
-    "@group(0) @binding(25) var<storage, read> scratch: array<u32>;\n"
-    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
+    "@group(0) @binding(33) var<storage, read> scratch: array<u32>;\n"
+    "@group(0) @binding(34) var<storage, read_write> list: array<u32>;\n"
     "@compute @workgroup_size(64) fn compute(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) w: vec3u,\n"
     "                                        @builtin(num_workgroups) n: vec3u) {\n"
     "    let region = (w.x + n.x * (w.y + n.y * w.z)) * u.x;\n"
@@ -544,7 +544,7 @@ static const char *const hiz_wgsl = WGSL(
     "    at: vec4<u32>,\n"
     "}\n"
     "@group(0) @binding(0) var<uniform> u: HiZ;\n"
-    "@group(0) @binding(25) var<storage, read_write> depths: array<atomic<i32>>;\n"
+    "@group(0) @binding(33) var<storage, read_write> depths: array<atomic<i32>>;\n"
     "var<workgroup> tile: array<i32, 256>;\n"
     "var<workgroup> finished: u32;\n"
     "fn across(n: u32, k: u32) -> u32 {\n"

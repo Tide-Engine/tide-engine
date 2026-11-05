@@ -1479,6 +1479,7 @@ typedef struct shader_texture {
     bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
     int count_at; // A list's (READ_DATA): the word of the uniforms' ints that says how many elements it has
     int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
+    int sampler; // 0: read through its own sampler; 1 + j: through texture j's, sampled the same way (share_samplers)
 } shader_texture;
 
 // A GPU list a shader's code names: a field of what the engine supplies (a
@@ -1921,6 +1922,10 @@ str json_field_key(const field *f);
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.
 bool shader_reads_local(const shader *sh, const decl *d);
+
+// A tide_shader's initializer's fields for its textures, where any isn't a color read through its own sampler:
+// `.texture_reads` and `.texture_samplers`.
+void shader_put_texture_reads(sb *o, const shader *sh);
 
 // What's sent of the elements of a list, a grid, a map or a set that code the
 // GPU runs reads: an element's parts are a struct's fields, each its own

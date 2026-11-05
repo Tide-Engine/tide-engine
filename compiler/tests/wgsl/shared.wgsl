@@ -1,10 +1,10 @@
 // platform/tests/compute.c's shared_wgsl
 struct Uniforms { count: u32, pad0: u32, pad1: u32, pad2: u32 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(25) var<storage, read> given: array<u32>;
-@group(0) @binding(26) var<storage, read_write> reversed: array<u32>;
-@group(0) @binding(27) var<storage, read_write> tally: array<atomic<u32>>;
-@group(0) @binding(28) var<storage, read_write> signed_tally: array<atomic<i32>>;
+@group(0) @binding(33) var<storage, read> given: array<u32>;
+@group(0) @binding(34) var<storage, read_write> reversed: array<u32>;
+@group(0) @binding(35) var<storage, read_write> tally: array<atomic<u32>>;
+@group(0) @binding(36) var<storage, read_write> signed_tally: array<atomic<i32>>;
 var<workgroup> held: array<u32, 64>;
 struct Odd { cells: array<atomic<u32>, 2>, plain: u32 }
 var<workgroup> odd_here: Odd;

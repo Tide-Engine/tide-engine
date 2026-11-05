@@ -18,8 +18,8 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
         model[3] - tide_block.tide_origin * model[3].w);
     return tide_block.tide_camera * (relative * vertex);
 }
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_s1: array<u32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -153,13 +153,13 @@ struct tide_uniforms {
     tide_v0: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
-@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read_write> tide_s1: array<u32>;
-@group(0) @binding(27) var<storage, read_write> tide_s2: array<u32>;
-@group(0) @binding(28) var<storage, read_write> tide_s3: array<u32>;
-@group(0) @binding(29) var<storage, read_write> tide_scratch0: array<u32>;
-@group(0) @binding(30) var<storage, read_write> tide_scratch1: array<u32>;
-@group(0) @binding(31) var<storage, read> tide_run: array<u32>;
+@group(0) @binding(33) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read_write> tide_s1: array<u32>;
+@group(0) @binding(35) var<storage, read_write> tide_s2: array<u32>;
+@group(0) @binding(36) var<storage, read_write> tide_s3: array<u32>;
+@group(0) @binding(37) var<storage, read_write> tide_scratch0: array<u32>;
+@group(0) @binding(38) var<storage, read_write> tide_scratch1: array<u32>;
+@group(0) @binding(39) var<storage, read> tide_run: array<u32>;
 var<private> tide_inv_index: i32;
 var<private> tide_inv_at: vec3i;
 var<private> tide_inv_local: vec3i;
@@ -312,8 +312,8 @@ struct tide_uniforms {
     tide_none: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
-@group(0) @binding(25) var<storage, read_write> tide_s0: array<u32>;
-@group(0) @binding(26) var<storage, read> tide_run: array<u32>;
+@group(0) @binding(33) var<storage, read_write> tide_s0: array<u32>;
+@group(0) @binding(34) var<storage, read> tide_run: array<u32>;
 var<private> tide_inv_index: i32;
 var<private> tide_inv_at: vec3i;
 var<private> tide_inv_local: vec3i;

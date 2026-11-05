@@ -25300,17 +25300,7 @@ static void gen_kernel(gen *g, const shader *sh, const int s)
     sb_printf(o, "#ifdef TIDE_SPIRV\n    .spirv = tide_shader_%d_spirv,\n    .spirv_words = %d,\n#endif\n", s, (int)spirv_words);
     sb_printf(o, "    .id = 0x%llxull,\n    .uniform_floats = %d,\n    .uniform_ints = %d,\n    .texture_count = %d,\n",
               (unsigned long long)id, word_packs(sh->uniform_floats), word_packs(sh->uniform_ints), sh->textures.count);
-    bool data = false;
-    for (int t = 0; t < sh->textures.count; t++) data |= sh->textures.items[t].read != READ_COLOR;
-    if (data) {
-        sb_put(o, "    .texture_reads = {");
-        for (int t = 0; t < sh->textures.count; t++) {
-            const shader_read read = sh->textures.items[t].read;
-            sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH" :
-                      read == READ_CUBE ? "CUBE" : read == READ_DATA ? "DATA" : "COLOR");
-        }
-        sb_put(o, "},\n");
-    }
+    shader_put_texture_reads(o, sh);
     unsigned writes = 0;
     int adds = 0;
     for (int i = 0; i < sh->storage.count; i++) {
@@ -25506,18 +25496,9 @@ static void gen_shaders(gen *g)
                   sh->gpu_instances ? 0 : word_packs(sh->instance_floats), sh->gpu_instances ? 0 : word_packs(sh->instance_ints),
                   word_packs(sh->uniform_floats),
                   word_packs(sh->uniform_ints), sh->textures.count);
-        // How each texture is read, where any isn't a color: a target's depth, as a number or compared
-        bool depths = false;
-        for (int t = 0; t < sh->textures.count; t++) depths |= sh->textures.items[t].read != READ_COLOR;
-        if (depths) {
-            sb_put(o, "    .texture_reads = {");
-            for (int t = 0; t < sh->textures.count; t++) {
-                const shader_read read = sh->textures.items[t].read;
-                sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH" :
-                                                                  read == READ_CUBE ? "CUBE" : read == READ_DATA ? "DATA" : "COLOR");
-            }
-            sb_put(o, "},\n");
-        }
+        // How each texture is read, where any isn't a color (a target's depth, as a number or compared), and through
+        // which sampler, where any shares another's
+        shader_put_texture_reads(o, sh);
         // The colors its frag writes, where that's more than the pixel's: one for each color image of a target
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
         if (sh->blit) sb_put(o, "    .blit = true,\n");

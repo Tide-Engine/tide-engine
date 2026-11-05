@@ -324,9 +324,8 @@ culling and indirect emission), which this leaves alone. Every pick is Claude's,
 - `TIDE_GPU_STORAGE` buffers: storage, vertices, indices, indirect arguments,
   copy source/destination, readback. Zeroed when made with no data.
 - Storage buffer `i` of a pipeline is at binding `TIDE_GPU_STORAGE_BINDING + i`
-  (25 + i) of group 0, at most `TIDE_GPU_MAX_STORAGE` (7): with the uniform
-  block (0) and 12 texture/sampler pairs (1..24) that's 32 descriptors,
-  Vulkan's least `maxPushDescriptors`. A pipeline's layout is explicit (not
+  (33 + i since 2026-11-05, 25 + i before) of group 0, at most `TIDE_GPU_MAX_STORAGE` (7), after the uniform
+  block (0) and 16 textures' and samplers' bindings (1..32): notes/rendering.md, Sixteen textures a draw. A pipeline's layout is explicit (not
   WGSL's `auto`), so a binding the shader leaves unused is still bound.
 - `tide_gpu_pipeline_desc.storage_count`, `.storage_writes[i]`: read-only
   (`var<storage, read>`) or written (`var<storage, read_write>`). Only compute
@@ -497,7 +496,7 @@ the spec is updated with the pick.
 
 What the translators take (SPIR-V for Vulkan, HLSL for Unity):
 
-- `@group(0) @binding(25 + i) var<storage, read> name: array<T>;` and
+- `@group(0) @binding(33 + i) var<storage, read> name: array<T>;` and
   `var<storage, read_write>`, `T` one of `u32`, `i32`, `f32`, `vec2<f32>`,
   `vec4<u32>`, `atomic<u32>`, `atomic<i32>`. Runtime-sized. `arrayLength(&name)`.
 - `var<workgroup> name: T;` for any type, including arrays of structs and
@@ -536,7 +535,7 @@ Unity).
   - A compute program is one kernel, `tidehl_compute`, in a `.compute` file
     (`tide_hlsl_unity_compute`), its `[numthreads]` the WGSL's
     `@workgroup_size`.
-  - Storage buffer i (binding 25 + i) is `_TideStorage<i>`:
+  - Storage buffer i (binding 33 + i) is `_TideStorage<i>`:
     `ByteAddressBuffer` for `read`, `RWByteAddressBuffer` for `read_write`,
     in every stage. Bind it by that name (`ComputeShader.SetBuffer`,
     `CommandBuffer.SetComputeBufferParam`, or a material's/global buffer for a

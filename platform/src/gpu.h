@@ -215,13 +215,21 @@ typedef enum tide_gpu_filter {
     TIDE_GPU_FILTER_MIPMAPS, // ...and between the two of its images nearest the size it's drawn at
 } tide_gpu_filter;
 
-enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 12 };
+// The most textures a pipeline samples: what every backend takes in a stage, as many samplers too (WebGPU's
+// default maxSampledTexturesPerShaderStage and maxSamplersPerShaderStage, Vulkan's least, and Metal's samplers).
+enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 16 };
 
 // The most storage buffers a pipeline binds. Storage buffer i is at binding
-// TIDE_GPU_STORAGE_BINDING + i of group 0, after the textures' bindings, so a
-// pipeline's whole layout is 32 descriptors at most: Vulkan's least
-// maxPushDescriptors, and within WebGPU's default 8 storage buffers a stage.
+// TIDE_GPU_STORAGE_BINDING + i of group 0, after the textures' bindings:
+// within WebGPU's default 8 storage buffers a stage.
 enum { TIDE_GPU_MAX_STORAGE = 7, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX_TEXTURES };
+
+// Whether a pipeline's texture `i` is read through a sampler of its own, at binding 2 + 2i: one that's loaded
+// a pixel at a time has none, and one read through another texture's (tide_gpu_pipeline_desc.samplers) hasn't.
+static inline bool tide_gpu_own_sampler(const uint8_t read, const uint8_t sampler)
+{
+    return sampler == 0 && read != 4u && read != 5u; // TIDE_GPU_READ_DATA, TIDE_GPU_READ_SAMPLES
+}
 
 // The most a pipeline's uniform block takes, in bytes.
 #define TIDE_GPU_MAX_UNIFORMS 4096u
@@ -236,8 +244,8 @@ typedef struct tide_gpu_pipeline_desc {
     const char *name; // For what the backend says when its shaders are wrong
     // Its shaders: WGSL, both stages in one, `vertex` and `fragment`, their
     // attributes at the locations below, their uniforms at binding 0 of group
-    // 0, and texture i and its sampler at bindings 1 + 2i and 2 + 2i. Either
-    // stage may sample. A texture read as depth is a `texture_depth_2d` with a
+    // 0, and texture i and its sampler at bindings 1 + 2i and 2 + 2i (or the
+    // sampler of the texture `samplers` names, below). Either stage may sample. A texture read as depth is a `texture_depth_2d` with a
     // `sampler`; one that's compared, a `texture_depth_2d` with a
     // `sampler_comparison`. A cube is a `texture_cube<f32>` with a `sampler`.
     const char *wgsl;
@@ -262,6 +270,11 @@ typedef struct tide_gpu_pipeline_desc {
     uint32_t uniform_size;  // Its uniform block's, in bytes: every pipeline has one
     uint32_t texture_count; // The textures it samples
     uint8_t reads[TIDE_GPU_MAX_TEXTURES]; // ...and how it reads each: tide_gpu_read
+    // ...and through which sampler: 0 for its own, at binding 2 + 2i, or 1 + the texture j < i whose sampler
+    // it's read through, at binding 2 + 2j, which has none of its own then. The shader's two are sampled the
+    // same way (tide_gpu.sample's filter and wrap, and how they're read), so the sampler is texture j's. Its
+    // pixels are bound as they're sampled: a texture whose smaller images aren't made yet as its first alone.
+    uint8_t samplers[TIDE_GPU_MAX_TEXTURES];
     tide_gpu_blend blend;
     tide_gpu_depth depth;
     tide_gpu_cull cull;

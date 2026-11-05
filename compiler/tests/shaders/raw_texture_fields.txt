@@ -13,13 +13,11 @@ struct tide_uniforms {
 @group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d<f32>;
-@group(0) @binding(8) var sampler3: sampler;
 @group(0) @binding(9) var pixels4: texture_2d<f32>;
 @group(0) @binding(10) var sampler4: sampler;
 @group(0) @binding(11) var pixels5: texture_2d<f32>;
 @group(0) @binding(12) var sampler5: sampler;
 @group(0) @binding(13) var pixels6: texture_2d<f32>;
-@group(0) @binding(14) var sampler6: sampler;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -40,7 +38,7 @@ fn tf_Forward_3_0Texture_0float2_40(t_uv: vec2f) -> vec4f {
 }
 
 fn tf_SamplePair_42(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels2, sampler2, t_uv, 0.0) + textureSampleLevel(pixels3, sampler3, t_uv, 0.0));
+    return (textureSampleLevel(pixels2, sampler2, t_uv, 0.0) + textureSampleLevel(pixels3, sampler1, t_uv, 0.0));
 }
 
 fn tf_Forward_3_0Texture_0float2_42(t_uv: vec2f) -> vec4f {
@@ -52,7 +50,7 @@ fn tf_Moved(t_uv: vec2f) -> vec2f {
 }
 
 fn tf_SamplePair_45(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels5, sampler5, t_uv, 0.0) + textureSampleLevel(pixels6, sampler6, t_uv, 0.0));
+    return (textureSampleLevel(pixels5, sampler5, t_uv, 0.0) + textureSampleLevel(pixels6, sampler1, t_uv, 0.0));
 }
 
 fn tf_Forward_3_0Texture_0float2_45(t_uv: vec2f) -> vec4f {
@@ -103,15 +101,11 @@ struct tide_uniforms {
 @group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d<f32>;
-@group(0) @binding(8) var sampler3: sampler;
 @group(0) @binding(9) var pixels4: texture_2d<f32>;
 @group(0) @binding(10) var sampler4: sampler;
 @group(0) @binding(11) var pixels5: texture_2d<f32>;
-@group(0) @binding(12) var sampler5: sampler;
 @group(0) @binding(13) var pixels6: texture_2d<f32>;
-@group(0) @binding(14) var sampler6: sampler;
 @group(0) @binding(15) var pixels7: texture_2d<f32>;
-@group(0) @binding(16) var sampler7: sampler;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -136,7 +130,7 @@ fn tf_Forward_3_0Texture_0float2_40(t_uv: vec2f) -> vec4f {
 }
 
 fn tf_SamplePair_42(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels2, sampler2, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels3, sampler3, t_uv, 0.0)));
+    return (tide_straight(textureSampleLevel(pixels2, sampler2, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels3, sampler1, t_uv, 0.0)));
 }
 
 fn tf_Forward_3_0Texture_0float2_42(t_uv: vec2f) -> vec4f {
@@ -144,7 +138,7 @@ fn tf_Forward_3_0Texture_0float2_42(t_uv: vec2f) -> vec4f {
 }
 
 fn tf_SamplePair_44(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels4, sampler4, t_uv, 0.0) + textureSampleLevel(pixels5, sampler5, t_uv, 0.0));
+    return (textureSampleLevel(pixels4, sampler4, t_uv, 0.0) + textureSampleLevel(pixels5, sampler1, t_uv, 0.0));
 }
 
 fn tf_Forward_3_0Texture_0float2_44(t_uv: vec2f) -> vec4f {
@@ -152,7 +146,7 @@ fn tf_Forward_3_0Texture_0float2_44(t_uv: vec2f) -> vec4f {
 }
 
 fn tf_SamplePair_46(t_uv: vec2f) -> vec4f {
-    return (textureSampleLevel(pixels6, sampler6, t_uv, 0.0) + textureSampleLevel(pixels7, sampler7, t_uv, 0.0));
+    return (textureSampleLevel(pixels6, sampler4, t_uv, 0.0) + textureSampleLevel(pixels7, sampler1, t_uv, 0.0));
 }
 
 fn tf_Forward_3_0Texture_0float2_46(t_uv: vec2f) -> vec4f {

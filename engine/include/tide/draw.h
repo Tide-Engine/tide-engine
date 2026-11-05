@@ -467,7 +467,7 @@ static inline tide_wrap tide_wrap_of(const int32_t wrap)
     return wrap == TIDE_WRAP_REPEAT || wrap == TIDE_WRAP_MIRROR ? (tide_wrap)wrap : TIDE_WRAP_CLAMP;
 }
 
-enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 12 };
+enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 16 };
 // The most storage buffers a shader binds (gpu.h's TIDE_GPU_MAX_STORAGE): GPU lists, and a kernel's own.
 enum { TIDE_SHADER_STORAGE = 7 };
 
@@ -477,7 +477,7 @@ enum { TIDE_SHADER_STORAGE = 7 };
 // TIDE_SAMPLING_WRAP + 2 * i are its tide_wrap. So a word with only its low
 // bits set clamps every texture. Bit TIDE_SAMPLING_MIPS + i is set, with bit
 // i, for one read between its smaller images too (TIDE_FILTER_TRILINEAR).
-// Slots 0..7 keep their original low 32 bits; slots 8..11 use the same
+// Slots 0..7 keep their original low 32 bits; slots 8..15 use the same
 // layout in the high 32 bits, with i starting at zero again.
 #define TIDE_SAMPLING_WRAP 8u
 #define TIDE_SAMPLING_MIPS 24u
@@ -1502,6 +1502,9 @@ typedef struct tide_shader {
     uint32_t uniform_floats, uniform_ints;
     uint32_t texture_count;
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
+    // Through which sampler each is read: 0 for its own, or 1 + the texture j before it whose sampler it shares,
+    // which the compiler gives only one sampled the same way as j in every draw (its filter, wrap and read)
+    uint8_t texture_samplers[TIDE_SHADER_TEXTURES];
     uint8_t outputs; // The colors its fragment stage writes: 1 for 0, TIDE_TARGET_COLORS at the most
     bool blit;       // Drawn by blits (tide_draw_blit) over a whole destination, rather than as a mesh
     // A cut-out ([Cutout]): its fragment stage writes how much of a pixel it covers as its first color's alpha,

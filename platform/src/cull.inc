@@ -192,7 +192,10 @@ static bool cull_kernels(void)
                                            .uniform_size = cull_uniform_size(shader),
                                            .texture_count = shader->texture_count, .storage_count = storage,
                                            .optional = true}; // The CPU decides runs without them
-            for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc.reads[i] = gpu_read(shader, i);
+            for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
+                desc.reads[i] = gpu_read(shader, i);
+                desc.samplers[i] = gpu_sampler(shader, i);
+            }
             for (uint32_t i = 0; i < storage && i < TIDE_GPU_MAX_STORAGE; i++)
                 desc.storage_writes[i] = i < shader->storage_count && (shader->storage_writes >> i & 1u) != 0;
             cull_pipelines[k] = gpu->pipeline(&desc);

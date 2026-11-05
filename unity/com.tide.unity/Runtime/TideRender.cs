@@ -183,7 +183,7 @@ namespace Tide
         readonly uint[] vertexOffset = new uint[3];
         uint indexBuffer;
         bool indexWide;
-        const int MaxTextures = 12;
+        const int MaxTextures = 16; // gpu.h's TIDE_GPU_MAX_TEXTURES
         readonly uint[] sampled = new uint[MaxTextures];
         readonly uint[] sampling = new uint[MaxTextures];
         int uniformAt, uniformSize;
@@ -222,6 +222,8 @@ namespace Tide
             Shader.PropertyToID("_TideTexture6"), Shader.PropertyToID("_TideTexture7"),
             Shader.PropertyToID("_TideTexture8"), Shader.PropertyToID("_TideTexture9"),
             Shader.PropertyToID("_TideTexture10"), Shader.PropertyToID("_TideTexture11"),
+            Shader.PropertyToID("_TideTexture12"), Shader.PropertyToID("_TideTexture13"),
+            Shader.PropertyToID("_TideTexture14"), Shader.PropertyToID("_TideTexture15"),
         };
 
         // Whether this GPU replays Tide's drawing: it computes, as each of Tide's renderers does, and its shaders read

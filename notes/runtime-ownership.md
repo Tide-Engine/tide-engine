@@ -1,5 +1,13 @@
 # Runtime written by Claude for now
 
+## Sixteen textures, shared samplers (2026-11-05)
+
+Within the drawing maintenance exception, with the owner's "not cap ourselves to arbitrary limits": `tide/draw.h`'s
+`TIDE_SHADER_TEXTURES` is 16 and `tide_shader` gains `texture_samplers` (generated code fills it; nothing new is
+called), gpu.h's `TIDE_GPU_MAX_TEXTURES` is 16, `TIDE_GPU_STORAGE_BINDING` 33, and `tide_gpu_pipeline_desc` gains
+`samplers` with `tide_gpu_own_sampler`. Hosts, libraries and generated games rebuild together; embed ABI 13
+(`TideLibrary.Abi`). Contracts and tests: notes/rendering.md, Sixteen textures a draw.
+
 ## A game's keyboard on screen (2026-11-05)
 
 New and agent-maintained, like `tide/voice.h`: `engine/include/tide/screen_keyboard.h` and `engine/src/screen_keyboard.c` (`tide_screen_keyboard_set`, `tide_screen_keyboard_get`), which a game's C (the steam package) calls, never generated code, and the host table's optional `screen_keyboard` getter. Contracts: notes/standard-host.md, A machine that slept, and the game's keyboard.

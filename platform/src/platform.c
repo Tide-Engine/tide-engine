@@ -2552,6 +2552,14 @@ typedef struct gpu_target {
 static gpu_target *gpu_targets;
 static uint32_t gpu_target_count, gpu_target_capacity;
 
+// Through which sampler a pipeline reads a shader's texture `i` (tide_gpu_pipeline_desc.samplers): its own, or an
+// earlier texture's.
+static uint8_t gpu_sampler(const tide_shader *shader, const uint32_t i)
+{
+    const uint8_t sampler = i < TIDE_SHADER_TEXTURES ? shader->texture_samplers[i] : 0u;
+    return sampler <= i ? sampler : 0u;
+}
+
 // How a pipeline reads a shader's texture `i`: a color, unless the shader says it's a depth.
 static tide_gpu_read gpu_read(const tide_shader *shader, const uint32_t i)
 {
@@ -3671,7 +3679,10 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
         if (desc.blend == TIDE_GPU_BLEND_ALPHA) desc.blend = TIDE_GPU_BLEND_REPLACE;
         desc.alpha_to_coverage = covers_by_samples(into);
     }
-    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc.reads[i] = gpu_read(shader, i);
+    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
+        desc.reads[i] = gpu_read(shader, i);
+        desc.samplers[i] = gpu_sampler(shader, i);
+    }
     for (uint32_t i = 0; i < shader->attribute_count; i++) {
         desc.attributes[i].slot = 0;
         desc.attributes[i].format = formats[shader->attributes[i].format];
