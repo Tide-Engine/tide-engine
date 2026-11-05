@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(int argc, char **argv)
@@ -19,6 +20,7 @@ int main(int argc, char **argv)
         printf("tide %s (fixture)\n", version);
         return 0;
     }
+    printf("update check: %s\n", getenv("TIDE_NO_UPDATE_CHECK") ? "disabled" : "enabled");
     for (int i = 1; i < argc; i++) printf("arg: %s\n", argv[i]);
     fflush(stdout);
     for (int i = 1; i < argc; i++) if (strcmp(argv[i], "--hold") == 0) (void)getchar();

@@ -1,0 +1,3 @@
+// expect: Scene.IsPrepared's second argument is a PlayerID
+scene Main;
+system Check(with Main) { Debug.Assert(Scene.IsPrepared(this, 3)); }

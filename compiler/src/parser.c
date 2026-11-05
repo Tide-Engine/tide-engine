@@ -758,6 +758,7 @@ static expr *parse_postfix(parser *p)
             expr *m = new_expr(E_METHOD, name->at);
             m->object = e;
             m->name = name->text;
+            if (str_eq_c(name->text, "IsPrepared") && e->kind == E_NAME && str_eq_c(e->name, "Scene")) p->prog->uses_prepared = true;
             if (accept(p, T_LT)) { // world.Get<Health>(e), Geometry.Bounds<Corner>(...)
                 parse_type_args(p, m);
                 const type_ref *arg = m->type_args.items[0];
@@ -2277,6 +2278,42 @@ static decl *parse_prefab(parser *p)
     return d;
 }
 
+static void parse_preparation(parser *p, decl *scene)
+{
+    const token *word = advance(p);
+    if (!scene->is_scene) {
+        diag_error(word->at, "prepare(...) belongs inside a scene");
+        longjmp(p->fail, 1);
+    }
+    if (scene->preparation) {
+        diag_error(word->at, "a scene has one prepare block; combine the preparation into prepare(...) { ... }");
+        longjmp(p->fail, 1);
+    }
+    decl *h = new_decl(DECL_SYSTEM, word);
+    sb name = {0};
+    sb_printf(&name, "tide_prepare_" STR_FMT, STR_ARG(scene->name));
+    h->name = str_from(name.data);
+    h->is_handler = true;
+    h->preparation_owner = scene;
+    h->preparation_cpu = true;
+    param trigger = {0};
+    trigger.mode = PARAM_EVENT;
+    trigger.at = trigger.type_at = trigger.type_qual_at = word->at;
+    trigger.type_name = str_from("tide_preparing");
+    vec_push(h->params, trigger);
+    param self = {0};
+    self.mode = PARAM_MUT;
+    self.name = str_from("tide_preparation_scene");
+    self.type_name = scene->name;
+    self.at = self.type_at = self.type_qual_at = self.name_at = word->at;
+    vec_push(h->params, self);
+    parse_query_params(p, h);
+    h->body = parse_block(p);
+    h->end = h->body->end;
+    scene->preparation = h;
+    p->prog->uses_prepared = true;
+}
+
 static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scene)
 {
     const char *what = kind == DECL_COMPONENT   ? "component or scene name"
@@ -2293,6 +2330,11 @@ static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scen
     }
     expect(p, T_LBRACE, "'{'");
     while (!at(p, T_RBRACE)) {
+        if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "prepare")
+            && (peek_at(p, 1)->kind == T_LPAREN || peek_at(p, 1)->kind == T_LBRACE)) {
+            parse_preparation(p, d);
+            continue;
+        }
         if (p->recover && (at(p, T_EOF) || at_decl_start_or_function(p, false))) {
             diag_error(peek(p)->at, "expected '}' to close '" STR_FMT "'", STR_ARG(name->text));
             d->end = peek(p)->at;
@@ -2944,6 +2986,9 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
+    for (const token *t = toks; t->kind != T_EOF; t++)
+        if (t->kind == T_IDENT && str_eq_c(t->text, "Scene") && t[1].kind == T_DOT
+            && t[2].kind == T_IDENT && str_eq_c(t[2].text, "IsPrepared")) prog->uses_prepared = true;
     const size_t path_len = strlen(src->path);
     // A Unity prefab or scene is read as the prefab `tide unity` makes of it
     const bool prefab_file = (path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0) ||
@@ -3136,6 +3181,11 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         p.pending.count = p.pending.cap = 0;
         p.seen_decl = true;
         vec_push(prog->decls, d);
+        if (d->preparation) {
+            d->preparation->unit = d->unit;
+            if (d->is_local) diag_error(d->preparation->at, "prepare runs deterministic match code; local scenes use Spawned handlers");
+            vec_push(prog->decls, d->preparation);
+        }
     }
     if (p.unit->outer) {
         diag_error(peek(&p)->at, "expected '}' to end the namespace '" STR_FMT "', which opens at line %d", STR_ARG(p.unit->ns_written),

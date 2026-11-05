@@ -70,6 +70,21 @@ C. Parsing keeps its files' count (it ends before); a game without assets keeps 
 after parsing every count is the whole one (4 for two assets) and never goes back, reaching 2 before generating C
 and 4 after packing.
 
+## Exact pins suppress upgrade notices (2026-11-05)
+
+Exact project pin selection sets TIDE_NO_UPDATE_CHECK in the command's process
+environment before continuing or dispatching. This suppresses automatic upgrade
+notices both when the invoking release matches and when an older cached release
+is downloaded/launched, including older compilers that already honor the opt-out.
+Moving channels retain their update behavior; explicit upgrade is unchanged.
+The setting does not change the owner's shell environment.
+
+Validation: Windows Clang 23.1.2 ASan CLI/dispatcher/child builds and
+tide_cli_versions pass (Node 24.22.1). The fixture starts without the opt-out and
+checks matching-release suppression, inheritance after download and an unchanged
+nightly channel. Native host tooling only; no WASM/runtime change. Linux/macOS
+execution remains CI coverage. CLI reference updated.
+
 ## Parallel generated C with ThinLTO (2026-11-05)
 
 Generated C groups at least 4 MiB now compile in four stable parts with `-flto=thin`. Small files stay whole.

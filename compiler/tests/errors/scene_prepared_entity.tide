@@ -1,0 +1,3 @@
+// expect: Scene.IsPrepared takes the scene's entity handle
+scene Main;
+system Check() { Debug.Assert(Scene.IsPrepared(1)); }

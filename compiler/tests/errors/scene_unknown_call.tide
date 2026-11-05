@@ -1,4 +1,4 @@
-// expect: Scene has no 'Open'; it has Load and Unload
+// expect: Scene has no 'Open'; it has Load, Unload and IsPrepared
 scene Arena { }
 scene Main { }
 event(Spawned) Setup(with Main) { Scene.Open(Arena); }

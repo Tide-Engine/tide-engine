@@ -1,0 +1,19 @@
+build List<int> Coefficients() { return [17, 23, 31]; }
+const List<int> coefficients = Coefficients();
+singleton State { List<int> values; }
+
+int Value(int index)
+{
+    mut int value = 0;
+    for (int j = 0; j < 64; j++) value += coefficients[(index + j) % coefficients.count];
+    return value;
+}
+
+scene Main
+{
+    prepare(mut State state)
+    {
+        state.values.Resize(8192);
+        parallel (var i in state.values) state.values[i] = Value(i);
+    }
+}

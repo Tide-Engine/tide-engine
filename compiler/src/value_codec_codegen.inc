@@ -38,7 +38,7 @@ static uint64_t client_codec_minbytes(const program *prog, const type t)
         uint64_t bytes = 0;
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == prog->visibility)) continue;
+            if (f->typed || recipient_private_field(prog, t.decl, f)) continue;
             bytes += client_codec_minbytes(prog, f->type);
         }
         return bytes;
@@ -65,7 +65,7 @@ static bool client_codec_raw(const program *prog, const type t)
         int64_t bytes = 0;
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == prog->visibility) || !client_codec_raw(prog, f->type)) return false;
+            if (f->typed || recipient_private_field(prog, t.decl, f) || !client_codec_raw(prog, f->type)) return false;
             bytes += type_layout(f->type).size;
         }
         return t.decl->fields.count && bytes == type_layout(t).size && bytes < LAYOUT_MOST;
@@ -91,7 +91,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == g->prog->visibility)) continue;
+            if (f->typed || recipient_private_field(g->prog, t.decl, f)) continue;
             sb_printf(o, "    tide_client_put%d(out, &v->%s, depth + 1u);\n", client_codec_id(codec, f->type), field_cname(f));
         }
         if (!t.decl->fields.count) sb_put(o, "    (void)out; (void)v;\n");
@@ -173,7 +173,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == g->prog->visibility)) continue;
+            if (f->typed || recipient_private_field(g->prog, t.decl, f)) continue;
             sb_printf(o, "    if (!tide_client_get%d(in, &v->%s, where, depth + 1u, budget)) return false;\n",
                       client_codec_id(codec, f->type), field_cname(f));
         }
@@ -303,7 +303,7 @@ static void gen_client_codec_skip(gen *g, const client_codec *codec, const int i
     } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == g->prog->visibility)) continue;
+            if (f->typed || recipient_private_field(g->prog, t.decl, f)) continue;
             sb_printf(o, "    if (!tide_client_skip%d(in, depth + 1u)) return false;\n", client_codec_id(codec, f->type));
         }
     } else if (t.kind == TY_ARRAY) {
@@ -417,7 +417,7 @@ static bool client_codec_heapy(const program *prog, const type t, const int dept
         if (t.kind == TY_RECORD && t.decl->array_of) return client_codec_heapy(prog, (type){TY_RECORD, t.decl->array_of}, depth + 1);
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && t.decl == prog->visibility)) continue;
+            if (f->typed || recipient_private_field(prog, t.decl, f)) continue;
             if (client_codec_heapy(prog, f->type, depth + 1)) return true;
         }
         return false;
