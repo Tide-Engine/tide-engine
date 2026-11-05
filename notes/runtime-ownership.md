@@ -7,8 +7,10 @@ New and agent-maintained: the index runtime, `engine/include/tide/index.h` and `
 `tide_index_lock`/`unlock`), which generated code calls for every indexed loop. The caches of indexes are
 generated helpers (`index_codegen.inc`: `tide_ix_*`, `tide_index_cache_prepare`/`free`), like the rows cache, over
 existing runtime calls (`tide_page_retain`/`release`, `tide_table_*`, `tide_list_*`, `tide_alloc*`); a game with an
-indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `tide_local`. Contracts:
-notes/indexed-loops.md, Code generation.
+indexed loop gets a `struct tide_index_cache *` at the end of `tide_world` and `tide_local`, and defines
+`tide_loop_indexes_free` (its header says `TIDE_HAS_LOOP_INDEXES`), which `tide_run_unload` (tide/run.h) calls
+before the library is unloaded, for the indexes kept outside the worlds. Contracts: notes/indexed-loops.md, Code
+generation.
 
 ## Meshes over GPU lists, moved runs (2026-11-05)
 

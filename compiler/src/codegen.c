@@ -247,6 +247,10 @@ typedef struct gen {
     bool ix_any;
     VEC(const struct stmt *) ix_loops;
     VEC(const void *) ix_variants;
+    VEC(const struct stmt *) ix_used;   // Loops written through their index (ix_check)
+    VEC(const struct stmt *) ix_locals; // Locals whose list a loop keeps its index of (loop_index.list_local)
+    VEC(const struct stmt *) ix_stamped; // ...declared, where the code is, with their stamps' C names
+    VEC(const char *) ix_stamp_names;
 } gen;
 
 static int rows_cache_count(const gen *g);
@@ -7484,6 +7488,9 @@ static void gen_query_foreach(gen *g, const stmt *s);
 static bool gen_indexed_list(gen *g, const stmt *s);
 static bool gen_indexed_query(gen *g, const stmt *s, const char *gather);
 static bool ix_par_list(const gen *g, const stmt *s);
+static bool gen_ix_parallel_rows(gen *g, const stmt *s, const char *row);
+static void gen_ix_stamp(gen *g, const stmt *s);
+static void ix_check(gen *g, const stmt *s);
 static void gen_ix_par_marks(gen *g, const stmt *s);
 static void gen_query_walk(gen *g, const stmt *s, const char *gather);
 static void gen_sort_call(gen *g, const expr *sort);
@@ -8096,7 +8103,17 @@ static void gen_block_run(gen *g)
     line(g, o, "}");
 }
 
+// A statement, and after it what indexed loops need: a local's stamp (gen_ix_stamp), and the check that a
+// planned loop went through its index (ix_check)
+static void gen_stmt_now(gen *g, const stmt *s);
 static void gen_stmt(gen *g, const stmt *s)
+{
+    gen_stmt_now(g, s);
+    gen_ix_stamp(g, s);
+    ix_check(g, s);
+}
+
+static void gen_stmt_now(gen *g, const stmt *s)
 {
     sb *o = &g->c;
     const bool bare = g->bare == s;
@@ -9589,6 +9606,8 @@ static void gen_header(gen *g)
     }
     if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
     sb_put(o, "} tide_world;\n\n");
+    if (g->ix_any) sb_put(o, "// Lets go of the indexes indexed loops keep outside the worlds, before the game's library is unloaded\n"
+                             "#define TIDE_HAS_LOOP_INDEXES 1\nvoid tide_loop_indexes_free(void);\n\n");
     if (rows_cache_count(g)) sb_put(o, "#define TIDE_ROWS_CACHE_ABI 1 // Change with the private cache payload layout\n\n");
 
     sb_put(o, "// How a match starts: the scene Session.Start named, with its values.\n");
@@ -14730,11 +14749,12 @@ static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, con
     const unsigned least = fewest < 16u ? (unsigned)fewest : 16u;
     line(g, o, "{");
     g->indent++;
-    if (q->query_rows) {
+    const bool indexed_rows = q->query_rows && gen_ix_parallel_rows(g, s, row); // Its candidates (index_codegen.inc)
+    if (q->query_rows && !indexed_rows) {
         const int qi = query_index(code, q);
         line(g, o, "const %s *const tide_rows = tide_q%d;", row, qi);
         line(g, o, "const uint32_t tide_rown = tide_q%dn;", qi);
-    } else {
+    } else if (!indexed_rows) {
         line(g, o, "%s *tide_rows = NULL;", row);
         line(g, o, "uint32_t tide_rown = 0u, tide_rowcap = 0u;");
         line(g, o, "(void)tide_rowcap;");
@@ -14767,6 +14787,7 @@ static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, con
         line(g, o, "}");
     }
     if (!q->query_rows) line(g, o, "free(tide_rows);");
+    if (indexed_rows) line(g, o, "free(tide_xrows);");
     g->indent--;
     line(g, o, "}");
 }
@@ -14831,8 +14852,7 @@ static void gen_parallel_call(gen *g, const stmt *s)
         }
         if (stmt_rolls(s->then_stmt)) line(g, o, "const tide_random tide_par_dice = tide_random_fork(tide_dice);");
         const bool marks = ix_par_list(g, s);
-        if (marks && !(g->routine && g->routine->is_worker)) gen_ix_par_marks(g, s); // Before the steps: which can pass
-        else if (marks) line(g, o, "const uint64_t *const tide_xm = NULL;\nconst int32_t tide_xmn = 0;");
+        if (marks) gen_ix_par_marks(g, s); // Before the steps: which can pass
         indent(g, o);
         sb_printf(o, "const %s_ctx tide_cx = {&tide_pl", name);
         if (flat) sb_put(o, ", tide_in, tide_count");

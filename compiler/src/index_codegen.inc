@@ -21,7 +21,10 @@
 //   (the scheduler's promise: the code only reads it).
 // - A view's rows (gen_query_fill): the rows themselves, made once a view's
 //   run, counted (tide_ix_made).
-// Anything else is gone through plainly.
+// - A list in a local the code never writes after declaring it (indexing.c,
+//   loop_index.list_local): the declaration's run (a stamp) and the list.
+// Anything else gets an index of its own at each run of the loop. Every loop
+// the analysis plans goes through an index: gen_stmt checks (ix_check).
 //
 // Many threads may run one per-entity system at once: an index is checked and
 // built under its site's lock, once, and searched outside it, which tide/index.h
@@ -30,38 +33,64 @@
 
 #define IX_LEAST 32 // Rows below which a loop goes through them all: an index costs more than it saves
 
-static bool ix_stmt_any(const stmt *s);
-static bool ix_expr_any(const expr *e)
+// The loops with an index in code: whether there's any, and the locals whose lists are kept (ix_locals).
+static bool ix_stmt_any(gen *g, const stmt *s);
+static bool ix_expr_any(gen *g, const expr *e)
 {
     if (!e) return false;
-    if (ix_expr_any(e->object) || ix_expr_any(e->lhs) || ix_expr_any(e->rhs) || ix_expr_any(e->cond)) return true;
-    for (int i = 0; i < e->args.count; i++) if (ix_expr_any(e->args.items[i])) return true;
-    return ix_stmt_any(e->block);
+    bool any = ix_expr_any(g, e->object);
+    any |= ix_expr_any(g, e->lhs);
+    any |= ix_expr_any(g, e->rhs);
+    any |= ix_expr_any(g, e->cond);
+    for (int i = 0; i < e->args.count; i++) any |= ix_expr_any(g, e->args.items[i]);
+    any |= ix_stmt_any(g, e->block);
+    return any;
 }
 
-static bool ix_stmt_any(const stmt *s)
+static bool ix_stmt_any(gen *g, const stmt *s)
 {
     if (!s) return false;
-    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && s->index) return true;
-    if (ix_expr_any(s->cond) || ix_expr_any(s->value)) return true;
-    if (ix_stmt_any(s->init) || ix_stmt_any(s->step) || ix_stmt_any(s->then_stmt) || ix_stmt_any(s->else_stmt)) return true;
-    for (int i = 0; i < s->stmts.count; i++) if (ix_stmt_any(s->stmts.items[i])) return true;
-    for (int i = 0; i < s->cases.count; i++) {
-        for (int k = 0; k < s->cases.items[i].body.count; k++) if (ix_stmt_any(s->cases.items[i].body.items[k])) return true;
+    bool any = false;
+    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && s->index) {
+        any = true;
+        if (s->index->list_local) vec_push(g->ix_locals, s->index->list_local);
     }
-    return false;
+    any |= ix_expr_any(g, s->cond);
+    any |= ix_expr_any(g, s->value);
+    any |= ix_stmt_any(g, s->init);
+    any |= ix_stmt_any(g, s->step);
+    any |= ix_stmt_any(g, s->then_stmt);
+    any |= ix_stmt_any(g, s->else_stmt);
+    for (int i = 0; i < s->stmts.count; i++) any |= ix_stmt_any(g, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) any |= ix_stmt_any(g, s->cases.items[i].body.items[k]);
+    }
+    return any;
 }
 
 // Whether the game has a loop that goes through an index: its worlds then have a cache of them.
-static bool ix_program(const gen *g)
+static bool ix_program(gen *g)
 {
     if (g->opts->no_loop_indexes) return false;
+    bool any = false;
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
-        if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) && ix_stmt_any(d->body)) return true;
-        for (int k = 0; k < d->methods.count; k++) if (ix_stmt_any(d->methods.items[k]->body)) return true;
+        if (d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) any |= ix_stmt_any(g, d->body);
+        for (int k = 0; k < d->methods.count; k++) any |= ix_stmt_any(g, d->methods.items[k]->body);
     }
-    return false;
+    return any;
+}
+
+// After a loop is written: one the analysis planned an index for went through it. Anything else is tidec's bug,
+// which a game would see as its loop looking at every row: refused instead.
+static void ix_check(gen *g, const stmt *s)
+{
+    if (!g->ix_any || !s->index || (s->kind != S_FOREACH && s->kind != S_PARALLEL)) return;
+    for (int i = g->ix_used.count - 1; i >= 0; i--) {
+        if (g->ix_used.items[i] == s) return;
+    }
+    diag_error(s->at, "internal: tidec planned an index for this loop and wrote it without one (a tidec bug, please "
+                      "report it)");
 }
 
 // The loop's place in its world's cache, for the code being generated (a borrowed query's for its source).
@@ -109,8 +138,11 @@ static void gen_index_helpers(gen *g)
         "    tide_ix_site *site;\n"
         "};\n"
         "static uint32_t tide_index_sites(void);\n"
+        "// A loop's site of its own, outside the worlds (a view's rows, a local's list): tide_loop_indexes_free lets go\n"
+        "static struct tide_ix_site *tide_ix_static(uint32_t id) __attribute__((unused));\n"
         "static uint32_t tide_ix_refs; // Page references the sites take or let go of, one at a time\n"
-        "static uint64_t tide_ix_made __attribute__((unused)); // Rows made for views, counted: an index of a view's rows holds while they're the last\n\n");
+        "static uint64_t tide_ix_made __attribute__((unused)); // Rows made for views, counted: an index of a view's rows holds while they're the last\n"
+        "static uint64_t tide_ix_calls; // Declarations of locals whose list a loop's index is kept for, counted (tide_ix_call)\n\n");
     sb_put(o,
         "TIDE_HELPER double tide_ix_min(const double a, const double b)\n{\n"
         "    return a != a || b != b ? __builtin_nan(\"\") : a < b ? a : b;\n}\n\n"
@@ -140,6 +172,10 @@ static void gen_index_helpers(gen *g)
         "        c->site = tide_alloc_zeroed(sites ? sites : 1u, sizeof *c->site);\n"
         "        *slot = c;\n    }\n"
         "    c->epoch++;\n}\n\n"
+        "// A local's declaration's run: a number no other has\n"
+        "TIDE_HELPER uint64_t tide_ix_call(void)\n{\n"
+        "    tide_index_lock(&tide_ix_refs);\n    const uint64_t n = ++tide_ix_calls;\n    tide_index_unlock(&tide_ix_refs);\n"
+        "    return n;\n}\n\n"
         "TIDE_HELPER tide_ix_site *tide_ix_site_at(struct tide_index_cache *c, const uint32_t id)\n{\n"
         "    return c && c->abi == TIDE_INDEX_CACHE_ABI && id < c->sites ? &c->site[id] : NULL;\n}\n\n");
     sb_put(o,
@@ -230,7 +266,14 @@ static void gen_index_helpers(gen *g)
 static void gen_index_sites(gen *g)
 {
     if (!g->ix_any) return;
-    sb_printf(&g->c, "static uint32_t tide_index_sites(void)\n{\n    return %du;\n}\n\n", g->ix_loops.count);
+    const int sites = g->ix_loops.count;
+    sb_printf(&g->c, "static uint32_t tide_index_sites(void)\n{\n    return %du;\n}\n\n", sites);
+    sb_printf(&g->c, "static tide_ix_site tide_ix_statics[%d];\n\n"
+                     "static __attribute__((unused)) tide_ix_site *tide_ix_static(const uint32_t id)\n{\n    return &tide_ix_statics[id];\n}\n\n"
+                     "// Before the game's library is unloaded (tide_run_unload): the loops' own sites' indexes\n"
+                     "void tide_loop_indexes_free(void)\n{\n"
+                     "    for (uint32_t i = 0; i < %du; i++) tide_ix_site_free(&tide_ix_statics[i]);\n}\n\n",
+              sites > 0 ? sites : 1, sites);
 }
 
 // A bound, as a double worked out before the loop (indexing.h)
@@ -378,9 +421,9 @@ static int ix_key_binding(const ix_query *x, const index_key *key, int *off, int
     return binding;
 }
 
-// The rows of each admitted table, in the loop's order, those a query's filters let through: with `build`, each
-// added to the index tide_xi by its keys, else to tide_xall, the loop's candidates (fewer than TIDE_IX_LEAST)
-static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan, const bool build)
+// The rows of each admitted table, in the loop's order, those a query's filters let through, each added to the
+// index tide_xi by its keys
+static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan)
 {
     sb *o = &g->c;
     for (int a = 0; a < g->prog->archetypes.count; a++) {
@@ -399,7 +442,7 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan,
                  arch_presence(g, a, c));
         }
         bool gathered[64] = {false};
-        for (int k = 0; build && k < plan->count; k++) {
+        for (int k = 0; k < plan->count; k++) {
             const int b = x->binding[k];
             if (b >= 64 || gathered[b]) continue;
             gathered[b] = true;
@@ -421,7 +464,7 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan,
             else if (mask_has(x->selection->query_without_mask, c)) line(g, o, "if (tide_qpres%d[tide_qi]) continue;", c);
         }
         line(g, o, "const uint64_t tide_xord = (uint64_t)%du << 32 | (uint64_t)((tide_qc << %d) + tide_qi);", a, arch_shift(g, a));
-        if (build) {
+        {
             line(g, o, "struct {");
             g->indent++;
             for (int i = 0; i < x->row->fields.count; i++) {
@@ -439,8 +482,6 @@ static void gen_ix_query_rows(gen *g, const ix_query *x, const loop_index *plan,
             }
             gen_ix_keys(g, plan, "tide_xrow", "tide_xkey");
             line(g, o, "tide_index_add(tide_xi, tide_xkey, tide_xord);");
-        } else {
-            line(g, o, "if (tide_xn < TIDE_IX_LEAST) tide_xall[tide_xn++] = tide_xord;");
         }
         g->indent--;
         line(g, o, "}");
@@ -508,13 +549,31 @@ static uint64_t ix_query_plan(const gen *g, const ix_query *x, const loop_index 
 }
 
 static void gen_query_fresh(gen *g, const param *q, const char *name);
+static void gen_query_walk(gen *g, const stmt *s, const char *gather);
+
+// The loop went through its index: gen_stmt checks every planned loop did (ix_check).
+static void ix_used(gen *g, const stmt *s)
+{
+    vec_push(g->ix_used, s);
+}
+
+// After the hits are found: the cleanup that frees them however the loop is left, pushed as a container. Returns
+// the container count the loop's target starts with.
+static int ix_hits_open(gen *g, const char *hits, sb *cleanup)
+{
+    sb_printf(cleanup, "tide_index_hits_free(&%s);", hits);
+    const gen_open open = {.cleanup = cleanup->data};
+    vec_push(g->containers, open);
+    return g->containers.count;
+}
 
 // A foreach over a world's query with an index: its candidates, then the body for each. With `gather` (a parallel
 // loop's, its row type), each candidate row copied onto the end of tide_rows instead, as tide_rown of tide_rowcap,
-// for the loop's steps (gen_parallel_query_call). False: it isn't one.
+// for the loop's steps (gen_parallel_query_call). Fewer rows than TIDE_IX_LEAST go through the plain loop, which
+// reads columns as they are: the body is written twice, and runs once. False: it isn't one.
 static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
 {
-    if (!g->ix_any || !s->index || g->task || s->kind != (gather ? S_PARALLEL : S_FOREACH)) return false;
+    if (!g->ix_any || !s->index || s->kind != (gather ? S_PARALLEL : S_FOREACH)) return false;
     const loop_index *plan = s->index;
     if (plan->count < 1 || plan->count > 3) return false;
     ix_query x = {0};
@@ -539,9 +598,13 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
             x.lane_hi[k] = (off + size - 1) / width;
         }
     }
+    ix_used(g, s);
     bool any = false;
     for (int a = 0; a < g->prog->archetypes.count; a++) any |= query_admits(g, x.selection, a);
-    if (!any) return false;
+    if (!any) { // No table has rows it could take: nothing to index
+        gen_query_walk(g, s, gather);
+        return true;
+    }
 
     sb *o = &g->c;
     const int site = ix_site(g, s);
@@ -550,21 +613,24 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     const char *hits = made_up(g, "xh");
     line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
     g->indent++;
-    gen_query_fresh(g, x.q, name);
-    gen_ix_bounds(g, plan, "tide_xlo", "tide_xhi");
-    line(g, o, "tide_index_hits %s;", hits);
-    line(g, o, "tide_index_hits_init(&%s);", hits);
-    line(g, o, "uint64_t tide_xall[TIDE_IX_LEAST];");
-    line(g, o, "const uint64_t *tide_xo = tide_xall;");
-    line(g, o, "uint32_t tide_xn = 0u;");
     indent(g, o);
     sb_put(o, "const uint64_t tide_xrows = 0u");
     for (int a = 0; a < g->prog->archetypes.count; a++) {
         if (query_admits(g, x.selection, a)) sb_printf(o, " + %s->%s.count", x.world, arch_name(g, a));
     }
     sb_put(o, ";\n");
-    line(g, o, "if (tide_xrows >= TIDE_IX_LEAST) {");
+    line(g, o, "if (tide_xrows < TIDE_IX_LEAST) { // Few rows: the plain loop");
     g->indent++;
+    const int sites = g->sites; // The same GUI sites in both: one runs
+    gen_query_walk(g, s, gather);
+    g->sites = sites;
+    g->indent--;
+    line(g, o, "} else {");
+    g->indent++;
+    gen_query_fresh(g, x.q, name);
+    gen_ix_bounds(g, plan, "tide_xlo", "tide_xhi");
+    line(g, o, "tide_index_hits %s;", hits);
+    line(g, o, "tide_index_hits_init(&%s);", hits);
     const char *fast = ix_fast(g) && strcmp(x.world, "tide_w") == 0 ? "true" : "false";
     line(g, o, "tide_ix_site *const tide_xs = tide_ix_site_at(%s->tide_index_cache, %du);", x.world, site);
     line(g, o, "const bool tide_xheld = tide_ix_hold(tide_xs, %s->tide_index_cache, %s);", x.world, fast);
@@ -584,7 +650,7 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     line(g, o, "if (tide_xbuild) {");
     g->indent++;
     line(g, o, "tide_index_begin(tide_xi, %du);", plan->count);
-    gen_ix_query_rows(g, &x, plan, true);
+    gen_ix_query_rows(g, &x, plan);
     line(g, o, "tide_index_end(tide_xi);");
     g->indent--;
     line(g, o, "}");
@@ -593,22 +659,10 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
     line(g, o, "}");
     line(g, o, "tide_index_find(tide_xi, tide_xlo, tide_xhi, &%s);", hits);
     line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown, tide_xheld);");
-    line(g, o, "tide_xo = %s.items;", hits);
-    line(g, o, "tide_xn = %s.count;", hits);
-    g->indent--;
-    line(g, o, "} else {");
-    g->indent++;
-    gen_ix_query_rows(g, &x, plan, false);
-    g->indent--;
-    line(g, o, "}");
-    line(g, o, "(void)tide_xlo;");
-    line(g, o, "(void)tide_xhi;");
-    // Its hits go however the loop is left
+    line(g, o, "const uint64_t *const tide_xo = %s.items;", hits);
+    line(g, o, "const uint32_t tide_xn = %s.count;", hits);
     sb cleanup = {0};
-    sb_printf(&cleanup, "tide_index_hits_free(&%s);", hits);
-    const gen_open open = {.cleanup = cleanup.data};
-    vec_push(g->containers, open);
-    const int containers = g->containers.count;
+    const int containers = ix_hits_open(g, hits, &cleanup);
     line(g, o, "for (uint32_t tide_xk = 0; tide_xk < tide_xn; tide_xk++) {");
     g->indent++;
     line(g, o, "const uint32_t tide_xa = (uint32_t)(tide_xo[tide_xk] >> 32), tide_xr = (uint32_t)tide_xo[tide_xk];");
@@ -669,108 +723,129 @@ static bool gen_indexed_query(gen *g, const stmt *s, const char *gather)
         line(g, o, "tide_rows[tide_rown++] = %s;", name);
         g->indent--;
         line(g, o, "}");
-        g->containers.count = containers - 1;
-        line(g, o, "%s", cleanup.data);
+    } else {
+        line(g, o, "(void)%s;", name);
+        gen_query_field_refs(g, x.q, name);
+        const gen_target loop = {g->frame, containers, true, true, end, false, made_up(g, "next"), false, true};
+        vec_push(g->targets, loop);
+        gen_body_stmt(g, s->then_stmt);
+        const gen_target done = g->targets.items[--g->targets.count];
+        if (done.next_used) line(g, o, "%s:;", done.next);
         g->indent--;
         line(g, o, "}");
-        return true;
+        if (done.end_used) line(g, o, "%s:;", end);
     }
-    line(g, o, "(void)%s;", name);
-    gen_query_field_refs(g, x.q, name);
-    const gen_target loop = {g->frame, containers, true, true, end, false, made_up(g, "next"), false, true};
-    vec_push(g->targets, loop);
-    gen_body_stmt(g, s->then_stmt);
-    const gen_target done = g->targets.items[--g->targets.count];
-    if (done.next_used) line(g, o, "%s:;", done.next);
-    g->indent--;
-    line(g, o, "}");
-    if (done.end_used) line(g, o, "%s:;", end);
     g->containers.count = containers - 1;
     line(g, o, "%s", cleanup.data);
+    g->indent--;
+    line(g, o, "}");
     g->indent--;
     line(g, o, "}");
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// A view's rows (or a borrowed query's, from a view): made once a view's run
+// Rows made for the code: a view's (or a borrowed query's, from a view), made once a view's run, or a local
+// handler's, a tick's record
 
-static bool gen_indexed_rows(gen *g, const stmt *s)
+typedef struct ix_rows {
+    const param *q, *selection;
+    const decl *owner; // The view or handler the rows were made for
+    bool borrowed;
+    int qi;
+    sb array, count;   // As C
+} ix_rows;
+
+static bool ix_rows_of(gen *g, const stmt *s, ix_rows *r)
 {
-    if (!g->ix_any || !s->index || g->task || s->kind != S_FOREACH) return false;
-    const loop_index *plan = s->index;
-    if (plan->count < 1 || plan->count > 3) return false;
-    const param *q = s->query;
-    const bool borrowed = q->function_param;
-    const borrow_source source = borrowed ? query_source(g->routine, g->borrow, q) : (borrow_source){0};
-    const param *selection = borrowed ? source_query(source) : q;
-    const decl *owner = borrowed ? source.owner : g->code;
-    if (!selection->query_rows || !owner || !owner->is_view) return false; // A local handler's rows are a tick's: plainly
-    const decl *row = q->type.decl;
-    sb *o = &g->c;
-    const int qi = borrowed ? source.index : query_index(g->code, q);
-    sb array = {0}, count = {0};
-    if (borrowed) {
-        sb_put(&array, local_cname(g, q->name));
-        sb_put(&count, borrow_count_name(array.data));
+    memset(r, 0, sizeof *r);
+    r->q = s->query;
+    r->borrowed = r->q->function_param;
+    const borrow_source source = r->borrowed ? query_source(g->routine, g->borrow, r->q) : (borrow_source){0};
+    r->selection = r->borrowed ? source_query(source) : r->q;
+    r->owner = r->borrowed ? source.owner : g->code;
+    if (!r->selection->query_rows || !r->owner) return false;
+    r->qi = r->borrowed ? source.index : query_index(g->code, r->q);
+    if (r->borrowed) {
+        sb_put(&r->array, local_cname(g, r->q->name));
+        sb_put(&r->count, borrow_count_name(r->array.data));
     } else {
-        sb_printf(&array, "tide_q%d", qi);
-        sb_printf(&count, "tide_q%dn", qi);
+        sb_printf(&r->array, "tide_q%d", r->qi);
+        sb_printf(&r->count, "tide_q%dn", r->qi);
     }
-    const char *name = local_cname(g, s->name);
-    const char *end = made_up(g, "query_end");
-    const char *hits = made_up(g, "xh");
-    line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
+    return true;
+}
+
+// The row `index` of the rows, as the loop's row `name` (the query's row type, or for a borrowed query the
+// helper's, filled from its source's as gen_query_walk does).
+static void gen_ix_row_of(gen *g, const ix_rows *r, const char *name, const char *index, const bool born)
+{
+    sb *o = &g->c;
+    const decl *row = r->q->type.decl;
+    if (!r->borrowed) {
+        line(g, o, "const %s %s = %s[%s];", query_row_type(g->code, r->qi), name, r->array.data, index);
+        return;
+    }
+    line(g, o, "struct {");
     g->indent++;
-    gen_query_fresh(g, q, name);
+    for (int i = 0; i < row->fields.count; i++) line(g, o, "%s %s;", c_type(row->fields.items[i].type), field_cname(&row->fields.items[i]));
+    if (born && r->q->local_use) line(g, o, "uint32_t tide_born;");
+    g->indent--;
+    line(g, o, "} %s;", name);
+    const decl *source_row = r->selection->type.decl;
+    for (int i = 0; i < row->fields.count; i++) {
+        const field *f = &row->fields.items[i];
+        const field *from = &source_row->fields.items[0];
+        if (i) for (int k = 1; k < source_row->fields.count; k++) {
+            if (f->type.kind == source_row->fields.items[k].type.kind && f->type.decl == source_row->fields.items[k].type.decl) {
+                from = &source_row->fields.items[k];
+                break;
+            }
+        }
+        line(g, o, "%s.%s = %s[%s].%s;", name, field_cname(f), r->array.data, index, field_cname(from));
+    }
+    if (born && r->q->local_use) line(g, o, "%s.tide_born = %s[%s].tide_born;", name, r->array.data, index);
+}
+
+// The candidates among the rows: tide_xo (NULL: every row, for few) and tide_xn, into `hits`. A view's are made
+// once a view's run (counted, tide_ix_made), so their index is kept for that run at a site of the loop's own
+// (tide_ix_static); a local handler's are a tick's record, made again for each: an index for each run.
+static void gen_ix_rows_search(gen *g, const stmt *s, const ix_rows *r, const char *hits)
+{
+    sb *o = &g->c;
+    const loop_index *plan = s->index;
+    const bool kept = r->owner->is_view;
     gen_ix_bounds(g, plan, "tide_xlo", "tide_xhi");
     line(g, o, "tide_index_hits %s;", hits);
     line(g, o, "tide_index_hits_init(&%s);", hits);
     line(g, o, "const uint64_t *tide_xo = NULL; // NULL: every row");
-    line(g, o, "uint32_t tide_xn = %s;", count.data);
-    line(g, o, "if (%s >= TIDE_IX_LEAST) {", count.data);
+    line(g, o, "uint32_t tide_xn = %s;", r->count.data);
+    line(g, o, "if (%s >= TIDE_IX_LEAST) {", r->count.data);
     g->indent++;
-    line(g, o, "static tide_ix_site tide_xsite; // Views run one at a time");
-    line(g, o, "tide_ix_site *const tide_xs = &tide_xsite;");
-    line(g, o, "tide_index_lock(&tide_xs->lock);");
-    line(g, o, "tide_ix_walk tide_xw = tide_ix_walk_begin(tide_xs, 1u);");
-    line(g, o, "tide_ix_num(&tide_xw, tide_ix_made);");
-    line(g, o, "tide_ix_num(&tide_xw, (uint64_t)(uintptr_t)%s);", array.data);
-    line(g, o, "tide_ix_num(&tide_xw, %s);", count.data);
+    if (kept) line(g, o, "tide_ix_site *const tide_xs = tide_ix_static(%du); // Views run one at a time", ix_site(g, s));
+    else line(g, o, "tide_ix_site *const tide_xs = NULL; // A tick's record of rows: an index of the loop's own");
+    line(g, o, "tide_ix_walk tide_xw = {0};");
+    line(g, o, "(void)tide_ix_hold(tide_xs, NULL, false); // Its lock, for checking it");
+    if (kept) {
+        line(g, o, "if (tide_xs) {");
+        g->indent++;
+        line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, 1u);");
+        line(g, o, "tide_ix_num(&tide_xw, tide_ix_made);");
+        line(g, o, "tide_ix_num(&tide_xw, (uint64_t)(uintptr_t)%s);", r->array.data);
+        line(g, o, "tide_ix_num(&tide_xw, %s);", r->count.data);
+        g->indent--;
+        line(g, o, "}");
+    }
     line(g, o, "bool tide_xown, tide_xbuild;");
     line(g, o, "tide_index *const tide_xi = tide_ix_take(tide_xs, &tide_xw, &tide_xown, &tide_xbuild);");
     line(g, o, "if (tide_xbuild) {");
     g->indent++;
     line(g, o, "tide_index_begin(tide_xi, %du);", plan->count);
-    line(g, o, "for (uint32_t tide_qi = 0; tide_qi < %s; tide_qi++) {", count.data);
+    line(g, o, "for (uint32_t tide_xq = 0; tide_xq < %s; tide_xq++) {", r->count.data);
     g->indent++;
-    // A row's key: the path from the query's row type, which the rows array's own (a borrowed one's source) shares
-    // binding names with only when it's the source's own; else through the source's binding of the same component
-    if (!borrowed) {
-        line(g, o, "const %s tide_xr = %s[tide_qi];", query_row_type(g->code, qi), array.data);
-        gen_ix_keys(g, plan, "tide_xr", "tide_xkey");
-    } else {
-        // The helper's row, filled from the source's as gen_query_foreach does
-        line(g, o, "struct {");
-        g->indent++;
-        for (int i = 0; i < row->fields.count; i++) line(g, o, "%s %s;", c_type(row->fields.items[i].type), field_cname(&row->fields.items[i]));
-        g->indent--;
-        line(g, o, "} tide_xrow;");
-        const decl *source_row = selection->type.decl;
-        for (int i = 0; i < row->fields.count; i++) {
-            const field *f = &row->fields.items[i];
-            const field *from = &source_row->fields.items[0];
-            if (i) for (int k = 1; k < source_row->fields.count; k++) {
-                if (f->type.kind == source_row->fields.items[k].type.kind && f->type.decl == source_row->fields.items[k].type.decl) {
-                    from = &source_row->fields.items[k];
-                    break;
-                }
-            }
-            line(g, o, "tide_xrow.%s = %s[tide_qi].%s;", field_cname(f), array.data, field_cname(from));
-        }
-        gen_ix_keys(g, plan, "tide_xrow", "tide_xkey");
-    }
-    line(g, o, "tide_index_add(tide_xi, tide_xkey, tide_qi);");
+    gen_ix_row_of(g, r, "tide_xr", "tide_xq", false);
+    gen_ix_keys(g, plan, "tide_xr", "tide_xkey");
+    line(g, o, "tide_index_add(tide_xi, tide_xkey, tide_xq);");
     g->indent--;
     line(g, o, "}");
     line(g, o, "tide_index_end(tide_xi);");
@@ -785,40 +860,33 @@ static bool gen_indexed_rows(gen *g, const stmt *s)
     line(g, o, "}");
     line(g, o, "(void)tide_xlo;");
     line(g, o, "(void)tide_xhi;");
+}
+
+static bool gen_indexed_rows(gen *g, const stmt *s)
+{
+    if (!g->ix_any || !s->index || s->kind != S_FOREACH) return false;
+    const loop_index *plan = s->index;
+    if (plan->count < 1 || plan->count > 3) return false;
+    ix_rows r;
+    if (!ix_rows_of(g, s, &r)) return false;
+    ix_used(g, s);
+    sb *o = &g->c;
+    const char *name = local_cname(g, s->name);
+    const char *end = made_up(g, "query_end");
+    const char *hits = made_up(g, "xh");
+    line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
+    g->indent++;
+    gen_query_fresh(g, r.q, name);
+    gen_ix_rows_search(g, s, &r, hits);
     sb cleanup = {0};
-    sb_printf(&cleanup, "tide_index_hits_free(&%s);", hits);
-    const gen_open open = {.cleanup = cleanup.data};
-    vec_push(g->containers, open);
-    const int containers = g->containers.count;
+    const int containers = ix_hits_open(g, hits, &cleanup);
     line(g, o, "for (uint32_t tide_xk = 0; tide_xk < tide_xn; tide_xk++) {");
     g->indent++;
     line(g, o, "const uint32_t tide_qi = tide_xo ? (uint32_t)tide_xo[tide_xk] : tide_xk;");
-    line(g, o, "if (tide_qi >= %s) continue;", count.data);
-    if (!borrowed) {
-        line(g, o, "%s %s = %s[tide_qi];", query_row_type(g->code, qi), name, array.data);
-    } else {
-        line(g, o, "struct {");
-        g->indent++;
-        for (int i = 0; i < row->fields.count; i++) line(g, o, "%s %s;", c_type(row->fields.items[i].type), field_cname(&row->fields.items[i]));
-        if (q->local_use) line(g, o, "uint32_t tide_born;");
-        g->indent--;
-        line(g, o, "} %s;", name);
-        const decl *source_row = selection->type.decl;
-        for (int i = 0; i < row->fields.count; i++) {
-            const field *f = &row->fields.items[i];
-            const field *from = &source_row->fields.items[0];
-            if (i) for (int k = 1; k < source_row->fields.count; k++) {
-                if (f->type.kind == source_row->fields.items[k].type.kind && f->type.decl == source_row->fields.items[k].type.decl) {
-                    from = &source_row->fields.items[k];
-                    break;
-                }
-            }
-            line(g, o, "%s.%s = %s[tide_qi].%s;", name, field_cname(f), array.data, field_cname(from));
-        }
-        if (q->local_use) line(g, o, "%s.tide_born = %s[tide_qi].tide_born;", name, array.data);
-    }
+    line(g, o, "if (tide_qi >= %s) continue;", r.count.data);
+    gen_ix_row_of(g, &r, name, "tide_qi", true);
     line(g, o, "(void)%s;", name);
-    gen_query_field_refs(g, q, name);
+    gen_query_field_refs(g, r.q, name);
     const gen_target loop = {g->frame, containers, true, true, end, false, made_up(g, "next"), false, true};
     vec_push(g->targets, loop);
     gen_body_stmt(g, s->then_stmt);
@@ -834,8 +902,44 @@ static bool gen_indexed_rows(gen *g, const stmt *s)
     return true;
 }
 
+// A parallel loop over rows made for the code: the candidate rows, copied into an array of the loop's own
+// (tide_xrows, freed after the steps) that tide_rows and tide_rown then are. False: it isn't indexed.
+static bool gen_ix_parallel_rows(gen *g, const stmt *s, const char *row)
+{
+    if (!g->ix_any || !s->index || s->kind != S_PARALLEL || s->index->count < 1 || s->index->count > 3) return false;
+    ix_rows r;
+    if (!ix_rows_of(g, s, &r) || r.borrowed) return false;
+    ix_used(g, s);
+    sb *o = &g->c;
+    line(g, o, "const %s *tide_rows = %s;", row, r.array.data);
+    line(g, o, "uint32_t tide_rown = %s;", r.count.data);
+    line(g, o, "%s *tide_xrows = NULL;", row);
+    line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
+    g->indent++;
+    gen_ix_rows_search(g, s, &r, "tide_xh");
+    line(g, o, "if (tide_xo) {");
+    g->indent++;
+    line(g, o, "tide_xrows = tide_xn ? tide_alloc((size_t)tide_xn * sizeof *tide_xrows) : NULL;");
+    line(g, o, "uint32_t tide_xm = 0u;");
+    line(g, o, "for (uint32_t tide_xk = 0; tide_xk < tide_xn; tide_xk++) {");
+    line(g, o, "    if (tide_xo[tide_xk] < %s) tide_xrows[tide_xm++] = %s[tide_xo[tide_xk]];", r.count.data, r.array.data);
+    line(g, o, "}");
+    line(g, o, "tide_rows = tide_xrows;");
+    line(g, o, "tide_rown = tide_xm;");
+    g->indent--;
+    line(g, o, "}");
+    line(g, o, "tide_index_hits_free(&tide_xh);");
+    g->indent--;
+    line(g, o, "}");
+    return true;
+}
+
 // ---------------------------------------------------------------------------
-// A list in a singleton that a system (or a view) only reads
+// Lists
+//
+// A list in a singleton a system or a view only reads keeps its index in the world's cache for the run of the tick
+// (or frame); a list in a local the code never writes after declaring it, in a site of the loop's own for as long as
+// the declaration (its call stamp, tide_ix_call); any other list's index is the loop's own, made at each run.
 
 // The world the list is read from for a site to hold for the code's run: a system's (the match), a view's (the
 // local state's, by the frame), or NULL when the list could change while the code runs.
@@ -852,19 +956,46 @@ static const char *ix_list_world(const gen *g, const stmt *s)
     return code->is_view ? "tide_l" : "tide_w";
 }
 
+// The C name of a local's call stamp (gen_ix_stamp), when it has one where the loop is
+static const char *ix_stamp_of(const gen *g, const stmt *local)
+{
+    if (!local || g->task) return NULL;
+    for (int i = g->ix_stamped.count - 1; i >= 0; i--) {
+        if (g->ix_stamped.items[i] == local) return g->ix_stamp_names.items[i];
+    }
+    return NULL;
+}
+
+// After a local's declaration: its stamp, a number no other declaration's run has, which an index of its list
+// is kept with (a loop's index of a list in a local nothing writes).
+static void gen_ix_stamp(gen *g, const stmt *s)
+{
+    if (!g->ix_any || g->task || s->kind != S_VAR) return;
+    bool planned = false;
+    for (int i = 0; i < g->ix_locals.count && !planned; i++) planned = g->ix_locals.items[i] == s;
+    if (!planned) return;
+    const char *name = made_up(g, "xcall");
+    line(g, &g->c, "const uint64_t %s = tide_ix_call(); // Its list's index holds while this declaration does", name);
+    line(g, &g->c, "(void)%s;", name);
+    vec_push(g->ix_stamped, s);
+    vec_push(g->ix_stamp_names, name);
+}
+
 static bool gen_indexed_list(gen *g, const stmt *s)
 {
-    if (!g->ix_any || !s->index || g->task || s->kind != S_FOREACH || s->value->type.kind != TY_LIST) return false;
+    if (!g->ix_any || !s->index || s->kind != S_FOREACH || s->value->type.kind != TY_LIST) return false;
     const loop_index *plan = s->index;
     if (plan->count < 1 || plan->count > 3) return false;
+    ix_used(g, s);
     const char *world = ix_list_world(g, s);
-    if (!world) return false;
+    const char *stamp = world ? NULL : ix_stamp_of(g, plan->list_local);
     sb *o = &g->c;
     const int site = ix_site(g, s);
     const bool borrows = foreach_borrows(g, s, s->type);
     const int k = s->value->type.decl->index;
     const char *hits = made_up(g, "xh");
     const char *end = made_up(g, "loop_end");
+    const int mark = task_mark(g);
     line(g, o, "{ // Through an index: %s (notes/indexed-loops.md)", loop_index_summary(s));
     g->indent++;
     const char *list = foreach_value(g, s->value);
@@ -874,24 +1005,40 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "const int32_t tide_xcount = tide_list_count(%s);", list);
     line(g, o, "const uint64_t *tide_xo = NULL; // NULL: every element");
     line(g, o, "uint32_t tide_xn = (uint32_t)tide_xcount;");
-    line(g, o, "tide_ix_site *const tide_xs = tide_xcount >= (int32_t)TIDE_IX_LEAST ? tide_ix_site_at(%s->tide_index_cache, %du) : NULL;",
-         world, site);
-    const char *fast = ix_fast(g) && strcmp(world, "tide_w") == 0 ? "true" : "false";
-    line(g, o, "const bool tide_xheld = tide_ix_hold(tide_xs, %s->tide_index_cache, %s);", world, fast);
+    line(g, o, "if (tide_xcount >= (int32_t)TIDE_IX_LEAST) {");
+    g->indent++;
+    const char *fast = world && ix_fast(g) && strcmp(world, "tide_w") == 0 ? "true" : "false";
+    if (world) {
+        line(g, o, "tide_ix_site *const tide_xs = tide_ix_site_at(%s->tide_index_cache, %du);", world, site);
+        line(g, o, "const bool tide_xheld = tide_ix_hold(tide_xs, %s->tide_index_cache, %s);", world, fast);
+    } else if (stamp) {
+        line(g, o, "tide_ix_site *const tide_xs = tide_ix_static(%du);", site);
+        line(g, o, "const bool tide_xheld = tide_ix_hold(tide_xs, NULL, false);");
+    } else {
+        line(g, o, "tide_ix_site *const tide_xs = NULL; // No proof the list is as it was: an index of the loop's own");
+        line(g, o, "const bool tide_xheld = false;");
+    }
     line(g, o, "if (tide_xheld) {");
     g->indent++;
     line(g, o, "tide_index_find(tide_xs->ix, tide_xlo, tide_xhi, &%s);", hits);
-    line(g, o, "tide_xo = %s.items;", hits);
-    line(g, o, "tide_xn = %s.count;", hits);
     g->indent--;
-    line(g, o, "} else if (tide_xs) {");
+    line(g, o, "} else {");
     g->indent++;
-    line(g, o, "tide_ix_walk tide_xw = tide_ix_walk_begin(tide_xs, %lluull);",
+    line(g, o, "tide_ix_walk tide_xw = {0};");
+    line(g, o, "if (tide_xs) {");
+    g->indent++;
+    line(g, o, "tide_xw = tide_ix_walk_begin(tide_xs, %lluull);",
          (unsigned long long)ix_hash(c_type(s->type)) ^ (unsigned long long)plan->count);
-    line(g, o, "tide_ix_num(&tide_xw, %s->tide_index_cache->epoch);", world);
-    if (strcmp(world, "tide_l") == 0) line(g, o, "tide_ix_num(&tide_xw, (uint64_t)(uintptr_t)tide_w);");
+    if (world) {
+        line(g, o, "tide_ix_num(&tide_xw, %s->tide_index_cache->epoch);", world);
+        if (strcmp(world, "tide_l") == 0) line(g, o, "tide_ix_num(&tide_xw, (uint64_t)(uintptr_t)tide_w);");
+    } else {
+        line(g, o, "tide_ix_num(&tide_xw, %s);", stamp ? stamp : "0u");
+    }
     line(g, o, "tide_ix_num(&tide_xw, (uint64_t)(%s).at);", list);
     line(g, o, "tide_ix_num(&tide_xw, (uint64_t)tide_xcount);");
+    g->indent--;
+    line(g, o, "}");
     line(g, o, "bool tide_xown, tide_xbuild;");
     line(g, o, "tide_index *const tide_xi = tide_ix_take(tide_xs, &tide_xw, &tide_xown, &tide_xbuild);");
     line(g, o, "if (tide_xbuild) {");
@@ -907,9 +1054,12 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "tide_index_end(tide_xi);");
     g->indent--;
     line(g, o, "}");
-    line(g, o, "tide_ix_searching(tide_xs, tide_xown, %s->tide_index_cache, %s);", world, fast);
+    if (world) line(g, o, "tide_ix_searching(tide_xs, tide_xown, %s->tide_index_cache, %s);", world, fast);
+    else line(g, o, "tide_ix_searching(tide_xs, tide_xown, NULL, false);");
     line(g, o, "tide_index_find(tide_xi, tide_xlo, tide_xhi, &%s);", hits);
     line(g, o, "tide_ix_searched(tide_xs, tide_xi, tide_xown, false);");
+    g->indent--;
+    line(g, o, "}");
     line(g, o, "tide_xo = %s.items;", hits);
     line(g, o, "tide_xn = %s.count;", hits);
     g->indent--;
@@ -917,23 +1067,23 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "(void)tide_xlo;");
     line(g, o, "(void)tide_xhi;");
     sb cleanup = {0};
-    sb_printf(&cleanup, "tide_index_hits_free(&%s);", hits);
-    const gen_open open = {.cleanup = cleanup.data};
-    vec_push(g->containers, open);
-    const int containers = g->containers.count;
+    const int containers = ix_hits_open(g, hits, &cleanup);
     line(g, o, "for (uint32_t tide_xk = 0; tide_xk < tide_xn; tide_xk++) {");
     g->indent++;
+    const int round = task_mark(g);
     const char *index = made_up(g, "i");
     line(g, o, "const int32_t %s = tide_xo ? (int32_t)tide_xo[tide_xk] : (int32_t)tide_xk;", index);
     const bool copy = type_has_list(s->type) && !borrows;
-    line(g, o, "const %s %s = %stide_list%d_get(%s, %s)%s;", elem_vtype(s->type), local_cname(g, s->name),
+    line(g, o, "%s%s %s = %stide_list%d_get(%s, %s)%s;", g->task ? "" : "const ", elem_vtype(s->type), local_cname(g, s->name),
          copy ? element_copy_open(s->type) : "", k, list, index, copy ? ")" : "");
     line(g, o, "(void)%s;", local_cname(g, s->name));
+    task_declare(g, local_cname(g, s->name), s->type);
     const gen_target loop = {g->frame, containers, true, true, end, false, made_up(g, "next"), false, false};
     vec_push(g->targets, loop);
     gen_body_stmt(g, s->then_stmt);
     const gen_target done = g->targets.items[--g->targets.count];
     if (done.next_used) line(g, o, "%s:;", done.next);
+    task_pop(g, round);
     g->indent--;
     line(g, o, "}");
     if (done.end_used) line(g, o, "%s:;", end);
@@ -941,6 +1091,7 @@ static bool gen_indexed_list(gen *g, const stmt *s)
     line(g, o, "%s", cleanup.data);
     g->indent--;
     line(g, o, "}");
+    task_pop(g, mark);
     return true;
 }
 
@@ -957,6 +1108,7 @@ static bool ix_par_list(const gen *g, const stmt *s)
 // tide_xmn. The steps change elements, so the index is the loop's own, made from the list as the loop starts.
 static void gen_ix_par_marks(gen *g, const stmt *s)
 {
+    ix_used(g, s);
     sb *o = &g->c;
     const loop_index *plan = s->index;
     const int k = s->value->type.decl->index;

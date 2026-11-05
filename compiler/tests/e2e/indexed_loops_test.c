@@ -20,8 +20,11 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 
+static tide_event_log events; // What local handlers hear of each tick
+
 static uint64_t frame(void)
 {
+    tide_local_events(&local, &events);
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     return (uint64_t)local.Drawn.rows * 1000003u + (uint64_t)local.Drawn.helper;
@@ -33,15 +36,18 @@ TIDE_TEST(indexed_loops_give_what_plain_loops_give)
     tide_local_init(&local);
     uint64_t at[80] = {0};
     for (int t = 0; t < 80; t++) {
-        tide_world_tick(&world);
+        tide_world_tick_events(&world, NULL, &events);
         const uint64_t drawn = frame();
         at[t] = tide_world_hash(&world);
-        printf("ixloops %d %016" PRIx64 " %" PRIu64 " %.9g %d %d %d %d %.9g\n", t, at[t], drawn, (double)local.Drawn.sum,
-               world.Stats.teams, world.Stats.low, world.Stats.band, world.Stats.tagged, (double)world.Stats.sum);
+        printf("ixloops %d %016" PRIx64 " %" PRIu64 " %.9g %d %d %d %d %.9g %d %d %d %d %d\n", t, at[t], drawn, (double)local.Drawn.sum,
+               world.Stats.teams, world.Stats.low, world.Stats.band, world.Stats.tagged, (double)world.Stats.sum,
+               world.Stats.around, world.Stats.shifting, world.Sparks.warm, local.Drawn.glanced, local.Drawn.marked);
         if (t == 30) tide_world_copy(&snapshot, &world);
     }
     TIDE_CHECK(world.Stats.teams > 0 && world.Stats.low > 0 && world.Stats.band > 0 && world.Stats.tagged > 0);
     TIDE_CHECK(local.Drawn.rows > 0 && local.Drawn.helper > 0);
+    TIDE_CHECK(world.Stats.around > 0 && world.Stats.shifting > 0 && local.Drawn.marked > 0);
+    TIDE_CHECK(local.Drawn.glanced > 0);
 #ifdef IXTEST_INDEXED
     TIDE_CHECK(world.tide_index_cache != NULL);
     TIDE_CHECK(local.tide_index_cache != NULL);
@@ -71,6 +77,7 @@ TIDE_TEST(indexed_loops_give_what_plain_loops_give)
     tide_world_free(&unpacked);
     tide_world_free(&copy);
     tide_world_free(&snapshot);
+    tide_event_log_free(&events);
     tide_local_free(&local);
     tide_world_free(&world);
 }

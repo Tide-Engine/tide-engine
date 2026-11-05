@@ -41,6 +41,9 @@ typedef struct loop_index {
     index_key keys[3]; // One to three keys: a grid over a vector's components, or one key sorted
     int count;
     const decl *component; // A query's key: the component its field is in
+    // A list's: the local (S_VAR) the list is, when nothing in the code writes it after declaring it, so an index
+    // made of it holds for as long as the declaration does (index_codegen.inc keeps it across the loop's runs)
+    const stmt *list_local;
 } loop_index;
 
 // Plans every loop's index once the program is checked, and reports the

@@ -13,14 +13,16 @@ tick:
 
 | | Plain | Indexed |
 |---|---|---|
-| 10,000 boids and 10,000 agents | 353 | 9.5 |
+| 10,000 boids and 10,000 agents | 341 | 9.3 |
 | 10,000 boids | 86 | 7.6 |
 | 10,000 agents | 273 | 1.8 |
-| 1,000 of each | 3.16 | 0.74 |
-| 200 of each | 0.134 | 0.030 |
-| 50 of each | 0.0096 | 0.0066 |
-| 20 of each | 0.0015 | 0.0054 |
+| 1,000 of each | 2.95 | 0.72 |
+| 200 of each | 0.129 | 0.028 |
+| 50 of each | 0.0091 | 0.0064 |
+| 20 of each | 0.00148 | 0.00142 |
 
+Below 32 rows a loop runs the plain loop (its body is written twice): 20 of each cost 5.4 µs a tick before that,
+listing the rows and gathering each. The boids and agents alone are from before it.
 More threads change nothing here: the tick's estimate of a system's work counts a loop over a query as one step,
 so neither build's tick goes on threads at these sizes. Before a system's own loop searched its index with no lock
 once it was found to hold that tick, checking the index's facts under the lock for every entity made the indexed

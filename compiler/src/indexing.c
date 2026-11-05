@@ -1247,6 +1247,56 @@ static bool choose(const constraints *set, loop_index *plan)
     return true;
 }
 
+// Whether code waits anywhere in it (await).
+static bool expr_waits(const expr *e);
+static bool stmt_waits(const stmt *s)
+{
+    if (!s) return false;
+    if (expr_waits(s->cond) || expr_waits(s->value) || expr_waits(s->target)) return true;
+    if (stmt_waits(s->init) || stmt_waits(s->step) || stmt_waits(s->then_stmt) || stmt_waits(s->else_stmt)) return true;
+    for (int i = 0; i < s->stmts.count; i++) {
+        if (stmt_waits(s->stmts.items[i])) return true;
+    }
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) {
+            if (stmt_waits(s->cases.items[i].body.items[k])) return true;
+        }
+    }
+    return false;
+}
+
+static bool expr_waits(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_AWAIT) return true;
+    if (expr_waits(e->object) || expr_waits(e->lhs) || expr_waits(e->rhs) || expr_waits(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (expr_waits(e->args.items[i])) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (expr_waits(e->inits.items[i].value)) return true;
+    }
+    return stmt_waits(e->block) || stmt_waits(e->step);
+}
+
+// The local a loop's list is in (the list itself or a field of it), when it's a local declared in the code
+// (not a parameter, a loop's variable or an `out` one) that nothing in the code writes after declaring it: then
+// the list it holds is the same for as long as the declaration is.
+static const stmt *unwritten_local(const decl *code, const expr *list)
+{
+    const expr *root = list;
+    while (root && root->kind == E_MEMBER && root->object && root->field && !root->property && !root->local_field) {
+        root = root->object;
+    }
+    if (!root || root->kind != E_NAME || root->bind != BIND_LOCAL || !root->local) return NULL;
+    const stmt *local = root->local;
+    if (local->kind != S_VAR || local->out_decl || local->is_shared || !code->body) return NULL;
+    ictx c = {0};
+    c.code = code;
+    walk_writes_stmt(&c, code->body);
+    return loop_changes(&c, local, NULL) ? NULL : local;
+}
+
 static void plan_loop(const program *prog, const decl *code, stmt *loop)
 {
     const type source = loop->value ? loop->value->type : (type){TY_ERROR, NULL};
@@ -1279,7 +1329,12 @@ static void plan_loop(const program *prog, const decl *code, stmt *loop)
     } else if (choose(&found, plan)) {
         plan->component = query ? path_component(&c, plan->keys[0].path) : NULL;
         const bool still = query ? query_source_still(&c, plan) : list_source_still(&c);
-        if (still) loop->index = plan;
+        if (still && code->is_async && stmt_waits(loop->then_stmt)) {
+            because(&c, loop->at, "its body waits (await), and the index's search can't be kept across a wait");
+        } else if (still) {
+            loop->index = plan;
+            if (list && !c.list_steps) plan->list_local = unwritten_local(code, loop->value);
+        }
     } else {
         because(&c, loop->at, "its guard bounds no number of the row on either side");
     }

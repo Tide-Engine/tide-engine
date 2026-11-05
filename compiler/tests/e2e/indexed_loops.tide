@@ -63,6 +63,7 @@ struct Spark
 singleton Sparks
 {
     List<Spark> items;
+    int warm;
 }
 
 singleton Stats
@@ -73,6 +74,8 @@ singleton Stats
     int tagged;
     int spawned;
     float sum;
+    int around;
+    int shifting;
 }
 
 local singleton Drawn
@@ -80,6 +83,19 @@ local singleton Drawn
     int rows;
     int helper;
     float sum;
+    int glanced;
+    int marked;
+    List<float2> marks;
+}
+
+component Trail
+{
+    List<float2> marks;
+}
+
+event Tick
+{
+    float3 at;
 }
 
 event Hit
@@ -114,7 +130,7 @@ event(Spawned) Setup(with Main)
     for (var i = 0; i < 400; i++)
     {
         var at = float3(Spread(i, 4) * 30.0f - 15.0f, Spread(i, 5) * 30.0f - 15.0f, Spread(i, 6) * 2.0f);
-        Spawn(Body { position = at, velocity = float3(Spread(i, 7) - 0.5f, Spread(i, 8) - 0.5f, 0.0f) }, Mover, Score { },
+        Spawn(Body { position = at, velocity = float3(Spread(i, 7) - 0.5f, Spread(i, 8) - 0.5f, 0.0f) }, Mover, Score { }, Trail { },
               Unit { team = i % 2 == 0 ? Team.Blue : Team.Green, level = i % 4, health = 5.0f, alive = true });
     }
 }
@@ -307,5 +323,116 @@ system Glow(mut Sparks sparks, Time time)
         mut var spark = sparks.items[i];
         spark.heat += float(time.tick % 5) * 0.5f + spark.at.y;
         sparks.items[i] = spark;
+    }
+}
+
+// A list in a component: an index of the loop's own at each run
+system Mark(mut Trail trail, Body body, with Mover)
+{
+    if (trail.marks.count < 48) trail.marks.Add(body.position.xy);
+}
+
+system Follow(mut Score score, Trail trail, Body body, with Mover)
+{
+    foreach (var m in trail.marks)
+    {
+        if (Math.Distance(m, body.position.xy) > 2.0f) continue;
+        score.list += 1;
+    }
+}
+
+// A list in a singleton the system changes (not the list)
+system Heat(mut Sparks sparks)
+{
+    sparks.warm = 0;
+    foreach (var s in sparks.items)
+    {
+        if (s.heat < 10.0f) continue;
+        sparks.warm += 1;
+    }
+}
+
+List<float2> Points(int salt, int n)
+{
+    mut List<float2> points = [];
+    for (var i = 0; i < n; i++) points.Add(float2(Spread(i, salt) * 40.0f - 20.0f, Spread(i, salt + 1) * 40.0f - 20.0f));
+    return points;
+}
+
+// A local's list nothing writes after declaring it: its index is kept across the inner loop's runs in one call,
+// and made again for the next call, whose list can be at the same place with other points
+int Around(int salt)
+{
+    var points = Points(salt, 200);
+    mut var n = 0;
+    for (var k = 0; k < 30; k++)
+    {
+        var c = float2(float(k) - 15.0f, float(k % 7) * 3.0f - 9.0f);
+        foreach (var p in points)
+        {
+            if (Math.Distance(p, c) > 4.0f) continue;
+            n += k + 1;
+        }
+    }
+    return n;
+}
+
+// ...and one the code writes between the inner loop's runs: an index of the loop's own each run
+int Shifting(int salt)
+{
+    mut var points = Points(salt, 120);
+    mut var n = 0;
+    for (var k = 0; k < 20; k++)
+    {
+        var c = float2(float(k) * 2.0f - 20.0f, 0.0f);
+        foreach (var p in points)
+        {
+            if (Math.Abs(p.x - c.x) > 3.0f) continue;
+            n += k;
+        }
+        points[k] = float2(c.x + 0.5f, c.y);
+    }
+    return n;
+}
+
+system Scatter(mut Stats stats, Time time)
+{
+    stats.around = Around(int(time.tick % 3) + 20); // One call a tick: the next tick's list is where this one was
+    stats.shifting = Shifting(int(time.tick % 4) + 30);
+}
+
+// A local handler's rows (a tick's record), and a parallel loop over them
+system Clock(Time time)
+{
+    Send(Tick { at = float3(float(time.tick % 30) - 15.0f, float(time.tick % 11) - 5.0f, 1.0f) });
+}
+
+local event(Tick t) Glance(mut Drawn drawn, query (Body other, with Wall) walls)
+{
+    foreach (var w in walls)
+    {
+        if (Math.Distance(w.other.position, t.at) > 5.0f) continue;
+        if (!Finite(w.other.position)) continue;
+        drawn.glanced += 1;
+    }
+    parallel (var w in walls)
+    {
+        if (Math.Distance(w.other.position, t.at) > 5.0f) continue;
+    }
+}
+
+// A view's rows in a parallel loop, and a list in a local singleton the view changes
+view Scan(mut Drawn drawn, Field field, query (Body other, with Wall) walls)
+{
+    parallel (var w in walls)
+    {
+        if (Math.Distance(w.other.position, float3(1.0f, 2.0f, 1.0f)) > 6.0f) continue;
+    }
+    if (drawn.marks.count < 64) drawn.marks.Add(float2(float(drawn.marks.count) * 0.5f - 16.0f, field.reach));
+    var lane = float(drawn.rows % 20) - 10.0f;
+    foreach (var m in drawn.marks)
+    {
+        if (Math.Abs(m.x - lane) > 2.0f) continue;
+        drawn.marked += 1;
     }
 }
