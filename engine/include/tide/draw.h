@@ -1760,7 +1760,8 @@ typedef struct tide_draw_gpu_op {
 // frame drawn next is done on the GPU. Begin gives a ticket, never 0, or 0 while the most are pending
 // (TIDE_GPU_READS), to try again; poll says whether it's done, with what was read: the count, and for a whole
 // read the elements' words, `count * stride` of them, valid until it's forgotten. A read of a list lost or
-// disposed meanwhile is done and failed (ok false), and so is a ticket this build doesn't know (another's).
+// disposed meanwhile is done and failed (ok false), and so is a ticket nobody knows (one let go of, or of a list freed at
+// a build's unload).
 enum { TIDE_GPU_READS = 64 };
 typedef struct tide_gpu_read_result {
     bool ok;
@@ -1787,7 +1788,16 @@ typedef struct tide_gpu_read_request {
     bool forgotten; // Let go of while begun: the renderer finishes it, and it goes free then
     uint32_t age;   // Frames since it was done (tide_gpu_reads_frame)
 } tide_gpu_read_request;
-tide_gpu_read_request *tide_gpu_read_requests(void);
+// The requests and the serial their tickets go by. Each copy of the engine has one, and a host that loads the game
+// as a library hands its own to each library it loads (tide_gpu_reads_share, through tide_host_game.gpu_reads_share),
+// so the game's reads are the renderer's, and a read begun before a hot reload finishes after it.
+typedef struct tide_gpu_reads {
+    tide_gpu_read_request requests[TIDE_GPU_READS];
+    uint32_t serial;
+} tide_gpu_reads;
+tide_gpu_reads *tide_gpu_reads_table(void);         // This copy's table now
+void tide_gpu_reads_share(tide_gpu_reads *table);   // Another copy's to use from now on, or NULL for its own
+tide_gpu_read_request *tide_gpu_read_requests(void); // tide_gpu_reads_table()->requests
 void tide_gpu_read_finished(tide_gpu_read_request *r, bool ok);
 // Once a frame, by the renderer: a read done long since that nobody polls (its task was cancelled) goes free.
 void tide_gpu_reads_frame(void);

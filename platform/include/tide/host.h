@@ -139,6 +139,9 @@ typedef struct tide_host_game {
     // Optional: tide_screen_keyboard_get, the keyboard on screen the game's C
     // registered (tide/screen_keyboard.h) in its own engine copy.
     const tide_screen_keyboard *(*screen_keyboard)(void);
+    // Optional: tide_gpu_reads_share, which the host calls with its own table of GPU lists' reads as it loads the
+    // library, so the game's reads (in its own engine copy) are the ones the host's renderer begins and finishes.
+    void (*gpu_reads_share)(tide_gpu_reads *table);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.

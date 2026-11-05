@@ -241,7 +241,10 @@ static const tide_host_game *load(const uint32_t build, void **library, const bo
         return NULL;
     }
     *library = opened;
-    return game();
+    const tide_host_game *loaded = game();
+    // Its engine copy's reads of GPU lists are the host's table, which the renderer finishes, through every reload
+    if (loaded && loaded->gpu_reads_share) loaded->gpu_reads_share(tide_gpu_reads_table());
+    return loaded;
 }
 
 // The match's worlds, carried over for tide_session_migrate. The first one is

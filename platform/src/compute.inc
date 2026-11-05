@@ -12,6 +12,7 @@
 typedef struct gpu_list_buffer {
     uint64_t id;
     uint64_t version;
+    uint64_t words; // What it was made for: the header and capacity * stride
     uint32_t epoch; // The draw list's epoch it was last named in
     tide_gpu_id buffer;
 } gpu_list_buffer;
@@ -77,7 +78,10 @@ static tide_gpu_id list_buffer(const uint64_t id)
     if (b) b->epoch = gpu_list_epoch; // Named in this build's list: its state is this build's to read
     const tide_gpu_list_state *s = tide_gpu_list_state_of(id);
     if (!s || !s->alive) return 0;
-    if (b && b->buffer && b->version == s->version) return b->buffer;
+    const uint64_t words = TIDE_GPU_LIST_HEADER_WORDS + (uint64_t)s->capacity * s->stride;
+    // A state no renderer made a buffer for is a new list, even at the address of one the last build freed (a full
+    // reload, or a swap that didn't adopt it): its record, kept for an adopted list, isn't its
+    if (b && b->buffer && b->version == s->version && b->words == words && s->made) return b->buffer;
     if (!b) {
         if (gpu_list_count == gpu_list_capacity) {
             const uint32_t capacity = gpu_list_capacity ? gpu_list_capacity * 2u : 16u;
@@ -89,8 +93,8 @@ static tide_gpu_id list_buffer(const uint64_t id)
         *b = (gpu_list_buffer){.id = id, .epoch = gpu_list_epoch};
     }
     if (b->buffer) free_buffer(b->buffer);
-    const uint64_t words = TIDE_GPU_LIST_HEADER_WORDS + (uint64_t)s->capacity * s->stride;
     b->buffer = made_buffer(TIDE_GPU_STORAGE, (size_t)(words * 4u), NULL);
+    b->words = words;
     const uint32_t header[TIDE_GPU_LIST_HEADER_WORDS] = {0, s->capacity, 0, 0};
     gpu->buffer_write(b->buffer, 0, header, sizeof header);
     b->version = s->version;
