@@ -1824,6 +1824,20 @@ static uint64_t vk_device_memory(void)
     return most;
 }
 
+// The most a storage buffer bound whole can be: what a shader reaches of one (maxStorageBufferRange), and what one
+// buffer and one allocation of its memory can be, rounded down to 16 bytes.
+static uint64_t vk_storage_most(void)
+{
+    VkPhysicalDeviceVulkan11Properties v11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES};
+    VkPhysicalDeviceVulkan13Properties v13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, .pNext = &v11};
+    VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &v13};
+    vkGetPhysicalDeviceProperties2(vk.physical, &properties);
+    uint64_t most = vk.properties.limits.maxStorageBufferRange;
+    if (v11.maxMemoryAllocationSize && v11.maxMemoryAllocationSize < most) most = v11.maxMemoryAllocationSize;
+    if (v13.maxBufferSize && v13.maxBufferSize < most) most = v13.maxBufferSize;
+    return most & ~(uint64_t)15u;
+}
+
 static tide_gpu_id vk_target_texture(const tide_gpu_id id, const uint32_t color)
 {
     const vk_target *t = &vk.targets[id - 1u];
@@ -3221,7 +3235,8 @@ static bool create_device(const bool say)
             continue;
         }
         // Compute as WebGPU's defaults have it, which every render backend has: a pipeline's storage
-        // buffers in each stage, and workgroups of 256 invocations, 64 deep
+        // buffers in each stage (4, the least every device has: a shader's GPU lists are ranges of two pools), and
+        // workgroups of 256 invocations, 64 deep
         const VkPhysicalDeviceLimits *limits = &properties.limits;
         if (limits->maxPerStageDescriptorStorageBuffers < TIDE_GPU_MAX_STORAGE || limits->maxComputeWorkGroupInvocations < 256u
             || limits->maxComputeWorkGroupSize[0] < 256u || limits->maxComputeWorkGroupSize[1] < 256u
@@ -3581,6 +3596,7 @@ const tide_gpu tide_gpu_vulkan = {
     .time_read = vk_time_read,
     .time_reset = vk_time_reset,
     .buffer = vk_buffer_make,
+    .storage_most = vk_storage_most,
     .buffer_write = vk_buffer_write,
     .buffer_free = vk_buffer_free,
     .texture = vk_texture_make,

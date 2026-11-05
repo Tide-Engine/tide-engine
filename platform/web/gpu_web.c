@@ -52,6 +52,8 @@ TIDE_WEB_IMPORT(gpu_pipeline_ready) bool tide_web_gpu_pipeline_ready(tide_gpu_id
 TIDE_WEB_IMPORT(gpu_pipeline_failed) bool tide_web_gpu_pipeline_failed(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_target) tide_gpu_id tide_web_gpu_target(tide_gpu_target_format format, int width, int height);
 TIDE_WEB_IMPORT(gpu_target_limit) int tide_web_gpu_target_limit(void);
+// The most bytes a storage buffer bound whole can be (gpu.h, storage_most), as a JavaScript number
+TIDE_WEB_IMPORT(gpu_storage_most) double tide_web_gpu_storage_most(void);
 TIDE_WEB_IMPORT(gpu_target_texture) tide_gpu_id tide_web_gpu_target_texture(tide_gpu_id target, uint32_t color);
 TIDE_WEB_IMPORT(gpu_target_depth) tide_gpu_id tide_web_gpu_target_depth(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_resolve_depth) void tide_web_gpu_resolve_depth(tide_gpu_id target);
@@ -118,6 +120,12 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
     return tide_web_gpu_pipeline_end();
 }
 
+static uint64_t web_storage_most(void)
+{
+    const double most = tide_web_gpu_storage_most();
+    return most >= 134217728.0 && most < 18446744073709551616.0 ? (uint64_t)most & ~(uint64_t)15u : UINT64_C(134217728);
+}
+
 // WebGPU has two sample counts, 1 and 4, for every format here: what asks for
 // more than 1 has 4. A target of depth alone has 1.
 // What a target's depth holds now: its texture, or a multisampled one's samples (gpu.h)
@@ -166,6 +174,7 @@ const tide_gpu tide_gpu_webgpu = {
     .pipeline_failed = tide_web_gpu_pipeline_failed,
     .target = tide_web_gpu_target,
     .target_limit = tide_web_gpu_target_limit,
+    .storage_most = web_storage_most,
     .target_samples = tide_web_gpu_target_samples,
     .target_texture = tide_web_gpu_target_texture,
     .target_depth = tide_web_gpu_target_depth,

@@ -126,7 +126,7 @@ test('WebGPU preserves every read kind in high texture slots and builds matching
             const sandbox = {
                 low, high, string: () => '', stencilTests: ['always'], stencilOps: ['keep'],
                 colorFormats: () => [], samplesOf: () => 1, layouts: new Map(),
-                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 7,
+                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 4,
                 readsDepth: read => read === 1 || read === 2,
                 ownSampler: (read, sampler) => !sampler && read !== 4 && read !== 5,
                 GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
@@ -167,7 +167,7 @@ test('WebGPU textures read through another texture\'s sampler have none of their
     const made = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 7,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 4,
         readsDepth: read => read === 1 || read === 2, ownSampler: (read, sampler) => !sampler && read !== 4 && read !== 5,
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
         device: {
@@ -212,7 +212,7 @@ test('WebGPU storage buffers get explicit layouts at binding 33 on, read-only ou
     const layoutsMade = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 7,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 4,
         readsDepth: read => read === 1 || read === 2, ownSampler: (read, sampler) => !sampler && read !== 4 && read !== 5,
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
         device: {
@@ -233,8 +233,9 @@ test('WebGPU storage buffers get explicit layouts at binding 33 on, read-only ou
         }
         return made;
     })()`, sandbox);
-    assert.deepEqual(Array.from(made, m => m.storage), ['', 'rrr', 'wrwrrrw', '']);
-    assert.deepEqual(Array.from(made, m => m.key), ['0/1', '0/1|rrr', '0/1|wrwrrrw|compute', '0/1||compute']);
+    // Past MAX_STORAGE (4: GPU lists are ranges of two pools) a pipeline binds the first 4
+    assert.deepEqual(Array.from(made, m => m.storage), ['', 'rrr', 'wrwr', '']);
+    assert.deepEqual(Array.from(made, m => m.key), ['0/1', '0/1|rrr', '0/1|wrwr|compute', '0/1||compute']);
     assert.equal(layoutsMade.length, 4);
     const [plain, render, compute, bare] = layoutsMade;
     assert.equal(plain.length, 3, 'a pipeline without storage is laid out as before');
@@ -243,8 +244,7 @@ test('WebGPU storage buffers get explicit layouts at binding 33 on, read-only ou
     assert.deepEqual(Array.from(render).filter(e => e.buffer && e.binding >= 33).map(e => [e.binding, e.buffer.type, e.visibility]),
         [[33, 'read-only-storage', 3], [34, 'read-only-storage', 3], [35, 'read-only-storage', 3]]);
     assert.deepEqual(Array.from(compute).filter(e => e.buffer && e.binding >= 33).map(e => [e.binding, e.buffer.type]),
-        [[33, 'storage'], [34, 'read-only-storage'], [35, 'storage'], [36, 'read-only-storage'],
-            [37, 'read-only-storage'], [38, 'read-only-storage'], [39, 'storage']]);
+        [[33, 'storage'], [34, 'read-only-storage'], [35, 'storage'], [36, 'read-only-storage']]);
     assert.ok(compute.every(e => e.visibility === 4), 'a compute pipeline binds everything to its compute stage');
     assert.equal(bare.length, 3);
     assert.ok(bare.every(e => e.visibility === 4));

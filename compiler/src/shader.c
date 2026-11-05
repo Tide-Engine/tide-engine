@@ -13,6 +13,9 @@
 // bindings (TIDE_GPU_STORAGE_BINDING).
 #define SHADER_TEXTURES 16
 #define SHADER_STORAGE_BINDING (1 + 2 * SHADER_TEXTURES)
+// The most GPU lists one shader names (tide/draw.h's TIDE_SHADER_STORAGE): a table's, in its uniforms, as a shader
+// binds the pools its lists are ranges of rather than each list (shader_compute.inc)
+#define SHADER_STORAGE_MOST 64
 
 // Tide code the GPU runs: a `frag` for each pixel of a mesh, a `vert` for
 // each of its vertices, and the functions they call. For every combination a
@@ -160,7 +163,7 @@ typedef struct emit {
     int part_first, part_count;  // ...and which part
     const expr *held_root;       // The element, or the part of one, that the local being declared holds (st_var)...
     const stmt *held_by;         // ...and the local
-    bool storage_done[7];        // The GPU lists whose functions are written (need_storage)
+    bool storage_done[SHADER_STORAGE_MOST]; // The GPU lists whose functions are written (need_storage)
     VEC(const char *) atomic_fns; // ...and the atomics' and shared memory's (need_atomic)
     bool guards_shared;           // A kernel's write to shared memory is under tide_zero (writes_shared)
 } emit;
@@ -6248,7 +6251,13 @@ static void put_instance_loads(emit *em, sb *o)
     const int slot = sh->instance_storage;
     need_storage(em, slot);
     const type element = slot_element(em, slot);
-    sb_printf(o, "    let tide_e = 4u + tide_instance_index * %du;\n", element_words(element, NULL));
+    // Its element, held inside the list's range: the GPU draws as many as its count, never more than its capacity
+    sb_printf(o, "    let tide_e = 4u + min(tide_instance_index, u32(max(");
+    sb *const out = em->o;
+    em->o = o;
+    put_word(em, 'v', sh->storage_at + 2 * slot + 1);
+    em->o = out;
+    sb_printf(o, ", 1) - 1)) * %du;\n", element_words(element, NULL));
     for (int v = 0; v < sh->values.count; v++) {
         const shader_value *value = &sh->values.items[v];
         if (!value->per_instance) continue;
@@ -6307,8 +6316,7 @@ static void write_wgsl(program *prog, shader *sh)
     const bool rolls = stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG);
     sb o = {0}, rest = {0};
     put_uniforms(sh, &o);
-    for (int i = 0; i < sh->storage.count; i++) // The GPU lists its code reads, and an indirect draw's instances
-        sb_printf(&o, "@group(0) @binding(%d) var<storage, read> tide_s%d: array<u32>;\n", SHADER_STORAGE_BINDING + i, i);
+    put_pools(sh, &o); // The pools of the GPU lists its code reads, and an indirect draw's instances
     sb loads = {0};
     if (sh->gpu_instances) put_instance_loads(&em, &loads);
     put_wgsl_inputs(sh, &rest);
@@ -6419,13 +6427,13 @@ static void add_bound(shader *sh, decl *d)
     vec_push(sh->bound, d);
 }
 
-// A GPU list the code names, as one of the shader's storage buffers.
+// A GPU list the code names, as one of the shader's slots: a range of the pool of ints for a GPUList<int>.
 static void add_storage(shader *sh, const decl *source, const field *f)
 {
     for (int i = 0; i < sh->storage.count; i++) {
         if (sh->storage.items[i].source == source && sh->storage.items[i].field == f) return;
     }
-    const shader_storage s = {.source = source, .field = f};
+    const shader_storage s = {.source = source, .field = f, .ints = f->type.decl->fields.items[0].type.kind == TY_INT};
     vec_push(sh->storage, s);
 }
 
@@ -6586,7 +6594,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->gpu_instances = call->gpu_instances;
     sh->gpu_vertices = call->gpu_vertices;
     sh->gpu_indices = call->gpu_indices;
-    sh->instance_storage = sh->vertex_storage = sh->index_storage = sh->through_at = sh->sides_at = -1;
+    sh->instance_storage = sh->vertex_storage = sh->index_storage = sh->through_at = sh->sides_at = sh->storage_at = -1;
     // The lists the draw gives are its first storage buffers: its instances', its vertices', then its indices'
     if (sh->gpu_instances) {
         const shader_storage instances = {.role = STORAGE_INSTANCES};
@@ -6599,7 +6607,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         vec_push(sh->storage, vertices);
     }
     if (sh->gpu_indices) {
-        const shader_storage indices = {.role = STORAGE_INDICES};
+        const shader_storage indices = {.role = STORAGE_INDICES, .ints = true};
         sh->index_storage = sh->storage.count;
         vec_push(sh->storage, indices);
     }
@@ -6621,8 +6629,10 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     if (sh->dims == 3) add_value(sh, NULL, NULL, (type){TY_FLOAT4X4, NULL}, true)->vert_reads = true;
     plan_reads(prog, sh, sh->vert);
     plan_reads(prog, sh, sh->frag);
-    if (sh->storage.count > 7) {
-        diag_error(call->at, "this draw reads %d GPU lists, and a GPU binds 7", sh->storage.count);
+    if (sh->storage.count > SHADER_STORAGE_MOST) {
+        diag_error(call->at, "this draw reads %d GPU lists, and a draw's shaders name %d at the most", sh->storage.count,
+                   SHADER_STORAGE_MOST);
+        diag_note("keep what several lists hold in one list of a struct, or draw in two draws");
         return NULL;
     }
     if (textured) {
@@ -6683,6 +6693,12 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->rolled_at = sh->seed_at = -1;
     if (stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG)) sh->rolled_at = sh->uniform_ints++;
     if ((sh->vert && sh->vert->reads_seed) || (sh->frag && sh->frag->reads_seed)) sh->seed_at = sh->uniform_ints++;
+    // Where each GPU list it reads is in its pool and its capacity, two words of the draw's ints a list, which the
+    // renderer writes (tide_shader.storage_table)
+    if (sh->storage.count) {
+        sh->storage_at = sh->uniform_ints;
+        sh->uniform_ints += 2 * sh->storage.count;
+    }
     if (sh->instance_list) {
         diag_error(call->at, "this draw's instances each have a list, '" STR_FMT "', that its code reads, and a draw sends one "
                    "list for all of them", STR_ARG(sh->instance_list->name));
@@ -6948,8 +6964,11 @@ bool write_kernels(const program *prog, const char *path)
         const int numbers[] = {sh->kernel->group[0], sh->kernel->group[1], sh->kernel->group[2], sh->uniform_floats,
                                sh->uniform_ints, sh->textures.count, sh->storage.count};
         for (size_t n = 0; n < sizeof numbers / sizeof *numbers; n++) id = (id ^ (uint32_t)numbers[n]) * 0x100000001B3ull;
-        unsigned writes = 0;
-        for (int s = 0; s < sh->storage.count; s++) writes |= sh->storage.items[s].write ? 1u << s : 0u;
+        unsigned long long writes = 0, ints = 0;
+        for (int s = 0; s < sh->storage.count && s < 64; s++) {
+            writes |= sh->storage.items[s].write ? 1ull << s : 0u;
+            ints |= sh->storage.items[s].ints ? 1ull << s : 0u;
+        }
         sb_printf(&o, "static const tide_shader %s = {\n    .name = \"the renderer's " STR_FMT "\",\n"
                       "#ifdef __wasm__\n    .wgsl = %s_wgsl,\n#endif\n"
                       "#ifdef TIDE_SPIRV\n    .spirv = %s_spirv,\n    .spirv_words = %d,\n#endif\n"
@@ -6957,8 +6976,11 @@ bool write_kernels(const program *prog, const char *path)
                   kernel.data, STR_ARG(name), kernel.data, kernel.data, (int)words, (unsigned long long)id,
                   (sh->uniform_floats + 3) / 4, (sh->uniform_ints + 3) / 4, sh->textures.count);
         shader_put_texture_reads(&o, sh);
-        sb_printf(&o, "    .storage_count = %d,\n    .storage_writes = 0x%xu,\n    .compute = true,\n    .group = {%d, %d, %d},\n};\n",
-                  sh->storage.count, writes, sh->kernel->group[0], sh->kernel->group[1], sh->kernel->group[2]);
+        // Its table, after its values in its ints (the renderer's own kernels have no floats: cull.inc writes them as ints)
+        sb_printf(&o, "    .storage_count = %d,\n    .storage_writes = 0x%llxull,\n    .storage_ints = 0x%llxull,\n"
+                      "    .storage_table = %d,\n    .compute = true,\n    .group = {%d, %d, %d},\n};\n",
+                  sh->storage.count, writes, ints, 16 * ((sh->uniform_floats + 3) / 4) + 4 * (sh->storage_at < 0 ? 0 : sh->storage_at),
+                  sh->kernel->group[0], sh->kernel->group[1], sh->kernel->group[2]);
         sb_put(&o, "enum {\n");
         for (int s = 0; s < sh->storage.count; s++) {
             sb_printf(&o, "    %s_STORAGE_", kernel.data);

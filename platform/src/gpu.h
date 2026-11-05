@@ -220,9 +220,12 @@ typedef enum tide_gpu_filter {
 enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 16 };
 
 // The most storage buffers a pipeline binds. Storage buffer i is at binding
-// TIDE_GPU_STORAGE_BINDING + i of group 0, after the textures' bindings:
-// within WebGPU's default 8 storage buffers a stage.
-enum { TIDE_GPU_MAX_STORAGE = 7, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX_TEXTURES };
+// TIDE_GPU_STORAGE_BINDING + i of group 0, after the textures' bindings. 4 is
+// Vulkan's least maxPerStageDescriptorStorageBuffers and within WebGPU's default
+// 8 a stage: every device binds them. The renderer's pipelines bind at most 3 (a
+// game's GPU lists are ranges of two pools, tide/draw.h's TIDE_STORAGE_WORDS and
+// TIDE_STORAGE_INTS, and a kernel's run).
+enum { TIDE_GPU_MAX_STORAGE = 4, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX_TEXTURES };
 
 // Whether a pipeline's texture `i` is read through a sampler of its own, at binding 2 + 2i: one that's loaded
 // a pixel at a time has none, and one read through another texture's (tide_gpu_pipeline_desc.samplers) hasn't.
@@ -355,6 +358,11 @@ typedef struct tide_gpu {
     // A buffer of `size` bytes, holding `data` if it's given. Sizes, and what's
     // written, are multiples of 4 bytes.
     tide_gpu_id (*buffer)(tide_gpu_buffer_kind kind, size_t size, const void *data);
+    // Optional: the most bytes a storage buffer that a pipeline binds whole can
+    // be on this device (Vulkan's maxStorageBufferRange, WebGPU's
+    // maxStorageBufferBindingSize, and either's most buffer), a multiple of 16
+    // and at least 128 MiB, every device's least. NULL for 128 MiB.
+    uint64_t (*storage_most)(void);
     void (*buffer_write)(tide_gpu_id buffer, size_t offset, const void *data, size_t size);
     void (*buffer_free)(tide_gpu_id buffer);
 

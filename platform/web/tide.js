@@ -1373,9 +1373,20 @@
                 ...['indirect-first-instance', 'chromium-experimental-multi-draw-indirect', 'multi-draw-indirect']
                     .filter(name => adapter.features.has(name))];
             const requiredFeatures = optional(adapter);
+            // As big a storage buffer as the adapter binds: the pools GPU lists are ranges of grow to it (gpu.h,
+            // storage_most), where the defaults would stop them at 128 MiB. Only what the adapter says it has
+            const limits = adapter => Object.fromEntries(['maxStorageBufferBindingSize', 'maxBufferSize']
+                .filter(name => adapter.limits && adapter.limits[name]).map(name => [name, adapter.limits[name]]));
+            // ...and the features: no descriptor where there's nothing to ask for
+            const asked = (adapter, features) => {
+                const requiredLimits = limits(adapter), descriptor = {};
+                if (features.length) descriptor.requiredFeatures = features;
+                if (Object.keys(requiredLimits).length) descriptor.requiredLimits = requiredLimits;
+                return Object.keys(descriptor).length ? descriptor : undefined;
+            };
             if (adapter.features.has('timestamp-query')) {
                 try {
-                    found = await adapter.requestDevice({ requiredFeatures: [...requiredFeatures, 'timestamp-query'] });
+                    found = await adapter.requestDevice(asked(adapter, [...requiredFeatures, 'timestamp-query']));
                 } catch {
                     // Timing is optional. Ask anew: a request can consume its adapter.
                     adapter = await navigator.gpu.requestAdapter();
@@ -1383,10 +1394,9 @@
                         noDevice = 'the browser gave no GPU adapter';
                         return;
                     }
-                    const features = optional(adapter);
-                    found = await adapter.requestDevice(features.length ? { requiredFeatures: features } : undefined);
+                    found = await adapter.requestDevice(asked(adapter, optional(adapter)));
                 }
-            } else found = await adapter.requestDevice(requiredFeatures.length ? { requiredFeatures } : undefined);
+            } else found = await adapter.requestDevice(asked(adapter, requiredFeatures));
             // A mistake in how the program uses it: test pages stop at one
             found.onuncapturederror = event => {
                 if (config.checkGL) fail(new Error('WebGPU: ' + event.error.message));
@@ -1503,7 +1513,7 @@
     const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
     const READ_DATA = 4;        // TIDE_GPU_READ_DATA: ints, each pixel by its place
     const READ_SAMPLES = 5;     // TIDE_GPU_READ_SAMPLES: a multisampled depth, each sample loaded
-    const MAX_STORAGE = 7;      // TIDE_GPU_MAX_STORAGE
+    const MAX_STORAGE = 4;      // TIDE_GPU_MAX_STORAGE
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES;
     // Whether a pipeline's texture is read through a sampler of its own (gpu.h's tide_gpu_own_sampler): one that's
@@ -2198,6 +2208,8 @@
             return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth, width, height, canvas: null, context: null });
         },
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
+        // What the renderer's pools of GPU lists grow to at most (gpu.h, storage_most): a buffer bound whole
+        gpu_storage_most: () => Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize),
         gpu_target_texture: (id, color) => gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
         gpu_target_depth: id => gpuTables.target[id].depth,
         // A multisampled target's depth as a texture: WebGPU resolves none, so a pass over a texture of one

@@ -410,7 +410,8 @@ static int workgroup_place(translation *x, const expr *e, hs *dest)
     return 0;
 }
 
-// Storage buffer i of a pipeline is at binding 33 + i (gpu.h's TIDE_GPU_STORAGE_BINDING), at most 7: `_TideStorage<i>`.
+// Storage buffer i of a pipeline is at binding 33 + i (gpu.h's TIDE_GPU_STORAGE_BINDING): `_TideStorage<i>`. The translator
+// takes 33 to 39; the renderer's pipelines bind 33 to 36 at the most (TIDE_GPU_MAX_STORAGE, 4).
 static int storage_slot(translation *x, const gdecl *g)
 {
     if (g->at.group != 0 || g->at.binding < 33 || g->at.binding > 39) {
