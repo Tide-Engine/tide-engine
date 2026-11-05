@@ -2,6 +2,30 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Indexed loops in games (2026-11-05)
+
+`bench_loops` and `bench_loops_plain` (`bench/loops`, the same game, the second built `NO_LOOP_INDEXES`): boids
+that each count the boids within 2 through a query (every boid moves every tick, so the index is made again each
+tick) and agents that each look for obstacles within 2 in a singleton's list that never changes, about ten boids
+and three obstacles near each. `bench_loops --n <count> [--boids n] [--agents n] [--ticks n] [--threads n]`;
+both print the world's hash, the same for the same options. Release, Windows, Ryzen 9 7900X, one thread, ms a
+tick:
+
+| | Plain | Indexed |
+|---|---|---|
+| 10,000 boids and 10,000 agents | 353 | 9.5 |
+| 10,000 boids | 86 | 7.6 |
+| 10,000 agents | 273 | 1.8 |
+| 1,000 of each | 3.16 | 0.74 |
+| 200 of each | 0.134 | 0.030 |
+| 50 of each | 0.0096 | 0.0066 |
+| 20 of each | 0.0015 | 0.0054 |
+
+More threads change nothing here: the tick's estimate of a system's work counts a loop over a query as one step,
+so neither build's tick goes on threads at these sizes. Before a system's own loop searched its index with no lock
+once it was found to hold that tick, checking the index's facts under the lock for every entity made the indexed
+build 22 ms a tick at 10,000. Details: notes/indexed-loops.md, Code generation.
+
 ## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
 
 Numbers, method and why the route couldn't run: drawing.md, Listed runs culled on the GPU. In short, the menu's
