@@ -34,3 +34,6 @@ stage 4  WorldAlias  (per entity)
 
 Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
+
+Loops that skip rows, and whether an index finds the rest:
+         Count, line 47: not indexed: its guard puts no bound on a number of the row: compare one of the row's numbers, or its distance to a place, with a value the loop doesn't change

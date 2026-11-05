@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "indexing.h"
 #include "lexer.h"
 #include "skinned_language.h"
 #include "types.h"
@@ -241,6 +242,15 @@ typedef struct gen {
     VEC(asset_dependency) skinned_fingerprints; // Imported source geometry; preflight only, never the header.
     uint8_t *pack_bytes; // Built once, before asset compatibility hashes are computed.
     size_t pack_size;
+    // Indexed loops (index_codegen.inc): whether any loop is, and each place a cached index is kept for, a loop
+    // as a borrowed query's code for one of its sources has it
+    bool ix_any;
+    VEC(const struct stmt *) ix_loops;
+    VEC(const void *) ix_variants;
+    VEC(const struct stmt *) ix_used;   // Loops written through their index (ix_check)
+    VEC(const struct stmt *) ix_locals; // Locals whose list a loop keeps its index of (loop_index.list_local)
+    VEC(const struct stmt *) ix_stamped; // ...declared, where the code is, with their stamps' C names
+    VEC(const char *) ix_stamp_names;
 } gen;
 
 static int rows_cache_count(const gen *g);
@@ -1785,7 +1795,7 @@ static void cache_key(const expr *e, sb *out)
 // list apart, as a mesh's triangle corners do, each keep the run of elements
 // they're in, rather than taking one cache from run to run at every element.
 // Any other index shares the list's one cache.
-static void index_key(const expr *index, sb *out)
+static void list_index_key(const expr *index, sb *out)
 {
     while (index->kind == E_BINARY && (index->op == T_PLUS || index->op == T_MINUS) && index->rhs->kind == E_INT) index = index->lhs;
     if (index->kind == E_NAME || index->kind == E_MEMBER) {
@@ -1802,7 +1812,7 @@ static int cache_slot(gen *g, const expr *list, const expr *index)
 {
     sb key = {0};
     cache_key(list, &key);
-    if (index) index_key(index, &key);
+    if (index) list_index_key(index, &key);
     for (int i = 0; i < g->lc_keys.count; i++) {
         if (strcmp(g->lc_keys.items[i], key.data) == 0) return i;
     }
@@ -7475,6 +7485,14 @@ static void gen_parallel_call(gen *g, const stmt *s);
 static void gen_grid_foreach(gen *g, const stmt *s);
 static void gen_map_foreach(gen *g, const stmt *s);
 static void gen_query_foreach(gen *g, const stmt *s);
+static bool gen_indexed_list(gen *g, const stmt *s);
+static bool gen_indexed_query(gen *g, const stmt *s, const char *gather);
+static bool ix_par_list(const gen *g, const stmt *s);
+static bool gen_ix_parallel_rows(gen *g, const stmt *s, const char *row);
+static void gen_ix_stamp(gen *g, const stmt *s);
+static void ix_check(gen *g, const stmt *s);
+static void gen_ix_par_marks(gen *g, const stmt *s);
+static void gen_query_walk(gen *g, const stmt *s, const char *gather);
 static void gen_sort_call(gen *g, const expr *sort);
 static uint64_t step_cost(const stmt *s);
 
@@ -8085,7 +8103,17 @@ static void gen_block_run(gen *g)
     line(g, o, "}");
 }
 
+// A statement, and after it what indexed loops need: a local's stamp (gen_ix_stamp), and the check that a
+// planned loop went through its index (ix_check)
+static void gen_stmt_now(gen *g, const stmt *s);
 static void gen_stmt(gen *g, const stmt *s)
+{
+    gen_stmt_now(g, s);
+    gen_ix_stamp(g, s);
+    ix_check(g, s);
+}
+
+static void gen_stmt_now(gen *g, const stmt *s)
 {
     sb *o = &g->c;
     const bool bare = g->bare == s;
@@ -8369,6 +8397,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_map_foreach(g, s);
             break;
         }
+        if (gen_indexed_list(g, s)) break; // Through an index (index_codegen.inc)
         // The list's count is read each round, so changes to it while it's gone
         // through count.
         const bool borrows = foreach_borrows(g, s, s->type);
@@ -9575,7 +9604,10 @@ static void gen_header(gen *g)
     if (rows_cache_count(g)) {
         sb_put(o, "    struct tide_rows_cache *tide_rows_cache; // Derived selection, never copied, hashed or packed\n");
     }
+    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
     sb_put(o, "} tide_world;\n\n");
+    if (g->ix_any) sb_put(o, "// Lets go of the indexes indexed loops keep outside the worlds, before the game's library is unloaded\n"
+                             "#define TIDE_HAS_LOOP_INDEXES 1\nvoid tide_loop_indexes_free(void);\n\n");
     if (rows_cache_count(g)) sb_put(o, "#define TIDE_ROWS_CACHE_ABI 1 // Change with the private cache payload layout\n\n");
 
     sb_put(o, "// How a match starts: the scene Session.Start named, with its values.\n");
@@ -9688,6 +9720,7 @@ static void gen_header(gen *g)
                   "    tide_outgoing_item tide_outgoing[TIDE_COMMAND_OUTBOX];\n"
                   "    uint32_t tide_outgoing_count;\n");
     }
+    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
     sb_put(o, "} tide_local;\n\n");
 
     if (startup_is_local(g)) {
@@ -11918,6 +11951,7 @@ static void gen_prelude(gen *g)
     if (g->prog->skinned_types.count) sb_put(o, "#include \"tide/skinned_data.h\"\n");
     if (g->prog->humanoid_rig) sb_put(o, "#include \"tide/retarget.h\"\n#include \"tide/retarget_bake.h\"\n");
     sb_put(o, "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
+    if (g->ix_any) sb_put(o, "#include \"tide/index.h\" // Indexed loops\n");
     sb_put(o, "#include \"tide/shard.h\" // Shards.Owns and Shards.delay, which any game can read\n\n");
     sb_printf(o, "#define TIDE_SHARDS_ON %s // Shards.on\n\n", g->prog->shards ? "true" : "false");
     sb_put(o, "// Determinism: never fuse a*b + c, whatever flags this file is built with.\n");
@@ -14374,6 +14408,51 @@ static bool flat_list_loop(const stmt *s)
     return batch_list_inner(s) >= 0;
 }
 
+static const char *query_row_type(const decl *sys, int i);
+
+// A parallel loop over a query's rows: the code's own parameter, found by
+// name as a foreach's is (bind_views may have grown a view's parameters since
+// the loop took it).
+static const param *par_query(const decl *sys, const stmt *s)
+{
+    return &sys->params.items[query_index(sys, s->query)];
+}
+
+// The type of its rows: a view's or a local handler's, made for it, or one of
+// its own (gen_par_heads), which the loop gathers.
+static const char *par_row_type(const gen *g, const decl *sys, const stmt *s, const int index)
+{
+    const param *q = par_query(sys, s);
+    if (q->query_rows) return query_row_type(sys, query_index(sys, q));
+    sb b = {0};
+    sb_printf(&b, "%s_row", g->par_names.items[index]);
+    return b.data;
+}
+
+static bool expr_sends(const expr *e);
+
+// Whether a step sends events, which go into a queue each task of its own.
+static bool stmt_sends(const stmt *s)
+{
+    if (!s) return false;
+    for (int i = 0; i < s->stmts.count; i++) if (stmt_sends(s->stmts.items[i])) return true;
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) if (stmt_sends(s->cases.items[i].body.items[k])) return true;
+    }
+    return expr_sends(s->cond) || expr_sends(s->value) || expr_sends(s->target) || stmt_sends(s->init)
+        || stmt_sends(s->step) || stmt_sends(s->then_stmt) || stmt_sends(s->else_stmt);
+}
+
+static bool expr_sends(const expr *e)
+{
+    if (!e) return false;
+    if (e->call == CALL_SEND) return true;
+    if (expr_sends(e->object) || expr_sends(e->lhs) || expr_sends(e->rhs) || expr_sends(e->cond) || stmt_sends(e->block)) return true;
+    for (int i = 0; i < e->args.count; i++) if (expr_sends(e->args.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (expr_sends(e->inits.items[i].value)) return true;
+    return false;
+}
+
 // Before a system's function: each of its loops' captures, and its step's prototype.
 static void gen_par_heads(gen *g, const decl *sys)
 {
@@ -14384,6 +14463,26 @@ static void gen_par_heads(gen *g, const decl *sys)
     for (int i = 0; i < g->pars.count; i++) {
         const char *name = g->par_names.items[i];
         const capture_list caps = par_captures(g, sys, g->pars.items[i]);
+        const stmt *s = g->pars.items[i];
+        if (s->query) { // Its rows, gathered before it, and the queues its steps record into
+            const param *q = par_query(sys, s);
+            if (!q->query_rows) {
+                const decl *row = q->type.decl;
+                sb_printf(o, "typedef struct %s_row {\n", name);
+                for (int k = 0; k < row->fields.count; k++) {
+                    sb_printf(o, "    %s %s;\n", c_type(row->fields.items[k].type), field_cname(&row->fields.items[k]));
+                }
+                if (q->local_use) sb_put(o, "    uint32_t tide_born;\n");
+                sb_printf(o, "} %s_row;\n\n", name);
+            }
+            sb_printf(o, "typedef struct %s_ctx {\n    const %s *rows;\n    uint32_t count;\n    uint32_t per;\n"
+                         "    tide_queue *queues;\n", name, par_row_type(g, sys, s, i));
+            for (int k = 0; k < caps.count; k++) sb_printf(o, "    %s%s%s;\n", caps.items[k].ctype,
+                                                           caps.items[k].ctype[strlen(caps.items[k].ctype) - 1] == '*' ? "" : " ",
+                                                           caps.items[k].name);
+            sb_printf(o, "} %s_ctx;\n\nstatic void %s(void *tide_ctx, uint32_t tide_task);\n\n", name, name);
+            continue;
+        }
         const bool list = g->pars.items[i]->value->type.kind == TY_LIST;
         sb_printf(o, "typedef struct %s_ctx {\n    %s *loop;\n", name, list ? "tide_par_list" : "tide_par_loop");
         if (flat_list_loop(g->pars.items[i])) sb_printf(o, "    const %s *input;\n    int32_t count;\n",
@@ -14391,6 +14490,8 @@ static void gen_par_heads(gen *g, const decl *sys)
         for (int k = 0; k < caps.count; k++) sb_printf(o, "    %s%s%s;\n", caps.items[k].ctype,
                                                        caps.items[k].ctype[strlen(caps.items[k].ctype) - 1] == '*' ? "" : " ",
                                                        caps.items[k].name);
+        // An indexed loop's: the elements that can pass its guard, a bit each, or NULL for every one (gen_ix_par_marks)
+        if (ix_par_list(g, g->pars.items[i])) sb_put(o, "    const uint64_t *tide_xm;\n    int32_t tide_xmn;\n");
         sb_printf(o, "} %s_ctx;\n\nstatic void %s(void *tide_ctx, uint32_t tide_task);\n\n", name, name);
     }
 }
@@ -14625,6 +14726,72 @@ static int par_index(const gen *g, const stmt *loop)
     return -1;
 }
 
+// A parallel loop over a query's rows: the rows a foreach would go through,
+// in its order, an array (a view's or a local handler's, made for it, or
+// gathered here from the world's tables), which the steps share out in runs
+// of rows, a task each. What a task's steps send goes into a queue of its own,
+// and the queues go into the code's own, task by task, once the steps are
+// done: the order a foreach would have recorded them in, on any number of
+// threads.
+static void gen_parallel_query_call(gen *g, const stmt *s, const char *name, const capture_list caps, const uint64_t cost)
+{
+    sb *o = &g->c;
+    const decl *code = g->code;
+    const param *q = par_query(code, s);
+    const int index = par_index(g, s);
+    const char *row = par_row_type(g, code, s, index);
+    const bool sends = stmt_sends(s->then_stmt);
+    const uint64_t step = cost ? (cost < 1000000u ? cost : 1000000u) : 1u;
+    // Runs of 16 rows or more where steps take little, so they aren't swamped
+    // by their tasks, and of fewer where each takes long, down to one; up to
+    // 1024 tasks, as for a list (tide_par_list_begin)
+    const uint64_t fewest = step >= 4096u ? 1u : (4096u + step - 1u) / step;
+    const unsigned least = fewest < 16u ? (unsigned)fewest : 16u;
+    line(g, o, "{");
+    g->indent++;
+    const bool indexed_rows = q->query_rows && gen_ix_parallel_rows(g, s, row); // Its candidates (index_codegen.inc)
+    if (q->query_rows && !indexed_rows) {
+        const int qi = query_index(code, q);
+        line(g, o, "const %s *const tide_rows = tide_q%d;", row, qi);
+        line(g, o, "const uint32_t tide_rown = tide_q%dn;", qi);
+    } else if (!indexed_rows) {
+        line(g, o, "%s *tide_rows = NULL;", row);
+        line(g, o, "uint32_t tide_rown = 0u, tide_rowcap = 0u;");
+        line(g, o, "(void)tide_rowcap;");
+        if (!gen_indexed_query(g, s, row)) gen_query_walk(g, s, row); // Through an index (index_codegen.inc)
+    }
+    line(g, o, "uint32_t tide_per = (uint32_t)(((uint64_t)tide_rown + 1023u) / 1024u);");
+    line(g, o, "if (tide_per < %uu) tide_per = %uu;", least, least);
+    line(g, o, "const uint32_t tide_tasks = (uint32_t)(((uint64_t)tide_rown + tide_per - 1u) / tide_per);");
+    if (sends) line(g, o, "tide_queue *const tide_queues = tide_tasks ? tide_alloc_zeroed(tide_tasks, sizeof(tide_queue)) : NULL;");
+    if (stmt_rolls(s->then_stmt)) line(g, o, "const tide_random tide_par_dice = tide_random_fork(tide_dice);");
+    indent(g, o);
+    sb_printf(o, "const %s_ctx tide_cx = {tide_rows, tide_rown, tide_per, %s", name, sends ? "tide_queues" : "NULL");
+    for (int k = 0; k < caps.count; k++) sb_printf(o, ", %s", caps.items[k].name);
+    sb_put(o, "};\n");
+    line(g, o, "if (tide_tasks) tide_parallel_for(tide_tasks, %s, (void *)(uintptr_t)&tide_cx, (uint64_t)tide_rown * %lluu);",
+         name, (unsigned long long)step);
+    if (sends) {
+        line(g, o, "if (tide_queues) {");
+        g->indent++;
+        line(g, o, "tide_memory_sync(); // What the steps recorded on other threads");
+        line(g, o, "tide_queue *const tide_into = tide_recording(&tide_w->commands);");
+        line(g, o, "for (uint32_t tide_k = 0; tide_k < tide_tasks; tide_k++) {");
+        g->indent++;
+        line(g, o, "tide_queue_append(tide_into, &tide_queues[tide_k]);");
+        line(g, o, "tide_queue_free(&tide_queues[tide_k]);");
+        g->indent--;
+        line(g, o, "}");
+        line(g, o, "free(tide_queues);");
+        g->indent--;
+        line(g, o, "}");
+    }
+    if (!q->query_rows) line(g, o, "free(tide_rows);");
+    if (indexed_rows) line(g, o, "free(tide_xrows);");
+    g->indent--;
+    line(g, o, "}");
+}
+
 // The loop where it is: set up, its steps run, and what they wrote put in.
 static void gen_parallel_call(gen *g, const stmt *s)
 {
@@ -14634,6 +14801,10 @@ static void gen_parallel_call(gen *g, const stmt *s)
     const decl *grid = s->value->type.decl;
     const capture_list caps = par_captures(g, g->routine ? g->routine : g->code, s);
     const uint64_t cost = step_cost(s->then_stmt);
+    if (s->query) {
+        gen_parallel_query_call(g, s, name, caps, cost);
+        return;
+    }
     if (g->routine && g->routine->is_worker) {
         if (s->value->type.kind == TY_LIST) {
             indent(g, o);
@@ -14680,14 +14851,18 @@ static void gen_parallel_call(gen *g, const stmt *s)
                  elem_ctype(list_elem(grid)), elem_ctype(list_elem(grid)));
         }
         if (stmt_rolls(s->then_stmt)) line(g, o, "const tide_random tide_par_dice = tide_random_fork(tide_dice);");
+        const bool marks = ix_par_list(g, s);
+        if (marks) gen_ix_par_marks(g, s); // Before the steps: which can pass
         indent(g, o);
         sb_printf(o, "const %s_ctx tide_cx = {&tide_pl", name);
         if (flat) sb_put(o, ", tide_in, tide_count");
         for (int k = 0; k < caps.count; k++) sb_printf(o, ", %s", caps.items[k].name);
+        if (marks) sb_put(o, ", tide_xm, tide_xmn");
         sb_put(o, "};\n");
         line(g, o, "tide_parallel_for(tide_pl.tasks, %s, (void *)(uintptr_t)&tide_cx, tide_pl.steps * %lluu);", name,
              (unsigned long long)(cost < 1000000u ? cost : 1000000u));
         line(g, o, "tide_par_list_end(&tide_pl);");
+        if (marks) line(g, o, "free((void *)(uintptr_t)tide_xm);");
         if (flat) line(g, o, "tide_list_unflatten(*tide_pl.list, (void *)(uintptr_t)tide_in, sizeof(%s), false, tide_copied);",
                        elem_ctype(list_elem(grid)));
         g->indent--;
@@ -14761,6 +14936,11 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
     const char *at = local_cname(g, s->name);
     if (list) {
         line(g, o, "const int32_t %s = tide_o0 + tide_k0 * %d;", at, b[0]);
+        // An indexed loop's element that can't pass its guard: nothing to do (gen_ix_par_marks)
+        if (ix_par_list(g, s)) {
+            line(g, o, "if (tide_cx->tide_xm && %s >= 0 && %s < tide_cx->tide_xmn && !(tide_cx->tide_xm[(uint32_t)%s >> 6] >> ((uint32_t)%s & 63u) & 1u)) continue;",
+                 at, at, at, at);
+        }
     } else if (three) {
         line(g, o, "const tide_int3 %s = {tide_o[0] + tide_k0 * %d, tide_o[1] + tide_k1 * %d, tide_o[2] + tide_k2 * %d};", at,
              b[0], b[1], b[2]);
@@ -14914,6 +15094,68 @@ static void gen_par_list_batch(gen *g, const decl *sys, const stmt *s, const cap
     line(g, o, "}");
 }
 
+// A parallel loop over a query's rows: a task's run of them, each a step,
+// which records what it sends into the task's own queue.
+static void gen_par_query_steps(gen *g, const decl *sys, const stmt *s, const int index, const capture_list caps)
+{
+    sb *o = &g->c;
+    const char *name = g->par_names.items[index];
+    const bool sends = stmt_sends(s->then_stmt);
+    sb_printf(o, "static void %s(void *tide_ctx, uint32_t tide_task)\n{\n", name);
+    sb_printf(o, "    const %s_ctx *tide_cx = tide_ctx;\n", name);
+    for (int k = 0; k < caps.count; k++) {
+        const par_capture *c = &caps.items[k];
+        sb_printf(o, "    %s%s%s = tide_cx->%s;\n    (void)%s;\n", c->ctype, c->ctype[strlen(c->ctype) - 1] == '*' ? "" : " ",
+                  c->name, c->name, c->name);
+    }
+    if (g->prog->grids.count) sb_printf(o, "    tide_grid_cache tide_gc[%d] = {{0}};\n    (void)tide_gc;\n", g->prog->grids.count);
+    if (g->prog->lists.count || g->prog->maps.count) {
+        const int outer_indent = g->indent;
+        g->indent = 1;
+        declare_list_caches(g, o);
+        g->indent = outer_indent;
+    }
+    sb_put(o, "    const uint64_t tide_mark = tide_scratch_mark();\n");
+    if (sends) sb_put(o, "    tide_queue *const tide_was = tide_task_queue;\n    tide_task_queue = &tide_cx->queues[tide_task];\n");
+    // Its run: tide_task's of tide_per rows, the last one up to the end
+    sb_put(o, "    const uint32_t tide_x0 = tide_task * tide_cx->per;\n");
+    sb_put(o, "    const uint32_t tide_x1 = tide_cx->count - tide_x0 > tide_cx->per ? tide_x0 + tide_cx->per : tide_cx->count;\n");
+    sb_put(o, "    for (uint32_t tide_k0 = tide_x0; tide_k0 < tide_x1; tide_k0++) {\n");
+    g->indent = 2;
+    const char *row = local_cname(g, s->name);
+    line(g, o, "%s %s = tide_cx->rows[tide_k0];", par_row_type(g, sys, s, index), row);
+    line(g, o, "(void)%s;", row);
+    if (stmt_rolls(s->then_stmt)) { // The step's rolls are its row's, whichever thread runs it
+        line(g, o, "tide_random tide_rolled = tide_random_step(tide_par_dice, (int32_t)tide_k0, 0, 0);");
+        line(g, o, "tide_random *const tide_dice = &tide_rolled;");
+        line(g, o, "(void)tide_dice;");
+    }
+    g->code = sys;
+    g->routine = NULL;
+    g->frame = NULL;
+    g->task = NULL;
+    g->par_loop = s;
+    g->reserved_send = false;
+    g->list_caches = g->prog->lists.count > 0;
+    g->map_views = g->prog->maps.count > 0;
+    g->targets.count = 0;
+    const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
+    vec_push(g->targets, loop);
+    gen_body_stmt(g, s->then_stmt);
+    const gen_target done = g->targets.items[--g->targets.count];
+    if (done.next_used) line(g, o, "%s:;", done.next);
+    g->par_loop = NULL;
+    g->list_caches = false;
+    g->map_views = false;
+    g->indent = 1;
+    line(g, o, "}");
+    close_list_caches(g); // Its caches' count, in its own text, before that's used anywhere else
+    g->indent = 0;
+    if (sends) sb_put(o, "    tide_task_queue = tide_was;\n");
+    sb_put(o, "    tide_scratch_reset(tide_mark);\n}\n\n");
+    line_reset(g);
+}
+
 // After a system's function: its loops' steps, each task a tile of blocks
 // (see tide/grid.h).
 static void gen_par_steps(gen *g, const decl *sys)
@@ -14924,6 +15166,10 @@ static void gen_par_steps(gen *g, const decl *sys)
         const char *name = g->par_names.items[i];
         const decl *grid = s->value->type.decl;
         const capture_list caps = par_captures(g, sys, s);
+        if (s->query) {
+            gen_par_query_steps(g, sys, s, i, caps);
+            continue;
+        }
         const bool list = s->value->type.kind == TY_LIST;
         sb_printf(o, "static void %s(void *tide_ctx, uint32_t tide_task)\n{\n", name);
         sb_printf(o, "    const %s_ctx *tide_cx = tide_ctx;\n    %s *const tide_pl = tide_cx->loop;\n", name,
@@ -14949,7 +15195,7 @@ static void gen_par_steps(gen *g, const decl *sys)
             sb_printf(o, "    %s *restrict const tide_wout = tide_par_list_task(tide_pl, tide_task, &tide_x0, &tide_x1);\n", element);
             sb_printf(o, "    const int32_t tide_o0 = tide_pl->offset, tide_lo = tide_o0 + tide_x0 * %d;\n", s->block[0]);
             sb_put(o, "    (void)tide_wout;\n    (void)tide_lo;\n");
-            const int inner = batch_list_inner(s);
+            const int inner = ix_par_list(g, s) ? -1 : batch_list_inner(s); // An indexed one's steps are skipped one by one
             if (inner >= 0) gen_par_list_batch(g, sys, s, caps, inner);
             gen_par_nest(g, sys, s, 1, false, inner >= 0);
             close_list_caches(g); // Its caches' count, in its own text, before that's used anywhere else
@@ -15217,7 +15463,38 @@ static void gen_query_field_refs(gen *g, const param *q, const char *name)
     }
 }
 
+// The default local fields of the entities a query's row `name` reads them of, where nothing was written for one.
+static void gen_query_fresh(gen *g, const param *q, const char *name)
+{
+    sb *o = &g->c;
+    const decl *row = q->type.decl;
+    for (int i = 0; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        if (!has_fields_ptr(p) || p->mode != PARAM_READ) continue;
+        const field *f = NULL;
+        for (int k = 1; k < row->fields.count; k++) if (str_eq(row->fields.items[k].name, p->name)) f = &row->fields.items[k];
+        indent(g, o);
+        sb_printf(o, "const %s tide_query_fresh_%s_%s = ", type_cname(local_part_of(p->type)), name, field_cname(f));
+        gen_value(g, o, local_part_of(p->type), NULL, 0);
+        sb_put(o, ";\n");
+        line(g, o, "(void)tide_query_fresh_%s_%s;", name, field_cname(f));
+    }
+}
+
+#include "index_codegen.inc"
+
+static void gen_query_walk(gen *g, const stmt *s, const char *gather);
+
 static void gen_query_foreach(gen *g, const stmt *s)
+{
+    if (gen_indexed_query(g, s, NULL) || gen_indexed_rows(g, s)) return;
+    gen_query_walk(g, s, NULL);
+}
+
+// A foreach's rows, each through its body, or with `gather` (a parallel loop
+// over a system's or match handler's query: the row type), each copied onto
+// the end of tide_rows instead, as tide_rown of tide_rowcap.
+static void gen_query_walk(gen *g, const stmt *s, const char *gather)
 {
     sb *o = &g->c;
     const param *q = s->query;
@@ -15230,17 +15507,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
     const char *end = made_up(g, "query_end");
     bool end_used = false;
     line(g, o, "{"); g->indent++;
-    for (int i = 0; i < q->query.count; i++) {
-        const param *p = &q->query.items[i];
-        if (!has_fields_ptr(p) || p->mode != PARAM_READ) continue;
-        const field *f = NULL;
-        for (int k = 1; k < row->fields.count; k++) if (str_eq(row->fields.items[k].name, p->name)) f = &row->fields.items[k];
-        indent(g, o);
-        sb_printf(o, "const %s tide_query_fresh_%s_%s = ", type_cname(local_part_of(p->type)), name, field_cname(f));
-        gen_value(g, o, local_part_of(p->type), NULL, 0);
-        sb_put(o, ";\n");
-        line(g, o, "(void)tide_query_fresh_%s_%s;", name, field_cname(f));
-    }
+    gen_query_fresh(g, q, name);
     if (selection->query_rows) { // The rows it was handed, retaining the caller's timing.
         // Found by name: bind_views may have grown the view's parameters since `q` was taken, leaving it pointing at
         // the old copy
@@ -15329,15 +15596,19 @@ static void gen_query_foreach(gen *g, const stmt *s)
             if (mask_has(selection->query_need_mask, c)) line(g, o, "if (!tide_qpres%d[tide_qi]) continue;", c);
             else if (mask_has(selection->query_without_mask, c)) line(g, o, "if (tide_qpres%d[tide_qi]) continue;", c);
         }
-        line(g, o, "struct {");
-        g->indent++;
-        for (int i = 0; i < row->fields.count; i++) {
-            const field *f = &row->fields.items[i];
-            line(g, o, "%s %s;", c_type(f->type), field_cname(f));
+        if (gather) {
+            line(g, o, "%s %s;", gather, name);
+        } else {
+            line(g, o, "struct {");
+            g->indent++;
+            for (int i = 0; i < row->fields.count; i++) {
+                const field *f = &row->fields.items[i];
+                line(g, o, "%s %s;", c_type(f->type), field_cname(f));
+            }
+            if (q->local_use) line(g, o, "uint32_t tide_born;");
+            g->indent--;
+            line(g, o, "} %s;", name);
         }
-        if (q->local_use) line(g, o, "uint32_t tide_born;");
-        g->indent--;
-        line(g, o, "} %s;", name);
         line(g, o, "%s.%s = tide_qe[tide_qi];", name, field_cname(&row->fields.items[0]));
         if (q->local_use) line(g, o, "%s.tide_born = tide_entity_born(&%s->entities, tide_qe[tide_qi]);", name, world);
         for (int i = 0, f = 1; i < q->query.count; i++) {
@@ -15353,14 +15624,25 @@ static void gen_query_foreach(gen *g, const stmt *s)
                      field_cname(value), i);
             }
         }
-        line(g, o, "(void)%s;", name);
-        gen_query_field_refs(g, q, name);
-        const gen_target loop = {g->frame, g->containers.count, true, true, end, false, made_up(g, "next"), false, true};
-        vec_push(g->targets, loop);
-        gen_body_stmt(g, s->then_stmt);
-        const gen_target done = g->targets.items[--g->targets.count];
-        end_used |= done.end_used;
-        if (done.next_used) line(g, o, "%s:;", done.next);
+        if (gather) { // Onto the end of the rows a parallel loop goes through
+            line(g, o, "if (tide_rown == tide_rowcap) {");
+            g->indent++;
+            line(g, o, "const uint32_t tide_more = tide_rowcap ? 2u * tide_rowcap : 64u;");
+            line(g, o, "tide_rows = tide_realloc(tide_rows, (size_t)tide_rowcap * sizeof *tide_rows, (size_t)tide_more * sizeof *tide_rows);");
+            line(g, o, "tide_rowcap = tide_more;");
+            g->indent--;
+            line(g, o, "}");
+            line(g, o, "tide_rows[tide_rown++] = %s;", name);
+        } else {
+            line(g, o, "(void)%s;", name);
+            gen_query_field_refs(g, q, name);
+            const gen_target loop = {g->frame, g->containers.count, true, true, end, false, made_up(g, "next"), false, true};
+            vec_push(g->targets, loop);
+            gen_body_stmt(g, s->then_stmt);
+            const gen_target done = g->targets.items[--g->targets.count];
+            end_used |= done.end_used;
+            if (done.next_used) line(g, o, "%s:;", done.next);
+        }
         g->indent--;
         line(g, o, "}");
         g->indent--;
@@ -20063,6 +20345,7 @@ static void gen_system_run(gen *g, const decl *sys)
                 sb_printf(&fill, "tide_q%d = tide_query_%s_%d(tide_w, tide_prev, tide_alpha, %s, tide_l, &tide_q%dn); ", i, name, i,
                           sys->takes_verified ? "tide_verified, tide_vprev, tide_valpha" : "NULL, NULL, 1.0f", i);
             }
+            if (g->ix_any) sb_put(&fill, "tide_ix_made++; "); // Indexes of the rows before are of other rows
             // What the view makes for an entity goes after each: the rows stay under that mark
             if (prog->uses_text) sb_put(&fill, "tide_mark = tide_scratch_mark(); ");
             sb hook = {0};
@@ -21917,6 +22200,7 @@ static void gen_api(gen *g)
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     if (rows_cache_count(g)) sb_put(o, "    tide_rows_cache_prepare(w); // Serial: publish immutable plans before worker dispatch\n");
+    if (g->ix_any) sb_put(o, "    tide_index_cache_prepare(&w->tide_index_cache); // Serial: the tick's run, for the loops' indexes\n");
     if (prog->systems.count) {
         sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->systems, %du, tide_system_sources);\n", prog->systems.count);
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s%s};\n",
@@ -22056,6 +22340,7 @@ static void gen_api(gen *g)
         if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
         sb_put(o, "    tide_text_use(NULL, &local->heap); // The match holds no text or lists\n");
     }
+    if (g->ix_any) sb_put(o, "    tide_index_cache_prepare(&local->tide_index_cache); // The frame, for the loops' indexes\n");
     // What the match sent since the last frame, first: its local handlers
     // still find the local fields of an entity that's gone since
     if (hears_visibility(prog) && !g->opts->editor_prefab) sb_put(o, "    tide_local_reconcile_availability(local, w, verified ? verified : w, verified != NULL);\n");
@@ -22656,6 +22941,7 @@ static void gen_world_bytes(gen *g, const bool local)
     const char *prefix = local ? "tide_local_" : "tide_world_";
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
     if (!local && rows_cache_count(g)) sb_put(o, "    tide_rows_cache_free(w->tide_rows_cache);\n    w->tide_rows_cache = NULL;\n");
+    if (g->ix_any) sb_put(o, "    tide_index_cache_free(w->tide_index_cache);\n    w->tide_index_cache = NULL;\n");
     if (local) sb_put(o, "    tide_workers_free(w->tide_workers);\n    w->tide_workers = NULL;\n");
     resident_field residents[RESIDENTS_MOST];
     const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
@@ -22722,6 +23008,7 @@ static void gen_world_bytes(gen *g, const bool local)
     sb_put(o, "    if (!out || size > capacity) return (uint32_t)size;\n");
     sb_printf(o, "    %s *header = malloc(sizeof *header); // Storage pointers are cleared before serialization\n    if (!header) tide_out_of_memory();\n    memcpy(header, w, sizeof *header);\n", world);
     if (!local && rows_cache_count(g)) sb_put(o, "    header->tide_rows_cache = NULL;\n");
+    if (g->ix_any) sb_put(o, "    header->tide_index_cache = NULL;\n");
     if (local) sb_put(o, "    header->tide_io = NULL;\n    header->tide_workers = NULL;\n    header->tide_worker_jobs = NULL;\n");
     if (local && prog->command_types.count) sb_put(o, "    memset(header->tide_outgoing, 0, sizeof header->tide_outgoing);\n    header->tide_outgoing_count = 0;\n");
     // What the match sent is a frame's: none of it is the local state's to keep
@@ -22810,6 +23097,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
     sb_put(o, "    memcpy(w, data, sizeof *w);\n");
     if (!local && rows_cache_count(g)) sb_put(o, "    w->tide_rows_cache = NULL; // Never trust a pointer from a raw header, including rejected input\n");
+    if (g->ix_any) sb_put(o, "    w->tide_index_cache = NULL; // ...nor this one\n");
     if (local) sb_put(o, "    w->tide_io = io;\n    w->tide_workers = NULL;\n    w->tide_worker_jobs = NULL;\n");
     if (local && program_hears(prog)) sb_put(o, "    memset(&w->tide_heard, 0, sizeof w->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    w->tide_available_predicted = w->tide_available_verified = NULL;\n"
@@ -25723,6 +26011,7 @@ bool codegen(program *prog, const codegen_options *opts)
             return false;
         }
     }
+    g.ix_any = ix_program(&g);
     gen_header(&g);
     // The game's hash: its header, but for the first line, which names files.
     const char *types = strchr(g.h.data, '\n');
@@ -25799,6 +26088,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_json_helpers(&g);
     gen_columns(&g);
     gen_rows_cache_helpers(&g);
+    gen_index_helpers(&g);
     gen_component_access(&g);
     gen_hierarchy(&g);
     gen_shard_early(&g);
@@ -25867,6 +26157,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_sounds(&g);
     gen_rebind_resources(&g);
     gen_editor_preview(&g);
+    gen_index_sites(&g);
     if (opts->layout || opts->embed) gen_layout(&g);
     if (opts->embed) gen_embed(&g);
     if (opts->build_program) gen_build_main(&g);

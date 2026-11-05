@@ -50,6 +50,28 @@ add_executable(bench_hash hash/hash.c)
 target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
+# Indexes for indexed loops (tide/index.h): building one, and searching it for
+# about 10 entries near a point, against the plain loop over every entry; the
+# test checks both loops find the same entries.
+add_executable(bench_index index/index.c)
+target_link_libraries(bench_index PRIVATE tide)
+add_test(NAME bench_index COMMAND bench_index --quick)
+
+# Indexed loops: boids looking at their neighbours through a query, agents at
+# obstacles in a list, with the loops' indexes and without (NO_LOOP_INDEXES):
+# `bench_loops --n 10000` against `bench_loops_plain --n 10000`.
+if(TIDE_PLATFORM)
+    foreach(variant "" _plain)
+        set(no_indexes "")
+        if(variant STREQUAL "_plain")
+            set(no_indexes NO_LOOP_INDEXES)
+        endif()
+        tide_add_game(bench_loops${variant} ${no_indexes} SOURCES loops/loops.tide NAME loops HOST loops/main.c)
+        target_link_libraries(bench_loops${variant} PRIVATE tide_platform)
+        add_test(NAME bench_loops${variant} COMMAND bench_loops${variant} --quick)
+    endforeach()
+endif()
+
 # Presentation correction costs, without changing Transform's defaults.
 add_subdirectory(corrections)
 

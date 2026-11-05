@@ -1,0 +1,10 @@
+// expect: query row 'f' is read-only, and a parallel loop's steps change nothing outside them
+component Body { float x; }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        f.body.x = 1;
+    }
+}

@@ -143,7 +143,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;NO_LOOP_INDEXES" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -264,6 +264,12 @@ function(tide_add_game target)
         set(split --split-plumbing)
         set(split_c "${out_dir}/${name}_plumbing.c")
         set_source_files_properties("${split_c}" PROPERTIES COMPILE_OPTIONS -O2)
+    endif()
+    # NO_LOOP_INDEXES: every loop goes through all of its rows, none through an index (notes/indexed-loops.md),
+    # for tests and benchmarks that compare the two
+    set(loop_indexes "")
+    if(ARG_NO_LOOP_INDEXES)
+        set(loop_indexes --no-loop-indexes)
     endif()
     set(pack_c "")
     set(pack_outputs "")
@@ -392,7 +398,7 @@ function(tide_add_game target)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" "-DSTRIP_NAMES=${strip_names}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${tidec_out_dir}" --name "${name}" --depfile "${out_depfile}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
-               ${split} ${TIDE_BUILD_CODE_FLAGS}
+               ${split} ${loop_indexes} ${TIDE_BUILD_CODE_FLAGS}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${asset_list}" "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         DEPFILE "${out_depfile}"
         WORKING_DIRECTORY "${tidec_working_dir}"

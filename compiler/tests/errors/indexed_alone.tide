@@ -1,0 +1,7 @@
+// expect: 'indexed' goes before a loop: write 'indexed foreach (...)' or 'indexed parallel (...)'
+component Body { float3 position; }
+scene Main { }
+system Hits(Body body, query (Body other) others)
+{
+    indexed (var o in others) { }
+}

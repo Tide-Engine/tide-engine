@@ -1,0 +1,81 @@
+indexed_loops: 12 systems each tick, 4 stages deep; 12 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Separate  (per entity)
+         reads Sight
+         writes Body
+         reads any entity's Body, through queries
+         alongside ListLoop, Spots2, OneSided
+stage 1  ListLoop  (per entity)
+         reads Body, Field
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, Spots2, Either, OneSided
+stage 1  Spots2  (per entity)
+         reads Body, Spots
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Either, OneSided
+stage 1  OneSided  (per entity)
+         reads Body
+         reads any entity's Unit, through queries
+         alongside Separate, SquaredLocal, Helper, Wrapped, Boxy, Changes, Varying, NoGuard, ListLoop, Spots2, Either
+
+stage 2  SquaredLocal  (per entity)
+         reads Body
+         reads any entity's Body, through queries
+         after Separate: it writes Body, which this reads
+         alongside Helper, Wrapped, Boxy, ListLoop, Spots2, OneSided
+stage 2  Helper  (per entity)
+         reads Body, Sight
+         reads any entity's Body, through queries
+         after Separate: it writes Body, which this reads
+         alongside SquaredLocal, Wrapped, Boxy, ListLoop, Spots2, OneSided
+stage 2  Wrapped  (per entity)
+         reads Body
+         reads any entity's Body and Unit, through queries
+         after Separate: it writes Body, which this reads
+         alongside SquaredLocal, Helper, Boxy, ListLoop, Spots2, OneSided
+stage 2  Boxy  (per entity)
+         reads Body
+         reads any entity's Body, through queries
+         after Separate: it writes Body, which this reads
+         alongside SquaredLocal, Helper, Wrapped, ListLoop, Spots2, OneSided
+
+stage 3  Changes  (per entity)
+         writes Body
+         reads any entity's Body, through queries
+         after Separate: it reads Body, which this writes; it writes Body, which this reads (and through SquaredLocal)
+         after SquaredLocal: it reads Body, which this writes
+         after Helper: it reads Body, which this writes
+         after Wrapped: it reads Body, which this writes
+         after Boxy: it reads Body, which this writes
+         alongside ListLoop, Spots2, OneSided
+
+stage 4  Varying  (per entity)
+         reads Body
+         reads any entity's Body, through queries
+         after Separate: it writes Body, which this reads (and through Changes)
+         after Changes: it writes Body, which this reads
+         alongside NoGuard, ListLoop, Spots2, Either, OneSided
+stage 4  NoGuard  (per entity)
+         reads Body
+         reads any entity's Body, through queries
+         after Separate: it writes Body, which this reads (and through Changes)
+         after Changes: it writes Body, which this reads
+         alongside Varying, ListLoop, Spots2, Either, OneSided
+stage 4  Either  (per entity)
+         reads Body
+         reads any entity's Body, through queries
+         after Separate: it writes Body, which this reads (and through Changes)
+         after Changes: it writes Body, which this reads
+         alongside Varying, NoGuard, ListLoop, Spots2, OneSided
+
+Loops that skip rows, and whether an index finds the rest:
+         Separate, line 49: indexed by o.other.position.x, o.other.position.y, o.other.position.z
+         SquaredLocal, line 59: indexed by o.other.position.x, o.other.position.y, o.other.position.z
+         Helper, line 70: indexed by o.other.position.x, o.other.position.y, o.other.position.z
+         Wrapped, line 79: indexed by o.unit.team
+         Boxy, line 90: indexed by o.other.position.x, o.other.position.y, o.other.position.z
+         Changes, line 102: not indexed: this system changes Body.position of its own entity as it goes, which the loop finds rows by: change it in a system of its own
+         Varying, line 113: not indexed: its bound reads 'r', which the loop changes
+         ListLoop, line 131: indexed by p.x, p.y, p.z
+         Spots2, line 140: indexed by s.at.x, s.at.y
+         Either, line 149: indexed by o.other.position.x
+         OneSided, line 158: indexed by u.unit.health

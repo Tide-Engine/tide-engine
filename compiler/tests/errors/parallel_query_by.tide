@@ -1,0 +1,11 @@
+// expect: a parallel loop over a query goes through its rows one by one: it has no 'by'
+component Body { float x; }
+event Hit { }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    parallel (var f in bodies by 2)
+    {
+        if (f.body.x > 1) f.entity.Send(Hit { });
+    }
+}

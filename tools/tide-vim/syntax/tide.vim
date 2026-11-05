@@ -8,7 +8,7 @@ syntax keyword tideKeyword scene prefab entity struct enum namespace using exter
 syntax keyword tideKeyword const asset frag vert async worker virtual override local verified
 syntax keyword tideKeyword mut with without out in var fails is this
 syntax keyword tideConditional if else switch case default
-syntax keyword tideRepeat while for foreach parallel
+syntax keyword tideRepeat while for foreach parallel indexed
 syntax keyword tideStatement return break continue fail try await
 syntax keyword tideType void bool byte ushort char int int2 int3 int4 long
 syntax keyword tideType double double2 double3 double4 double2x2 double3x3 double4x4

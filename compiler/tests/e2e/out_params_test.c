@@ -224,7 +224,7 @@ TIDE_TEST(out_declared_wherever_a_call_is)
     TIDE_CHECK(p->listed == 1409); // A foreach's list: 1 + 4 + 9, and the last
     TIDE_CHECK(p->switched == 6);
     TIDE_CHECK(p->stepped == 4);   // A for's step halves its own variable: 16, 8, 4, 2
-    TIDE_CHECK(p->indexed == 42);  // The index's call, then the value that reads what it made
+    TIDE_CHECK(p->byIndex == 42);  // The index's call, then the value that reads what it made
     TIDE_CHECK(p->inlined == 2);   // In a function copied into its call: 2 and 4 halve to more than 0
     TIDE_CHECK(p->tally.total == 105); // Results nobody reads: 5, then 100
 }

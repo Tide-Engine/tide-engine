@@ -403,6 +403,7 @@ const cases = {
     ],
     "loops' headers": [
         ['parallel (var at in field.cells by 2 offset o)', [['parallel', 'keyword.control'], ['in', 'keyword.control'], ['by', 'keyword.control'], ['offset', 'keyword.control']]],
+        ['indexed foreach (var near in field.items)', [['indexed', 'keyword.control'], ['foreach', 'keyword.control'], ['in', 'keyword.control']]],
         ['foreach (var tick in Both(Ticks(), Ticks()))', [['in', 'keyword.control'], ['Both', 'entity.name.function.call'], ['in', '!keyword', 2]]],
     ],
     'query is a modifier in system parameters and a name elsewhere': [

@@ -15,6 +15,7 @@
 #include "tide/player.h" // How many players a game can take
 #include "tide/skinned_data.h" // [BlendShapes] keeps some of an imported model's shapes
 #include "types.h"
+#include "indexing.h"
 
 // Semantic analysis: resolves names and types, enforces access and mutability
 // rules, and derives the archetype list from spawn, add and remove sites.
@@ -9869,6 +9870,12 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         diag_note("read and write them in a view, and keep what the task needs in local state of its own");
         return T_ERR;
     }
+    if (c->parallel && c->parallel->query && row_binding(e->object)) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', which a parallel loop's steps don't read yet",
+                   STR_ARG(f->name), STR_ARG(d->name));
+        diag_note("read it in a 'foreach', which goes in order, or keep what the steps need in the match's fields");
+        return T_ERR;
+    }
     if (c->method && c->method->kind != DECL_FUNCTION && c->method->kind != DECL_SHADER && !row_binding(e->object)) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and methods work on values, which have none",
                    STR_ARG(f->name), STR_ARG(d->name));
@@ -10423,7 +10430,7 @@ static type check_name(checker *c, expr *e)
         e->local = local;
         if (e == c->write_root) local->assigned = true; // `count += 1` alone never uses count
         else local->read = true;
-        if (local->query && (c->parallel || c->block_depth || c->compare)) {
+        if (local->query && ((c->parallel && c->parallel != local) || c->block_depth || c->compare)) {
             diag_error(e->at, "a query row can't be captured by parallel loops or callback blocks");
             diag_note("copy the entity handle or a component binding before the loop or callback");
             return T_ERR;
@@ -12294,6 +12301,12 @@ static bool check_step_write(checker *c, const expr *target)
             if (c->locals.items[i] == root->local) return true;
         }
     }
+    if (root && root->bind == BIND_LOCAL && root->local == loop && loop->query) {
+        diag_error(target->at, "query row '" STR_FMT "' is read-only, and a parallel loop's steps change nothing outside them",
+                   STR_ARG(root->name));
+        diag_note("copy a component binding into a 'mut var' to change the copy, or send an event to the row's entity");
+        return false;
+    }
     diag_error(target->at, "a parallel loop's steps run at once, so each changes only its own place (a grid's cell "
                            "or block, a list's element or block), and the variables it declares");
     diag_note("work it out in the step, or in a 'for' loop, which goes in order");
@@ -13078,7 +13091,23 @@ static void check_step_expr(checker *c, const expr *e)
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "add, remove or destroy"; break;
-    case CALL_SEND: what = "send events"; break;
+    case CALL_SEND:
+        // A loop over a query's rows records its steps' events in the order
+        // its rows come in, as a foreach would: the match's events, of plain
+        // values, as text can't be made on threads
+        if (!c->parallel->query) what = "send events";
+        else if (e->type_decl && (e->type_decl->is_command || e->local_world)) {
+            diag_error(e->at, "a parallel loop's steps send only the match's events, and '" STR_FMT "' is %s",
+                       STR_ARG(e->type_decl->name), e->type_decl->is_command ? "a command" : "local");
+            diag_note("send it before or after the loop, or from a 'foreach', which goes in order");
+            return;
+        } else if (e->type_decl && decl_holds_text(e->type_decl)) {
+            diag_error(e->at, "a parallel loop's steps run on threads, where text and lists can't be made, and '" STR_FMT
+                       "' holds them", STR_ARG(e->type_decl->name));
+            diag_note("send it from a 'foreach', which goes in order, or keep a number for the text in the event");
+            return;
+        }
+        break;
     case CALL_DRAW: what = "draw"; break;
     case CALL_AUDIO: what = "play sounds"; break;
     case CALL_GUI: what = gui_call_what(e); break;
@@ -13171,12 +13200,50 @@ static bool thread_grid(const expr *e)
 }
 
 // parallel (var at in cells) { ... }, or by blocks: parallel (var at in cells by 2 offset shift)
+static void check_parallel_steps(checker *c, stmt *s);
+
+// parallel (var row in query): its rows, as a foreach has them, read-only. The
+// loop gathers them in the foreach's order, and its steps go through them at
+// once; what they send is recorded in that order too.
+static void check_parallel_query(checker *c, stmt *s, const type query)
+{
+    s->query = s->value->param;
+    s->type = (type){TY_STRUCT, query.decl};
+    for (int i = 0; i < 3; i++) s->block[i] = 1;
+    if (s->by || s->offset) {
+        const expr *extra = s->by ? s->by : s->offset;
+        diag_error(extra->at, "a parallel loop over a query goes through its rows one by one: it has no '%s'",
+                   s->by ? "by" : "offset");
+        diag_note("remove it: 'parallel (var " STR_FMT " in " STR_FMT ")'", STR_ARG(s->name), STR_ARG(s->value->name));
+    }
+    if (s->type_name.len > 0) {
+        diag_error(s->type_at, "a query row takes its type from the query: write 'parallel (var " STR_FMT " in ...)'",
+                   STR_ARG(s->name));
+    }
+    for (int i = 0; s->query && i < s->query->query.count; i++) {
+        const param *p = &s->query->query.items[i];
+        if (!param_binding(p) || p->mode != PARAM_MUT) continue;
+        diag_error(s->value->at, "a parallel loop's rows are read-only, and '" STR_FMT "' takes 'mut " STR_FMT " " STR_FMT "'",
+                   STR_ARG(s->value->name), STR_ARG(p->type_name), STR_ARG(p->name));
+        diag_note("change local fields in a 'foreach', which goes in order, or loop over a query without 'mut'");
+        break;
+    }
+    check_parallel_steps(c, s);
+}
+
 static void check_parallel(checker *c, stmt *s)
 {
+    c->query_value = s->value->kind == E_NAME ? s->value : NULL;
     const type grid = check_expr(c, s->value);
+    c->query_value = NULL;
+    if (grid.kind == TY_QUERY) {
+        check_parallel_query(c, s, grid);
+        return;
+    }
     const bool list = grid.kind == TY_LIST; // Its places are its elements' indices
     if (grid.kind != TY_GRID && !list && grid.kind != TY_ERROR) {
-        diag_error(s->value->at, "parallel goes through a grid's cells or a list's elements, and this is %s", type_name(grid));
+        diag_error(s->value->at, "parallel goes through a grid's cells, a list's elements or a query's rows, and this is %s",
+                   type_name(grid));
     }
     const int dims = grid.kind == TY_GRID ? grid.decl->dims : list ? 1 : 2;
     const type position = list ? (type){TY_INT, NULL} : dims == 2 ? (type){TY_INT2, NULL} : (type){TY_INT3, NULL};
@@ -13246,6 +13313,12 @@ static void check_parallel(checker *c, stmt *s)
         }
     }
     s->type = position;
+    check_parallel_steps(c, s);
+}
+
+// What every parallel loop's steps are checked for, whatever it goes through.
+static void check_parallel_steps(checker *c, stmt *s)
+{
     s->parallel = true;
     if (c->parallel) {
         diag_error(s->at, "a parallel loop's step can't hold another parallel loop");
@@ -22099,6 +22172,12 @@ static void check_local_field_calls(const checker *c)
                 diag_note_at(q->match_write_at, "it does on line %d; copy the component to change its value", q->match_write_at.line);
                 continue;
             }
+            if (q->local_use && site->parallel && row_binding(arg)) {
+                diag_error(arg->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which a parallel loop's steps "
+                           "don't read yet", STR_ARG(to->name), STR_ARG(q->type.decl->name));
+                diag_note("call it from a 'foreach', which goes in order");
+                continue;
+            }
             if (q->mode == PARAM_MUT && q->match_write && local_code && own) {
                 diag_error(arg->at, "%s can't change the match, and '" STR_FMT "' changes its '" STR_FMT "''s match fields",
                            local_code_what(from), STR_ARG(to->name), STR_ARG(q->name));
@@ -23560,6 +23639,7 @@ bool check(program *prog)
     }
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
+    plan_loop_indexes(prog);
     collect_device_uses(&c);
     check_workers(&c);
     check_build_code(&c);

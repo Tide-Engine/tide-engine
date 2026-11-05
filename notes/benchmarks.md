@@ -10,6 +10,32 @@ frames with `Draw.Occlusion` off and on, GPU time, what it hid; `--quick` is its
 In short: the town 3.6-3.9 -> 0.35 ms of GPU a frame; Mount & Rifle's menu scene no gain (+0.35-0.45 ms, its
 multisampled scene target's split and depth resolve, for 5.5% fewer flora indices).
 
+## Indexed loops in games (2026-11-05)
+
+`bench_loops` and `bench_loops_plain` (`bench/loops`, the same game, the second built `NO_LOOP_INDEXES`): boids
+that each count the boids within 2 through a query (every boid moves every tick, so the index is made again each
+tick) and agents that each look for obstacles within 2 in a singleton's list that never changes, about ten boids
+and three obstacles near each. `bench_loops --n <count> [--boids n] [--agents n] [--ticks n] [--threads n]`;
+both print the world's hash, the same for the same options. Release, Windows, Ryzen 9 7900X, one thread, ms a
+tick:
+
+| | Plain | Indexed |
+|---|---|---|
+| 10,000 boids and 10,000 agents | 341 | 9.3 |
+| 10,000 boids | 86 | 7.6 |
+| 10,000 agents | 273 | 1.8 |
+| 1,000 of each | 2.95 | 0.72 |
+| 200 of each | 0.129 | 0.028 |
+| 50 of each | 0.0091 | 0.0064 |
+| 20 of each | 0.00148 | 0.00142 |
+
+Below 32 rows a loop runs the plain loop (its body is written twice): 20 of each cost 5.4 µs a tick before that,
+listing the rows and gathering each. The boids and agents alone are from before it.
+More threads change nothing here: the tick's estimate of a system's work counts a loop over a query as one step,
+so neither build's tick goes on threads at these sizes. Before a system's own loop searched its index with no lock
+once it was found to hold that tick, checking the index's facts under the lock for every entity made the indexed
+build 22 ms a tick at 10,000. Details: notes/indexed-loops.md, Code generation.
+
 ## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
 
 Numbers, method and why the route couldn't run: drawing.md, Listed runs culled on the GPU. In short, the menu's

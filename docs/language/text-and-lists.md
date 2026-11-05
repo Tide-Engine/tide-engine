@@ -398,6 +398,10 @@ Each step reads the list as the loop found it and changes only its own element, 
 
 The list is one the world keeps, a component's or a singleton's, and its elements hold no text: the steps run on threads, where text can't be made.
 
+### Only the elements that can pass
+
+A `foreach` or `parallel` loop over a list that starts by skipping elements, as in `if (Math.Distance(wall.center, body.position) > reach) continue;`, visits only the elements within the bounds its condition sets, found through an index, with the same results. `indexed foreach` and `indexed parallel` promise it, and say why when they can't. It works as for a query's rows: see [Only the rows that can pass](../game/systems.md#only-the-rows-that-can-pass).
+
 ## Maps and sets
 
 `Map<K, V>` holds values by key, and `Set<K>` holds keys, each once. Both start empty, and `[a, b]` makes a set where one goes:

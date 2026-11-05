@@ -1,0 +1,438 @@
+// Indexed loops (notes/indexed-loops.md): each loop below that skips rows on a guard goes through an index,
+// unless the game is built with --no-loop-indexes. indexed_loops_test.c runs both builds and the test
+// tidec_indexed_loops_same compares what they print, tick by tick: the worlds and what the views drew.
+
+enum Team { Red, Blue, Green }
+
+component Body
+{
+    float3 position;
+    float3 velocity;
+    float radius = 1;
+}
+
+component Unit
+{
+    Team team;
+    int level;
+    float health;
+    bool alive;
+}
+
+component Score
+{
+    int walls;
+    int list;
+    int spots;
+    int helper;
+    float sum;
+}
+
+component Life
+{
+    int ticks;
+}
+
+component Mover { }
+
+component Wall { }
+
+[Sparse]
+component Tagged { }
+
+struct Spot
+{
+    float2 at;
+    int kind;
+}
+
+singleton Field
+{
+    List<float3> points;
+    List<Spot> spots;
+    float reach;
+    int made;
+}
+
+struct Spark
+{
+    float2 at;
+    float heat;
+}
+
+singleton Sparks
+{
+    List<Spark> items;
+    int warm;
+}
+
+singleton Stats
+{
+    int teams;
+    int low;
+    int band;
+    int tagged;
+    int spawned;
+    float sum;
+    int around;
+    int shifting;
+}
+
+local singleton Drawn
+{
+    int rows;
+    int helper;
+    float sum;
+    int glanced;
+    int marked;
+    List<float2> marks;
+}
+
+component Trail
+{
+    List<float2> marks;
+}
+
+event Tick
+{
+    float3 at;
+}
+
+event Hit
+{
+    float amount;
+}
+
+scene Main { }
+
+// A number from 0 to 1 for `i`, the same everywhere
+float Spread(int i, int salt)
+{
+    return float((i * 7919 + salt * 104729) % 1000) / 1000.0f;
+}
+
+event(Spawned) Setup(with Main)
+{
+    // Walls, which never move: their indexes last from tick to tick
+    for (var i = 0; i < 1200; i++)
+    {
+        var at = float3(Spread(i, 1) * 40.0f - 20.0f, Spread(i, 2) * 40.0f - 20.0f, Spread(i, 3) * 4.0f);
+        var team = i % 3 == 0 ? Team.Red : i % 3 == 1 ? Team.Blue : Team.Green;
+        if (i % 7 == 0) Spawn(Body { position = at }, Wall, Unit { team = team, level = i % 5, health = float(i % 13), alive = true }, Tagged);
+        else Spawn(Body { position = at }, Wall, Unit { team = team, level = i % 5, health = float(i % 13), alive = i % 2 == 0 });
+    }
+    // Walls no number can find: NaN and infinite places, which every search gives
+    var zero = 0.0f;
+    Spawn(Body { position = float3(zero / zero, 1.0f, 1.0f) }, Wall);
+    Spawn(Body { position = float3(1.0f / zero, 0.0f, 0.0f) }, Wall);
+    Spawn(Body { position = float3(-1.0f / zero, 2.0f, zero / zero) }, Wall);
+    // Movers, which move every tick: theirs are made again each tick
+    for (var i = 0; i < 400; i++)
+    {
+        var at = float3(Spread(i, 4) * 30.0f - 15.0f, Spread(i, 5) * 30.0f - 15.0f, Spread(i, 6) * 2.0f);
+        Spawn(Body { position = at, velocity = float3(Spread(i, 7) - 0.5f, Spread(i, 8) - 0.5f, 0.0f) }, Mover, Score { }, Trail { },
+              Unit { team = i % 2 == 0 ? Team.Blue : Team.Green, level = i % 4, health = 5.0f, alive = true });
+    }
+}
+
+// The lists, once
+system Fill(mut Field field, mut Sparks sparks)
+{
+    if (field.made > 0) return;
+    for (var i = 0; i < 500; i++) sparks.items.Add(Spark { at = float2(Spread(i, 16) * 40.0f - 20.0f, Spread(i, 17) * 4.0f) });
+    field.made = 1;
+    field.reach = 3.5f;
+    for (var i = 0; i < 400; i++)
+    {
+        field.points.Add(float3(Spread(i, 9) * 40.0f - 20.0f, Spread(i, 10) * 40.0f - 20.0f, Spread(i, 11) * 3.0f));
+        field.spots.Add(Spot { at = float2(Spread(i, 12) * 40.0f - 20.0f, Spread(i, 13) * 40.0f - 20.0f), kind = i % 4 });
+    }
+    var zero = 0.0f;
+    field.points.Add(float3(zero / zero, 0.0f, 0.0f));
+}
+
+system Move(mut Body body, with Mover)
+{
+    body.position += body.velocity * 0.25f;
+    // Round the middle, slowing: they stay among the walls
+    body.velocity = body.velocity * 0.9f + float3(-body.position.y, body.position.x, 0.0f) * 0.02f;
+    if (body.position.x > 20.0f || body.position.x < -20.0f) body.velocity.x = -body.velocity.x;
+    if (body.position.y > 20.0f || body.position.y < -20.0f) body.velocity.y = -body.velocity.y;
+}
+
+// A 3D distance to the walls, which don't move
+system Avoid(mut Body body, mut Score score, with Mover, query (Body other, with Wall) walls)
+{
+    foreach (var w in walls)
+    {
+        if (Math.Distance(w.other.position, body.position) > 3.0f) continue;
+        if (!Finite(w.other.position)) continue; // NaN passes the guard above: the index gives it every time
+        body.velocity -= (w.other.position - body.position) * 0.01f;
+        score.walls += 1;
+        score.sum += w.other.position.x * 0.5f + w.other.position.y;
+    }
+}
+
+bool Finite(float3 p)
+{
+    return Math.Abs(p.x) + Math.Abs(p.y) + Math.Abs(p.z) < 1000.0f;
+}
+
+bool InRange(float3 a, float3 b, float r)
+{
+    return Math.DistanceSq(a, b) <= r * r;
+}
+
+// A squared distance through a function, to the movers, which move every tick, sending events
+system Crowd(Body body, Unit unit, with Mover, query (Body other, Unit u, with Mover) movers)
+{
+    foreach (var m in movers)
+    {
+        if (!InRange(m.other.position, body.position, 4.0f)) continue;
+        if (m.entity == this) continue;
+        m.entity.Send(Hit { amount = float(unit.level + m.u.level) + body.position.x * 0.125f });
+    }
+}
+
+event(Hit hit) Struck(mut Unit unit)
+{
+    unit.health = unit.health * 0.999f - hit.amount * 0.01f;
+}
+
+// An equality on an enum, a one-sided bound, a band of either side (`||`), and a bool
+system Count(mut Stats stats, query (Body other, Unit u) units, query (Unit u, with Tagged) tagged)
+{
+    stats.teams = 0;
+    stats.low = 0;
+    stats.band = 0;
+    stats.tagged = 0;
+    stats.sum = 0.0f;
+    foreach (var r in units)
+    {
+        if (r.u.team != Team.Blue) continue;
+        stats.teams += r.u.level;
+        stats.sum = stats.sum * 0.5f + r.u.health;
+    }
+    foreach (var r in units)
+    {
+        if (r.u.health >= 3.0f) continue;
+        stats.low += 1;
+        stats.sum += r.other.position.z;
+    }
+    foreach (var r in units)
+    {
+        var x = r.other.position.x;
+        if ((x > 1.0f && x < 3.0f) || (x > 7.0f && x < 9.0f))
+        {
+            stats.band += 1;
+            stats.sum -= x;
+        }
+    }
+    foreach (var t in tagged)
+    {
+        if (!t.u.alive) continue;
+        stats.tagged += t.u.level + 1;
+    }
+}
+
+// Lists in a singleton: of float3, and of structs
+system Near(mut Score score, Body body, Field field, with Mover)
+{
+    foreach (var p in field.points)
+    {
+        if (Math.Distance(p, body.position) > field.reach) continue;
+        score.list += 1;
+        score.sum += p.z;
+    }
+    foreach (var s in field.spots)
+    {
+        if (s.kind != 2 || Math.Distance(s.at, body.position.xy) > 3.0f) continue;
+        score.spots += 1;
+    }
+}
+
+// A query borrowed by a function: from a system (the world's rows) and from a view (the view's rows)
+int CountNear(query (Body other, with Wall) walls, float3 at, float r)
+{
+    mut var n = 0;
+    foreach (var w in walls)
+    {
+        if (Math.Distance(w.other.position, at) > r) continue;
+        n += 1;
+    }
+    return n;
+}
+
+system Borrow(mut Score score, Body body, with Mover, query (Body other, with Wall) walls)
+{
+    score.helper += CountNear(walls, body.position, 2.5f);
+}
+
+// Entities come and go
+system Churn(mut Stats stats, Time time)
+{
+    if (time.tick % 5 != 0) return;
+    stats.spawned += 1;
+    var i = stats.spawned;
+    Spawn(Body { position = float3(Spread(i, 14) * 30.0f - 15.0f, Spread(i, 15) * 30.0f - 15.0f, 0.5f) }, Wall, Life { ticks = 12 },
+          Unit { team = Team.Blue, level = i % 3, health = 1.0f, alive = true });
+}
+
+// Work enough for a tick on threads
+system Busy(mut Score score, with Mover)
+{
+    mut var h = score.walls;
+    for (var i = 0; i < 4096; i++) h = (h * 17 + i) % 65521;
+    score.helper += h % 3;
+}
+
+system Expire(mut Life life)
+{
+    life.ticks -= 1;
+    if (life.ticks <= 0) this.Destroy();
+}
+
+view Look(Body body, with Mover, mut Drawn drawn, query (Body other, with Wall) walls)
+{
+    foreach (var w in walls)
+    {
+        if (Math.DistanceSq(w.other.position, body.position) > 9.0f) continue;
+        if (!Finite(w.other.position)) continue;
+        drawn.rows += 1;
+        drawn.sum += w.other.position.x;
+    }
+    drawn.helper += CountNear(walls, body.position, 2.0f);
+}
+
+// A parallel loop over a query's rows: the index's candidates are the rows its steps go through
+system Ping(Time time, query (Body other, Unit u) units)
+{
+    parallel (var r in units)
+    {
+        if (Math.Distance(r.other.position, float3(2.0f, 3.0f, 1.0f)) > 6.0f) continue;
+        r.entity.Send(Hit { amount = float(r.u.level) + float(time.tick % 7) * 0.25f });
+    }
+}
+
+// A parallel loop over a list: its steps run for the elements the index gives
+system Glow(mut Sparks sparks, Time time)
+{
+    parallel (var i in sparks.items)
+    {
+        if (Math.Abs(sparks.items[i].at.x - 3.0f) > 4.0f) continue;
+        mut var spark = sparks.items[i];
+        spark.heat += float(time.tick % 5) * 0.5f + spark.at.y;
+        sparks.items[i] = spark;
+    }
+}
+
+// A list in a component: an index of the loop's own at each run
+system Mark(mut Trail trail, Body body, with Mover)
+{
+    if (trail.marks.count < 48) trail.marks.Add(body.position.xy);
+}
+
+system Follow(mut Score score, Trail trail, Body body, with Mover)
+{
+    foreach (var m in trail.marks)
+    {
+        if (Math.Distance(m, body.position.xy) > 2.0f) continue;
+        score.list += 1;
+    }
+}
+
+// A list in a singleton the system changes (not the list)
+system Heat(mut Sparks sparks)
+{
+    sparks.warm = 0;
+    foreach (var s in sparks.items)
+    {
+        if (s.heat < 10.0f) continue;
+        sparks.warm += 1;
+    }
+}
+
+List<float2> Points(int salt, int n)
+{
+    mut List<float2> points = [];
+    for (var i = 0; i < n; i++) points.Add(float2(Spread(i, salt) * 40.0f - 20.0f, Spread(i, salt + 1) * 40.0f - 20.0f));
+    return points;
+}
+
+// A local's list nothing writes after declaring it: its index is kept across the inner loop's runs in one call,
+// and made again for the next call, whose list can be at the same place with other points
+int Around(int salt)
+{
+    var points = Points(salt, 200);
+    mut var n = 0;
+    for (var k = 0; k < 30; k++)
+    {
+        var c = float2(float(k) - 15.0f, float(k % 7) * 3.0f - 9.0f);
+        foreach (var p in points)
+        {
+            if (Math.Distance(p, c) > 4.0f) continue;
+            n += k + 1;
+        }
+    }
+    return n;
+}
+
+// ...and one the code writes between the inner loop's runs: an index of the loop's own each run
+int Shifting(int salt)
+{
+    mut var points = Points(salt, 120);
+    mut var n = 0;
+    for (var k = 0; k < 20; k++)
+    {
+        var c = float2(float(k) * 2.0f - 20.0f, 0.0f);
+        foreach (var p in points)
+        {
+            if (Math.Abs(p.x - c.x) > 3.0f) continue;
+            n += k;
+        }
+        points[k] = float2(c.x + 0.5f, c.y);
+    }
+    return n;
+}
+
+system Scatter(mut Stats stats, Time time)
+{
+    stats.around = Around(int(time.tick % 3) + 20); // One call a tick: the next tick's list is where this one was
+    stats.shifting = Shifting(int(time.tick % 4) + 30);
+}
+
+// A local handler's rows (a tick's record), and a parallel loop over them
+system Clock(Time time)
+{
+    Send(Tick { at = float3(float(time.tick % 30) - 15.0f, float(time.tick % 11) - 5.0f, 1.0f) });
+}
+
+local event(Tick t) Glance(mut Drawn drawn, query (Body other, with Wall) walls)
+{
+    foreach (var w in walls)
+    {
+        if (Math.Distance(w.other.position, t.at) > 5.0f) continue;
+        if (!Finite(w.other.position)) continue;
+        drawn.glanced += 1;
+    }
+    parallel (var w in walls)
+    {
+        if (Math.Distance(w.other.position, t.at) > 5.0f) continue;
+    }
+}
+
+// A view's rows in a parallel loop, and a list in a local singleton the view changes
+view Scan(mut Drawn drawn, Field field, query (Body other, with Wall) walls)
+{
+    parallel (var w in walls)
+    {
+        if (Math.Distance(w.other.position, float3(1.0f, 2.0f, 1.0f)) > 6.0f) continue;
+    }
+    if (drawn.marks.count < 64) drawn.marks.Add(float2(float(drawn.marks.count) * 0.5f - 16.0f, field.reach));
+    var lane = float(drawn.rows % 20) - 10.0f;
+    foreach (var m in drawn.marks)
+    {
+        if (Math.Abs(m.x - lane) > 2.0f) continue;
+        drawn.marked += 1;
+    }
+}

@@ -1,0 +1,11 @@
+// expect: a parallel loop's rows are read-only, and 'bodies' takes 'mut Body body'
+component Body { float x; local float shown; }
+scene Main { }
+view Look(query (mut Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        if (f.body.x > 1) continue;
+    }
+    foreach (var f in bodies) f.body.shown = f.body.x;
+}

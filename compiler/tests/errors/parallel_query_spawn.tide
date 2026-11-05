@@ -1,0 +1,11 @@
+// expect: a parallel loop's steps run at once, so they can't spawn
+component Body { float x; }
+component Spark { }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        if (f.body.x > 1) Spawn(Spark);
+    }
+}

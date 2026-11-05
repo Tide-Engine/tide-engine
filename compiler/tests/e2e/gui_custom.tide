@@ -13,7 +13,7 @@ local singleton Menu
     bool scrolling;
     bool focusLast;
     float2 offset;
-    bool indexed;
+    bool byIndex;
     bool clearOffsets;
     int indexCalls;
     List<float2> offsets = [float2(0)];
@@ -64,7 +64,7 @@ int OffsetIndex(mut Menu menu)
 view MenuView(mut Menu menu)
 {
     menu.frames++;
-    if (menu.indexed)
+    if (menu.byIndex)
     {
         GUILayout.Scroll(float2(160, 60), menu.offsets[OffsetIndex(menu)])
         {

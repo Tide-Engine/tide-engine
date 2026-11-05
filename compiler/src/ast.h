@@ -1409,7 +1409,17 @@ struct stmt {
     loc name_at;
     loc type_qual_at; // Where the type starts: its namespace if it's qualified
 
-    param *query; // S_FOREACH over a query parameter; its compiler-only row is `type`
+    param *query; // S_FOREACH or S_PARALLEL over a query parameter; its compiler-only row is `type`
+
+    // S_FOREACH and S_PARALLEL: `indexed` written before the loop (a promise), and what the
+    // checker found (compiler/src/indexing.c): the bounds its guard puts on the rows'
+    // fields, or why it found none
+    bool indexed;
+    loc indexed_at;
+    struct loop_index *index;
+    const char *index_why;
+    loc index_why_at;
+    bool index_guarded; // Its body starts by skipping rows on a condition
 
     // S_VAR initializer (NULL for the name after `is`), S_ASSIGN value, S_EXPR
     // expression, S_RETURN value (or NULL), S_FAIL error
