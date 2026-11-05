@@ -692,6 +692,8 @@ static void walk_value(const expr *e);
 static void walk_expr(const expr *e)
 {
     if (!e) return;
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param
+        && str_eq_c(e->param->name, "tide_preparation_scene")) return;
     if (e->task_source) { walk_expr(e->task_source); return; }
     if (!e->is_out) {
         walk_value(e);
@@ -1005,7 +1007,7 @@ static void walk_value(const expr *e)
             o.kind = OCC_METHOD;
             if (e->call == CALL_TRANSFORM) o.component = e->type_decl;
             add_occ(o);
-        } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD) {
+        } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_IS_PREPARED) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
                                  .name = str_from("Scene")});
             o.kind = OCC_FUNCTION;
@@ -1249,7 +1251,7 @@ static void walk_param(const param *p, const decl *d)
 
 static void walk_params(const decl *d)
 {
-    for (int i = 0; i < d->params.count; i++) walk_param(&d->params.items[i], d);
+    for (int i = d->preparation_owner ? 2 : 0; i < d->params.count; i++) walk_param(&d->params.items[i], d);
 }
 
 static void walk_routine(const decl *m)
@@ -1424,8 +1426,9 @@ static void index_program(void)
             if (at->call) for (int v = 0; v < at->call->args.count; v++) walk_expr(at->call->args.items[v]);
         }
         if (d->kind == DECL_SYSTEM || d->kind == DECL_SHADER) {
-            add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_SYSTEM, .declaration = true, .decl = d,
-                                 .name = d->name});
+            if (!d->preparation_owner)
+                add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_SYSTEM, .declaration = true, .decl = d,
+                                     .name = d->name});
             walk_params(d);
             walk_code = d;
             walk_stmt(d->body);
@@ -1474,6 +1477,7 @@ static void index_program(void)
         // checker keeps apart, in its local part
         for (int f = 0; f < d->fields.count + local_field_count(d); f++) {
             const field *fl = field_of(d, f);
+            if (fl->hidden) continue;
             type_place(fl->type_ref, fl->type_qual_at.line ? fl->type_qual_at : fl->type_at, fl->type_at, fl->type_name, fl->type);
             add_occ((occurrence){.at = fl->at, .len = fl->name.len, .kind = OCC_FIELD, .declaration = true, .field = fl,
                                  .decl = d, .name = fl->name, .type = fl->type});
@@ -1878,6 +1882,15 @@ static void format_param(const param *p, sb *out)
 // `system Move(mut Body body)`, or a handler's `event(Hit hit) TakeHit(mut Health health)`.
 static void format_header(const decl *d, sb *out)
 {
+    if (d->preparation_owner) {
+        sb_put(out, "prepare(");
+        for (int i = 2; i < d->params.count; i++) {
+            if (i > 2) sb_put(out, ", ");
+            format_param(&d->params.items[i], out);
+        }
+        sb_put(out, ")");
+        return;
+    }
     int first = 0;
     if (d->is_virtual) sb_put(out, "virtual ");
     if (d->is_override) sb_put(out, "override ");
@@ -2136,6 +2149,8 @@ static const method_form scene_calls[] = {
     {"Load", "Scene.Load(scene, components...)",
      "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
+    {"IsPrepared", "Scene.IsPrepared(scene[, player]) -> bool",
+     "Whether this machine has prepared the scene, or the server has acknowledged a player's readiness. Games choose their own waiting and timeout policy."},
 };
 
 #define AUDIENCE_DOC "A set of players permitted to receive state. All and None are values; Only(player) and From(players) select players."
@@ -5396,7 +5411,7 @@ void analysis_symbols(jbuf *out)
     int written = 0;
     for (int i = 0; i < A.written.count; i++) {
         const decl *d = A.written.items[i];
-        if (d->builtin || d->at.file != A.doc) continue; // This document's declarations
+        if (d->builtin || d->at.file != A.doc || d->preparation_owner) continue; // This document's declarations
         const int kind = symbol_kind(d);
         const loc start = {d->at.line, 1, d->at.file};
         const loc end = d->end.line > 0 ? d->end : d->at;
@@ -5457,6 +5472,21 @@ void analysis_symbols(jbuf *out)
             write_position(out, (loc){end.line, end.col + 1, end.file});
             jb_put(out, "},\"selectionRange\":");
             write_range(out, m->at, m->name.len);
+            jb_put(out, "}");
+        }
+        if (d->preparation) {
+            if (!first_child) jb_put(out, ",");
+            first_child = false;
+            sb detail = {0};
+            format_header(d->preparation, &detail);
+            jb_put(out, "{\"name\":\"prepare\",\"detail\":");
+            jb_string(out, detail.data);
+            jb_printf(out, ",\"kind\":%d,\"range\":{\"start\":", SYMBOL_METHOD);
+            write_position(out, d->preparation->at);
+            jb_put(out, ",\"end\":");
+            write_position(out, d->preparation->end);
+            jb_put(out, "},\"selectionRange\":");
+            write_range(out, d->preparation->at, 7);
             jb_put(out, "}");
         }
         for (int k = 0; d->kind == DECL_INPUT && k < 3; k++) {
@@ -6382,7 +6412,7 @@ void analysis_workspace_symbols(const char *query, const workspace_symbol_fn sym
 {
     for (int i = 0; A.prog && i < A.written.count; i++) {
         const decl *d = A.written.items[i];
-        if (d->builtin) continue;
+        if (d->builtin || d->preparation_owner) continue;
         const int kind = symbol_kind(d);
         const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
         if (fuzzy_match(d->name, query)) workspace_symbol(symbol, user, d->name, kind, d->at, d->name.len, ns);
@@ -6834,7 +6864,7 @@ static scope scope_at(const loc at)
         if (d->builtin || (!block_contains(d->body, at) && !sanitize && !predict)) continue;
         sc.decl = d;
         sc.in_input = d->kind == DECL_INPUT;
-        sc.fields_of = sc.in_input ? d : d->kind == DECL_METHOD ? d->owner : NULL; // An override of a method: its type's
+        sc.fields_of = d->preparation_owner ? d->preparation_owner : sc.in_input ? d : d->kind == DECL_METHOD ? d->owner : NULL; // An override of a method: its type's
         sc.in_sanitize = sanitize || predict;
         sc.in_predict = predict;
         collect_locals(predict ? d->predict : sanitize ? d->sanitize : d->body, at, &sc);
@@ -8257,6 +8287,7 @@ static void complete_shader_code(completion *c, const scope *sc, const bool stat
     }
     for (int i = 0; i < sc->decl->params.count; i++) {
         const param *p = &sc->decl->params.items[i];
+        if (sc->decl->preparation_owner && i < 2) continue;
         if (p->name.len == 0) continue;
         sb detail = {0};
         format_param(p, &detail);
@@ -8389,6 +8420,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     if (sc.decl) {
         for (int i = 0; i < sc.decl->params.count && !sc.in_sanitize; i++) {
             const param *p = &sc.decl->params.items[i];
+            if (sc.decl->preparation_owner && i < 2) continue;
             if (p->name.len == 0) continue;
             sb detail = {0};
             format_param(p, &detail);
@@ -9550,6 +9582,7 @@ static void complete_out_argument(completion *c, const out_argument *arg, const 
     }
     for (int i = 0; sc.decl && !sc.in_input && i < sc.decl->params.count; i++) {
         const param *p = &sc.decl->params.items[i];
+        if (sc.decl->preparation_owner && i < 2) continue;
         if (p->name.len == 0 || p->mode != PARAM_MUT || p->type.kind == TY_WORLD) continue;
         sb detail = {0};
         format_param(p, &detail);
@@ -10301,6 +10334,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
         if (pk == T_LBRACE || pk == T_SEMI || pk == T_RBRACE) {
             // A field's type: inputs send numbers, and only ECS data keeps grids.
             const bool input = keyword && keyword->kind == T_IDENT && str_eq_c(keyword->text, "input");
+            if (keyword && keyword->kind == T_IDENT && str_eq_c(keyword->text, "scene")
+                && !(keyword > DOC->toks && str_eq_c(keyword[-1].text, "local")))
+                item(&c, "prepare", CK_SNIPPET, "prepare(parameters) { ... }", "Deterministic preparation before the scene activates.",
+                     "prepare($1)\n{\n    $0\n}");
             const bool grids = keyword && (keyword->kind == T_COMPONENT || keyword->kind == T_SINGLETON
                                            || (keyword->kind == T_IDENT && str_eq_c(keyword->text, "scene")));
             complete_value_types(&c, (input ? VT_VALUES | VT_BOOL | VT_ENTITY | VT_LOCAL_ENTITY : VT_LOCALS | VT_LOCAL_ENTITY)

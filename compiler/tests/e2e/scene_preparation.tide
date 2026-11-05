@@ -1,0 +1,85 @@
+settings { maxPlayers = 65; }
+singleton Generation { int value; int started; int order; bool travel; bool multi; bool cancelTest; Entity destination; List<int> samples; }
+component Site { int value; }
+local singleton Heard { int roots; int sites; int verifiedRoots; }
+
+void Spin() { while (true) {} }
+bool Prepared(Entity scene) { return Scene.IsPrepared(scene); }
+
+scene Main
+{
+    int seed = 42;
+    int NextSite() { return seed + 1; }
+
+    prepare(mut Generation generation)
+    {
+        Debug.Assert(!Scene.IsPrepared(this));
+        generation.value = seed;
+        generation.started += 1;
+        if (generation.cancelTest) Spin();
+        generation.samples.Resize(20000);
+        for (int i = 0; i < generation.samples.count; i++) generation.samples[i] = seed + i;
+        Spawn(Site { value = NextSite() });
+    }
+}
+
+scene Region
+{
+    int seed;
+
+    prepare(mut Generation generation)
+    {
+        generation.value = seed;
+        generation.started += 1;
+        generation.order = generation.order * 100 + seed;
+        Spawn(Site { value = seed + 1 });
+    }
+}
+
+system Travel(with Main, Time time, mut Generation generation)
+{
+    if (time.tick != 10 || !generation.travel) return;
+    generation.travel = false;
+    generation.destination = Scene.Load(Region { seed = 57 });
+    if (generation.multi) {
+        Scene.Load(Region { seed = 13 });
+        Scene.Load(Region { seed = 29 });
+    }
+    Scene.Unload(this);
+}
+
+system ReplaceSceneValue(mut Region region, Time time)
+{
+    if (time.tick == 11) region = Region { seed = 57 };
+}
+
+event(Spawned) Ready(Main main, Generation generation, query(Site site) sites)
+{
+    Debug.Assert(generation.value == main.seed);
+    Debug.Assert(generation.started == 1);
+    Debug.Assert(Scene.IsPrepared(this));
+    Debug.Assert(Prepared(this));
+    Debug.Assert(!Scene.IsPrepared(this, PlayerID(-1)));
+    mut int seen = 0;
+    foreach (var entry in sites)
+    {
+        Debug.Assert(entry.site.value == main.seed + 1);
+        seen += 1;
+    }
+    Debug.Assert(seen == 1);
+}
+
+local event(Spawned) SeeRoot(Main main, mut Heard heard)
+{
+    if (main.seed == 42) heard.roots += 1;
+}
+
+local event(verified Spawned) ConfirmRoot(with Main, mut Heard heard)
+{
+    heard.verifiedRoots += 1;
+}
+
+local event(Spawned) SeeSite(Site site, mut Heard heard)
+{
+    if (site.value > 0) heard.sites += 1;
+}

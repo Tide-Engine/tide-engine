@@ -152,6 +152,12 @@ static access_list accesses_of(const program *prog, const decl *sys)
         takes_owner |= data && data == prog->owner;
     }
     if (by_owner && sys->per_entity && !takes_owner && prog->owner) list.items[list.count++] = (access){prog->owner, false, false};
+    if (!any_entity && sys->preparation_reads) {
+        for (int k = 0; k < sys->world_uses.count; k++) {
+            const world_use *u = &sys->world_uses.items[k];
+            list.items[list.count++] = (access){u->component, u->writes, true};
+        }
+    }
     for (int side = 0; side < 2; side++) {
         if (sys->task_access[side] && prog->task_slots[side])
             list.items[list.count++] = (access){prog->task_slots[side], (sys->task_access[side] & 2u) != 0, true};
@@ -494,6 +500,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         put_access(out, sys, true);
         put_world_access(out, sys, false);
         put_world_access(out, sys, true);
+        if (sys->preparation_reads) sb_put(out, "         reads scene readiness\n");
         for (int k = 0; k < sys->waits.count; k++) {
             const system_wait *w = &sys->waits.items[k];
             sb_put(out, "         after ");
@@ -528,8 +535,19 @@ void print_schedule(const program *prog, const char *game, sb *out)
         }
     }
 
+    if (prog->preparing) {
+        sb_put(out, "\nScene preparation, before Spawned, with match ticks waiting:\n");
+        for (int i = 0; i < prog->handlers.count; i++) {
+            const decl *h = prog->handlers.items[i];
+            if (!h->preparation_owner) continue;
+            sb_put(out, "         ");
+            put_decl_name(out, h->preparation_owner, "", NULL);
+            sb_put(out, ": prepare\n");
+        }
+    }
     bool handled = false, heard = false;
     for (int i = 0; i < prog->events.count; i++) {
+        if (prog->events.items[i] == prog->preparing) continue;
         handled |= prog->events.items[i]->handlers.count > 0;
         heard |= prog->events.items[i]->listeners.count > 0;
     }
@@ -537,7 +555,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         sb_put(out, "\nEvent handlers, at the end of the tick, as their events are sent:\n");
         for (int i = 0; i < prog->events.count; i++) {
             const decl *event = prog->events.items[i];
-            if (event->handlers.count == 0) continue;
+            if (event->handlers.count == 0 || event == prog->preparing) continue;
             sb_put(out, "         ");
             put_decl_name(out, event, "", NULL);
             sb_put(out, ": ");

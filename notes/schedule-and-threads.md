@@ -1,5 +1,20 @@
 # The schedule and the tick on threads
 
+## Scene preparation outside ticks (2026-11-05)
+
+The approved prepare block (language.md) runs on the existing owned background worker provider, on one private match
+world, with normal deterministic helpers/parallel loops. No system tick runs concurrently on that world. Pending
+roots run in recorded load order. Source/complete world adoption stays on the session thread. Top-level preparation
+statement boundaries flush mutable components and publish locked retained snapshots for observational views; loops
+and helper interiors need not publish. Cancellation checks are at loops, helper entry and handler statements,
+avoiding a check for every ordinary assignment in a hot helper. Leaving/reload waits for provider completion after
+abandoning work, so trusted extern C must finish. Hosts without background/help support fall back synchronously,
+as local workers do. Threaded publication/running-helper cancellation and exact generation counts are fixture-tested.
+Readiness declares global scene reads even without an explicit World/query parameter, including through helpers;
+`schedule/preparation` pins the resulting dependency. Schedule output lists authored preparation separately from
+tick-end handlers. Parallel preparation callbacks bind packed constants on each helper thread; the assets fixture
+checks exact results against serial preparation on native and WASI pools.
+
 ## Parallel loops over a query's rows (2026-11-05)
 
 Owner's decision (notes/indexed-loops.md, the indexed-loops design): parallel

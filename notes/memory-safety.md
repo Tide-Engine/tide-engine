@@ -1,5 +1,19 @@
 # No Tide code can corrupt memory
 
+## Preparation owns its worlds (2026-11-05)
+
+Scene preparation (language.md) packs its input on the caller and unpacks an independent world on the worker.
+Page references are non-atomic, so a running worker never shares COW pages with another thread's worlds.
+Statement-boundary publication packs/unpacks another independent snapshot on the worker; under a lock the main
+thread takes exclusive ownership of that endpoint. Both sides synchronize WASM memory before reading a transferred
+pointer; views never race writable state. Completed worlds use ordinary COW adoption only after provider completion.
+Source identity/hash changes discard the job rather than adopt obsolete results. Cancellation drains workers before
+world/log/code release; Tide loops/helpers cooperate and trusted C must return. Root handles validate full entity
+generation and component presence, and readiness validates player bounds before shifts. Growable report arrays widen
+allocation arithmetic. Hidden metadata is preserved by normal setters and scheduled output-lane write-back, including
+whole-value scene assignments and split/snapshot lanes. Player index 64, stale/unloaded/invalid handles, packed copies,
+queued/running cancellation and real threaded progress are covered by scene_preparation fixtures.
+
 ## Commands' lists of values (2026-11-04)
 
 A command's `List<T>` from the wire (`gen_bits_list`, `notes/netcode.md`, Commands holding lists of values) is

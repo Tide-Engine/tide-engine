@@ -1,5 +1,13 @@
 # The language server and the editors
 
+## Scene preparation editing (2026-11-05)
+
+Scene-owned `prepare(...)` appears as a nested method symbol and outline preparation/access entry; its generated
+handler/receiver/private fields are hidden. Own-field references/hover and completion resolve to the scene, explicit
+dependencies keep ordinary parameter editing, and scene bodies offer the prepare snippet. Scene.IsPrepared joins
+Load/Unload in completion/hover. The shared grammar scopes prepare as a function name. `lsp_scene_preparation` and
+the grammar fixture cover these paths; public usage/limits are in docs/game/scenes.md and spec Scenes.
+
 ## Meshes over GPU lists (2026-11-05)
 
 The mesh draws' hover (`MESH_SHADER_DOC`) says vertices can be a `GPUList` and indices a `GPUList<int>`; the

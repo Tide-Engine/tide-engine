@@ -4670,6 +4670,12 @@ static type check_send(checker *c, expr *e)
     }
     e->type_decl = event;
     note_text_write(c, decl_holds_text(event));
+    decl *sender = reading_code(c);
+    if (sender) {
+        bool known = false;
+        for (int i = 0; i < sender->sent_events.count; i++) known |= sender->sent_events.items[i] == event;
+        if (!known) vec_push(sender->sent_events, event);
+    }
     vec_push(c->sends, e);
     return T_VOID_;
 }
@@ -6040,6 +6046,16 @@ static type check_call(checker *c, expr *e)
 
     decl *const own = c->method && !c->method->is_operator && !c->method->is_interpolate ? find_method(c->method->owner, e->name) : NULL;
     if (own) return check_self_call(c, e, own);
+    if (!call_local && !call_param && c->system && c->system->preparation_owner
+        && find_method(c->system->preparation_owner, e->name)) {
+        expr *self = NEW(expr);
+        self->kind = E_NAME;
+        self->name = str_from("tide_preparation_scene");
+        self->at = e->at;
+        e->kind = E_METHOD;
+        e->object = self;
+        return check_expr(c, e);
+    }
 
     type builtin;
     e->type_alias = authored_alias(c, e->name, e->at);
@@ -6479,16 +6495,48 @@ static type check_session_call(checker *c, expr *e)
 
 static type check_scene_call(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "IsPrepared")) {
+        if (!order_named_args(e, "scene, player", 1)) return T_ERR;
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (e->args.count < 1 || e->args.count > 2) {
+            diag_error(e->at, "Scene.IsPrepared takes a scene entity and optionally a player: Scene.IsPrepared(scene, player)");
+            return T_ERR;
+        }
+        const type_kind kind = e->args.items[0]->type.kind;
+        if (kind != TY_ENTITY && kind != TY_LOCAL_ENTITY && kind != TY_ERROR)
+            diag_error(e->args.items[0]->at, "Scene.IsPrepared takes the scene's entity handle");
+        if (e->args.count == 2 && e->args.items[1]->type.kind != TY_PLAYER && e->args.items[1]->type.kind != TY_ERROR)
+            diag_error(e->args.items[1]->at, "Scene.IsPrepared's second argument is a PlayerID");
+        if (kind == TY_LOCAL_ENTITY && e->args.count == 2)
+            diag_error(e->at, "a local scene belongs to this machine; use Scene.IsPrepared(scene) without a player");
+        e->local_world = kind == TY_LOCAL_ENTITY;
+        if (c->in_input || (in_routine(c) && !inherits(c) && !async_code(c))) {
+            diag_error(e->at, "Scene.IsPrepared reads world state; use it from world code or its synchronous helpers");
+            return T_ERR;
+        }
+        decl *code = reading_code(c);
+        if (code) {
+            code->preparation_reads |= e->local_world ? 2u : 1u;
+            if (e->local_world) {
+                code->world_local = true;
+                if (code->is_async) note_side(code, TASK_LOCAL, e->at);
+                else if (!in_routine(c) && !local_code(c)) diag_error(e->at, "a local scene belongs to this machine; match code can't read it");
+            } else code->world_match = true;
+        }
+        e->call = CALL_IS_PREPARED;
+        return T_BOOL_;
+    }
     const bool load = str_eq_c(e->name, "Load");
     const bool unload = str_eq_c(e->name, "Unload");
     if (!load && !unload) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load and Unload", STR_ARG(e->name));
+        diag_error(e->at, "Scene has no '" STR_FMT "'; it has Load, Unload and IsPrepared", STR_ARG(e->name));
         if (str_eq_c(e->name, "AddPlayer") || str_eq_c(e->name, "RemovePlayer"))
             diag_note("set the scene root's Visibility group audience with Visibility.Set(group, audience)");
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Load");
         suggest_consider_c(&s, "Unload");
+        suggest_consider_c(&s, "IsPrepared");
         suggest_note(&s);
         return T_ERR;
     }
@@ -6566,6 +6614,7 @@ static type check_scene_call(checker *c, expr *e)
             return T_ERR;
         }
         e->call = CALL_LOAD;
+        if (c->system) c->system->loads_scenes = true;
         e->type_decl = scene;
         note_text_write(c, decl_holds_text(scene));
         e->spawn_mask = bit(scene);
@@ -10497,6 +10546,17 @@ static type check_name(checker *c, expr *e)
             return T_ERR;
         }
         return p->type;
+    }
+    if (c->system && c->system->preparation_owner
+        && (field_named(c->system->preparation_owner, e->name) || find_property(c->system->preparation_owner, e->name))) {
+        expr *self = NEW(expr);
+        self->kind = E_NAME;
+        self->name = str_from("tide_preparation_scene");
+        self->at = e->at;
+        e->kind = E_MEMBER;
+        e->object = self;
+        e->member = e->name;
+        return check_expr(c, e);
     }
     if (str_eq_c(e->name, "Devices")) {
         e->bind = BIND_DEVICES;
@@ -16483,7 +16543,8 @@ static void check_fields(checker *c, const decl *d)
                 diag_note("grids stay where they're made: in components, singletons and scenes");
             }
         }
-        check_reserved(f->name, f->at);
+        if (!(d->is_scene && f->hidden && (str_eq_c(f->name, "tide_prepared") || str_eq_c(f->name, "tide_preparationOrder")
+              || str_eq_c(f->name, "tide_preparedPlayers")))) check_reserved(f->name, f->at);
         for (int j = 0; j < i; j++) {
             if (str_eq(d->fields.items[j].name, f->name)) {
                 diag_error(f->at, "field '" STR_FMT "' is declared twice", STR_ARG(f->name));
@@ -18525,7 +18586,7 @@ static void check_params(const checker *c, decl *sys)
         const bool is_local_entity = names_type_as(c, p->type_name, "LocalEntity");
 
         if (p->name.len > 0) {
-            check_reserved(p->name, p->at);
+            if (!(sys->preparation_owner && i == 1)) check_reserved(p->name, p->at);
             for (int j = 0; j < i; j++) {
                 if (str_eq(sys->params.items[j].name, p->name)) {
                     diag_error(p->at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
@@ -18850,6 +18911,7 @@ static void warn_unused_params(checker *c, const decl *sys)
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         const type_kind kind = p->type.kind;
+        if (sys->preparation_owner && i == 1) continue; // Implicit scene receiver.
         if (shared && !p->read) continue;
         if (kind == TY_QUERY && !p->read) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
@@ -19258,6 +19320,40 @@ static void add_builtins(program *prog)
     audience_word.hidden = true;
     vec_push(audience->fields, audience_word);
     prog->audience = audience;
+    if (prog->uses_prepared) {
+        decl *players = NEW(decl);
+        players->kind = DECL_STRUCT;
+        players->name = str_from("tide_prepared_players");
+        players->builtin = true;
+        vec_push(players->fields, audience_word);
+        prog->prepared_players = players;
+    }
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *scene = prog->decls.items[i];
+        if (!prog->uses_prepared || !scene->is_scene || scene->is_local) continue;
+        scene->has_preparation_state = true;
+        scene->world_set_used = true;
+        if (scene->preparation) {
+            field completed = {0};
+            completed.name = str_from("tide_prepared");
+            completed.type_name = str_from("bool");
+            completed.hidden = true;
+            completed.default_value = NEW(expr);
+            completed.default_value->kind = E_BOOL;
+            completed.default_value->bool_value = true; // Existing activated scenes stay activated during layout migration.
+            vec_push(scene->fields, completed);
+            field order = {0};
+            order.name = str_from("tide_preparationOrder");
+            order.type_name = str_from("long");
+            order.hidden = true;
+            vec_push(scene->fields, order);
+        }
+        field players = {0};
+        players.name = str_from("tide_preparedPlayers");
+        players.type_name = str_from("tide_prepared_players");
+        players.hidden = true;
+        vec_push(scene->fields, players);
+    }
     decl *visibility_group = NEW(decl);
     visibility_group->kind = DECL_STRUCT;
     visibility_group->name = str_from("VisibilityGroup");
@@ -19284,6 +19380,12 @@ static void add_builtins(program *prog)
     // The events the engine sends: to each entity as it's spawned or destroyed,
     // and to the world as players join and leave.
     prog->spawned = builtin_event("Spawned", false);
+    for (int i = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->preparation) {
+            prog->preparing = builtin_event("tide_preparing", false);
+            break;
+        }
+    }
     prog->destroyed = builtin_event("Destroyed", false);
     prog->shown = builtin_event("Shown", false);
     prog->hidden = builtin_event("Hidden", false);
@@ -19799,6 +19901,13 @@ static void add_builtins(program *prog)
     vec_push(decls, prog->forgotten); // After the others, whose numbers the match's queue keeps
     vec_push(decls, prog->shown);
     vec_push(decls, prog->hidden);
+    if (prog->preparing) vec_push(decls, prog->preparing);
+    if (prog->uses_prepared) {
+        vec_push(decls, prog->prepared_players);
+        prog->prepared_ack = builtin_event("tide_prepared_ack", false);
+        prog->prepared_ack->is_command = true;
+        vec_push(decls, prog->prepared_ack);
+    }
     for (int i = 0; i < prog->decls.count; i++) vec_push(decls, prog->decls.items[i]);
     prog->decls.items = decls.items;
     prog->decls.count = decls.count;
@@ -20093,7 +20202,7 @@ static void collect_decls(program *prog)
         if (!d->builtin) split_local_fields(prog, d);
 
         // An override's name is that of what it replaces: it declares none, so it clashes with none
-        if (!d->builtin && !d->is_override) {
+        if (!d->builtin && !d->is_override && !d->preparation_owner) {
             check_reserved(d->name, d->at);
             if (is_builtin_name(d->name) || (d->kind == DECL_ALIAS && (generic_form_named(d->name) || str_eq_c(d->name, "Func")
                                                                     || str_eq_c(d->name, "void")))) {
@@ -22852,6 +22961,7 @@ static void add_audience_words(program *prog)
         sb_printf(&name, "players%u", (unsigned)word);
         more.name = (str){name.data, (int)name.len};
         vec_push(prog->audience->fields, more);
+        if (prog->prepared_players) vec_push(prog->prepared_players->fields, more);
     }
 }
 
@@ -23330,6 +23440,20 @@ bool check(program *prog)
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
+    if (prog->preparing) {
+        decl *order = NEW(decl);
+        order->kind = DECL_SINGLETON;
+        order->builtin = true;
+        order->name = order->qualified = str_from("tide_preparation_order");
+        order->c_name = "tide_preparation_order";
+        order->index = prog->singletons.count;
+        field value = {0};
+        value.name = str_from("value");
+        value.type = (type){TY_LONG, NULL};
+        vec_push(order->fields, value);
+        prog->preparation_order = order;
+        vec_push(prog->singletons, order);
+    }
     check_units(prog);
     check_packages(prog);
     for (int i = 0; i < prog->decls.count; i++) {
@@ -23577,6 +23701,75 @@ bool check(program *prog)
     }
     settle_heap_passes(&c);
     check_acts(&c);
+    for (int i = 0; prog->preparing && i < prog->handlers.count; i++) {
+        decl *handler = prog->handlers.items[i];
+        if (!handler->is_local) handler->preparation_cpu = true;
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c.calls.count; i++) {
+            const call_site *site = &c.calls.items[i];
+            if (site->from->preparation_cpu && !site->to->is_extern && !site->to->is_async
+                && !site->to->preparation_cpu) site->to->preparation_cpu = changed = true;
+            if (site->to->loads_scenes && !site->from->loads_scenes) site->from->loads_scenes = changed = true;
+            if (prog->preparing && site->to->starts_tasks && !site->from->starts_tasks) {
+                site->from->starts_tasks = changed = true;
+                site->from->starts_at = site->call->at;
+                site->from->starts_what = site->to->starts_what;
+            }
+            if ((site->from->preparation_reads & site->to->preparation_reads) != site->to->preparation_reads) {
+                site->from->preparation_reads |= site->to->preparation_reads;
+                site->from->world_match |= (site->to->preparation_reads & 1u) != 0;
+                site->from->world_local |= (site->to->preparation_reads & 2u) != 0;
+                changed = true;
+            }
+        }
+        for (int i = 0; prog->preparing && i < prog->decls.count; i++) {
+            decl *owner = prog->decls.items[i];
+            for (int k = -1; k < owner->methods.count; k++) {
+                decl *code = k < 0 ? owner : owner->methods.items[k];
+                for (int e = 0; e < code->sent_events.count; e++) {
+                    for (int h = 0; h < prog->handlers.count; h++) {
+                        const decl *handler = prog->handlers.items[h];
+                        if (handler->is_local || handler->event != code->sent_events.items[e]) continue;
+                        if (handler->loads_scenes && !code->loads_scenes) code->loads_scenes = changed = true;
+                        if (handler->starts_tasks && !code->starts_tasks) code->starts_tasks = changed = true;
+                    }
+                }
+            }
+        }
+    }
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *owner = prog->decls.items[i];
+        for (int k = -1; k < owner->methods.count; k++) {
+            decl *code = k < 0 ? owner : owner->methods.items[k];
+            if ((code->preparation_reads & 1u) && code->kind == DECL_SYSTEM && code->is_local
+                && !code->is_view && !code->is_async)
+                diag_error(code->at, "local handlers can't read current match readiness; check Scene.IsPrepared in a view");
+            for (int j = 0; code->preparation_reads && j < prog->components.count; j++) {
+                decl *scene = prog->components.items[j];
+                if (!scene->is_scene || !(code->preparation_reads & (scene->is_local ? 2u : 1u))) continue;
+                bool known = false;
+                for (int u = 0; u < code->world_uses.count; u++) known |= code->world_uses.items[u].component == scene;
+                if (!known) {
+                    const world_use use = {.component = scene, .at = code->at};
+                    vec_push(code->world_uses, use);
+                }
+            }
+        }
+        const decl *h = owner;
+        if (!h->preparation_owner) continue;
+        if (h->loads_scenes) diag_error(h->at, "prepare can't load another scene, including through helpers; load it after preparation");
+        if (h->starts_tasks) diag_error(h->at, "prepare runs to completion and can't start async tasks; start them in Spawned instead");
+        if (prog->shards) diag_error(h->at, "scene preparation requires one match world; sharded scene preparation isn't supported");
+    }
+    for (int i = 0; i < c.calls.count; i++) {
+        const call_site *site = &c.calls.items[i];
+        if (!(site->to->preparation_reads & 2u)) continue;
+        if (site->from->is_async) note_side(site->from, TASK_LOCAL, site->call->at);
+        else if (site->from->kind == DECL_SYSTEM && !is_local_code(site->from))
+            diag_error(site->call->at, "this helper reads local scene readiness; call it from local code");
+    }
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);
@@ -23747,6 +23940,26 @@ bool check(program *prog)
         d->without_mask = mask_or(d->without_mask, bit(prog->predict_far));
     }
     derive_archetypes(&c);
+    for (int i = 0; i < prog->handlers.count; i++) {
+        const decl *h = prog->handlers.items[i];
+        if (!h->preparation_owner) continue;
+        for (int k = 2; k < h->params.count; k++) {
+            const param *p = &h->params.items[k];
+            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->ownership) {
+                diag_error(p->at, "prepare declares data access, not entity filters; put conditions inside its body");
+                continue;
+            }
+            if (p->type.kind != TY_COMPONENT) continue;
+            for (int a = 0; a < prog->archetypes.count; a++) {
+                if (!mask_has(prog->archetypes.items[a], h->preparation_owner->index)) continue;
+                const comp_mask available = mask_or(prog->archetypes.items[a], prog->possible.items[a]);
+                if (mask_has(available, p->type.decl->index)) continue;
+                diag_error(p->at, "preparation requires '" STR_FMT "' on the scene root; supply it to Scene.Load(" STR_FMT ", " STR_FMT ")",
+                           STR_ARG(p->type.decl->name), STR_ARG(h->preparation_owner->name), STR_ARG(p->type.decl->name));
+                break;
+            }
+        }
+    }
     check_extern_sparse(prog);
     diag_phase("deriving archetypes");
     if (diag_error_count() > 0) return false;

@@ -701,6 +701,9 @@ typedef struct decl {
 
     // Structs and components: their methods
     VEC(struct decl *) methods;
+    struct decl *preparation; // A scene's prepare(...) block.
+    struct decl *preparation_owner; // Its private lifecycle handler's scene.
+    bool has_preparation_state;
 
     // Enums
     VEC(enum_member) members;
@@ -935,6 +938,10 @@ typedef struct decl {
     // workers also have CPU bodies; actual GPU sampling remains GPU-only.
     bool gpu_only;
     bool worker_cpu; // Reachable from a local worker: grid-reading helpers also have CPU bodies.
+    bool preparation_cpu; // Synchronous preparation helper chains have cancellation safe points.
+    bool loads_scenes;
+    unsigned preparation_reads; // Match/local scene metadata, propagated through helpers.
+    VEC(struct decl *) sent_events; // Preparation restrictions include synchronous event handlers.
     bool task_cpu; // Reachable synchronous helper of async code: cooperative task stop checks.
     bool gpu_sampling; // Samples GPU resources, directly or transitively; never worker CPU code.
     loc gpu_only_at;
@@ -1035,6 +1042,7 @@ typedef enum builtin_call {
     CALL_SEND,      // Send(RoundOver { ... }), or target.Send(Hit { ... }): type_decl is the event
     CALL_LOAD,      // Scene.Load(Arena { ... }): a spawn whose entity is its own scene; type_decl is the scene
     CALL_UNLOAD,    // Scene.Unload(scene)
+    CALL_IS_PREPARED, // Scene.IsPrepared(scene[, player])
     CALL_SESSION,   // Session.Start, Open, Close, Kick, Ban and the rest: `name` says which; type_decl is Start's scene
     CALL_CLIPBOARD, // Clipboard.Copy(text)
     CALL_QUIT,      // Application.Quit()
@@ -1631,6 +1639,11 @@ typedef struct program {
     VEC(decl *) command_types; // Commands are event-shaped values, with a separate incoming wire API
     VEC(command_channel) channels; // The channels [Channel] names, in order: channel i + 1
     decl *spawned;        // Built-in events
+    decl *preparing;      // Private scene-preparation lifecycle event.
+    decl *prepared_ack;   // Readiness enters match state through ordinary commands.
+    decl *prepared_players;
+    decl *preparation_order;
+    bool uses_prepared;
     decl *destroyed;
     decl *shown;          // Local availability transitions of match entities/components
     decl *hidden;

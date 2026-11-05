@@ -529,6 +529,13 @@
           "match": "\\bis\\b"
         },
         {
+          "comment": "A scene's preparation block",
+          "match": "^\\s*(prepare)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.tide" }
+          }
+        },
+        {
           "comment": "An input's Sample(), Sanitize() and Predict()",
           "match": "^\\s*(Sample|Sanitize|Predict)(?=\\s*\\()",
           "captures": {

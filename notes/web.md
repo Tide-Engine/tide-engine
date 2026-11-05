@@ -1,5 +1,12 @@
 # Web builds
 
+## Deterministic scene preparation (2026-11-05)
+
+Scene prepare blocks use the existing WASM background worker provider on isolated/threaded pages; main-thread
+networking and views read retained observational snapshots. The same generated deterministic code and readiness
+commands run on native/web. A host/page without background workers falls back synchronously, as local workers do.
+No JavaScript protocol or loader change. Contracts/fixtures and validation: language.md, Deterministic scene preparation.
+
 ## Textures and samplers apart (2026-11-05)
 
 `gpu_image(slot, id)` and `gpu_sampler(slot, filter, wrap)` replace `gpu_sample`; `gpu_pipeline_samplers(count, low,

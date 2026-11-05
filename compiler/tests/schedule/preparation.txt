@@ -1,0 +1,14 @@
+preparation: 2 systems each tick, 2 stages deep; none can run at the same time.
+A system starts once everything it runs after is done.
+
+stage 1  Change  (per entity)
+         writes Main
+         alongside nothing
+
+stage 2  Check  (once)
+         reads scene readiness
+         after Change: it writes Main, which this reads
+         alongside nothing
+
+Scene preparation, before Spawned, with match ticks waiting:
+         Main: prepare

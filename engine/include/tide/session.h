@@ -104,6 +104,14 @@ typedef struct tide_game {
     void (*start)(void *world, float dt, const void *start, uint32_t seed);
     // Runs a tick, on `jobs`' threads (tide/jobs.h), or NULL for this one's.
     void (*tick)(void *world, const tide_jobs *jobs);
+    // Preparation runs between committed ticks, on an independent world.
+    // These callbacks are supplied together; NULL means no preparation.
+    bool (*prepare_pending)(const void *world);
+    void (*prepare)(void *world, const tide_jobs *jobs, tide_event_log *per_player, tide_event_log *events);
+    // Enumerates locally completed scene instances. A zero entity ends it.
+    // Readiness reports use the game's normal authenticated command channel.
+    tide_entity (*prepared_scene)(const void *world, uint32_t ordinal);
+    uint32_t (*prepared_command)(tide_entity scene, uint8_t *out, uint32_t capacity);
     // The same, recording into `events` what the tick sent that the game's
     // local handlers hear (tide/events.h): the events, each with what its
     // handlers read, beside the world and never in it. The world comes out

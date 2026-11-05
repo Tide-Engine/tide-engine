@@ -1,5 +1,14 @@
 # Hot reloading
 
+## Preparation jobs across reload (2026-11-05)
+
+Sessions drain/discard in-flight preparation jobs and their logs before set_game/migrate/rewind or world destruction.
+No old library callback, worker pointer or observational endpoint survives unload. Pending worlds retain committed
+preparation metadata and restart against the new code; completed worlds retain completion/player bits through normal
+layout migration. A newly introduced preparation flag defaults true on already activated roots, while Scene.Load
+explicitly resets it false. Ordinary prediction uses the completed baseline instead of regenerating. Contracts and
+coverage: language.md and netcode.md, scene preparation.
+
 ## GPU list reads and freed lists across a reload (2026-11-05, later)
 
 The host hands each library it loads its own table of GPU list reads (`tide_host_game.gpu_reads_share`), so the

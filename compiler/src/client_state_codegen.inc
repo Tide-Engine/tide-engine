@@ -4,7 +4,8 @@
 
 static bool client_singleton(const program *prog, const decl *d)
 {
-    return !d->is_local && d != prog->visibility_state && d != prog->hierarchy[0] && d != prog->task_slots[0];
+    return !d->is_local && d != prog->visibility_state && d != prog->hierarchy[0] && d != prog->task_slots[0]
+        && d != prog->preparation_order;
 }
 
 // A C library's own fields ([Native]: its handles, and its bookkeeping of
@@ -451,7 +452,7 @@ static void gen_client_hv(gen *g, const client_codec *codec, const int id)
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
             // [Native] fields aren't a recipient's (client_natives): a projection has them 0
-            if (f->typed || (f->hidden && t.decl == g->prog->visibility)
+            if (f->typed || recipient_private_field(g->prog, t.decl, f)
                 || ((t.kind == TY_SINGLETON || t.kind == TY_COMPONENT) && f->native)) continue;
             char place[256];
             snprintf(place, sizeof place, "&v->%s", field_cname(f));
