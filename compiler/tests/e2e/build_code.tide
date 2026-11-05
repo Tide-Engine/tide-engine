@@ -229,6 +229,21 @@ system Read(mut Probe probe)
     probe.beepSamples = beepSource.samples.count;
 }
 
+// Runtime-only drawing must not prevent any of the constants or assets above from being built.
+// Keep the font reference in a helper too: build code emits ordinary functions as well as views.
+void BoldLabel(string text)
+{
+    Draw.Text(text, float2(20, 20), 20, Color.white, Anchor.MiddleLeft, Font.Bold);
+}
+
+view Show()
+{
+    GUI.Draw()
+    {
+        BoldLabel($"{CURVE[3]}");
+    }
+}
+
 scene Main
 {
 }
