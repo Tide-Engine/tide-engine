@@ -1,5 +1,73 @@
 # The schedule and the tick on threads
 
+## Parallel loops over a query's rows (2026-11-05)
+
+Owner's decision (notes/indexed-loops.md, the indexed-loops design): parallel
+loops over a query's rows exist, and one-sided effects between entities go
+through `Send`. Built: `parallel (var f in fighters)` in systems, views and
+handlers (match and local). Picks, Provisional in `docs/spec.md` (Read-only
+entity queries):
+
+- **Checker** (`check_parallel_query`, `check_parallel_steps` in
+  `compiler/src/check.c`). The loop sets `stmt.query` as a query foreach does,
+  and its variable is the foreach's row type. `by`/`offset` and a typed
+  variable are errors. The row is read-only: `check_step_write` names it
+  (`query row 'f' is read-only ...`); `check_name` lets the loop's own row in
+  (other rows stay refused in steps). Not yet: a query with a `mut` binding
+  (refused at the loop), and attached local fields read in a step, directly
+  (`check_local_field`) or through a helper (`check_local_field_calls`, by
+  `call_site.parallel`). Steps keep every other parallel-step rule, with one
+  exception in `check_step_expr`: a query loop's step may `Send` a match event
+  of plain values; a command, a local event, or an event holding text or lists
+  is an error naming why. Helpers that send are still refused (the `acts`
+  check), as in every parallel step.
+- **Codegen** (`gen_parallel_query_call`, `gen_par_query_steps`, the query
+  branch of `gen_par_heads` in `compiler/src/codegen.c`). The rows are an
+  array in the foreach's order: a view's or a local handler's own row array
+  (`tide_q<n>`, `tide_q<n>n`), or, for a system or match handler, rows gathered
+  into a `tide_par<n>_row` array (malloc'd, freed after the loop) by the
+  foreach's own table walk (`gen_query_walk` with `gather`, which copies each
+  row instead of running a body). Tasks are runs of `per` rows: `ceil(n/1024)`,
+  at least `ceil(4096/step cost)` clamped to 1..16, as `tide_par_list_begin`
+  picks blocks. `tide_parallel_for` runs them with the usual cost
+  (`rows * step cost`). Each task's step function walks its run, binding the
+  row as a copy; rolls are `tide_random_step(tide_par_dice, row index, 0, 0)`.
+- **Order of sends.** When a step sends, the loop allocates one zeroed
+  `tide_queue` per task; the step function points the thread-local
+  `tide_task_queue` at its task's queue (restoring the previous value after),
+  so `tide_cmd_push`'s `tide_recording` records there. After the join
+  (`tide_memory_sync`), the queues are appended to
+  `tide_recording(&tide_w->commands)` in task order and freed. Tasks are
+  contiguous runs in row order, so the result is exactly what the foreach
+  records, on any number of threads; in a split system the task queue is the
+  system task's, which `jobs.c` merges and settles as before. In a match
+  handler it's the world's queue being dispatched: appended items come after
+  the current one, as ordinary pushes do (`tide_queue_append` keeps places).
+  No runtime function was added: `tide_task_queue`, `tide_queue_append`,
+  `tide_queue_free`, `tide_parallel_for`, `tide_realloc` are existing API.
+- Work estimate: a query loop's work can't be told before the tick
+  (`gen_parallel_work` returns false), so a tick with one runs on threads, as
+  for a component's list.
+
+Tests: `tidec_e2e_parallel_query` (`compiler/tests/e2e/parallel_query.tide`):
+6,000 bodies over four matching and unmatched archetypes, a foreach, a system
+parallel loop and a match handler's parallel loop with the same guard each send
+a world event (with a costly computed value) and the system ones an entity
+event; the logs written by the handlers must be identical in order and value,
+on one thread, on a fake two-thread pool, and on the platform pool (5 runs,
+hashes equal to one thread each tick). Reversing the queue merge was caught. A
+view loop over its row array builds. Errors: `compiler/tests/errors/
+parallel_query_*.tide` (by, typed row, row write, outer write, mut query, local
+field, send of text, send of a local event, in a function, spawn). Passing:
+sanitize (ASan) natively and `web-debug` (with threads).
+
+Gaps: spawning, `Add`/`Remove`/`Destroy` from steps (the same per-task queues
+would order them, but spawn handles need settling per loop task); helpers
+that send; local-field reads; `mut` bindings; local events from view steps
+(the local world's queue isn't `tide_recording`'s); the gathered array is
+allocated each run (no cache across ticks yet; the indexed-loops cache would
+own it).
+
 ## Parallel loops in ticks on one thread, and costly steps (2026-11-04)
 
 Gap (nightly.21-32): a match `parallel` loop over a singleton's list ran at one

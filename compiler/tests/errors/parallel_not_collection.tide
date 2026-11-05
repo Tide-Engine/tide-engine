@@ -1,4 +1,4 @@
-// expect: parallel goes through a grid's cells or a list's elements, and this is int
+// expect: parallel goes through a grid's cells, a list's elements or a query's rows, and this is int
 singleton Field { int count; }
 system Step(mut Field field)
 {

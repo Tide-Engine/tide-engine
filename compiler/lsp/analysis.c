@@ -8328,8 +8328,10 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         // Every cell of a grid or element of a list at once, in a system, view or handler that isn't async
         if (sc.decl && sc.decl->kind == DECL_SYSTEM && !sc.decl->is_async) {
             item(c, "parallel", CK_KEYWORD, "parallel (var at in cells) { ... }",
-                 "Goes through a grid's cells or a list's elements (by index), or with `by`, their blocks, all at once: "
-                 "each step reads them as the loop found them and changes only its own cell, element or block.",
+                 "Goes through a grid's cells, a list's elements (by index) or a query's rows, or with `by`, blocks of "
+                 "cells or elements, all at once: each step reads them as the loop found them and changes only its own "
+                 "cell, element or block. A query's rows are read-only, and the events their steps send come in the "
+                 "rows' order.",
                  NULL);
         }
         // A function that can fail ends with its error

@@ -1,0 +1,10 @@
+// expect: 'shown' is a local field of 'Body', which a parallel loop's steps don't read yet
+component Body { float x; local float shown; }
+scene Main { }
+view Look(query (Body body) bodies)
+{
+    parallel (var f in bodies)
+    {
+        if (f.body.shown > 1) continue;
+    }
+}

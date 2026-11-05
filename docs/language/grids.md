@@ -141,7 +141,7 @@ A step can declare variables, call functions (and C) and read any cell. What it 
 
 To add things up, use a `for` loop, or a foreach that goes in order (see below).
 
-A list's elements go through a parallel loop the same way, by index (see [Lists](./text-and-lists.md#going-through-every-element-at-once)).
+A list's elements go through a parallel loop the same way, by index (see [Lists](./text-and-lists.md#going-through-every-element-at-once)), and so do a query's rows, whose steps can also send events (see [Systems](../game/systems.md#going-through-the-rows-at-once)).
 
 A parallel loop goes in a system, a view, an event handler that isn't async, or a local worker: not in ordinary functions, methods, async code or an input's `Sample`. It goes through a component's or a singleton's grid: a local's lives on the thread that made it, so a `foreach` goes through it in order. Workers can run parallel loops over their own lists, reading captured grids from each step. Their read-only grid inputs cannot be the writable output of an explicit parallel loop.
 
