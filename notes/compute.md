@@ -15,7 +15,8 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [x] WebGPU backend (`web/gpu_web.c`, `web/tide.js`), 2026-11-05: notes/web.md,
       WebGPU compute
 - [ ] Recorder for Unity (`gpu_record.c`) and its replay (`TideRender.cs`)
-- [ ] WGSL compute and storage in the translators (`wgsl_read.inc`, `spirv.c`, `hlsl.c`)
+- [x] WGSL compute and storage in the translators (`wgsl_read.inc`, `spirv.c`, `hlsl.c`), 2026-11-05:
+      see "The translators" below and `notes/shaders.md`
 - [ ] tidec: `compute`, `GPUList<T>`, `GPU.Run`, ordered `Add`, atomics,
       `shared`, `GPU.Barrier`, `await list.Read()`
 - [ ] Engine/renderer: GPU lists in the draw list, compute commands, ordering
@@ -202,3 +203,58 @@ What the translators take (SPIR-V for Vulkan, HLSL for Unity):
   `atomicCompareExchangeWeak` with `.old_value` and `.exchanged`, each on
   `&name[i]` or `&name`.
 - Storage reads in vertex and fragment stages (read-only).
+
+## The translators (2026-11-05)
+
+Both take the whole list above, `vec4<f32>`, `vec2<u32>` and `vec4<i32>`
+(any scalar or vector but bool) as storage elements, compute built-ins in any
+order and inside a struct parameter, and a uniform block that is a number,
+vector or matrix rather than a struct (`var<uniform> u: vec4<u32>`, which
+`platform/tests/compute.c` writes). Existing shaders' SPIR-V and HLSL came out
+byte-identical (every `compiler/tests/shaders` fixture and the renderer's 10).
+Details and tests are in `notes/shaders.md` (SPIR-V, for Vulkan; HLSL, for
+Unity).
+
+- **Out of range, as Tint:** a runtime-sized array's index, constant or not,
+  is `min(i, arrayLength - 1)` for reads, writes and atomics; workgroup arrays
+  clamp as other fixed arrays do.
+- **Workgroup memory is zeroed by the kernel itself** as it starts (Tint's
+  polyfill: each invocation an array's elements from its local index by the
+  workgroup's size, the first invocation everything else, then a workgroup
+  barrier), so Vulkan needs no `shaderZeroInitializeWorkgroupMemory`.
+- **The Unity replay's contract** (HLSL, for whoever builds `TideRender.cs`'s
+  compute):
+  - A compute program is one kernel, `tidehl_compute`, in a `.compute` file
+    (`tide_hlsl_unity_compute`), its `[numthreads]` the WGSL's
+    `@workgroup_size`.
+  - Storage buffer i (binding 25 + i) is `_TideStorage<i>`:
+    `ByteAddressBuffer` for `read`, `RWByteAddressBuffer` for `read_write`,
+    in every stage. Bind it by that name (`ComputeShader.SetBuffer`,
+    `CommandBuffer.SetComputeBufferParam`, or a material's/global buffer for a
+    draw). Raw, so one `GraphicsBuffer` with `Target.Raw` (plus `Vertex`,
+    `Index`, `IndirectArguments`, `CopySource`/`CopyDestination` as gpu.h's
+    `TIDE_GPU_STORAGE` flags) serves every use: elements are at WGSL's stride
+    and the length is the buffer's size over it, so the buffer's own stride
+    doesn't matter.
+  - The uniform block is `cbuffer TideUniforms`, as for draws (its bytes as
+    WGSL lays them out).
+  - `num_workgroups` is `uint3 _TideGroups`, alone in `cbuffer TideGroups`
+    (16 bytes: x, y, z, padding). Set it to the dispatch's group counts; for
+    an indirect dispatch copy the arguments' 3 words into a constant buffer
+    bound as `TideGroups`. Every compute program declares it.
+  - Workgroup memory, barriers and atomics need nothing from the replay.
+  - A draw shader that reads storage has no OpenGL ES 3.0/WebGL 2 subshader
+    (`tide_hlsl_unity_shader`), which have no storage buffers.
+- **fxc (Unity's Direct3D 11 compiler) refuses races it can see:** a write
+  every invocation makes, unconditionally, to one place (a workgroup
+  variable, or an element at a constant index of one or of storage) with
+  values that differ: X3695 for workgroup memory, X3694 for storage, errors
+  no pragma turns off, and a uniform condition doesn't help. WGSL allows it
+  and SPIR-V takes it; tidec's kernels write one place under a condition on
+  the invocation (`if (local == 0u)`) or by its index. One value every
+  invocation writes alike is only a warning (X3583), which
+  `TideWarnings.hlsl` disables. Unity's other compilers (DXC for Direct3D 12
+  and Vulkan, Metal) don't check this.
+- **Not run on a GPU yet:** the Vulkan backend's compute and the Unity replay
+  aren't built, so the translations are checked by spirv-val (Vulkan 1.3) and
+  fxc only; `tide_platform_compute` exercises them once `gpu_vk.c` has compute.

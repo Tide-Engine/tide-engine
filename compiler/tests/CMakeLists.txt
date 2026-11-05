@@ -831,6 +831,40 @@ if(TIDE_FXC)
     endforeach()
 endif()
 
+# WGSL as the translators take it beyond what tidec's frags and verts write:
+# compute kernels, storage buffers, workgroup memory, barriers and atomics
+# (notes/compute.md), each wgsl/*.wgsl through SPIR-V and spirv-val, and
+# through HLSL and fxc, where there are those; wgsl/refused/*.wgsl refused by both.
+if(TARGET tide_spirv_shaders)
+    add_executable(tide_wgsl_translate wgsl_translate.c "${PROJECT_SOURCE_DIR}/compiler/src/spirv.c"
+        "${PROJECT_SOURCE_DIR}/compiler/src/hlsl.c")
+    target_include_directories(tide_wgsl_translate PRIVATE "${PROJECT_SOURCE_DIR}/compiler/src")
+    target_link_libraries(tide_wgsl_translate PRIVATE tide_flags)
+    file(GLOB TIDE_WGSL_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/wgsl/*.wgsl")
+    foreach(source IN LISTS TIDE_WGSL_TESTS)
+        get_filename_component(name "${source}" NAME_WE)
+        if(TIDE_SPIRV_VAL)
+            add_test(NAME wgsl_spirv_${name}
+                COMMAND "${CMAKE_COMMAND}" "-DTOOL=$<TARGET_FILE:tide_wgsl_translate>" "-DSOURCE=${source}" -DMODE=spv
+                    "-DSPIRV_VAL=${TIDE_SPIRV_VAL}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/wgsl"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_wgsl.cmake")
+        endif()
+        if(TIDE_FXC)
+            add_test(NAME wgsl_hlsl_${name}
+                COMMAND "${CMAKE_COMMAND}" "-DTOOL=$<TARGET_FILE:tide_wgsl_translate>" "-DSOURCE=${source}" -DMODE=hlsl
+                    "-DFXC=${TIDE_FXC}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/wgsl"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_wgsl.cmake")
+        endif()
+    endforeach()
+    file(GLOB TIDE_WGSL_REFUSED CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/wgsl/refused/*.wgsl")
+    foreach(source IN LISTS TIDE_WGSL_REFUSED)
+        get_filename_component(name "${source}" NAME_WE)
+        add_test(NAME wgsl_refused_${name}
+            COMMAND "${CMAKE_COMMAND}" "-DTOOL=$<TARGET_FILE:tide_wgsl_translate>" "-DSOURCE=${source}" -DMODE=refuse
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/wgsl" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_wgsl.cmake")
+    endforeach()
+endif()
+
 # The mesh files' reader on its own (src/mesh_files.c): the numbers it reads,
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.
