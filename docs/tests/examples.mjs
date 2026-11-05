@@ -121,7 +121,9 @@ try {
     function command(method, params = {}) {
         return new Promise((done, fail) => {
             const id = ++next;
-            const timeout = setTimeout(() => { pending.delete(id); fail(new Error(`Timed out: ${method}`)); }, 20000);
+            // A screenshot waits for a frame, which software WebGPU (WARP on CI) can take long over
+            const limit = method === 'Page.captureScreenshot' ? 120000 : 20000;
+            const timeout = setTimeout(() => { pending.delete(id); fail(new Error(`Timed out: ${method}`)); }, limit);
             pending.set(id, { done, fail, timeout });
             socket.send(JSON.stringify({ id, method, params }));
         });
@@ -148,6 +150,9 @@ try {
     }
     await command('Page.enable');
     await command('Runtime.enable');
+    // Examples start by themselves unless the machine prefers reduced motion (eager(), src/lib/examples.ts),
+    // as a Windows server with its animations off says it does
+    await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     await command('Page.addScriptToEvaluateOnNewDocument', { source: `
         window.__draws = 0;
         // WebGPU's draws, not its submits: a frame that draws nothing still submits its pass

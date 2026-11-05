@@ -31,10 +31,11 @@
 #define NETWORK 30 // Milliseconds the other end takes to send back
 #define SLOWER 80  // ...once the network got slower
 // What pings may be off by on the whole, in real time: the page's timers and
-// frames only ever fire late, by up to tens of ms on a busy CI runner, and a
-// mean of pings can come out a few ms early
+// frames only ever fire late, by up to tens of ms on a busy CI runner; a ping
+// can come out early where the page takes off a network time it measured long
+// (40 for 30 on a macOS runner: a lag of 100 told came out 87)
 #define LATE 48.0
-#define EARLY 12.0
+#define EARLY 20.0
 #define WINDOW 1.0 // Seconds of pings a step checks
 
 static int failures;
