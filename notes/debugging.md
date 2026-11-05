@@ -1,5 +1,9 @@
 # Debugging Tide code in native debuggers
 
+## The natvis test's step, and other threads (2026-11-05)
+
+`tidec_debugger_natvis` stops at the `[gained]` line, steps once and expects the next line. It failed now and then on CI's Windows runner, still on the `[gained]` line: the fixture's systems run on several threads, and after the step another thread hit the same breakpoint first. The script now clears breakpoints (`bc *`) before the step, so only the step can stop it. Eight repeated local runs passed.
+
 ## Optimized plumbing beside unoptimized code (2026-11-04)
 
 `tide`'s debug builds now compile the generated C in two files (notes/cli-and-packages.md, Optimized plumbing in
