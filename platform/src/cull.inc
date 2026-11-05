@@ -133,6 +133,9 @@ static sized_buffer hiz_buffer;
 static uint32_t hiz_read; // The frame's counts on their way back: a buffer_read token, or 0
 static tide_platform_occlusion_report hiz_report;
 static tide_gpu_id hiz_pipelines[2]; // The pyramid's kernel (shaders.h), reading a depth of one sample and of more
+// Kernels this device can't make (its driver refused them: gpu.h, pipeline_failed), said once a device: the culling's
+// (culled runs decided on the CPU as they're drawn, the same pixels) and the pyramid's (no occlusion, the same pixels)
+static bool cull_failed, hiz_failed;
 typedef struct hiz_room {
     uint32_t target; // 1 + the destination whose pyramid it holds, 0 for none
     uint32_t at;     // Where in `depths` its level 0 starts, in elements
@@ -160,6 +163,7 @@ static void forget_culling(void)
     memset(cull_buffers, 0, sizeof cull_buffers);
     memset(cull_pipelines, 0, sizeof cull_pipelines);
     memset(hiz_pipelines, 0, sizeof hiz_pipelines);
+    cull_failed = hiz_failed = false;
     memset(cull_families, 0, sizeof cull_families);
     cull_on = false;
     cull_join_count = 0;
@@ -186,7 +190,8 @@ static bool cull_kernels(void)
             tide_gpu_pipeline_desc desc = {.name = shader->name, .wgsl = shader->wgsl, .spirv = shader->spirv,
                                            .spirv_words = shader->spirv_words, .compute = true,
                                            .uniform_size = cull_uniform_size(shader),
-                                           .texture_count = shader->texture_count, .storage_count = storage};
+                                           .texture_count = shader->texture_count, .storage_count = storage,
+                                           .optional = true}; // The CPU decides runs without them
             for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc.reads[i] = gpu_read(shader, i);
             for (uint32_t i = 0; i < storage && i < TIDE_GPU_MAX_STORAGE; i++)
                 desc.storage_writes[i] = i < shader->storage_count && (shader->storage_writes >> i & 1u) != 0;
@@ -203,13 +208,27 @@ static bool cull_kernels(void)
             tide_gpu_pipeline_desc desc = {.name = k ? "occlusion's pyramid of samples" : "occlusion's pyramid",
                                            .wgsl = joined(&wgsl[k], first[k], hiz_wgsl), .spirv = spirv[k],
                                            .spirv_words = words[k], .compute = true, .uniform_size = 32,
-                                           .texture_count = 1, .storage_count = 1};
+                                           .texture_count = 1, .storage_count = 1, .optional = true}; // Or no occlusion
             desc.reads[0] = k ? TIDE_GPU_READ_SAMPLES : TIDE_GPU_READ_DEPTH;
             desc.storage_writes[0] = true;
             hiz_pipelines[k] = gpu->pipeline(&desc);
         }
     }
-    return ready;
+    // Where the device can't make one, the frame does without it, and says so once (the backend has said why)
+    for (uint32_t k = 0; gpu->pipeline_failed && k < CULL_KERNELS; k++) {
+        if (cull_failed || !gpu->pipeline_failed(cull_pipelines[k])) continue;
+        fprintf(stderr, "tide: this device can't make %s, a kernel of the GPU culling: runs recorded to be culled are "
+                        "decided on the CPU as they're drawn\n", cull_shaders[k]->name);
+        cull_failed = true;
+    }
+    for (uint32_t k = 0; gpu->pipeline_failed && k < 2; k++) {
+        if (hiz_failed || !gpu->pipeline_failed(hiz_pipelines[k])) continue;
+        fprintf(stderr, "tide: this device can't make occlusion culling's depth pyramid: draws testing occlusion are culled "
+                        "without it\n");
+        hiz_failed = true;
+    }
+    hiz_report.failed = hiz_failed;
+    return ready && !cull_failed;
 }
 
 static void cull_warm(void)
@@ -1139,7 +1158,7 @@ bool tide_platform_occlusion(tide_platform_occlusion_report *report, const bool 
 
 bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report)
 {
-    *report = (tide_platform_cull_report){0};
+    *report = (tide_platform_cull_report){.failed = cull_failed};
     const uint32_t buckets = cull_bucket_count, joins = cull_join_count;
     for (uint32_t b = 0; b < buckets; b++) {
         if (list && cull_fixed(list, &steps[cull_buckets[b].step])) report->listed++;

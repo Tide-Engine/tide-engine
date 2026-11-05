@@ -6,8 +6,10 @@
 // needed. With TIDE_WEB_HARDWARE=1 it's the machine's own GPU (Dawn on D3D12
 // on Windows, Metal on macOS, Vulkan on Linux), still headless and muted, and
 // a page that gets a software adapter instead fails the test: the hardware
-// lane (notes/testing.md, The hardware web lane). TIDE_WEBGPU_FLAGS replaces
-// the flags in either mode.
+// lane (notes/testing.md, The hardware web lane). TIDE_WEB_HARDWARE=d3d11 is
+// that on Dawn's Direct3D 11 adapter, which some Windows machines get instead of
+// D3D12 (its shaders go through FXC): a page whose adapter says another backend
+// fails. TIDE_WEBGPU_FLAGS replaces the flags in either mode.
 //
 // Which adapter the browser gives is asked before the test's page: the browser
 // is sent to `probePath`, a page that asks for an adapter as tide.js does
@@ -15,7 +17,9 @@
 // page (`probeAddress`). A runner that drives its pages over DevTools
 // (examples.mjs) evaluates `adapterExpression` in its first page instead.
 
-export const hardware = process.env.TIDE_WEB_HARDWARE === '1';
+export const hardware = process.env.TIDE_WEB_HARDWARE === '1' || process.env.TIDE_WEB_HARDWARE === 'd3d11';
+// The backend the hardware lane asks for, where it asks for one: 'D3D11', as adapters say it
+export const backend = process.env.TIDE_WEB_HARDWARE === 'd3d11' ? 'D3D11' : null;
 
 export function gpuFlags() {
     let flags;
@@ -27,6 +31,7 @@ export function gpuFlags() {
         // --enable-webgpu-developer-features: the adapter's full description (device, driver) for the log
         flags = ['--enable-unsafe-webgpu', '--enable-webgpu-developer-features', '--ignore-gpu-blocklist',
             '--use-webgpu-power-preference=default-high-performance', '--disable-gpu-watchdog'];
+        if (backend === 'D3D11') flags.push('--use-webgpu-adapter=d3d11');
     } else {
         // WebGPU in software, and the browser's own drawing where it can take WebGPU's images: on Windows
         // through WARP (with SwiftShader's GL, Chrome has no WebGPU at all). On Linux, SwiftShader's GL draws
@@ -59,7 +64,8 @@ export const adapterExpression = `(async () => {
         if (!adapter) return { error: 'the browser gave no GPU adapter' };
         const about = adapter.info || {};
         return { vendor: about.vendor || '', architecture: about.architecture || '', device: about.device || '',
-            description: about.description || '', fallback: !!(about.isFallbackAdapter ?? adapter.isFallbackAdapter) };
+            description: about.description || '', backend: about.backend || '',
+            fallback: !!(about.isFallbackAdapter ?? adapter.isFallbackAdapter) };
     } catch (error) {
         return { error: String(error && error.message || error) };
     }
@@ -107,6 +113,7 @@ export function probeRoute(request, response, heard) {
 
 export const describeAdapter = info => info.error ? info.error
     : `${[info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(', ') || 'no description'}`
+        + (info.backend ? ` (${info.backend})` : '')
         + (info.fallback ? ' (a fallback adapter)' : '');
 
 // Why an adapter isn't the machine's GPU, or null when it is
@@ -115,6 +122,8 @@ export function notHardware(info) {
     if (info.fallback) return 'the browser gave its fallback adapter';
     const said = [info.vendor, info.architecture, info.device, info.description].join(' ');
     if (/swiftshader|llvmpipe|lavapipe|softpipe|warp|basic render|software/i.test(said)) return `a software adapter (${said.trim()})`;
+    // The adapter says its backend with --enable-webgpu-developer-features, which the hardware lane gives
+    if (backend && info.backend !== backend) return `its backend is ${info.backend || 'unsaid'}, not ${backend}`;
     return null;
 }
 
@@ -124,5 +133,6 @@ export function adapterVerdict(info) {
     const line = `WebGPU adapter: ${describeAdapter(info)}`;
     if (!hardware) return { line, failure: null };
     const why = notHardware(info);
-    return { line, failure: why ? `TIDE_WEB_HARDWARE=1, but the browser didn't give the machine's GPU: ${why}` : null };
+    return { line, failure: why ? `TIDE_WEB_HARDWARE=${process.env.TIDE_WEB_HARDWARE}, but the browser didn't give the machine's GPU`
+        + `${backend ? ` on ${backend}` : ''}: ${why}` : null };
 }

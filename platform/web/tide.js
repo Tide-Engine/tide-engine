@@ -113,6 +113,9 @@
     // A page whose frames are stepped and compared, as a test's are, makes each pipeline before the frame that first
     // draws with it (`Tide.backgroundPipelines = false`, or `background-pipelines=off` in the address)
     if (address.get('background-pipelines') === 'off') config.backgroundPipelines = false;
+    // A test of what the renderer does without a pipeline the browser can't make: those whose names have one of these
+    // parts fail as they're made (`fail-pipeline=CullListed,pyramid`, gpu_pipeline_end)
+    const failPipelines = (address.get('fail-pipeline') || '').split(',').filter(Boolean);
     // A test whose game draws but checks nothing drawn (networking, input, files) runs without WebGPU with
     // `gpu=none` (`Tide.gpuNone`): the program draws through a GPU that draws nothing (platform/src/gpu_none.c),
     // as on a machine whose browser gives no WebGPU adapter, like CI's Linux runners
@@ -1822,21 +1825,36 @@
     // A pipeline described (`b`, from gpu_pipeline_begin on), made now or, while background pipelines are on,
     // in the background: the draws and dispatches that use it are left out till it's made (gpu_pipeline_ready),
     // where the frame that first used it would otherwise wait for the browser to compile it
+    //
+    // One the browser can't make (a driver's shader compiler that refuses its code: Dawn's Direct3D 11 runs FXC) is
+    // `failed` (gpu_pipeline_failed) once that's known, said once, and never used: the renderer does without it where
+    // it can (the GPU culling's kernels: notes/drawing.md, A culling kernel that can't be made). Made now, that's
+    // known as its error scopes settle, a moment later, and the frames before use it (each use an error the page
+    // prints); made in the background, its promise says so before it's ever used. Those the renderer can do without
+    // (`optional`) are always made in the background, so they're never used before they're known to be made.
     function addPipeline(b, layout, described, compute) {
         const entry = { pipeline: null, textures: b.textures, reads: b.reads, storage: b.storage.length, compute, layout };
-        if (!backgroundPipelines) {
+        const made = device;
+        const id = gpuAdd('pipeline', entry);
+        const failed = error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
+            if (device !== made || gpuTables.pipeline[id] !== entry) return;
+            entry.pipeline = null;
+            entry.failed = true;
+            const text = `WebGPU: the pipeline of ${b.name} wasn't made: ${error.message}`;
+            if (config.checkGL && !b.failing) fail(new Error(text));
+            else printErr('tide: ' + text + (b.failing ? ' (as the page asked: fail-pipeline)' : ''));
+        };
+        if (!backgroundPipelines && !b.optional) {
+            device.pushErrorScope('internal');
+            device.pushErrorScope('validation');
             entry.pipeline = compute ? device.createComputePipeline(described) : device.createRenderPipeline(described);
-            return gpuAdd('pipeline', entry);
+            const validation = device.popErrorScope(), internal = device.popErrorScope();
+            Promise.all([validation, internal]).then(([v, i]) => { if (v || i) failed(v || i); }, () => {});
+            return id;
         }
-        const id = gpuAdd('pipeline', entry), made = device;
         (compute ? device.createComputePipelineAsync(described) : device.createRenderPipelineAsync(described)).then(pipeline => {
             if (device === made && gpuTables.pipeline[id] === entry) entry.pipeline = pipeline;
-        }, error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
-            if (device !== made) return;
-            const text = `WebGPU: the pipeline of ${b.name} wasn't made: ${error.message}`;
-            if (config.checkGL) fail(new Error(text));
-            else printErr('tide: ' + text);
-        });
+        }, failed);
         return id;
     }
     // A compute pipeline: its entry point is `compute`, and nothing about vertices, targets or blending is read
@@ -2079,10 +2097,18 @@
                 (unused, i) => compute && writes >>> i & 1 ? 'w' : 'r').join('');
             building.compute = !!compute;
         },
+        // One the renderer does without until it's made (gpu.h, optional): made in the background whatever
+        // gpu_background says, so nothing uses it before it's known to be made
+        gpu_pipeline_optional() {
+            building.optional = true;
+        },
         gpu_pipeline_end() {
             const b = building;
             building = null;
-            const module = device.createShaderModule({ label: b.name, code: b.code });
+            // A test of a pipeline the browser can't make (`fail-pipeline=` in the address, a comma's list of parts of
+            // pipelines' names): its code has no entry point, so making it fails as a driver's refusal would
+            b.failing = failPipelines.some(part => b.name.includes(part));
+            const module = device.createShaderModule({ label: b.name, code: b.failing ? `// fail-pipeline: ${b.name}\n` : b.code });
             checkShader(module, b.name);
             if (b.compute) return computePipeline(b, module);
             const buffers = b.slots.map((slot, index) => ({
@@ -2115,6 +2141,7 @@
         gpu_pipeline_free: id => gpuRemove('pipeline', id),
         gpu_background: on => { backgroundPipelines = !!on && config.backgroundPipelines !== false; },
         gpu_pipeline_ready: id => gpuTables.pipeline[id]?.pipeline ? 1 : 0,
+        gpu_pipeline_failed: id => gpuTables.pipeline[id]?.failed ? 1 : 0,
         gpu_target(format, width, height) {
             // Its color images, in order: none for a target of depth alone (TIDE_GPU_TARGET_DEPTH)
             const formats = colorFormats(format), samples = formats.length ? samplesOf(format) : 1;
