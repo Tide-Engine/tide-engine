@@ -5821,10 +5821,20 @@ static void put_vertex_main(emit *em, sb *o)
     const char *out = "out.";
     em->stage = STAGE_VERT;
     em->o = o;
+    // A GPU list's indices: this corner's index is its place among them (zeros past their count), as an index buffer's
+    if (sh->gpu_indices) {
+        need_storage(em, sh->index_storage);
+        sb_printf(o, "    let tide_vertex_index = bitcast<u32>(tide_get%d(i32(tide_corner_at)));\n", sh->index_storage);
+    }
     put_dice(em, o, STAGE_VERT, NULL);
-    sb_printf(o, "    var tide_vertex: %s = %s(", ty(em, vertex), ty(em, vertex));
-    for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%stide_a%d", i ? ", " : "", i);
-    sb_put(o, ");\n");
+    if (sh->gpu_vertices) { // A GPU list's vertex, by its index: zeros past their count
+        need_storage(em, sh->vertex_storage);
+        sb_printf(o, "    var tide_vertex: %s = tide_get%d(i32(tide_vertex_index));\n", ty(em, vertex), sh->vertex_storage);
+    } else {
+        sb_printf(o, "    var tide_vertex: %s = %s(", ty(em, vertex), ty(em, vertex));
+        for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%stide_a%d", i ? ", " : "", i);
+        sb_put(o, ");\n");
+    }
     put_skin_vertex(em, o);
     // What the vert writes for the frag: a variable each, in the order it takes them
     for (int h = 0; h < sh->handed.count; h++) {
@@ -6156,6 +6166,15 @@ static void put_instance_loads(emit *em, sb *o)
             sb_printf(o, "    tide_j%d.%c = bitcast<i32>(tide_word%d(tide_e + %du));\n", w / 4, "xyzw"[w % 4], slot, ints_at + k);
         }
     }
+    // Moved by Draw.Transform as the draw was recorded: its matrix times each one's transform, which starts the packs
+    for (int v = 0; sh->through_at >= 0 && v < sh->values.count; v++) {
+        const shader_value *value = &sh->values.items[v];
+        if (!value->per_instance || value->source || value->float_at % 4) continue;
+        const int n = value->float_at / 4, u = sh->through_at / 4;
+        sb_printf(o, "    let tide_moved = mat4x4f(tide_block.tide_u%d, tide_block.tide_u%d, tide_block.tide_u%d, tide_block.tide_u%d)"
+                     " * mat4x4f(tide_n%d, tide_n%d, tide_n%d, tide_n%d);\n", u, u + 1, u + 2, u + 3, n, n + 1, n + 2, n + 3);
+        for (int c = 0; c < 4; c++) sb_printf(o, "    tide_n%d = tide_moved[%d];\n", n + c, c);
+    }
 }
 
 static void write_wgsl(program *prog, shader *sh)
@@ -6188,19 +6207,22 @@ static void write_wgsl(program *prog, shader *sh)
     // whose numbers are its packs (put_listed_loads)
     sb corners = {0}, after = {0}, listed = {0};
     int location = 0;
-    for (int i = 0; i < sh->vertex->fields.count; i++) {
+    for (int i = 0; !sh->gpu_vertices && i < sh->vertex->fields.count; i++) {
         sb_printf(&corners, "%s@location(%d) tide_a%d: %s", location ? ", " : "", location, i, attribute_type(&em, sh->vertex->fields.items[i].type));
         location++;
     }
     const int listed_at = location;
     for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_floats); i++, location++)
-        sb_printf(&after, ", @location(%d) tide_in%d: vec4f", location, i);
+        sb_printf(&after, "%s@location(%d) tide_in%d: vec4f", location ? ", " : "", location, i);
     for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_ints); i++, location++)
-        sb_printf(&after, ", @location(%d) tide_ij%d: vec4i", location, i);
-    // Which vertex of the mesh, and which instance of the draw: what tells a vert's runs, and an instance's pixels, apart
+        sb_printf(&after, "%s@location(%d) tide_ij%d: vec4i", location ? ", " : "", location, i);
+    // Which vertex of the mesh, and which instance of the draw: what tells a vert's runs, and an instance's pixels, apart.
+    // A vertex a GPU list's is read by its index, which a GPU list of indices gives for each corner (put_vertex_main)
     sb builtins = {0};
-    if (rolls || sh->skinned || sh->gpu_instances)
-        sb_put(&builtins, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
+    if (rolls || sh->skinned || sh->gpu_instances || sh->gpu_vertices) {
+        sb_printf(&builtins, "%s@builtin(vertex_index) %s: u32, @builtin(instance_index) tide_instance_index: u32",
+                  location ? ", " : "", sh->gpu_indices ? "tide_corner_at" : "tide_vertex_index");
+    }
     sb_put(&builtins, ") -> tide_corner {\n");
     if (sh->listed) {
         sb_printf(&listed, "%s@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n%s@vertex fn vertex(%s, @location(%d) tide_listed: i32%s",
@@ -6208,7 +6230,7 @@ static void write_wgsl(program *prog, shader *sh)
         put_listed_loads(sh, &listed);
         sb_printf(&listed, "%s    return out;\n}\n", vertex.data ? vertex.data : "");
     }
-    sb_printf(&o, "%s@vertex fn vertex(%s%s%s", rest.data, corners.data, after.data ? after.data : "", builtins.data);
+    sb_printf(&o, "%s@vertex fn vertex(%s%s%s", rest.data, corners.data ? corners.data : "", after.data ? after.data : "", builtins.data);
     if (sh->gpu_instances) sb_put(&o, loads.data ? loads.data : "");
     for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_floats); i++) sb_printf(&o, "    tide_n%d = tide_in%d;\n", i, i);
     for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
@@ -6427,6 +6449,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
             && s->instanced == call->instanced && s->instance_type == call->instance_type
             && s->skinned == call->skinned
             && s->values_type == call->values_type && s->gpu_instances == call->gpu_instances
+            && s->gpu_vertices == call->gpu_vertices && s->gpu_indices == call->gpu_indices
             && s->blit == call->blit && s->direct_texture == direct_texture) return s;
     }
     shader *sh = NEW(shader);
@@ -6443,10 +6466,24 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->instance_type = call->instance_type;
     sh->values_type = call->values_type;
     sh->gpu_instances = call->gpu_instances;
-    if (sh->gpu_instances) { // Its instances' list is its first storage buffer, which the draw gives
-        const shader_storage instances = {0};
+    sh->gpu_vertices = call->gpu_vertices;
+    sh->gpu_indices = call->gpu_indices;
+    sh->instance_storage = sh->vertex_storage = sh->index_storage = sh->through_at = -1;
+    // The lists the draw gives are its first storage buffers: its instances', its vertices', then its indices'
+    if (sh->gpu_instances) {
+        const shader_storage instances = {.role = STORAGE_INSTANCES};
+        sh->instance_storage = sh->storage.count;
         vec_push(sh->storage, instances);
-        sh->instance_storage = 0;
+    }
+    if (sh->gpu_vertices) {
+        const shader_storage vertices = {.role = STORAGE_VERTICES};
+        sh->vertex_storage = sh->storage.count;
+        vec_push(sh->storage, vertices);
+    }
+    if (sh->gpu_indices) {
+        const shader_storage indices = {.role = STORAGE_INDICES};
+        sh->index_storage = sh->storage.count;
+        vec_push(sh->storage, indices);
     }
     const field *position = field_called(vertex, "position");
     sh->dims = position->type.kind == TY_FLOAT3 ? 3 : 2;
@@ -6494,6 +6531,13 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
             sh->frag_floats += v->floats;
             sh->frag_ints += v->ints;
         }
+    }
+    // Draw.Transform's matrix, for instances the GPU reads (Draw.Instanced over a GPU list in 3D): the draw's,
+    // whole float4s of its floats, which the engine writes as the draw is recorded (tide_shader.instance_through)
+    if (sh->gpu_instances && sh->dims == 3) {
+        sh->uniform_floats = packs(sh->uniform_floats) * 4;
+        sh->through_at = sh->uniform_floats;
+        sh->uniform_floats += 16;
     }
     // How many elements each list it reads has: a word of the draw's ints
     for (int i = 0; i < sh->textures.count; i++) {
@@ -6561,15 +6605,16 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     if (sh->skinned && vertex->fields.count + packs(sh->instance_floats) + packs(sh->instance_ints + 1) <= 16)
         sh->skin_base_at = sh->instance_ints++;
 
-    // What a GPU takes, on every backend
-    const int attributes = vertex->fields.count + packs(sh->instance_floats) + packs(sh->instance_ints);
+    // What a GPU takes, on every backend: vertices a GPU list's are read from it, not attributes
+    const int vertex_attributes = sh->gpu_vertices ? 0 : vertex->fields.count;
+    const int attributes = vertex_attributes + (sh->gpu_instances ? 0 : packs(sh->instance_floats) + packs(sh->instance_ints));
     const int uniform_bytes = 16 * (packs(sh->uniform_floats) + packs(sh->uniform_ints));
     if (attributes > 16) {
         sb from = {0};
         list_bound(sh, &from, true);
         diag_error(call->at, "this draw reads %d values for each vertex, and a GPU takes 16: %d fields of " STR_FMT "%s, and %d "
-                   "float4s and int4s of %s", attributes, vertex->fields.count, STR_ARG(vertex->name),
-                   sh->dims == 3 ? ", 4 for the transform" : "", attributes - vertex->fields.count - (sh->dims == 3 ? 4 : 0),
+                   "float4s and int4s of %s", attributes, vertex_attributes, STR_ARG(vertex->name),
+                   sh->dims == 3 ? ", 4 for the transform" : "", attributes - vertex_attributes - (sh->dims == 3 ? 4 : 0),
                    from.data ? from.data : "its entity");
         diag_note("a component's fields are sent for each entity drawn, 4 floats or 4 ints to a value: read fewer of them, or "
                   "keep what every entity shares in a singleton, which is sent once for the draw");

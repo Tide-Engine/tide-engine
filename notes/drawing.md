@@ -2,6 +2,16 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Meshes over GPU lists and Draw.Transform on indirect draws (2026-11-05)
+
+`Draw.Mesh`/`Draw.Instanced`/a target's `Mesh` over a `GPUList` of vertices, with a `GPUList<int>` or `List<int>` of
+indices, and `Draw.Transform` around a `Draw.Instanced` over a GPU list: notes/compute.md, Meshes over GPU lists. In
+the draw list: a pulled shader's run has a stand-in mesh (`tide_draw_mesh_fill_pulled`: one vertex of zeros and the
+CPU's indices kept as they are, or one unused triangle), its lists in `storage`; an indirect 3D run's uniforms hold
+Draw.Transform's matrix at `tide_shader.instance_through`, and a mirroring one sets `TIDE_DRAW_MIRRORED`. Generated
+code calls nothing new. Layout: `tide_shader.instance_through`, `.vertex_storage`, `.index_storage`; hosts, libraries
+and games rebuild together.
+
 ## Listed runs culled on the GPU (2026-11-05)
 
 Task (owner, step 1 of compute's plan): cull listed runs on the GPU (frustum), pick their levels and split their

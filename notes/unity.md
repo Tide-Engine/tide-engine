@@ -27,6 +27,16 @@ texture's filter and wrap as the draw asks. The Sample's checked-in
 in Unity after the merge: the sampler path is the one the replay was checked
 with on OpenGL Core, now under one define instead of four.
 
+## Meshes over GPU lists in Unity (2026-11-05)
+
+Nothing new crosses the embed (ABI stays 11): a pulled-vertex shader is a pipeline with a vertex slot of stride 0 and
+no vertex attributes, reading storage in its vertex stage (as `ComputeReplayTests`' draws do), drawn with the CPU's
+indices (`DrawProcedural` with an index view) or, for GPU indices, `DRAW_INDIRECT` without indices
+(`DrawProceduralIndirect`). Their HLSL compiles with fxc (`tidec_hlsl_gpu_meshes`). `TideWarnings.hlsl` now also turns
+off X3584 (one value every invocation writes to shared memory, as X3583 for storage); X3695 (differing values) can't
+be turned off, so tidec warns (notes/compute.md). Not run in Unity: the Sample has no game with these draws, and no
+Unity run was made for this change.
+
 ## Compute in Unity: embed ABI 11 (2026-11-05)
 
 The recorder (`gpu_record.c`) writes gpu.h's compute calls as

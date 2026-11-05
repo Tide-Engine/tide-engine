@@ -17,6 +17,14 @@ The owner's rule: "compute shaders will be a guarantee now, if a render backend 
 - **Checked by hand:** `tide_platform_draw` with `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` pointing at no driver, under `TIDE_HIDDEN`, printed "This game needs Vulkan 1.3 to draw, and this machine's Vulkan can't draw in a window" (and the driver advice) and exited 1, with no dialog. The dialogs themselves (Windows, macOS, Linux) weren't shown on this machine, which a run nobody watches mustn't do; the Linux code was compiled warning-free with clang 23 under WSL, the macOS branch not at all. Android's screen: `notes/android-and-mingw.md`. The web's: `tide_platform_web_keys`' page in Chrome with `TIDE_WEBGPU_FLAGS="--disable-features=WebGPU,WebGPUService --disable-gpu"` printed "This game needs WebGPU to draw, which this browser doesn't have or has turned off (the browser gave no GPU adapter)…" and gave result 1 within half a second; no test covers it, as every test browser gives an adapter.
 - Measurements and validation records below that compare OpenGL with Vulkan, or name OpenGL/WebGL tests, are history.
 
+## Runs out of passes, pulled vertices, a pass count (2026-11-05)
+
+`move_work_out_of_passes` (compute.inc) moves each run and GPU list operation step back over the draws before it
+that don't depend on it, so it doesn't split their pass; `tide_platform_render_passes()` (platform.h) counts the
+passes the last list drawn began, which `tide_platform_kernels` pins (2; 3 without the move). A pulled-vertex
+shader's pipeline has a vertex slot of stride 0, and one with GPU indices draws `draw_indirect` with the list's count.
+Details: notes/compute.md, Meshes over GPU lists.
+
 ## The renderer's own kernels, in Tide (2026-11-05)
 
 `platform/src/cull.tide` is the renderer's first Tide source: `tidec --kernels` makes it `kernels/cull_kernels.h`

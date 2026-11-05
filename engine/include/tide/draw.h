@@ -1505,8 +1505,17 @@ typedef struct tide_shader {
     uint32_t storage_count;
     uint32_t storage_writes;
     // An Instanced draw over a GPU list's: 1 + the storage slot its instances are read from, each by its place,
-    // and the draw is indirect (tide_draw_run.indirect). 0 for another.
+    // and the draw is indirect (tide_draw_run.indirect). 0 for another. In 3D, 1 + the float word of its uniforms
+    // where Draw.Transform's matrix goes, which its instances' transforms go through on the GPU: written as the
+    // draw is recorded (the identity where nothing moves it), 0 for none.
     uint32_t instance_storage;
+    uint32_t instance_through;
+    // A mesh draw over a GPU list of vertices: 1 + the storage slot they're read from, each by its index, and the
+    // shader has no attributes (`attribute_count` 0, and the renderer's vertex buffer of stride 0). Its mesh is the
+    // CPU's indices alone (tide_draw_mesh_fill_pulled), unless its indices are a GPU list too: 1 + the slot they're
+    // read from in `index_storage`, each corner's by its place, drawn indirect as many as the list has on the GPU.
+    uint32_t vertex_storage;
+    uint32_t index_storage;
     // A kernel (Tide's `compute`): code run over a size, not tied to a draw. Its WGSL's entry point is `compute`,
     // with `group` invocations a workgroup, and nothing above about vertices, instances, outputs or blits is read.
     // Its uniforms are the game's alone (no engine header). After its lists, at the storage slots that follow
@@ -2748,6 +2757,11 @@ void tide_draw_instances(tide_draw_list *d, uint32_t mesh, const tide_float4x4 *
 // bytes each, as a shader reads them.
 void tide_draw_mesh_fill_bytes(tide_draw_list *d, uint32_t mesh, const void *vertices, uint32_t vertex_size,
                                uint32_t vertex_count, const uint32_t *indices, uint32_t index_count);
+// ...for a shader that reads its vertices from a GPU list (tide_shader.vertex_storage): one vertex of zeros, which
+// nothing reads, and the indices as they are, whole triangles of them, as the GPU's vertices aren't the CPU's to
+// count (one past them is zeros there).
+void tide_draw_mesh_fill_pulled(tide_draw_list *d, uint32_t mesh, uint32_t vertex_size, const uint32_t *indices,
+                                uint32_t index_count);
 
 // An instance of the TIDE_MESH_BYTES mesh tide_draw_mesh_slot gave, through
 // `shader`: its instance's bytes (tide_shader_instance_size of them), the

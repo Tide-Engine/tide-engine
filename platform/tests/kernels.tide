@@ -2,7 +2,9 @@
 // against the same functions on the CPU, ordered Add's order and count at
 // several group sizes, atomics, shared memory with barriers, a run over a GPU
 // list's count chained after the run that filled it, a list sent and changed
-// and read back, and an indirect draw of a list a kernel filled.
+// and read back, an indirect draw of a list a kernel filled, meshes whose
+// vertices and indices kernels made, Draw.Transform around indirect draws,
+// and a run a draw before it reads what it writes.
 
 struct Item
 {
@@ -23,6 +25,29 @@ struct Corner
     float2 position;
 }
 
+// A corner of a mesh a kernel makes
+struct Dot
+{
+    float2 position;
+    Color color;
+}
+
+struct Corner3
+{
+    float3 position;
+}
+
+struct Box
+{
+    float4x4 transform;
+    Color color;
+}
+
+struct Shift
+{
+    float2 by;
+}
+
 struct Wave
 {
     float speed;
@@ -40,6 +65,9 @@ local singleton Lists
     GPUList<int> groups;
     GPUList<Item> items;
     GPUList<Spot> spots;
+    GPUList<Dot> dots;
+    GPUList<int> dotIndices;
+    GPUList<Box> boxes;
     List<Item> sent;
     float scale;
     int frame;
@@ -149,6 +177,53 @@ compute PlaceSpots(Lists lists)
     lists.spots.Add(Spot { at = float2(x, 0), color = Color(float(this.index) * 0.25, 1.0 - float(this.index) * 0.25, 0.5, 1) });
 }
 
+// Three squares' corners, written by index (the CPU says how many with SetCount): red, green and blue across
+[Group(4)]
+compute MakeDots(Lists lists)
+{
+    int square = this.index / 4;
+    int k = this.index % 4;
+    float2 corner = float2(k == 1 || k == 2 ? 3.0 : -3.0, k >= 2 ? 3.0 : -3.0);
+    Color color = square == 0 ? Color(1, 0, 0, 1) : square == 1 ? Color(0, 1, 0, 1) : Color(0, 0, 1, 1);
+    lists.dots[this.index] = Dot { position = float2(float(square) * 20.0 - 20.0, -24.0) + corner, color = color };
+}
+
+// The first and the last squares' triangles, added in order: the middle one's are left out, so the count is the GPU's
+[Group(6)]
+compute MakeIndices(Lists lists)
+{
+    int square = this.index / 6;
+    if (square == 1) return;
+    int k = this.index % 6;
+    int corner = k == 0 || k == 3 ? 0 : k == 1 ? 1 : k == 2 || k == 4 ? 2 : 3;
+    lists.dotIndices.Add(square * 4 + corner);
+}
+
+// A box placed far to the right, which Draw.Transform brings back
+[Group(1)]
+compute PlaceBoxes(Lists lists)
+{
+    lists.boxes.Add(Box { transform = float4x4.Translate(float3(96.5, 3.5, 10.0)), color = Color(1, 1, 0, 1) });
+}
+
+// Every corner white, after the draws before it read them
+[Group(16)]
+compute Whiten(Lists lists)
+{
+    Dot dot = lists.dots[this.index];
+    lists.dots[this.index] = Dot { position = dot.position, color = Color(1, 1, 1, 1) };
+}
+
+vert Moved(mut Dot dot, Shift shift)
+{
+    dot.position += shift.by;
+}
+
+frag ShowBox(Corner3 corner, Box box, out Color color)
+{
+    color = box.color;
+}
+
 vert PlaceSpot(mut Corner corner, Spot spot)
 {
     corner.position += spot.at;
@@ -172,6 +247,9 @@ view Compute(mut Lists lists, mut Results results)
         lists.groups = GPUList<int>(4);
         lists.items = GPUList<Item>(16);
         lists.spots = GPUList<Spot>(8);
+        lists.dots = GPUList<Dot>(16);
+        lists.dotIndices = GPUList<int>(32);
+        lists.boxes = GPUList<Box>(2);
         lists.scale = 1.5;
         results.revision = lists.shapes.contentRevision;
         for (var i = 0; i < 200; i++) results.expected.Add(Curve(float(i) * 0.37 - 5.0, lists.scale));
@@ -198,9 +276,36 @@ view Compute(mut Lists lists, mut Results results)
     GPU.Run(Bump, lists.items);
     lists.spots.Clear();
     GPU.Run(PlaceSpots, 6);
+    lists.dots.SetCount(12);
+    GPU.Run(MakeDots, 12);
+    lists.dotIndices.Clear();
+    GPU.Run(MakeIndices, 18);
+    lists.boxes.Clear();
+    GPU.Run(PlaceBoxes, 1);
+    // Every run and list operation above goes before the clear's pass, which none of them is drawn in
     List<Corner> square = [Corner { position = float2(-4, -4) }, Corner { position = float2(4, -4) },
                            Corner { position = float2(4, 4) }, Corner { position = float2(-4, 4) }];
     Draw.Instanced(square, [0, 1, 2, 0, 2, 3], lists.spots, PlaceSpot, ShowSpot);
+    Draw.Transform(float2(0, 12))
+    {
+        Draw.Instanced(square, [0, 1, 2, 0, 2, 3], lists.spots, PlaceSpot, ShowSpot);
+    }
+    // Vertices and indices a kernel made, as many as the GPU has: the first and the last squares
+    Draw.Mesh(lists.dots, lists.dotIndices);
+    // ...and the middle one's corners by the CPU's indices, moved up, with one more triangle past the vertices
+    Draw.Mesh(lists.dots, [4, 5, 6, 4, 6, 7, 12, 13, 14], Moved, Shift { by = float2(0, 44) });
+    List<Corner3> face = [Corner3 { position = float3(-0.75, -0.75, 0) }, Corner3 { position = float3(0.75, -0.75, 0) },
+                          Corner3 { position = float3(0.75, 0.75, 0) }, Corner3 { position = float3(-0.75, 0.75, 0) }];
+    Draw.Cull(Cull.None)
+    {
+        Draw.Transform(float4x4.Translate(float3(-100, 0, 0)))
+        {
+            Draw.Instanced(face, [0, 1, 2, 0, 2, 3], lists.boxes, ShowBox);
+        }
+    }
+    // A run whose list the draws before it read: after them, and the draw after it sees what it wrote
+    GPU.Run(Whiten, lists.dots);
+    Draw.Mesh(lists.dots, [0, 1, 2, 0, 2, 3], Moved, Shift { by = float2(20, 12) });
     if (lists.read)
     {
         lists.read = false; // The host asks for each read

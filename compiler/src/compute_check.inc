@@ -740,6 +740,89 @@ static void barriers_uniform(const stmt *s, const bool loop, bool *returned)
     }
 }
 
+// Whether `e` is the same for every invocation of a group, as far as can be told: constants, what the kernel takes
+// (its values, singletons and components, uniforms all), this.group and this.count, arithmetic of those, and locals
+// that never change made of those. A GPU list's elements and count, a call and an index aren't.
+static bool group_uniform(const expr *e)
+{
+    if (!e) return true;
+    int64_t n;
+    if (fold_int(e, &n)) return true;
+    switch (e->kind) {
+    case E_INT:
+    case E_FLOAT:
+    case E_BOOL:
+        return true;
+    case E_NAME:
+        if (e->bind == BIND_PARAM) return e->type.kind != TY_GPU_LIST;
+        if (e->bind != BIND_LOCAL || !e->local || e->local->kind != S_VAR) return false;
+        return !e->local->is_mut && !e->local->assigned && !e->local->is_shared && !e->local->loop_var
+            && e->local->value && group_uniform(e->local->value);
+    case E_MEMBER:
+        if (e->object && e->object->kind == E_THIS)
+            return str_eq_c(e->member, "group") || str_eq_c(e->member, "count");
+        return e->gpu == GPU_NONE && e->type.kind != TY_GPU_LIST && group_uniform(e->object);
+    case E_BINARY:
+        return group_uniform(e->lhs) && group_uniform(e->rhs);
+    case E_UNARY:
+        return group_uniform(e->lhs);
+    case E_CONDITIONAL:
+        return group_uniform(e->cond) && group_uniform(e->lhs) && group_uniform(e->rhs);
+    default:
+        return false;
+    }
+}
+
+// A write to one place of a kernel's shared memory by every invocation of a group, each with its own value, which
+// Unity's Direct3D 11 compiler (fxc) refuses (X3695: no pragma turns it off), where WGSL, SPIR-V and the other
+// compilers take it: said as a warning, conservatively. The place is the same for each where its indexes are
+// (group_uniform), and every invocation writes it where a barrier would be reached by all (barriers_uniform's
+// rule). One value for all is fine: fxc only warns (X3584), which Unity's shaders turn off.
+static void shared_races(const decl *d, const stmt *s, bool *returned)
+{
+    if (!s) return;
+    switch (s->kind) {
+    case S_BLOCK:
+        for (int i = 0; i < s->stmts.count; i++) shared_races(d, s->stmts.items[i], returned);
+        return;
+    case S_RETURN:
+    case S_FAIL:
+        *returned = true;
+        return;
+    case S_FOR:
+        if (counts_alike(s) && !leaves_loop(s->then_stmt)) shared_races(d, s->then_stmt, returned);
+        return;
+    case S_IF: { // A condition the same for the whole group sends all of it one way
+        bool inner = *returned;
+        if (group_uniform(s->cond)) {
+            shared_races(d, s->then_stmt, &inner);
+            shared_races(d, s->else_stmt, &inner);
+        }
+        *returned |= inner || leaves_loop(s);
+        return;
+    }
+    case S_ASSIGN: {
+        if (*returned) return;
+        const expr *root = s->target;
+        bool same_place = true;
+        while (root && (root->kind == E_INDEX || root->kind == E_MEMBER)) {
+            if (root->kind == E_INDEX) same_place &= group_uniform(root->lhs);
+            root = root->object;
+        }
+        if (!shared_local(root) || root->local->shared_atomic || !same_place) return;
+        if (s->op == T_ASSIGN && group_uniform(s->value)) return; // One value for all
+        diag_warning(s->at, "every invocation of a group writes '" STR_FMT "' here, each its own value, and Unity's Direct3D 11 "
+                     "compiler refuses a write like that, so kernel '" STR_FMT "' won't run there", STR_ARG(root->local->name),
+                     STR_ARG(d->name));
+        diag_note("have one invocation write it, and the others read it after a barrier: 'if (this.local.x == 0) ...', then "
+                  "'GPU.Barrier();'");
+        return;
+    }
+    default:
+        return;
+    }
+}
+
 static void shared_placement(const stmt *s, const bool top)
 {
     if (!s) return;
@@ -802,4 +885,6 @@ static void check_kernel_flow(const checker *c, decl *d)
         bool returned = false;
         barriers_uniform(d->body, false, &returned);
     }
+    bool returned = false;
+    shared_races(d, d->body, &returned);
 }

@@ -2388,7 +2388,9 @@ static const method_form target_calls[] = {
     "for a 3D one. A vert and a frag, named last, run on the GPU for each of the mesh's vertices and pixels: "         \
     "`Draw.Mesh(vertices, indices, transform, Wave, Shade)`. A struct's value after them is the draw's values, "       \
     "which they read through a parameter of its type, the same for the whole draw: "                                   \
-    "`Draw.Mesh(vertices, indices, transform, Wave, Shade, Swell { height = 2 })`."
+    "`Draw.Mesh(vertices, indices, transform, Wave, Shade, Swell { height = 2 })`. A kernel's geometry draws the same " \
+    "way from GPU lists: `vertices` a `GPUList` of the struct, and `indices` a `List<int>` or a `GPUList<int>`, as "   \
+    "many as the GPU has, with nothing read back."
 
 static bool is_mesh_draw(const str owner, const str name)
 {

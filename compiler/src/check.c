@@ -6960,8 +6960,8 @@ static void note_mesh_forms(const expr *e)
         return;
     }
     diag_note("%s.Mesh(vertices, indices) draws a 2D mesh, and %s.Mesh(vertices, indices, transform) a 3D one, by its "
-              "vertices' position; then come a texture, its filter and its wrap, or a vert and a frag by name, and after those "
-              "a struct of values they read", on, on);
+              "vertices' position, the lists the CPU's or a kernel's GPU lists; then come a texture, its filter and its wrap, or "
+              "a vert and a frag by name, and after those a struct of values they read", on, on);
 }
 
 // Whether a vert writes a struct of this type for its frag: `out FromLamp lamp`.
@@ -7379,11 +7379,13 @@ static type check_mesh_draw(checker *c, expr *e)
         check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
     } else {
         const type t = checked > 0 ? vertices->type : check_expr(c, vertices);
-        if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_STRUCT) {
+        if ((t.kind == TY_LIST || t.kind == TY_GPU_LIST) && t.decl->fields.items[0].type.kind == TY_STRUCT) {
             vertex = t.decl->fields.items[0].type.decl;
+            e->gpu_vertices = t.kind == TY_GPU_LIST; // A kernel's: each read on the GPU, by its index
         } else if (t.kind != TY_ERROR) {
             diag_error(vertices->at, "%s draws a list of vertices, and this is %s", draw_name, type_name(t));
-            diag_note("a List<Vertex> in 2D, a List<Vertex3> in 3D, or a list of a struct of the game's with a 'position'");
+            diag_note("a List<Vertex> in 2D, a List<Vertex3> in 3D, or a list of a struct of the game's with a 'position', or a "
+                      "GPUList of one");
         }
     }
     expr *indices = e->args.items[1];
@@ -7489,7 +7491,20 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
 
-    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced && !skinned) {
+    // Indices on the GPU: as many as its count there, each vertex read by its index, so the vertices are there too
+    e->gpu_indices = index_type.kind == TY_GPU_LIST && index_type.decl->fields.items[0].type.kind == TY_INT;
+    if (e->gpu_indices && !e->gpu_vertices) {
+        diag_error(indices->at, "a GPUList of indices picks its vertices on the GPU, and these vertices are the CPU's");
+        diag_note("put them in a GPUList too, sent once with 'Set' where they don't change, or give the indices as a List<int>");
+        return T_ERR;
+    }
+    if (e->gpu_vertices && e->mesh_lod) {
+        diag_error(lod_at, "levels of detail are made of the CPU's vertices, and this mesh's are a GPU list's: 'lod:' isn't for it");
+        diag_note("draw one GPU list a level, each made by the kernel that picks them");
+        return T_ERR;
+    }
+
+    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced && !skinned && !e->gpu_vertices) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
@@ -7499,8 +7514,10 @@ static type check_mesh_draw(checker *c, expr *e)
     }
 
     bool ok = true;
-    if (index_type.kind != TY_ERROR && (index_type.kind != TY_LIST || index_type.decl != index_list.decl)) {
-        diag_error(indices->at, "a mesh's indices are a List<int>, three for each triangle, and this is %s", type_name(index_type));
+    if (index_type.kind != TY_ERROR && (index_type.kind != TY_LIST || index_type.decl != index_list.decl)
+        && (index_type.kind != TY_GPU_LIST || index_type.decl->fields.items[0].type.kind != TY_INT)) {
+        diag_error(indices->at, "a mesh's indices are a List<int>, three for each triangle, or a GPUList<int>, and this is %s",
+                   type_name(index_type));
         ok = false;
     }
     for (int i = 2; i < count; i++) {
@@ -7642,7 +7659,7 @@ static type check_mesh_draw(checker *c, expr *e)
     }
     if (!ok) return T_ERR;
 
-    if (instanced && transforms && vertex == prog->vertex3 && !shaded && !skinned) {
+    if (instanced && transforms && vertex == prog->vertex3 && !shaded && !skinned && !e->gpu_vertices) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
@@ -7655,7 +7672,7 @@ static type check_mesh_draw(checker *c, expr *e)
     e->c_callee = NULL;
     e->arg_want.count = 0;
     vec_push(e->arg_want, vertices->type);
-    vec_push(e->arg_want, index_list);
+    vec_push(e->arg_want, e->gpu_indices ? index_type : index_list);
     for (int i = 2; i < count; i++) {
         const expr *arg = e->args.items[i];
         // The texture as the Texture it is, a grid too

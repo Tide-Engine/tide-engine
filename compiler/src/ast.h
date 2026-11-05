@@ -1267,6 +1267,8 @@ struct expr {
     bool web_request;        // ...and a WebRequest's Send, with web_fetch: its object is the request, its value a WebResponse
     int gpu;                 // What it does with a GPU list or a kernel (gpu_op), or 0
     bool gpu_instances;      // Draw.Instanced over a GPUList: drawn indirect, its instances read on the GPU
+    bool gpu_vertices;       // A mesh draw over a GPUList of vertices: each read on the GPU by its index (shader.vertex_storage)
+    bool gpu_indices;        // ...and a GPUList<int> of indices, read there too: drawn indirect, as many as the list has
     struct decl *kernel;     // GPU.Run: the kernel it runs
     int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
@@ -1466,9 +1468,12 @@ typedef struct shader_texture {
 
 // A GPU list a shader's code names: a field of what the engine supplies (a
 // component, a singleton, the values), a storage buffer of the shader's.
+typedef enum storage_role { STORAGE_FIELD, STORAGE_INSTANCES, STORAGE_VERTICES, STORAGE_INDICES } storage_role;
+
 typedef struct shader_storage {
     const struct decl *source;
     const field *field;
+    storage_role role; // A field's list, or one the draw gives: its instances, its vertices or its indices (no field)
     bool write;  // A kernel writes it: var<storage, read_write>
     bool atomic; // ...with atomics: its words are array<atomic<i32>>
     bool add;    // ...and Adds to it: in invocation order, through a scratch buffer after the lists
@@ -1501,6 +1506,10 @@ typedef struct shader {
     struct decl *kernel;
     VEC(shader_storage) storage; // The GPU lists its code names, a storage buffer each, in slot order
     int instance_storage;        // gpu_instances: the slot of the list its instances are read from
+    bool gpu_vertices;           // Its vertices are a GPU list's, read by their index from slot vertex_storage: no attributes
+    bool gpu_indices;            // ...and its indices too, from slot index_storage, each vertex by its place among them
+    int vertex_storage, index_storage;
+    int through_at;              // gpu_instances in 3D: the uniforms' float word Draw.Transform's matrix starts at, or -1
     bool skinned;        // Skin deformation before the optional user vert
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL

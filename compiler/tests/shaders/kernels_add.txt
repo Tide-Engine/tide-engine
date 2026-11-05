@@ -4,6 +4,10 @@ struct tide_uniforms {
     tide_screen: vec4f,
     tide_tint: vec4f,
     tide_origin: vec4f,
+    tide_u0: vec4f,
+    tide_u1: vec4f,
+    tide_u2: vec4f,
+    tide_u3: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
@@ -114,6 +118,11 @@ fn tide_get0(tide_i: i32) -> tt_Blade {
     tide_n4.x = bitcast<f32>(tide_word0(tide_e + 3u));
     tide_j0.x = bitcast<i32>(tide_word0(tide_e + 4u));
     tide_j0.y = bitcast<i32>(tide_word0(tide_e + 5u));
+    let tide_moved = mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3) * mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3);
+    tide_n0 = tide_moved[0];
+    tide_n1 = tide_moved[1];
+    tide_n2 = tide_moved[2];
+    tide_n3 = tide_moved[3];
     var tide_vertex: tt_Corner = tt_Corner(tide_a0);
     ts_Sway(&tide_vertex);
     let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));

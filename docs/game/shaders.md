@@ -1299,14 +1299,50 @@ compute Sum(Values values)
 
 - Every invocation reaches a barrier: it's in no `if`, `switch` or `while`, in `for` loops only from a constant to a constant that nothing leaves early, and after no `return`. A kernel with a barrier runs its body for every invocation of its groups, those past the run's size too, so it checks `this.index` itself.
 - Atomics work on a `shared int[N]`'s elements too: `seen.AtomicAdd(0, 1)`.
+- One place of shared memory written by every invocation of a group, each with its own value, is a race: some invocation's value is left, and which isn't said. Unity's Direct3D 11 compiler refuses it, so the compiler warns. Have one invocation write it, `if (this.local.x == 0) ...`, and the others read it after a barrier. One value written by all is fine.
 
 ### Drawing what a kernel made
 
-`Draw.Instanced(vertices, indices, list, vert, frag)` over a GPU list draws as many instances as the list has on the GPU, each read there: one indirect draw, with nothing read back. Its element is the instance struct, as a list's is, its `float4x4 transform` too where it has one. No culling or level picking happens on the CPU, which has no instances to test: the kernel that filled the list does that. A game draws one list a level, each filled by the kernel that picks them.
+`Draw.Instanced(vertices, indices, list, vert, frag)` over a GPU list draws as many instances as the list has on the GPU, each read there: one indirect draw, with nothing read back. Its element is the instance struct, as a list's is, its `float4x4 transform` too where it has one. No culling or level picking happens on the CPU, which has no instances to test: the kernel that filled the list does that. A game draws one list a level, each filled by the kernel that picks them. Inside `Draw.Transform`, each instance's transform goes through it, as a `List<T>`'s instances' do.
+
+A mesh's vertices and indices can be a kernel's too: `Draw.Mesh` and `Draw.Instanced` take a `GPUList` of the vertex struct where the vertices go, and a `GPUList<int>` or a `List<int>` where the indices go, in 2D and 3D, and so does a target's `Mesh`. Each vertex is read on the GPU by its index, zeros past the list's count, and indices on the GPU draw as many triangles as that list's count has there, with nothing read back.
+
+```csharp
+struct Dot
+{
+    float2 position;
+    Color color;
+}
+
+local singleton Sparks
+{
+    GPUList<Dot> corners;
+}
+
+[Group(64)]
+compute Spark(Sparks sparks, Burst burst)   // Burst: a local singleton of the game's
+{
+    float2 at = burst.center + float2(float(this.index % 16), float(this.index / 16)) * burst.spacing;
+    int first = this.index * 4;
+    sparks.corners[first] = Dot { position = at + float2(-1, -1), color = burst.color };
+    sparks.corners[first + 1] = Dot { position = at + float2(1, -1), color = burst.color };
+    sparks.corners[first + 2] = Dot { position = at + float2(1, 1), color = burst.color };
+    sparks.corners[first + 3] = Dot { position = at + float2(-1, 1), color = burst.color };
+}
+
+view DrawSparks(Sparks sparks, Burst burst)
+{
+    sparks.corners.SetCount(burst.count * 4);
+    GPU.Run(Spark, burst.count);
+    Draw.Mesh(sparks.corners, burst.quads); // burst.quads: a List<int> of 0, 1, 2, 0, 2, 3, 4, 5, 6, ...
+}
+```
+
+A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's.
 
 ### Order in a frame
 
-A frame's GPU work happens as if in the order it was recorded: a draw after a run sees what it wrote, and one before it doesn't, as do runs after runs, and `Set`, `Clear` and `SetCount` among them.
+A frame's GPU work happens as if in the order it was recorded: a draw after a run sees what it wrote, and one before it doesn't, as do runs after runs, and `Set`, `Clear` and `SetCount` among them. A run that no draw before it depends on is done before them, so it costs the draws around it nothing: write runs where they read best.
 
 ### Where kernels run
 

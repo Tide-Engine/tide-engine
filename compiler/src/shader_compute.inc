@@ -51,10 +51,13 @@ static bool slot_atomic(const emit *em, const int slot)
     return em->sh && em->sh->compute && slot >= 0 && em->sh->storage.items[slot].atomic;
 }
 
-// The element type of the GPU list in slot `slot`: its instances' for an Instanced draw's own.
+// The element type of the GPU list in slot `slot`: for a list the draw gives, its instances', its vertices' or its
+// indices'.
 static type slot_element(const emit *em, const int slot)
 {
     const shader_storage *s = &em->sh->storage.items[slot];
+    if (s->role == STORAGE_VERTICES) return (type){TY_STRUCT, em->sh->vertex};
+    if (s->role == STORAGE_INDICES) return (type){TY_INT, NULL};
     if (!s->field) return em->sh->instance_type ? (type){TY_STRUCT, em->sh->instance_type} : (type){TY_FLOAT4X4, NULL};
     return s->field->type.decl->fields.items[0].type;
 }

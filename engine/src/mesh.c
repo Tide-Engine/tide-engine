@@ -943,12 +943,46 @@ void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, const t
     tide_draw_mesh_shaded_instances(d, shader, vertices, indices, instance, 1, uniforms, textures, sampling);
 }
 
+// Where a shader reads its vertices from a GPU list (tide_shader.vertex_storage), its mesh is the CPU's indices alone,
+// by their list and its version, or for indices a GPU list's too, one triangle the draw doesn't use: a vertex of
+// zeros each (tide_draw_mesh_fill_pulled), so the renderer has a mesh as for any draw.
+#define MESH_PULLED (UINT64_MAX - 1u)
+
+static uint32_t pulled_mesh(tide_draw_list *d, const tide_shader *shader, const tide_list indices)
+{
+    static const uint32_t unused[3] = {0, 0, 0};
+    const uint32_t size = shader->vertex_size;
+    const int32_t index_count = shader->index_storage ? 3 : tide_list_count(indices);
+    if (index_count < 3) return 0;
+    uint64_t version = tide_hash_more(tide_hash_more(0, &size, sizeof size), &shader->index_storage, sizeof shader->index_storage);
+    uint64_t id = MESH_PULLED;
+    if (!shader->index_storage) {
+        const uint64_t index_version = list_version(indices, sizeof(uint32_t));
+        version = tide_hash_more(version, &index_version, sizeof index_version);
+        id = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? tide_handle_of(TIDE_IN_SCRATCH, 0) : indices.at;
+    }
+    version = tide_hash_end(version);
+    bool fill;
+    const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_BYTES, id, MESH_PULLED, version, &fill);
+    if (fill && shader->index_storage) {
+        tide_draw_mesh_fill_pulled(d, mesh, size, unused, 3);
+    } else if (fill) {
+        bool copied;
+        uint32_t *i = tide_list_flatten(indices, sizeof(uint32_t), false, &copied);
+        tide_draw_mesh_fill_pulled(d, mesh, size, i, (uint32_t)index_count);
+        tide_list_unflatten(indices, i, sizeof(uint32_t), false, copied);
+    }
+    if (d->diagnostics && mesh) d->meshes[mesh - 1u].profile_indices = indices.at;
+    return mesh;
+}
+
 // The mesh of a shader's draw of two lists, 0 for none: found by their versions, and filled where it's new.
 static uint32_t shaded_mesh(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
                             const tide_list indices, const uint32_t count)
 {
     const uint64_t key = take_mesh_key(d, vertices, indices);
     if (count == 0 || !shader) return 0;
+    if (shader->vertex_storage) return pulled_mesh(d, shader, indices); // Its vertices are on the GPU
     const int32_t vertex_count = tide_list_count(vertices);
     const int32_t index_count = tide_list_count(indices);
     if (vertex_count <= 0 || index_count < 3) return 0;
