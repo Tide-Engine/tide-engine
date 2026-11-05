@@ -109,7 +109,7 @@ test('WebGPU preserves every read kind in high texture slots and builds matching
     const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
     const begin = source.indexOf('        gpu_pipeline_begin(');
     const end = source.indexOf('\n        gpu_pipeline_slot:', begin);
-    const layoutBegin = source.indexOf('    function layoutFor(reads) {');
+    const layoutBegin = source.indexOf('    function layoutFor(');
     const layoutEnd = source.indexOf('\n    // A pass', layoutBegin);
     assert.ok(begin >= 0 && end > begin && layoutBegin >= 0 && layoutEnd > layoutBegin);
     const method = source.slice(begin, end);
@@ -126,8 +126,9 @@ test('WebGPU preserves every read kind in high texture slots and builds matching
             const sandbox = {
                 low, high, string: () => '', stencilTests: ['always'], stencilOps: ['keep'],
                 colorFormats: () => [], samplesOf: () => 1, layouts: new Map(),
-                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, readsDepth: read => read === 1 || read === 2,
-                GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 },
+                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, STORAGE_BINDING: 25, MAX_STORAGE: 7,
+                readsDepth: read => read === 1 || read === 2,
+                GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
                 device: {
                     createBindGroupLayout: desc => { entries = desc.entries; return {}; },
                     createPipelineLayout: () => ({}),
@@ -151,6 +152,54 @@ test('WebGPU preserves every read kind in high texture slots and builds matching
             assert.equal(sampler.sampler.type, kind === 2 ? 'comparison' : kind === 1 || kind === 4 ? 'non-filtering' : 'filtering');
         }
     }
+});
+
+test('WebGPU storage buffers get explicit layouts at binding 25 on, read-only outside compute', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_pipeline_begin(');
+    const end = source.indexOf('\n        gpu_pipeline_end()', begin);
+    const layoutBegin = source.indexOf('    function layoutFor(');
+    const layoutEnd = source.indexOf('\n    // A pass', layoutBegin);
+    assert.ok(begin >= 0 && end > begin && layoutBegin >= 0 && layoutEnd > layoutBegin);
+    const method = source.slice(begin, end);
+    const layoutsMade = [];
+    const sandbox = {
+        string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, STORAGE_BINDING: 25, MAX_STORAGE: 7,
+        readsDepth: read => read === 1 || read === 2, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
+        device: {
+            createBindGroupLayout: desc => { layoutsMade.push(desc.entries); return {}; },
+            createPipelineLayout: () => ({}),
+        },
+    };
+    const made = vm.runInNewContext(`(() => {
+        let building;
+        const backend = { ${method} };
+        ${source.slice(layoutBegin, layoutEnd)}
+        const made = [];
+        for (const [count, writes, compute] of [[0, 0, 0], [3, 0b111, 0], [7, 0b1000101, 1], [0, 0, 1]]) {
+            backend.gpu_pipeline_begin(0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0);
+            if (count || compute) backend.gpu_pipeline_storage(count, writes, compute);
+            made.push({ storage: building.storage, compute: building.compute,
+                key: layoutFor(building.reads, building.storage, building.compute).key });
+        }
+        return made;
+    })()`, sandbox);
+    assert.deepEqual(Array.from(made, m => m.storage), ['', 'rrr', 'wrwrrrw', '']);
+    assert.deepEqual(Array.from(made, m => m.key), ['0', '0|rrr', '0|wrwrrrw|compute', '0||compute']);
+    assert.equal(layoutsMade.length, 4);
+    const [plain, render, compute, bare] = layoutsMade;
+    assert.equal(plain.length, 3, 'a pipeline without storage is laid out as before');
+    assert.ok(plain.every(e => e.visibility === 3));
+    // A render pipeline's storage is read by both its stages, whatever writes say: only compute writes
+    assert.deepEqual(Array.from(render).filter(e => e.buffer && e.binding >= 25).map(e => [e.binding, e.buffer.type, e.visibility]),
+        [[25, 'read-only-storage', 3], [26, 'read-only-storage', 3], [27, 'read-only-storage', 3]]);
+    assert.deepEqual(Array.from(compute).filter(e => e.buffer && e.binding >= 25).map(e => [e.binding, e.buffer.type]),
+        [[25, 'storage'], [26, 'read-only-storage'], [27, 'storage'], [28, 'read-only-storage'],
+            [29, 'read-only-storage'], [30, 'read-only-storage'], [31, 'storage']]);
+    assert.ok(compute.every(e => e.visibility === 4), 'a compute pipeline binds everything to its compute stage');
+    assert.equal(bare.length, 3);
+    assert.ok(bare.every(e => e.visibility === 4));
 });
 
 test('synchronous release decoder preserves bytes and checks gzip corruption', () => {

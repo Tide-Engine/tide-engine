@@ -1657,6 +1657,8 @@
             gpuFree[kind] = [];
         }
         bindGroups.clear();
+        storageGroups.clear();
+        loseBufferReads();
         retired.length = 0;
         uniformBuffer = layouts = pass = commands = null;
         uniformSlots = 0;
@@ -1712,6 +1714,8 @@
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
     const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
     const READ_DATA = 4;        // TIDE_GPU_READ_DATA: ints, each pixel by its place
+    const MAX_STORAGE = 7;      // TIDE_GPU_MAX_STORAGE
+    const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const readsDepth = read => read === 1 || read === READ_COMPARE;
     // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
@@ -1736,12 +1740,20 @@
         // draw there), and what that gives at the pixels around, blended
         samplers.push(device.createSampler({ magFilter: 'linear', minFilter: 'linear', compare: 'less-equal' }));
     }
-    function layoutFor(reads) {
-        const key = reads.join('');
+    // `storage`: a letter for each of its storage buffers (tide_gpu_pipeline_desc.storage_count), at
+    // STORAGE_BINDING on, 'w' for one it writes and 'r' for one it reads. A compute pipeline's are its compute
+    // stage's, where a render pipeline's are both of its stages', which only read storage. Explicit, so a
+    // binding its shader leaves unused is still bound.
+    function layoutFor(reads, storage = '', compute = false) {
+        const key = reads.join('') + (storage || compute ? `|${storage}${compute ? '|compute' : ''}` : '');
         let layout = layouts.get(key);
         if (!layout) {
-            const stages = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+            const stages = compute ? GPUShaderStage.COMPUTE : GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
             const entries = [{ binding: 0, visibility: stages, buffer: { type: 'uniform', hasDynamicOffset: true } }];
+            for (let i = 0; i < storage.length; i++) {
+                entries.push({ binding: STORAGE_BINDING + i, visibility: stages,
+                    buffer: { type: storage[i] === 'w' ? 'storage' : 'read-only-storage' } });
+            }
             reads.forEach((read, i) => {
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
                     ? { sampleType: 'float', viewDimension: 'cube' }
@@ -1773,13 +1785,23 @@
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         uniformsUsed = 0;
         bindGroups.clear();
+        storageGroups.clear();
     }
-    function bindGroup(p, textures, sampled) {
+    // ...and its storage buffers, by their numbers (gpu_storage), all of each
+    const storageGroups = new Map(); // By a buffer's number: the keys of the bind groups it's in, which go when it does
+    function bindGroup(p, textures, sampled, storage) {
         let key = p.layout.key + ';';
         for (let i = 0; i < p.textures; i++) key += textures[i] + ':' + (readsDepth(p.reads[i]) ? 0 : sampled[i]) + ',';
+        for (let i = 0; i < p.storage; i++) key += 's' + storage[i] + ',';
         let group = bindGroups.get(key);
         if (!group) {
             const entries = [{ binding: 0, resource: { buffer: uniformBuffer, size: UNIFORM_BYTES } }];
+            for (let i = 0; i < p.storage; i++) {
+                entries.push({ binding: STORAGE_BINDING + i, resource: { buffer: gpuTables.buffer[storage[i]] } });
+                let keys = storageGroups.get(storage[i]);
+                if (!keys) storageGroups.set(storage[i], keys = new Set());
+                keys.add(key);
+            }
             for (let i = 0; i < p.textures; i++) {
                 const t = gpuTables.texture[textures[i]];
                 const read = p.reads[i];
@@ -1972,14 +1994,18 @@
         }); // A reset or device loss cancelled it
     }
     // What the next draw draws with: its pipeline, and each texture it samples, by its slot
+    // ...and each storage buffer, by its slot. In a compute pass, the same, for its dispatches
     const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), sampled: new Array(MAX_TEXTURES).fill(0),
-        bound: false };
+        storage: new Array(MAX_STORAGE).fill(0), bound: false };
 
+    function bind() {
+        if (drawing.bound) return;
+        pass.setBindGroup(0, bindGroup(drawing.pipeline, drawing.textures, drawing.sampled, drawing.storage), [uniformsAt]);
+        drawing.bound = true;
+    }
     function beforeDraw() {
         drew = true;
-        if (drawing.bound) return;
-        pass.setBindGroup(0, bindGroup(drawing.pipeline, drawing.textures, drawing.sampled), [uniformsAt]);
-        drawing.bound = true;
+        bind();
     }
 
     // What the browser has to say about a shader comes after it's made: a
@@ -1997,6 +2023,43 @@
         if (config.checkGL) {
             shaderChecks.add(check);
             check.then(() => shaderChecks.delete(check));
+        }
+    }
+
+    // A pipeline described (`b`, from gpu_pipeline_begin on), made now or, while background pipelines are on,
+    // in the background: the draws and dispatches that use it are left out till it's made (gpu_pipeline_ready),
+    // where the frame that first used it would otherwise wait for the browser to compile it
+    function addPipeline(b, layout, described, compute) {
+        const entry = { pipeline: null, textures: b.textures, reads: b.reads, storage: b.storage.length, compute, layout };
+        if (!backgroundPipelines) {
+            entry.pipeline = compute ? device.createComputePipeline(described) : device.createRenderPipeline(described);
+            return gpuAdd('pipeline', entry);
+        }
+        const id = gpuAdd('pipeline', entry), made = device;
+        (compute ? device.createComputePipelineAsync(described) : device.createRenderPipelineAsync(described)).then(pipeline => {
+            if (device === made && gpuTables.pipeline[id] === entry) entry.pipeline = pipeline;
+        }, error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
+            if (device !== made) return;
+            const text = `WebGPU: the pipeline of ${b.name} wasn't made: ${error.message}`;
+            if (config.checkGL) fail(new Error(text));
+            else printErr('tide: ' + text);
+        });
+        return id;
+    }
+    // A compute pipeline: its entry point is `compute`, and nothing about vertices, targets or blending is read
+    function computePipeline(b, module) {
+        const layout = layoutFor(b.reads, b.storage, true);
+        return addPipeline(b, layout, { label: b.name, layout: layout.pipeline, compute: { module, entryPoint: 'compute' } }, true);
+    }
+
+    // Reads of storage buffers back (gpu_buffer_read): each copied into a buffer the page maps, by a token
+    // counted from 1 that the program polls (gpu_buffer_read_done). `bytes` once it's here, `lost` for one
+    // the device took with it. They're kept across a lost device, whose reads are lost.
+    const bufferReads = new Map();
+    let bufferReadToken = 0;
+    function loseBufferReads() {
+        for (const read of bufferReads.values()) {
+            if (!read.bytes) read.lost = true;
         }
     }
 
@@ -2035,8 +2098,13 @@
         },
         gpu_time_reset: gpuTimeReset,
         gpu_buffer(kind, size, ptr) {
-            const buffer = device.createBuffer({ size,
-                usage: (kind === 0 ? GPUBufferUsage.VERTEX : GPUBufferUsage.INDEX) | GPUBufferUsage.COPY_DST });
+            size >>>= 0;
+            // tide_gpu_buffer_kind: vertices, indices, or storage, which is every one of those and what compute
+            // writes, indirect arguments and either side of a copy or a read. WebGPU zeroes what it makes
+            const usage = kind === 0 ? GPUBufferUsage.VERTEX : kind === 1 ? GPUBufferUsage.INDEX
+                : GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.INDIRECT
+                    | GPUBufferUsage.COPY_SRC;
+            const buffer = device.createBuffer({ size, usage: usage | GPUBufferUsage.COPY_DST });
             if (ptr) device.queue.writeBuffer(buffer, 0, ...memoryBytes(ptr, size), size);
             return gpuAdd('buffer', buffer);
         },
@@ -2044,6 +2112,11 @@
         gpu_buffer_free(id) {
             gpuTables.buffer[id].destroy();
             gpuRemove('buffer', id);
+            const keys = storageGroups.get(id);
+            if (keys) {
+                for (const key of keys) bindGroups.delete(key);
+                storageGroups.delete(id);
+            }
         },
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
@@ -2201,15 +2274,24 @@
                 stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
                 reads: Array.from({ length: textures }, (unused, i) => (i < 8 ? reads >>> 3 * i : readsHigh >>> 3 * (i - 8)) & 7), // Two banks of 3-bit tide_gpu_read values
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
-                into: colorFormats(into), outputs, samples: samplesOf(into), coverage: !!alphaToCoverage };
+                into: colorFormats(into), outputs, samples: samplesOf(into), coverage: !!alphaToCoverage,
+                storage: '', compute: false };
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
+        // Its storage buffers, bit i of `writes` set for one it writes, and whether it's a compute pipeline: only
+        // those write (WebGPU has no storage written by a vertex shader)
+        gpu_pipeline_storage(count, writes, compute) {
+            building.storage = Array.from({ length: Math.min(count, MAX_STORAGE) },
+                (unused, i) => compute && writes >>> i & 1 ? 'w' : 'r').join('');
+            building.compute = !!compute;
+        },
         gpu_pipeline_end() {
             const b = building;
             building = null;
             const module = device.createShaderModule({ label: b.name, code: b.code });
             checkShader(module, b.name);
+            if (b.compute) return computePipeline(b, module);
             const buffers = b.slots.map((slot, index) => ({
                 arrayStride: slot.stride,
                 stepMode: slot.perInstance ? 'instance' : 'vertex',
@@ -2217,7 +2299,7 @@
                     format: attributeFormats[a.format], slot: a.slot })).filter(a => a.slot === index)
                     .map(({ shaderLocation, offset, format }) => ({ shaderLocation, offset, format })),
             }));
-            const layout = layoutFor(b.reads);
+            const layout = layoutFor(b.reads, b.storage);
             const described = {
                 label: b.name,
                 layout: layout.pipeline,
@@ -2235,23 +2317,7 @@
                 depthStencil: { format: depthFormat, ...depths[b.depth], stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
             };
-            if (!backgroundPipelines) {
-                return gpuAdd('pipeline', { pipeline: device.createRenderPipeline(described), textures: b.textures, reads: b.reads,
-                    layout });
-            }
-            // In the background: the draws that use it are left out till it's made (gpu_pipeline_ready), where the
-            // frame that first drew with it would otherwise wait for the browser to compile it
-            const entry = { pipeline: null, textures: b.textures, reads: b.reads, layout };
-            const id = gpuAdd('pipeline', entry), made = device;
-            device.createRenderPipelineAsync(described).then(pipeline => {
-                if (device === made && gpuTables.pipeline[id] === entry) entry.pipeline = pipeline;
-            }, error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
-                if (device !== made) return;
-                const text = `WebGPU: the pipeline of ${b.name} wasn't made: ${error.message}`;
-                if (config.checkGL) fail(new Error(text));
-                else printErr('tide: ' + text);
-            });
-            return id;
+            return addPipeline(b, layout, described, false);
         },
         gpu_pipeline_free: id => gpuRemove('pipeline', id),
         gpu_background: on => { backgroundPipelines = !!on && config.backgroundPipelines !== false; },
@@ -2452,6 +2518,86 @@
         gpu_draw_indexed(count, instances) {
             beforeDraw();
             pass.drawIndexed(count, instances, 0, 0, 0);
+        },
+        gpu_storage(slot, id) {
+            drawing.storage[slot] = id;
+            drawing.bound = false;
+        },
+        // A compute pass, encoded and handed over by itself as a render pass is: the queue runs what was handed
+        // over before it first, and what's handed over or written after it after it, which is all the ordering
+        // gpu.h asks for (WebGPU puts the barriers between passes and between dispatches itself)
+        gpu_compute_begin() {
+            if (!uniformBuffer) growUniforms();
+            uniformsUsed = 0;
+            commands = device.createCommandEncoder();
+            pass = commands.beginComputePass();
+            drawing.pipeline = null;
+            drawing.bound = false;
+        },
+        gpu_compute_end() {
+            pass.end();
+            device.queue.submit([commands.finish()]);
+            pass = commands = null;
+            for (const buffer of retired.splice(0)) buffer.destroy();
+        },
+        gpu_dispatch(x, y, z) {
+            bind();
+            pass.dispatchWorkgroups(x >>> 0, y >>> 0, z >>> 0);
+        },
+        gpu_dispatch_indirect(id, offset) {
+            bind();
+            pass.dispatchWorkgroupsIndirect(gpuTables.buffer[id], offset >>> 0);
+        },
+        gpu_draw_indirect(id, offset) {
+            beforeDraw();
+            pass.drawIndirect(gpuTables.buffer[id], offset >>> 0);
+        },
+        gpu_draw_indexed_indirect(id, offset) {
+            beforeDraw();
+            pass.drawIndexedIndirect(gpuTables.buffer[id], offset >>> 0);
+        },
+        // Outside passes, handed over by itself, so it's in order with the passes around it
+        gpu_buffer_copy(from, fromOffset, to, toOffset, size) {
+            size >>>= 0;
+            if (!size) return;
+            const copy = device.createCommandEncoder();
+            copy.copyBufferToBuffer(gpuTables.buffer[from], fromOffset >>> 0, gpuTables.buffer[to], toOffset >>> 0, size);
+            device.queue.submit([copy.finish()]);
+        },
+        gpu_buffer_read(id, offset, size) {
+            size >>>= 0;
+            if (!device || !size) return 0;
+            const readback = device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+            const copy = device.createCommandEncoder();
+            copy.copyBufferToBuffer(gpuTables.buffer[id], offset >>> 0, readback, 0, size);
+            device.queue.submit([copy.finish()]);
+            do bufferReadToken = (bufferReadToken + 1) >>> 0; while (!bufferReadToken || bufferReads.has(bufferReadToken));
+            const token = bufferReadToken, read = { size, bytes: null, lost: false };
+            bufferReads.set(token, read);
+            readback.mapAsync(GPUMapMode.READ).then(() => {
+                read.bytes = new Uint8Array(readback.getMappedRange()).slice();
+                readback.destroy();
+            }, () => { // The device went away, or the read was let go of
+                read.lost = true;
+                readback.destroy();
+            });
+            return token;
+        },
+        // 1 once the bytes are here (copied to `ptr`), 0 while they aren't, -1 for a read the device lost; the
+        // token goes once it's said anything but 0
+        gpu_buffer_read_done(token, ptr) {
+            const read = bufferReads.get(token);
+            if (!read) return -1;
+            if (read.bytes) {
+                u8().set(read.bytes, ptr >>> 0);
+                bufferReads.delete(token);
+                return 1;
+            }
+            if (read.lost) {
+                bufferReads.delete(token);
+                return -1;
+            }
+            return 0;
         },
     });
 

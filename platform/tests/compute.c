@@ -181,8 +181,10 @@ static uint8_t pixels[3][SIDE * SIDE * 4];
 static tide_gpu_id given_buffer, squared_buffer, reversed_buffer, tally_buffer, signed_buffer, copy_buffer;
 static tide_gpu_id sizes_buffer, corners_buffer, colors_buffer, marks_buffer;
 static tide_gpu_id targets[3];
+static tide_gpu_id square, shared, setup, marking, storage_draw, vertex_draw;
 
-static void record(const tide_gpu *gpu)
+// The buffers and pipelines, which a backend that makes pipelines in the background may not have made yet.
+static void make(const tide_gpu *gpu)
 {
     for (uint32_t i = 0; i < COUNT; i++) given[i] = i * 7u + 3u;
     given_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof given, given);
@@ -199,15 +201,37 @@ static void record(const tide_gpu *gpu)
     colors_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof colors, colors);
     marks_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof marks, NULL);
 
-    const tide_gpu_id square = compute_pipeline(gpu, "square", square_wgsl, 16, 2, (const bool[]){false, true});
-    const tide_gpu_id shared = compute_pipeline(gpu, "shared", shared_wgsl, 16, 4, (const bool[]){false, true, true, true});
-    const tide_gpu_id setup = compute_pipeline(gpu, "setup", setup_wgsl, 16, 2, (const bool[]){true, true});
-    const tide_gpu_id marking = compute_pipeline(gpu, "marks", marks_wgsl, 16, 1, (const bool[]){true});
-    if (!square || !shared || !setup || !marking) {
-        fprintf(stderr, "a compute pipeline wasn't made\n");
+    square = compute_pipeline(gpu, "square", square_wgsl, 16, 2, (const bool[]){false, true});
+    shared = compute_pipeline(gpu, "shared", shared_wgsl, 16, 4, (const bool[]){false, true, true, true});
+    setup = compute_pipeline(gpu, "setup", setup_wgsl, 16, 2, (const bool[]){true, true});
+    marking = compute_pipeline(gpu, "marks", marks_wgsl, 16, 1, (const bool[]){true});
+    storage_draw = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "storage draw", .wgsl = storage_draw_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR, .storage_count = 2,
+    });
+    vertex_draw = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "vertex draw", .wgsl = vertex_draw_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR, .slots = {{8, false}}, .slot_count = 1,
+        .attributes = {{0, TIDE_GPU_FLOAT2, 0}}, .attribute_count = 1,
+    });
+    if (!square || !shared || !setup || !marking || !storage_draw || !vertex_draw) {
+        fprintf(stderr, "a pipeline wasn't made\n");
         failures++;
-        return;
     }
+}
+
+static bool made(const tide_gpu *gpu)
+{
+    if (!gpu->pipeline_ready) return true;
+    const tide_gpu_id all[] = {square, shared, setup, marking, storage_draw, vertex_draw};
+    for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
+        if (!gpu->pipeline_ready(all[i])) return false;
+    }
+    return true;
+}
+
+static void record(const tide_gpu *gpu)
+{
 
     gpu->compute_begin();
     gpu->use(square);
@@ -240,15 +264,6 @@ static void record(const tide_gpu *gpu)
 
     gpu->buffer_copy(reversed_buffer, 4 * 10, copy_buffer, 4 * 20, 4 * 100);
 
-    const tide_gpu_id storage_draw = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "storage draw", .wgsl = storage_draw_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
-        .into = TIDE_GPU_TARGET_COLOR, .storage_count = 2,
-    });
-    const tide_gpu_id vertex_draw = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "vertex draw", .wgsl = vertex_draw_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
-        .into = TIDE_GPU_TARGET_COLOR, .slots = {{8, false}}, .slot_count = 1,
-        .attributes = {{0, TIDE_GPU_FLOAT2, 0}}, .attribute_count = 1,
-    });
     for (int i = 0; i < 3; i++) targets[i] = gpu->target(TIDE_GPU_TARGET_COLOR, SIDE, SIDE);
 
     gpu->begin(targets[0], true);
@@ -306,13 +321,13 @@ static void check(void)
     uint32_t odd = 0, greatest = 0;
     int32_t least = 1000000;
     for (uint32_t i = 0; i < COUNT; i++) {
-        const uint32_t square = given[i] * given[i] + 5u;
-        if (squared[i] != square) fail("squared", i, squared[i], square);
+        const uint32_t wanted = given[i] * given[i] + 5u;
+        if (squared[i] != wanted) fail("squared", i, squared[i], wanted);
         const uint32_t mirrored = i / GROUP * GROUP + GROUP - 1 - i % GROUP;
-        if (mirrored < COUNT && reversed[mirrored] != square) fail("reversed", mirrored, reversed[mirrored], square);
-        odd += square & 1u;
-        greatest = square > greatest ? square : greatest;
-        least = (int32_t)square - 500 < least ? (int32_t)square - 500 : least;
+        if (mirrored < COUNT && reversed[mirrored] != wanted) fail("reversed", mirrored, reversed[mirrored], wanted);
+        odd += wanted & 1u;
+        greatest = wanted > greatest ? wanted : greatest;
+        least = (int32_t)wanted - 500 < least ? (int32_t)wanted - 500 : least;
     }
     if (tally[0] != odd) fail("odd count", 0, tally[0], odd);
     if (tally[1] != greatest) fail("greatest", 1, tally[1], greatest);
@@ -338,24 +353,91 @@ static void check(void)
 
 static int stage;
 
+#ifdef __wasm__
+// On WebGPU, once it passed: a read begun as the device goes is lost (-1), and everything is made again on the
+// next device, its pipelines in the background (createComputePipelineAsync), and passes again.
+static int device_round;
+static uint32_t lost_read, lost_epoch;
+static bool lost_said;
+
+static void start_over(void)
+{
+    memset(squared, 0, sizeof squared);
+    memset(reversed, 0, sizeof reversed);
+    memset(tally, 0, sizeof tally);
+    memset(signed_tally, 0, sizeof signed_tally);
+    memset(copied, 0, sizeof copied);
+    memset(marks, 0, sizeof marks);
+    memset(pixels, 0, sizeof pixels);
+    read_count = 0;
+}
+#endif
+
 static int frame(void *user, const float seconds)
 {
     (void)user;
     (void)seconds;
     const tide_gpu *gpu = tide_window_gpu();
     if (!gpu->compute_begin) {
+#ifdef __wasm__
+        // The page's WebGL test (tide_add_web_test makes one beside the WebGPU test): WebGL 2 can't compute,
+        // and goes once compute lands
+        printf("SKIPPED: %s can't compute\n", gpu->name);
+        return 0;
+#else
         fprintf(stderr, "%s can't compute: compute is guaranteed on every render backend\n", gpu->name);
         return 1;
+#endif
     }
+#ifdef __wasm__
+    if (stage == 3) { // The device lost: its read has to say so, and another device come
+        if (!lost_said) {
+            const int done = gpu->buffer_read_done(lost_read, squared);
+            if (done > 0) {
+                fprintf(stderr, "a read begun as the device went landed\n");
+                return 1;
+            }
+            lost_said = done < 0;
+        }
+        const uint32_t epoch = gpu->epoch();
+        if (!lost_said || epoch == 0 || epoch == lost_epoch) return TIDE_KEEP_RUNNING;
+        start_over();
+        tide_platform_background_pipelines(true);
+        if (gpu->background) gpu->background(true);
+        device_round = 1;
+        stage = 0;
+    }
+#endif
     if (stage == 0) {
+        if (gpu->epoch() == 0) return TIDE_KEEP_RUNNING;
         printf("renderer: %s\n", tide_platform_renderer());
-        record(gpu);
+        make(gpu);
         stage = 1;
+    }
+    if (failures) return 1;
+    if (stage == 1) {
+        if (!made(gpu)) return TIDE_KEEP_RUNNING;
+        record(gpu);
+        stage = 2;
     }
     if (failures) return 1;
     if (!reads_landed(gpu)) return TIDE_KEEP_RUNNING;
     check();
     if (failures) return 1;
+#ifdef __wasm__
+    if (device_round == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
+        printf("compute passed on the first device\n");
+        lost_epoch = gpu->epoch();
+        lost_read = gpu->buffer_read(given_buffer, 0, sizeof given);
+        if (!lost_read) {
+            fprintf(stderr, "no read began before the device went\n");
+            return 1;
+        }
+        tide_web_eval("Tide.loseDevice()");
+        stage = 3;
+        return TIDE_KEEP_RUNNING;
+    }
+#endif
     printf("compute passed\n");
     return 0;
 }
