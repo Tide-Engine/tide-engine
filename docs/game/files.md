@@ -35,21 +35,27 @@ explicit absolute paths still reach the files they name.
 
 ## Logs and crashes
 
-A game run with a window keeps its log in its persistent data directory, so a player's problem can be looked into once they send it. `Player.log` has everything the game wrote to stderr, after a line naming the Tide version, the game's `appId`, the system and the time it started: `Debug.Log` and `Debug.Assert`, the engine's messages and what your C prints there. The output still reaches the terminal or console too. The run before is kept as `Player-prev.log`, and a log stops growing at 100 MB.
+A game run with a window keeps its log and its crashes in its persistent data directory (`Application.persistentDataPath`), beside its saves, so a player's problem can be looked into once they send them:
 
-A crash on desktop leaves a folder of its own, `Crashes/Crash_<UTC date>_<time>`, with:
+| System | Log | Crashes |
+|---|---|---|
+| Windows | `%USERPROFILE%\AppData\LocalLow\<appId>\Player.log` | `%USERPROFILE%\AppData\LocalLow\<appId>\Crashes\` |
+| macOS | `~/Library/Application Support/<appId>/Player.log` | `~/Library/Application Support/<appId>/Crashes/` |
+| Linux | `~/.local/share/<appId>/Player.log` (under `$XDG_DATA_HOME` when it's set) | `~/.local/share/<appId>/Crashes/` |
+| Android | `Player.log` in the app's internal storage; the system log (`adb logcat`) has it too | The system's own crash reports |
+| Web | The browser's console | The browser's console |
+
+With [`--data-dir <folder>`](../tools/cli.md#without-a-window) they go in that folder instead.
+
+`Player.log` has everything the game wrote to stderr, after a line naming the Tide version, the game's `appId`, the system and the time it started: `Debug.Log` and `Debug.Assert`, the engine's messages and what your C prints there. The output still reaches the terminal or console too. The run before is kept as `Player-prev.log` beside it, and a log stops growing at 100 MB.
+
+A crash on Windows, macOS or Linux leaves a folder of its own in `Crashes`, named `Crash_<UTC date>_<time>`, with:
 
 - `crash.txt`: what the crash was (an access violation, a signal, an abort, as a failed `Debug.Assert` ends) and the stack, as module and offset
 - `Player.log`: a copy of the log up to the crash
 - `crash.dmp` on Windows: a minidump, which Visual Studio, WinDbg or CLion open with the build's PDB
 
-The ten newest crash folders are kept. Under a debugger the debugger has the crash instead. Android's system log has the output and its own crash reports have what a crash leaves; on the web the browser's console has both. A run with no window (`--frames`, `--capture`, `--script`) writes no log, as its output is the test's.
-
-| System | Persistent data directory |
-|---|---|
-| Windows | `%USERPROFILE%\AppData\LocalLow\<appId>` |
-| macOS | `~/Library/Application Support/<appId>` |
-| Linux | `$XDG_DATA_HOME/<appId>`, or `~/.local/share/<appId>` |
+The ten newest crash folders are kept. Under a debugger the debugger has the crash instead. A run with no window (`--frames`, `--capture`, `--script`) writes no log, as its output is the test's.
 
 ## Whole-file operations
 
