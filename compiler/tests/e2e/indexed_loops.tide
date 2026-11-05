@@ -275,3 +275,13 @@ view Look(Body body, with Mover, mut Drawn drawn, query (Body other, with Wall) 
     }
     drawn.helper += CountNear(walls, body.position, 2.0f);
 }
+
+// A parallel loop over a query's rows: the index's candidates are the rows its steps go through
+system Ping(Time time, query (Body other, Unit u) units)
+{
+    parallel (var r in units)
+    {
+        if (Math.Distance(r.other.position, float3(2.0f, 3.0f, 1.0f)) > 6.0f) continue;
+        r.entity.Send(Hit { amount = float(r.u.level) + float(time.tick % 7) * 0.25f });
+    }
+}
