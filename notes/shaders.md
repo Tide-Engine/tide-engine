@@ -1,5 +1,57 @@
 # Code the GPU runs: frags and verts
 
+## Kernels on Dawn's Direct3D 11 (2026-11-05)
+
+Chrome's WebGPU on Dawn's D3D11 adapter turns WGSL into HLSL (Tint) and compiles it with FXC (`d3dcompiler_47`,
+cs_5_0; Dawn's flags `D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | IEEE_STRICTNESS | OPTIMIZATION_LEVEL0`, no `/WX`). Of every
+shader tidec and the renderer write (382 modules: notes/testing.md, The hardware web lane on Direct3D 11), FXC refused
+seven kernels, for two reasons. Found with `--enable-dawn-features=dump_shaders,disable_symbol_renaming`, which puts
+Tint's HLSL and FXC's messages in the browser's log; each was then reproduced with the Windows SDK's `fxc.exe`
+10.0.22621 on the dumped HLSL (`/T cs_5_0 /Zpr /Gis /O0`) and every fix checked again through Chrome. Claude's,
+Provisional:
+
+- **X4000 on workgroup atomics.** `error X4000: variable 't_kept' used without having been completely initialized`
+  (CullListed's `kept`, `tested`, `hidden`; `kernels.tide`'s `Prefix` `inside`; the golden `kernels_shared_races`'
+  `counted`; `compute.c`'s `odd_here`; `atomics.wgsl`'s four). WGSL zeroes workgroup memory, and Tint does it in HLSL
+  with an `InterlockedExchange` for an atomic, as it does every atomic access: FXC refuses any `groupshared` variable
+  whose first use is an Interlocked call, when no plain store has written it before. What FXC took, measured: a struct
+  whose atomic array comes first and a plain word after it, the word written before the array's first Interlocked
+  call; not the word first in the struct, not a separate variable, and not when the array's zeroing is one element an
+  invocation of the whole group (FXC knows the `if` is always true then, and refuses again: lengths equal to the
+  group's invocations fail, one more or less pass). Tint zeroes a workgroup variable's parts in buckets by how many
+  there are, ascending, each bucket's in the struct's order: the word (one) goes before the array where it has 2 or
+  more elements.
+  - **So tidec writes a shared array that atomics are used on** (`shared int[N]`, `shared_atomic`) as
+    `struct tide_atomics_<name> { tide_cells: array<atomic<i32>, n>, tide_plain: u32 }` and
+    `var<workgroup> <name>: tide_atomics_<name>`, with n = max(N, 2), one more where that's the group's invocations
+    (`shared_atomic_length`, shader_kernel.inc); every access is `&<name>.tide_cells[i]` (`need_atomic`,
+    `need_shared_access`), bounds still checked against N, so the elements past it are never touched. The plain word
+    and the padding count against the group's 16 KiB (`plan_kernel`). Same results on every backend: only the layout of
+    workgroup memory changes.
+  - **The translators take it:** SPIR-V already did (a pointer is any place); `hlsl.c` takes an atomic's place as
+    `&name`, `&name[i]`, `&name.member` or `&name.member[i]` of a workgroup variable (`workgroup_place`), its helper
+    `tidehl_<op>_<name>_<member>`, and zeroes the struct with one plain store as before (so Unity's FXC never had this
+    problem: its HLSL never zeroed atomics through Interlocked). `compiler/tests/wgsl/shared.wgsl` (a copy of
+    `compute.c`'s kernel) now has its `odd_here` in such a struct, so `wgsl_spirv_shared` and `wgsl_hlsl_shared` test
+    the member form; `atomics.wgsl` keeps the bare forms.
+  - Goldens: `kernels_shared` and `kernels_shared_races` (only the declaration and the three accesses); every other
+    golden is the same bytes.
+- **X3663 in the depth pyramid** (`hiz_wgsl`, shaders.h, both variants): `thread sync operation found in varying flow
+  control`, at the barrier inside the `for (k = 1; k < 5; k++)` loop over levels 1 to 4, `this variable dependent on
+  potentially varying data: k`. Nothing there varies: FXC, inlining `put` and `most` (which take `k` and loop over it
+  in `level_at`) inside the branch on the invocation's index, takes the loop's counter for varying. `[unroll]` on the
+  HLSL loop fixes it, which WGSL can't say, so the WGSL is unrolled by hand: `down(k, t, g)` (one level's texel, as the
+  loop's body was) called for k 1 to 4 with constants, its barriers and the copy into `tile` between, as before. The
+  same arithmetic in the same order; its SPIR-V and Unity HLSL (`tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid`)
+  pass, and `tide_platform_occlusion` gives the same pixels and counts on Vulkan, SwiftShader, D3D12 and D3D11.
+- **Not changed:** the renderer's other kernels (`run_size`, `add_offsets`, `add_scatter`, CullOffsets, CullScatter,
+  CullDraws), every other golden's kernel and every frag and vert already compiled. Unity's own FXC route (hlsl.c) was
+  never affected. DXC (Dawn's D3D12 with SM6) isn't FXC; untouched.
+- **What a kernel game code writes still risks on D3D11:** FXC's X3663 can come of a game kernel's own loops in the same
+  way (a uniform counter passed into a helper inside a branch on the invocation, a barrier after), and tidec has no
+  check for it; X3695/X3694 races are already guarded (Closing the gaps, notes/compute.md). A kernel FXC refuses is a
+  pipeline that fails: notes/drawing.md, A culling kernel that can't be made, for what the renderer does then.
+
 ## GLSL removed: tidec writes WGSL alone (2026-11-05)
 
 The owner's decision that compute is guaranteed on every backend removed OpenGL

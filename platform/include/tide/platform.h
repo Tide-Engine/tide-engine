@@ -477,6 +477,8 @@ typedef struct tide_platform_cull_report {
     uint32_t joined;    // The runs drawn by calls of more than one, listed ones too
     uint32_t draws;     // The draws those calls made: runs that kept any instance, listed ones too
     uint32_t misdrawn;  // Draw records that aren't each such run's, in order, then none, with how many
+    bool failed;        // The device can't make the culling's kernels (its driver refused them): every run recorded to
+                        // be culled is decided on the CPU, as it's drawn
 } tide_platform_cull_report;
 bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
 
@@ -493,6 +495,7 @@ typedef struct tide_platform_occlusion_report {
     uint32_t breaks;   // Passes ended for them, where the destination's had ended for nothing else since it was drawn in
     uint64_t serial;   // How many frames' counts have come back: a new number, new counts
     bool counted;
+    bool failed;       // The device can't make the pyramid's kernel: draws testing occlusion are culled without it
 } tide_platform_occlusion_report;
 bool tide_platform_occlusion(tide_platform_occlusion_report *report, bool wait);
 

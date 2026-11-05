@@ -647,6 +647,10 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(tide_platform_cull SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_cull TARGET tide_platform_cull PIXELS EXPECT "renderer: WebGPU")
+        # ...and where the browser can't make the culling's kernels (as Dawn's FXC on Direct3D 11 couldn't): the CPU's
+        # culling, said once, the same pixels
+        tide_add_web_test(tide_platform_cull_fallback TARGET tide_platform_cull QUERY "fail-pipeline=CullListed,pyramid" PIXELS
+            EXPECT "ok: the culling's kernels and the pyramid's couldn't be made")
     else()
         target_include_directories(tide_platform_cull PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
         add_test(NAME tide_platform_cull COMMAND tide_platform_cull)

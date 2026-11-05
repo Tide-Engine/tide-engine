@@ -14,7 +14,11 @@ var<workgroup> tide_zero: u32;
 var<workgroup> t_last: i32;
 var<workgroup> t_slots: array<i32, 64>;
 var<workgroup> t_pair: tt_Pair;
-var<workgroup> t_counted: array<atomic<i32>, 4>;
+struct tide_atomics_t_counted {
+    tide_cells: array<atomic<i32>, 4>,
+    tide_plain: u32,
+}
+var<workgroup> t_counted: tide_atomics_t_counted;
 struct tt_Pair {
     m_a: i32,
     m_b: f32,
@@ -34,7 +38,7 @@ fn tide_atomic_t_counted_AtomicAdd(tide_i: i32, tide_v: i32) -> i32 {
     if (tide_i < 0 || tide_i >= 4) {
         return 0;
     }
-    return atomicAdd(&t_counted[tide_i], tide_v);
+    return atomicAdd(&t_counted.tide_cells[tide_i], tide_v);
 }
 
 fn tide_word0(tide_k: u32) -> u32 {
@@ -70,7 +74,7 @@ fn tide_load_t_counted(tide_i: i32) -> i32 {
     if (tide_i < 0 || tide_i >= 4) {
         return 0;
     }
-    return atomicLoad(&t_counted[tide_i]);
+    return atomicLoad(&t_counted.tide_cells[tide_i]);
 }
 
 fn ts_Races() {

@@ -126,7 +126,7 @@ test('WebGPU preserves every read kind in high texture slots and builds matching
             const sandbox = {
                 low, high, string: () => '', stencilTests: ['always'], stencilOps: ['keep'],
                 colorFormats: () => [], samplesOf: () => 1, layouts: new Map(),
-                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, STORAGE_BINDING: 25, MAX_STORAGE: 7,
+                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 25, MAX_STORAGE: 7,
                 readsDepth: read => read === 1 || read === 2,
                 GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
                 device: {
@@ -165,7 +165,7 @@ test('WebGPU storage buffers get explicit layouts at binding 25 on, read-only ou
     const layoutsMade = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, STORAGE_BINDING: 25, MAX_STORAGE: 7,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 25, MAX_STORAGE: 7,
         readsDepth: read => read === 1 || read === 2, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
         device: {
             createBindGroupLayout: desc => { layoutsMade.push(desc.entries); return {}; },
