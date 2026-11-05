@@ -460,21 +460,24 @@ tide_int3 tide_grid_array_extent(const tide_grid g, const tide_grid_shape *s)
 #define KIND_ARRAY_COLORS UINT64_C(0x4741434C)
 #define KIND_ARRAY_FLOATS UINT64_C(0x4741464C)
 
-uint32_t tide_draw_grid_array_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+#define KIND_ARRAY_RAW UINT64_C(0x47415257)
+
+uint32_t tide_draw_grid_array_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
 {
     grid_seen v;
     if (!see_grid_array(g, s, &v)) return 0;
     const bool colors = s->cell == sizeof(tide_color);
     const int32_t width = v.dir.size[0], height = v.dir.size[1], depth = v.dir.size[2];
-    const uint64_t version = (v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g)) ^ UINT64_C(0x4152524159); // Not its Texture's
-    const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u};
+    uint64_t version = (v.heap ? tide_hash_end(grid_hash(&v, s)) : tide_pack_grid_version(g)) ^ UINT64_C(0x4152524159); // Not its Texture's
+    if (raw && colors) version ^= UINT64_C(0x5241575241575241); // Other bytes than the same cells as colors
+    const cells_writer w = {.row = colors ? color_cells : float_cells, .bytes = colors ? 4u : 2u, .raw = raw};
     // Its layers one under another: a row of the texture is a row of a layer
     const cells_box box = {.dims = 3u, .extent = {width, height, depth}, .across = 1, .wide = (size_t)width * w.bytes};
     uint8_t *pixels;
     bool kept;
     const uint32_t slot = tide_draw_texture_edit(d, TIDE_PIXELS_GRID_ARRAY, g.at, version, width, height * depth,
                                                  colors ? TIDE_TEXELS_BYTES : TIDE_TEXELS_HALF,
-                                                 colors ? KIND_ARRAY_COLORS : KIND_ARRAY_FLOATS, &pixels, &kept);
+                                                 !colors ? KIND_ARRAY_FLOATS : raw ? KIND_ARRAY_RAW : KIND_ARRAY_COLORS, &pixels, &kept);
     if (slot) d->textures[slot - 1u].layers = (uint32_t)depth;
     if (pixels) grid_cells(d, slot, pixels, kept, &v, s, &w, &box);
     return slot;

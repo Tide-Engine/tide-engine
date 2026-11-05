@@ -3510,7 +3510,8 @@ static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create
                                             "tide_embed_view", "tide_embed_status_of", "tide_embed_request", "tide_embed_command",
                                             "tide_embed_background", "tide_embed_schema", "tide_embed_draw",
                                             "tide_embed_camera", "tide_embed_render", "tide_embed_render_view",
-                                            "tide_embed_render_reset", "tide_embed_render_read", "tide_embed_audio", "tide_embed_microphone",
+                                            "tide_embed_render_reset", "tide_embed_render_read", "tide_embed_render_formats",
+                                            "tide_embed_audio", "tide_embed_microphone",
                                             "tide_embed_travel_of", "tide_embed_travel_keep", "tide_embed_pause",
                                             "tide_embed_step", "tide_embed_show", "tide_embed_continue", "tide_embed_recording", "tide_embed_replay",
                                             "tide_embed_replay_end", NULL};
@@ -3901,6 +3902,10 @@ static const char unity_web_exports[] =
     "TIDE_UNITY_EXPORT(tide_unity_render) const uint8_t *tide_unity_render(void) { return tide_embed_render(unity_embed, &unity_render_size); }\n"
     "TIDE_UNITY_EXPORT(tide_unity_render_size) uint32_t tide_unity_render_size(void) { return unity_render_size; }\n"
     "TIDE_UNITY_EXPORT(tide_unity_render_reset) void tide_unity_render_reset(void) { tide_embed_render_reset(unity_embed); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_render_formats) void tide_unity_render_formats(uint32_t formats)\n"
+    "{\n"
+    "    tide_embed_render_formats(unity_embed, formats);\n"
+    "}\n"
     "\n"
     "// A read back the page made: `size` bytes at `data` (tide_unity_buffer's), or NULL for one it couldn't make\n"
     "TIDE_UNITY_EXPORT(tide_unity_render_read) void tide_unity_render_read(uint32_t token, const void *data, uint32_t size)\n"

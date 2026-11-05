@@ -104,10 +104,52 @@ static tide_gpu_id record_texture(const tide_gpu_format format, const int width,
     return id;
 }
 
+static uint32_t block_formats; // 1 << format for each the other program samples (tide_embed_render_formats)
+
+void tide_gpu_record_block_formats(const uint32_t formats)
+{
+    block_formats = formats & (1u << TIDE_BLOCKS_BC1 | 1u << TIDE_BLOCKS_BC3);
+}
+
+// Blocks the other program takes, whole: every level, as tide_texture_blocks_size has them. RGBA8 chains always.
+static bool takes_blocks(const int width, const int height, const tide_texture_blocks blocks)
+{
+    uint32_t levels, bytes;
+    if (!blocks.pixels || width <= 0 || height <= 0) return false;
+    if (blocks.format != TIDE_BLOCKS_RGBA8 && !(blocks.format < 32u && block_formats >> blocks.format & 1u)) return false;
+    return tide_texture_blocks_size(width, height, blocks.format, &levels, &bytes) && levels == blocks.levels
+           && bytes == blocks.bytes;
+}
+
 static tide_gpu_id record_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
 {
-    (void)width, (void)height, (void)blocks;
-    return 0; // The renderer sends RGBA instead
+    if (!takes_blocks(width, height, blocks)) return 0; // The renderer sends RGBA instead
+    const uint32_t id = ++next_id;
+    op(TIDE_EMBED_RENDER_TEXTURE_BLOCKS, 24u + (size_t)blocks.bytes);
+    u32(id);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(blocks.format);
+    u32(blocks.levels);
+    u32(blocks.bytes);
+    bytes(blocks.pixels, blocks.bytes);
+    return id;
+}
+
+static tide_gpu_id record_array_blocks(const int width, const int height, const uint32_t layers, const tide_texture_blocks blocks)
+{
+    if (!layers || layers > TIDE_GPU_MAX_LAYERS || !takes_blocks(width, height, blocks)) return 0;
+    const uint32_t id = ++next_id;
+    op(TIDE_EMBED_RENDER_ARRAY_BLOCKS, 28u + (size_t)blocks.bytes * layers);
+    u32(id);
+    u32((uint32_t)width);
+    u32((uint32_t)height);
+    u32(layers);
+    u32(blocks.format);
+    u32(blocks.levels);
+    u32(blocks.bytes);
+    bytes(blocks.pixels, (size_t)blocks.bytes * layers);
+    return id;
 }
 
 // A texture's part, its rows one after another: `pixels` is the whole texture's.
@@ -728,6 +770,7 @@ const tide_gpu tide_gpu_record = {
     .cube = record_cube,
     .cube_face = record_cube_face,
     .array = record_array,
+    .array_blocks = record_array_blocks,
     .array_depth = record_array_depth,
     .array_of = record_array_of,
     .array_write = record_array_write,
@@ -803,4 +846,5 @@ void tide_gpu_record_close(void)
     forget_reads();
     epoch++;
     next_id = 0;
+    block_formats = 0; // The next program says its own
 }

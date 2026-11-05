@@ -3,13 +3,17 @@ scene Main { }
 // Texture arrays in a frag and a vert: an asset's of a glob, and a field's, read by a uv and a layer that can
 // differ from pixel to pixel, one texture however many ways it's read, each way a sampler; a depth array read as a
 // number and compared, one texture through two samplers; and one read between its smaller images, whose uv's change
-// is asked as the frag starts.
+// is asked as the frag starts. [Raw] ones, an asset's and a field's, are read as their numbers, not straightened.
 [Filter(Filter.Point), Wrap(Wrap.Repeat)]
 asset TextureArray ground = "../e2e/cubes/sky/sky_??.png";
+
+[Raw]
+asset TextureArray numbers = "../e2e/cubes/sky/sky_??.png";
 
 local singleton Field
 {
     TextureArray layers;
+    [Raw] TextureArray rawLayers;
     DepthTextureArray cascades;
     int pick;
     List<Vertex3> mesh;
@@ -28,6 +32,11 @@ frag Ground(Vertex3 vertex, out Color color, Field field)
     color = said * blended + far * steep * lit * depth * float(field.layers.count + ground.size.x + field.cascades.count);
 }
 
+frag Numbers(Vertex3 vertex, out Color color, Field field)
+{
+    color = numbers.Sample(vertex.uv, 1) + field.rawLayers.Sample(vertex.uv, 0);
+}
+
 vert Lift(mut Vertex3 vertex, Field field)
 {
     vertex.position.y += field.layers.Sample(vertex.uv, 0).r + field.cascades.Sample(vertex.uv, 3);
@@ -40,4 +49,5 @@ view Show(mut Field field)
         field.layers = TextureArray(64, 64, 4);
     }
     Draw.Mesh(field.mesh, field.faces, float4x4.identity, Lift, Ground);
+    Draw.Mesh(field.mesh, field.faces, float4x4.identity, Numbers);
 }

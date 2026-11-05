@@ -1,0 +1,16 @@
+// expect: 'numbers' is [Raw], its pixels numbers and not colors to draw: it's no TextureArray to draw with or hand on
+[Raw] asset TextureArray numbers = "../e2e/cubes/sky/sky_??.png";
+
+local singleton Art
+{
+    TextureArray kept;
+}
+
+view Show(mut Art art)
+{
+    art.kept = numbers;
+}
+
+scene Main
+{
+}

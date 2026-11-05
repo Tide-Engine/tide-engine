@@ -2661,7 +2661,9 @@ uint32_t tide_draw_array_source(tide_draw_list *d, const tide_texture_array_ref 
 {
     tide_grid grid;
     tide_grid_shape shape;
-    if (tide_texture_array_grid(array, &grid, &shape)) return tide_draw_grid_array_texture(d, grid, &shape);
+    if (tide_texture_array_grid(array, &grid, &shape)) {
+        return tide_draw_grid_array_texture(d, grid, &shape, tide_texture_array_grid_raw(array));
+    }
     if (!array.target.id) {
         int32_t width, height;
         uint32_t layers;

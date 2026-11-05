@@ -3530,7 +3530,10 @@ bool declared_raw(const expr *texture)
 {
     if (!texture) return false;
     if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_raw;
-    return texture->field && (texture->type.kind == TY_GRID || texture->type.kind == TY_TEXTURE) && field_is_raw(texture->field);
+    return texture->field
+           && (texture->type.kind == TY_GRID || texture->type.kind == TY_TEXTURE || texture->type.kind == TY_TEXTURE_ARRAY
+               || texture->type.kind == TY_CUBEMAP)
+           && field_is_raw(texture->field);
 }
 
 void declared_sampling(const expr *texture, int *filter, int *wrap)
@@ -4019,8 +4022,12 @@ static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampli
     // In a function that's being checked, the cube is noted on the function, for each frag and vert that reaches it
     const int slot = em->checking && em->code != em->root ? 0 : sample_slot(em, of, how);
     const type way = {TY_FLOAT3, NULL};
-    need(em, H_STRAIGHT); // The color itself, where the cube has it times its alpha
-    sb_put(em->o, "tide_straight(");
+    // The color itself, where the cube has it times its alpha. One that's [Raw] is numbers, as they are
+    const bool straight = !declared_raw(of);
+    if (straight) {
+        need(em, H_STRAIGHT);
+        sb_put(em->o, "tide_straight(");
+    }
     if (grad) {
         const int at = em->grad_count++;
         sb *const out = em->o;
@@ -4039,12 +4046,12 @@ static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampli
         em->statement = statement;
         sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", way_texture(em, slot), way_sampler(em, slot));
         ex_as(em, e->args.items[0], way);
-        sb_printf(em->o, ", tide_dx%d, tide_dy%d))", at, at);
+        sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
         return;
     }
     sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", way_texture(em, slot), way_sampler(em, slot));
     ex_as(em, e->args.items[0], way);
-    sb_put(em->o, ", 0.0))");
+    sb_put(em->o, straight ? ", 0.0))" : ", 0.0)");
 }
 
 // An array's layer, after a Sample's uv: its argument `at` (none where it's -1), held to the layers the array has,

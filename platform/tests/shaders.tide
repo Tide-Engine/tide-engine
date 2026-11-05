@@ -4853,6 +4853,8 @@ local singleton Layers
     Grid3<float> heights = Grid3(4, 4, 5);    // Each layer a quarter more than the one before
     TextureArray fromCells;   // ...each as an array, its z its layers
     TextureArray fromHeights;
+    [Raw] Grid3<Color> rawCells = Grid3(4, 4, 2); // Numbers, with no alpha: as colors they'd be nothing...
+    [Raw] TextureArray fromRaw;                   // ...and as numbers they're kept
     int paint;                // What the host has a cell of the second layer be: 0 its own color, 1 white
     List<Vertex> small;
     List<Vertex3> plane;
@@ -4880,6 +4882,12 @@ frag PaintedLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
 frag GridLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
 {
     color = layers.fromCells.Sample(pick.at, pick.layer, Filter.Point);
+}
+
+frag RawLayer(Vertex vertex, out Color color, Layers layers)
+{
+    color = layers.fromRaw.Sample(float2(0.5, 0.5), 1, Filter.Point);
+    color.a = 1;
 }
 
 frag HeightLayer(Vertex vertex, out Color color, Pick pick, Layers layers)
@@ -4963,6 +4971,8 @@ view LayersPaint(Art art, mut Layers layers)
         for (int z = 0; z < 5; z++) for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) layers.heights[x, y, z] = z * 0.25;
         layers.fromCells = layers.cells;
         layers.fromHeights = layers.heights;
+        for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) layers.rawCells[x, y, 1] = Color(1, 0.5, 0.25, 0);
+        layers.fromRaw = layers.rawCells;
     }
     // A cell of the second layer, as the host says: written to the GPU alone when it changes
     layers.cells[35, 15, 1] = layers.paint == 1 ? Color.white : LayerColor(1);
@@ -5017,6 +5027,7 @@ view LayersRead(Art art, Layers layers)
     }
     Draw.Transform(float2(56, 88)) { Draw.Mesh(layers.small, art.faces, GridLayer, Pick { at = float2(35.5 / 40, 15.5 / 20), layer = 1 }); }
     Draw.Transform(float2(72, 88)) { Draw.Mesh(layers.small, art.faces, HeightLayer, Pick { at = float2(0.5, 0.5), layer = 3 }); }
+    Draw.Transform(float2(88, 88)) { Draw.Mesh(layers.small, art.faces, RawLayer); }
     for (int layer = 0; layer < 2; layer++)
     {
         Draw.Transform(float2(8 + layer * 32, 72)) { Draw.Mesh(layers.small, art.faces, PackedLayer, Pick { at = float2(0.3, 0.6), layer = layer }); }

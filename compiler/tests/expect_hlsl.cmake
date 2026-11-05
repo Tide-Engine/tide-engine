@@ -39,7 +39,9 @@ foreach(program IN LISTS programs)
     file(WRITE "${program}.unity.hlsl" "#include \"${repository}/unity/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n#include \"${program}\"\n")
     # A kernel's (tidec's `compute`) is one compute program, cs_5_0, as Unity compiles a .compute for Direct3D 11
     file(READ "${program}" text)
-    set(apis SHADER_API_D3D11) # Every API Tide draws on in Unity compiles alike (hlsl.c: reversed depth)
+    # Direct3D's, and OpenGL Core's, whose textures sample themselves (hlsl.c: TIDEHL_OWN_SAMPLERS, a read another
+    # way emulated); every other API Tide draws on in Unity compiles as Direct3D's does (reversed depth)
+    set(apis SHADER_API_D3D11 SHADER_API_GLCORE)
     set(stages "vs_5_0:tidehl_vertex" "ps_5_0:tidehl_fragment")
     if(text MATCHES "tidehl_compute")
         set(apis SHADER_API_D3D11)

@@ -672,6 +672,8 @@ void tide_gpu_record_begin(void);
 const uint8_t *tide_gpu_record_end(uint32_t *size);
 void tide_gpu_record_reset(void);
 void tide_gpu_record_close(void);
+// The block formats the other program samples, 1 << format each (tide_embed_render_formats); RGBA8 chains always.
+void tide_gpu_record_block_formats(uint32_t formats);
 // What the other program read for a buffer_read's token (tide_embed_render_read): `size` bytes, or NULL for a read
 // that failed, which buffer_read_done then gives. False for a token it isn't waiting for, or another size.
 bool tide_gpu_record_read(uint32_t token, const void *data, uint32_t size);

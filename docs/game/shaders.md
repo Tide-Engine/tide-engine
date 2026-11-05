@@ -747,7 +747,8 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 }
 ```
 
-- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a `Texture` or `Grid2<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A `Grid2<float>` needs none: it has no alpha.
+- It goes before an asset that's one `Texture`, a `TextureArray`, a `Cubemap` or one `Grid2<Color>`, and on a `Texture`, `TextureArray`, `Cubemap`, `Grid2<Color>` or `Grid3<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A grid of floats needs none: it has no alpha.
+- Arrays and cubes follow the same rules as `Texture`: a `[Raw] TextureArray` field takes a `[Raw]` array asset, another `[Raw] TextureArray` field or a `[Raw] Grid3<Color>`, and a `[Raw] Cubemap` field a `[Raw]` cube asset or another such field. Their `Sample` gives the numbers as they are.
 - A `[Raw] Texture` field accepts `default`, a singular `[Raw] Texture` asset, another `[Raw] Texture` field, or a `[Raw] Grid2<Color>` field or asset. A grid-backed texture still names the grid's cells, with the [same lifetime rules](./meshes-and-textures.md#a-texture-is-a-value). Assigning an ordinary color texture to a Raw field is an error.
 - A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
 - Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.

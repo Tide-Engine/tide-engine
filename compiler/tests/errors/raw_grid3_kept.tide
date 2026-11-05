@@ -1,0 +1,15 @@
+// expect: this grid is [Raw], its cells numbers and not colors to draw: it's no TextureArray to draw with or hand on
+local singleton Art
+{
+    [Raw] Grid3<Color> paint = Grid3(4, 4, 2);
+    TextureArray kept;
+}
+
+view Show(mut Art art)
+{
+    art.kept = art.paint;
+}
+
+scene Main
+{
+}

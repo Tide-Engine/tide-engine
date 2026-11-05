@@ -1151,6 +1151,7 @@ static void run_array_checks(const char *when)
     WANT(40, 88, 0, 0, 255, "its third", 2);
     if (local.Layers.paint) WANT(56, 88, 255, 255, 255, "a cell of its second layer, changed: that part written alone", 1);
     else WANT(56, 88, 0, 255, 0, "a cell of its second layer, as it was", 1);
+    WANT(88, 88, 255, 128, 64, "a [Raw] Grid3's array: its numbers as they are, with an alpha of 0", 1);
     WANT(72, 88, 191, 80, 64, "a Grid3 of floats as an array: its fourth layer, 0.75; its count, 5, and the other's width, 40", 3);
     WANT(8, 56, 0, 42, 0, "a depth array's layer, a plane 5 away: nearer than 0.4, and its depth", 0);
     WANT(24, 56, 0, 84, 0, "the next, 10 away: still nearer than 0.4", 1);

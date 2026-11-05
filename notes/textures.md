@@ -84,11 +84,28 @@ What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture
   changed then changed back between frames (a partial write; a broken one leaves the old color, checked by breaking
   it), on Vulkan and WebGPU, and `tide_platform_shaders_rgba_fallback` (WebGPU with `texture-compression=off`);
   `embed_render_array_written_in_parts`.
-- **Still gaps:** `[Raw]` arrays (refused as before); Unity's arrays are uncompressed RGBA8 and its replay of all of
-  this wasn't run (no Unity here; a compile check only); Unity's OpenGL Core samples one texture read two ways with
-  its first sampler (Unity's GL keeps sampling on the texture: not fixable from the replay); Linux, macOS and Android
-  are CI's. The layer-before-array reload case above turned out to need nothing: recreating the array reconciles its
-  layer count.
+- **Then the rest** (the owner: "why are we stopping with things still open? the testing i understand and that can be
+  postponed"):
+  - **`[Raw]` arrays and cubes.** The checker's raw role is `raw_kind` (Texture, TextureArray, Cubemap) wherever it
+    was Texture's: `[Raw]` on `ASSET_TEXTURE_ARRAY`/`ASSET_CUBEMAP` assets and on TextureArray, Cubemap and
+    `Grid3<Color>` fields (`check_field_raw`); raw uses, field values and escapes as for textures (`check_raw_uses`,
+    `check_raw_field_value`, `refuse_raw_grid` naming the type); array and cube `Sample` and array `size`/`count`
+    mark the source read. `declared_raw` covers both field types, so their reads skip `tide_straight` (the cube's in
+    `ex_cube_sample` too). A raw array asset's layers pack raw (`pack_item` with `sample_raw`, compressed as raw
+    Textures are); a raw cube's faces too (never compressed). A `[Raw] Grid3<Color>`'s array is
+    `tide_texture_array_of_grid(grid, &shape, true)`: cell kind 3 in the ref (`tide_texture_array_grid_raw`), drawn by
+    `tide_draw_grid_array_texture(..., raw)` with `cells_writer.raw` and `KIND_ARRAY_RAW`. Hot-reload layout names
+    `[Raw] TextureArray`/`[Raw] Cubemap`. Tests: e2e (`numbers` asset, a raw Grid3's alpha-0 cell kept, the run has
+    no `tide_straight` on the web, a color array's does); goldens `shaders/texture_arrays`, `shaders/cubemaps`; errors
+    `raw_array_kept`, `raw_grid3_kept`, `raw_array_field_colors`, `raw_on_float_grid3`, `raw_cube_kept` (replacing
+    `cubemap_asset_raw`); pass 25's alpha-0 raw Grid3 pixel on Vulkan and WebGPU.
+  - **Compressed images in Unity**, textures and arrays alike: notes/unity.md, ABI 17.
+  - **Unity's OpenGL Core reading one texture two ways**: notes/unity.md, ABI 17.
+  - **The prototypes' `WEBGPU`**: already gone on tide-prototypes' dev (its foldline test says `PIXELS`); only a stale
+    local checkout had it.
+- **Still open:** none of the Unity side has run in Unity (no Unity here: C# compile checks, fxc for the HLSL, the
+  recorder's packets in `embed`); Linux, macOS and Android are CI's. The layer-before-array reload case above needed
+  nothing: recreating the array reconciles its layer count.
 
 ## Texture arrays: the proposal, agreed (2026-11-05)
 

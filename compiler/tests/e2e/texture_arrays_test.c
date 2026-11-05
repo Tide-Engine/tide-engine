@@ -118,6 +118,30 @@ TIDE_TEST(texture_arrays_are_assets_of_files_and_arrays_a_view_draws_into_a_laye
     }
     TIDE_CHECK(gridded);
 
+    // [Raw] ones: an asset's six layers and a Grid3's two, the grid's colors kept with no alpha worked in, and a frag
+    // reads them as numbers (no tide_straight)
+    TIDE_CHECK(art->numbersCount == 8);
+    const tide_draw_run *numbers_run = run_through("Numbers on Vertex");
+    TIDE_REQUIRE(numbers_run && numbers_run->shader->texture_count == 2);
+#ifdef __wasm__ // A shader's text is its WGSL, which a build keeps on the web
+    TIDE_CHECK(strstr(numbers_run->shader->wgsl, "tide_straight(") == NULL);
+#endif
+    bool raw_grid = false, raw_asset = false;
+    for (uint32_t i = 0; i < 2; i++) {
+        const tide_draw_texture *t = texture_of(numbers_run, i);
+        if (!t) continue;
+        raw_asset |= t->space == TIDE_PIXELS_PACK_ARRAY && t->layers == 6;
+        if (t->space != TIDE_PIXELS_GRID_ARRAY) continue;
+        const uint8_t *cell = t->pixels + ((size_t)(1 * 2 + 1) * 2 + 1) * 4; // Layer 1's (1, 1)
+        raw_grid = t->layers == 2 && t->width == 2 && t->height == 4 && t->format == TIDE_TEXELS_BYTES && cell[0] == 255
+                   && cell[1] >= 127 && cell[1] <= 128 && cell[2] >= 63 && cell[2] <= 64 && cell[3] == 0;
+    }
+    TIDE_CHECK(raw_grid && raw_asset);
+#ifdef __wasm__
+    const tide_draw_run *show_run = run_through("Show on Vertex");
+    TIDE_CHECK(show_run && strstr(show_run->shader->wgsl, "tide_straight(") != NULL); // ...where a color array's is straightened
+#endif
+
     // Counts, on the CPU: a drawn one's, its depth's, an asset's, and none
     TIDE_CHECK(art->count == 3 && art->depthCount == 4 && art->assetCount == 6 && art->pickedCount == 3 && art->none == 0);
     TIDE_CHECK(tide_texture_array_size(art->kept).x == 4 && tide_texture_array_size(art->kept).y == 4);
