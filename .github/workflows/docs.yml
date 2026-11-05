@@ -152,6 +152,8 @@ jobs:
     needs: build
     runs-on: windows-2025
     steps:
+      # The tests compare what pages show with the sources as Linux has them, LF
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
         with:
