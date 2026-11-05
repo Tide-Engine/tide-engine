@@ -1590,8 +1590,10 @@ static inline uint32_t tide_draw_run_stride(const tide_draw_run *r)
 // content_revision changes so that the game knows to fill it again.
 #define TIDE_GPU_LIST_MANAGED (UINT64_C(1) << 63)
 #define TIDE_GPU_LIST_HEADER_WORDS 4u
-// The most words a list's elements take, so that its bytes fit what every backend binds (2 GiB)
-#define TIDE_GPU_LIST_MOST_WORDS (UINT32_C(1) << 29)
+// The most words a list's elements take, so that its bytes, with its header, fit what every backend binds as one
+// storage buffer: 128 MiB, WebGPU's default maxStorageBufferBindingSize and Vulkan's least maxStorageBufferRange
+#define TIDE_GPU_STORAGE_MOST_BYTES (UINT32_C(1) << 27)
+#define TIDE_GPU_LIST_MOST_WORDS (TIDE_GPU_STORAGE_MOST_BYTES / 4u - TIDE_GPU_LIST_HEADER_WORDS)
 
 typedef struct tide_gpu_list_state {
     struct tide_gpu_list_state *next;

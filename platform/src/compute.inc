@@ -320,8 +320,16 @@ static void run_compute(const tide_draw_list *list, const draw_step *s)
         most_groups = (uint64_t)groups[0] * groups[1] * groups[2];
     }
     tide_gpu_id scratch[TIDE_SHADER_STORAGE] = {0};
-    for (uint32_t k = 0; k < shader->add_count; k++)
-        scratch[k] = take_scratch(most_groups * tide_gpu_add_group_words(group, shader->adds[k].stride) * 4u);
+    for (uint32_t k = 0; k < shader->add_count; k++) {
+        const uint64_t bytes = most_groups * tide_gpu_add_group_words(group, shader->adds[k].stride) * 4u;
+        if (bytes > TIDE_GPU_STORAGE_MOST_BYTES) { // Each group's room for what it adds, more than a GPU binds
+            fprintf(stderr, "tide: a run of %s adds from more invocations than a GPU holds room for (%llu bytes of %u): "
+                            "it's passed by\n", shader->name ? shader->name : "a kernel", (unsigned long long)bytes,
+                    (unsigned)TIDE_GPU_STORAGE_MOST_BYTES);
+            return;
+        }
+        scratch[k] = take_scratch(bytes);
+    }
     static uint8_t zero[16];
     gpu->compute_begin();
     gpu->use(pipeline);
