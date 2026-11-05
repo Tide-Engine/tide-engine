@@ -1021,6 +1021,10 @@ typedef struct draw_step {
     // (gathered after the list's for a listed run drawn the ordinary way: upload_shaded)
     uint32_t listed;
     uint32_t instances_at;
+    // STEP_SHADED of a culled run (tide_draw_run.culled): 1 + its bucket among the frame's the GPU culls (cull.inc),
+    // or 0 where the CPU decided its instances (`decided`): `count` of them, from `instances_at`
+    uint32_t culled;
+    bool decided;
     tide_gpu_id indirect; // STEP_SHADED over a GPU list: its arguments, the mesh's index count and the list's count
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
     tide_gpu_id pipeline; // What draws it, once it's found: its shader's, for a STEP_SHADED
@@ -2942,6 +2946,8 @@ void tide_platform_background_pipelines(const bool on)
 }
 
 static void forget_compute(void);
+static void forget_culling(void);
+static void cull_warm(void);
 
 static bool gpu_ready(void)
 {
@@ -3705,12 +3711,28 @@ static bool run_draws(const tide_draw_list *list, const uint32_t place)
         const uint32_t texture = shader->texture_count < TIDE_SHADER_TEXTURES ? run->textures[shader->texture_count] : 0u;
         if (!texture || texture > list->texture_count || !tide_shader_instance_size(shader)) return false;
     }
+    if (run->culled) { // Its instances are decided as it's drawn: it has none in the list's
+        return run->culled - 1u + (uint64_t)run->culled_count <= list->cull_count
+               && run->uniforms + uniform_fields * 16u <= list->uniform_used;
+    }
     return run->first + (uint64_t)tide_draw_run_stride(run) * run->count <= list->instance_used
            && run->uniforms + uniform_fields * 16u <= list->uniform_used;
 }
 
 // A listed run's instances drawn the ordinary way (where its pipeline can't be had), their bytes gathered from
 // its list's numbers: after the list's instances in the instance buffer (upload_shaded)
+// Culled runs (tide_draw_run.culled, cull.inc): the frame's plan, whether the GPU takes a run, the CPU's decisions
+// where it doesn't (their places in cull_cpu), the GPU's culling once the frame's are known, and where it puts them
+static void cull_plan(const tide_draw_list *list);
+static bool cull_takes(const tide_draw_list *list, const tide_draw_run *run);
+static uint32_t cull_decide(const tide_draw_list *list, const tide_draw_run *run);
+static uint32_t *cull_cpu;
+static void cull_run(const tide_draw_list *list);
+static tide_gpu_id cull_places(void);
+static size_t cull_places_at(uint32_t bucket);
+static tide_gpu_id cull_args(void);
+static size_t cull_args_at(uint32_t bucket);
+
 static uint8_t *gathered;
 static uint32_t gathered_used, gathered_capacity;
 
@@ -3814,6 +3836,7 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
         }
         warm_ask(clear_pipeline(into));
         warm_ask(depth_clear_pipeline(into));
+        cull_warm(); // ...and the kernels listed runs are culled with, where they can be
         // Each of the game's, every way it was drawn before
         for (uint32_t i = 0; i < count; i++) {
             const tide_shader *shader = shaders[i];
@@ -3871,6 +3894,7 @@ static bool upload_shaded(const tide_draw_list *list)
 {
     bool any = false;
     gathered_used = 0;
+    cull_plan(list);
     for (uint32_t i = 0; i < step_count; i++) {
         if (steps[i].kind != STEP_SHADED && steps[i].kind != STEP_BLIT) continue;
         if (!frame_targets[steps[i].target].valid || leaves_nothing(list, &steps[i])) continue;
@@ -3878,8 +3902,46 @@ static bool upload_shaded(const tide_draw_list *list)
         any = true;
         mesh_for(list, run->mesh);
         steps[i].listed = 0;
+        steps[i].culled = 0;
+        steps[i].decided = false;
         steps[i].instances_at = run->first;
-        if (run->listed) {
+        if (run->culled) {
+            // Culled on the GPU, through its listed pipeline: where there's one, made, and the frame's culling runs
+            const tide_gpu_id listed = gpu == &tide_gpu_record ? 0 :
+                listed_pipeline_for(run->shader, steps[i].blend, steps[i].depth, steps[i].cull,
+                                    frame_targets[steps[i].target].into, stencil_state(steps[i].stencil));
+            const bool ready = listed && (!gpu->pipeline_ready || gpu->pipeline_ready(listed));
+            if (ready && cull_takes(list, run)) {
+                steps[i].pipeline = listed;
+                steps[i].listed = 1;
+                steps[i].culled = 1; // Its bucket's, once the frame's are known (cull_run)
+            } else { // ...or by the CPU's decisions, which are the CPU path's: their places, or their bytes
+                const uint32_t size = tide_shader_instance_size(run->shader);
+                const uint32_t n = cull_decide(list, run);
+                const uint64_t bytes = (uint64_t)(ready ? sizeof(uint32_t) : size) * n;
+                if (bytes > UINT32_MAX - (uint64_t)list->instance_used - gathered_used) tide_out_of_memory();
+                if (gathered_used + bytes > gathered_capacity) {
+                    uint64_t room = gathered_capacity ? gathered_capacity : 4096u;
+                    while (room < gathered_used + bytes) room *= 2u;
+                    if (room > UINT32_MAX) room = UINT32_MAX;
+                    gathered = tide_realloc(gathered, gathered_capacity, (size_t)room);
+                    gathered_capacity = (uint32_t)room;
+                }
+                const tide_draw_texture *page = &list->textures[run->textures[run->shader->texture_count] - 1u];
+                for (uint32_t k = 0; k < n; k++) {
+                    if (ready) memcpy(gathered + gathered_used + (size_t)k * sizeof(uint32_t), &cull_cpu[k], sizeof(uint32_t));
+                    else memcpy(gathered + gathered_used + (size_t)k * size, page->pixels + (size_t)cull_cpu[k] * size, size);
+                }
+                steps[i].instances_at = list->instance_used + gathered_used;
+                gathered_used += (uint32_t)bytes;
+                steps[i].count = n;
+                steps[i].decided = true;
+                if (ready) {
+                    steps[i].pipeline = listed;
+                    steps[i].listed = 1;
+                }
+            }
+        } else if (run->listed) {
             // Through its listed pipeline where there's one, made: the recorder for another program has none, and
             // one made in the background may not be done yet
             const tide_gpu_id listed = gpu == &tide_gpu_record ? 0 :
@@ -4594,6 +4656,7 @@ static tide_float4x4 camera_to_clip(const camera *cam)
 
 // A run of instances of a mesh through a shader of the game's, at once.
 #include "compute.inc"
+#include "cull.inc"
 
 static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
 {
@@ -4638,14 +4701,21 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
     }
     if (shader->storage_count) bind_storage(list, run);
     gpu->vertices(0, corners_of(g), 0);
+    if (s->culled) { // Its places as the GPU found them, as many as it found: their count isn't the CPU's to know
+        gpu->vertices(1, cull_places(), cull_places_at(s->culled - 1u));
+        gpu->indices(g->indices, g->wide);
+        gpu->draw_indexed_indirect(cull_args(), cull_args_at(s->culled - 1u));
+        return g->index_count;
+    }
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, s->instances_at);
     gpu->indices(g->indices, g->wide);
     if (run->indirect) { // As many as its list has on the GPU: their count isn't the CPU's to know
         gpu->draw_indexed_indirect(s->indirect, 0);
         return g->index_count;
     }
-    gpu->draw_indexed(g->index_count, run->count);
-    return (uint64_t)g->index_count * run->count;
+    const uint32_t instances = s->decided ? s->count : run->count;
+    gpu->draw_indexed(g->index_count, instances);
+    return (uint64_t)g->index_count * instances;
 }
 
 static uint64_t draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
@@ -5027,6 +5097,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     gpu_profile_drawing = !over && gpu_pass_collect;
     if (gpu_profile_drawing) { gpu_profile_frame++; gpu_profile_pass = 0; }
     if (timed && gpu->time_begin) gpu->time_begin();
+    cull_run(list); // The culled runs' instances, found on the GPU before any pass: timed with the frame's work
     // A pass begins at the first step that draws in it, so steps that only
     // move to another target cost none: a pass costs the backends that have
     // them (Vulkan, WebGPU) command buffers or encoders, and barriers. The
@@ -5323,6 +5394,17 @@ tide_float2 tide_platform_screen_size(void)
 tide_float2 tide_platform_screen_scale(void)
 {
     return window_scale();
+}
+
+bool tide_platform_gpu_culling(void)
+{
+    static int wanted = -1; // TIDE_GPU_CULLING=0 leaves it to the CPU, for comparing the two
+    if (wanted < 0) {
+        const char *said = getenv("TIDE_GPU_CULLING");
+        wanted = !(said && strcmp(said, "0") == 0); // "decide": recorded so, and decided by the CPU as it draws
+    }
+    const tide_gpu *device = embedded ? &tide_gpu_record : tide_window_gpu();
+    return wanted && device && device != &tide_gpu_record && device->dispatch;
 }
 
 tide_target_content tide_platform_target_content(const tide_target_size size)

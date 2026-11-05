@@ -402,6 +402,9 @@ uint64_t tide_platform_entropy(void);
 tide_float2 tide_platform_screen_size(void);
 // Physical pixels per logical pixel on each axis, as the renderer fits them.
 tide_float2 tide_platform_screen_scale(void);
+// Whether the renderer culls listed runs on the GPU (tide_draw_list.gpu_culling), which a host sets each frame
+// before its views record: where its backend computes, unless TIDE_GPU_CULLING is 0.
+bool tide_platform_gpu_culling(void);
 tide_int2 tide_platform_target_pixels(tide_target_size size);
 tide_target_content tide_platform_target_content(tide_target_size size);
 
@@ -430,6 +433,18 @@ void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *po
 // tide_platform_measure_text with a target of that size and scale.
 void tide_platform_read_pixels_as(const tide_draw_list *list, int width, int height, float scale,
                                   const tide_float2 *points, int count, uint32_t *rgba);
+
+// What the GPU culled of the listed runs of the frame drawn last (tide_draw_list.gpu_culling), read back and set
+// beside the CPU's decisions for the same runs (tide_draw_culled_places), for tests and diagnostics: false where
+// it can't be (no run of it was culled on the GPU, or a backend that can't wait for a read: the web's). `list` is
+// the one drawn, as it was.
+typedef struct tide_platform_cull_report {
+    uint32_t runs;      // Culled on the GPU
+    uint64_t gpu, cpu;  // The instances each drew
+    uint64_t missing;   // The CPU's that the GPU's leave out, or have out of order: none where the decisions agree
+    uint64_t extra;     // The GPU's that the CPU's leave out: its slack at the frustum's edges, picks at a threshold
+} tide_platform_cull_report;
+bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
 
 // Networking for sessions (tide/session.h): a UDP transport, taking datagrams
 // on `port` (0: any free one). False where there's no network, like the web

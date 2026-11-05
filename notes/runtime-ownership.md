@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Listed runs culled on the GPU (2026-11-05)
+
+Within the drawing maintenance exception, an internal performance change (no Tide or generated-C change, the same
+pixels): `tide_draw_shaded_culled` (list_data_cache.h, from `tide_draw_mesh_shaded_list`), `tide_draw_culled_places`,
+`tide_draw_run_uncull`, `tide_draw_uncull`, `tide_draw_cull_planes` (`tide/draw.h`), the renderer's
+`tide_platform_gpu_culling` (which the standard host sets `tide_draw_list.gpu_culling` from) and
+`tide_platform_cull_compare` (tests and diagnostics). Generated code calls nothing new. The kernels are the
+renderer's own, in Tide (`platform/src/cull.tide`), built by `tidec --kernels`. Contracts: drawing.md, Listed runs
+culled on the GPU.
+
 ## Compute: GPU lists, runs and reads back (2026-11-05)
 
 The owner pre-approved compute's boundary ("anything you decide should be

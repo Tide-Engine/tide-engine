@@ -1,5 +1,12 @@
 # The platform layer and the renderer
 
+## The renderer's own kernels, in Tide (2026-11-05)
+
+`platform/src/cull.tide` is the renderer's first Tide source: `tidec --kernels` makes it `kernels/cull_kernels.h`
+in the platform's build (WGSL for the web, SPIR-V for Vulkan, each kernel's `tide_shader` and its bindings by
+field name), which `platform/src/cull.inc` includes after compute.inc. The steps of a culled run, its buffers and
+fallbacks: drawing.md, Listed runs culled on the GPU. `tide_platform_cull` is its pixel and read-back test.
+
 ## Vulkan compute (2026-11-05)
 
 The owner decided compute is guaranteed on every render backend (`docs/spec.md`, Compute on the GPU; `notes/compute.md` is the contract). This is `gpu.h`'s compute on Vulkan (`platform/src/gpu_vk.c`); every pick below is Claude's, Provisional, behind the language.

@@ -27,6 +27,7 @@ typedef struct tide_draw_diagnostic {
     uint64_t untestable; // Kept conservatively: unavailable/invalid bounds, camera or transform.
     uint64_t bypassed; // Frustum culling explicitly disabled.
     uint64_t submitted; // Instances retained in draw commands, not GPU draw calls.
+    uint64_t gpu_culled; // Candidates handed to the GPU to cull and pick levels of: neither tested nor submitted here.
     uint64_t bounds_cache_hits;
     uint64_t bounds_builds;
     uint64_t frustum_builds;

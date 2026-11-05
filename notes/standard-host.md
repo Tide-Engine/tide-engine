@@ -1,5 +1,12 @@
 # The standard host: runs with no window, the stats, debug views
 
+## GPU culling asked each frame (2026-11-05)
+
+The standard host sets `tide_run_draw.gpu_culling = tide_platform_gpu_culling()` beside the screen's scale before
+the views record: listed draws are then recorded for the GPU to cull where the backend computes and isn't the
+recorder, unless `TIDE_GPU_CULLING=0` (`decide`: recorded so, decided by the CPU as they're drawn, for tests). A
+custom host leaves it false and keeps the CPU path. drawing.md, Listed runs culled on the GPU.
+
 ## Application.Quit (2026-11-04)
 
 The owner's ask, from mount-and-rifle, whose workaround was C `exit(0)`, which

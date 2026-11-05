@@ -61,6 +61,7 @@ static void forget_compute(void)
     scratch_count = scratch_used = 0;
     kernel_pipeline_count = 0;
     run_size_pipeline = add_offsets_pipeline = add_scatter_pipeline = 0;
+    forget_culling();
     tide_gpu_read_request *reads = tide_gpu_read_requests();
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
         if (reads[i].state == TIDE_GPU_READ_BEGUN) tide_gpu_read_finished(&reads[i], false);
