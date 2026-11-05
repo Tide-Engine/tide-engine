@@ -50,6 +50,13 @@ add_executable(bench_hash hash/hash.c)
 target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
+# Indexes for indexed loops (tide/index.h): building one, and searching it for
+# about 10 entries near a point, against the plain loop over every entry; the
+# test checks both loops find the same entries.
+add_executable(bench_index index/index.c)
+target_link_libraries(bench_index PRIVATE tide)
+add_test(NAME bench_index COMMAND bench_index --quick)
+
 # Presentation correction costs, without changing Transform's defaults.
 add_subdirectory(corrections)
 
