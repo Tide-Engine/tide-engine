@@ -628,6 +628,15 @@ typedef enum tide_players_action {
 } tide_players_action;
 tide_players_action tide_platform_players_action(void);
 
+// Whether the machine slept since the last call (a Steam Deck's or a laptop's
+// sleep): true once for each sleep, at the first call after it woke. Desktop
+// and Android; always false on the web, where the browser freezes a hidden
+// page instead. The standard host asks once a frame, and leaves a match other
+// machines can be in (tide/host.h, tide_run_slept).
+bool tide_platform_slept(void);
+// The next tide_platform_slept says the machine slept: a script's `sleep`.
+void tide_platform_pretend_sleep(void);
+
 // Threads to run ticks on (tide/jobs.h): a pool with one for each of the
 // CPU's cores, the caller's among them, made on first use. NULL with one core.
 // On the web, its threads are workers, which only a cross-origin isolated page

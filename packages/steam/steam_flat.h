@@ -4,7 +4,7 @@
 //
 // Written from Steamworks SDK 1.60's public/steam/steam_api_flat.h,
 // steam_api.h, isteammatchmaking.h, isteamfriends.h, isteamuser.h,
-// isteamnetworkingmessages.h and steamnetworkingtypes.h, and the callbacks'
+// isteamutils.h, isteamnetworkingmessages.h and steamnetworkingtypes.h, and the callbacks'
 // numbers from their headers. The functions are exported by the SDK's
 // redistributable library (steam_api64.dll, libsteam_api.so,
 // libsteam_api.dylib), which a game puts in its folder (README.md).
@@ -30,6 +30,7 @@ typedef struct ISteamUser ISteamUser;
 typedef struct ISteamFriends ISteamFriends;
 typedef struct ISteamMatchmaking ISteamMatchmaking;
 typedef struct ISteamNetworkingMessages ISteamNetworkingMessages;
+typedef struct ISteamUtils ISteamUtils;
 
 enum {
     k_ESteamAPIInitResult_OK = 0,
@@ -46,6 +47,8 @@ enum {
     // Datagrams: unreliable, sent at once, and a session that broke starts again with the next one
     k_nSteamNetworkingSend_UnreliableNoNagle = 1,
     k_nSteamNetworkingSend_AutoRestartBrokenSession = 32,
+    // The keyboard Steam shows over a game, on a Steam Deck and in Big Picture: one line, whose Enter closes it
+    k_EFloatingGamepadTextInputModeModeSingleLine = 0,
 };
 
 // What ISteamNetworkingMessages names a peer by: 136 bytes, of which this
@@ -163,11 +166,17 @@ ISteamUser *SteamAPI_SteamUser_v023(void);
 ISteamFriends *SteamAPI_SteamFriends_v017(void);
 ISteamMatchmaking *SteamAPI_SteamMatchmaking_v009(void);
 ISteamNetworkingMessages *SteamAPI_SteamNetworkingMessages_SteamAPI_v002(void);
+ISteamUtils *SteamAPI_SteamUtils_v010(void);
 
 uint64_t SteamAPI_ISteamUser_GetSteamID(ISteamUser *self);
 const char *SteamAPI_ISteamFriends_GetPersonaName(ISteamFriends *self);
 const char *SteamAPI_ISteamFriends_GetFriendPersonaName(ISteamFriends *self, uint64_t steamIDFriend);
 void SteamAPI_ISteamFriends_ActivateGameOverlayInviteDialog(ISteamFriends *self, uint64_t steamIDLobby);
+
+// The text field's place, in the screen's pixels, is where the keyboard doesn't go: all 0 for nowhere in particular.
+bool SteamAPI_ISteamUtils_ShowFloatingGamepadTextInput(ISteamUtils *self, int32_t eKeyboardMode, int nTextFieldXPosition,
+                                                      int nTextFieldYPosition, int nTextFieldWidth, int nTextFieldHeight);
+bool SteamAPI_ISteamUtils_DismissFloatingGamepadTextInput(ISteamUtils *self);
 
 SteamAPICall_t SteamAPI_ISteamMatchmaking_RequestLobbyList(ISteamMatchmaking *self);
 void SteamAPI_ISteamMatchmaking_AddRequestLobbyListStringFilter(ISteamMatchmaking *self, const char *pchKeyToMatch,

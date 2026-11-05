@@ -25,6 +25,7 @@
 #include "tide/stats.h"
 #include "tide/time.h"
 #include "tide/voice.h"
+#include "tide/screen_keyboard.h"
 #include "tide/worker.h"
 
 typedef struct tide_run_desc {
@@ -135,6 +136,9 @@ typedef struct tide_host_game {
     // Separate from frame_time so updates between draws neither change Frame.dt
     // nor reseed local randomness. Seconds cover only time since the last update.
     void (*age_views)(void *local, float seconds);
+    // Optional: tide_screen_keyboard_get, the keyboard on screen the game's C
+    // registered (tide/screen_keyboard.h) in its own engine copy.
+    const tide_screen_keyboard *(*screen_keyboard)(void);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -1377,6 +1381,46 @@ static inline double tide_run_wait_update(void *user, const double elapsed)
     return tide_session_until_tick(s);
 }
 
+// The machine slept (tide_platform_slept): it was gone from its match all the
+// while, as a phone that went to the background is, so it leaves a match
+// other machines can be in, as Session.Leave does: one it joined, one it was
+// moving to, or one it runs that's open or has others in it. Their match goes
+// on without it, through host migration where the game has it. A match it
+// runs alone and closed (single-player) goes on where it stopped, as nobody
+// waited for it.
+static inline void tide_run_slept(void)
+{
+    const tide_session *s = tide_run_session;
+    const tide_session_status status = tide_session_status_of(s);
+    char code[TIDE_ROOM_CODE_LENGTH + 1], key[TIDE_ROOM_KEY_LENGTH + 1];
+    const bool others = status.server ? status.open || tide_session_remote_players(s) > 0
+                                      : status.client.state != TIDE_SESSION_OFFLINE || tide_session_migrating(s, code, key);
+    if (others || tide_run_hosting) tide_run_request(&(tide_session_request){.kind = TIDE_REQUEST_LEAVE}, NULL);
+}
+
+// Whether the player types, once a frame: the system's keyboard shows where
+// there is one (tide_platform_typing), and the game's own is told once each
+// time it changes (tide/screen_keyboard.h). One registered while the player
+// types, or by a new build, is told at once. Runs with no window, and runs
+// nobody watches, show neither.
+static tide_screen_keyboard tide_run_screen_keyboard_was; // The game's keyboard as of the last frame ({0} for none)...
+static bool tide_run_screen_keyboard_typing;              // ...and what it was told
+
+static inline void tide_run_typing(const tide_host_game *game, const bool typing)
+{
+    tide_platform_typing(typing);
+    const bool shown = !tide_run_headless && !tide_run_embedded && !tide_hidden();
+    const tide_screen_keyboard *k = shown && game->screen_keyboard ? game->screen_keyboard() : NULL;
+    const tide_screen_keyboard now = k ? *k : (tide_screen_keyboard){0};
+    // One that's new to the host was told nothing
+    const tide_screen_keyboard was = tide_run_screen_keyboard_was;
+    if (now.self != was.self || now.typing != was.typing) tide_run_screen_keyboard_typing = false;
+    tide_run_screen_keyboard_was = now;
+    if (!now.typing || typing == tide_run_screen_keyboard_typing) return;
+    tide_run_screen_keyboard_typing = typing;
+    now.typing(now.self, typing);
+}
+
 static inline int tide_run_frame(void *user, const float seconds)
 {
     if (tide_run_loading.on) return tide_run_loading_frame(user, seconds); // The game's pack isn't in yet
@@ -1427,6 +1471,8 @@ static inline int tide_run_frame(void *user, const float seconds)
         else if (again.kind) tide_run_request(&again, NULL);
         else fprintf(stderr, "tide: player %u has nothing to rejoin: it never joined a match\n", (unsigned)tide_platform_player());
     }
+    // Before the session's update, which would otherwise go on as if no time had passed
+    if (!tide_run_embedded && tide_platform_slept()) tide_run_slept();
 
     tide_session *s = tide_run_session;
     // Existing visual errors age before this update adds fresh corrections.
@@ -1553,7 +1599,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);
     if (tide_run_reporting) tide_profile_report_mark(&tide_run_report, TIDE_FRAME_VIEWS);
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
-    tide_platform_typing(tide_gui_typing(&tide_run_gui));
+    tide_run_typing(game, tide_gui_typing(&tide_run_gui));
     tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
     if (timing && tide_run_draw.epoch != tide_run_timing_epoch) {
         // A retained native reload keeps the host, but the samples are the old build's.

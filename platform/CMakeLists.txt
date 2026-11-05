@@ -920,6 +920,16 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     set_tests_properties(tide_platform_players_net_control PROPERTIES TIMEOUT 60)
     set_tests_properties(tide_platform_players_net tide_platform_players_net_ended tide_platform_players_net_drop PROPERTIES TIMEOUT 60)
 
+    # The machine about to sleep, from a logind of the test's own on a D-Bus of its own (tests/sleep_logind.c):
+    # Linux desktops, where logind is. Skipped (77) without dbus-daemon or libdbus.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(tide_platform_sleep_logind tests/sleep_logind.c)
+        target_include_directories(tide_platform_sleep_logind PRIVATE src)
+        target_link_libraries(tide_platform_sleep_logind PRIVATE tide_platform)
+        add_test(NAME tide_platform_sleep_logind COMMAND tide_platform_sleep_logind)
+        set_tests_properties(tide_platform_sleep_logind PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    endif()
+
     tide_add_game(tide_platform_players SOURCES tests/players.tide)
     tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
     tide_add_game(tide_platform_players_leave SOURCES tests/players_leave.tide)

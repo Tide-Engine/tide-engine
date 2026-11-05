@@ -90,6 +90,7 @@ typedef struct user {
     pair filters[FILTERS];
     int filter_count;
     int slots;
+    bool keyboard; // Steam's keyboard shows over its game
 } user;
 
 static user users[USERS + 1];
@@ -146,6 +147,12 @@ const char *FakeSteamData(const char *key)
         }
     }
     return "";
+}
+
+// Whether Steam's keyboard shows over a user's game.
+bool FakeSteamKeyboard(const int32_t number)
+{
+    return users[number].keyboard;
 }
 
 // A lobby member who isn't a player of the test sets a key of the lobby's
@@ -371,6 +378,29 @@ ISteamMatchmaking *SteamAPI_SteamMatchmaking_v009(void)
 ISteamNetworkingMessages *SteamAPI_SteamNetworkingMessages_SteamAPI_v002(void)
 {
     return (ISteamNetworkingMessages *)&some_interface;
+}
+
+ISteamUtils *SteamAPI_SteamUtils_v010(void)
+{
+    return (ISteamUtils *)&some_interface;
+}
+
+// As on a Steam Deck: the keyboard shows wherever it's asked for
+bool SteamAPI_ISteamUtils_ShowFloatingGamepadTextInput(ISteamUtils *self, const int32_t eKeyboardMode,
+                                                      const int nTextFieldXPosition, const int nTextFieldYPosition,
+                                                      const int nTextFieldWidth, const int nTextFieldHeight)
+{
+    (void)self, (void)nTextFieldXPosition, (void)nTextFieldYPosition, (void)nTextFieldWidth, (void)nTextFieldHeight;
+    if (eKeyboardMode != k_EFloatingGamepadTextInputModeModeSingleLine) return false;
+    users[me].keyboard = true;
+    return true;
+}
+
+bool SteamAPI_ISteamUtils_DismissFloatingGamepadTextInput(ISteamUtils *self)
+{
+    (void)self;
+    users[me].keyboard = false;
+    return true;
 }
 
 uint64_t SteamAPI_ISteamUser_GetSteamID(ISteamUser *self)

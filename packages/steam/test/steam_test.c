@@ -14,6 +14,7 @@
 
 #include "game.h"
 #include "network_players.h"
+#include "tide/screen_keyboard.h"
 #include "tide_test.h"
 
 #define WAIT_FRAMES 3000
@@ -24,6 +25,7 @@ void FakeSteamDeafen(int32_t number, bool on);
 int32_t FakeSteamStarts(void);
 const char *FakeSteamData(const char *key);
 void FakeSteamForge(const char *key, const char *value);
+bool FakeSteamKeyboard(int32_t number);
 void TideSteamUse(int32_t user);
 void TideSteamForget(void);
 
@@ -282,6 +284,16 @@ TIDE_TEST(steam_lobbies_and_messages_take_players_into_a_match_that_follows_the_
     FakeSteamDeafen(3, false);
 
     TIDE_CHECK(FakeSteamStarts() == 4); // Once a user
+
+    // Steam's keyboard is the game's while the player types (tide/screen_keyboard.h), which a host tells it
+    enter(ANN);
+    const tide_screen_keyboard *keyboard = tide_screen_keyboard_get();
+    TIDE_REQUIRE(keyboard != NULL);
+    TIDE_CHECK(!FakeSteamKeyboard(1));
+    keyboard->typing(keyboard->self, true);
+    TIDE_CHECK(FakeSteamKeyboard(1));
+    keyboard->typing(keyboard->self, false);
+    TIDE_CHECK(!FakeSteamKeyboard(1));
     for (int i = 0; i < 4; i++) player_free(&players[i]);
     TideSteamForget();
     FakeSteamReset();
