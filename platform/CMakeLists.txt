@@ -87,6 +87,8 @@ add_custom_target(tide_renderer_kernels DEPENDS "${TIDE_KERNELS_H}")
 
 add_library(tide_platform STATIC ${TIDE_PLATFORM_SOURCES} "${TIDE_FONT_C}" "${TIDE_FONT_BOLD_C}" "${TIDE_KERNELS_H}")
 add_dependencies(tide_platform tide_renderer_kernels)
+# The log names the version a crash was in (src/log.c): that file alone, so a new version rebuilds no other
+set_source_files_properties(src/log.c PROPERTIES COMPILE_DEFINITIONS "TIDE_VERSION=\"${TIDE_VERSION}\"")
 # Hosts go through include/ only; third_party/ is stb_truetype, for the font.
 target_include_directories(tide_platform PUBLIC include PRIVATE src third_party "${CMAKE_CURRENT_BINARY_DIR}/kernels")
 target_link_libraries(tide_platform PUBLIC tide)
@@ -932,6 +934,15 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
                 $<TARGET_FILE:tide_platform_capture> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_hidden-runs" runs)
         set_tests_properties(tide_platform_hidden_runs PROPERTIES TIMEOUT 120)
         tide_gpu_test(tide_platform_hidden_runs)
+    endif()
+
+    # The program's log and what a crash leaves (src/log.c): no window, no GPU
+    add_executable(tide_platform_log tests/log.c)
+    target_link_libraries(tide_platform_log PRIVATE tide_platform)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_log
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/log.mjs" $<TARGET_FILE:tide_platform_log>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_log-runs")
     endif()
 
     # The window's images on Vulkan: made again when the window is resized and

@@ -1200,24 +1200,23 @@ static char *data_directory(const char *path)
 #endif
 }
 
-static void native_paths(io_state *io, char *directory)
+// An app's own folder of saved data, as the system has one for it: nothing's made.
+static char *persistent_path(const char *app_id)
 {
-    if (directory) io->persistent = directory;
-    else {
 #ifdef _WIN32
     char *profile = environment(L"USERPROFILE");
     char *base = profile ? join(profile, "AppData/LocalLow") : NULL;
-    io->persistent = base ? join(base, io->app_id) : duplicate("");
+    char *path = base ? join(base, app_id) : duplicate("");
     free(base);
     free(profile);
+    return path;
 #elif defined(__ANDROID__)
     const char *data = tide_android_internal_data_path();
-    if (data) io->persistent = duplicate(data);
-    else {
-        char *cwd = getcwd(NULL, 0);
-        io->persistent = cwd ? join(cwd, io->app_id) : duplicate("");
-        free(cwd);
-    }
+    if (data) return duplicate(data);
+    char *cwd = getcwd(NULL, 0);
+    char *path = cwd ? join(cwd, app_id) : duplicate("");
+    free(cwd);
+    return path;
 #else
     const char *home = getenv("HOME");
 #ifdef __APPLE__
@@ -1226,10 +1225,28 @@ static void native_paths(io_state *io, char *directory)
     const char *xdg = getenv("XDG_DATA_HOME");
     char *base = xdg && absolute(xdg) ? duplicate(xdg) : home ? join(home, ".local/share") : NULL;
 #endif
-    io->persistent = base ? join(base, io->app_id) : duplicate("");
+    char *path = base ? join(base, app_id) : duplicate("");
     free(base);
+    return path;
 #endif
-    }
+}
+
+char *tide_platform_data_folder(const char *app_id, const char *directory)
+{
+    if (!app_id || !*app_id) app_id = "dev.tide.game";
+    char *path = directory ? data_directory(directory) : persistent_path(app_id);
+    io_state scratch = {0}; // What it made isn't flushed: a log needs no more than the system gives it
+    const bool made = path[0] && mkdir_parents(&scratch, path) == TIDE_IO_NONE;
+    for (uint32_t i = 0; i < scratch.dirty_count; i++) free(scratch.dirty[i].path);
+    free(scratch.dirty);
+    if (made) return path;
+    free(path);
+    return NULL;
+}
+
+static void native_paths(io_state *io, char *directory)
+{
+    io->persistent = directory ? directory : persistent_path(io->app_id);
     io->temporary = temporary_path(io->app_id);
     io->persistent_error = io->persistent[0] ? mkdir_parents(io, io->persistent) : TIDE_IO_STORAGE_UNAVAILABLE;
     io->temporary_error = io->temporary[0] ? mkdir_parents(io, io->temporary) : TIDE_IO_STORAGE_UNAVAILABLE;
