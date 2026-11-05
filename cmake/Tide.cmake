@@ -1,5 +1,5 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
-#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [SPLIT_PLUMBING] [WARNINGS <text>...]
+#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [SPLIT_PLUMBING] [SPLIT_CODE] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
 #               [DEFINES <SYMBOL>...] [SHELL <page.html>])
 #
@@ -49,6 +49,8 @@
 # SPLIT_PLUMBING compiles the game's generated C as tide's debug builds do: the
 # game's own code (<name>.c) with the target's flags, and the rest, the
 # generated plumbing (<name>_plumbing.c), optimized (-O2).
+# SPLIT_CODE partitions generated C into four stable files compiled/linked with ThinLTO.
+# With SPLIT_PLUMBING it partitions the optimized plumbing and leaves game code debuggable.
 #
 # The generated files land in the build tree and are regenerated whenever a
 # .tide file or tidec changes. Every game is also listed in
@@ -143,7 +145,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;NO_LOOP_INDEXES" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS;STRIP_NAMES;SPLIT_PLUMBING;SPLIT_CODE;NO_LOOP_INDEXES" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -264,6 +266,22 @@ function(tide_add_game target)
         set(split --split-plumbing)
         set(split_c "${out_dir}/${name}_plumbing.c")
         set_source_files_properties("${split_c}" PROPERTIES COMPILE_OPTIONS -O2)
+    endif()
+    if(ARG_SPLIT_CODE)
+        list(APPEND split --split-code)
+        foreach(part RANGE 1 3)
+            if(ARG_SPLIT_PLUMBING)
+                list(APPEND split_c "${out_dir}/${name}_plumbing_part${part}.c")
+                set_property(SOURCE "${out_dir}/${name}_plumbing_part${part}.c" APPEND PROPERTY COMPILE_OPTIONS -O2)
+            else()
+                list(APPEND split_c "${out_dir}/${name}_part${part}.c")
+            endif()
+        endforeach()
+        set(thin_sources ${split_c})
+        if(NOT ARG_SPLIT_PLUMBING)
+            list(APPEND thin_sources "${out_c}")
+        endif()
+        set_property(SOURCE ${thin_sources} APPEND PROPERTY COMPILE_OPTIONS -flto=thin)
     endif()
     # NO_LOOP_INDEXES: every loop goes through all of its rows, none through an index (notes/indexed-loops.md),
     # for tests and benchmarks that compare the two
@@ -463,6 +481,12 @@ int main(int argc, char **argv)
             else()
                 tide_web_page(${target} PACK "${out_pack}")
             endif()
+        endif()
+    endif()
+    if(ARG_SPLIT_CODE)
+        target_link_options(${target} PRIVATE -flto=thin)
+        if(NOT APPLE AND NOT TIDE_WEB)
+            target_link_options(${target} PRIVATE -fuse-ld=lld)
         endif()
     endif()
     if(NOT ARG_HOST)

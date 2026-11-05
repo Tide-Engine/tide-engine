@@ -1,5 +1,27 @@
 # Language features, as tidec builds them
 
+## Stable generated C partitions (2026-11-05)
+
+`codegen_options.split_code` / `tidec --split-code` cut generated C into four translation units using two binary
+passes of the existing plumbing splitter. `partition == -1` retains the debug code/plumbing policy; 0 and 1 choose
+by bits of the symbol-name hash. Function bodies stay intact. Types/macros/prototypes are repeated; cross-part
+references promote internal linkage and rename private symbols to avoid host/pack collisions. Small immutable
+constants retain the existing sharing policy. Conservative dependency propagation can leave a retained copy unused,
+so shared constants carry `unused` explicitly. Prototype emission ends any trailing line comment before its semicolon.
+
+`tide_game_api` always lands in part zero: only that object's header stamp needs the changing simulation identity.
+`write_code_parts` writes `<name>.c` and `<name>_part1.c` through `_part3.c`; `<name>_parts.txt` lists each generated
+source as `plumbing thin filename` (two 0/1 flags and a basename). A nonpartitioned group has one record. Debug's
+own game code remains whole/unoptimized; its plumbing can partition. `split_code_min_bytes` is zero for explicit
+tidec use and 4 MiB in the CLI. Without `split_code`, the ordinary one-file output remains supported.
+
+No Tide semantics, generated runtime calls, layouts, ordering, snapshots or hashes change. ThinLTO preserves
+cross-part optimization opportunities, not an identical machine-code layout. Stable-part regression changes one
+function's numeric body and checks that exactly one C part changes and repeated generation is identical. Real
+native/web links and execution cover pinned cross-platform math, nested container ownership, tasks, compute/shader
+arrays and a debug-code/optimized-plumbing combination. CLI/cache/CMake contracts and measurements are recorded in
+cli-and-packages.md and tide-programs.md.
+
 ## Tide compilation progress labels (2026-11-05)
 
 The terminal build display now receives synchronous compiler progress through

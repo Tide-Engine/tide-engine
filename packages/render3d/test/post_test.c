@@ -79,8 +79,12 @@ static int blits(post_blit found[32])
             const tide_draw_texture *source = &draw.textures[run->textures[texture] - 1u];
             if (source->space == TIDE_PIXELS_TARGET)
                 TIDE_CHECK(tide_render_target_whole(source->id) != destination);
-            TIDE_CHECK(tide_sampling_filter(run->sampling, texture) == TIDE_FILTER_BILINEAR);
-            TIDE_CHECK(tide_sampling_wrap(run->sampling, texture) == TIDE_WRAP_CLAMP);
+            const uint32_t samplers = tide_shader_texture_samplers(run->shader, texture);
+            for (uint32_t sampler = 0; sampler < TIDE_SHADER_TEXTURES; sampler++) {
+                if (!(samplers >> sampler & 1u)) continue;
+                TIDE_CHECK(tide_sampling_filter(run->sampling, sampler) == TIDE_FILTER_BILINEAR);
+                TIDE_CHECK(tide_sampling_wrap(run->sampling, sampler) == TIDE_WRAP_CLAMP);
+            }
         }
     }
     return count;

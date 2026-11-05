@@ -51,6 +51,16 @@ they have no reliable total. Elapsed time covers the build. The display clears
 before game launch or completion output, and diagnostics appear on clean lines.
 Redirected output uses plain stderr lines with file counts.
 
+Large generated C files (at least 4 MiB) compile as four stable partitions in
+parallel, with ThinLTO preserving optimization across them. Each completed
+partition advances the C compilation bar; linking has an activity indicator.
+The linker caches its work beside the game's other cached objects. Small files
+stay whole. In ordinary debug builds, the optimized generated plumbing can be
+partitioned while your game code stays unoptimized for the debugger. A body
+edit keeps unrelated partitions reusable; changes to shared types can rebuild
+them all. `TIDE_JOBS` also limits parallel ThinLTO work.
+
+
 Code objects and expensive asset processing are cached between launches.
 Imported models, generated tangents, checked/converted audio and prepared texture
 payloads are kept in `.tide/assets/imports`, alongside the existing download,
@@ -293,6 +303,12 @@ Assets in the pack: 96.4 MB in 41 declarations, biggest first
 Each line has the bytes and share, the declaration's name, its type, an image's size (or how many files a list or map has) and how images are kept: `BC1` or `BC3` when [compressed](../game/assets.md#gpu-compression), `RGBA` when exact, `RGBA mips` for [authored mipmaps](../game/assets.md#authored-mipmaps). The bytes are the pack's, before a web page compresses it. A file two declarations share is in the pack once and counts toward the first. It's the pack of the build it's given with, so `--release` and `--distribution` show what pruning left. `tidec --asset-sizes` prints the same.
 
 Release and distribution builds leave out assets no Tide code, default or shader names. A game or package with C/C++ sources or prebuilt libraries keeps every asset instead, since C can find a pack entry by name. When the game's C reads no asset that way, `--strip-assets` says so, and its build is pruned like any other. An asset the C does read by name and nothing in Tide names is then missing at run time: its lookup finds nothing.
+
+Custom C build pipelines can request `tidec --split-code`: it writes
+`<name>.c`, `<name>_part1.c` through `<name>_part3.c`, and a `<name>_parts.txt`
+manifest. Compile and link those parts with `-flto=thin`. CMake callers can use
+`tide_add_game(... SPLIT_CODE)` to handle generation, compilation and linking.
+With `SPLIT_PLUMBING` too, only the optimized plumbing is partitioned.
 
 Custom build pipelines can pass `tidec --depfile <file>` to write Make-style dependencies for the generated C, including rig profiles, their reference models and external animation buffers. `tide_add_game` consumes this file automatically so editing those inputs rebuilds the asset pack. The flag applies to code generation, not schedule, outline or shader inspection.
 
