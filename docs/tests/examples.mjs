@@ -121,7 +121,9 @@ try {
     function command(method, params = {}) {
         return new Promise((done, fail) => {
             const id = ++next;
-            const timeout = setTimeout(() => { pending.delete(id); fail(new Error(`Timed out: ${method}`)); }, 20000);
+            // A screenshot waits for a frame, which software WebGPU (WARP on CI) can take long over
+            const limit = method === 'Page.captureScreenshot' ? 120000 : 20000;
+            const timeout = setTimeout(() => { pending.delete(id); fail(new Error(`Timed out: ${method}`)); }, limit);
             pending.set(id, { done, fail, timeout });
             socket.send(JSON.stringify({ id, method, params }));
         });
