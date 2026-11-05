@@ -238,8 +238,11 @@ and `Release(prefab, made)` replace Instantiate and Destroy.
 
 What the game's Tide views draw with `Draw` is drawn in Unity's frame while
 the runner's "Draw Tide" is on: 2D, text, 3D with the camera's depth, render
-targets and the game's own shaders, in Unity's built-in render pipeline and in
-URP.
+targets, the game's own shaders and its compute kernels (`GPU.Run`, GPU lists
+and `await list.Read()`), in Unity's built-in render pipeline and in URP. That
+takes a GPU that runs compute shaders, as every renderer of Tide's does:
+Direct3D 11 and 12, Vulkan, Metal, desktop OpenGL or WebGPU. On one without
+them (OpenGL ES 3, WebGL 2), the views' 2D is drawn with Unity's GL alone.
 
 A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).

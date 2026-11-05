@@ -609,12 +609,15 @@ has the details.
 
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
 drawn with the camera's depth (so Tide's meshes and Unity's scene hide each
-other), render targets, stencil and the game's own frags and verts, as Tide
-draws them in its own window. The views' 3D camera is the runner's View Camera,
-or the main camera. tide writes a Unity shader for each of the game's shaders,
-and for Tide's own, into `Packages/com.tide.game/Resources/TideShaders`, which
-Unity compiles for every graphics API: Direct3D 11 and 12, Vulkan, Metal,
-OpenGL and WebGL 2. It draws in Unity's built-in render pipeline and in URP,
+other), render targets, stencil, the game's own frags and verts, and its
+compute kernels, GPU lists and their reads back, as Tide draws them in its own
+window. The views' 3D camera is the runner's View Camera, or the main camera.
+tide writes a Unity shader for each of the game's shaders, a compute shader
+for each kernel, and the same for Tide's own, into
+`Packages/com.tide.game/Resources/TideShaders`, which Unity compiles for every
+graphics API that runs compute shaders: Direct3D 11 and 12, Vulkan, Metal,
+desktop OpenGL and WebGPU. On a GPU without them (OpenGL ES 3 and WebGL 2),
+the views' 2D is drawn with Unity's GL alone. It draws in Unity's built-in render pipeline and in URP,
 whose pass the package adds by itself. In Play, the editor's scene view shows
 Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide

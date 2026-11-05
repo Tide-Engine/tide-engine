@@ -28,6 +28,7 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, float*, float*, void> cameraFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> renderFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> renderResetFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, void*, uint, void> renderReadFn;
         delegate* unmanaged[Cdecl]<IntPtr, float*, float*, int, int, uint*, byte*> renderViewFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> viewFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> schemaFn;
@@ -47,7 +48,7 @@ namespace Tide
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 10;
+        public const uint Abi = 11;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
@@ -169,6 +170,7 @@ namespace Tide
             cameraFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, float*, void>)Find("tide_embed_camera");
             renderFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_render");
             renderResetFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_render_reset");
+            renderReadFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, void*, uint, void>)Find("tide_embed_render_read");
             renderViewFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, float*, int, int, uint*, byte*>)Find("tide_embed_render_view");
             viewFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_view");
             schemaFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_schema");
@@ -186,7 +188,7 @@ namespace Tide
             replayFn = (delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte>)Find("tide_embed_replay");
             replayEndFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_replay_end");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
-                || cameraFn == null || renderFn == null || renderResetFn == null || renderViewFn == null
+                || cameraFn == null || renderFn == null || renderResetFn == null || renderReadFn == null || renderViewFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null
                 || travelFn == null || travelKeepFn == null || pauseFn == null || stepFn == null || showFn == null
                 || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null)
@@ -224,6 +226,7 @@ namespace Tide
         }
         public byte* Render(IntPtr embed, uint* size) => TideWebRender(size);
         public void RenderReset(IntPtr embed) => TideWebRenderReset();
+        public void RenderRead(IntPtr embed, uint token, void* data, uint size) => TideWebRenderRead(token, data, size);
         public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size)
         {
             *size = 0;
@@ -263,6 +266,7 @@ namespace Tide
         [DllImport("__Internal")] static extern byte* TideWebDraw(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebRender(uint* size);
         [DllImport("__Internal")] static extern void TideWebRenderReset();
+        [DllImport("__Internal")] static extern void TideWebRenderRead(uint token, void* data, uint size);
         [DllImport("__Internal")] static extern int TideWebCommand(uint type, uint index, uint generation, void* value, uint size);
         [DllImport("__Internal")] static extern void TideWebTravel(TideTravel* travel, int size);
         [DllImport("__Internal")] static extern void TideWebTravelKeep(float seconds);
@@ -289,6 +293,7 @@ namespace Tide
             cameraFn(embed, (float*)transform, (float*)projection);
         public byte* Render(IntPtr embed, uint* size) => renderFn(embed, size);
         public void RenderReset(IntPtr embed) => renderResetFn(embed);
+        public void RenderRead(IntPtr embed, uint token, void* data, uint size) => renderReadFn(embed, token, data, size);
         public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size) =>
             renderViewFn(embed, (float*)transform, (float*)projection, width, height, size);
         public byte* View(IntPtr embed, uint* size) => viewFn(embed, size);

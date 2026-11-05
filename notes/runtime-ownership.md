@@ -1,5 +1,17 @@
 # Runtime written by Claude for now
 
+## Compute's reads back in Unity: embed ABI 11 (2026-11-05)
+
+Under compute's pre-approved boundary, for the Unity replay: `tide/embed.h`
+gains the op `TIDE_EMBED_RENDER_BUFFER_READ` (appended) and
+`tide_embed_render_read(e, token, data, size)`, which hands the bytes of a read
+the other program made back to the recorder; `gpu.h` gains
+`tide_gpu_record_read`, and `gpu_record.c`'s `buffer_read`/`buffer_read_done`
+keep a table of reads instead of failing each. Generated game code calls nothing
+new; the `tide unity --web` program exports `tide_unity_render_read`.
+`TIDE_EMBED_ABI` and Unity's `TideLibrary.Abi` are 11, so hosts, embeds and the
+package move together. Contracts and tests: notes/unity.md, Compute in Unity.
+
 ## Compute: GPU lists, runs and reads back (2026-11-05)
 
 The owner pre-approved compute's boundary ("anything you decide should be

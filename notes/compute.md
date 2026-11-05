@@ -14,7 +14,8 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [x] Vulkan backend (`gpu_vk.c`; `notes/rendering.md`, Vulkan compute)
 - [x] WebGPU backend (`web/gpu_web.c`, `web/tide.js`), 2026-11-05: notes/web.md,
       WebGPU compute
-- [x] Recorder for Unity (`gpu_record.c`), 2026-11-05; its replay (`TideRender.cs`) not built
+- [x] Recorder for Unity (`gpu_record.c`) and its replay (`TideRender.cs`), reads back
+      included (embed ABI 11), 2026-11-05: notes/unity.md, Compute in Unity
 - [x] WGSL compute and storage in the translators (`wgsl_read.inc`, `spirv.c`, `hlsl.c`), 2026-11-05:
       see "The translators" below and `notes/shaders.md`
 - [x] tidec: `compute`, `GPUList<T>`, `GPU.Run`, ordered `Add`, atomics,
@@ -132,7 +133,9 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
   another fails the begun ones (`forget_compute`).
 - No compute (`gpu->dispatch` NULL: OpenGL, WebGL, and a draw reading storage
   there): passed by, said once, reads fail.
-- The recorder writes the new ops after the existing ones (`notes/unity.md`).
+- The recorder writes the new ops after the existing ones, and a read back as
+  `BUFFER_READ`, which the other program answers (`tide_embed_render_read`);
+  Unity's TideRender replays them (`notes/unity.md`, Compute in Unity).
 
 ### Tests
 
@@ -159,8 +162,6 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
 - `Draw.Mesh` over GPU-list vertices and indices; `DrawIndirectCount`.
 - A frag or vert reading a GPU list through a function given a struct works by
   field; one passed on alone is refused.
-- `tide unity`'s `.compute` file per kernel, and the C# replay of the recorder's
-  new ops (the Unity task; `TIDE_EMBED_ABI` stays 10 until it's built).
 - A run moved out of the render pass it fell in: runs end any open pass.
 - `Draw.Transform` on indirect draws.
 
@@ -361,8 +362,7 @@ Unity).
   polyfill: each invocation an array's elements from its local index by the
   workgroup's size, the first invocation everything else, then a workgroup
   barrier), so Vulkan needs no `shaderZeroInitializeWorkgroupMemory`.
-- **The Unity replay's contract** (HLSL, for whoever builds `TideRender.cs`'s
-  compute):
+- **The Unity replay's contract** (the HLSL `TideRender.cs`'s compute binds):
   - A compute program is one kernel, `tidehl_compute`, in a `.compute` file
     (`tide_hlsl_unity_compute`), its `[numthreads]` the WGSL's
     `@workgroup_size`.
@@ -394,6 +394,7 @@ Unity).
   invocation writes alike is only a warning (X3583), which
   `TideWarnings.hlsl` disables. Unity's other compilers (DXC for Direct3D 12
   and Vulkan, Metal) don't check this.
-- **Not run on a GPU yet:** the Vulkan backend's compute and the Unity replay
-  aren't built, so the translations are checked by spirv-val (Vulkan 1.3) and
-  fxc only; `tide_platform_compute` exercises them once `gpu_vk.c` has compute.
+- **Run on a GPU:** the SPIR-V by the Vulkan backend (`tide_platform_compute`,
+  `tide_platform_kernels`); the HLSL by Unity's replay, a kernel and a draw
+  reading storage, on Direct3D 11 and 12, Vulkan and OpenGL Core (the Sample's
+  `ComputeReplayTests`, `notes/unity.md`). Metal and WebGPU in Unity aren't run.

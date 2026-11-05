@@ -120,6 +120,15 @@ var TideWebLibrary = {
         if (x) x.tide_unity_render_reset();
     },
 
+    // A read back of the replay's (TideRender): its bytes into Tide's memory, or none for one that failed
+    TideWebRenderRead__deps: ['$TideWeb'],
+    TideWebRenderRead: function (token, data, size) {
+        var x = TideWeb.program();
+        if (!x) return;
+        var at = data && size ? TideWeb.copyIn(x, data, size) : 0;
+        x.tide_unity_render_read(token, at, at ? size : 0);
+    },
+
     TideWebRequest__deps: ['$TideWeb'],
     TideWebRequest: function (kind, text, port) {
         var x = TideWeb.program();

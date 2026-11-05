@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 10u
+#define TIDE_EMBED_ABI 11u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -223,9 +223,19 @@ typedef enum tide_embed_render_op {
     TIDE_EMBED_RENDER_DRAW_INDIRECT,          // buffer, offset: four uint32s (count, instances, first, 0)
     TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT,  // buffer, offset: five uint32s (count, instances, first, base, 0)
     TIDE_EMBED_RENDER_BUFFER_COPY,    // from, from_offset, to, to_offset, size: outside passes, in order
+    // token, buffer, offset, size: outside passes, those bytes of a storage buffer read back as they are once
+    // everything before is done, which the other program hands over with tide_embed_render_read
+    TIDE_EMBED_RENDER_BUFFER_READ,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
+
+// What a BUFFER_READ command read: its `size` bytes, or NULL (and 0) for a read
+// the other program couldn't make, which the game's read fails with. Once for
+// each token, from the frame thread, in any frame after its command's; a token
+// it doesn't know (answered already, or made old by tide_embed_render_reset)
+// is let go of, as are bytes of another size than the command's.
+void tide_embed_render_read(tide_embed *e, uint32_t token, const void *data, uint32_t size);
 
 // ...and the frame's 3D again, through another camera of the other program's
 // (its editor's scene view): only the 3D drawn on its own target, each through

@@ -1,19 +1,102 @@
 # Unity as a front end
 
-## Compute in the recording (2026-11-05)
+## Compute in Unity: embed ABI 11 (2026-11-05)
 
-The recorder (`gpu_record.c`) writes gpu.h's compute calls as new
+The recorder (`gpu_record.c`) writes gpu.h's compute calls as
 `tide_embed_render` ops after the existing ones, whose packets are unchanged:
 `PIPELINE_STORAGE` (id, compute, storage_count, storage_writes bits), right
 after the `PIPELINE` it's of; `STORAGE` (slot, buffer); `COMPUTE_BEGIN`,
 `COMPUTE_END`; `DISPATCH` (x, y, z); `DISPATCH_INDIRECT`, `DRAW_INDIRECT`,
 `DRAW_INDEXED_INDIRECT` (buffer, offset); `BUFFER_COPY` (from, from_offset, to,
-to_offset, size). A `BUFFER` of kind 2 is a storage buffer, zeroed when given
-nothing. Reads back return no token there, so a game's `await list.Read()`
-fails in Unity. Not built: `TideRender.cs`'s replay of these ops, `tide unity`
-writing each kernel's `.compute` (`tide_hlsl_unity_compute`), and the
-`TIDE_EMBED_ABI` bump that goes with them (it stays 10 until the replay takes
-the new ops). `notes/compute.md` has the translators' Unity contract.
+to_offset, size); and, new with the replay, `BUFFER_READ` (token, buffer,
+offset, size). A `BUFFER` of kind 2 is a storage buffer, zeroed when given
+nothing. `tide unity` writes each kernel's `.compute` (`tide_hlsl_unity_compute`,
+by the same key as shaders; `notes/compute.md` has the HLSL contract).
+
+**Reads back (embed ABI 11).** `buffer_read` gives a token (a table of 128 in
+`gpu_record.c`) and writes `BUFFER_READ`; the other program hands the bytes over
+with the new `tide_embed_render_read(e, token, data, size)`, NULL for a read it
+couldn't make, and `buffer_read_done` gives them once (1), 0 till then, -1 for a
+failed, unknown, answered or wrongly sized one. `tide_embed_render_reset` and
+the embed's end drop every waiting read (the renderer fails them itself, its
+device epoch moving). `gpu.h` has `tide_gpu_record_read`. `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 11; `tide_embed_render_read` is in the embed's exports
+(`build.c`), and on the web `tide_unity_render_read` (the generated program) and
+`TideWebRenderRead` (Tide.jslib, which copies the bytes in through
+`tide_unity_buffer`). `TideRunner.RenderRead` passes TideRender's answers on.
+
+**The replay (`TideRender.cs`).** Compute runs once a frame, however many cameras
+draw it: as `Prepare` reads the commands, into a CommandBuffer of its own
+(`work`) that `Flush` runs with `Graphics.ExecuteCommandBuffer` before anything
+done at once (a buffer or texture written, mipmaps) and at the commands' end,
+the recording's uniform buffer written first so kernels have their values. Draws
+stay deferred to the camera, so:
+
+- A storage buffer is a raw `GraphicsBuffer` (Raw, CopySource, CopyDestination),
+  as vertex buffers are. Unity ignores Raw beside IndirectArguments ("Invalid
+  combination ... Ignoring Raw"), and its CopyBuffer copies whole buffers of one
+  size alone, so indirect calls' numbers go through `Resources/TideCompute.compute`
+  (`TideCopy`, words between raw buffers, bounds-checked): copied where the call
+  is in the frame into a pooled raw buffer, then with CopyBuffer into a pooled
+  IndirectArguments buffer (and, for a dispatch, a pooled `Constant |
+  CopyDestination` buffer bound as `TideGroups`). A direct dispatch's TideGroups
+  is its own pooled buffer, written at once. Pools are taken in turn and reset
+  at each frame's `Replay`. `BUFFER_COPY` is the same kernel (through a buffer
+  between when both are one).
+- A buffer a kernel or copy writes after a kept draw of the frame read it is
+  renamed (`Written`): a new buffer, the old one's bytes copied first in the
+  work's order, the draw keeping the old one, as CPU writes already were.
+- Draws bind storage with `SetGlobalBuffer(_TideStorage<i>)`; indirect ones are
+  `DrawProceduralIndirect` (with the bound index buffer for an indexed one),
+  their first vertex or index in the numbers, `_TideFirst` 0.
+- Kernels: the pipeline's `.compute` (`Loaded<ComputeShader>`, looked for again
+  each frame till imported, one Console error two seconds on as for shaders),
+  kernel `tidehl_compute`; `SetComputeBufferParam` for its storage,
+  `SetComputeConstantBufferParam` for `TideUniforms` and `TideGroups`,
+  `SetComputeTextureParam` and `_TideSampling(High)` for its textures.
+- Reads are `RequestAsyncReadback` in the work's order; the answer goes to
+  `TideRunner.RenderRead` (or `ReadsTo`, a test's). One begun before
+  `ForgetAll` (a reset) is dropped: the embed forgot it. A read of nothing, or on
+  a GPU without async readback, fails at once.
+- `Replay` with no camera still prepares, so compute and reads go on.
+- `Supported` now asks for compute shaders, indirect arguments, shader level 4.5,
+  seven storage buffers in compute and fragment stages and ten (three vertex
+  buffers more) in vertex stages, and not OpenGL ES 3: **Unity's OpenGL ES 3.0
+  and WebGL 2 targets don't take Tide's renderer any more** (owner's rule:
+  compute is on every render backend), and draw the views' 2D with the OnGUI
+  path (`TideDraw.cs`) as GPUs without constant buffers did. WebGPU, Metal,
+  Vulkan, Direct3D 11/12 and desktop OpenGL do. `textureBuffers`, the GL ES path,
+  stays in TideRender until the GL backends' removal takes the `gles3` subshaders
+  too.
+
+**Picks (mine, Provisional):** compute in a CommandBuffer of its own run as the
+commands are read, rather than in the camera's (a camera can draw a frame twice,
+or not at all, where compute must run once); a kernel samples a render target as
+the camera's commands left it (the last frame's passes), not as this frame's
+passes before it, which run later; copies through a kernel of the package's.
+
+**Tests:** `tide_platform_embed`'s `embed_render_compute` (every compute op's
+words, a read answered once, another size or NULL failing, a reset dropping
+waiting reads); `tide_cli_tests`, `tide_cli_unity_physics`,
+`tidec_unity_folder_names`, `tide_platform_embed_shards`, `tide_editor_embed`
+pass (sanitize). The Sample's PlayMode `ComputeReplayTests` replays commands it
+makes itself through a kernel and a draw shader tidec's translator wrote
+(`Assets/Tests/Resources/TideShaders/00000000c0de000{1,2}.*`, from the WGSL in
+the test's comment), with `ReadsTo` taking the reads: a direct and an indirect
+dispatch (their storage, values and TideGroups), a copy, a write after the work
+landing after it, a read of nothing failing; storage starting as zeros and
+staying from frame to frame; and two indirect draws reading storage in both
+stages, the first's colors kept as they were though a kernel between them wrote
+them. Run in Unity 6000.6.0f1 in batch mode on a GPU (TIDE_HIDDEN, no window,
+`-noAudio`, automatic builds off) in a scratch copy of the Sample with this
+checkout's package by `file:`: ComputeReplayTests 3/3 on Direct3D 11 and 12,
+Vulkan and OpenGL Core, and EditMode `ShaderTests` (the fixture shader too) with
+nothing said; without the rename the indirect-draw test fails (checked). The
+package and test assemblies compile with no C# warnings. The web debug build of
+the embed compiles; the docs build passes. Not run: the Sample's other suites
+with a tide built from this checkout (ABI 11 needs one; no Sample game runs a
+kernel), a real game's kernels in Unity, Metal, WebGPU (a Unity web player),
+URP's pass with compute, and the `tide unity --web` program's new export.
 
 ## Embed ABI 10: the game asks to quit (2026-11-04)
 
@@ -1419,6 +1502,8 @@ pipeline and URP; on Direct3D 11 and 12, Vulkan, OpenGL and WebGL 2; in Gamma
 and Linear projects; and the editor's scene views show the frame's 3D. The
 OnGUI path (`TideDraw.cs`) remains only for a GPU `TideRender.Supported` refuses
 (no constant buffers, or neither compute-class buffers nor OpenGL ES 3).
+Correction 2026-11-05 (Compute in Unity, above): OpenGL ES 3 and WebGL 2 are
+refused too now, compute being on every render backend.
 
 - **Shaders:** `tide unity` (`compiler/cli/unity_shaders.c`, with `--assets`)
   writes a Unity shader per pipeline WGSL: the renderer's 10 (`TIDE_RENDERER_WGSL`)

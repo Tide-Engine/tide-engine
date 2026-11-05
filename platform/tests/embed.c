@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_BUFFER_COPY + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_BUFFER_READ + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_BUFFER_COPY) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_BUFFER_READ) {
             r.whole = false;
             break;
         }
@@ -520,6 +520,83 @@ TIDE_TEST(embed_render_pipeline_carries_actual_texture_reads)
         const uint32_t name_at = 8u + (reads_at + textures + 9u) * 4u;
         TIDE_CHECK(u32_at(packet, name_at - 4u) == 8 && memcmp(packet + name_at, "capacity", 8) == 0);
     }
+}
+
+// gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds
+// of storage, a compute pass, direct and indirect dispatches and draws, a copy, and a read back the other program
+// answers (tide_embed_render_read) for buffer_read_done to give, once.
+TIDE_TEST(embed_render_compute)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    tide_gpu_record_begin();
+    const tide_gpu tide = tide_gpu_record;
+    const tide_gpu_id storage = tide.buffer(TIDE_GPU_STORAGE, 64, NULL);
+    tide_gpu_pipeline_desc desc = {.name = "kernel", .compute = true, .storage_count = 3};
+    desc.storage_writes[1] = true;
+    const tide_gpu_id kernel = tide.pipeline(&desc);
+    tide.compute_begin();
+    tide.use(kernel);
+    tide.storage(1, storage);
+    tide.dispatch(2, 3, 4);
+    tide.dispatch_indirect(storage, 16);
+    tide.compute_end();
+    tide.buffer_copy(storage, 4, storage, 32, 8);
+    const uint32_t token = tide.buffer_read(storage, 8, 12);
+    TIDE_REQUIRE(token != 0);
+    uint32_t size = 0;
+    const uint8_t *p = tide_gpu_record_end(&size);
+    // Each command, in order: its op and words
+    const uint32_t expected[][7] = {
+        {TIDE_EMBED_RENDER_BUFFER, 4, storage, TIDE_GPU_STORAGE, 64, 0},
+        {TIDE_EMBED_RENDER_PIPELINE, 1, kernel},
+        {TIDE_EMBED_RENDER_PIPELINE_STORAGE, 4, kernel, 1, 3, 2},
+        {TIDE_EMBED_RENDER_COMPUTE_BEGIN, 0},
+        {TIDE_EMBED_RENDER_USE, 1, kernel},
+        {TIDE_EMBED_RENDER_STORAGE, 2, 1, storage},
+        {TIDE_EMBED_RENDER_DISPATCH, 3, 2, 3, 4},
+        {TIDE_EMBED_RENDER_DISPATCH_INDIRECT, 2, storage, 16},
+        {TIDE_EMBED_RENDER_COMPUTE_END, 0},
+        {TIDE_EMBED_RENDER_BUFFER_COPY, 5, storage, 4, storage, 32, 8},
+        {TIDE_EMBED_RENDER_BUFFER_READ, 4, token, storage, 8, 12},
+    };
+    uint32_t at = 0;
+    for (size_t c = 0; c < sizeof expected / sizeof expected[0]; c++) {
+        TIDE_REQUIRE(at + 8u <= size);
+        TIDE_CHECK(u32_at(p, at) == expected[c][0]);
+        const uint32_t length = u32_at(p, at + 4u);
+        TIDE_REQUIRE(at + 8u + length <= size);
+        for (uint32_t w = 0; w < expected[c][1]; w++) TIDE_CHECK(u32_at(p, at + 8u + 4u * w) == expected[c][2 + w]);
+        if (expected[c][0] != TIDE_EMBED_RENDER_PIPELINE) TIDE_CHECK(length == 4u * expected[c][1]);
+        at += 8u + length;
+    }
+    TIDE_CHECK(at == size);
+    // Not here yet; then here, once
+    uint8_t got[12] = {0};
+    TIDE_CHECK(tide.buffer_read_done(token, got) == 0);
+    const uint8_t bytes[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    tide_embed_render_read(e, token, bytes, 11); // Another size: let go of, as a failed read
+    TIDE_CHECK(tide.buffer_read_done(token, got) == -1);
+    TIDE_CHECK(tide.buffer_read_done(token, got) == -1); // ...and forgotten
+    tide_gpu_record_begin();
+    const uint32_t second = tide.buffer_read(storage, 0, 12);
+    TIDE_REQUIRE(second != 0 && second != token);
+    tide_embed_render_read(e, second, bytes, 12);
+    tide_embed_render_read(e, second, NULL, 0); // Answered already: nothing changes
+    TIDE_CHECK(tide.buffer_read_done(second, got) == 1);
+    TIDE_CHECK(memcmp(got, bytes, sizeof bytes) == 0);
+    TIDE_CHECK(tide.buffer_read_done(second, got) == -1);
+    // One the other program couldn't make fails; one a reset made old is gone
+    const uint32_t failed = tide.buffer_read(storage, 0, 4);
+    tide_embed_render_read(e, failed, NULL, 0);
+    TIDE_CHECK(tide.buffer_read_done(failed, got) == -1);
+    const uint32_t old = tide.buffer_read(storage, 0, 4);
+    tide_embed_render_reset(e);
+    tide_embed_render_read(e, old, bytes, 4);
+    TIDE_CHECK(tide.buffer_read_done(old, got) == -1);
+    tide_gpu_record_end(&size);
+    tide_embed_destroy(e);
 }
 
 static rendered render(tide_embed *e)
