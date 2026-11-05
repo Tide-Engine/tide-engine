@@ -457,3 +457,63 @@ TIDE_TEST(draw_culled_declines_and_hands_over)
     tide_text_use(NULL, NULL);
     tide_heap_free(&heap);
 }
+
+// Draw.Occlusion: a destination's own, off each frame, put back by blocks; each culled draw carries what it was,
+// and draws with it on and off don't join one set.
+TIDE_TEST(draw_culled_carry_occlusion)
+{
+    const uint64_t mark = tide_scratch_mark();
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_list plain = scattered(300, 5u, NONE_MIRRORED, 20.0f);
+    in_view(plain, 1u);
+    tide_draw_list d = {0};
+    frame(&d, true);
+    TIDE_CHECK(d.place.occlusion == 0);
+    TIDE_CHECK(draw(&d, plain));
+    tide_draw_set_occlusion(&d, true);
+    TIDE_CHECK(d.place.occlusion == 1);
+    TIDE_CHECK(draw(&d, plain));
+    TIDE_CHECK(draw(&d, plain)); // Joins the one before: both with it on
+    const uint32_t saved = tide_draw_push_occlusion(&d, false);
+    TIDE_CHECK(d.place.occlusion == 0);
+    TIDE_CHECK(draw(&d, plain));
+    tide_draw_pop(&d, saved);
+    TIDE_CHECK(d.place.occlusion == 1);
+    tide_draw_unset_occlusion(&d);
+    TIDE_CHECK(d.place.occlusion == 0);
+    TIDE_CHECK(d.cull_count == 4);
+    TIDE_CHECK(!d.culls[0].occlusion && d.culls[1].occlusion && d.culls[2].occlusion && !d.culls[3].occlusion);
+    // Three sets: off, on (two draws), off
+    uint32_t sets = 0, joined = 0;
+    for (uint32_t i = 0; i < d.run_count; i++) {
+        const tide_draw_run *r = &d.runs[i];
+        if (!r->culled) continue;
+        bool first = true;
+        for (uint32_t k = 0; k < i; k++) first &= d.runs[k].culled != r->culled;
+        sets += first;
+        for (uint32_t j = r->culled - 1u; j < r->culled - 1u + r->culled_count; j++) {
+            TIDE_CHECK(d.culls[j].occlusion == d.culls[r->culled - 1u].occlusion);
+        }
+        joined += first && r->culled_count == 2;
+    }
+    TIDE_CHECK(sets == 3 && joined == 1);
+    // A target's own, and the next frame starts with it off everywhere
+    tide_draw_to(&d, 17, 64, 64);
+    TIDE_CHECK(d.place.occlusion == 0);
+    tide_draw_set_occlusion(&d, true);
+    tide_draw_to(&d, 0, 0, 0);
+    TIDE_CHECK(d.place.occlusion == 0);
+    tide_draw_set_occlusion(&d, true);
+    tide_draw_to(&d, 17, 64, 64);
+    TIDE_CHECK(d.place.occlusion == 1);
+    frame(&d, true);
+    TIDE_CHECK(d.place.occlusion == 0);
+    tide_draw_to(&d, 17, 64, 64);
+    TIDE_CHECK(d.place.occlusion == 0);
+    tide_draw_free(&d);
+    tide_list_release(&plain, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}

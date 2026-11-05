@@ -72,6 +72,7 @@ The `semantics` object repeats the measurement definitions in the file itself.
 | `gpu_passes` | GPU pass timing rows, target/order/pixel size, shader membership and submitted work for completed samples. Check `pending`, `unmeasured` and `dropped_observations` for missing coverage; see below. |
 | `geometry` | Submitted cached mesh work by asset, originating view, target and selected LOD; see below. |
 | `render_work` | Total renderer draw calls and vertices across the measured frames. These are separate from instances retained in draw commands. A draw the GPU decides is one call; its vertices are the GPU's numbers, read back a frame or two late. |
+| `occlusion` | [Occlusion culling](../game/3d.md#occlusion-culling)'s counts, summed over the `frames` whose counts came back from the GPU (a frame or two late, as GPU timing is): instances `tested` against the depth drawn before them, and those it `hidden` (not drawn). All zero without `Draw.Occlusion`. |
 | `draw_diagnostics` | Mesh recording time and work counts, grouped by source, destination `target` and `camera_slot`; see below. |
 | `limits` | Dropped timing observations, draw calls and draw candidates. Nonzero values mean the affected source tables are incomplete. |
 

@@ -1075,6 +1075,7 @@ typedef struct frame_target {
     tide_target_size size; // As the list recorded it
     bool valid;
     bool bare; // It holds depth alone (TIDE_TARGET_DEPTH): a color has nowhere to go there
+    bool begun; // A pass on it has begun this frame: its depth is this frame's (occlusion culling measures it)
     tide_gpu_target_format into; // What it holds, which the pipelines that draw into it are made for
 } frame_target;
 
@@ -5224,10 +5225,16 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             pass_active = false;
             prepare_step_mipmaps(list, s, false);
         }
+        if (cull_span_at(i)) { // Draws testing occlusion from here: the depth drawn so far measured, outside a pass
+            if (pass_active) end_pass();
+            pass_active = false;
+            cull_span_start(list, frame_targets[draw_target].begun);
+        }
         if (!pass_active && step_draws(s)) {
             begin_pass(frame_targets[draw_target].gpu, !draw_target && !cleared);
             passes++;
             if (!draw_target) cleared = true;
+            frame_targets[draw_target].begun = true;
             pass_active = true;
             clip(&frame_targets[draw_target].clipping);
         }
@@ -5316,6 +5323,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         profile_pass_draw(list, s, calls - before_calls, vertices - before_vertices);
     }
     if (pass_active) end_pass();
+    cull_frame_end();
     if (!cleared) { // Nothing drew in the frame's target
         select_target(0);
         begin_pass(target, true);

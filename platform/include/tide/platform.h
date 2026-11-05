@@ -464,6 +464,19 @@ typedef struct tide_platform_cull_report {
 } tide_platform_cull_report;
 bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
 
+// Occlusion culling (Draw.Occlusion; notes/drawing.md, Occlusion culling from a depth pyramid): what the GPU's
+// culling counted, as it came back from the GPU (a frame or two after it was drawn; with `wait`, it waits for the
+// last frame's, where the backend can), and the last frame's spans and pyramids made. False until counts have come.
+typedef struct tide_platform_occlusion_report {
+    uint64_t tested; // Instances the frustum kept that a pyramid of the depth drawn before them was asked about
+    uint64_t hidden; // ...that it surely hid: not drawn
+    uint32_t spans;  // Runs of draws testing it in the last frame drawn, each with a pyramid of its own...
+    uint32_t pyramids; // ...and the pyramids made (none where a destination gave no depth to measure, or had none yet)
+    uint64_t serial;   // How many frames' counts have come back: a new number, new counts
+    bool counted;
+} tide_platform_occlusion_report;
+bool tide_platform_occlusion(tide_platform_occlusion_report *report, bool wait);
+
 // Networking for sessions (tide/session.h): a UDP transport, taking datagrams
 // on `port` (0: any free one). False where there's no network, like the web
 // for now, or when the port is taken.

@@ -25,8 +25,8 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
       ("Meshes over GPU lists" below)
 - [x] `Draw.Transform` on indirect draws, runs moved out of passes, fxc's shared-memory races warned, 2026-11-05
 - [x] GL backends removed, 2026-11-05 (`notes/rendering.md`, GL backends removed)
-- [x] Engine GPU culling of listed runs, 2026-11-05: notes/drawing.md, Listed runs culled on the GPU (Hi-Z
-      occlusion not built)
+- [x] Engine GPU culling of listed runs, 2026-11-05: notes/drawing.md, Listed runs culled on the GPU; Hi-Z
+      occlusion (`Draw.Occlusion`) the same day: drawing.md, Occlusion culling from a depth pyramid
 - [x] Docs: `docs/game/shaders.md`, spec, editors
 - [x] GPU lists passed on alone, writes/Add/atomics in functions, mirrored instances of indirect draws, shared writes
       guarded for fxc, Adds sharing one scan, Draw.Bounds pinned for GPU vertices, 2026-11-05 ("Closing the gaps" below)
@@ -169,7 +169,7 @@ has no draw list). (A 2D or 3D `Draw.Instanced` over a GPU list wasn't moved by
 
 - (Built 2026-11-05: `draw_indexed_indirect_count`, below and notes/drawing.md.) A game's `Draw.Instanced` over a
   GPU list is still one indirect draw a call: nothing in the language asks for many records.
-- Hi-Z occlusion in the engine's culling (drawing.md).
+- (Hi-Z occlusion in the engine's culling is built: drawing.md, Occlusion culling from a depth pyramid.)
 - (Built since, "Closing the gaps" below: GPU lists passed on alone, mirrored instances of indirect draws, fxc's race
   guarded.)
 - Stats: an indirect draw counts its mesh's indices once (its instance count is the GPU's), and a draw of GPU indices

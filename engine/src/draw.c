@@ -1123,6 +1123,7 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
             case TIDE_DRAW_SAVED_LOD_PIXELS: p->lod_pixels = s->pixels; break;
             case TIDE_DRAW_SAVED_FRUSTUM_CULLING: p->no_frustum_culling = s->value; break;
             case TIDE_DRAW_SAVED_BOUNDS: p->bounds = s->bounds; break;
+            case TIDE_DRAW_SAVED_OCCLUSION: p->occlusion = s->value; break;
             case TIDE_DRAW_SAVED_CAMERA_2D: p->camera_2d = s->value; break;
             default: p->camera_3d = s->value; break;
             }
@@ -1315,6 +1316,24 @@ uint32_t tide_draw_push_frustum_culling(tide_draw_list *d, const bool enabled)
     const uint32_t mark = d->saved_count;
     save(d, TIDE_DRAW_SAVED_FRUSTUM_CULLING)->value = d->place.no_frustum_culling;
     tide_draw_set_frustum_culling(d, enabled);
+    return mark;
+}
+
+void tide_draw_set_occlusion(tide_draw_list *d, const bool enabled)
+{
+    d->place.occlusion = enabled ? 1u : 0u;
+}
+
+void tide_draw_unset_occlusion(tide_draw_list *d)
+{
+    d->place.occlusion = 0;
+}
+
+uint32_t tide_draw_push_occlusion(tide_draw_list *d, const bool enabled)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_OCCLUSION)->value = d->place.occlusion;
+    tide_draw_set_occlusion(d, enabled);
     return mark;
 }
 
@@ -1703,6 +1722,7 @@ void tide_draw_defaults(tide_draw_list *d)
         p->lod = p->lod_camera = 0;
         p->lod_pixels = 0.0f;
         p->no_frustum_culling = 0;
+        p->occlusion = 0;
         p->bounds = (tide_draw_bounds){0};
         p->blend = TIDE_BLEND_ALPHA;
         p->depth = TIDE_DEPTH_READ_WRITE;
@@ -3999,7 +4019,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
     d->culls = grow(d->culls, d->cull_count, &d->cull_capacity, 1, sizeof(tide_draw_cull), 64u);
     d->culls[job] = (tide_draw_cull){.camera = cull_camera(d, &d->frustum_matrix, &view), .mesh = mesh, .page = slot,
                                      .first = first, .count = count, .packs = size / 16u, .low = (uint8_t)low,
-                                     .high = (uint8_t)high, .bounds = bounds};
+                                     .high = (uint8_t)high, .occlusion = p->occlusion ? 1u : 0u, .bounds = bounds};
     d->cull_count++;
     if (d->diagnostics) { // The geometry rows what the GPU draws of each of its levels counts in, once it says
         tide_draw_cull *made = &d->culls[job];
@@ -4022,6 +4042,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
         // Its set's runs are the list's last commands, a level each from its first draw's lowest on
         const uint32_t set_low = head ? head->low : 0u;
         bool same = head && r->culled - 1u + r->culled_count == job && family == mesh && head->page == slot
+                 && head->occlusion == d->culls[job].occlusion
                  && (r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
                  && r->sampling == sampling && same_color(r->tint, tide_draw_tint(d)) && low >= set_low
                  && top >= set_low && top <= TIDE_MESH_LEVELS && d->count >= top - set_low + 1u

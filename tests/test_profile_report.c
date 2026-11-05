@@ -190,6 +190,8 @@ TIDE_TEST(profile_report_excludes_baseline_and_survives_overlay_clears)
     p.systems_ms += 1;
     p.changes_ms += 0.25;
     tide_profile_report_end(&report, &p, 3, 100);
+    tide_profile_report_occlusion(&report, 500, 320); // A frame's occlusion counts, as they come back
+    tide_profile_report_occlusion(&report, 400, 300);
     tide_profile_free(&p); // Report sources and totals survive the originating profile.
 
     char *text = written(&report, &(tide_profile_report_info){.total_frames = 62, .warmup = 60});
@@ -209,6 +211,9 @@ TIDE_TEST(profile_report_excludes_baseline_and_survives_overlay_clears)
     TIDE_CHECK(number(field(ticks, "count")) == 3 && number(field(ticks, "systems_ms")) == 5);
     TIDE_CHECK(number(field(ticks, "changes_events_tasks_ms")) == 0.75);
     TIDE_CHECK(number(field(render, "draw_calls")) == 10 && number(field(render, "vertices")) == 190);
+    const tide_json occlusion = field(j, "occlusion");
+    TIDE_CHECK(number(field(occlusion, "frames")) == 2 && number(field(occlusion, "tested")) == 900);
+    TIDE_CHECK(number(field(occlusion, "hidden")) == 620);
     TIDE_CHECK(number(field(field(j, "cpu_work"), "samples")) == 2);
     TIDE_CHECK(number(field(field(j, "cpu_work"), "total_ms")) >= 0.0);
     free(text);

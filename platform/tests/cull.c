@@ -3,8 +3,10 @@
 // back and set beside the CPU's decisions (tide_platform_cull_compare): every instance the CPU draws, in order,
 // and only a few more (its slack at the frustum's edges), with the draw records the GPU wrote for each call: those
 // of the runs that kept any, in order, then none. Where the device takes draws' first instances, runs one after
-// another that draw alike are one call. The stats' vertices and draws, read back from the GPU a frame or more later,
-// are the CPU's culling's. Then the device is lost, and it's all again on the next.
+// another that draw alike are one call. One setting has the field behind a wall, testing occlusion: the same pixels,
+// some instances hidden, its runs at their levels still joined and their records those of what occlusion's culling
+// kept. The stats' vertices and draws, read back from the GPU a frame or more later, are the CPU's culling's. Then
+// the device is lost, and it's all again on the next.
 // Under TIDE_GPU_CULLING=decide the renderer has the CPU decide the recorded runs, and draws the same.
 
 #include <stdio.h>
@@ -23,7 +25,7 @@
 #include "gpu_vk.h"   // ...and Vulkan's
 #endif
 
-enum { WIDTH = 160, HEIGHT = 96, PIXELS = WIDTH * HEIGHT, CAMERAS = 3, SETTINGS = 5 };
+enum { WIDTH = 160, HEIGHT = 96, PIXELS = WIDTH * HEIGHT, CAMERAS = 3, SETTINGS = 6, OCCLUSION = 5 };
 
 static tide_world world;
 static tide_local local;
@@ -78,12 +80,21 @@ static bool shots(const char *when, const bool computes)
             // Where none was culled on the GPU yet (its kernels or a pipeline still being made), the renderer had
             // the CPU decide them: the same pixels still
             char what[160];
-            if (read) {
+            if (read && setting == OCCLUSION) { // The CPU's decisions know nothing of occlusion: it left out some
+                tide_platform_occlusion_report hidden;
+                tide_platform_occlusion(&hidden, true);
+                snprintf(what, sizeof what, "camera %d, setting %d: occlusion hid %llu of %llu tested, in %u of %u runs "
+                         "testing it measured", camera, setting, (unsigned long long)hidden.hidden,
+                         (unsigned long long)hidden.tested, hidden.pyramids, hidden.spans);
+                expect(hidden.spans == 1 && hidden.pyramids == 1 && (camera != 0 || hidden.hidden > 0), what, when);
+            } else if (read) {
                 snprintf(what, sizeof what, "camera %d, setting %d: the GPU kept every instance the CPU draws, in order "
                          "(%llu of %llu, %llu more, in %u runs)", camera, setting,
                          (unsigned long long)(report.cpu - report.missing), (unsigned long long)report.cpu,
                          (unsigned long long)report.extra, report.runs);
                 expect(report.missing == 0 && report.cpu > 0 && report.extra * 20u <= report.cpu, what, when);
+            }
+            if (read) {
                 snprintf(what, sizeof what, "camera %d, setting %d: %u calls for %u runs drew the %u that kept any (%u joined), "
                          "their records as they were kept (%u not)", camera, setting, report.calls, report.runs,
                          report.draws, report.joined, report.misdrawn);
@@ -95,7 +106,8 @@ static bool shots(const char *when, const bool computes)
                 const bool joins = gpu->indirect && (gpu->indirect() & TIDE_GPU_INDIRECT_FIRST_INSTANCE);
                 snprintf(what, sizeof what, "camera %d, setting %d: %u calls for %u culled runs, %s", camera, setting,
                          report.calls, report.runs, joins ? "joined" : "one each");
-                expect(joins ? report.calls <= report.runs && (setting != 0 || report.calls < report.runs) : report.calls == report.runs,
+                expect(joins ? report.calls <= report.runs && ((setting != 0 && setting != OCCLUSION) || report.calls < report.runs)
+                             : report.calls == report.runs,
                        what, when);
             }
             draw_shot(camera, setting, false, plain);

@@ -1,0 +1,283 @@
+// Occlusion culling (platform/tests/occlusion.c; notes/drawing.md, Occlusion culling from a depth pyramid).
+//
+// Shots: fields of boxes, each a list drawn instanced with Draw.Occlusion on, behind walls and a see-through pane
+// that writes depth, drawn before them; then a draw without it, more with it (another run, its depth measured again)
+// and more after the depth is cleared. Into the window, a target of its own and a target of 4 samples. The host
+// draws a run of frames (walls that move, a camera cut, a camera inside the field, a window of another size) with
+// the GPU's culling and occlusion, and each frame again on the CPU's path, which knows nothing of occlusion: the
+// same pixels, byte for byte.
+//
+// Probes: where occlusion.tide's HiZFind says a box falls in a pyramid, worked out on the CPU (this, as C) and on
+// the GPU (Probe), for the host to check against its own reckoning in doubles.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+struct Box
+{
+    float4x4 transform = float4x4.identity;
+    Color tint;
+}
+
+local singleton Field
+{
+    List<Corner> corners;
+    List<int> faces;
+    List<List<Box>> patches;
+    List<Box> walls;
+    int made;
+    RenderTarget single;
+    RenderTarget sampled;
+}
+
+// What the host has the frame drawn with
+local singleton Shot
+{
+    int camera;    // 0: before the walls; 1: from the field's other side; 2: inside the field
+    float slide;   // How far the walls have moved, sideways
+    int into;      // 0: the window; 1: a target; 2: a target of 4 samples
+    bool occlusion;
+}
+
+frag Paint(Corner corner, out Color color, Box box)
+{
+    color = box.tint * corner.color;
+}
+
+float Roll(int i, int k)
+{
+    return (Math.Hash(int2(i, k)) % 10000) / 10000.0;
+}
+
+view Make(mut Field field)
+{
+    if (field.made > 0) return;
+    field.made = 1;
+    // A box, its corners colored, its faces' fronts out
+    for (int c = 0; c < 8; c++)
+    {
+        float3 at = float3((c & 1) == 0 ? -0.5 : 0.5, (c & 2) == 0 ? -0.5 : 0.5, (c & 4) == 0 ? -0.5 : 0.5);
+        field.corners.Add(Corner { position = at, uv = at.xy, color = Color(0.3 + 0.7 * (c & 1), 0.3 + 0.35 * (c & 2), 0.3 + 0.175 * (c & 4)) });
+    }
+    field.faces = [0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5];
+    // Patches of boxes from 10 to 90 along z, spread across x
+    for (int p = 0; p < 16; p++)
+    {
+        mut List<Box> patch = [];
+        float3 middle = float3(Roll(p, 0) * 60 - 30, Roll(p, 1) * 4 - 2, 10 + p * 5);
+        int count = 40 + p * 9;
+        for (int i = 0; i < count; i++)
+        {
+            float turn = Roll(p * 1000 + i, 3) * 6.28;
+            float size = 0.3 + Roll(p * 1000 + i, 4) * 1.2;
+            float3 at = middle + float3(Roll(p * 1000 + i, 5) * 24 - 12, Roll(p * 1000 + i, 6) * 6 - 3, Roll(p * 1000 + i, 7) * 6 - 3);
+            float4x4 placed = float4x4.TRS(at, quaternion.AxisAngle(float3(0.3, 1, 0.2), turn), float3(size, size, size));
+            patch.Add(Box { transform = placed, tint = Color(0.4 + 0.6 * Roll(p, 8), 0.4 + 0.6 * Roll(i, 9), 1) });
+        }
+        field.patches.Add(patch);
+    }
+    // Walls, between the camera and the field: wide, tall and thin
+    for (int w = 0; w < 3; w++)
+    {
+        float3 at = float3(-26 + w * 26, 0, 6 + w * 3);
+        field.walls.Add(Box { transform = float4x4.TRS(at, quaternion.identity, float3(14, 12, 0.5)), tint = Color(0.6, 0.6, 0.55) });
+    }
+}
+
+void Picture(Field field, Shot shot, RenderTarget into, bool window)
+{
+    float4x4 camera = shot.camera == 0 ? float4x4.TRS(float3(0, 1, -12), quaternion.identity, float3(1, 1, 1))
+        : shot.camera == 1 ? float4x4.TRS(float3(4, 3, 110), quaternion.Euler(float3(0.05, 3.1, 0)), float3(1, 1, 1))
+        : float4x4.TRS(float3(-3, 0.5, 40), quaternion.Euler(float3(0, 0.4, 0)), float3(1, 1, 1));
+    mut List<Box> walls = [];
+    foreach (Box wall in field.walls)
+    {
+        walls.Add(Box { transform = Math.Mul(float4x4.Translate(float3(shot.slide, 0, 0)), wall.transform), tint = wall.tint });
+    }
+    // A pane of glass before the middle of the field: see-through, and writing depth
+    List<Box> glass = [Box { transform = float4x4.TRS(float3(-shot.slide, 1, 8), quaternion.identity, float3(10, 6, 0.2)),
+                             tint = Color(0.4, 0.8, 1, 0.5) }];
+    if (window)
+    {
+        Draw.SetCamera(camera, float4x4.PerspectiveFov(1.1, Screen.width / Screen.height, 0.3, 400));
+        Draw.Clear(Color(0.1, 0.1, 0.15));
+        // The walls and the pane: drawn before, without occlusion; what they hide is in the depth the boxes are
+        // tested against
+        Draw.Instanced(field.corners, field.faces, walls, Paint);
+        Draw.Instanced(field.corners, field.faces, glass, Paint);
+        Draw.SetOcclusion(shot.occlusion);
+        foreach (List<Box> patch in field.patches) Draw.Instanced(field.corners, field.faces, patch, Paint);
+        Draw.SetOcclusion();
+        // A draw that doesn't test it, more that do (measured again), and more after the depth is cleared
+        Draw.Instanced(field.corners, field.faces, field.patches[3], Paint);
+        Draw.Occlusion(shot.occlusion)
+        {
+            Draw.Instanced(field.corners, field.faces, field.patches[5], Paint);
+            Draw.ClearDepth();
+            Draw.Instanced(field.corners, field.faces, field.patches[6], Paint);
+        }
+        // ...and what's see-through after that
+        Draw.Depth(Depth.Read), Draw.Blend(Blend.Add)
+        {
+            Draw.Instanced(field.corners, field.faces, field.patches[7], Paint);
+        }
+        return;
+    }
+    into.SetCamera(camera, float4x4.PerspectiveFov(1.1, 160.0 / 96.0, 0.3, 400));
+    into.Clear(Color(0.15, 0.1, 0.1));
+    into.Instanced(field.corners, field.faces, walls, Paint);
+    into.Instanced(field.corners, field.faces, glass, Paint);
+    into.SetOcclusion(shot.occlusion);
+    foreach (List<Box> patch in field.patches) into.Instanced(field.corners, field.faces, patch, Paint);
+    into.SetOcclusion();
+    into.Instanced(field.corners, field.faces, field.patches[3], Paint);
+    into.Occlusion(shot.occlusion)
+    {
+        into.Instanced(field.corners, field.faces, field.patches[5], Paint);
+        into.ClearDepth();
+        into.Instanced(field.corners, field.faces, field.patches[6], Paint);
+    }
+}
+
+view Shoot(mut Field field, Shot shot)
+{
+    if (shot.into == 0)
+    {
+        Picture(field, shot, field.single, true);
+        return;
+    }
+    if (!field.single.valid) field.single = RenderTarget(160, 96, 1);
+    if (!field.sampled.valid) field.sampled = RenderTarget(160, 96, 1, samples: 4);
+    RenderTarget into = shot.into == 1 ? field.single : field.sampled;
+    Picture(field, shot, into, false);
+    Draw.SetScreen();
+    Draw.Sprite(into.color, float2(80, 48), float2(160, 96), Filter.Point);
+}
+
+// ---------------------------------------------------------------------------
+// Probes of HiZFind
+
+struct ProbeCase
+{
+    float4 m0;      // The camera's world-to-clip columns
+    float4 m1;
+    float4 m2;
+    float4 m3;
+    float4 center;  // The box
+    float4 extents;
+    float4 c0;      // Its transform's columns
+    float4 c1;
+    float4 c2;
+    float4 c3;
+    int4 size;      // The depth's width and height, the pyramid's levels, where its level 0 starts
+}
+
+struct ProbeFound
+{
+    float nearest;
+    int4 texels;
+    int level;
+    int sure;
+}
+
+local singleton Probes
+{
+    List<ProbeCase> cases;
+    List<ProbeFound> cpu;
+    List<ProbeFound> gpu;
+    GPUList<ProbeCase> sent;
+    GPUList<ProbeFound> found;
+    bool ask;   // The host asks for a round
+    int reads;  // Rounds read back
+}
+
+ProbeFound Found(HiZLook look)
+{
+    return ProbeFound { nearest = look.nearest, texels = look.texels, level = look.level, sure = look.sure ? 1 : 0 };
+}
+
+HiZLook Look(ProbeCase k)
+{
+    return HiZFind(k.size.x, k.size.y, k.size.z, k.size.w, k.m0, k.m1, k.m2, k.m3, k.center, k.extents, k.c0, k.c1, k.c2,
+                   k.c3);
+}
+
+[Group(64)]
+compute Probe(Probes probes)
+{
+    probes.found[this.index] = Found(Look(probes.sent[this.index]));
+}
+
+ProbeCase Case(float4x4 camera, float3 center, float3 extents, float4x4 placed, int width, int height)
+{
+    return ProbeCase { m0 = camera.c0, m1 = camera.c1, m2 = camera.c2, m3 = camera.c3,
+                       center = float4(center, 0), extents = float4(extents, 0),
+                       c0 = placed.c0, c1 = placed.c1, c2 = placed.c2, c3 = placed.c3,
+                       size = int4(width, height, HiZLevels(width, height), 3) };
+}
+
+// A camera looking along +z from `at`, turned, with its depth as the GPU's: the z flip that the engine's has
+float4x4 Looking(float3 at, float3 turn, float fov, float aspect, float near, float far)
+{
+    float4x4 projection = Math.Mul(float4x4.PerspectiveFov(fov, aspect, near, far),
+                                   float4x4.TRS(float3(0, 0, 0), quaternion.identity, float3(1, 1, -1)));
+    return Math.Mul(projection, Math.Inverse(float4x4.TRS(at, quaternion.Euler(turn), float3(1, 1, 1))));
+}
+
+view Probing(mut Probes probes)
+{
+    if (!probes.ask) return;
+    probes.ask = false;
+    if (probes.cases.count == 0)
+    {
+        // Crafted: at the screen's middle, small and far; big and near; past the left edge; across the near plane;
+        // behind the camera; flat; under an orthographic camera; at odd sizes
+        float4x4 ahead = Looking(float3(0, 0, 0), float3(0, 0, 0), 1.0, 1.5, 0.5, 200);
+        float4x4 still = float4x4.identity;
+        probes.cases.Add(Case(ahead, float3(0, 0, 50), float3(0.5, 0.5, 0.5), still, 61, 37));
+        probes.cases.Add(Case(ahead, float3(0, 0, 4), float3(3, 3, 1), still, 61, 37));
+        probes.cases.Add(Case(ahead, float3(-30, 0, 20), float3(2, 2, 2), still, 61, 37));
+        probes.cases.Add(Case(ahead, float3(0, 0, 0.4), float3(1, 1, 0.5), still, 61, 37));
+        probes.cases.Add(Case(ahead, float3(0, 0, -10), float3(1, 1, 1), still, 61, 37));
+        probes.cases.Add(Case(ahead, float3(2, 1, 30), float3(4, 0, 4), still, 64, 40));
+        probes.cases.Add(Case(Math.Mul(float4x4.Ortho(40, 30, 0.1, 100), Math.Inverse(float4x4.TRS(float3(0, 0, -50), quaternion.identity, float3(1, 1, -1)))),
+                              float3(3, -2, 0), float3(1, 1, 1), still, 33, 17));
+        probes.cases.Add(Case(ahead, float3(0.1, 0.1, 80), float3(0.01, 0.01, 0.01), still, 1, 1));
+        probes.cases.Add(Case(ahead, float3(0.1, 0.1, 80), float3(0.2, 0.2, 0.2), still, 1000, 3));
+        // ...and many at random: cameras, sizes, boxes turned and scaled, some crossing the camera's planes
+        for (int i = 0; i < 1400; i++)
+        {
+            float3 eye = float3(Roll(i, 0) * 40 - 20, Roll(i, 1) * 10 - 5, Roll(i, 2) * 40 - 20);
+            float4x4 camera = Looking(eye, float3(Roll(i, 3) - 0.5, Roll(i, 4) * 6.28, 0), 0.4 + Roll(i, 5) * 1.8,
+                                      0.5 + Roll(i, 6) * 2, 0.05 + Roll(i, 7), 50 + Roll(i, 8) * 1000);
+            float3 at = eye + float3(Roll(i, 9) * 60 - 30, Roll(i, 10) * 20 - 10, Roll(i, 11) * 60 - 30);
+            float size = Roll(i, 12) < 0.2 ? Roll(i, 13) * 40 : Roll(i, 13) * 3;
+            float4x4 placed = float4x4.TRS(at, quaternion.Euler(float3(Roll(i, 14) * 6, Roll(i, 15) * 6, Roll(i, 16) * 6)),
+                                           float3(0.2 + Roll(i, 17) * 3, 0.2 + Roll(i, 18) * 3, 0.2 + Roll(i, 19) * 3));
+            int width = 1 + int(Roll(i, 20) * 300);
+            int height = 1 + int(Roll(i, 21) * 200);
+            probes.cases.Add(Case(camera, float3(Roll(i, 22) - 0.5, Roll(i, 23) - 0.5, Roll(i, 24) - 0.5),
+                                  float3(size, size * Roll(i, 25), size * Roll(i, 26)), placed, width, height));
+        }
+        probes.sent = GPUList<ProbeCase>(probes.cases.count);
+        probes.found = GPUList<ProbeFound>(probes.cases.count);
+    }
+    probes.cpu = [];
+    foreach (ProbeCase k in probes.cases) probes.cpu.Add(Found(Look(k)));
+    probes.sent.Set(probes.cases);
+    probes.found.SetCount(probes.cases.count);
+    GPU.Run(Probe, probes.cases.count);
+    ReadProbes(probes);
+}
+
+async void ReadProbes(mut Probes probes)
+{
+    if (await probes.found.Read() is List<ProbeFound> found) probes.gpu = found;
+    probes.reads += 1;
+}

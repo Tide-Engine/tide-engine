@@ -750,6 +750,13 @@ static void build_signatures(void)
                 "Custom verts and skinned meshes need explicit Bounds; unknown bounds keep the draw. "
                 "This changes drawing only, never view execution or match simulation.", 1, &T_BOOL);
     add_unset("Draw", "SetFrustumCulling", "tide_draw_unset_frustum_culling", "Enable frustum culling, as each frame starts.");
+    add_setting("Draw", "Occlusion", "tide_draw_push_occlusion", "tide_draw_set_occlusion", NULL, "enabled",
+                "Leave out the instances of 3D lists drawn instanced that the depth already drawn in the frame surely "
+                "hides, tested on the GPU: they'd fail the depth test, so the pixels are the same. Off each frame, as "
+                "measuring that depth costs GPU time: worth it where much is hidden behind what's drawn first. Needs "
+                "bounds, as frustum culling does. This changes drawing only, never views or the match.",
+                1, &T_BOOL);
+    add_unset("Draw", "SetOcclusion", "tide_draw_unset_occlusion", "Turn occlusion culling off, as each frame starts.");
     add_setting("Draw", "Bounds", "tide_draw_push_bounds", "tide_draw_set_bounds", NULL, "center, size",
                 "A conservative mesh-local box for frustum culling: center and full size, before the instance transform "
                 "and Draw.Transform. Include all skinning or custom vertex displacement. Invalid bounds keep the draw.",

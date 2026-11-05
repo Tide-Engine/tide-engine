@@ -430,6 +430,14 @@ typedef struct tide_gpu {
     // first time, and is what its samples hold now. Nothing, for a target
     // that isn't multisampled, whose depth is always its texture.
     void (*resolve_depth)(tide_gpu_id target);
+    // Optional. Outside a pass: a texture of what `target`'s depth (the window's for 0, as this frame's passes left
+    // it) holds now, read as depth, each pixel the farthest of its samples: for a target of one sample, its own
+    // depth texture; for a multisampled one, or the window, a texture of the backend's own, made the first time and
+    // filled again at each call (not the one resolve_depth fills, whose pixel is a sample's). What occlusion culling
+    // measures the depth drawn so far with (notes/drawing.md, Occlusion culling from a depth pyramid), so it's never
+    // nearer than a sample. 0 where there's none to give (a device that can't take the farthest of samples, a
+    // window nothing drew in yet); NULL where there never is.
+    tide_gpu_id (*depth_far)(tide_gpu_id target);
     void (*target_free)(tide_gpu_id target);
     // Its first color image, read back: 4 bytes a pixel, rows from the top.
     // Zeros for a target whose first isn't 4 bytes a pixel, or that has none:

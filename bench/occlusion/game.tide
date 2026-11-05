@@ -1,0 +1,120 @@
+// Occlusion culling's benchmark (bench/occlusion/main.c; notes/drawing.md, Occlusion culling from a depth
+// pyramid): a town at street level. Blocks of tall houses, drawn first, hide most of what stands among them:
+// lists of props (round lamps of 320 triangles each), a list a block of the town, drawn instanced with
+// Draw.Occlusion as the host says. The camera walks slowly down a street.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+struct Prop
+{
+    float4x4 transform = float4x4.identity;
+    Color tint;
+}
+
+local singleton Town
+{
+    List<Corner> box;
+    List<int> boxFaces;
+    List<Corner> ball;
+    List<int> ballFaces;
+    List<Prop> houses;
+    List<List<Prop>> props;
+    bool made;
+}
+
+// What the host has a frame drawn with
+local singleton Walk
+{
+    float along;    // How far down the street the camera is
+    bool occlusion;
+    int blocks;     // Blocks of the town each way: blocks^2 lists of props
+    int perBlock;   // Props a block
+}
+
+frag Paint(Corner corner, out Color color, Prop prop)
+{
+    color = prop.tint * corner.color;
+}
+
+float Roll(int i, int k)
+{
+    return (Math.Hash(int2(i, k)) % 10000) / 10000.0;
+}
+
+view Make(mut Town town, Walk walk)
+{
+    if (town.made) return;
+    town.made = true;
+    for (int c = 0; c < 8; c++)
+    {
+        float3 at = float3((c & 1) == 0 ? -0.5 : 0.5, (c & 2) == 0 ? -0.5 : 0.5, (c & 4) == 0 ? -0.5 : 0.5);
+        town.box.Add(Corner { position = at, uv = at.xy, color = Color(0.5 + 0.5 * (c & 1), 0.5 + 0.25 * (c & 2), 0.5 + 0.12 * (c & 4)) });
+    }
+    town.boxFaces = [0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5];
+    // A ball of 16 slices and 10 rings: 320 triangles
+    for (int r = 0; r <= 10; r++)
+    {
+        float up = 3.14159265 * r / 10;
+        for (int s = 0; s <= 16; s++)
+        {
+            float round = 6.2831853 * s / 16;
+            float3 at = float3(Math.Sin(up) * Math.Cos(round), Math.Cos(up), Math.Sin(up) * Math.Sin(round)) * 0.5;
+            town.ball.Add(Corner { position = at, uv = float2(s / 16.0, r / 10.0), color = Color(0.6 + 0.4 * at.y, 0.7, 0.8 - 0.3 * at.y) });
+        }
+    }
+    for (int r = 0; r < 10; r++)
+    {
+        for (int s = 0; s < 16; s++)
+        {
+            int a = r * 17 + s;
+            int b = a + 17;
+            town.ballFaces.Add(a);
+            town.ballFaces.Add(a + 1);
+            town.ballFaces.Add(b);
+            town.ballFaces.Add(a + 1);
+            town.ballFaces.Add(b + 1);
+            town.ballFaces.Add(b);
+        }
+    }
+    // Blocks 40 m apart, a house of 28 m square in each, streets of 12 m between; props in the streets and yards
+    for (int bx = 0; bx < walk.blocks; bx++)
+    {
+        for (int bz = 0; bz < walk.blocks; bz++)
+        {
+            int block = bx * walk.blocks + bz;
+            float2 middle = float2((bx - walk.blocks / 2) * 40.0, bz * 40.0 + 30);
+            float tall = 25 + Roll(block, 0) * 35;
+            town.houses.Add(Prop { transform = float4x4.TRS(float3(middle.x, tall * 0.5, middle.y), quaternion.identity,
+                                                            float3(28, tall, 28)), tint = Color(0.7, 0.65, 0.6) });
+            mut List<Prop> props = [];
+            for (int i = 0; i < walk.perBlock; i++)
+            {
+                float2 at = middle + float2(Roll(block * 100000 + i, 1) * 40 - 20, Roll(block * 100000 + i, 2) * 40 - 20);
+                float size = 0.4 + Roll(block * 100000 + i, 3) * 0.8;
+                props.Add(Prop { transform = float4x4.TRS(float3(at.x, size * 0.5 + Roll(block * 100000 + i, 4) * 3, at.y),
+                                                          quaternion.identity, float3(size, size, size)),
+                                 tint = Color(0.5 + 0.5 * Roll(i, 5), 0.5 + 0.5 * Roll(block, 6), 1) });
+            }
+            town.props.Add(props);
+        }
+    }
+}
+
+view Show(Town town, Walk walk)
+{
+    // Down the street between the middle two columns of blocks, at a person's height
+    Draw.SetCamera(float4x4.TRS(float3(-20, 1.7, walk.along), quaternion.Euler(float3(0.03, 0.08 * Math.Sin(walk.along * 0.05), 0)),
+                                float3(1, 1, 1)),
+                   float4x4.PerspectiveFov(1.0, Screen.width / Screen.height, 0.2, 3000));
+    Draw.Clear(Color(0.55, 0.7, 0.9));
+    Draw.Instanced(town.box, town.boxFaces, town.houses, Paint);
+    Draw.SetOcclusion(walk.occlusion);
+    foreach (List<Prop> props in town.props) Draw.Instanced(town.ball, town.ballFaces, props, Paint);
+}

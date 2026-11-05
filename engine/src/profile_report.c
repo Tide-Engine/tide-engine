@@ -37,6 +37,7 @@ typedef struct report_state {
     uint32_t *index;
     uint32_t count, source_bytes, first, last;
     uint64_t frames, dropped, began, mark, serial, draw_calls, vertices;
+    uint64_t occlusion_tested, occlusion_hidden, occlusion_frames;
     uint64_t ticks;
     uint32_t before_ticks;
     double before_systems, before_changes, systems_ms, changes_ms;
@@ -194,6 +195,14 @@ void tide_profile_report_end(tide_profile_report *r, const tide_profile *p, cons
 void tide_profile_report_gpu(tide_profile_report *r, const double ms)
 {
     sample(&state(r)->metrics[GPU], ms);
+}
+
+void tide_profile_report_occlusion(tide_profile_report *r, const uint64_t tested, const uint64_t hidden)
+{
+    report_state *s = state(r);
+    s->occlusion_tested += tested;
+    s->occlusion_hidden += hidden;
+    s->occlusion_frames++;
 }
 
 void tide_profile_report_gpu_pass(void *report, const tide_gpu_pass_sample *pass)
@@ -361,8 +370,11 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
                 (unsigned long long)d->vertices, (unsigned long long)d->triangles);
     }
     fputs("]},\n", out);
-    fprintf(out, "\"render_work\":{\"draw_calls\":%llu,\"vertices\":%llu},\n\"draw_diagnostics\":[",
-            (unsigned long long)s->draw_calls, (unsigned long long)s->vertices);
+    fprintf(out, "\"render_work\":{\"draw_calls\":%llu,\"vertices\":%llu},\n", (unsigned long long)s->draw_calls,
+            (unsigned long long)s->vertices);
+    fprintf(out, "\"occlusion\":{\"frames\":%llu,\"tested\":%llu,\"hidden\":%llu},\n\"draw_diagnostics\":[",
+            (unsigned long long)s->occlusion_frames, (unsigned long long)s->occlusion_tested,
+            (unsigned long long)s->occlusion_hidden);
     for (uint32_t i = 0; i < r->draw.count; i++) {
         const tide_draw_diagnostic *d = &r->draw.rows[i];
         if (i) fputc(',', out);

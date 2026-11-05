@@ -1,0 +1,4 @@
+// expect: Draw.Occlusion sets it around a block: 'Draw.Occlusion(...) { ... }'
+// expect: to set it for the draws that follow, write 'Draw.SetOcclusion(...);'
+scene Main { }
+view Show() { Draw.Occlusion(true); }

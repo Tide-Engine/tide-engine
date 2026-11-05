@@ -1,5 +1,6 @@
 // Listed runs culled on the GPU (platform/tests/cull.c): fields of plants, each a list drawn through one shader,
-// near and far, before and behind the camera, one list mirrored and one half mirrored. The host draws each frame
+// near and far, before and behind the camera, one list mirrored and one half mirrored; with one setting, behind a
+// wall, testing occlusion. The host draws each frame
 // with the GPU culling and without, and compares what they draw.
 
 scene Main { }
@@ -22,6 +23,7 @@ local singleton Field
     List<Corner> corners;
     List<int> faces;
     List<List<Plant>> patches;
+    List<Plant> wall; // Before the field, for occlusion
     int made;
 }
 
@@ -70,6 +72,7 @@ view Make(mut Field field)
         }
         field.patches.Add(patch);
     }
+    field.wall.Add(Plant { transform = float4x4.TRS(float3(-6, 1, 25), quaternion.identity, float3(30, 10, 0.5)), tint = Color(0.6, 0.6, 0.55) });
 }
 
 view Shoot(Field field, mut Shot shot)
@@ -92,6 +95,11 @@ view Shoot(Field field, mut Shot shot)
     if (shot.setting == 2) Draw.SetLODPixels(6);
     if (shot.setting == 3) Draw.SetFrustumCulling(false);
     Draw.Clear(Color(0.1, 0.1, 0.15));
+    if (shot.setting == 5) // A wall, then the field testing occlusion against it: its runs at their levels culled again
+    {                      // at the run's start, and joined still
+        Draw.Instanced(field.corners, field.faces, field.wall, Paint);
+        Draw.SetOcclusion(true);
+    }
     foreach (List<Plant> patch in field.patches) Draw.Instanced(field.corners, field.faces, patch, Paint);
     // ...and the first patch again, just after: one run of both
     Draw.Instanced(field.corners, field.faces, field.patches[0], Paint);

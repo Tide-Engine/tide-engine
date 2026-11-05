@@ -78,8 +78,9 @@ add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
 set(TIDE_KERNELS_H "${CMAKE_CURRENT_BINARY_DIR}/kernels/cull_kernels.h")
 add_custom_command(OUTPUT "${TIDE_KERNELS_H}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/kernels"
-    COMMAND ${TIDEC_COMMAND} "${CMAKE_CURRENT_SOURCE_DIR}/src/cull.tide" --kernels "${TIDE_KERNELS_H}"
-    DEPENDS ${TIDEC_DEPENDS} src/cull.tide
+    COMMAND ${TIDEC_COMMAND} "${CMAKE_CURRENT_SOURCE_DIR}/src/cull.tide" "${CMAKE_CURRENT_SOURCE_DIR}/src/occlusion.tide"
+            --kernels "${TIDE_KERNELS_H}"
+    DEPENDS ${TIDEC_DEPENDS} src/cull.tide src/occlusion.tide
     COMMENT "The renderer's kernels as C"
     VERBATIM)
 add_custom_target(tide_renderer_kernels DEPENDS "${TIDE_KERNELS_H}")
@@ -615,6 +616,23 @@ if(NOT TIDE_ANDROID)
     else()
         add_test(NAME tide_platform_kernels COMMAND tide_platform_kernels)
         tide_gpu_test(tide_platform_kernels)
+    endif()
+endif()
+
+# Occlusion culling (tests/occlusion.tide, src/occlusion.tide): HiZFind on the CPU and the GPU against the host's
+# reckoning in doubles, and frames with occlusion on the same pixels as the CPU's path as walls move and the camera
+# cuts, into the window, a target and a multisampled one; a lost device and the next.
+if(NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_occlusion SOURCES tests/occlusion.tide src/occlusion.tide NAME game HOST tests/occlusion.c)
+    target_include_directories(tide_platform_occlusion PRIVATE src)
+    target_link_libraries(tide_platform_occlusion PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_occlusion SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_occlusion TARGET tide_platform_occlusion PIXELS EXPECT "renderer: WebGPU")
+    else()
+        target_include_directories(tide_platform_occlusion PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
+        add_test(NAME tide_platform_occlusion COMMAND tide_platform_occlusion)
+        tide_gpu_test(tide_platform_occlusion)
     endif()
 endif()
 
