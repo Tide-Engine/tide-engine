@@ -134,6 +134,26 @@ if(TIDE_PLATFORM)
 endif()
 set_tests_properties(tidec_e2e_queries PROPERTIES TIMEOUT 120)
 tide_e2e_test(query_blocks) # ...beside a comparison block and a parallel loop, which capture the code's other parameters
+# Indexed loops: one game with its loops' indexes and without (NO_LOOP_INDEXES), which print the same, tick by tick
+tide_e2e_test(indexed_loops)
+target_compile_definitions(tidec_e2e_indexed_loops PRIVATE IXTEST_INDEXED=1)
+tide_add_game(tidec_e2e_indexed_loops_plain NO_LOOP_INDEXES SOURCES e2e/indexed_loops.tide NAME game
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/indexed_loops_test.c")
+target_include_directories(tidec_e2e_indexed_loops_plain PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_indexed_loops_plain COMMAND tidec_e2e_indexed_loops_plain)
+foreach(target tidec_e2e_indexed_loops tidec_e2e_indexed_loops_plain)
+    set_tests_properties(${target} PROPERTIES TIMEOUT 300)
+    if(TIDE_PLATFORM)
+        target_link_libraries(${target} PRIVATE tide_platform)
+        target_compile_definitions(${target} PRIVATE TIDE_IX_THREADS=1)
+    endif()
+endforeach()
+string(REPLACE ";" "|" TIDE_IX_EMULATOR "${CMAKE_CROSSCOMPILING_EMULATOR}")
+add_test(NAME tidec_indexed_loops_same
+    COMMAND "${CMAKE_COMMAND}" "-DINDEXED=$<TARGET_FILE:tidec_e2e_indexed_loops>"
+        "-DPLAIN=$<TARGET_FILE:tidec_e2e_indexed_loops_plain>" "-DEMULATOR=${TIDE_IX_EMULATOR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/indexed_loops_same.cmake")
+set_tests_properties(tidec_indexed_loops_same PROPERTIES TIMEOUT 600)
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)

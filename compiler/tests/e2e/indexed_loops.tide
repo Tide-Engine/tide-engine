@@ -1,0 +1,277 @@
+// Indexed loops (notes/indexed-loops.md): each loop below that skips rows on a guard goes through an index,
+// unless the game is built with --no-loop-indexes. indexed_loops_test.c runs both builds and the test
+// tidec_indexed_loops_same compares what they print, tick by tick: the worlds and what the views drew.
+
+enum Team { Red, Blue, Green }
+
+component Body
+{
+    float3 position;
+    float3 velocity;
+    float radius = 1;
+}
+
+component Unit
+{
+    Team team;
+    int level;
+    float health;
+    bool alive;
+}
+
+component Score
+{
+    int walls;
+    int list;
+    int spots;
+    int helper;
+    float sum;
+}
+
+component Life
+{
+    int ticks;
+}
+
+component Mover { }
+
+component Wall { }
+
+[Sparse]
+component Tagged { }
+
+struct Spot
+{
+    float2 at;
+    int kind;
+}
+
+singleton Field
+{
+    List<float3> points;
+    List<Spot> spots;
+    float reach;
+    int made;
+}
+
+singleton Stats
+{
+    int teams;
+    int low;
+    int band;
+    int tagged;
+    int spawned;
+    float sum;
+}
+
+local singleton Drawn
+{
+    int rows;
+    int helper;
+    float sum;
+}
+
+event Hit
+{
+    float amount;
+}
+
+scene Main { }
+
+// A number from 0 to 1 for `i`, the same everywhere
+float Spread(int i, int salt)
+{
+    return float((i * 7919 + salt * 104729) % 1000) / 1000.0f;
+}
+
+event(Spawned) Setup(with Main)
+{
+    // Walls, which never move: their indexes last from tick to tick
+    for (var i = 0; i < 1200; i++)
+    {
+        var at = float3(Spread(i, 1) * 40.0f - 20.0f, Spread(i, 2) * 40.0f - 20.0f, Spread(i, 3) * 4.0f);
+        var team = i % 3 == 0 ? Team.Red : i % 3 == 1 ? Team.Blue : Team.Green;
+        if (i % 7 == 0) Spawn(Body { position = at }, Wall, Unit { team = team, level = i % 5, health = float(i % 13), alive = true }, Tagged);
+        else Spawn(Body { position = at }, Wall, Unit { team = team, level = i % 5, health = float(i % 13), alive = i % 2 == 0 });
+    }
+    // Walls no number can find: NaN and infinite places, which every search gives
+    var zero = 0.0f;
+    Spawn(Body { position = float3(zero / zero, 1.0f, 1.0f) }, Wall);
+    Spawn(Body { position = float3(1.0f / zero, 0.0f, 0.0f) }, Wall);
+    Spawn(Body { position = float3(-1.0f / zero, 2.0f, zero / zero) }, Wall);
+    // Movers, which move every tick: theirs are made again each tick
+    for (var i = 0; i < 400; i++)
+    {
+        var at = float3(Spread(i, 4) * 30.0f - 15.0f, Spread(i, 5) * 30.0f - 15.0f, Spread(i, 6) * 2.0f);
+        Spawn(Body { position = at, velocity = float3(Spread(i, 7) - 0.5f, Spread(i, 8) - 0.5f, 0.0f) }, Mover, Score { },
+              Unit { team = i % 2 == 0 ? Team.Blue : Team.Green, level = i % 4, health = 5.0f, alive = true });
+    }
+}
+
+// The lists, once
+system Fill(mut Field field)
+{
+    if (field.made > 0) return;
+    field.made = 1;
+    field.reach = 3.5f;
+    for (var i = 0; i < 400; i++)
+    {
+        field.points.Add(float3(Spread(i, 9) * 40.0f - 20.0f, Spread(i, 10) * 40.0f - 20.0f, Spread(i, 11) * 3.0f));
+        field.spots.Add(Spot { at = float2(Spread(i, 12) * 40.0f - 20.0f, Spread(i, 13) * 40.0f - 20.0f), kind = i % 4 });
+    }
+    var zero = 0.0f;
+    field.points.Add(float3(zero / zero, 0.0f, 0.0f));
+}
+
+system Move(mut Body body, with Mover)
+{
+    body.position += body.velocity * 0.25f;
+    // Round the middle, slowing: they stay among the walls
+    body.velocity = body.velocity * 0.9f + float3(-body.position.y, body.position.x, 0.0f) * 0.02f;
+    if (body.position.x > 20.0f || body.position.x < -20.0f) body.velocity.x = -body.velocity.x;
+    if (body.position.y > 20.0f || body.position.y < -20.0f) body.velocity.y = -body.velocity.y;
+}
+
+// A 3D distance to the walls, which don't move
+system Avoid(mut Body body, mut Score score, with Mover, query (Body other, with Wall) walls)
+{
+    foreach (var w in walls)
+    {
+        if (Math.Distance(w.other.position, body.position) > 3.0f) continue;
+        if (!Finite(w.other.position)) continue; // NaN passes the guard above: the index gives it every time
+        body.velocity -= (w.other.position - body.position) * 0.01f;
+        score.walls += 1;
+        score.sum += w.other.position.x * 0.5f + w.other.position.y;
+    }
+}
+
+bool Finite(float3 p)
+{
+    return Math.Abs(p.x) + Math.Abs(p.y) + Math.Abs(p.z) < 1000.0f;
+}
+
+bool InRange(float3 a, float3 b, float r)
+{
+    return Math.DistanceSq(a, b) <= r * r;
+}
+
+// A squared distance through a function, to the movers, which move every tick, sending events
+system Crowd(Body body, Unit unit, with Mover, query (Body other, Unit u, with Mover) movers)
+{
+    foreach (var m in movers)
+    {
+        if (!InRange(m.other.position, body.position, 4.0f)) continue;
+        if (m.entity == this) continue;
+        m.entity.Send(Hit { amount = float(unit.level + m.u.level) + body.position.x * 0.125f });
+    }
+}
+
+event(Hit hit) Struck(mut Unit unit)
+{
+    unit.health = unit.health * 0.999f - hit.amount * 0.01f;
+}
+
+// An equality on an enum, a one-sided bound, a band of either side (`||`), and a bool
+system Count(mut Stats stats, query (Body other, Unit u) units, query (Unit u, with Tagged) tagged)
+{
+    stats.teams = 0;
+    stats.low = 0;
+    stats.band = 0;
+    stats.tagged = 0;
+    stats.sum = 0.0f;
+    foreach (var r in units)
+    {
+        if (r.u.team != Team.Blue) continue;
+        stats.teams += r.u.level;
+        stats.sum = stats.sum * 0.5f + r.u.health;
+    }
+    foreach (var r in units)
+    {
+        if (r.u.health >= 3.0f) continue;
+        stats.low += 1;
+        stats.sum += r.other.position.z;
+    }
+    foreach (var r in units)
+    {
+        var x = r.other.position.x;
+        if ((x > 1.0f && x < 3.0f) || (x > 7.0f && x < 9.0f))
+        {
+            stats.band += 1;
+            stats.sum -= x;
+        }
+    }
+    foreach (var t in tagged)
+    {
+        if (!t.u.alive) continue;
+        stats.tagged += t.u.level + 1;
+    }
+}
+
+// Lists in a singleton: of float3, and of structs
+system Near(mut Score score, Body body, Field field, with Mover)
+{
+    foreach (var p in field.points)
+    {
+        if (Math.Distance(p, body.position) > field.reach) continue;
+        score.list += 1;
+        score.sum += p.z;
+    }
+    foreach (var s in field.spots)
+    {
+        if (s.kind != 2 || Math.Distance(s.at, body.position.xy) > 3.0f) continue;
+        score.spots += 1;
+    }
+}
+
+// A query borrowed by a function: from a system (the world's rows) and from a view (the view's rows)
+int CountNear(query (Body other, with Wall) walls, float3 at, float r)
+{
+    mut var n = 0;
+    foreach (var w in walls)
+    {
+        if (Math.Distance(w.other.position, at) > r) continue;
+        n += 1;
+    }
+    return n;
+}
+
+system Borrow(mut Score score, Body body, with Mover, query (Body other, with Wall) walls)
+{
+    score.helper += CountNear(walls, body.position, 2.5f);
+}
+
+// Entities come and go
+system Churn(mut Stats stats, Time time)
+{
+    if (time.tick % 5 != 0) return;
+    stats.spawned += 1;
+    var i = stats.spawned;
+    Spawn(Body { position = float3(Spread(i, 14) * 30.0f - 15.0f, Spread(i, 15) * 30.0f - 15.0f, 0.5f) }, Wall, Life { ticks = 12 },
+          Unit { team = Team.Blue, level = i % 3, health = 1.0f, alive = true });
+}
+
+// Work enough for a tick on threads
+system Busy(mut Score score, with Mover)
+{
+    mut var h = score.walls;
+    for (var i = 0; i < 4096; i++) h = (h * 17 + i) % 65521;
+    score.helper += h % 3;
+}
+
+system Expire(mut Life life)
+{
+    life.ticks -= 1;
+    if (life.ticks <= 0) this.Destroy();
+}
+
+view Look(Body body, with Mover, mut Drawn drawn, query (Body other, with Wall) walls)
+{
+    foreach (var w in walls)
+    {
+        if (Math.DistanceSq(w.other.position, body.position) > 9.0f) continue;
+        if (!Finite(w.other.position)) continue;
+        drawn.rows += 1;
+        drawn.sum += w.other.position.x;
+    }
+    drawn.helper += CountNear(walls, body.position, 2.0f);
+}

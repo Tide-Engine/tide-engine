@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "indexing.h"
 #include "lexer.h"
 #include "skinned_language.h"
 #include "types.h"
@@ -241,6 +242,11 @@ typedef struct gen {
     VEC(asset_dependency) skinned_fingerprints; // Imported source geometry; preflight only, never the header.
     uint8_t *pack_bytes; // Built once, before asset compatibility hashes are computed.
     size_t pack_size;
+    // Indexed loops (index_codegen.inc): whether any loop is, and each place a cached index is kept for, a loop
+    // as a borrowed query's code for one of its sources has it
+    bool ix_any;
+    VEC(const struct stmt *) ix_loops;
+    VEC(const void *) ix_variants;
 } gen;
 
 static int rows_cache_count(const gen *g);
@@ -1785,7 +1791,7 @@ static void cache_key(const expr *e, sb *out)
 // list apart, as a mesh's triangle corners do, each keep the run of elements
 // they're in, rather than taking one cache from run to run at every element.
 // Any other index shares the list's one cache.
-static void index_key(const expr *index, sb *out)
+static void list_index_key(const expr *index, sb *out)
 {
     while (index->kind == E_BINARY && (index->op == T_PLUS || index->op == T_MINUS) && index->rhs->kind == E_INT) index = index->lhs;
     if (index->kind == E_NAME || index->kind == E_MEMBER) {
@@ -1802,7 +1808,7 @@ static int cache_slot(gen *g, const expr *list, const expr *index)
 {
     sb key = {0};
     cache_key(list, &key);
-    if (index) index_key(index, &key);
+    if (index) list_index_key(index, &key);
     for (int i = 0; i < g->lc_keys.count; i++) {
         if (strcmp(g->lc_keys.items[i], key.data) == 0) return i;
     }
@@ -7475,6 +7481,7 @@ static void gen_parallel_call(gen *g, const stmt *s);
 static void gen_grid_foreach(gen *g, const stmt *s);
 static void gen_map_foreach(gen *g, const stmt *s);
 static void gen_query_foreach(gen *g, const stmt *s);
+static bool gen_indexed_list(gen *g, const stmt *s);
 static void gen_sort_call(gen *g, const expr *sort);
 static uint64_t step_cost(const stmt *s);
 
@@ -8369,6 +8376,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_map_foreach(g, s);
             break;
         }
+        if (gen_indexed_list(g, s)) break; // Through an index (index_codegen.inc)
         // The list's count is read each round, so changes to it while it's gone
         // through count.
         const bool borrows = foreach_borrows(g, s, s->type);
@@ -9575,6 +9583,7 @@ static void gen_header(gen *g)
     if (rows_cache_count(g)) {
         sb_put(o, "    struct tide_rows_cache *tide_rows_cache; // Derived selection, never copied, hashed or packed\n");
     }
+    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
     sb_put(o, "} tide_world;\n\n");
     if (rows_cache_count(g)) sb_put(o, "#define TIDE_ROWS_CACHE_ABI 1 // Change with the private cache payload layout\n\n");
 
@@ -9688,6 +9697,7 @@ static void gen_header(gen *g)
                   "    tide_outgoing_item tide_outgoing[TIDE_COMMAND_OUTBOX];\n"
                   "    uint32_t tide_outgoing_count;\n");
     }
+    if (g->ix_any) sb_put(o, "    struct tide_index_cache *tide_index_cache; // Indexes of loops (notes/indexed-loops.md): derived, never copied, hashed or packed\n");
     sb_put(o, "} tide_local;\n\n");
 
     if (startup_is_local(g)) {
@@ -11918,6 +11928,7 @@ static void gen_prelude(gen *g)
     if (g->prog->skinned_types.count) sb_put(o, "#include \"tide/skinned_data.h\"\n");
     if (g->prog->humanoid_rig) sb_put(o, "#include \"tide/retarget.h\"\n#include \"tide/retarget_bake.h\"\n");
     sb_put(o, "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
+    if (g->ix_any) sb_put(o, "#include \"tide/index.h\" // Indexed loops\n");
     sb_put(o, "#include \"tide/shard.h\" // Shards.Owns and Shards.delay, which any game can read\n\n");
     sb_printf(o, "#define TIDE_SHARDS_ON %s // Shards.on\n\n", g->prog->shards ? "true" : "false");
     sb_put(o, "// Determinism: never fuse a*b + c, whatever flags this file is built with.\n");
@@ -15217,19 +15228,11 @@ static void gen_query_field_refs(gen *g, const param *q, const char *name)
     }
 }
 
-static void gen_query_foreach(gen *g, const stmt *s)
+// The default local fields of the entities a query's row `name` reads them of, where nothing was written for one.
+static void gen_query_fresh(gen *g, const param *q, const char *name)
 {
     sb *o = &g->c;
-    const param *q = s->query;
     const decl *row = q->type.decl;
-    const bool borrowed = q->function_param;
-    const borrow_source source = borrowed ? query_source(g->routine, g->borrow, q) : (borrow_source){0};
-    const param *selection = borrowed ? source_query(source) : q;
-    const char *world = borrowed ? local_cname(g, q->name) : q->query_local ? "tide_l" : "tide_w";
-    const char *name = local_cname(g, s->name);
-    const char *end = made_up(g, "query_end");
-    bool end_used = false;
-    line(g, o, "{"); g->indent++;
     for (int i = 0; i < q->query.count; i++) {
         const param *p = &q->query.items[i];
         if (!has_fields_ptr(p) || p->mode != PARAM_READ) continue;
@@ -15241,6 +15244,25 @@ static void gen_query_foreach(gen *g, const stmt *s)
         sb_put(o, ";\n");
         line(g, o, "(void)tide_query_fresh_%s_%s;", name, field_cname(f));
     }
+}
+
+#include "index_codegen.inc"
+
+static void gen_query_foreach(gen *g, const stmt *s)
+{
+    if (gen_indexed_query(g, s) || gen_indexed_rows(g, s)) return;
+    sb *o = &g->c;
+    const param *q = s->query;
+    const decl *row = q->type.decl;
+    const bool borrowed = q->function_param;
+    const borrow_source source = borrowed ? query_source(g->routine, g->borrow, q) : (borrow_source){0};
+    const param *selection = borrowed ? source_query(source) : q;
+    const char *world = borrowed ? local_cname(g, q->name) : q->query_local ? "tide_l" : "tide_w";
+    const char *name = local_cname(g, s->name);
+    const char *end = made_up(g, "query_end");
+    bool end_used = false;
+    line(g, o, "{"); g->indent++;
+    gen_query_fresh(g, q, name);
     if (selection->query_rows) { // The rows it was handed, retaining the caller's timing.
         // Found by name: bind_views may have grown the view's parameters since `q` was taken, leaving it pointing at
         // the old copy
@@ -20063,6 +20085,7 @@ static void gen_system_run(gen *g, const decl *sys)
                 sb_printf(&fill, "tide_q%d = tide_query_%s_%d(tide_w, tide_prev, tide_alpha, %s, tide_l, &tide_q%dn); ", i, name, i,
                           sys->takes_verified ? "tide_verified, tide_vprev, tide_valpha" : "NULL, NULL, 1.0f", i);
             }
+            if (g->ix_any) sb_put(&fill, "tide_ix_made++; "); // Indexes of the rows before are of other rows
             // What the view makes for an entity goes after each: the rows stay under that mark
             if (prog->uses_text) sb_put(&fill, "tide_mark = tide_scratch_mark(); ");
             sb hook = {0};
@@ -21917,6 +21940,7 @@ static void gen_api(gen *g)
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     if (rows_cache_count(g)) sb_put(o, "    tide_rows_cache_prepare(w); // Serial: publish immutable plans before worker dispatch\n");
+    if (g->ix_any) sb_put(o, "    tide_index_cache_prepare(&w->tide_index_cache); // Serial: the tick's run, for the loops' indexes\n");
     if (prog->systems.count) {
         sb_printf(o, "    if (tide_p) tide_profile_sources(&tide_p->systems, %du, tide_system_sources);\n", prog->systems.count);
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s%s};\n",
@@ -22056,6 +22080,7 @@ static void gen_api(gen *g)
         if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
         sb_put(o, "    tide_text_use(NULL, &local->heap); // The match holds no text or lists\n");
     }
+    if (g->ix_any) sb_put(o, "    tide_index_cache_prepare(&local->tide_index_cache); // The frame, for the loops' indexes\n");
     // What the match sent since the last frame, first: its local handlers
     // still find the local fields of an entity that's gone since
     if (hears_visibility(prog) && !g->opts->editor_prefab) sb_put(o, "    tide_local_reconcile_availability(local, w, verified ? verified : w, verified != NULL);\n");
@@ -22656,6 +22681,7 @@ static void gen_world_bytes(gen *g, const bool local)
     const char *prefix = local ? "tide_local_" : "tide_world_";
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
     if (!local && rows_cache_count(g)) sb_put(o, "    tide_rows_cache_free(w->tide_rows_cache);\n    w->tide_rows_cache = NULL;\n");
+    if (g->ix_any) sb_put(o, "    tide_index_cache_free(w->tide_index_cache);\n    w->tide_index_cache = NULL;\n");
     if (local) sb_put(o, "    tide_workers_free(w->tide_workers);\n    w->tide_workers = NULL;\n");
     resident_field residents[RESIDENTS_MOST];
     const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
@@ -22722,6 +22748,7 @@ static void gen_world_bytes(gen *g, const bool local)
     sb_put(o, "    if (!out || size > capacity) return (uint32_t)size;\n");
     sb_printf(o, "    %s *header = malloc(sizeof *header); // Storage pointers are cleared before serialization\n    if (!header) tide_out_of_memory();\n    memcpy(header, w, sizeof *header);\n", world);
     if (!local && rows_cache_count(g)) sb_put(o, "    header->tide_rows_cache = NULL;\n");
+    if (g->ix_any) sb_put(o, "    header->tide_index_cache = NULL;\n");
     if (local) sb_put(o, "    header->tide_io = NULL;\n    header->tide_workers = NULL;\n    header->tide_worker_jobs = NULL;\n");
     if (local && prog->command_types.count) sb_put(o, "    memset(header->tide_outgoing, 0, sizeof header->tide_outgoing);\n    header->tide_outgoing_count = 0;\n");
     // What the match sent is a frame's: none of it is the local state's to keep
@@ -22810,6 +22837,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
     sb_put(o, "    memcpy(w, data, sizeof *w);\n");
     if (!local && rows_cache_count(g)) sb_put(o, "    w->tide_rows_cache = NULL; // Never trust a pointer from a raw header, including rejected input\n");
+    if (g->ix_any) sb_put(o, "    w->tide_index_cache = NULL; // ...nor this one\n");
     if (local) sb_put(o, "    w->tide_io = io;\n    w->tide_workers = NULL;\n    w->tide_worker_jobs = NULL;\n");
     if (local && program_hears(prog)) sb_put(o, "    memset(&w->tide_heard, 0, sizeof w->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    w->tide_available_predicted = w->tide_available_verified = NULL;\n"
@@ -25722,6 +25750,7 @@ bool codegen(program *prog, const codegen_options *opts)
             return false;
         }
     }
+    g.ix_any = ix_program(&g);
     gen_header(&g);
     // The game's hash: its header, but for the first line, which names files.
     const char *types = strchr(g.h.data, '\n');
@@ -25798,6 +25827,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_json_helpers(&g);
     gen_columns(&g);
     gen_rows_cache_helpers(&g);
+    gen_index_helpers(&g);
     gen_component_access(&g);
     gen_hierarchy(&g);
     gen_shard_early(&g);
@@ -25866,6 +25896,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_sounds(&g);
     gen_rebind_resources(&g);
     gen_editor_preview(&g);
+    gen_index_sites(&g);
     if (opts->layout || opts->embed) gen_layout(&g);
     if (opts->embed) gen_embed(&g);
     if (opts->build_program) gen_build_main(&g);
