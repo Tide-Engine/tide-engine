@@ -2812,6 +2812,25 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, const uint32_t mesh, const voi
     }
 }
 
+void tide_draw_mesh_fill_pulled(tide_draw_list *d, const uint32_t mesh, const uint32_t vertex_size,
+                                const uint32_t *indices, const uint32_t index_count)
+{
+    if (mesh == 0 || mesh > d->mesh_count || d->meshes[mesh - 1u].space == TIDE_MESH_NONE) return;
+    tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+    m->vertex_count = m->index_count = 0;
+    m->vertex_size = vertex_size;
+    m->bounds = (tide_draw_bounds){0};
+    m->bounds_position = 0;
+    const uint32_t whole = index_count - index_count % 3u;
+    if (vertex_size == 0 || whole == 0) return;
+    m->bytes = grow(m->bytes, 0, &m->vertex_capacity, vertex_size, 1, vertex_size);
+    memset(m->bytes, 0, vertex_size);
+    m->vertex_count = 1;
+    m->indices = grow(m->indices, 0, &m->index_capacity, whole, sizeof(uint32_t), 192u);
+    memcpy(m->indices, indices, (size_t)whole * sizeof(uint32_t));
+    m->index_count = whole;
+}
+
 void tide_draw_mesh_fill(tide_draw_list *d, const uint32_t mesh, const tide_vertex3 *vertices,
                          const uint32_t vertex_count, const uint32_t *indices, const uint32_t index_count)
 {
@@ -3280,8 +3299,11 @@ static void shaded_visible(tide_draw_list *d, const tide_shader *shader, const u
     // their own. An instance with no transform has none that could
     if (!shader || shader->dims != 3 || p->cull == TIDE_CULL_NONE || shader->instance_floats < 4u || !instances
         || count == 0) {
+        // Instances the GPU reads go through a mirroring Draw.Transform there, wound the other way
+        const bool turned = shader && shader->instance_through && through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
         shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling, TIDE_DRAW_SHADED,
-                         (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull, &with, through, from);
+                         (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull | (turned ? TIDE_DRAW_MIRRORED : 0u),
+                         &with, through, from);
         return;
     }
     const bool turned = through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
@@ -4102,6 +4124,16 @@ void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, con
     d->storage_next = tide_draw_storage(d, storage, shader->storage_count < TIDE_SHADER_STORAGE ? shader->storage_count
                                                                                                 : TIDE_SHADER_STORAGE);
     d->indirect_next = list.id;
+    // Moved as a CPU list's instances are: Draw.Transform's matrix, which the GPU puts each one's transform through
+    _Alignas(16) uint8_t moved[TIDE_SHADER_UNIFORM_BYTES];
+    const uint32_t size = tide_shader_uniform_size(shader);
+    const uint64_t at = (uint64_t)(shader->instance_through - 1u) * sizeof(float);
+    if (shader->instance_through && uniforms && size <= sizeof moved && at + sizeof(tide_float4x4) <= size) {
+        const tide_float4x4 through = d->place.moved & TIDE_DRAW_MOVED_3D ? d->place.transform_3d : tide_identity_f4x4();
+        memcpy(moved, uniforms, size);
+        memcpy(moved + at, &through, sizeof through);
+        uniforms = moved;
+    }
     // As the GPU has them: no culling or level picking, which is the kernel's that filled the list
     shaded_visible(d, shader, mesh, NULL, 1, uniforms, textures, sampling, NULL);
     d->storage_next = 0;

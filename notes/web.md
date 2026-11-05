@@ -9,6 +9,12 @@ WebGL 2 went with the other GL backends (`notes/rendering.md`, GL backends remov
 - **`tide_web_init_canvas` returns a `bool`:** true once WebGPU is configured on the canvas with the device found before the program started (the old 0/1/2 of `TIDE_WEB_NO_CANVAS`/`WEBGL`/`WEBGPU` is gone). False: the page hides the canvas and puts a note in its place (`#tide-needs-webgpu`, `role="alert"`) saying the game needs WebGPU (a current Chrome, Edge or Safari, or Firefox where WebGPU is on) and why; the shell's loader (`#tide-loading`) shows the same text as its error, and it's printed. `canvas.c`'s `tide_window_open` then fails, saying so on stderr. `tide_window_gpu` is always `tide_gpu_webgpu`.
 - **Tests:** every `tide_add_web_test` is served (`cmake/run_web_served_test.mjs`) on the browser's software WebGPU; the file-page runner (`cmake/run_web_test.cmake`, `cmake/browser_dump.mjs`) and virtual time are gone. The arrangement, its `pixels` label and what CI runs where are in `notes/testing.md`, GL backends removed. `tide_platform_compute`'s WebGL run (which printed `SKIPPED:`) and every `_d3d11` (ANGLE WARP) run are gone. Custom runners (`web_threads.mjs`, `web_rooms.mjs`, `docs/tests/examples.mjs`) launch with the WebGPU software flags instead of SwiftShader WebGL's.
 
+## Meshes over GPU lists on WebGPU (2026-11-05)
+
+No page change: a pulled-vertex pipeline's vertex slot has `arrayStride` 0 and no attributes (WebGPU then checks
+nothing of the bound buffer's size), and GPU indices draw `drawIndirect`. `tide_platform_kernels` (label `pixels`)
+passes on Chrome's software WebGPU with them, before and after a lost device: notes/compute.md, Meshes over GPU lists.
+
 ## WebGPU compute (2026-11-05)
 
 All of `gpu.h`'s compute (notes/compute.md) on WebGPU: `gpu_web.c` hands each

@@ -1,0 +1,1004 @@
+// meshes of Dot: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec4f,
+}
+struct tt_Dot {
+    m_position: vec2f,
+    m_color: vec4f,
+}
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_s1[tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), tide_word1(1u)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), 0x7fffffffu));
+}
+
+fn tide_get1(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Dot {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Dot();
+    }
+    let tide_b = 4u + u32(tide_i) * 6u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), 0, 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Dot(tide_p0.xy, vec4f(tide_p0.z, tide_p0.w, tide_p1.x, tide_p1.y));
+}
+
+@vertex fn vertex(@builtin(vertex_index) tide_corner_at: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    let tide_vertex_index = bitcast<u32>(tide_get1(i32(tide_corner_at)));
+    var tide_vertex: tt_Dot = tide_get0(i32(tide_vertex_index));
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = in.tide_s1;
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Wobble and Shade on Dot: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+var<private> tide_dice: u32;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec4f,
+}
+struct tt_Dot {
+    m_position: vec2f,
+    m_color: vec4f,
+}
+fn tide_xxh_word(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+fn tide_xxh_lane(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+fn tide_xxh_end(h: u32) -> i32 {
+    var k: u32 = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return i32(k & 0x7FFFFFFFu);
+}
+fn tide_hash3(v: vec3i) -> i32 {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+fn tide_roll() -> u32 {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    var w: u32 = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+fn tide_roll_float() -> f32 {
+    return f32(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+fn ts_Wobble(t_dot: ptr<function, tt_Dot>) {
+    (*t_dot).m_position = ((*t_dot).m_position + (vec2f(tide_roll_float(), tide_roll_float()) * 0.1));
+}
+
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_s1[tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), tide_word1(1u)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), 0x7fffffffu));
+}
+
+fn tide_get1(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Dot {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Dot();
+    }
+    let tide_b = 4u + u32(tide_i) * 6u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), 0, 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Dot(tide_p0.xy, vec4f(tide_p0.z, tide_p0.w, tide_p1.x, tide_p1.y));
+}
+
+fn ts_Shade(t_dot: tt_Dot, t_color: ptr<function, vec4f>) {
+    (*t_color) = (t_dot.m_color * 0.5);
+}
+
+@vertex fn vertex(@builtin(vertex_index) tide_corner_at: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    let tide_vertex_index = bitcast<u32>(tide_get1(i32(tide_corner_at)));
+    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), tide_block.tide_v0.x ^ 838500456)));
+    var tide_vertex: tt_Dot = tide_get0(i32(tide_vertex_index));
+    ts_Wobble(&tide_vertex);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Shade(tt_Dot(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Leaning on Dot: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_u0: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec4f,
+}
+struct tt_Dot {
+    m_position: vec2f,
+    m_color: vec4f,
+}
+fn ts_Leaning(t_dot: ptr<function, tt_Dot>) {
+    (*t_dot).m_position = ((*t_dot).m_position + tide_block.tide_u0.xy);
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Dot {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Dot();
+    }
+    let tide_b = 4u + u32(tide_i) * 6u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), 0, 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Dot(tide_p0.xy, vec4f(tide_p0.z, tide_p0.w, tide_p1.x, tide_p1.y));
+}
+
+@vertex fn vertex(@builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    var tide_vertex: tt_Dot = tide_get0(i32(tide_vertex_index));
+    ts_Leaning(&tide_vertex);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = in.tide_s1;
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Shade on Dot: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec4f,
+}
+struct tt_Dot {
+    m_position: vec2f,
+    m_color: vec4f,
+}
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_s1[tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), tide_word1(1u)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), 0x7fffffffu));
+}
+
+fn tide_get1(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Dot {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Dot();
+    }
+    let tide_b = 4u + u32(tide_i) * 6u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), 0, 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Dot(tide_p0.xy, vec4f(tide_p0.z, tide_p0.w, tide_p1.x, tide_p1.y));
+}
+
+fn ts_Shade(t_dot: tt_Dot, t_color: ptr<function, vec4f>) {
+    (*t_color) = (t_dot.m_color * 0.5);
+}
+
+@vertex fn vertex(@builtin(vertex_index) tide_corner_at: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    let tide_vertex_index = bitcast<u32>(tide_get1(i32(tide_corner_at)));
+    var tide_vertex: tt_Dot = tide_get0(i32(tide_vertex_index));
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Shade(tt_Dot(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Light on Point3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec3f,
+}
+struct tt_Point3 {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_kind: i32,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_s1[tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), tide_word1(1u)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), 0x7fffffffu));
+}
+
+fn tide_get1(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Point3 {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Point3();
+    }
+    let tide_b = 4u + u32(tide_i) * 7u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), bitcast<i32>(tide_word0(tide_b + 6u)), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Point3(tide_p0.xyz, vec3f(tide_p0.w, tide_p1.x, tide_p1.y), tide_q1.z);
+}
+
+fn ts_Light(t_point: tt_Point3, t_color: ptr<function, vec4f>) {
+    var t_lit: f32 = tide_max1(dot(t_point.m_normal, vec3f(tide_f(0.0), tide_f(1.0), tide_f(0.0))), tide_f(0.0));
+    (*t_color) = vec4f(t_lit, t_lit, t_lit, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_in0: vec4f, @location(1) tide_in1: vec4f, @location(2) tide_in2: vec4f, @location(3) tide_in3: vec4f, @builtin(vertex_index) tide_corner_at: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    let tide_vertex_index = bitcast<u32>(tide_get1(i32(tide_corner_at)));
+    var tide_vertex: tt_Point3 = tide_get0(i32(tide_vertex_index));
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_normal;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Light(tt_Point3(vec3f(), in.tide_s1, i32()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Raise and Light on Point3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec3f,
+}
+struct tt_Point3 {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_kind: i32,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn ts_Raise(t_point: ptr<function, tt_Point3>) {
+    if (((*t_point).m_kind == 2)) {
+        (*t_point).m_position.y = ((*t_point).m_position.y + 1.0);
+    }
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Point3 {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Point3();
+    }
+    let tide_b = 4u + u32(tide_i) * 7u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), bitcast<i32>(tide_word0(tide_b + 6u)), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Point3(tide_p0.xyz, vec3f(tide_p0.w, tide_p1.x, tide_p1.y), tide_q1.z);
+}
+
+fn ts_Light(t_point: tt_Point3, t_color: ptr<function, vec4f>) {
+    var t_lit: f32 = tide_max1(dot(t_point.m_normal, vec3f(tide_f(0.0), tide_f(1.0), tide_f(0.0))), tide_f(0.0));
+    (*t_color) = vec4f(t_lit, t_lit, t_lit, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_in0: vec4f, @location(1) tide_in1: vec4f, @location(2) tide_in2: vec4f, @location(3) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    var tide_vertex: tt_Point3 = tide_get0(i32(tide_vertex_index));
+    ts_Raise(&tide_vertex);
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_normal;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Light(tt_Point3(vec3f(), in.tide_s1, i32()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Tinted on Point3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_n4: vec4f;
+var<private> tide_f0: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) @interpolate(flat) tide_f0: vec4f,
+}
+struct tt_Point3 {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_kind: i32,
+}
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_s1[tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), tide_word1(1u)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), 0x7fffffffu));
+}
+
+fn tide_get1(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Point3 {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Point3();
+    }
+    let tide_b = 4u + u32(tide_i) * 7u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), bitcast<i32>(tide_word0(tide_b + 6u)), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Point3(tide_p0.xyz, vec3f(tide_p0.w, tide_p1.x, tide_p1.y), tide_q1.z);
+}
+
+fn ts_Tinted(t_point: tt_Point3, t_color: ptr<function, vec4f>) {
+    (*t_color) = tide_f0;
+}
+
+@vertex fn vertex(@location(0) tide_in0: vec4f, @location(1) tide_in1: vec4f, @location(2) tide_in2: vec4f, @location(3) tide_in3: vec4f, @location(4) tide_in4: vec4f, @builtin(vertex_index) tide_corner_at: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    tide_n4 = tide_in4;
+    let tide_vertex_index = bitcast<u32>(tide_get1(i32(tide_corner_at)));
+    var tide_vertex: tt_Point3 = tide_get0(i32(tide_vertex_index));
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_f0 = vec4f(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_f0 = in.tide_f0;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Tinted(tt_Point3(vec3f(), vec3f(), i32()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Tinted on Point3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+    tide_u0: vec4f,
+    tide_u1: vec4f,
+    tide_u2: vec4f,
+    tide_u3: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+@group(0) @binding(26) var<storage, read> tide_s1: array<u32>;
+@group(0) @binding(27) var<storage, read> tide_s2: array<u32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_n4: vec4f;
+var<private> tide_f0: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) @interpolate(flat) tide_f0: vec4f,
+}
+struct tt_Point3 {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_kind: i32,
+}
+struct tt_Placed {
+    m_transform: mat4x4f,
+    m_tint: vec4f,
+}
+fn tide_word2(tide_k: u32) -> u32 {
+    return tide_s2[tide_k];
+}
+
+fn tide_count2() -> i32 {
+    return i32(min(tide_word2(0u), tide_word2(1u)));
+}
+
+fn tide_capacity2() -> i32 {
+    return i32(min(tide_word2(1u), 0x7fffffffu));
+}
+
+fn tide_get2(tide_i: i32) -> i32 {
+    if (tide_i < 0 || tide_i >= tide_count2()) {
+        return i32();
+    }
+    let tide_b = 4u + u32(tide_i) * 1u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word2(tide_b + 0u)), 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn tide_word1(tide_k: u32) -> u32 {
+    return tide_s1[tide_k];
+}
+
+fn tide_count1() -> i32 {
+    return i32(min(tide_word1(0u), tide_word1(1u)));
+}
+
+fn tide_capacity1() -> i32 {
+    return i32(min(tide_word1(1u), 0x7fffffffu));
+}
+
+fn tide_get1(tide_i: i32) -> tt_Point3 {
+    if (tide_i < 0 || tide_i >= tide_count1()) {
+        return tt_Point3();
+    }
+    let tide_b = 4u + u32(tide_i) * 7u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word1(tide_b + 0u)), bitcast<i32>(tide_word1(tide_b + 1u)), bitcast<i32>(tide_word1(tide_b + 2u)), bitcast<i32>(tide_word1(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word1(tide_b + 4u)), bitcast<i32>(tide_word1(tide_b + 5u)), bitcast<i32>(tide_word1(tide_b + 6u)), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Point3(tide_p0.xyz, vec3f(tide_p0.w, tide_p1.x, tide_p1.y), tide_q1.z);
+}
+
+fn ts_Tinted(t_point: tt_Point3, t_color: ptr<function, vec4f>) {
+    (*t_color) = tide_f0;
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Placed {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Placed();
+    }
+    let tide_b = 4u + u32(tide_i) * 20u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), bitcast<i32>(tide_word0(tide_b + 6u)), bitcast<i32>(tide_word0(tide_b + 7u)));
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    let tide_q2 = vec4i(bitcast<i32>(tide_word0(tide_b + 8u)), bitcast<i32>(tide_word0(tide_b + 9u)), bitcast<i32>(tide_word0(tide_b + 10u)), bitcast<i32>(tide_word0(tide_b + 11u)));
+    let tide_p2 = bitcast<vec4f>(tide_q2);
+    let tide_q3 = vec4i(bitcast<i32>(tide_word0(tide_b + 12u)), bitcast<i32>(tide_word0(tide_b + 13u)), bitcast<i32>(tide_word0(tide_b + 14u)), bitcast<i32>(tide_word0(tide_b + 15u)));
+    let tide_p3 = bitcast<vec4f>(tide_q3);
+    let tide_q4 = vec4i(bitcast<i32>(tide_word0(tide_b + 16u)), bitcast<i32>(tide_word0(tide_b + 17u)), bitcast<i32>(tide_word0(tide_b + 18u)), bitcast<i32>(tide_word0(tide_b + 19u)));
+    let tide_p4 = bitcast<vec4f>(tide_q4);
+    return tt_Placed(mat4x4f(tide_p0, tide_p1, tide_p2, tide_p3), tide_p4);
+}
+
+@vertex fn vertex(@builtin(vertex_index) tide_corner_at: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    let tide_e = 4u + tide_instance_index * 20u;
+    tide_n0.x = bitcast<f32>(tide_word0(tide_e + 0u));
+    tide_n0.y = bitcast<f32>(tide_word0(tide_e + 1u));
+    tide_n0.z = bitcast<f32>(tide_word0(tide_e + 2u));
+    tide_n0.w = bitcast<f32>(tide_word0(tide_e + 3u));
+    tide_n1.x = bitcast<f32>(tide_word0(tide_e + 4u));
+    tide_n1.y = bitcast<f32>(tide_word0(tide_e + 5u));
+    tide_n1.z = bitcast<f32>(tide_word0(tide_e + 6u));
+    tide_n1.w = bitcast<f32>(tide_word0(tide_e + 7u));
+    tide_n2.x = bitcast<f32>(tide_word0(tide_e + 8u));
+    tide_n2.y = bitcast<f32>(tide_word0(tide_e + 9u));
+    tide_n2.z = bitcast<f32>(tide_word0(tide_e + 10u));
+    tide_n2.w = bitcast<f32>(tide_word0(tide_e + 11u));
+    tide_n3.x = bitcast<f32>(tide_word0(tide_e + 12u));
+    tide_n3.y = bitcast<f32>(tide_word0(tide_e + 13u));
+    tide_n3.z = bitcast<f32>(tide_word0(tide_e + 14u));
+    tide_n3.w = bitcast<f32>(tide_word0(tide_e + 15u));
+    tide_n4.x = bitcast<f32>(tide_word0(tide_e + 16u));
+    tide_n4.y = bitcast<f32>(tide_word0(tide_e + 17u));
+    tide_n4.z = bitcast<f32>(tide_word0(tide_e + 18u));
+    tide_n4.w = bitcast<f32>(tide_word0(tide_e + 19u));
+    let tide_moved = mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3) * mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3);
+    tide_n0 = tide_moved[0];
+    tide_n1 = tide_moved[1];
+    tide_n2 = tide_moved[2];
+    tide_n3 = tide_moved[3];
+    let tide_vertex_index = bitcast<u32>(tide_get2(i32(tide_corner_at)));
+    var tide_vertex: tt_Point3 = tide_get1(i32(tide_vertex_index));
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_f0 = vec4f(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_f0 = in.tide_f0;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Tinted(tt_Point3(vec3f(), vec3f(), i32()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Tinted on Point3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_origin: vec4f,
+    tide_u0: vec4f,
+    tide_u1: vec4f,
+    tide_u2: vec4f,
+    tide_u3: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
+    let relative = mat4x4f(
+        model[0] - tide_block.tide_origin * model[0].w,
+        model[1] - tide_block.tide_origin * model[1].w,
+        model[2] - tide_block.tide_origin * model[2].w,
+        model[3] - tide_block.tide_origin * model[3].w);
+    return tide_block.tide_camera * (relative * vertex);
+}
+@group(0) @binding(25) var<storage, read> tide_s0: array<u32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_n4: vec4f;
+var<private> tide_f0: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) @interpolate(flat) tide_f0: vec4f,
+}
+struct tt_Point3 {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_kind: i32,
+}
+struct tt_Placed {
+    m_transform: mat4x4f,
+    m_tint: vec4f,
+}
+fn ts_Tinted(t_point: tt_Point3, t_color: ptr<function, vec4f>) {
+    (*t_color) = tide_f0;
+}
+
+fn tide_word0(tide_k: u32) -> u32 {
+    return tide_s0[tide_k];
+}
+
+fn tide_count0() -> i32 {
+    return i32(min(tide_word0(0u), tide_word0(1u)));
+}
+
+fn tide_capacity0() -> i32 {
+    return i32(min(tide_word0(1u), 0x7fffffffu));
+}
+
+fn tide_get0(tide_i: i32) -> tt_Placed {
+    if (tide_i < 0 || tide_i >= tide_count0()) {
+        return tt_Placed();
+    }
+    let tide_b = 4u + u32(tide_i) * 20u;
+    let tide_q0 = vec4i(bitcast<i32>(tide_word0(tide_b + 0u)), bitcast<i32>(tide_word0(tide_b + 1u)), bitcast<i32>(tide_word0(tide_b + 2u)), bitcast<i32>(tide_word0(tide_b + 3u)));
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = vec4i(bitcast<i32>(tide_word0(tide_b + 4u)), bitcast<i32>(tide_word0(tide_b + 5u)), bitcast<i32>(tide_word0(tide_b + 6u)), bitcast<i32>(tide_word0(tide_b + 7u)));
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    let tide_q2 = vec4i(bitcast<i32>(tide_word0(tide_b + 8u)), bitcast<i32>(tide_word0(tide_b + 9u)), bitcast<i32>(tide_word0(tide_b + 10u)), bitcast<i32>(tide_word0(tide_b + 11u)));
+    let tide_p2 = bitcast<vec4f>(tide_q2);
+    let tide_q3 = vec4i(bitcast<i32>(tide_word0(tide_b + 12u)), bitcast<i32>(tide_word0(tide_b + 13u)), bitcast<i32>(tide_word0(tide_b + 14u)), bitcast<i32>(tide_word0(tide_b + 15u)));
+    let tide_p3 = bitcast<vec4f>(tide_q3);
+    let tide_q4 = vec4i(bitcast<i32>(tide_word0(tide_b + 16u)), bitcast<i32>(tide_word0(tide_b + 17u)), bitcast<i32>(tide_word0(tide_b + 18u)), bitcast<i32>(tide_word0(tide_b + 19u)));
+    let tide_p4 = bitcast<vec4f>(tide_q4);
+    return tt_Placed(mat4x4f(tide_p0, tide_p1, tide_p2, tide_p3), tide_p4);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: i32, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    let tide_e = 4u + tide_instance_index * 20u;
+    tide_n0.x = bitcast<f32>(tide_word0(tide_e + 0u));
+    tide_n0.y = bitcast<f32>(tide_word0(tide_e + 1u));
+    tide_n0.z = bitcast<f32>(tide_word0(tide_e + 2u));
+    tide_n0.w = bitcast<f32>(tide_word0(tide_e + 3u));
+    tide_n1.x = bitcast<f32>(tide_word0(tide_e + 4u));
+    tide_n1.y = bitcast<f32>(tide_word0(tide_e + 5u));
+    tide_n1.z = bitcast<f32>(tide_word0(tide_e + 6u));
+    tide_n1.w = bitcast<f32>(tide_word0(tide_e + 7u));
+    tide_n2.x = bitcast<f32>(tide_word0(tide_e + 8u));
+    tide_n2.y = bitcast<f32>(tide_word0(tide_e + 9u));
+    tide_n2.z = bitcast<f32>(tide_word0(tide_e + 10u));
+    tide_n2.w = bitcast<f32>(tide_word0(tide_e + 11u));
+    tide_n3.x = bitcast<f32>(tide_word0(tide_e + 12u));
+    tide_n3.y = bitcast<f32>(tide_word0(tide_e + 13u));
+    tide_n3.z = bitcast<f32>(tide_word0(tide_e + 14u));
+    tide_n3.w = bitcast<f32>(tide_word0(tide_e + 15u));
+    tide_n4.x = bitcast<f32>(tide_word0(tide_e + 16u));
+    tide_n4.y = bitcast<f32>(tide_word0(tide_e + 17u));
+    tide_n4.z = bitcast<f32>(tide_word0(tide_e + 18u));
+    tide_n4.w = bitcast<f32>(tide_word0(tide_e + 19u));
+    let tide_moved = mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3) * mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3);
+    tide_n0 = tide_moved[0];
+    tide_n1 = tide_moved[1];
+    tide_n2 = tide_moved[2];
+    tide_n3 = tide_moved[3];
+    var tide_vertex: tt_Point3 = tt_Point3(tide_a0, tide_a1, tide_a2);
+    let tide_projected = tide_project(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3), vec4f(tide_vertex.m_position, 1.0));
+    let tide_clip = tide_projected;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_f0 = vec4f(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_f0 = in.tide_f0;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Tinted(tt_Point3(vec3f(), vec3f(), i32()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

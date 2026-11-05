@@ -1051,6 +1051,7 @@ static uint32_t draw_target;
 static uint32_t draw_blend; // How the command being turned into steps blends: tide_blend
 static uint32_t draw_stencil; // What the selected destination's commands do with its stencil, by now: a tide_stencil, packed
 static uint32_t draw_calls; // What the last list drawn took, the overlay's aside (tide_platform_draw_calls)
+static uint32_t render_passes; // ...and the passes it began (tide_platform_render_passes)
 static uint64_t draw_vertices; // Submitted vertices, including every index and instance
 
 // A target's cameras and clip belong to it for the whole frame, including
@@ -3576,7 +3577,8 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
         .wgsl = shader->wgsl,
         .spirv = shader->spirv,
         .spirv_words = shader->spirv_words,
-        .slots = {{shader->vertex_size, false}, {instance_size, true}},
+        // Vertices a GPU list's are read from it by their index: the mesh's buffer holds one, which nothing reads
+        .slots = {{shader->vertex_storage ? 0u : shader->vertex_size, false}, {instance_size, true}},
         .slot_count = instance_size ? 2u : 1u,
         .uniform_size = shaded_header_size(shader) + tide_shader_uniform_size(shader),
         .texture_count = shader->texture_count,
@@ -4689,6 +4691,10 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
         return g->index_count;
     }
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, s->instances_at);
+    if (shader->index_storage) { // Corners as many as its list of indices has on the GPU, each vertex read by its index
+        gpu->draw_indirect(s->indirect, 0);
+        return 0; // How many isn't the CPU's to know
+    }
     gpu->indices(g->indices, g->wide);
     if (run->indirect) { // As many as its list has on the GPU: their count isn't the CPU's to know
         gpu->draw_indexed_indirect(s->indirect, 0);
@@ -4862,6 +4868,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         if (!over) {
             draw_calls = 0;
             draw_vertices = 0;
+            render_passes = 0;
         }
         return;
     }
@@ -5058,6 +5065,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     settle_extras();
     settle_radii();
     if (!over) last_camera = frame_targets[0].world;
+    move_work_out_of_passes(list); // Runs a pass doesn't wait for go before it, so it isn't split
 
     // What the steps draw from goes to the GPU first
     renderer_start();
@@ -5087,6 +5095,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     bool pass_active = false;
     bool cleared = over;
     uint32_t calls = 0; // The steps that draw, a draw call each
+    uint32_t passes = 0;
     uint64_t vertices = 0;
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
@@ -5141,6 +5150,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
         if (!pass_active && step_draws(s)) {
             begin_pass(frame_targets[draw_target].gpu, !draw_target && !cleared);
+            passes++;
             if (!draw_target) cleared = true;
             pass_active = true;
             clip(&frame_targets[draw_target].clipping);
@@ -5197,7 +5207,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case STEP_SHADED:
             if (!pipeline_made(s)) break;
-            if (list->runs[s->first].indirect && !s->indirect) break; // Its list isn't there
+            if (step_indirect(list, s) && !s->indirect) break; // Its list isn't there
             vertices += draw_shaded(list, s);
             calls++;
             break;
@@ -5230,6 +5240,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     if (!cleared) { // Nothing drew in the frame's target
         select_target(0);
         begin_pass(target, true);
+        passes++;
         end_pass();
     }
     if (timed && gpu->time_end) gpu->time_end();
@@ -5243,6 +5254,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         free_spare_data_textures();
         draw_calls = calls;
         draw_vertices = vertices;
+        render_passes = passes;
         // The first frame through shaders after the list forgot (a hot reload): what's left of the last build's goes
         if (shaded && list->epoch != shader_epoch) {
             forget_pipelines();
@@ -5443,6 +5455,11 @@ const char *tide_platform_renderer(void)
 uint32_t tide_platform_draw_calls(void)
 {
     return draw_calls;
+}
+
+uint32_t tide_platform_render_passes(void)
+{
+    return render_passes;
 }
 
 uint64_t tide_platform_draw_vertices(void)

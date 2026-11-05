@@ -1,5 +1,10 @@
 # The language server and the editors
 
+## Meshes over GPU lists (2026-11-05)
+
+The mesh draws' hover (`MESH_SHADER_DOC`) says vertices can be a `GPUList` and indices a `GPUList<int>`; the
+checker's forms note (`note_mesh_forms`) says the lists can be GPU lists. No completion or grammar change.
+
 ## Kernels and GPU lists (2026-11-05)
 
 `compute` is a declaration word in the language server (snippets in both

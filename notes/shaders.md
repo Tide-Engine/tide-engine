@@ -73,6 +73,16 @@ Contracts, layout and tests: `notes/compute.md`, Built. `tidec --kernels <file.h
 program's kernels as a C header for the renderer's own (`platform/src/cull.tide`): drawing.md, Listed runs culled on
 the GPU.
 
+## Pulled vertices and indices, Draw.Transform's matrix, shared races (2026-11-05)
+
+A shader whose vertices are a GPU list's (`shader.gpu_vertices`) reads its vertex from storage by
+`tide_vertex_index` (no `@location` vertex inputs; instance attributes start at 0); one whose indices are too reads
+each corner's index first (`tide_corner_at` is the built-in then). A 3D `gpu_instances` shader multiplies its loaded
+transform by Draw.Transform's matrix, four uniform float4s after its values (`through_at`). Kernels' shared-memory
+writes fxc refuses (X3695) are a tidec warning (`shared_races`), and X3584 (one value for all) is off in
+`TideWarnings.hlsl`. Contracts, measurements and tests: notes/compute.md, Meshes over GPU lists. Goldens:
+`gpu_meshes` (new), `kernels_add` (its indirect draw's matrix); every other golden is unchanged.
+
 ## Camera-relative 3D projection (2026-11-02)
 
 Generated 3D shaders add tide_origin after the existing camera/screen/tint

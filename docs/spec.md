@@ -3651,7 +3651,15 @@ Kernels, GPU lists, `GPU.Run`, ordered `Add`, atomics, `shared`, `GPU.Barrier`, 
 - **Reads back** are of the list as the frame drawn after the read was asked for leaves it (the renderer begins them once that frame's work is recorded). On the web they arrive when the browser has them; without a window (`--capture`, `--frames`, `--script`) at the next frame's start. A read nobody polls for 600 frames (its task was cancelled) is let go. 64 are pending at most; past that the await waits.
 - **Atomics on `shared` memory** are on a `shared int[N]`'s elements; such an array's reads and writes are atomic too, and it can't be read whole.
 - **Shared locals** take no initializer, are changeable without `mut`, and are a kernel's own body's top level.
-- **`Draw.Instanced` over a GPU list** takes no `lod:`, no skinned mesh, and isn't moved by `Draw.Transform` (its transforms are the kernel's).
+- **`Draw.Instanced` over a GPU list** takes no `lod:` and no skinned mesh. Inside `Draw.Transform` (built 2026-11-05, after the first cut, which left such a draw unmoved), the draw's matrix goes with its uniforms and the GPU puts each instance's transform through it, as the CPU does a list's; one that mirrors turns the draw's front round, as it does a list's. An instance whose own transform mirrors isn't drawn apart from the others (the CPU has no instances to tell apart): such a list is drawn inside `Draw.Cull(Cull.None)` or as two lists.
+- **Meshes over GPU lists** (built 2026-11-05): `Draw.Mesh`, `Draw.Instanced` and a target's `Mesh` take a `GPUList` of the vertex struct for the vertices, and a `GPUList<int>` or a `List<int>` for the indices.
+  - The vertex stage reads each vertex from its list's storage by its index (`vertex_index`), as `list[i]` reads, zeros past the count; such a shader has no vertex attributes. GPU lists' layout (each element's floats, then its ints) isn't a vertex buffer's, and reading them as storage needs nothing of a backend that a frag's reads don't.
+  - Indices a GPU list's are read there too, each corner's by its place among them, and the draw is a non-indexed indirect one of as many corners as the list's count on the GPU: no backend binds a storage buffer as indices the same way (Unity's replay doesn't). So a mesh with indices on the GPU has its vertices there too: the CPU's vertices with a GPU list's indices is an error that says to `Set` them into a `GPUList`.
+  - The CPU's indices with a GPU list's vertices are an ordinary index buffer, drawn with the CPU's count: as many triangles as there are indices, a vertex past the GPU's count zeros, so a fixed pattern of quads draws however many a kernel made.
+  - A vert's rolls tell its runs apart by the vertex's index, the one read from the list of indices where that's a GPU list's.
+  - Instances of such a mesh from a CPU list are a list's (`Draw.Transform`, mirroring, frustum culling), but its bounds aren't the CPU's to know, so none are culled. `lod:` is an error: levels are made of the CPU's vertices.
+- **Runs moved out of passes** (built 2026-11-05): the renderer does a run, or a list's `Set`, `Clear` or `SetCount`, before the draws recorded ahead of it that read none of the lists it writes (and, for a run that samples a render target, draw into no target), in their order: so it splits no render pass it doesn't have to. Observable order is as if serial.
+- **A race on shared memory that Unity can't compile** (built 2026-11-05): every invocation of a group writing one place of shared memory, each with its own value, is a race WGSL and SPIR-V allow and Unity's Direct3D 11 compiler (fxc) refuses (X3695). tidec warns where it can tell (a place the same for the group, reached by all of it) and says to write from one invocation. It doesn't guard the write itself: an invocation that reads what it wrote before a barrier could then read something else. One value written by all is fine everywhere (fxc's X3584, which Unity's shaders turn off).
 - **OpenGL and WebGL** passed runs and draws that read GPU lists by, saying so once, and failed reads back: the staging the decided Backends rule describes. History: the GL backends were removed 2026-11-05, so every backend runs them.
 
 #### Kernels
@@ -3731,7 +3739,7 @@ view DrawMeadow(Meadow meadow, Models models)
 - **`values`** is a struct sent once for the dispatch, as a draw's values are.
 - **A frame's GPU work happens as if in recording order.** A draw recorded after a run sees what the run wrote; one recorded before it doesn't. The same holds between runs. This is the scheduler's rule applied within a frame.
   - The renderer knows each command's GPU-list reads and writes from the compiler, and places exactly the barriers they need.
-  - It may move a run earlier, out of the render pass it fell in, when nothing between them writes what the run reads or reads what it writes. A render pass is never split for a run that doesn't need it.
+  - It may move a run earlier, out of the render pass it fell in, when nothing between them writes what the run reads or reads what it writes. A render pass is never split for a run that doesn't need it. (Built 2026-11-05: Built, above.)
   - Parallel views keep recording order, as for draws.
 - **Kernels write GPU lists only.** Writing a texture (storage textures) is open: a Hi-Z pyramid can be built with `Blit` into float targets, so culling doesn't need it.
 
@@ -3746,11 +3754,11 @@ view DrawMeadow(Meadow meadow, Models models)
 
 - **A draw over a GPU list is indirect, with nothing more said:**
   - `Draw.Instanced(mesh, list, ...)` draws as many instances as the list's GPU count;
-  - `Draw.Mesh` takes `GPUList` vertices and indices too, for geometry a kernel makes (grass, particles, terrain), with their counts on the GPU.
+  - `Draw.Mesh` takes `GPUList` vertices and indices too, for geometry a kernel makes (grass, particles, terrain), with their counts on the GPU. (Built 2026-11-05: Built, above.)
   - The CPU records one command and reads nothing back. No game writes indirect arguments.
 - **No CPU culling or level picking** applies to such a draw (the CPU has no instances to test): the kernel does that. A game draws one list a level, filled by one kernel.
 - **Backends:**
-  - Vulkan uses `vkCmdDrawIndexedIndirect`, with `DrawIndirectCount` (core since 1.2) for many runs in one call.
+  - Vulkan uses `vkCmdDrawIndexedIndirect`, with `DrawIndirectCount` (core since 1.2) for many runs in one call (not built: a draw each).
   - WebGPU uses `drawIndexedIndirect`, one a draw. A nonzero first instance there needs the optional `indirect-first-instance` feature, so the instance base goes with the draw's uniforms instead.
   - Unity uses `Graphics.RenderPrimitivesIndexedIndirect` and `CommandBuffer.DispatchCompute`.
 

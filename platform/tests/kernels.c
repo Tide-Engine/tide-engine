@@ -4,7 +4,12 @@
 // What the GPU works out is checked against the CPU's: the same Tide function,
 // ordered Add's elements and count at three group sizes, a run over a list's
 // count on the GPU, atomics, shared memory with barriers, a list sent, changed
-// and read back, and the pixels of an indirect draw of a list a kernel filled.
+// and read back, and the pixels of an indirect draw of a list a kernel filled,
+// of it again inside Draw.Transform, of meshes whose vertices and indices
+// kernels made (as many as the GPU has), of a 3D indirect draw moved by
+// Draw.Transform, and of a draw after a run that changed what a draw before
+// it read. The runs nothing drawn before them reads go before the frame's
+// pass: two passes, the second after the run a draw waits for.
 // On WebGPU the page then loses its device, and every check runs again on the
 // next one, with the lists made again (their contentRevision changed).
 
@@ -112,24 +117,56 @@ static void check_results(const char *when)
     expect(items, "a list of structs sent, changed by a kernel where it is, and read back", when);
 }
 
+// Whether the pixels at `points` are `want`'s colors, each channel within 3; says which aren't.
+static bool pixels_are(const tide_float2 *points, const uint32_t *want, const int count, const char *what, const char *when)
+{
+    uint32_t got[8];
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, (uint32_t)count, got);
+    bool ok = true;
+    for (int i = 0; i < count; i++) {
+        bool same = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)(want[i] >> (24 - 8 * c) & 0xFFu);
+            same = same && d >= -3 && d <= 3;
+        }
+        if (!same) printf("  at (%g, %g): 0x%08X, not 0x%08X\n", (double)points[i].x, (double)points[i].y, (unsigned)got[i],
+                          (unsigned)want[i]);
+        ok = ok && same;
+    }
+    expect(ok, what, when);
+    return ok;
+}
+
 static void check_pixels(const char *when)
 {
     // Three spots, at -20, 0 and 20 across from the middle, and nothing between them: as many as the kernel added
-    static const tide_float2 points[] = {{12, 32}, {32, 32}, {52, 32}, {22, 32}, {42, 32}, {32, 20}};
-    static const uint32_t want[] = {0x00FF80FFu, 0x808080FFu, 0xFF0080FFu, 0x000000FFu, 0x000000FFu, 0x000000FFu};
-    uint32_t got[6];
-    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 6, got);
-    bool ok = true;
-    for (int i = 0; i < 6; i++) {
-        for (int c = 0; c < 3; c++) {
-            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)(want[i] >> (24 - 8 * c) & 0xFFu);
-            ok = ok && d >= -3 && d <= 3;
-        }
-    }
-    printf("%s: an indirect draw draws as many instances as a kernel added, each its own (0x%08X 0x%08X 0x%08X, "
-           "between 0x%08X 0x%08X 0x%08X)%s\n", ok ? "ok" : "FAIL", (unsigned)got[0], (unsigned)got[1], (unsigned)got[2],
-           (unsigned)got[3], (unsigned)got[4], (unsigned)got[5], when);
-    if (!ok) failures++;
+    static const tide_float2 spots[] = {{12, 32}, {32, 32}, {52, 32}, {22, 32}, {42, 32}};
+    static const uint32_t spots_are[] = {0x00FF80FFu, 0x808080FFu, 0xFF0080FFu, 0x000000FFu, 0x000000FFu};
+    pixels_are(spots, spots_are, 5, "an indirect draw draws as many instances as a kernel added, each its own", when);
+    // The same, 12 up inside Draw.Transform
+    static const tide_float2 moved[] = {{12, 20}, {52, 20}, {22, 20}};
+    static const uint32_t moved_are[] = {0x00FF80FFu, 0xFF0080FFu, 0x000000FFu};
+    pixels_are(moved, moved_are, 3, "a 2D indirect draw goes through Draw.Transform", when);
+    // A mesh of a kernel's vertices and indices: the first and last squares, red and blue, not the middle one
+    static const tide_float2 made[] = {{12, 56}, {52, 56}, {32, 56}};
+    static const uint32_t made_are[] = {0xFF0000FFu, 0x0000FFFFu, 0x000000FFu};
+    pixels_are(made, made_are, 3, "a mesh of a GPU list's vertices and indices draws as many as the GPU has", when);
+    // The middle square's corners, by the CPU's indices (one triangle past the vertices too), moved up by its vert
+    static const tide_float2 picked[] = {{32, 12}, {32, 24}};
+    static const uint32_t picked_are[] = {0x00FF00FFu, 0x000000FFu};
+    pixels_are(picked, picked_are, 2, "a GPU list's vertices by the CPU's indices", when);
+    // A 3D box far to the right, which Draw.Transform brings into view
+    static const tide_float2 box[] = {{8, 8}};
+    static const uint32_t box_is[] = {0xFFFF00FFu};
+    pixels_are(box, box_is, 1, "a 3D indirect draw's transforms go through Draw.Transform", when);
+    // The first square again, after a run made every corner white, 20 across and 12 up: the draws before it kept red
+    static const tide_float2 after[] = {{32, 44}};
+    static const uint32_t after_is[] = {0xFFFFFFFFu};
+    pixels_are(after, after_is, 1, "a draw after a run sees what it wrote, and the draws before it don't", when);
+    const uint32_t passes = tide_platform_render_passes();
+    printf("%s: the runs before the draws go before the frame's pass, and the one a draw waits for ends it (%u "
+           "passes)%s\n", passes == 2 ? "ok" : "FAIL", (unsigned)passes, when);
+    if (passes != 2) failures++;
 }
 
 // A round of checks, a frame of the game in each of the host's frames: the browser has to run between them, for a

@@ -371,9 +371,78 @@ static void run_gpu_op(const tide_draw_list *list, const draw_step *s)
     gpu->buffer_write(buffer, 0, &header, sizeof header);
 }
 
+// Whether a step reads the GPU list `id`: a draw's lists, its instances', vertices' and indices' among them.
+static bool step_reads_list(const tide_draw_list *list, const draw_step *s, const uint64_t id)
+{
+    if (s->kind != STEP_SHADED && s->kind != STEP_BLIT) return false;
+    const tide_draw_run *run = &list->runs[s->first];
+    if (run->indirect == id) return true;
+    if (!run->shader || !run->storage) return false;
+    for (uint32_t k = 0; k < run->shader->storage_count && k < TIDE_SHADER_STORAGE; k++) {
+        if (list->storage[run->storage - 1u + k] == id) return true;
+    }
+    return false;
+}
+
+// Whether a run samples a render target's image, which a draw into a target may be changing.
+static bool run_samples_target(const tide_draw_list *list, const tide_draw_compute *r)
+{
+    for (uint32_t i = 0; i < r->shader->texture_count && i < TIDE_SHADER_TEXTURES; i++) {
+        const uint32_t t = r->textures[i];
+        if (!t || t > list->texture_count) continue;
+        const uint32_t space = list->textures[t - 1u].space;
+        if (space == TIDE_PIXELS_TARGET || space == TIDE_PIXELS_TARGET_DEPTH || space == TIDE_PIXELS_TARGET_CUBE) return true;
+    }
+    return false;
+}
+
+// Whether work `w` (a run or a list's Set, Clear or SetCount) can be done before step `s` with the same results:
+// `s` is no work (work keeps its order), reads no list `w` writes, and draws into no target where `w` samples one.
+static bool moves_before(const tide_draw_list *list, const draw_step *w, const draw_step *s)
+{
+    if (s->kind == STEP_COMPUTE || s->kind == STEP_GPU_OP) return false;
+    if (w->kind == STEP_GPU_OP) return !step_reads_list(list, s, list->gpu_ops[w->first].list);
+    const tide_draw_compute *r = &list->computes[w->first];
+    const tide_shader *shader = r->shader;
+    if (!shader || !shader->compute) return true; // It runs nothing
+    if (s->target && run_samples_target(list, r)) return false;
+    for (uint32_t k = 0; k < shader->storage_count && k < TIDE_SHADER_STORAGE; k++) {
+        bool writes = (shader->storage_writes >> k & 1u) != 0;
+        for (uint32_t a = 0; a < shader->add_count && a < TIDE_SHADER_STORAGE; a++) writes |= shader->adds[a].list == k;
+        const uint64_t id = r->storage ? list->storage[r->storage - 1u + k] : 0u;
+        if (writes && id && step_reads_list(list, s, id)) return false;
+    }
+    return true;
+}
+
+// Runs and list operations moved before the draws recorded ahead of them that don't depend on them, in their order:
+// out of the render pass they fell in, which they'd otherwise end, so it isn't split. What's drawn is as if done in
+// recording order: a draw before a run still reads none of what the run writes.
+static void move_work_out_of_passes(const tide_draw_list *list)
+{
+    for (uint32_t i = 1; i < step_count; i++) {
+        if (steps[i].kind != STEP_COMPUTE && steps[i].kind != STEP_GPU_OP) continue;
+        uint32_t to = i;
+        while (to > 0 && moves_before(list, &steps[i], &steps[to - 1u])) to--;
+        if (to == i) continue;
+        const draw_step work = steps[i];
+        memmove(&steps[to + 1u], &steps[to], (size_t)(i - to) * sizeof *steps);
+        steps[to] = work;
+    }
+}
+
+// Whether a step draws indirect, with counts the GPU has: instances a GPU list's, or indices.
+static bool step_indirect(const tide_draw_list *list, const draw_step *s)
+{
+    if (s->kind != STEP_SHADED) return false;
+    const tide_draw_run *run = &list->runs[s->first];
+    return run->indirect || (run->shader && run->shader->index_storage);
+}
+
 // The GPU lists the frame's draws read, made before any pass (a draw can't make one in a pass), and each indirect
 // draw's arguments from `from` to the next of the frame's runs and list operations, which change counts: its index
-// count, and its instances, the list's count as the GPU has it there.
+// count, and its instances, the list's count as the GPU has it there. A draw whose indices are a GPU list's draws
+// as many corners as that list's count, each reading its vertex's index there, `draw_indirect`'s numbers.
 static void prepare_storage_draws(const tide_draw_list *list, const uint32_t from)
 {
     for (uint32_t i = from; i < step_count; i++) {
@@ -381,16 +450,29 @@ static void prepare_storage_draws(const tide_draw_list *list, const uint32_t fro
         if (s->kind == STEP_COMPUTE || s->kind == STEP_GPU_OP) return;
         if (s->kind != STEP_SHADED || !run_draws(list, s->first)) continue;
         const tide_draw_run *run = &list->runs[s->first];
-        if (!run->shader->storage_count) continue;
-        for (uint32_t k = 0; k < run->shader->storage_count && run->storage; k++) list_buffer(list->storage[run->storage - 1u + k]);
-        if (!run->indirect) continue;
-        const tide_gpu_id instances = list_buffer(run->indirect);
-        const gpu_mesh *g = &gpu_meshes[run->mesh - 1u];
-        if (!instances || !g->index_count) continue;
-        s->indirect = take_scratch(5u * sizeof(uint32_t));
-        const uint32_t args[5] = {g->index_count, 0, 0, 0, 0};
-        gpu->buffer_write(s->indirect, 0, args, sizeof args);
-        gpu->buffer_copy(instances, 0, s->indirect, sizeof(uint32_t), sizeof(uint32_t));
+        const tide_shader *shader = run->shader;
+        if (!shader->storage_count) continue;
+        for (uint32_t k = 0; k < shader->storage_count && run->storage; k++) list_buffer(list->storage[run->storage - 1u + k]);
+        if (!run->indirect && !shader->index_storage) continue;
+        const tide_gpu_id instances = run->indirect ? list_buffer(run->indirect) : 0;
+        if (run->indirect && !instances) continue;
+        if (shader->index_storage) {
+            const uint32_t slot = shader->index_storage - 1u;
+            const tide_gpu_id indices = slot < shader->storage_count && run->storage
+                                      ? list_buffer(list->storage[run->storage - 1u + slot]) : 0;
+            if (!indices) continue;
+            s->indirect = take_scratch(4u * sizeof(uint32_t));
+            const uint32_t args[4] = {0, run->indirect ? 0u : run->count, 0, 0};
+            gpu->buffer_write(s->indirect, 0, args, sizeof args);
+            gpu->buffer_copy(indices, 0, s->indirect, 0, sizeof(uint32_t));
+        } else {
+            const gpu_mesh *g = &gpu_meshes[run->mesh - 1u];
+            if (!g->index_count) continue;
+            s->indirect = take_scratch(5u * sizeof(uint32_t));
+            const uint32_t args[5] = {g->index_count, 0, 0, 0, 0};
+            gpu->buffer_write(s->indirect, 0, args, sizeof args);
+        }
+        if (instances) gpu->buffer_copy(instances, 0, s->indirect, sizeof(uint32_t), sizeof(uint32_t));
     }
 }
 

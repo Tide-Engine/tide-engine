@@ -24962,8 +24962,8 @@ static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, ui
 static void gen_storage_source(sb *o, const shader *sh, const int i)
 {
     const shader_storage *st = &sh->storage.items[i];
-    if (!st->field) {
-        sb_put(o, "tide_items");
+    if (!st->field) { // One the draw gives
+        sb_put(o, st->role == STORAGE_VERTICES ? "tide_gpu_vertices" : st->role == STORAGE_INDICES ? "tide_gpu_indices" : "tide_items");
         return;
     }
     if (sh->values_type && st->source == sh->values_type) {
@@ -25191,7 +25191,7 @@ static void gen_shaders(gen *g)
         gen_c_raw_literal(o, diagnostic_name(g, str_from(sh->name), "shader", s));
         // A fragment shader cannot move vertices. Skinning and a user vert can,
         // so only an undeformed 3D mesh advertises automatic geometry bounds.
-        if (sh->dims == 3 && !sh->vert && !sh->skinned) {
+        if (sh->dims == 3 && !sh->vert && !sh->skinned && !sh->gpu_vertices) {
             for (int i = 0; i < sh->vertex->fields.count; i++) {
                 const field *f = &sh->vertex->fields.items[i];
                 if (str_eq_c(f->name, "position"))
@@ -25204,8 +25204,9 @@ static void gen_shaders(gen *g)
                   (int)spirv_words);
         sb_printf(o, "    .id = 0x%llxull,\n    .dims = %d,\n    .vertex_size = sizeof(%s),\n    .attribute_count = %d,\n"
                      "    .attributes = {",
-                  (unsigned long long)id, sh->dims, vertex, sh->vertex->fields.count);
-        for (int i = 0; i < sh->vertex->fields.count; i++) {
+                  (unsigned long long)id, sh->dims, vertex, sh->gpu_vertices ? 0 : sh->vertex->fields.count);
+        if (sh->gpu_vertices) sb_put(o, "{0}"); // Read from their list, by index: none are attributes
+        for (int i = 0; !sh->gpu_vertices && i < sh->vertex->fields.count; i++) {
             const field *f = &sh->vertex->fields.items[i];
             const int dim = f->type.kind == TY_COLOR ? 4 : type_dim(f->type);
             sb_printf(o, "%s{TIDE_SHADER_%s + %d, offsetof(%s, %s)}", i ? ", " : "", type_is_int_based(f->type) ? "INT" : "FLOAT",
@@ -25235,6 +25236,9 @@ static void gen_shaders(gen *g)
         if (sh->frag && sh->frag->cutout) sb_put(o, "    .cutout = true,\n"); // Its alpha is its coverage
         if (sh->storage.count) sb_printf(o, "    .storage_count = %d,\n", sh->storage.count); // The GPU lists it reads
         if (sh->gpu_instances) sb_printf(o, "    .instance_storage = %d,\n", sh->instance_storage + 1);
+        if (sh->through_at >= 0) sb_printf(o, "    .instance_through = %d,\n", sh->through_at + 1);
+        if (sh->gpu_vertices) sb_printf(o, "    .vertex_storage = %d,\n", sh->vertex_storage + 1);
+        if (sh->gpu_indices) sb_printf(o, "    .index_storage = %d,\n", sh->index_storage + 1);
         if (sh->listed) {
             sb_printf(o, "    .listed = true,\n#ifdef __wasm__\n"
                          "    .wgsl_listed = tide_shader_%d_listed_wgsl,\n#endif\n#ifdef TIDE_SPIRV\n"
@@ -25301,7 +25305,10 @@ static void gen_shaders(gen *g)
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
         sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw", s);
-        if (!sh->blit) sb_put(o, ", tide_list tide_vertices, tide_list tide_indices");
+        if (!sh->blit) {
+            sb_put(o, sh->gpu_vertices ? ", tide_gpu_list tide_gpu_vertices" : ", tide_list tide_vertices");
+            sb_put(o, sh->gpu_indices ? ", tide_gpu_list tide_gpu_indices" : ", tide_list tide_indices");
+        }
         if (sh->gpu_instances) sb_put(o, ", tide_gpu_list tide_items");
         else if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
@@ -25320,6 +25327,11 @@ static void gen_shaders(gen *g)
         }
         sb_put(o, ")\n{\n");
         if (sh->blit) sb_put(o, "    tide_draw = tide_draw_render_target(tide_draw, tide_destination);\n");
+        // A GPU list's vertices or indices are read on the GPU: the engine is given none of the CPU's for them
+        if (sh->gpu_vertices) sb_put(o, "    const tide_list tide_vertices = {0};\n");
+        if (sh->gpu_indices) sb_put(o, "    const tide_list tide_indices = {0};\n");
+        const char *no_vertices = sh->gpu_vertices ? "tide_gpu_vertices.id == 0" : "tide_list_count(tide_vertices) <= 0";
+        const char *no_indices = sh->gpu_indices ? "tide_gpu_indices.id == 0" : "tide_list_count(tide_indices) < 3";
         for (int b = 0; b < sh->bound.count; b++) {
             const decl *binding = sh->bound.items[b];
             if (!binding->binding_of) continue;
@@ -25334,10 +25346,10 @@ static void gen_shaders(gen *g)
         }
         if (sh->direct_texture || sh->textured) sb_put(o, "    (void)tide_texture;\n");
         if (sh->gpu_instances) {
-            sb_put(o, "    if (tide_list_count(tide_vertices) <= 0 || tide_list_count(tide_indices) < 3) return;\n");
+            sb_printf(o, "    if (%s || %s) return;\n", no_vertices, no_indices);
         } else if (sh->instanced) {
-            sb_put(o, "    const int32_t tide_count = tide_list_count(tide_items);\n"
-                      "    if (tide_count <= 0 || tide_list_count(tide_vertices) <= 0 || tide_list_count(tide_indices) < 3) return;\n");
+            sb_printf(o, "    const int32_t tide_count = tide_list_count(tide_items);\n"
+                         "    if (tide_count <= 0 || %s || %s) return;\n", no_vertices, no_indices);
             if (sh->dims == 3 && sh->instance_type && !sh->instance_transform)
                 sb_put(o, "    const tide_float4x4 tide_transform = tide_identity_f4x4();\n");
         }

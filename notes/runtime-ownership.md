@@ -1,5 +1,13 @@
 # Runtime written by Claude for now
 
+## Meshes over GPU lists, moved runs (2026-11-05)
+
+Under compute's pre-approved boundary: `tide_draw_mesh_fill_pulled` (draw.h, a pulled shader's stand-in mesh, which
+mesh.c's `shaded_mesh` makes), `tide_shader.instance_through`, `.vertex_storage`, `.index_storage`, and the renderer's
+`tide_platform_render_passes`. Generated code calls nothing new: `tide_draw_mesh_shaded*` and
+`tide_draw_mesh_shaded_indirect` take the new forms as they are. No embed op or ABI change: the recorder already has
+`DRAW_INDIRECT` and a pipeline's slot strides. Contracts: notes/compute.md, Meshes over GPU lists.
+
 ## Compute's reads back in Unity: embed ABI 11 (2026-11-05)
 
 Under compute's pre-approved boundary, for the Unity replay: `tide/embed.h`

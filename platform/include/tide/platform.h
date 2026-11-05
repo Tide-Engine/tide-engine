@@ -348,6 +348,12 @@ uint32_t tide_platform_prewarm_waiting(void);
 // instances is one.
 uint32_t tide_platform_draw_calls(void);
 
+// How many render passes the last list drawn began, with the same scope as
+// draw calls: one for each destination drawn into in a row, and another
+// after a kernel's run or a GPU list's Set, Clear or SetCount that a draw
+// after it waits for (one nothing drawn before it reads goes before them).
+uint32_t tide_platform_render_passes(void);
+
 // Vertices submitted by the last list drawn, with the same scope as draw
 // calls above: all render-target passes, without the host's overlays. Each
 // index counts once per instance, including repeated indices; this isn't a

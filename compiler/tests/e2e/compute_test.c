@@ -111,6 +111,46 @@ TIDE_TEST(compute_runs_and_gpu_lists_are_recorded_in_frame_order)
     TIDE_CHECK(drawn->shader->storage_count == 1 && drawn->storage && draw.storage[drawn->storage - 1u] == m->shown.id);
     TIDE_CHECK(drawn->shader->instance_floats == 0 && drawn->shader->instance_ints == 0);
     TIDE_CHECK(strstr(drawn->shader->wgsl ? drawn->shader->wgsl : "", "") != NULL);
+    // ...with Draw.Transform's matrix in its uniforms, which the GPU puts each transform through: the identity here,
+    // then a Draw.Transform's, and one that mirrors has its triangles' front the other way
+    const tide_shader *placed = drawn->shader;
+    TIDE_REQUIRE(placed->instance_through && (placed->instance_through - 1u) % 4u == 0
+                 && (placed->instance_through - 1u + 16u) * 4u <= tide_shader_uniform_size(placed));
+    const tide_draw_run *moved = &draw.runs[command(TIDE_DRAW_SHADED, 1)->shaded.run];
+    const tide_draw_run *mirrored = &draw.runs[command(TIDE_DRAW_SHADED, 2)->shaded.run];
+    tide_float4x4 through[3];
+    const tide_draw_run *indirect[3] = {drawn, moved, mirrored};
+    for (int i = 0; i < 3; i++)
+        memcpy(&through[i], draw.uniforms + indirect[i]->uniforms + (placed->instance_through - 1u) * 4u, sizeof through[i]);
+    const tide_float4x4 identity = tide_identity_f4x4();
+    TIDE_CHECK(memcmp(&through[0], &identity, sizeof identity) == 0);
+    TIDE_CHECK(through[1].c3.x == 5.0f && through[1].c3.y == 6.0f && through[1].c3.z == 7.0f && through[1].c0.x == 1.0f);
+    TIDE_CHECK(through[2].c0.x == -1.0f && through[2].c1.y == 1.0f && through[2].c3.x == 0.0f);
+    TIDE_CHECK(moved->indirect == m->shown.id && mirrored->indirect == m->shown.id);
+    TIDE_CHECK(!(command(TIDE_DRAW_SHADED, 0)->cull & TIDE_DRAW_MIRRORED) && !(command(TIDE_DRAW_SHADED, 1)->cull & TIDE_DRAW_MIRRORED)
+               && (command(TIDE_DRAW_SHADED, 2)->cull & TIDE_DRAW_MIRRORED));
+
+    // A mesh of a GPU list's vertices and indices: both its lists, read on the GPU, and a mesh of one unused triangle
+    const tide_draw_run *made = &draw.runs[command(TIDE_DRAW_SHADED, 3)->shaded.run];
+    const tide_shader *pulled = made->shader;
+    TIDE_CHECK(pulled->vertex_storage == 1 && pulled->index_storage == 2 && pulled->attribute_count == 0
+               && pulled->storage_count == 2 && pulled->instance_storage == 0 && pulled->bounds_position == 0);
+    TIDE_CHECK(made->storage && draw.storage[made->storage - 1u] == m->points.id && draw.storage[made->storage] == m->order.id);
+    TIDE_CHECK(made->indirect == 0 && made->count == 1 && pulled->instance_floats == 4); // Its transform, from the CPU
+    TIDE_CHECK(draw.meshes[made->mesh - 1u].index_count == 3 && draw.meshes[made->mesh - 1u].vertex_count == 1
+               && draw.meshes[made->mesh - 1u].vertex_size == sizeof(Corner));
+    float x;
+    memcpy(&x, draw.instances + made->first + 12u * sizeof(float), sizeof x);
+    TIDE_CHECK(x == 1.0f);
+    // ...by the CPU's indices: whole triangles of them as they are, the vertices the GPU's to count
+    const tide_draw_run *picked = &draw.runs[command(TIDE_DRAW_SHADED, 4)->shaded.run];
+    TIDE_CHECK(picked->shader->vertex_storage == 1 && picked->shader->index_storage == 0 && picked->shader->storage_count == 1);
+    TIDE_CHECK(picked->storage && draw.storage[picked->storage - 1u] == m->points.id);
+    const tide_draw_mesh_data *by_cpu = &draw.meshes[picked->mesh - 1u];
+    TIDE_CHECK(by_cpu->index_count == 6 && by_cpu->vertex_count == 1 && by_cpu->indices[3] == 2 && by_cpu->indices[5] == 3);
+    // ...instanced over a CPU list: its instances as any list's
+    const tide_draw_run *many = &draw.runs[command(TIDE_DRAW_SHADED, 5)->shaded.run];
+    TIDE_CHECK(many->shader->vertex_storage == 1 && many->count == 2 && many->indirect == 0);
 
     // A frame later the same, with the lists kept; a disposed list records nothing more
     frame();
