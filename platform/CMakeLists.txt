@@ -827,6 +827,23 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         set_tests_properties(tide_platform_reload PROPERTIES TIMEOUT 120)
         tide_gpu_test(tide_platform_reload)
     endif()
+    # The same game with its own engine copy reading a GPU list back through the host's renderer, and a build of
+    # another layout whose list is bigger, made once the first one's state was freed
+    foreach(reads IN ITEMS tide_platform_reload_reads tide_platform_reload_reads_next)
+        add_library(${reads} SHARED tests/reload_game.c)
+        target_compile_definitions(${reads} PRIVATE RELOAD_GAME_READS)
+        target_include_directories(${reads} PRIVATE include)
+        target_link_libraries(${reads} PRIVATE tide_pic)
+    endforeach()
+    target_compile_definitions(tide_platform_reload_reads_next PRIVATE RELOAD_GAME_HASH=4343)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_reload_reads
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload_reads.mjs" $<TARGET_FILE:tide_platform_reload>
+                $<TARGET_FILE:tide_platform_reload_reads> $<TARGET_FILE:tide_platform_reload_reads_next>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload_reads-run")
+        set_tests_properties(tide_platform_reload_reads PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_reload_reads)
+    endif()
 
     # The loading screen: a window's pack loads on the pool while its frames
     # go on, and the game begins once it's in. A hidden window, the real loop.

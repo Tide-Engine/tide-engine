@@ -1,5 +1,12 @@
 # Hot reloading
 
+## GPU list reads and freed lists across a reload (2026-11-05, later)
+
+The host hands each library it loads its own table of GPU list reads (`tide_host_game.gpu_reads_share`), so the
+game's reads are the renderer's and one begun before a reload finishes after it; a list freed at unload leaves the
+table. The renderer no longer takes a freed list's buffer for a new list at the same address. `notes/compute.md`,
+GPU lists under the library host.
+
 ## GPU lists across a reload (2026-11-05)
 
 `gen_resource_value` rebinds `GPUList` fields as targets are: native reloads

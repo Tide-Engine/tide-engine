@@ -4039,13 +4039,14 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
         const uint32_t family = r->mesh && r->mesh <= d->mesh_count && d->meshes[r->mesh - 1u].base
                               ? d->meshes[r->mesh - 1u].base : r->mesh;
         const tide_draw_cull *head = r->culled ? &d->culls[r->culled - 1u] : NULL;
-        // Its set's runs are the list's last commands, a level each from its first draw's lowest on
+        // Its set's runs are the list's last commands, a level each from its first draw's lowest on. A draw whose
+        // lowest level is past the set's top plus one would leave levels between with no mesh made: a set of its own
         const uint32_t set_low = head ? head->low : 0u;
         bool same = head && r->culled - 1u + r->culled_count == job && family == mesh && head->page == slot
                  && head->occlusion == d->culls[job].occlusion
                  && (r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
                  && r->sampling == sampling && same_color(r->tint, tide_draw_tint(d)) && low >= set_low
-                 && top >= set_low && top <= TIDE_MESH_LEVELS && d->count >= top - set_low + 1u
+                 && top >= set_low && top <= TIDE_MESH_LEVELS && low <= top + 1u && d->count >= top - set_low + 1u
                  && (uniform_size == 0 || memcmp(d->uniforms + r->uniforms, uniforms, uniform_size) == 0);
         for (uint32_t i = 0; same && i < shader->texture_count; i++) {
             same = r->textures[i] == (textures && textures[i] <= d->texture_count ? textures[i] : 0u);
@@ -4053,6 +4054,7 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
         for (uint32_t level = set_low; same && level <= top; level++) {
             const tide_draw_command *c = &d->commands[d->count - 1u - (top - level)];
             same = c->kind == TIDE_DRAW_SHADED && c->shaded.run < d->run_count && d->runs[c->shaded.run].culled == r->culled
+                && d->runs[c->shaded.run].mesh && d->runs[c->shaded.run].mesh <= d->mesh_count
                 && d->meshes[d->runs[c->shaded.run].mesh - 1u].level == level && c->blend == last->blend
                 && c->depth == depth && c->cull == cull;
         }

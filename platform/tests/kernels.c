@@ -214,6 +214,44 @@ static bool round_over(check_round *r, const char *when, const bool all)
     return true;
 }
 
+// A list made at the address of one a build freed (a full reload, or a swap that didn't adopt it) is a state no
+// renderer made a buffer for, of version 1 and its own capacity: the renderer makes it a buffer of its own, not the
+// freed list's. Allocators that keep freed memory a while (AddressSanitizer's) never give that address again, so the
+// list's own state is made over into such a state here. Returns true once both reads are checked.
+static bool reused_list_over(void)
+{
+    enum { SMALL = 4, BIG = 64 };
+    static tide_draw_list own;
+    static tide_gpu_list made;
+    static uint32_t ticket;
+    static int step;
+    tide_draw_reset(&own);
+    const uint32_t capacity = step < 2 ? SMALL : BIG;
+    if (step == 0 || step == 2) {
+        if (step == 0) made = tide_gpu_list_make(SMALL, 1u);
+        uint32_t words[BIG];
+        for (uint32_t i = 0; i < capacity; i++) words[i] = capacity * 1000u + i;
+        tide_draw_gpu_list_set(&own, made, words, capacity);
+        ticket = tide_gpu_list_read_begin(made, false);
+        step++;
+    }
+    uint32_t pixel;
+    tide_platform_read_pixels_as(&own, SIZE, SIZE, 1.0f, &(tide_float2){1, 1}, 1, &pixel);
+    tide_gpu_read_result got;
+    if (!tide_gpu_list_read_poll(ticket, &got)) return false;
+    const bool right = got.ok && got.count == (int32_t)capacity && got.stride == 1u && got.words[0] == capacity * 1000u
+                    && got.words[capacity - 1u] == capacity * 1000u + capacity - 1u;
+    expect(right, step == 1 ? "a list's read back" : "a list made where a freed one was gets its own buffer, whole", "");
+    tide_gpu_list_read_forget(ticket);
+    if (step == 3) return true;
+    tide_gpu_list_state *s = tide_gpu_list_state_of(made.id);
+    s->capacity = BIG;
+    s->version = 1;
+    s->made = false;
+    step = 2;
+    return false;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -241,7 +279,8 @@ static int frame(void *user, const float seconds)
             return TIDE_KEEP_RUNNING;
         }
 #endif
-        return failures;
+        stage = 5;
+        return TIDE_KEEP_RUNNING;
 #ifdef __wasm__
     case 3:
         if (!tide_web_eval("Tide.gpuDevices() > 1")) return TIDE_KEEP_RUNNING;
@@ -252,8 +291,11 @@ static int frame(void *user, const float seconds)
         if (!round_over(&r, ", on another device", true)) return TIDE_KEEP_RUNNING;
         expect(local.Results.revisionNow != before && local.Results.revisionNow > 0,
                "a GPU list made again on another device has another contentRevision", "");
-        return failures;
+        stage = 5;
+        return TIDE_KEEP_RUNNING;
 #endif
+    case 5:
+        return reused_list_over() ? failures : TIDE_KEEP_RUNNING;
     default:
         (void)before;
         return failures + 1;

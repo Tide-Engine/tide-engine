@@ -276,6 +276,7 @@ static const tide_host_game tide_host_game_api = {
     .network = tide_network_get,
     .voice = tide_voice_get,
     .screen_keyboard = tide_screen_keyboard_get,
+    .gpu_reads_share = tide_gpu_reads_share,
     .shaders = tide_game_shaders,
 #ifdef TIDE_HAS_EMBED
     .layout = &tide_game_layout,

@@ -125,6 +125,14 @@ static int frame(void *user, const float seconds)
         wait = 70; // More than a second: the host takes stock of what it timed
         break;
     case 3: {
+        // A page makes its pipelines in the background: a slow one (CI's macOS) still leaves a step out here, its
+        // vertices uncounted, until they're made
+        static int settling;
+        if (tide_platform_draw_vertices() != 9 && ++settling < 300) {
+            step--;
+            wait = 1;
+            break;
+        }
         check(drew("cpu") && drew("Count"), "the list has what a frame's work takes, and the game's system by name");
         check(drew("render"), "rendering CPU time is shown separately from the frame's total work");
         bool vertices_shown = false;

@@ -41,6 +41,42 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
       can't make done without, the D3D11 hardware lane, 2026-11-05: notes/shaders.md, Kernels on Dawn's Direct3D 11;
       notes/drawing.md, A culling kernel that can't be made
 
+## GPU lists under the library host (2026-11-05)
+
+Found auditing compute for the owner's Mount & Rifle crash (whose cause was the culling's join: drawing.md, A culled
+set's join past its top level). Internal: no Tide, generated-C or language change.
+
+- **Reads never finished under `tide run`.** `gpu_list.c`'s request table was a static, and a watching run's host
+  (`game.exe`) and game library each link their own engine copy (both PDBs have `tide_gpu_read_requests`): generated
+  code asked in the library's table and the renderer polled the host's, so `await list.Read()` waited forever and
+  after 64 the begins failed. `tide_platform_kernels` is a standalone program, which has one copy. Now the table and its
+  serial are a `tide_gpu_reads` (draw.h); each copy uses its own until `tide_gpu_reads_share` hands it another's, and
+  the host does that as it loads each library (`load` in `reload_library.inc`, through the optional
+  `tide_host_game.gpu_reads_share`, which run.h's table fills). One table through every reload, so the serial goes on
+  (no carried ticket matches a new build's request) and a read begun before a same-layout reload finishes after it.
+  `tide_gpu_lists_free` takes the lists it frees out of the table (`reads_lose`: asked fails, begun finishes and
+  fails when polled), and a poll whose list is gone fails, so nothing reads a freed state.
+- **A list made where a freed one was took its buffer.** The renderer's records are by id (the state's address) and
+  version; a full reload, or a swap that didn't adopt a list, frees its state, and the next build's first list of
+  that size can be calloc'ed at the same address, version 1 again. That frame named it, so `list_buffer` returned
+  the freed list's buffer, sized for its capacity and stride: a `Set` of more wrote past its end
+  (`vkCmdCopyBuffer`, which the validation layer reports) and a read read past it. Now a record also keeps the words
+  it was made for, and is reused only for a state a renderer made a buffer for (`made`: an adopted list's is set, a
+  new state's isn't) of that version and size.
+- **contentRevision.** The renderer's copy bumped a remade list's revision from its own counter, which can be behind
+  the game's: now past both (`max(next, old + 1)`).
+- **Tests.** `tide_platform_reload_reads` (`reload_reads.mjs`, `reload_game.c` with `RELOAD_GAME_READS` linking the
+  engine as its own copy, `tide_pic`, as a game library does): a list set and read back through the host's renderer,
+  then a build of another layout published while it runs, whose list is 16 times bigger, read back whole; without
+  the host sharing its table no read finishes. `tide_platform_kernels` gains `reused_list_over`: a list read back,
+  then its state made over into what a new state at that address is (made false, version 1, 16 times the capacity),
+  set and read back whole; without the record's check the validation layer reports the copy past the 32-byte buffer
+  and it fails. (Under AddressSanitizer freed memory isn't handed out again soon, so the reload test alone can't show
+  the address reused.) Native Windows, sanitize, Vulkan with the validation layer; the kernels page on WebGPU and
+  Linux/macOS (where `tide_pic` is the engine built again position-independent) are CI's.
+- **Left as it is:** an adopted list the new build's first frame doesn't name loses its buffer (it comes back empty
+  with a new revision), as designed; a list made in a view every frame keeps its state until the next unload.
+
 ## Built: the language, the engine and the renderer (2026-11-05)
 
 Everything between the language and gpu.h, as "Language and runtime design"

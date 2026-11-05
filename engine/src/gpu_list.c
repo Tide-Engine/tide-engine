@@ -78,7 +78,11 @@ void tide_gpu_list_made(const uint64_t id)
 {
     tide_gpu_list_state *s = tide_gpu_list_state_of(id);
     if (!s) return;
-    if (s->made) s->content_revision = tide_render_revision_next();
+    // The renderer's copy of the engine counts revisions apart from the game's: past both, whichever is further
+    if (s->made) {
+        const int64_t next = tide_render_revision_next();
+        s->content_revision = next > s->content_revision ? next : s->content_revision + 1;
+    }
     s->made = true;
 }
 
@@ -123,11 +127,14 @@ void tide_gpu_lists_recreated(void)
     for (tide_gpu_list_state *s = gpu_lists; s; s = s->next) s->reload_id = 0;
 }
 
+static void reads_lose(uint64_t id);
+
 void tide_gpu_lists_free(void)
 {
     while (gpu_lists) {
         tide_gpu_list_state *s = gpu_lists;
         gpu_lists = s->next;
+        reads_lose(TIDE_GPU_LIST_MANAGED | (uint64_t)(uintptr_t)s);
         free(s->memory);
     }
 }
@@ -135,38 +142,48 @@ void tide_gpu_lists_free(void)
 // ---------------------------------------------------------------------------
 // Reads back
 
-static tide_gpu_read_request reads[TIDE_GPU_READS];
-static uint32_t read_serial;
+static tide_gpu_reads own_reads;
+static tide_gpu_reads *reads_now = &own_reads;
+
+tide_gpu_reads *tide_gpu_reads_table(void)
+{
+    return reads_now;
+}
+
+void tide_gpu_reads_share(tide_gpu_reads *table)
+{
+    reads_now = table ? table : &own_reads;
+}
 
 tide_gpu_read_request *tide_gpu_read_requests(void)
 {
-    return reads;
+    return reads_now->requests;
 }
 
 // A ticket: the request's place and its serial, so that a ticket of a request let go and taken again is no longer one.
 static uint32_t ticket_of(const uint32_t place)
 {
-    return (reads[place].serial << 6) | place;
+    return (reads_now->requests[place].serial << 6) | place;
 }
 
 static tide_gpu_read_request *request_of(const uint32_t ticket)
 {
     if (!ticket) return NULL;
-    tide_gpu_read_request *r = &reads[ticket & (TIDE_GPU_READS - 1u)];
+    tide_gpu_read_request *r = &reads_now->requests[ticket & (TIDE_GPU_READS - 1u)];
     return r->state != TIDE_GPU_READ_FREE && !r->forgotten && ticket_of(ticket & (TIDE_GPU_READS - 1u)) == ticket ? r : NULL;
 }
 
 uint32_t tide_gpu_list_read_begin(const tide_gpu_list list, const bool count_only)
 {
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
-        tide_gpu_read_request *r = &reads[i];
+        tide_gpu_read_request *r = &reads_now->requests[i];
         if (r->state != TIDE_GPU_READ_FREE) continue;
         const tide_gpu_list_state *s = tide_gpu_list_state_of(list.id);
         const uint64_t bytes = s && s->alive ? 4u * (TIDE_GPU_LIST_HEADER_WORDS + (count_only ? 0u : (uint64_t)s->capacity * s->stride)) : 0u;
         // A serial that's never 0 for place 0, so that no ticket is 0
-        if (++read_serial >= (UINT32_MAX >> 6)) read_serial = 1;
+        if (++reads_now->serial >= (UINT32_MAX >> 6)) reads_now->serial = 1;
         *r = (tide_gpu_read_request){.list = list.id, .bytes = (uint32_t)bytes, .state = TIDE_GPU_READ_ASKED,
-                                     .serial = read_serial, .count_only = count_only};
+                                     .serial = reads_now->serial, .count_only = count_only};
         if (bytes) {
             r->data = malloc((size_t)bytes);
             if (!r->data) tide_out_of_memory();
@@ -196,7 +213,8 @@ bool tide_gpu_list_read_poll(const uint32_t ticket, tide_gpu_read_result *out)
     if (r->state == TIDE_GPU_READ_ASKED || r->state == TIDE_GPU_READ_BEGUN) return false;
     if (r->state == TIDE_GPU_READ_FAILED || !r->data) return true;
     const tide_gpu_list_state *s = tide_gpu_list_state_of(r->list);
-    const uint32_t stride = s ? s->stride : 0u;
+    if (!s) return true; // Its list was freed with the build that made it: failed
+    const uint32_t stride = s->stride;
     const uint32_t room = r->count_only || !stride ? 0u : (r->bytes / 4u - TIDE_GPU_LIST_HEADER_WORDS) / stride;
     uint32_t count = r->data[0];
     if (!r->count_only && count > room) count = room;
@@ -209,7 +227,7 @@ bool tide_gpu_list_read_poll(const uint32_t ticket, tide_gpu_read_result *out)
 void tide_gpu_reads_frame(void)
 {
     for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
-        tide_gpu_read_request *r = &reads[i];
+        tide_gpu_read_request *r = &reads_now->requests[i];
         if (r->state != TIDE_GPU_READ_DONE && r->state != TIDE_GPU_READ_FAILED) continue;
         if (++r->age <= TIDE_GPU_READ_KEPT_FRAMES) continue;
         free(r->data);
@@ -227,4 +245,17 @@ void tide_gpu_list_read_forget(const uint32_t ticket)
     }
     free(r->data);
     *r = (tide_gpu_read_request){.serial = r->serial};
+}
+
+// A list freed with its build (tide_gpu_lists_free): reads of it, in a table the host shares with the next build,
+// name no list from now on, so nothing reads its state; one asked for and not begun fails, one begun finishes as the
+// renderer has it and fails when polled.
+static void reads_lose(const uint64_t id)
+{
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        tide_gpu_read_request *r = &reads_now->requests[i];
+        if (r->state == TIDE_GPU_READ_FREE || r->list != id) continue;
+        r->list = 0;
+        if (r->state == TIDE_GPU_READ_ASKED) r->state = TIDE_GPU_READ_FAILED;
+    }
 }
