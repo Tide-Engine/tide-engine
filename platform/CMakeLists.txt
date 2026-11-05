@@ -557,8 +557,13 @@ if(NOT TIDE_ANDROID)
         tide_web_page(tide_platform_compute SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_compute TARGET tide_platform_compute WEBGPU EXPECT "compute passed")
     else()
+        target_include_directories(tide_platform_compute PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
         add_test(NAME tide_platform_compute COMMAND tide_platform_compute)
         tide_gpu_test(tide_platform_compute)
+        # ...and with Vulkan's descriptor sets, as devices without push descriptors compute
+        add_test(NAME tide_platform_compute_vulkan_sets COMMAND tide_platform_compute)
+        tide_gpu_test(tide_platform_compute_vulkan_sets)
+        set_property(TEST tide_platform_compute_vulkan_sets APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan TIDE_VULKAN_DESCRIPTOR_SETS=1)
     endif()
 endif()
 

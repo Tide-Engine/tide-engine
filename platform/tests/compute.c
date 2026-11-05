@@ -15,6 +15,9 @@
 
 #ifdef __wasm__
 #include "tide_web.h"
+#else
+#define COMPUTE_VULKAN // Desktop computes with Vulkan where it can, whose device the test loses
+#include "gpu_vk.h"
 #endif
 
 enum { COUNT = 1000, GROUP = 64, SIDE = 4 };
@@ -373,6 +376,12 @@ static void start_over(void)
 }
 #endif
 
+#ifdef COMPUTE_VULKAN
+static int vulkan_round;
+static uint32_t lost_vk_read, lost_vk_epoch; // A read begun as Vulkan's device was lost on purpose, and the device's epoch then
+static uint32_t lost_into[4];
+#endif
+
 static int frame(void *user, const float seconds)
 {
     (void)user;
@@ -408,6 +417,22 @@ static int frame(void *user, const float seconds)
         stage = 0;
     }
 #endif
+#ifdef COMPUTE_VULKAN
+    if (stage == 10) { // The device was lost as the last frame was shown: the read with it, and everything on the next device
+        const int done = gpu->buffer_read_done(lost_vk_read, lost_into);
+        if (done != -1) fail("a read the device lost", 0, (unsigned)done, (unsigned)-1);
+        if (gpu->epoch() == lost_vk_epoch || !gpu->epoch()) {
+            fprintf(stderr, "Vulkan's lost device wasn't made again\n");
+            return 1;
+        }
+        memset(squared, 0, sizeof squared), memset(reversed, 0, sizeof reversed), memset(tally, 0, sizeof tally);
+        memset(copied, 0, sizeof copied), memset(signed_tally, 0, sizeof signed_tally), memset(marks, 0, sizeof marks);
+        memset(pixels, 0, sizeof pixels);
+        read_count = 0;
+        vulkan_round = 1;
+        stage = 0;
+    }
+#endif
     if (stage == 0) {
         if (gpu->epoch() == 0) return TIDE_KEEP_RUNNING;
         printf("renderer: %s\n", tide_platform_renderer());
@@ -437,6 +462,19 @@ static int frame(void *user, const float seconds)
         stage = 3;
         return TIDE_KEEP_RUNNING;
     }
+#endif
+#ifdef COMPUTE_VULKAN
+    if (vulkan_round == 0 && strcmp(tide_platform_renderer(), "Vulkan") == 0) {
+        // A read begun and not yet sent isn't there, and asking doesn't wait for it
+        lost_vk_read = gpu->buffer_read(tally_buffer, 0, sizeof lost_into);
+        if (!lost_vk_read) fail("a read began", 0, 0, 1);
+        else if (gpu->buffer_read_done(lost_vk_read, lost_into) != 0) fail("a read not yet sent is there", 0, 1, 0);
+        lost_vk_epoch = gpu->epoch();
+        tide_gpu_vk_lose();
+        stage = 10;
+        return failures ? 1 : TIDE_KEEP_RUNNING;
+    }
+    if (vulkan_round == 1) printf("the device was lost with a read on its way, and another computed it all again\n");
 #endif
     printf("compute passed\n");
     return 0;
