@@ -1244,6 +1244,34 @@ view Setup(mut Meadow meadow)
 - Local code sends a list's elements with `list.Set(items)`, sets the count with `list.Clear()` and `list.SetCount(n)`, in frame order with the draws and runs around them; `list.Resize(capacity)` makes it empty at another capacity, and `list.Dispose()` lets it go.
 - `list.contentRevision` changes when the list was made again empty: a lost device, a `Resize`, or a hot reload that changed its element. A game that filled it once fills it again then.
 
+Functions the GPU runs take a GPU list as a parameter, `GPUList<T>`, as they take a `List<T>`: the call names one by its field, or passes on its own parameter. What a kernel can do to a list, a function it calls can do to the one it's given, and the kernel then does it to the list it passed: write elements, `Add` and atomics.
+
+```csharp
+float Tallest(GPUList<Blade> blades)
+{
+    mut float most = 0.0;
+    foreach (var blade in blades)
+        most = Math.Max(most, blade.height);
+    return most;
+}
+
+void Keep(GPUList<Blade> into, Blade blade)
+{
+    into.Add(blade);
+}
+
+[Group(64)]
+compute CullBlades(Meadow meadow)
+{
+    Blade blade = meadow.blades[this.index];
+    if (blade.height * 2 > Tallest(meadow.blades))
+        Keep(meadow.shown, blade);
+}
+```
+
+- A GPU list isn't a value there: it's named where it's used, so a local can't keep one, nor can a function return one or `?:` pick between two.
+- A function that writes, adds to or uses atomics on a GPU list is a kernel's: a frag or a vert calling it is an error, as the CPU calling one is.
+
 The CPU can't read a GPU list as it draws: `count` there is an error. Local async code reads one back, a copy, once the frame drawn next is done on the GPU:
 
 ```csharp
@@ -1262,6 +1290,7 @@ async void Count(Meadow meadow, mut Census census)
 `list.Add(value)` in a kernel keeps invocation order: what invocation 3 adds comes before what invocation 7 adds, whatever order the GPU ran them in, and the count goes up by how many were added. Captures stay the same from run to run. Past the capacity, nothing more is added.
 
 - An invocation adds to a list once at the most, on any path, and never in a loop: "'CullBlades' can add to 'shown' twice". To add several, run over more invocations, or count places with an atomic and write them by index.
+- A call of a function that adds to a list counts as an `Add` of it: once on a path, not in a loop, and a statement of its own.
 - A kernel that adds has a group of one axis, `[Group(64)]`: this.index's order is then the groups' order, even over a size of two or three axes.
 
 ### Atomics
@@ -1299,11 +1328,11 @@ compute Sum(Values values)
 
 - Every invocation reaches a barrier: it's in no `if`, `switch` or `while`, in `for` loops only from a constant to a constant that nothing leaves early, and after no `return`. A kernel with a barrier runs its body for every invocation of its groups, those past the run's size too, so it checks `this.index` itself.
 - Atomics work on a `shared int[N]`'s elements too: `seen.AtomicAdd(0, 1)`.
-- One place of shared memory written by every invocation of a group, each with its own value, is a race: some invocation's value is left, and which isn't said. Unity's Direct3D 11 compiler refuses it, so the compiler warns. Have one invocation write it, `if (this.local.x == 0) ...`, and the others read it after a barrier. One value written by all is fine.
+- One place of shared memory written by every invocation of a group, each with its own value, is a race: some invocation's value is left, and which isn't said. To have one known value, have one invocation write it, `if (this.local.x == 0) ...`, and the others read it after a barrier. It runs everywhere, Unity's Direct3D 11 too.
 
 ### Drawing what a kernel made
 
-`Draw.Instanced(vertices, indices, list, vert, frag)` over a GPU list draws as many instances as the list has on the GPU, each read there: one indirect draw, with nothing read back. Its element is the instance struct, as a list's is, its `float4x4 transform` too where it has one. No culling or level picking happens on the CPU, which has no instances to test: the kernel that filled the list does that. A game draws one list a level, each filled by the kernel that picks them. Inside `Draw.Transform`, each instance's transform goes through it, as a `List<T>`'s instances' do.
+`Draw.Instanced(vertices, indices, list, vert, frag)` over a GPU list draws as many instances as the list has on the GPU, each read there: one indirect draw, with nothing read back. Its element is the instance struct, as a list's is, its `float4x4 transform` too where it has one. No culling or level picking happens on the CPU, which has no instances to test: the kernel that filled the list does that. A game draws one list a level, each filled by the kernel that picks them. Inside `Draw.Transform`, each instance's transform goes through it, as a `List<T>`'s instances' do. An instance whose own transform mirrors its mesh is drawn with its front the other way round, as a list's is: such a draw is two runs, one for the instances that mirror and one for those that don't, unless it's inside `Draw.Cull(Cull.None)`.
 
 A mesh's vertices and indices can be a kernel's too: `Draw.Mesh` and `Draw.Instanced` take a `GPUList` of the vertex struct where the vertices go, and a `GPUList<int>` or a `List<int>` where the indices go, in 2D and 3D, and so does a target's `Mesh`. Each vertex is read on the GPU by its index, zeros past the list's count, and indices on the GPU draw as many triangles as that list's count has there, with nothing read back.
 
@@ -1338,7 +1367,7 @@ view DrawSparks(Sparks sparks, Burst burst)
 }
 ```
 
-A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's.
+A mesh whose indices are a GPU list's has its vertices in one too: they're picked on the GPU. Levels of detail (`lod:`) are made of the CPU's vertices, so they're not for a mesh of a GPU list's. Instances of such a mesh from a `List<T>` are frustum culled by the bounds [`Draw.Bounds`](./draw-settings.md) gives, a box around every vertex the kernel can make: the CPU has none of its own for them, and without them, every instance is drawn.
 
 ### Order in a frame
 

@@ -3,7 +3,9 @@
 // (compute_test.c): each run's kernel, size or list it's over, uniforms and
 // GPU lists; Set's words, Clear and SetCount; the indirect draw's list, and
 // Draw.Transform's matrix in its uniforms; and meshes over a GPU list of
-// vertices, by a GPU list of indices or the CPU's.
+// vertices, by a GPU list of indices or the CPU's; and instances with transforms of their own, a run for those that
+// mirror the mesh and one for those that don't, unless nothing is culled; and a GPU list's vertices instanced over
+// a CPU list, frustum culled by the bounds Draw.Bounds gives (the CPU has none of its own for them).
 scene Main { }
 
 struct Blade
@@ -25,6 +27,12 @@ struct Corner
     float3 position;
 }
 
+struct Moved
+{
+    float4x4 transform;
+    float shade;
+}
+
 local singleton Meadow
 {
     GPUList<Blade> blades;
@@ -32,6 +40,7 @@ local singleton Meadow
     GPUList<int> counts;
     GPUList<Corner> points;
     GPUList<int> order;
+    GPUList<Moved> turned;
     List<Blade> sent;
     float scale;
     int frames;
@@ -77,6 +86,7 @@ view Show(mut Meadow meadow)
         meadow.counts = GPUList<int>(4);
         meadow.points = GPUList<Corner>(8);
         meadow.order = GPUList<int>(12);
+        meadow.turned = GPUList<Moved>(4);
         meadow.sent.Add(Blade { root = float3(1, 2, 3), height = 0.5, kind = 7, lit = true });
         meadow.sent.Add(Blade { root = float3(4, 5, 6), height = 1.5, kind = -2, lit = false });
         meadow.scale = 2;
@@ -106,5 +116,17 @@ view Show(mut Meadow meadow)
     Draw.Mesh(meadow.points, meadow.order, float4x4.Translate(float3(1, 0, 0)), Flat);
     Draw.Mesh(meadow.points, [0, 1, 2, 2, 1, 3, 4], float4x4.Translate(float3(2, 0, 0)), Flat);
     Draw.Instanced(meadow.points, [0, 1, 2], [float4x4.Translate(float3(3, 0, 0)), float4x4.Translate(float3(4, 0, 0))], Flat);
+    Draw.Instanced(corners, [0, 1, 2], meadow.turned, Flat);
+    Draw.Cull(Cull.None)
+    {
+        Draw.Instanced(corners, [0, 1, 2], meadow.turned, Flat);
+    }
+    Draw.SetCamera(float4x4.identity, float4x4.identity);
+    List<float4x4> near_and_far = [float4x4.identity, float4x4.Translate(float3(10, 0, 0))];
+    Draw.Bounds(float3(0, 0, 0), float3(0.5, 0.5, 0.5))
+    {
+        Draw.Instanced(meadow.points, [0, 1, 2], near_and_far, Flat);
+    }
+    Draw.Instanced(meadow.points, [0, 1, 2], near_and_far, Flat);
     if (meadow.frames == 3) meadow.counts.Dispose();
 }

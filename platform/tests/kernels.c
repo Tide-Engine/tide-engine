@@ -9,7 +9,10 @@
 // kernels made (as many as the GPU has), of a 3D indirect draw moved by
 // Draw.Transform, and of a draw after a run that changed what a draw before
 // it read. The runs nothing drawn before them reads go before the frame's
-// pass: two passes, the second after the run a draw waits for.
+// pass: two passes, the second after the run a draw waits for. Functions given
+// GPU lists alone write, add to and use atomics on them; a kernel adds to two
+// lists in order; and a 3D indirect draw's instances whose own transforms
+// mirror the mesh are drawn, culled, as those that don't are.
 // On WebGPU the page then loses its device, and every check runs again on the
 // next one, with the lists made again (their contentRevision changed).
 
@@ -115,6 +118,16 @@ static void check_results(const char *when)
              && it->on == (i % 2 != 0);
     }
     expect(items, "a list of structs sent, changed by a kernel where it is, and read back", when);
+    bool helped = tide_list_count(r->helped) == 150;
+    for (int32_t i = 0; helped && i < 150; i++) helped = int_at(r->helped, i) == i * 3;
+    expect(helped, "a function given a GPU list alone writes its elements", when);
+    expect(tide_list_count(r->helpCount) == 1 && int_at(r->helpCount, 0) == 150,
+           "a function given a GPU list alone uses atomics on it", when);
+    bool evens = tide_list_count(r->evens) == 75, fives = tide_list_count(r->fives) == 30;
+    for (int32_t i = 0; evens && i < 75; i++) evens = int_at(r->evens, i) == i * 2;
+    for (int32_t i = 0; fives && i < 30; i++) fives = int_at(r->fives, i) == i * 5;
+    expect(evens, "a function given a GPU list alone adds to it, in invocation order across 3 groups", when);
+    expect(fives, "and the kernel's own Add to another list, in the same scan, keeps its order too", when);
 }
 
 // Whether the pixels at `points` are `want`'s colors, each channel within 3; says which aren't.
@@ -159,6 +172,11 @@ static void check_pixels(const char *when)
     static const tide_float2 box[] = {{8, 8}};
     static const uint32_t box_is[] = {0xFFFF00FFu};
     pixels_are(box, box_is, 1, "a 3D indirect draw's transforms go through Draw.Transform", when);
+    // Two boxes of a list drawn as culled, the second's own transform mirrored, and a frag reading a GPU list
+    // through a function: both drawn, as the CPU draws a list's (a run of each)
+    static const tide_float2 turned[] = {{51, 8}, {40, 8}, {45, 8}};
+    static const uint32_t turned_are[] = {0x00FFFFFFu, 0xFF00FFFFu, 0x000000FFu};
+    pixels_are(turned, turned_are, 3, "an indirect draw's instances whose own transforms mirror its mesh are drawn, culled", when);
     // The first square again, after a run made every corner white, 20 across and 12 up: the draws before it kept red
     static const tide_float2 after[] = {{32, 44}};
     static const uint32_t after_is[] = {0xFFFFFFFFu};

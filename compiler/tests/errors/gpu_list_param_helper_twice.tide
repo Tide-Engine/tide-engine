@@ -1,0 +1,29 @@
+// expect: 'Twice' can add to 'into' twice: an invocation adds to a GPU list once at the most, on any path
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<Blade> shown;
+}
+void Keep(GPUList<Blade> into, Blade b)
+{
+    into.Add(b);
+}
+void Twice(GPUList<Blade> into, Blade b)
+{
+    Keep(into, b);
+    into.Add(b);
+}
+[Group(64)]
+compute Thin(Meadow meadow)
+{
+    Twice(meadow.shown, meadow.blades[this.index]);
+}
+view Show(Meadow meadow) { GPU.Run(Thin, meadow.blades); }

@@ -363,6 +363,9 @@ typedef struct param {
     bool *gpu_leaves;    // A function's list, grid, map or set, in code the GPU runs: the parts of an element it reads (field.gpu_leaves)
     bool *given_reads;   // A function's struct, singleton or component that holds a list, in code the GPU runs: the fields it
     bool *given_local_reads; // reads of it, and of its local fields, which each caller then reads of what it passed (given_struct)
+    // A function's GPUList<T>, in code the GPU runs: it writes the list, Adds to it, or uses atomics on it, itself or
+    // through a function it passes it to; each call writes what it passes (settle_gpu_list_writes)
+    bool gpu_written, gpu_adds, gpu_atomic;
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
     // A function's or method's singleton that it starts a task with, itself or through a function it passes it to:
     // the task gets the world's own again each time it goes on, so every call passes its own parameter, never a copy
@@ -915,7 +918,9 @@ typedef struct decl {
     bool is_compute;              // `compute Name(...)`: a kernel, code GPU.Run runs over a size, tied to no draw
     int group[3];                 // A kernel's invocations a group along each axis ([Group(x, y, z)]): 64, 1, 1 when it says none
     bool barrier;                 // A kernel that calls GPU.Barrier(): every invocation of a group runs its body
-    VEC(const field *) adds;      // A kernel's GPU lists it Adds to, by the field that names each, once each
+    // A kernel's GPU lists it Adds to, by the field that names each, once each, itself or through functions it calls;
+    // a function's of the structs it's given
+    VEC(const field *) adds;
     VEC(const field *) atomics;   // ...and those it calls atomics on (GPUList<int>)
     VEC(const field *) gpu_writes; // ...and every one it writes
     bool cutout;                  // A frag that says how much of its pixel it covers (this.Cutout or this.Coverage): drawn with alpha to coverage
@@ -1510,6 +1515,8 @@ typedef struct shader {
     bool gpu_indices;            // ...and its indices too, from slot index_storage, each vertex by its place among them
     int vertex_storage, index_storage;
     int through_at;              // gpu_instances in 3D: the uniforms' float word Draw.Transform's matrix starts at, or -1
+    int sides_at;                // ...and where instances have transforms of their own, the float word that says which of
+                                 // them a run keeps (tide_shader.instance_sides), or -1
     bool skinned;        // Skin deformation before the optional user vert
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL

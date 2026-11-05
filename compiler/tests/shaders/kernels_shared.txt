@@ -149,6 +149,7 @@ var<private> tide_inv_at: vec3i;
 var<private> tide_inv_local: vec3i;
 var<private> tide_inv_group: vec3i;
 var<private> tide_inv_count: vec3i;
+var<workgroup> tide_zero: u32;
 var<workgroup> t_partial: array<f32, 64>;
 var<workgroup> t_seen: array<atomic<i32>, 2>;
 fn tide_i(x: i32) -> i32 {
@@ -231,16 +232,20 @@ fn tide_load_t_seen(tide_i: i32) -> i32 {
 
 fn ts_Sum() {
     var t_i: i32 = tide_inv_local.x;
-    if ((t_i >= 0 && t_i < 64)) {
-        t_partial[t_i] = select(0.0, tide_get0(tide_inv_index), (tide_inv_index < tide_count0()));
+    if (tide_zero == 0u) {
+        if ((t_i >= 0 && t_i < 64)) {
+            t_partial[t_i] = select(0.0, tide_get0(tide_inv_index), (tide_inv_index < tide_count0()));
+        }
     }
     _ = tide_atomic_t_seen_AtomicAdd(0, 1);
     workgroupBarrier();
     storageBarrier();
     for (var t_step: i32 = 32; (t_step > 0); t_step = (t_step / tide_i(2))) {
         if ((t_i < t_step)) {
-            if ((t_i >= 0 && t_i < 64)) {
-                t_partial[t_i] = (tide_el0(t_partial, t_i) + tide_el0(t_partial, (t_i + t_step)));
+            if (tide_zero == 0u) {
+                if ((t_i >= 0 && t_i < 64)) {
+                    t_partial[t_i] = (tide_el0(t_partial, t_i) + tide_el0(t_partial, (t_i + t_step)));
+                }
             }
         }
         workgroupBarrier();

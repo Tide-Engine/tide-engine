@@ -1,4 +1,4 @@
-// expect: a GPU list in code the GPU runs is a field of what it takes, by its name
+// expect: a GPU list in code the GPU runs is named where it's used: it can't be kept in a local, returned or picked there
 scene Main { }
 
 struct Blade
@@ -15,7 +15,8 @@ local singleton Meadow
 }
 float First(GPUList<Blade> blades)
 {
-    return blades[0].height;
+    var kept = blades;
+    return kept[0].height;
 }
 compute Look(Meadow meadow)
 {

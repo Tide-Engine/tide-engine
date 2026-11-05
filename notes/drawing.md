@@ -172,7 +172,9 @@ shaded run's (`tide_draw_run.storage`, set for the next draw by
 `tide_draw_run.indirect` its list (`tide_draw_shaded_indirect`,
 `tide_draw_mesh_shaded_indirect`), through `shaded_visible` with no instances,
 so no culling, level picking or mirroring split applies; such a run never joins
-another, and runs with different lists don't join. `tide_draw_reset` empties the
+another, and runs with different lists don't join. (Since 2026-11-05 a culled
+one whose shader has `instance_sides` is two runs, wound each way, each keeping
+one side's instances on the GPU: notes/compute.md, Closing the gaps.) `tide_draw_reset` empties the
 new arrays, `tide_draw_forget` forgets runs' shaders. Tests: `tidec_e2e_compute`.
 `notes/compute.md`, Built.
 

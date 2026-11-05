@@ -16,6 +16,13 @@ static const field *gpu_list_field(const expr *e)
         ? e->field : NULL;
 }
 
+// A function's own GPUList<T> parameter, named alone: it stands for the list its call names. NULL for anything else.
+static param *gpu_list_param(const expr *e)
+{
+    return e && e->kind == E_NAME && e->bind == BIND_PARAM && e->param && e->param->function_param
+        && e->param->type.kind == TY_GPU_LIST ? (param *)(uintptr_t)e->param : NULL;
+}
+
 // The CPU reads a GPU list's elements or its count where `e` is: in code the GPU runs that's what it does; in a
 // function that's what makes it the GPU's (check_gpu_only_calls); elsewhere it's an error, said here.
 static bool gpu_list_read_ok(checker *c, const loc at, const char *what)
@@ -83,8 +90,9 @@ static type check_gpu_list_index(checker *c, expr *e, const type obj)
     return gpu_list_element(obj);
 }
 
-// Where a kernel writes a GPU list (an element, Add, an atomic): its own body, and a list a field names. Says
-// what's wrong otherwise.
+// Where a kernel writes a GPU list (an element, Add, an atomic): its own body, or a function it calls, and a list a
+// field names, or a function's own GPUList parameter. Says what's wrong otherwise. A function that writes one is code
+// the GPU runs, and a kernel's alone (settle_gpu_list_writes).
 static bool gpu_list_write_ok(checker *c, const expr *list, const loc at, const char *does)
 {
     const decl *s = gpu_code(c);
@@ -94,26 +102,52 @@ static bool gpu_list_write_ok(checker *c, const expr *list, const loc at, const 
                   "wrote");
         return false;
     }
-    if (!s) {
-        if (gpu_function(c) && !c->method->is_async) {
-            diag_error(at, "a kernel's own body writes GPU lists, so a function can't %s", does);
-            diag_note("return what it works out, and %s in the kernel", does);
-        } else {
-            diag_error(at, "the CPU can't %s: kernels write GPU lists on the GPU", does);
-            diag_note("local code sends a list's elements with 'list.Set(items)', in frame order with draws and runs");
-        }
+    decl *fn = s ? NULL : gpu_function(c);
+    if (!s && !fn) {
+        diag_error(at, "the CPU can't %s: kernels write GPU lists on the GPU", does);
+        diag_note("local code sends a list's elements with 'list.Set(items)', in frame order with draws and runs");
         return false;
     }
-    if (!gpu_list_field(list)) {
-        diag_error(list->at, "a kernel writes a GPU list a field names, of a component, singleton or values struct it takes");
-        diag_note("like 'meadow.shown.Add(blade)', for a kernel that takes 'Meadow meadow'");
+    if (!gpu_list_field(list) && !(fn && gpu_list_param(list))) {
+        diag_error(list->at, "a kernel writes a GPU list a field names, of a component, singleton or values struct it takes, "
+                             "or one a function it calls is given");
+        diag_note("like 'meadow.shown.Add(blade)', for a kernel that takes 'Meadow meadow', or 'Keep(meadow.shown, blade)' for a "
+                  "function that takes 'GPUList<Blade> shown'");
         return false;
+    }
+    if (fn && !fn->gpu_only) { // Only the GPU runs it
+        fn->gpu_only = true;
+        fn->gpu_only_at = at;
+        fn->gpu_only_reads = TY_GPU_LIST;
     }
     return true;
 }
 
-static void note_field_once(VEC(const field *) *fields, const field *f)
+// The code being checked writes `list` (an element, an Add, an atomic): noted on the kernel or function, by the
+// field that names it, or on the function's own parameter, which its calls hand on (settle_gpu_list_writes).
+static void note_field_once(void *fields, const field *f);
+
+static void note_gpu_write(checker *c, const expr *list, const bool add, const bool atomic)
 {
+    param *p = gpu_list_param(list);
+    if (p) {
+        p->gpu_written = true;
+        p->gpu_adds |= add;
+        p->gpu_atomic |= atomic;
+        return;
+    }
+    decl *code = c->method;
+    const field *f = gpu_list_field(list);
+    if (add) note_field_once((void *)&code->adds, f);
+    if (atomic) note_field_once((void *)&code->atomics, f);
+    note_field_once((void *)&code->gpu_writes, f);
+}
+
+typedef VEC(const field *) field_list;
+
+static void note_field_once(void *into, const field *f)
+{
+    field_list *fields = into;
     for (int i = 0; i < fields->count; i++) {
         if (fields->items[i] == f) return;
     }
@@ -198,9 +232,7 @@ static type check_gpu_list_method(checker *c, expr *e, const type obj)
             return T_ERR;
         }
         vec_push(e->arg_want, element);
-        decl *kernel = kernel_own(c);
-        note_field_once((void *)&kernel->adds, gpu_list_field(e->object));
-        note_field_once((void *)&kernel->gpu_writes, gpu_list_field(e->object));
+        note_gpu_write(c, e->object, true, false);
         e->gpu = GPU_ADD;
         return T_VOID_;
     }
@@ -210,10 +242,7 @@ static type check_gpu_list_method(checker *c, expr *e, const type obj)
             return T_ERR;
         }
         const type result = check_atomic(c, e, element, false);
-        if (result.kind != TY_ERROR) {
-            note_field_once((void *)&kernel_own(c)->atomics, gpu_list_field(e->object));
-            note_field_once((void *)&kernel_own(c)->gpu_writes, gpu_list_field(e->object));
-        }
+        if (result.kind != TY_ERROR) note_gpu_write(c, e->object, false, true);
         return result;
     }
     const bool read = str_eq_c(e->name, "Read") || str_eq_c(e->name, "ReadCount");
@@ -321,7 +350,7 @@ static bool check_gpu_list_write(checker *c, const stmt *s)
         diag_note("like 'var b = list[i]; b.height = 2; list[i] = b;'");
         return true;
     }
-    note_field_once((void *)&kernel_own(c)->gpu_writes, gpu_list_field(index->object));
+    note_gpu_write(c, index->object, false, false);
     if (c->statement_call && c->step_assignment) return true;
     const type value = s->value->type;
     if (s->op == T_ASSIGN && value.kind != TY_ERROR && !type_assignable(s->target->type, value)) {
@@ -582,14 +611,40 @@ static void check_kernel_decl(const checker *c, decl *d)
 // most, GPU.Barrier() where every invocation of a group reaches it, and
 // `shared` locals at its top level.
 
-static bool adds_to(const stmt *s, const field *list)
+// A GPU list code adds to: one a field names, or a function's own parameter.
+typedef struct gpu_target {
+    const field *field;
+    const param *param;
+} gpu_target;
+
+static bool names_target(const expr *list, const gpu_target t)
 {
-    return s && s->kind == S_EXPR && s->value && s->value->gpu == GPU_ADD && gpu_list_field(s->value->object) == list;
+    return t.param ? gpu_list_param(list) == t.param : t.field && gpu_list_field(list) == t.field;
+}
+
+// A call of a function that adds to `t`: to the list the call hands it, or to a field of a struct it's given.
+static bool call_adds_to(const expr *call, const gpu_target t)
+{
+    const decl *to = call && (call->call == CALL_FUNCTION || call->call == CALL_METHOD) ? call->method : NULL;
+    if (!to) return false;
+    for (int i = 0; t.field && i < to->adds.count; i++) {
+        if (to->adds.items[i] == t.field) return true;
+    }
+    for (int i = 0; i < to->params.count && i < call->args.count; i++) {
+        if (to->params.items[i].gpu_adds && names_target(call->args.items[i], t)) return true;
+    }
+    return false;
+}
+
+static bool adds_to(const stmt *s, const gpu_target list)
+{
+    if (!s || s->kind != S_EXPR || !s->value) return false;
+    return (s->value->gpu == GPU_ADD && names_target(s->value->object, list)) || call_adds_to(s->value, list);
 }
 
 // The most Adds to `list` on a path through `s` that goes on after it, from `before` (-1: none goes on), with
-// *most the most on any path that ended.
-static int adds_through(const stmt *s, const field *list, const int before, int *most, const stmt **second)
+// *most the most on any path that ended. A call of a function that adds to it adds once (it adds once at the most).
+static int adds_through(const stmt *s, const gpu_target list, const int before, int *most, const stmt **second)
 {
     if (!s || before < 0) return before;
     switch (s->kind) {
@@ -620,7 +675,8 @@ static int adds_through(const stmt *s, const field *list, const int before, int 
     case S_FAIL:
         if (before > *most) *most = before;
         return -1;
-    default: // Loops can't Add (check_gpu_list_method); their returns end paths with what was added before them
+    default: // Loops can't Add, or call what does (check_gpu_list_method, settle_gpu_list_writes); their returns end paths
+             // with what was added before them
         return before;
     }
 }
@@ -740,89 +796,6 @@ static void barriers_uniform(const stmt *s, const bool loop, bool *returned)
     }
 }
 
-// Whether `e` is the same for every invocation of a group, as far as can be told: constants, what the kernel takes
-// (its values, singletons and components, uniforms all), this.group and this.count, arithmetic of those, and locals
-// that never change made of those. A GPU list's elements and count, a call and an index aren't.
-static bool group_uniform(const expr *e)
-{
-    if (!e) return true;
-    int64_t n;
-    if (fold_int(e, &n)) return true;
-    switch (e->kind) {
-    case E_INT:
-    case E_FLOAT:
-    case E_BOOL:
-        return true;
-    case E_NAME:
-        if (e->bind == BIND_PARAM) return e->type.kind != TY_GPU_LIST;
-        if (e->bind != BIND_LOCAL || !e->local || e->local->kind != S_VAR) return false;
-        return !e->local->is_mut && !e->local->assigned && !e->local->is_shared && !e->local->loop_var
-            && e->local->value && group_uniform(e->local->value);
-    case E_MEMBER:
-        if (e->object && e->object->kind == E_THIS)
-            return str_eq_c(e->member, "group") || str_eq_c(e->member, "count");
-        return e->gpu == GPU_NONE && e->type.kind != TY_GPU_LIST && group_uniform(e->object);
-    case E_BINARY:
-        return group_uniform(e->lhs) && group_uniform(e->rhs);
-    case E_UNARY:
-        return group_uniform(e->lhs);
-    case E_CONDITIONAL:
-        return group_uniform(e->cond) && group_uniform(e->lhs) && group_uniform(e->rhs);
-    default:
-        return false;
-    }
-}
-
-// A write to one place of a kernel's shared memory by every invocation of a group, each with its own value, which
-// Unity's Direct3D 11 compiler (fxc) refuses (X3695: no pragma turns it off), where WGSL, SPIR-V and the other
-// compilers take it: said as a warning, conservatively. The place is the same for each where its indexes are
-// (group_uniform), and every invocation writes it where a barrier would be reached by all (barriers_uniform's
-// rule). One value for all is fine: fxc only warns (X3584), which Unity's shaders turn off.
-static void shared_races(const decl *d, const stmt *s, bool *returned)
-{
-    if (!s) return;
-    switch (s->kind) {
-    case S_BLOCK:
-        for (int i = 0; i < s->stmts.count; i++) shared_races(d, s->stmts.items[i], returned);
-        return;
-    case S_RETURN:
-    case S_FAIL:
-        *returned = true;
-        return;
-    case S_FOR:
-        if (counts_alike(s) && !leaves_loop(s->then_stmt)) shared_races(d, s->then_stmt, returned);
-        return;
-    case S_IF: { // A condition the same for the whole group sends all of it one way
-        bool inner = *returned;
-        if (group_uniform(s->cond)) {
-            shared_races(d, s->then_stmt, &inner);
-            shared_races(d, s->else_stmt, &inner);
-        }
-        *returned |= inner || leaves_loop(s);
-        return;
-    }
-    case S_ASSIGN: {
-        if (*returned) return;
-        const expr *root = s->target;
-        bool same_place = true;
-        while (root && (root->kind == E_INDEX || root->kind == E_MEMBER)) {
-            if (root->kind == E_INDEX) same_place &= group_uniform(root->lhs);
-            root = root->object;
-        }
-        if (!shared_local(root) || root->local->shared_atomic || !same_place) return;
-        if (s->op == T_ASSIGN && group_uniform(s->value)) return; // One value for all
-        diag_warning(s->at, "every invocation of a group writes '" STR_FMT "' here, each its own value, and Unity's Direct3D 11 "
-                     "compiler refuses a write like that, so kernel '" STR_FMT "' won't run there", STR_ARG(root->local->name),
-                     STR_ARG(d->name));
-        diag_note("have one invocation write it, and the others read it after a barrier: 'if (this.local.x == 0) ...', then "
-                  "'GPU.Barrier();'");
-        return;
-    }
-    default:
-        return;
-    }
-}
-
 static void shared_placement(const stmt *s, const bool top)
 {
     if (!s) return;
@@ -863,28 +836,155 @@ static void check_kernel_flow(const checker *c, decl *d)
         diag_error(d->at, "kernel '" STR_FMT "' shares %d bytes within a group, and a group has 16384 (16 KiB) on every GPU",
                    STR_ARG(d->name), shared_bytes);
     }
-    if (d->adds.count && (d->group[1] > 1 || d->group[2] > 1)) {
-        diag_error(d->at, "kernel '" STR_FMT "' adds to a GPU list, so its group is along one axis, like '[Group(%d)]': Add keeps "
-                   "this.index's order, which a group of %d by %d%s doesn't run in", STR_ARG(d->name),
-                   d->group[0] * d->group[1] * d->group[2], d->group[0], d->group[1], d->group[2] > 1 ? " by more" : "");
-        diag_note("a run over a size of two or three axes is still in this.index's order with a group of one axis: each row "
-                  "of its size is groups after each other");
-    }
-    for (int i = 0; i < d->adds.count; i++) {
-        int most = 0;
-        const stmt *second = NULL;
-        const int end = adds_through(d->body, d->adds.items[i], 0, &most, &second);
-        if (second || end > 1 || most > 1) {
-            diag_error(second ? second->at : d->at, "'" STR_FMT "' can add to '" STR_FMT "' twice: an invocation adds to a GPU list "
-                       "once at the most, on any path", STR_ARG(d->name), STR_ARG(d->adds.items[i]->name));
-            diag_note("pick the element first, and add it once: 'var kept = ...; if (keep) " STR_FMT ".Add(kept);'",
-                      STR_ARG(d->adds.items[i]->name));
-        }
-    }
     if (d->barrier) {
         bool returned = false;
         barriers_uniform(d->body, false, &returned);
     }
-    bool returned = false;
-    shared_races(d, d->body, &returned);
+}
+
+// ---------------------------------------------------------------------------
+// GPU lists written through functions: a function that writes, adds to or uses atomics on its own GPUList<T>
+// parameter, or a field of a struct it's given, does so for its callers, by what each call names. Settled once every
+// body is checked, so a kernel's lists say all it writes, its own body's and the functions' it reaches, before its
+// shader is planned (plan_kernel); and calls of what adds are held to Add's rules, as Add itself is.
+
+// Whether `d` writes a GPU list, itself or through what it calls, as noted so far.
+static bool writes_gpu_lists(const decl *d)
+{
+    if (d->gpu_writes.count) return true;
+    for (int i = 0; i < d->params.count; i++) {
+        if (d->params.items[i].gpu_written) return true;
+    }
+    return false;
+}
+
+static bool adds_gpu_lists(const decl *d)
+{
+    if (d->adds.count) return true;
+    for (int i = 0; i < d->params.count; i++) {
+        if (d->params.items[i].gpu_adds) return true;
+    }
+    return false;
+}
+
+static bool merge_field(void *list, const field *f)
+{
+    field_list *into = list;
+    for (int i = 0; i < into->count; i++) {
+        if (into->items[i] == f) return false;
+    }
+    vec_push(*into, f);
+    return true;
+}
+
+static bool merge_fields(void *into, const void *list)
+{
+    const field_list *from = list;
+    bool changed = false;
+    for (int i = 0; i < from->count; i++) changed |= merge_field(into, from->items[i]);
+    return changed;
+}
+
+// The kernel or function `from`, whose call hands `to`'s parameter `p` the list `arg`, writes it as `p` does.
+static bool hand_on_writes(decl *from, const param *p, const expr *arg)
+{
+    param *own = gpu_list_param(arg);
+    if (own) {
+        const bool changed = (p->gpu_written && !own->gpu_written) || (p->gpu_adds && !own->gpu_adds)
+                          || (p->gpu_atomic && !own->gpu_atomic);
+        own->gpu_written |= p->gpu_written;
+        own->gpu_adds |= p->gpu_adds;
+        own->gpu_atomic |= p->gpu_atomic;
+        return changed;
+    }
+    const field *f = gpu_list_field(arg);
+    bool changed = false;
+    if (!f) return false;
+    if (p->gpu_adds) changed |= merge_field((void *)&from->adds, f);
+    if (p->gpu_atomic) changed |= merge_field((void *)&from->atomics, f);
+    if (p->gpu_written) changed |= merge_field((void *)&from->gpu_writes, f);
+    return changed;
+}
+
+static bool gpu_writer(const decl *d)
+{
+    return (d->kind == DECL_SHADER && d->is_compute) || d->kind == DECL_FUNCTION || d->kind == DECL_METHOD;
+}
+
+// Once at the most on any path of `d`'s own, for a list it adds to.
+static void adds_once(const decl *d, const gpu_target t, const str name)
+{
+    int most = 0;
+    const stmt *second = NULL;
+    const int end = adds_through(d->body, t, 0, &most, &second);
+    if (second || end > 1 || most > 1) {
+        diag_error(second ? second->at : d->at, "'" STR_FMT "' can add to '" STR_FMT "' twice: an invocation adds to a GPU list "
+                   "once at the most, on any path", STR_ARG(d->name), STR_ARG(name));
+        diag_note("pick the element first, and add it once: 'var kept = ...; if (keep) " STR_FMT ".Add(kept);'", STR_ARG(name));
+    }
+}
+
+static void settle_adds(const decl *d);
+
+static void settle_gpu_list_writes(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            decl *from = site->from;
+            const decl *to = site->to;
+            if (!site->call || !gpu_writer(from) || !writes_gpu_lists(to)) continue;
+            changed |= merge_fields((void *)&from->adds, (const void *)&to->adds);
+            changed |= merge_fields((void *)&from->atomics, (const void *)&to->atomics);
+            changed |= merge_fields((void *)&from->gpu_writes, (const void *)&to->gpu_writes);
+            for (int k = 0; k < to->params.count && k < site->call->args.count; k++) {
+                const param *p = &to->params.items[k];
+                if (p->gpu_written) changed |= hand_on_writes(from, p, site->call->args.items[k]);
+            }
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        const decl *from = site->from, *to = site->to;
+        if (!site->call || !writes_gpu_lists(to)) continue;
+        if (from->kind == DECL_SHADER && !from->is_compute) {
+            diag_error(site->call->at, "'" STR_FMT "' writes a GPU list, which kernels do: a %s reads them", STR_ARG(to->name),
+                       shader_word(from));
+            diag_note("run a kernel that calls it with GPU.Run before the draw: what's drawn after a run sees what it wrote");
+            continue;
+        }
+        if (!gpu_writer(from) || !adds_gpu_lists(to)) continue;
+        if (!site->statement) {
+            diag_error(site->call->at, "'" STR_FMT "' adds to a GPU list, so a call of it is a statement of its own",
+                       STR_ARG(to->name));
+            diag_note("an invocation adds to a list once at the most on any path, and its calls count as its Adds do");
+        } else if (site->looped) {
+            diag_error(site->call->at, "'" STR_FMT "' adds to a GPU list, and an invocation adds to one once at the most, so it "
+                       "can't be called in a loop", STR_ARG(to->name));
+            diag_note("each invocation's element goes in invocation order; to add several, count places with atomics, "
+                      "'int at = counts.AtomicAdd(0, n);', and write 'list[at + k] = v'");
+        }
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        for (int k = 0; k < c->prog->decls.items[i]->methods.count; k++) settle_adds(c->prog->decls.items[i]->methods.items[k]);
+        settle_adds(c->prog->decls.items[i]);
+    }
+}
+
+// What `d` adds, held to Add's rules: once a path, and in a kernel, a group of one axis.
+static void settle_adds(const decl *d)
+{
+    if (!gpu_writer(d) || !d->body) return;
+    for (int k = 0; k < d->adds.count; k++) adds_once(d, (gpu_target){d->adds.items[k], NULL}, d->adds.items[k]->name);
+    for (int k = 0; k < d->params.count; k++) {
+        if (d->params.items[k].gpu_adds) adds_once(d, (gpu_target){NULL, &d->params.items[k]}, d->params.items[k].name);
+    }
+    if (d->kind == DECL_SHADER && d->adds.count && (d->group[1] > 1 || d->group[2] > 1)) {
+        diag_error(d->at, "kernel '" STR_FMT "' adds to a GPU list, so its group is along one axis, like '[Group(%d)]': Add "
+                   "keeps this.index's order, which a group of %d by %d%s doesn't run in", STR_ARG(d->name),
+                   d->group[0] * d->group[1] * d->group[2], d->group[0], d->group[1], d->group[2] > 1 ? " by more" : "");
+        diag_note("a run over a size of two or three axes is still in this.index's order with a group of one axis: each row "
+                  "of its size is groups after each other");
+    }
 }
