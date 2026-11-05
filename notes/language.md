@@ -4701,3 +4701,8 @@ normal source metadata and stripped identities without locations. Runtime copyin
 same-prefix name changes, source relocation and count changes are covered by
 `tests/test_profile.c`. Validation is recorded with the coordinated profiler work
 in `notes/standard-host.md`.
+
+Worker-constant fix integration: merged origin/dev bda29c5c9 cleanly. Rebuilt
+the affected targets after incoming compiler/runtime changes; the same four
+Windows ASan and three WASI checks pass again.
+
