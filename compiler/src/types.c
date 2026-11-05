@@ -60,6 +60,7 @@ static const generic_form generic_forms[] = {
     {"Set", 1, {GENERIC_KEY}, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
     {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
     {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid3<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"GPUList", 1, {GENERIC_ELEMENT}, {"the list's element type, like 'GPUList<float4>'"}, NULL, "'>' after the list's element type"},
     {"Mesh", 1, {GENERIC_VERTEX}, {"the mesh's vertex type, like 'Mesh<Vertex3>'"}, NULL, "'>' after the mesh's vertex type"},
     {"SkinnedMesh", 2, {GENERIC_VERTEX, GENERIC_ELEMENT},
      {"the mesh's vertex type, like 'SkinnedMesh<Vertex3>'", "an optional animation and bone contract struct"},
@@ -186,6 +187,7 @@ layout type_layout(const type t)
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_FONT) return (layout){8, 8};           // tide_font_ref: a number of the registry's
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
+    if (t.kind == TY_GPU_LIST) return (layout){16, 8};      // tide_gpu_list: its id, then its capacity and stride
     // Text, lists and grids are a handle each (tide_handle: 64 bits, see tide/text.h)
     if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_GRID) return (layout){8, 8};
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){32, 8}; // tide_map: two lists, count, padding and insertion order
@@ -445,6 +447,7 @@ const char *type_name(const type t)
     case TY_GRID:
     case TY_ARRAY:
     case TY_MESH:
+    case TY_GPU_LIST:
     case TY_OPTIONAL:
     case TY_FAILABLE: {
         char *b = buf[next++ % 4];
@@ -467,6 +470,7 @@ const char *type_c_name(const type t)
     if (t.kind == TY_MAP || t.kind == TY_SET) return "tide_map";
     if (t.kind == TY_GRID) return "tide_grid";
     if (t.kind == TY_MESH) return "tide_mesh_lists";
+    if (t.kind == TY_GPU_LIST) return "tide_gpu_list";
     if (t.kind == TY_DRAW_LIST) return "tide_draw_list *";
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {
         if (builtins[i].kind == t.kind) return builtins[i].c_name;

@@ -177,6 +177,7 @@ static type decl_type(decl *d)
     case DECL_ENUM: return (type){TY_ENUM, d};
     case DECL_ALIAS: return d->alias_type;
     case DECL_LIST: return (type){TY_LIST, d};
+    case DECL_GPU_LIST: return (type){TY_GPU_LIST, d};
     case DECL_MAP: return (type){d->is_set ? TY_SET : TY_MAP, d};
     case DECL_GRID: return (type){TY_GRID, d};
     case DECL_ARRAY: return (type){TY_ARRAY, d};
@@ -1386,7 +1387,7 @@ typedef struct resource_outer {
 static bool holds_render_resource_in(const type t, const resource_outer *outer, const bool fonts)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
-        || t.kind == TY_CLIP || (fonts && t.kind == TY_FONT)) return true;
+        || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
@@ -1479,6 +1480,63 @@ static type list_of(program *prog, const type element)
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
     return (type){TY_LIST, d};
+}
+
+// ---------------------------------------------------------------------------
+// GPU lists: GPUList<T>, a list that lives on the GPU (docs/spec.md, Compute on the GPU)
+
+// Why a value of `t` can't be a GPU list's element, or NULL where it can: a
+// GPU value, numbers, vectors, colors, quaternions, float matrices, bools,
+// bytes, chars, enums, and fixed arrays and structs of them.
+static const char *gpu_element_refusal(const type t, const int depth)
+{
+    if (depth > 32) return "it holds itself";
+    switch (t.kind) {
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_INT2: case TY_INT3: case TY_INT4:
+    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_COLOR:
+    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENUM:
+        return NULL;
+    case TY_LONG: return "the GPU's ints are 32 bits";
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_DOUBLE2X2: case TY_DOUBLE3X3:
+    case TY_DOUBLE4X4: return "the GPU's floats are 32 bits";
+    case TY_STRING: return "text is the CPU's";
+    case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: return "it's a handle into a world, which the GPU doesn't have";
+    case TY_ARRAY: return gpu_element_refusal(t.decl->fields.items[0].type, depth + 1);
+    case TY_STRUCT:
+        if (t.decl->skin_kind || t.decl->task_handle || t.decl->binding_of) return "it's a handle the GPU doesn't have";
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (f->hidden) return "it's a handle the GPU doesn't have";
+            const char *why = gpu_element_refusal(f->type, depth + 1);
+            if (why) return why;
+        }
+        return NULL;
+    case TY_ERROR: return NULL;
+    default: return "it's no value the GPU has: GPU lists hold numbers, vectors, colors, matrices, enums, and arrays and "
+                    "structs of them";
+    }
+}
+
+// GPUList<T> for element type `element`: one declaration for each, so two GPU lists of floats are the same type.
+static type gpu_list_of(program *prog, const type element)
+{
+    for (int i = 0; i < prog->gpu_lists.count; i++) {
+        const type t = prog->gpu_lists.items[i]->fields.items[0].type;
+        if (t.kind == element.kind && t.decl == element.decl) return (type){TY_GPU_LIST, prog->gpu_lists.items[i]};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_GPU_LIST;
+    d->builtin = true;
+    sb name = {0};
+    sb_printf(&name, "GPUList<%s>", type_name(element));
+    d->name = (str){name.data, (int)name.len};
+    field item = {0};
+    item.name = str_from("item");
+    item.type = element;
+    vec_push(d->fields, item);
+    d->index = prog->gpu_lists.count;
+    vec_push(prog->gpu_lists, d);
+    return (type){TY_GPU_LIST, d};
 }
 
 // ---------------------------------------------------------------------------
@@ -2142,6 +2200,16 @@ static type resolve_generic(const checker *c, const type_ref *r, const loc at, c
         if (args[i].kind == TY_ERROR) return T_ERR;
     }
     if (str_eq_c(r->name, "List")) return list_of(c->prog, args[0]);
+    if (str_eq_c(r->name, "GPUList")) {
+        const char *why = gpu_element_refusal(args[0], 0);
+        if (why) {
+            diag_error(at, "a GPUList can't hold %s: %s", type_name(args[0]), why);
+            diag_note("a GPU list's elements are GPU values: numbers, vectors, colors, quaternions, float matrices, bools, "
+                      "enums, and fixed arrays and structs of them");
+            return T_ERR;
+        }
+        return gpu_list_of(c->prog, args[0]);
+    }
     if (str_eq_c(r->name, "Set")) return map_of(c->prog, args[0], T_ERR, true);
     if (str_eq_c(r->name, "Map")) return map_of(c->prog, args[0], args[1], false);
     return grid_of(c->prog, args[0], r->name.ptr[4] - '0');
@@ -3928,7 +3996,7 @@ static const decl *gpu_code(const checker *c)
 
 static const char *shader_word(const decl *d)
 {
-    return d->is_frag ? "frag" : "vert";
+    return d->is_compute ? "compute" : d->is_frag ? "frag" : "vert";
 }
 
 // The function or method being checked, where it's one code the GPU runs can
@@ -3977,7 +4045,7 @@ static bool gpu_refuses(const checker *c, const loc at, const char *what, const 
 {
     const decl *s = gpu_code(c);
     if (!s) return false;
-    diag_error(at, "a %s runs on the GPU, for each %s, so it can't %s", shader_word(s), s->is_frag ? "pixel" : "vertex", what);
+    diag_error(at, "a %s runs on the GPU, for each %s, so it can't %s", shader_word(s), s->is_compute ? "invocation" : s->is_frag ? "pixel" : "vertex", what);
     if (instead) diag_note("%s", instead);
     return true;
 }
@@ -5943,8 +6011,12 @@ static type check_self_call(checker *c, expr *e, decl *m)
 
 #include "callable_check.inc"
 
+static type check_gpu_list_make(checker *c, expr *e);
+
 static type check_call(checker *c, expr *e)
 {
+    if (str_eq_c(e->name, "GPUList") && e->type_args.count && !find_local(c, e->name) && !find_param(c, e->name))
+        return check_gpu_list_make(c, e);
     const stmt *call_local = find_local(c, e->name);
     const param *call_param = find_param(c, e->name);
     const field *call_field = field_in_scope(c, e->name);
@@ -7181,6 +7253,11 @@ static type check_mesh_draw(checker *c, expr *e)
             continue;
         }
         if (!shader) break;
+        if (shader->is_compute) {
+            diag_error(name->at, "'" STR_FMT "' is a kernel: it's run with 'GPU.Run(" STR_FMT ", over)', not drawn",
+                       STR_ARG(shader->name), STR_ARG(shader->name));
+            return T_ERR;
+        }
         decl **slot = shader->is_frag ? &e->frag : &e->vert;
         if (*slot) {
             diag_error(name->at, "%s takes one %s, and this names two", draw_name, shader_word(shader));
@@ -7440,12 +7517,24 @@ static type check_mesh_draw(checker *c, expr *e)
     if (instanced) {
         const expr *instances = e->args.items[at++];
         const type list = instances->type;
-        const type element = list.kind == TY_LIST ? list.decl->fields.items[0].type : T_ERR;
-        if (list.kind != TY_LIST || (element.kind != TY_STRUCT && element.kind != TY_FLOAT4X4)) {
-            diag_error(instances->at, "%s takes a List<float4x4> of transforms or a List<T> of instance structs, and this is %s",
-                       draw_name, type_name(list));
+        const bool on_gpu = list.kind == TY_GPU_LIST; // As many as its count on the GPU: drawn indirect
+        const type element = list.kind == TY_LIST || on_gpu ? list.decl->fields.items[0].type : T_ERR;
+        if ((list.kind != TY_LIST && !on_gpu) || (element.kind != TY_STRUCT && element.kind != TY_FLOAT4X4)) {
+            diag_error(instances->at, "%s takes a List<float4x4> of transforms or a List<T> of instance structs, or a GPUList of "
+                       "either, and this is %s", draw_name, type_name(list));
             return T_ERR;
         }
+        if (on_gpu && skinned) {
+            diag_error(instances->at, "a skinned mesh's instances are posed on the CPU, so they can't be a GPU list's");
+            return T_ERR;
+        }
+        if (on_gpu && e->mesh_lod) {
+            diag_error(instances->at, "a draw over a GPU list picks no levels on the CPU, which has no instances to weigh: 'lod:' "
+                       "isn't for it");
+            diag_note("draw one GPU list a level, each filled by the kernel that picks them");
+            return T_ERR;
+        }
+        e->gpu_instances = on_gpu;
         transforms = element.kind == TY_FLOAT4X4;
         if (transforms && dims != 3) {
             diag_error(instances->at, "a List<float4x4> places 3D instances: a 2D draw takes instance structs and a vert that places them");
@@ -8385,6 +8474,7 @@ static type check_parse_call(checker *c, expr *e, const type result)
 }
 
 #include "visibility_check.inc"
+#include "compute_check.inc"
 
 // A frag's this.Ddx(v), this.Ddy(v) and this.Fwidth(v): how much a float or a
 // float vector changes from this pixel to the next one across, down, and the
@@ -8456,6 +8546,8 @@ static type check_method(checker *c, expr *e)
     alias_receiver(c, e);
     if (visibility_owner(c, e->object, "Visibility") || visibility_owner(c, e->object, "Audience"))
         return check_visibility_static(c, e);
+    if (e->object->kind == E_NAME && str_eq_c(e->object->name, "GPU") && !find_local(c, e->object->name)
+        && !find_param(c, e->object->name) && !field_in_scope(c, e->object->name)) return check_gpu_static(c, e);
     if (str_eq_c(e->name, "Count")) {
         decl *d = named_enum(c, e->object);
         if (d) {
@@ -8726,6 +8818,8 @@ static type check_method(checker *c, expr *e)
         return check_instance_call(e);
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
+    if (obj.kind == TY_GPU_LIST) return check_gpu_list_method(c, e, obj);
+    if (shared_local(e->object) && is_atomic_name(e->name)) return check_shared_atomic(c, e, obj);
     bool skin_handled;
     const type skin_result = check_skinned_method(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
@@ -10098,6 +10192,7 @@ static type check_member(checker *c, expr *e)
         suggest_note(&sg);
         return T_ERR;
     }
+    if (obj.kind == TY_GPU_LIST) return check_gpu_list_member(c, e, obj);
     if (obj.kind == TY_LIST) {
         if (str_eq_c(e->member, "count")) return T_INT_;
         diag_error(e->at, "a list has 'count' and methods like Add(...), not '" STR_FMT "'", STR_ARG(e->member));
@@ -10481,6 +10576,7 @@ static type check_this(const checker *c, const expr *e)
 {
     decl *m = c->method;
     const decl *shader = gpu_code(c);
+    if (shader && shader->is_compute) return decl_type(c->prog->invocation); // Which invocation of its run
     if (shader && shader->is_frag) return decl_type(c->prog->pixel);
     if (shader) return decl_type(c->prog->placed); // Its vertex, as the engine would place it: this.clip
     if (m && m->kind == DECL_FUNCTION) {
@@ -10668,6 +10764,7 @@ static type check_index(checker *c, expr *e)
     bool skin_handled;
     const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
     if (skin_handled) return skin_result;
+    if (obj.kind == TY_GPU_LIST) return check_gpu_list_index(c, e, obj);
     if (obj.kind == TY_RENDER_TARGET && e->object->kind == E_MEMBER && e->object->target_colors) {
         // target.colors[1]: one of its color images, as a Texture. Which ones it has is the target's to say, when
         // it's made, so one it hasn't got is found out as it's sampled: that draw is passed by, and says so
@@ -13268,6 +13365,7 @@ static void check_assign(checker *c, const stmt *s)
                   STR_FMT ".Set<" STR_FMT ">(e, c);'", STR_ARG(world), STR_ARG(component), STR_ARG(world), STR_ARG(component));
         return;
     }
+    if (check_gpu_list_write(c, s)) return; // list[i] = v, in a kernel: no 'mut', as it's a handle
     // name[0] = 'x': said by check_writable, as for a mut argument
     if (s->target->kind == E_INDEX && s->target->object->type.kind == TY_STRING) {
         check_writable(c, s->target, NULL, NULL);
@@ -14014,6 +14112,8 @@ static bool stands_alone(const expr *e)
 {
     const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
     const builtin_call call = called->call;
+    // A GPU list's changes, a run, a barrier, and an atomic, whose old value a statement drops
+    if (called->gpu >= GPU_RESIZE && called->gpu != GPU_READ && called->gpu != GPU_READ_COUNT) return true;
     return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_PARENT
                                          // A Draw call that gives a value only measures or converts
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
@@ -14171,6 +14271,8 @@ static void check_stmt(checker *c, stmt *s)
             }
         } else if (list.kind == TY_LIST) {
             element = list_element(list);
+        } else if (list.kind == TY_GPU_LIST) { // Its elements up to its count, on the GPU
+            if (gpu_list_read_ok(c, s->value->at, "elements")) element = gpu_list_element(list);
         } else if (list.kind == TY_MAP) { // Its entries, in the order their keys were added: each a key and a value
             element = (type){TY_STRUCT, list.decl->entry};
         } else if (list.kind == TY_SET) { // Its keys, in the order they were added
@@ -14485,6 +14587,11 @@ static type constant_type(const checker *c, const decl *k, const bool built)
     const type_ref *const r = type_ref_or_text(k->return_type_ref, k->return_type_name);
     if (r->sizes.count > 0) {
         diag_error(at, "a constant can't be an array yet");
+        return T_ERR;
+    }
+    if (str_eq_c(r->name, "GPUList")) {
+        diag_error(at, "a GPUList is this machine's, made in local code: a constant can't be one");
+        diag_note("keep it in a local field or a local singleton, and make it there: 'GPUList<float4>(1024)'");
         return T_ERR;
     }
     if (r->args.count > 0 && !str_eq_c(r->name, "Mesh") && !(built && str_eq_c(r->name, "List"))) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
@@ -16244,7 +16351,7 @@ static void check_fields(checker *c, const decl *d)
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
-                diag_note("Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component "
+                diag_note("Texture, DepthTexture, Cubemap, RenderTarget, GPUList, Clip and Sound belong to this machine: keep the field local, or use a local component "
                           "or singleton");
             }
         }
@@ -17275,6 +17382,10 @@ static void check_handed_struct(const decl *vert, const param *p, const decl *t)
 // A read-only struct is one the draw's vert writes, or an element of an Instanced draw's list: the draw says which (check_shader_binding).
 static void check_shader_decl(const checker *c, decl *d)
 {
+    if (d->is_compute) {
+        check_kernel_decl(c, d);
+        return;
+    }
     const program *prog = c->prog;
     const char *word = shader_word(d);
     const char *vertex_form = d->is_frag ? "frag Name(BoxVertex vertex, out Color color, ...)" : "vert Name(mut BoxVertex vertex, ...)";
@@ -17583,6 +17694,10 @@ static void check_method_body(checker *c, decl *m)
     const int errors = diag_error_count();
     check_stmt(c, m->body);
     check_body_assigned(c, m, m->body, outs, errors);
+    if (m->kind == DECL_SHADER && m->is_compute) {
+        check_group(c, m);
+        if (diag_error_count() == errors) check_kernel_flow(c, m);
+    }
     const type_kind ret = m->return_type.kind;
     if (ret != TY_VOID && ret != TY_ERROR && !always_returns(m->body)) {
         diag_error(m->at, "'" STR_FMT "' doesn't return a value on every path", STR_ARG(m->name));
@@ -18909,6 +19024,21 @@ static void add_builtins(program *prog)
     clip.type = (type){TY_FLOAT4, NULL};
     vec_push(placed->fields, clip);
     prog->placed = placed;
+    // A kernel's implicit `this`: which invocation of its run it is (docs/spec.md, Compute on the GPU)
+    static const char *const invocation_fields[][2] = {{"index", "int"}, {"at", "int3"}, {"local", "int3"},
+                                                       {"group", "int3"}, {"count", "int3"}};
+    decl *invocation = NEW(decl);
+    invocation->kind = DECL_RECORD;
+    invocation->name = str_from("Invocation");
+    invocation->builtin = true;
+    for (int i = 0; i < (int)(sizeof invocation_fields / sizeof invocation_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(invocation_fields[i][0]);
+        f.type_name = str_from(invocation_fields[i][1]);
+        builtin_type_named(f.type_name, &f.type);
+        vec_push(invocation->fields, f);
+    }
+    prog->invocation = invocation;
     decl *instance = NEW(decl);
     instance->kind = DECL_RECORD;
     instance->name = str_from("Instance");
@@ -19986,6 +20116,7 @@ static void collect_decls(program *prog)
         case DECL_STRUCT: // Ordered once their fields are known; see order_struct
         case DECL_METHOD: // Not in prog->decls
         case DECL_LIST:
+        case DECL_GPU_LIST:
         case DECL_MAP:
         case DECL_GRID:
         case DECL_ARRAY:
@@ -20901,6 +21032,16 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Group")) { // A kernel's group size, read with it (check_group)
+                if (d->kind != DECL_SHADER || !d->is_compute) {
+                    diag_error(attr->at, "Group says how many invocations of a kernel run together, and '" STR_FMT "' isn't a "
+                               "kernel", STR_ARG(d->name));
+                    diag_note("it goes before a 'compute' declaration: '[Group(8, 8)] compute Blur(...)'");
+                } else if (stage_seen) {
+                    stage_seen = true;
+                }
+                continue;
+            }
             if (str_eq_c(attr->name, "Cutout")) { // It's code: the frag says it
                 diag_error(attr->at, "a frag says it's a cut-out in its code, with 'this.Cutout(alpha)': there's no "
                                      "Cutout attribute");
@@ -20931,6 +21072,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "LOD");
                 suggest_consider_c(&s, "BlendShapes");
                 suggest_consider_c(&s, "Parts");
+                suggest_consider_c(&s, "Group");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
@@ -21538,6 +21680,13 @@ static void check_gpu_only_calls(const checker *c)
         if (site->from->worker_cpu && !site->to->gpu_sampling && site->to->gpu_only_reads == TY_GRID) continue;
         if (!site->to->gpu_only || site->from->gpu_only || site->from->kind == DECL_SHADER) continue;
         const type_kind reads = site->to->gpu_only_reads;
+        if (reads == TY_GPU_LIST) {
+            diag_error(site->call->at, "'" STR_FMT "' reads a GPU list's elements or its count, which only code the GPU runs "
+                       "does: a kernel, a frag, a vert and the functions they call", STR_ARG(site->to->name));
+            diag_note_at(site->to->gpu_only_at, "it does on line %d; the CPU reads a GPU list back with 'await list.Read()'",
+                         site->to->gpu_only_at.line);
+            continue;
+        }
         if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP) {
             diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which shader code and local workers can call",
                        STR_ARG(site->to->name));

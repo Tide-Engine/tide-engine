@@ -1,0 +1,432 @@
+// Compute on the GPU, in the shader writer (notes/compute.md): GPU lists as
+// storage buffers, kernels' WGSL, ordered Add's compaction, atomics, shared
+// memory and barriers. Included by shader.c.
+//
+// A GPU list a shader's code names is its storage buffer `tide_s<slot>`, at
+// binding 25 + slot: an array of u32 words (array<atomic<i32>> in a kernel that
+// uses atomics on it), a header of 4 words (its count, its capacity) and then
+// its elements, `stride` words each, a value's floats' bits then its ints, as
+// put_value reads words everywhere. Each slot has functions of its own, written
+// once a shader: tide_word<s>, tide_count<s>, tide_capacity<s>, tide_get<s> and,
+// in a kernel that writes it, tide_put<s>. GLSL has no storage buffers (OpenGL
+// 3.3, OpenGL ES 3 and WebGL 2, which go once compute lands): its functions
+// there are zeros, and the renderer refuses a draw that reads a GPU list on them.
+
+// The words of an element of type `t`: its floats, then its ints.
+static int element_words(const type t, int *floats)
+{
+    int f = 0, i = 0;
+    type_words(t, &f, &i);
+    if (floats) *floats = f;
+    return f + i;
+}
+
+// The storage slot of the GPU list `list` names, a field of what the engine supplies or of a struct a function is
+// given: -1 while checking, which notes the field as read. Refuses anything else.
+static int gpu_list_slot(emit *em, const expr *list)
+{
+    const expr *obj = list && list->kind == E_MEMBER ? list->object : NULL;
+    if (!obj || !list->field || obj->kind != E_NAME || obj->bind != BIND_PARAM
+        || !(is_bound(em, obj->param) || names_given(em, obj))) {
+        refuse(em, list ? list->at : (loc){0}, "a GPU list in code the GPU runs is a field of what it takes, by its name: it "
+                                               "can't be kept in a local, passed on alone or returned there");
+        diag_note("pass the struct, component or singleton that holds it to a function instead, which reads it by its field");
+        return -1;
+    }
+    const param *p = obj->param;
+    if (!is_bound(em, p)) {
+        note_given_field(em, obj, list->field, list->local_field);
+    } else if (em->checking && list->local_field) {
+        em->root->params.items[param_index(em->root, p)].local_reads[field_index(p->type.decl->local_part, list->field)] = true;
+    } else if (em->checking) {
+        em->root->params.items[param_index(em->root, p)].reads[field_index(p->type.decl, list->field)] = true;
+    }
+    if (em->checking || !em->sh) return -1;
+    for (int i = 0; i < em->sh->storage.count; i++) {
+        if (em->sh->storage.items[i].field == list->field && em->sh->storage.items[i].source == p->type.decl) return i;
+    }
+    return -1;
+}
+
+static bool slot_atomic(const emit *em, const int slot)
+{
+    return em->l == WGSL && em->sh && em->sh->compute && slot >= 0 && em->sh->storage.items[slot].atomic;
+}
+
+// The element type of the GPU list in slot `slot`: its instances' for an Instanced draw's own.
+static type slot_element(const emit *em, const int slot)
+{
+    const shader_storage *s = &em->sh->storage.items[slot];
+    if (!s->field) return em->sh->instance_type ? (type){TY_STRUCT, em->sh->instance_type} : (type){TY_FLOAT4X4, NULL};
+    return s->field->type.decl->fields.items[0].type;
+}
+
+// Statements that store a value of type `t` (the WGSL expression `access`) as its words into `array` from word
+// `base` on: floats at *f, ints at *i, as put_value reads them back.
+static void put_store(emit *em, const type t, const char *access, int *f, int *i, const char *array, const char *base,
+                      const bool atomic)
+{
+    char word[256];
+#define STORE(at, value) do { \
+        if (atomic) sb_printf(em->o, "    atomicStore(&%s[%s + %du], bitcast<i32>(%s));\n", array, base, at, value); \
+        else sb_printf(em->o, "    %s[%s + %du] = %s;\n", array, base, at, value); \
+    } while (0)
+    const int dim = type_dim(t);
+    const int n = matrix_dim(t);
+    if (t.kind == TY_BOOL) {
+        snprintf(word, sizeof word, "select(0u, 1u, %s)", access);
+        STORE(*i, word);
+        *i += 1;
+    } else if (t.kind == TY_BYTE || t.kind == TY_ENUM || t.kind == TY_CHAR || (dim == 1 && !type_is_float_based(t))) {
+        snprintf(word, sizeof word, "bitcast<u32>(%s)", access);
+        STORE(*i, word);
+        *i += 1;
+    } else if (dim == 1) {
+        snprintf(word, sizeof word, "bitcast<u32>(%s)", access);
+        STORE(*f, word);
+        *f += 1;
+    } else if (dim > 1 || t.kind == TY_COLOR || t.kind == TY_QUATERNION) {
+        const int count = dim > 1 ? dim : 4;
+        const bool floats = dim == 0 || type_is_float_based(t);
+        for (int k = 0; k < count; k++) {
+            snprintf(word, sizeof word, "bitcast<u32>((%s).%c)", access, "xyzw"[k]);
+            STORE(floats ? *f + k : *i + k, word);
+        }
+        *(floats ? f : i) += count;
+    } else if (n > 0) {
+        for (int c = 0; c < n; c++) {
+            for (int r = 0; r < n; r++) {
+                snprintf(word, sizeof word, "bitcast<u32>((%s)[%d][%d])", access, c, r);
+                STORE(*f + c * n + r, word);
+            }
+        }
+        *f += n * n;
+    } else if (t.kind == TY_ARRAY) {
+        for (int k = 0; k < t.decl->array_length; k++) {
+            char inner[200];
+            snprintf(inner, sizeof inner, "(%s)[%d]", access, k);
+            put_store(em, t.decl->fields.items[0].type, inner, f, i, array, base, atomic);
+        }
+    } else if (is_struct_like(t)) {
+        for (int k = 0; k < t.decl->fields.count; k++) {
+            const field *fl = &t.decl->fields.items[k];
+            if (fl->hidden) continue;
+            char inner[200];
+            snprintf(inner, sizeof inner, "(%s).%s", access, field_name(fl));
+            put_store(em, fl->type, inner, f, i, array, base, atomic);
+        }
+    }
+#undef STORE
+}
+
+// The value of type `element` whose words are at `base` of what `word` reads ("tide_word3(%s)"): declares its packs
+// as the locals tide_q<k> (ints) and tide_p<k> (floats), then returns the expression that makes the value.
+static void put_load(emit *em, sb *text, const type element, const char *word, const char *base)
+{
+    int floats = 0;
+    const int words = element_words(element, &floats);
+    for (int k = 0; k < packs(words); k++) {
+        sb_printf(text, "    let tide_q%d = vec4i(", k);
+        for (int c = 0; c < 4; c++) {
+            const int w = 4 * k + c;
+            if (c) sb_put(text, ", ");
+            if (w >= words) {
+                sb_put(text, "0");
+                continue;
+            }
+            char at[96];
+            snprintf(at, sizeof at, "%s + %du", base, w);
+            sb_put(text, "bitcast<i32>(");
+            sb_printf(text, word, at);
+            sb_put(text, ")");
+        }
+        sb_put(text, ");\n");
+        if (4 * k < floats) sb_printf(text, "    let tide_p%d = bitcast<vec4f>(tide_q%d);\n", k, k);
+    }
+    sb *const out = em->o;
+    em->o = text;
+    sb_put(text, "    return ");
+    int f = 0, n = floats;
+    put_value(em, element, 'p', 'q', &f, &n);
+    sb_put(text, ";\n");
+    em->o = out;
+}
+
+// The functions that read and write slot `slot`, written once before the code that calls them.
+static void need_storage(emit *em, const int slot)
+{
+    if (slot < 0 || em->storage_done[slot]) return;
+    em->storage_done[slot] = true;
+    const shader_storage *s = &em->sh->storage.items[slot];
+    const type element = slot_element(em, slot);
+    const char *t = ty(em, element);
+    sb text = {0};
+    if (em->l == GLSL) { // No storage buffers there: nothing is read (the renderer draws none of this)
+        sb *const out = em->o;
+        em->o = &text;
+        sb_printf(&text, "int tide_count%d() {\n    return 0;\n}\n\nint tide_capacity%d() {\n    return 0;\n}\n\n", slot, slot);
+        sb_printf(&text, "%s tide_get%d(int tide_i) {\n    return ", t, slot);
+        put_zeros(em, element);
+        sb_put(&text, ";\n}\n\n");
+        em->o = out;
+        sb_put(&em->functions, text.data);
+        return;
+    }
+    const bool atomic = slot_atomic(em, slot);
+    const int words = element_words(element, NULL);
+    if (atomic) sb_printf(&text, "fn tide_word%d(tide_k: u32) -> u32 {\n    return bitcast<u32>(atomicLoad(&tide_s%d[tide_k]));\n}\n\n", slot, slot);
+    else sb_printf(&text, "fn tide_word%d(tide_k: u32) -> u32 {\n    return tide_s%d[tide_k];\n}\n\n", slot, slot);
+    sb_printf(&text, "fn tide_count%d() -> i32 {\n    return i32(min(tide_word%d(0u), tide_word%d(1u)));\n}\n\n", slot, slot, slot);
+    sb_printf(&text, "fn tide_capacity%d() -> i32 {\n    return i32(min(tide_word%d(1u), 0x7fffffffu));\n}\n\n", slot, slot);
+    sb_printf(&text, "fn tide_get%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= tide_count%d()) {\n        return ", slot, t, slot);
+    sb *const out = em->o;
+    em->o = &text;
+    put_zeros(em, element);
+    em->o = out;
+    sb_printf(&text, ";\n    }\n    let tide_b = 4u + u32(tide_i) * %du;\n", words);
+    char word[32];
+    snprintf(word, sizeof word, "tide_word%d(%%s)", slot);
+    put_load(em, &text, element, word, "tide_b");
+    sb_put(&text, "}\n\n");
+    if (s->write) {
+        sb_printf(&text, "fn tide_put%d(tide_i: i32, tide_v: %s) {\n    if (tide_i < 0 || tide_i >= tide_capacity%d()) {\n"
+                         "        return;\n    }\n    let tide_b = 4u + u32(tide_i) * %du;\n", slot, t, slot, words);
+        em->o = &text;
+        int f = 0, i = 0;
+        element_words(element, &i);
+        char array[16];
+        snprintf(array, sizeof array, "tide_s%d", slot);
+        put_store(em, element, "tide_v", &f, &i, array, "tide_b", atomic);
+        em->o = out;
+        sb_put(&text, "}\n\n");
+    }
+    sb_put(&em->functions, text.data);
+}
+
+// An atomic on an element of slot `slot`'s list (a GPUList<int>): the function that does it, which leaves an element
+// past the capacity alone and gives 0 there, written once.
+static const char *need_atomic(emit *em, const int slot, const str name, const char *array, const int length)
+{
+    sb fn = {0};
+    sb_printf(&fn, "tide_atomic_%s_" STR_FMT, array, STR_ARG(name));
+    for (int i = 0; i < em->atomic_fns.count; i++) {
+        if (!strcmp(em->atomic_fns.items[i], fn.data)) return fn.data;
+    }
+    vec_push(em->atomic_fns, fn.data);
+    const bool exchange = str_eq_c(name, "AtomicCompareExchange");
+    static const char *const ops[][2] = {{"AtomicAdd", "atomicAdd"}, {"AtomicSub", "atomicSub"}, {"AtomicMin", "atomicMin"},
+                                         {"AtomicMax", "atomicMax"}, {"AtomicAnd", "atomicAnd"}, {"AtomicOr", "atomicOr"},
+                                         {"AtomicXor", "atomicXor"}, {"AtomicExchange", "atomicExchange"}};
+    const char *op = "atomicAdd";
+    for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+        if (str_eq_c(name, ops[i][0])) op = ops[i][1];
+    }
+    sb text = {0};
+    sb_printf(&text, "fn %s(tide_i: i32, %stide_v: i32) -> i32 {\n", fn.data, exchange ? "tide_c: i32, " : "");
+    char place[96]; // Each atomic names its element itself, as the translators take them
+    if (slot >= 0) {
+        sb_printf(&text, "    if (tide_i < 0 || tide_i >= tide_capacity%d()) {\n        return 0;\n    }\n", slot);
+        snprintf(place, sizeof place, "&%s[4u + u32(tide_i)]", array);
+    } else {
+        sb_printf(&text, "    if (tide_i < 0 || tide_i >= %d) {\n        return 0;\n    }\n", length);
+        snprintf(place, sizeof place, "&%s[tide_i]", array);
+    }
+    if (exchange) sb_printf(&text, "    return atomicCompareExchangeWeak(%s, tide_c, tide_v).old_value;\n}\n\n", place);
+    else sb_printf(&text, "    return %s(%s, tide_v);\n}\n\n", op, place);
+    sb_put(&em->functions, text.data);
+    return fn.data;
+}
+
+// A kernel's `shared int[N]` that atomics are used on: its reads and writes are atomic too.
+static bool shared_atomic(const expr *e)
+{
+    return e && e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && e->local->is_shared && e->local->shared_atomic;
+}
+
+static const char *need_shared_access(emit *em, const stmt *local, const bool store)
+{
+    sb fn = {0};
+    sb_printf(&fn, "tide_%s_%s", store ? "store" : "load", local_name(local->name));
+    for (int i = 0; i < em->atomic_fns.count; i++) {
+        if (!strcmp(em->atomic_fns.items[i], fn.data)) return fn.data;
+    }
+    vec_push(em->atomic_fns, fn.data);
+    const int length = local->type.decl->array_length;
+    sb text = {0};
+    if (store) sb_printf(&text, "fn %s(tide_i: i32, tide_v: i32) {\n    if (tide_i >= 0 && tide_i < %d) {\n"
+                                "        atomicStore(&%s[tide_i], tide_v);\n    }\n}\n\n", fn.data, length, local_name(local->name));
+    else sb_printf(&text, "fn %s(tide_i: i32) -> i32 {\n    if (tide_i < 0 || tide_i >= %d) {\n        return 0;\n    }\n"
+                          "    return atomicLoad(&%s[tide_i]);\n}\n\n", fn.data, length, local_name(local->name));
+    sb_put(&em->functions, text.data);
+    return fn.data;
+}
+
+// The Add of a kernel to slot `slot`: which of its Adds it is.
+static int add_of(const emit *em, const int slot)
+{
+    int k = 0;
+    for (int i = 0; i < slot; i++) k += em->sh->storage.items[i].add;
+    return k;
+}
+
+// An expression of a GPU list or a kernel's: written, and true; false for any other.
+static bool ex_gpu(emit *em, const expr *e)
+{
+    if (e->kind == E_INDEX && shared_atomic(e->object)) {
+        if (em->l != WGSL) return true;
+        sb_printf(em->o, "%s(", need_shared_access(em, e->object->local, false));
+        ex_as(em, e->lhs, (type){TY_INT, NULL});
+        sb_put(em->o, ")");
+        return true;
+    }
+    if (e->kind == E_NAME && shared_atomic(e)) {
+        refuse(em, e->at, "a shared array that atomics are used on is read an element at a time: '" STR_FMT "[i]'", STR_ARG(e->name));
+        return true;
+    }
+    switch (e->gpu) {
+    case GPU_COUNT:
+    case GPU_CAPACITY: {
+        const int slot = gpu_list_slot(em, e->object);
+        if (slot < 0) {
+            sb_put(em->o, "0");
+            return true;
+        }
+        need_storage(em, slot);
+        sb_printf(em->o, e->gpu == GPU_COUNT ? "tide_count%d()" : "tide_capacity%d()", slot);
+        return true;
+    }
+    case GPU_INDEX: {
+        const int slot = gpu_list_slot(em, e->object);
+        need_storage(em, slot);
+        sb_printf(em->o, "tide_get%d(", slot < 0 ? 0 : slot);
+        ex_as(em, e->lhs, (type){TY_INT, NULL});
+        sb_put(em->o, ")");
+        return true;
+    }
+    case GPU_ATOMIC:
+    case GPU_SHARED_ATOMIC: {
+        int slot = -1;
+        char array[96] = "tide_s0";
+        int length = 0;
+        if (e->gpu == GPU_ATOMIC) {
+            slot = gpu_list_slot(em, e->object);
+            need_storage(em, slot);
+            snprintf(array, sizeof array, "tide_s%d", slot < 0 ? 0 : slot);
+        } else {
+            snprintf(array, sizeof array, "%s", local_name(e->object->name));
+            length = e->object->type.decl->array_length;
+        }
+        if (em->l != WGSL || em->checking) { // Checked for what it reads; kernels are WGSL alone
+            for (int i = 0; i < e->args.count; i++) ex_as(em, e->args.items[i], (type){TY_INT, NULL});
+            return true;
+        }
+        sb_printf(em->o, "%s(", need_atomic(em, slot, e->name, array, length));
+        for (int i = 0; i < e->args.count; i++) {
+            if (i) sb_put(em->o, ", ");
+            ex_as(em, e->args.items[i], (type){TY_INT, NULL});
+        }
+        sb_put(em->o, ")");
+        return true;
+    }
+    case GPU_ADD:
+    case GPU_BARRIER:
+        refuse(em, e->at, "this is a statement of its own"); // The checker said so already
+        return true;
+    case GPU_NONE:
+        return false;
+    default:
+        refuse(em, e->at, "the GPU can't run '" STR_FMT "': it's the CPU's", STR_ARG(e->name));
+        return true;
+    }
+}
+
+// A statement of a GPU list or a kernel's: written, and true; false for any other.
+static bool st_gpu(emit *em, const stmt *s)
+{
+    if (s->kind == S_VAR && s->is_shared) { // A module's variable, the group's (put_shared): nothing here
+        if (em->code != em->root) refuse(em, s->at, "a shared local is a kernel's own");
+        type_fits(em, s->type, s->type_at.line ? s->type_at : s->at);
+        return true;
+    }
+    if (s->kind == S_ASSIGN && s->target->kind == E_INDEX && shared_atomic(s->target->object)) {
+        if (em->l != WGSL) return true;
+        line(em);
+        sb_printf(em->o, "%s(", need_shared_access(em, s->target->object->local, true));
+        ex_as(em, s->target->lhs, (type){TY_INT, NULL});
+        sb_put(em->o, ", ");
+        put_assigned(em, s);
+        sb_put(em->o, ");\n");
+        return true;
+    }
+    if (s->kind == S_ASSIGN && s->target->kind == E_INDEX && s->target->object->type.kind == TY_GPU_LIST) {
+        const int slot = gpu_list_slot(em, s->target->object);
+        need_storage(em, slot);
+        line(em);
+        sb_printf(em->o, "tide_put%d(", slot < 0 ? 0 : slot);
+        ex_as(em, s->target->lhs, (type){TY_INT, NULL});
+        sb_put(em->o, ", ");
+        put_assigned(em, s);
+        sb_put(em->o, ");\n");
+        return true;
+    }
+    if (s->kind == S_EXPR && s->value->gpu == GPU_BARRIER) {
+        line(em);
+        sb_put(em->o, "workgroupBarrier();\n");
+        line(em);
+        sb_put(em->o, "storageBarrier();\n");
+        return true;
+    }
+    if (s->kind == S_EXPR && s->value->gpu == GPU_ADD) {
+        const int slot = gpu_list_slot(em, s->value->object);
+        if (slot < 0) {
+            if (em->checking) ex_as(em, s->value->args.items[0], s->value->arg_want.items[0]);
+            return true;
+        }
+        const int k = add_of(em, slot);
+        line(em);
+        sb_printf(em->o, "tide_adding%d = true;\n", k);
+        line(em);
+        sb_printf(em->o, "tide_added%d = ", k);
+        ex_as(em, s->value->args.items[0], s->value->arg_want.items[0]);
+        sb_put(em->o, ";\n");
+        return true;
+    }
+    if (s->kind == S_FOREACH && s->value && s->value->type.kind == TY_GPU_LIST) {
+        const int slot = gpu_list_slot(em, s->value);
+        need_storage(em, slot);
+        const type element = s->value->type.decl->fields.items[0].type;
+        if (!type_fits(em, element, s->value->at)) return true;
+        const bool wgsl = em->l == WGSL;
+        const int k = em->temps++;
+        const int at = slot < 0 ? 0 : slot;
+        line(em);
+        sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < tide_count%d(); tide_k%d++) {\n"
+                              : "for (int tide_k%d = 0; tide_k%d < tide_count%d(); tide_k%d++) {\n", k, k, at, k);
+        em->indent++;
+        line(em);
+        if (wgsl) sb_printf(em->o, "var %s: %s = tide_get%d(tide_k%d);\n", local_name(s->name), ty(em, element), at, k);
+        else sb_printf(em->o, "%s %s = tide_get%d(tide_k%d);\n", ty(em, element), local_name(s->name), at, k);
+        const stmt *body = s->then_stmt;
+        for (int i = 0; body && body->kind == S_BLOCK && i < body->stmts.count; i++) {
+            st(em, body->stmts.items[i]);
+            if (ends(body->stmts.items[i])) break;
+        }
+        if (body && body->kind != S_BLOCK) st(em, body);
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
+        return true;
+    }
+    return false;
+}
+
+// this.index, this.at...: which invocation of its run a kernel's is, which its entry point sets.
+static void ex_invocation(emit *em, const expr *e)
+{
+    if (em->l != WGSL) {
+        put_zero(em, e->type);
+        return;
+    }
+    sb_printf(em->o, "tide_inv_" STR_FMT, STR_ARG(e->member));
+}
+

@@ -1081,7 +1081,8 @@ static bool is_decl_word(const str text)
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
-        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio") || str_eq_c(text, "worker")
+        || str_eq_c(text, "vert") || str_eq_c(text, "compute") || str_eq_c(text, "asset") || str_eq_c(text, "audio")
+        || str_eq_c(text, "worker")
         || str_eq_c(text, "build");
 }
 
@@ -1555,6 +1556,20 @@ static stmt *parse_stmt(parser *p)
             diag_note("a local is read-only already: '" STR_FMT " " STR_FMT " = ...;'", STR_ARG(peek_at(p, 1)->text),
                       STR_ARG(peek_at(p, 2)->text));
             longjmp(p->fail, 1);
+        }
+        // `shared int[64] sums;`: a kernel's local the whole group shares (the checker says where it goes)
+        if (t->kind == T_IDENT && str_eq_c(t->text, "shared") && peek_at(p, 1)->kind == T_IDENT) {
+            advance(p);
+            stmt *s = parse_var(p);
+            s->is_shared = true;
+            s->shared_at = t->at;
+            // Zeroed as the group starts, and written by any of the group: `int[64] sums = default;`, changeable
+            if (s->delayed) {
+                s->delayed = false;
+                s->value = new_expr(E_DEFAULT, s->name_at);
+            }
+            s->is_mut = true;
+            return s;
         }
         if (at_local_decl(p)) return parse_var(p);
 
@@ -2582,10 +2597,11 @@ static decl *parse_extern_system(parser *p)
 
 // frag Shade(BoxVertex vertex, out Color color, Sun sun) { ... } and
 // vert Wave(mut BoxVertex vertex, Time time) { ... }: code the GPU runs.
-static decl *parse_shader(parser *p, const bool is_frag)
+static decl *parse_shader(parser *p, const bool is_frag, const bool is_compute)
 {
-    decl *d = new_named_decl(p, DECL_SHADER, is_frag ? "frag name" : "vert name");
+    decl *d = new_named_decl(p, DECL_SHADER, is_compute ? "compute name" : is_frag ? "frag name" : "vert name");
     d->is_frag = is_frag;
+    d->is_compute = is_compute;
     d->return_type_name = str_from("void");
     parse_query_rest(p, d);
     return d;
@@ -2740,7 +2756,7 @@ static void parse_attributes(parser *p)
             parse_args(p, a.call);
         } else if (accept(p, T_LPAREN)) {
             if (!at(p, T_RPAREN)) {
-                if (str_eq_c(a.name, "LOD")) {
+                if (str_eq_c(a.name, "LOD") || str_eq_c(a.name, "Group")) { // [Group(8, 8)]: sizes, which constants can say
                     do vec_push(a.values, parse_expr(p)); while (accept(p, T_COMMA));
                 } else if (str_eq_c(a.name, "Stage")) {
                     vec_push(a.args, parse_qname(p, "an enum member, like 'RenderStages.Objects'"));
@@ -3034,8 +3050,9 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         else if (t->kind == T_SYSTEM) d = parse_system(&p, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "input")) d = parse_data_decl(&p, DECL_INPUT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "view")) d = parse_system(&p, true);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "compute")) d = parse_shader(&p, false, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "audio")) d = parse_audio(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT, false);

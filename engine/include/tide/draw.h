@@ -57,6 +57,8 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_STENCIL,   // stencil: what the commands after it do with their destination's stencil
     TIDE_DRAW_QUADS,     // mesh: a run of quads of 2D meshes (tide_draw_list.quads), and the texture they sample
     TIDE_DRAW_PLAIN,     // plain: a run of plain shapes (tide_draw_list.plains): rects, circles, their outlines, lines
+    TIDE_DRAW_COMPUTE,   // compute: a kernel's run (tide_draw_list.computes), outside any pass, in order with draws
+    TIDE_DRAW_GPU_LIST,  // gpu_list: Set, Clear or SetCount of a GPU list (tide_draw_list.gpu_ops), in order with draws
 } tide_draw_kind;
 
 // How what a command draws goes over what's there. Tide's `Blend` has the same
@@ -213,6 +215,12 @@ typedef struct tide_draw_command {
         struct {          // TIDE_DRAW_SHADED
             uint32_t run; // Its place in tide_draw_list.runs
         } shaded;
+        struct {          // TIDE_DRAW_COMPUTE
+            uint32_t run; // Its place in tide_draw_list.computes
+        } compute;
+        struct {         // TIDE_DRAW_GPU_LIST
+            uint32_t op; // Its place in tide_draw_list.gpu_ops
+        } gpu_list;
         struct {             // TIDE_DRAW_TEXT, after its `a` and `b.x`
             tide_float2 at;  // `a`
             float size;      // `b.x`
@@ -460,6 +468,8 @@ static inline tide_wrap tide_wrap_of(const int32_t wrap)
 }
 
 enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 12 };
+// The most storage buffers a shader binds (gpu.h's TIDE_GPU_MAX_STORAGE): GPU lists, and a kernel's own.
+enum { TIDE_SHADER_STORAGE = 7 };
 
 // How a shader's textures are sampled, two eight-texture banks (a
 // tide_draw_run's `sampling`): bit i is set for texture i read blended with
@@ -754,6 +764,8 @@ typedef struct tide_render_target {
 int64_t tide_render_target_content_revision(tide_render_target target);
 void tide_render_target_content_observe(uint64_t id, tide_target_content content, uint32_t epoch);
 uint64_t tide_render_target_revision_highwater(void);
+// The next of the revisions render targets' and GPU lists' contents share: positive, and never one before.
+int64_t tide_render_revision_next(void);
 void tide_render_target_revision_resume(uint64_t previous);
 
 // target.size: its size in logical pixels, in a window of `window_size`: the
@@ -1484,7 +1496,34 @@ typedef struct tide_shader {
     const char *wgsl_listed;
     const uint32_t *spirv_listed;
     uint32_t spirv_listed_words;
+    // The GPU lists it reads, and a kernel's writes too (tide_gpu_list), each a storage buffer at storage slot 0
+    // on (gpu.h's TIDE_GPU_STORAGE_BINDING + slot): what a run's `storage` names, in that order. Bit i of
+    // `storage_writes` is set for one a kernel writes. None for a shader of no GPU list's.
+    uint32_t storage_count;
+    uint32_t storage_writes;
+    // An Instanced draw over a GPU list's: 1 + the storage slot its instances are read from, each by its place,
+    // and the draw is indirect (tide_draw_run.indirect). 0 for another.
+    uint32_t instance_storage;
+    // A kernel (Tide's `compute`): code run over a size, not tied to a draw. Its WGSL's entry point is `compute`,
+    // with `group` invocations a workgroup, and nothing above about vertices, instances, outputs or blits is read.
+    // Its uniforms are the game's alone (no engine header). After its lists, at the storage slots that follow
+    // them: each of its ordered Adds' scratch (`adds`), then its run record (TIDE_GPU_RUN_WORDS words: the
+    // dispatch's groups, the invocations, the size), which every kernel reads.
+    bool compute;
+    uint32_t group[3];
+    uint32_t add_count;
+    struct {
+        uint8_t list;    // The storage slot of the list it adds to
+        uint8_t scratch; // ...and its scratch's: each group's survivors, compacted (TIDE_GPU_ADD_GROUP_WORDS)
+        uint16_t stride; // Words an element
+    } adds[TIDE_SHADER_STORAGE];
 } tide_shader;
+
+// The storage slots a kernel binds: its lists, its Adds' scratch, then its run record.
+static inline uint32_t tide_shader_compute_storage(const tide_shader *s)
+{
+    return s->storage_count + s->add_count + 1u;
+}
 
 static inline uint32_t tide_shader_outputs(const tide_shader *s)
 {
@@ -1518,6 +1557,12 @@ typedef struct tide_draw_run {
     // (tide_draw_mesh_shaded_list): then they're uint32_t places in that list, 4 bytes each, from `first`, and
     // the list's numbers are each instance's bytes, tide_shader_instance_size each (tide_draw_run_instance).
     uint32_t listed;
+    // 1 + where the ids of the GPU lists its shader reads start in tide_draw_list.storage, shader->storage_count
+    // of them; 0 for a shader that reads none
+    uint32_t storage;
+    // An Instanced draw over a GPU list (shader->instance_storage): that list's id. Its instances are as many as
+    // the list's count on the GPU, read from it there, and `first` and `count` name none: it's drawn indirect.
+    uint64_t indirect;
 } tide_draw_run;
 
 // How many bytes a run's instances take each in tide_draw_list.instances: a place in a list for a listed one.
@@ -1525,6 +1570,145 @@ static inline uint32_t tide_draw_run_stride(const tide_draw_run *r)
 {
     return r->listed ? (uint32_t)sizeof(uint32_t) : tide_shader_instance_size(r->shader);
 }
+
+// ---------------------------------------------------------------------------
+// GPU lists (Tide's GPUList<T>): lists that live on the GPU, which kernels
+// write and shaders read, and whose count is on the GPU too. Machine-local, as
+// render targets are: never match state.
+//
+// On the GPU a list is one storage buffer (gpu.h's TIDE_GPU_STORAGE) of
+// 16 + capacity * stride * 4 bytes: words 0 to 3 are its header, the count
+// (0 to the capacity), the capacity, and two zeros; element i's `stride`
+// words start at word 4 + i * stride, its floats' bits, then its ints, as a
+// value's words are everywhere in shaders (shader.c, put_value).
+//
+// A made list's id is its state's address with TIDE_GPU_LIST_MANAGED set; 0
+// is no list, which runs over and draws of treat as empty. Copies share the
+// list. Its contents stay from frame to frame until something writes them; a
+// renderer that makes its buffer again (a device that was lost, a Resize,
+// another stride across a hot reload) makes it empty, and its
+// content_revision changes so that the game knows to fill it again.
+#define TIDE_GPU_LIST_MANAGED (UINT64_C(1) << 63)
+#define TIDE_GPU_LIST_HEADER_WORDS 4u
+// The most words a list's elements take, so that its bytes fit what every backend binds (2 GiB)
+#define TIDE_GPU_LIST_MOST_WORDS (UINT32_C(1) << 29)
+
+typedef struct tide_gpu_list_state {
+    struct tide_gpu_list_state *next;
+    struct tide_gpu_list_state **owner;
+    uint32_t capacity;  // Elements
+    uint32_t stride;    // Words an element
+    uint64_t version;   // Changed where the renderer makes its buffer again, empty: a Resize, another stride
+    uint64_t reload_id; // Temporary opaque identity while restoring another address space
+    int64_t content_revision;
+    bool made; // A renderer has made its buffer once: one made again is the list emptied (tide_gpu_list_made)
+    bool alive;
+    void *memory; // What it was allocated in, to free
+} tide_gpu_list_state;
+
+typedef struct tide_gpu_list {
+    uint64_t id;
+    // Its capacity as last made or resized through this reference: what a web reload, which can't read the
+    // state of another address space, makes it again with (tide_gpu_list_recreate)
+    int32_t capacity;
+    uint32_t stride;
+} tide_gpu_list;
+
+static inline tide_gpu_list_state *tide_gpu_list_state_of(const uint64_t id)
+{
+    return (id & TIDE_GPU_LIST_MANAGED) ? (tide_gpu_list_state *)(uintptr_t)(id & ~TIDE_GPU_LIST_MANAGED) : NULL;
+}
+
+static inline bool tide_gpu_list_live(const uint64_t id)
+{
+    const tide_gpu_list_state *s = tide_gpu_list_state_of(id);
+    return s && s->alive;
+}
+
+// GPUList<T>(capacity) for an element of `stride` words: empty, of a capacity from 0 up, which is clamped to
+// what the list's bytes can be.
+tide_gpu_list tide_gpu_list_make(int32_t capacity, uint32_t stride);
+void tide_gpu_list_resize(tide_gpu_list *list, int32_t capacity); // Another capacity, and empty
+void tide_gpu_list_dispose(tide_gpu_list list);
+int32_t tide_gpu_list_capacity(tide_gpu_list list); // 0 for none, or one disposed
+int64_t tide_gpu_list_content_revision(tide_gpu_list list); // Positive for a live list; 0 otherwise
+// The renderer's: it made the list's buffer, empty. A list made before has lost what it held.
+void tide_gpu_list_made(uint64_t id);
+// Hot reloads, as render targets' (tide_render_target_adopt): the build that takes over keeps a list, of
+// `stride` words an element now, and a list of another stride is made again empty.
+void tide_gpu_list_adopt(tide_gpu_list *list, uint32_t stride);
+tide_gpu_list tide_gpu_list_recreate(tide_gpu_list previous, uint32_t stride); // Web reload: previous.id is opaque
+void tide_gpu_lists_recreated(void);
+void tide_gpu_lists_free(void); // Build unload: references must no longer be used
+
+// A kernel's run, a TIDE_DRAW_COMPUTE command's. Its size is `size` invocations along each axis, or for an
+// indirect run (`over` a GPU list's id) as many as that list's count on the GPU, along x, when the run is done.
+typedef struct tide_draw_compute {
+    const tide_shader *shader; // shader->compute; NULL once forgotten (see tide_draw_forget)
+    uint32_t uniforms;         // Its uniforms of the game's, where they start in tide_draw_list.uniforms
+    uint64_t sampling;
+    uint32_t textures[TIDE_SHADER_TEXTURES];
+    uint32_t storage;          // As a run's: 1 + where its lists' ids start in tide_draw_list.storage, or 0
+    uint32_t size[3];
+    uint64_t over;
+} tide_draw_compute;
+
+// A kernel's run record: words 0 to 2 the dispatch's groups along each axis, 3 its invocations in all, 4 to 6
+// its size, and one more. The CPU writes a direct run's; the renderer's own kernel an indirect run's, from the
+// count of the list it's over.
+#define TIDE_GPU_RUN_WORDS 8u
+// The words of a group's region of an Add's scratch, for a kernel of `group` invocations a group adding elements
+// of `stride` words: how many it kept, where they go (written by the renderer), and those, compacted.
+static inline uint64_t tide_gpu_add_group_words(const uint32_t group, const uint32_t stride)
+{
+    return 2u + (uint64_t)group * stride;
+}
+
+typedef enum tide_gpu_list_op_kind {
+    TIDE_GPU_LIST_SET,   // `count` elements' words from tide_draw_list.gpu_words, and the count
+    TIDE_GPU_LIST_CLEAR, // The count, 0
+    TIDE_GPU_LIST_COUNT, // The count, `count` (clamped to its capacity), the elements as they are
+} tide_gpu_list_op_kind;
+
+typedef struct tide_draw_gpu_op {
+    uint64_t list;
+    uint32_t kind;  // tide_gpu_list_op_kind
+    uint32_t count;
+    uint32_t words; // TIDE_GPU_LIST_SET: where its words start in tide_draw_list.gpu_words, in words
+} tide_draw_gpu_op;
+
+// `await list.Read()` and `await list.ReadCount()` (local async code): a read of the list as it is once the
+// frame drawn next is done on the GPU. Begin gives a ticket, never 0, or 0 while the most are pending
+// (TIDE_GPU_READS), to try again; poll says whether it's done, with what was read: the count, and for a whole
+// read the elements' words, `count * stride` of them, valid until it's forgotten. A read of a list lost or
+// disposed meanwhile is done and failed (ok false), and so is a ticket this build doesn't know (another's).
+enum { TIDE_GPU_READS = 64 };
+typedef struct tide_gpu_read_result {
+    bool ok;
+    int32_t count;
+    uint32_t stride;
+    const uint32_t *words;
+} tide_gpu_read_result;
+uint32_t tide_gpu_list_read_begin(tide_gpu_list list, bool count_only);
+bool tide_gpu_list_read_poll(uint32_t ticket, tide_gpu_read_result *out);
+void tide_gpu_list_read_forget(uint32_t ticket);
+
+// The renderer's side of reads (tide_gpu_read_requests: TIDE_GPU_READS of them). It begins each one asked for,
+// once the frame it draws is done, reading `bytes` from the start of its list's buffer, and says when it's done
+// (tide_gpu_read_finished), with `data` filled, or failed.
+enum { TIDE_GPU_READ_FREE, TIDE_GPU_READ_ASKED, TIDE_GPU_READ_BEGUN, TIDE_GPU_READ_DONE, TIDE_GPU_READ_FAILED };
+typedef struct tide_gpu_read_request {
+    uint64_t list;
+    uint32_t bytes;
+    uint32_t token; // The renderer's (gpu.h's buffer_read), once begun
+    uint32_t state; // TIDE_GPU_READ_FREE...
+    uint32_t serial;
+    uint32_t *data; // `bytes` of it
+    bool count_only;
+    bool forgotten; // Let go of while begun: the renderer finishes it, and it goes free then
+} tide_gpu_read_request;
+tide_gpu_read_request *tide_gpu_read_requests(void);
+void tide_gpu_read_finished(tide_gpu_read_request *r, bool ok);
 
 // One frame's commands. Not simulation state: it lives outside the world. A
 // zeroed list is ready to use, and it grows as it needs, with no limit but
@@ -1608,9 +1792,21 @@ typedef struct tide_draw_list {
     uint8_t *instances;     // ...their instances, one after the other
     uint32_t instance_used; // Bytes
     uint32_t instance_capacity;
-    uint8_t *uniforms; // ...and their uniforms
+    uint8_t *uniforms; // ...and their uniforms, and the kernels' runs'
     uint32_t uniform_used;
     uint32_t uniform_capacity;
+    tide_draw_compute *computes; // The TIDE_DRAW_COMPUTE commands' runs
+    uint32_t compute_count, compute_capacity;
+    uint64_t *storage; // The ids of the GPU lists runs and kernels read and write, each run's together
+    uint32_t storage_count, storage_capacity;
+    tide_draw_gpu_op *gpu_ops; // The TIDE_DRAW_GPU_LIST commands' operations...
+    uint32_t gpu_op_count, gpu_op_capacity;
+    uint32_t *gpu_words; // ...and what their Sets send
+    uint32_t gpu_word_count, gpu_word_capacity;
+    // What the shaded runs recorded next are told (tide_draw_set_storage, tide_draw_shaded_indirect): their GPU
+    // lists, and the list an indirect one's instances are, until they're set back to 0 after the draw
+    uint32_t storage_next;
+    uint64_t indirect_next;
     tide_draw_shape_data *shapes; // The TIDE_DRAW_SHAPE commands' shapes
     uint32_t shape_count;
     uint32_t shape_capacity;
@@ -2541,6 +2737,30 @@ void tide_draw_run_unlist(tide_draw_list *d, uint32_t run);
 // Sampling the destination is refused.
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, tide_blend blend, const void *instance,
                    const void *uniforms, const uint32_t *textures, uint64_t sampling);
+
+// GPU.Run(kernel, over[, values]): `shader` (a kernel's) run over `size` invocations along each axis, or
+// indirectly over the count `over` has on the GPU when that's a GPU list (and `size` isn't read), reading and
+// writing the lists `storage` names (shader->storage_count of them), with its uniforms and textures as a
+// shaded draw's are. In order with the draws around it: what's drawn after it sees what it wrote. Nothing for a
+// size of no invocations, or for a shader that's no kernel.
+void tide_draw_compute_run(tide_draw_list *d, const tide_shader *shader, const uint32_t size[3], tide_gpu_list over,
+                           const tide_gpu_list *storage, const void *uniforms, const uint32_t *textures,
+                           uint64_t sampling);
+// list.Set(items), list.Clear() and list.SetCount(n), in order with draws and runs. Set sends `count` elements of
+// the list's stride, `words` (the count is clamped to the capacity), and the count with them.
+void tide_draw_gpu_list_set(tide_draw_list *d, tide_gpu_list list, const uint32_t *words, uint32_t count);
+void tide_draw_gpu_list_clear(tide_draw_list *d, tide_gpu_list list);
+void tide_draw_gpu_list_count(tide_draw_list *d, tide_gpu_list list, int32_t count);
+// The ids of `count` GPU lists for a run, recorded once: 1 + where they start in tide_draw_list.storage, or 0.
+uint32_t tide_draw_storage(tide_draw_list *d, const tide_gpu_list *lists, uint32_t count);
+// The GPU lists the next shaded draw's frag and vert read (shader->storage_count of them), recorded for it.
+void tide_draw_set_storage(tide_draw_list *d, const tide_gpu_list *storage, uint32_t count);
+// Draw.Instanced over a GPU list: `mesh` through `shader` (whose instance_storage is the list's slot), as many
+// times as `list` has elements on the GPU, each instance read there: one indirect draw, with no culling or
+// level picking. `storage` is every GPU list the shader reads, the instances' among them.
+void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, tide_gpu_list list,
+                               const tide_gpu_list *storage, const void *uniforms, const uint32_t *textures,
+                               uint64_t sampling);
 // ---------------------------------------------------------------------------
 // 3D primitives: solid meshes, through the 3D camera and with depth, as
 // tide_draw_mesh_3d. Every shape is centered on `center`; its geometry is

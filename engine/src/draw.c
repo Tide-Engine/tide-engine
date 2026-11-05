@@ -32,6 +32,8 @@ static int64_t next_render_revision(void)
 
 uint64_t tide_render_target_revision_highwater(void) { return render_revision; }
 
+int64_t tide_render_revision_next(void) { return next_render_revision(); }
+
 void tide_render_target_revision_resume(const uint64_t previous)
 {
     if (previous > INT64_MAX) abort();
@@ -575,6 +577,9 @@ void tide_draw_reset(tide_draw_list *d)
     d->run_count = 0;
     d->instance_used = 0;
     d->uniform_used = 0;
+    d->compute_count = d->storage_count = d->gpu_op_count = d->gpu_word_count = 0;
+    d->storage_next = 0;
+    d->indirect_next = 0;
     d->shape_count = 0;
     d->target_count = d->target = 0;
     // Every setting is back where a frame starts
@@ -651,6 +656,10 @@ void tide_draw_free(tide_draw_list *d)
     free(d->runs);
     free(d->instances);
     free(d->uniforms);
+    free(d->computes);
+    free(d->storage);
+    free(d->gpu_ops);
+    free(d->gpu_words);
     free(d->shapes);
     free(d->fonts);
     free(d->level_room);
@@ -1541,6 +1550,7 @@ void tide_draw_forget(tide_draw_list *d)
         if (c->kind == TIDE_DRAW_TARGET) c->target = UINT32_MAX;
     }
     for (uint32_t i = 0; i < d->run_count; i++) d->runs[i] = (tide_draw_run){0};
+    for (uint32_t i = 0; i < d->compute_count; i++) d->computes[i] = (tide_draw_compute){0};
     // The forgotten selectors now sink their old commands. End on a valid
     // window selector so direct C draws recorded afterward have a destination.
     if (had_targets) push_state(d, TIDE_DRAW_TARGET)->target = 0;
@@ -3095,6 +3105,14 @@ static inline const uint8_t *shaded_after(const uint8_t *instances, const shaded
 // a 2D one, and a blit, have neither. `from` (shaded_from) says where the
 // instances are, where it isn't NULL: a listed run's are recorded as their
 // places, and its list's texture is its textures[texture_count].
+// Whether two runs read the same GPU lists: the same ids, where they're recorded (tide_draw_storage).
+static bool same_storage(const tide_draw_list *d, const uint32_t a, const uint32_t b, const uint32_t count)
+{
+    if (a == b || count == 0) return true;
+    if (!a || !b) return false;
+    return memcmp(d->storage + a - 1u, d->storage + b - 1u, count * sizeof(uint64_t)) == 0;
+}
+
 static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                              const uint32_t count, const void *uniforms, const uint32_t *textures,
                              const uint64_t sampling, const tide_draw_kind kind, const tide_blend blend,
@@ -3112,7 +3130,8 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     if (d->profile_active) d->profile_active->submitted += count;
     const uint32_t texture_count = shader->texture_count < TIDE_SHADER_TEXTURES ? shader->texture_count : TIDE_SHADER_TEXTURES;
     tide_draw_run run = {.shader = shader, .mesh = mesh, .first = d->instance_used, .count = count, .sampling = sampling,
-                         .tint = with->tint, .moved = with->moved, .transform = with->transform, .listed = listed != 0};
+                         .tint = with->tint, .moved = with->moved, .transform = with->transform, .listed = listed != 0,
+                         .storage = d->storage_next, .indirect = d->indirect_next};
     for (uint32_t i = 0; i < texture_count; i++) {
         if (textures && textures[i] <= d->texture_count) run.textures[i] = textures[i];
     }
@@ -3151,7 +3170,8 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     // ...and what has no sides, so neither does that one
     const uint8_t sided = kind == TIDE_DRAW_SHADED && shader->dims == 3 ? sides(cull) : 0;
     if (kind == TIDE_DRAW_SHADED && last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)blend
-        && last->depth == deep && last->cull == sided) {
+        && last->depth == deep && last->cull == sided && !run.indirect && !d->runs[last->shaded.run].indirect
+        && same_storage(d, d->runs[last->shaded.run].storage, run.storage, shader->storage_count)) {
         tide_draw_run *r = &d->runs[last->shaded.run];
         if ((r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
             && r->mesh == mesh && r->sampling == sampling && r->listed == run.listed
@@ -3601,6 +3621,96 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
     shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, sampling, TIDE_DRAW_BLIT,
                      (uint32_t)blend <= TIDE_BLEND_REPLACE ? blend : TIDE_BLEND_REPLACE, TIDE_DEPTH_READ_WRITE, 0, &with,
                      NULL, NULL);
+}
+
+uint32_t tide_draw_storage(tide_draw_list *d, const tide_gpu_list *lists, const uint32_t count)
+{
+    if (count == 0 || !lists) return 0;
+    d->storage = grow(d->storage, d->storage_count, &d->storage_capacity, count, sizeof(uint64_t), 32u);
+    const uint32_t at = d->storage_count;
+    for (uint32_t i = 0; i < count; i++) d->storage[at + i] = lists[i].id;
+    d->storage_count += count;
+    return at + 1u;
+}
+
+void tide_draw_compute_run(tide_draw_list *d, const tide_shader *shader, const uint32_t size[3], const tide_gpu_list over,
+                           const tide_gpu_list *storage, const void *uniforms, const uint32_t *textures,
+                           const uint64_t sampling)
+{
+    if (!shader || !shader->compute) return;
+    if (!over.id && (!size || size[0] == 0 || size[1] == 0 || size[2] == 0)) return; // No invocations
+    if (over.id && !tide_gpu_list_live(over.id)) return; // A list that isn't there is empty
+    const uint32_t uniform_size = tide_shader_uniform_size(shader);
+    if (uniform_size && !uniforms) return;
+    tide_draw_compute run = {.shader = shader, .uniforms = d->uniform_used, .sampling = sampling, .over = over.id};
+    if (!over.id) memcpy(run.size, size, sizeof run.size);
+    const uint32_t texture_count = shader->texture_count < TIDE_SHADER_TEXTURES ? shader->texture_count : TIDE_SHADER_TEXTURES;
+    for (uint32_t i = 0; i < texture_count; i++) {
+        if (textures && textures[i] <= d->texture_count) run.textures[i] = textures[i];
+    }
+    run.storage = tide_draw_storage(d, storage, shader->storage_count < TIDE_SHADER_STORAGE ? shader->storage_count
+                                                                                            : TIDE_SHADER_STORAGE);
+    d->uniforms = grow(d->uniforms, d->uniform_used, &d->uniform_capacity, uniform_size, 1, 1024u);
+    if (uniform_size) memcpy(d->uniforms + d->uniform_used, uniforms, uniform_size);
+    d->uniform_used += uniform_size;
+    d->computes = grow(d->computes, d->compute_count, &d->compute_capacity, 1, sizeof(tide_draw_compute), 16u);
+    d->computes[d->compute_count] = run;
+    push(d, TIDE_DRAW_COMPUTE, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_WHITE)->compute.run = d->compute_count++;
+}
+
+static void gpu_op(tide_draw_list *d, const tide_gpu_list list, const uint32_t kind, const uint32_t count,
+                   const uint32_t words)
+{
+    d->gpu_ops = grow(d->gpu_ops, d->gpu_op_count, &d->gpu_op_capacity, 1, sizeof(tide_draw_gpu_op), 16u);
+    d->gpu_ops[d->gpu_op_count] = (tide_draw_gpu_op){.list = list.id, .kind = kind, .count = count, .words = words};
+    push(d, TIDE_DRAW_GPU_LIST, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_WHITE)->gpu_list.op = d->gpu_op_count++;
+}
+
+void tide_draw_gpu_list_set(tide_draw_list *d, const tide_gpu_list list, const uint32_t *words, uint32_t count)
+{
+    const tide_gpu_list_state *s = tide_gpu_list_state_of(list.id);
+    if (!s || !s->alive) return;
+    if (count > s->capacity) count = s->capacity;
+    const uint64_t length = (uint64_t)count * s->stride;
+    if (length && !words) return;
+    if (length > UINT32_MAX - (uint64_t)d->gpu_word_count) tide_out_of_memory();
+    d->gpu_words = grow(d->gpu_words, d->gpu_word_count, &d->gpu_word_capacity, length, sizeof(uint32_t), 1024u);
+    const uint32_t at = d->gpu_word_count;
+    if (length) memcpy(d->gpu_words + at, words, (size_t)length * sizeof(uint32_t));
+    d->gpu_word_count += (uint32_t)length;
+    gpu_op(d, list, TIDE_GPU_LIST_SET, count, at);
+}
+
+void tide_draw_gpu_list_clear(tide_draw_list *d, const tide_gpu_list list)
+{
+    if (tide_gpu_list_live(list.id)) gpu_op(d, list, TIDE_GPU_LIST_CLEAR, 0, 0);
+}
+
+void tide_draw_gpu_list_count(tide_draw_list *d, const tide_gpu_list list, const int32_t count)
+{
+    const tide_gpu_list_state *s = tide_gpu_list_state_of(list.id);
+    if (!s || !s->alive) return;
+    const uint32_t clamped = count <= 0 ? 0u : (uint32_t)count > s->capacity ? s->capacity : (uint32_t)count;
+    gpu_op(d, list, TIDE_GPU_LIST_COUNT, clamped, 0);
+}
+
+void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const tide_gpu_list list,
+                               const tide_gpu_list *storage, const void *uniforms, const uint32_t *textures,
+                               const uint64_t sampling)
+{
+    if (!shader || !shader->instance_storage || !tide_gpu_list_live(list.id)) return;
+    d->storage_next = tide_draw_storage(d, storage, shader->storage_count < TIDE_SHADER_STORAGE ? shader->storage_count
+                                                                                                : TIDE_SHADER_STORAGE);
+    d->indirect_next = list.id;
+    // As the GPU has them: no culling or level picking, which is the kernel's that filled the list
+    shaded_visible(d, shader, mesh, NULL, 1, uniforms, textures, sampling, NULL);
+    d->storage_next = 0;
+    d->indirect_next = 0;
+}
+
+void tide_draw_set_storage(tide_draw_list *d, const tide_gpu_list *storage, const uint32_t count)
+{
+    d->storage_next = tide_draw_storage(d, storage, count);
 }
 
 // Instances of a 3D mesh whose transforms are the list's from `at`, all

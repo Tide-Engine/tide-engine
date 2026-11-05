@@ -157,6 +157,8 @@ typedef struct emit {
     int part_first, part_count;  // ...and which part
     const expr *held_root;       // The element, or the part of one, that the local being declared holds (st_var)...
     const stmt *held_by;         // ...and the local
+    bool storage_done[7];        // The GPU lists whose functions are written (need_storage)
+    VEC(const char *) atomic_fns; // ...and the atomics' and shared memory's (need_atomic)
 } emit;
 
 static void ex(emit *em, const expr *e);
@@ -169,10 +171,14 @@ static bool is_const(const expr *e);
 static bool is_sampled(type t);
 static const field *field_called(const decl *d, const char *name);
 static int packs(int words);
+static bool ex_gpu(emit *em, const expr *e);
+static bool st_gpu(emit *em, const stmt *s);
+static void ex_invocation(emit *em, const expr *e);
+static void put_assigned(emit *em, const stmt *s);
 
 static const char *shader_word(const decl *d)
 {
-    return d->is_frag ? "frag" : "vert";
+    return d->is_compute ? "compute" : d->is_frag ? "frag" : "vert";
 }
 
 // Something the GPU can't run, where it's written. Code a frag or vert only
@@ -454,6 +460,12 @@ static bool type_fits(emit *em, const type t, const loc at)
         break;
     case TY_CUBEMAP: why = "a cube is read with 'cube.Sample(direction)', not kept as a GPU value"; break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
+    case TY_GPU_LIST:
+        refuse(em, at, "a GPU list in code the GPU runs is a field of what it takes, by its name: it can't be kept in a local, "
+                       "passed on alone, returned or picked there");
+        diag_note("read it where it's named, 'meadow.blades[i]', or pass the struct, component or singleton that holds it to a "
+                  "function");
+        return false;
     case TY_RESIDENT: why = "resident state belongs to the CPU: the C of the package that keeps it reads it"; break;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
@@ -465,6 +477,11 @@ static bool type_fits(emit *em, const type t, const loc at)
         if (t.decl == em->prog->pixel) {
             refuse(em, at, "a frag's pixel is read through 'this.position', 'this.depth' and 'this.world': it's not a value "
                           "to keep or pass on");
+            return false;
+        }
+        if (t.decl == em->prog->invocation) {
+            refuse(em, at, "a kernel's invocation is read through 'this.index', 'this.at', 'this.local', 'this.group' and "
+                          "'this.count': 'this' is not a value to keep or pass on");
             return false;
         }
         if (t.decl == em->prog->placed) {
@@ -1908,11 +1925,11 @@ static bool holds_data(const type t)
 {
     if (!is_struct_like(t) || !t.decl) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
-        if (is_data(t.decl->fields.items[i].type)) return true;
+        if (is_data(t.decl->fields.items[i].type) || t.decl->fields.items[i].type.kind == TY_GPU_LIST) return true;
     }
     const decl *part = t.kind == TY_STRUCT ? NULL : t.decl->local_part;
     for (int i = 0; part && i < part->fields.count; i++) {
-        if (is_data(part->fields.items[i].type)) return true;
+        if (is_data(part->fields.items[i].type) || part->fields.items[i].type.kind == TY_GPU_LIST) return true;
     }
     return false;
 }
@@ -2868,6 +2885,10 @@ static void ex_member(emit *em, const expr *e)
     if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->pixel) {
         if (em->checking && str_eq_c(e->member, "world")) em->root->pixel_world = true;
         ex_pixel(em, e);
+        return;
+    }
+    if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->invocation) { // this.index...
+        ex_invocation(em, e);
         return;
     }
     if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->placed) { // this.clip
@@ -4460,6 +4481,7 @@ static void ex(emit *em, const expr *e)
         sb_put(em->o, e->hoisted);
         return;
     }
+    if ((e->gpu || e->kind == E_INDEX || e->kind == E_NAME) && ex_gpu(em, e)) return;
     switch (e->kind) {
     case E_SWITCH:
         if (switch_choice(e) >= 0) ex_as(em, e->args.items[switch_choice(e)], e->type);
@@ -5527,6 +5549,7 @@ static void st_switch(emit *em, const stmt *s)
 
 static void st(emit *em, const stmt *s)
 {
+    if (st_gpu(em, s)) return;
     step_list made = {0};
     bool outs_ready = false;
     if (s->kind == S_FOR || s->kind == S_WHILE) { // Its line runs again each round, where a statement before it runs once
@@ -5716,6 +5739,8 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
         break;
     }
 }
+
+#include "shader_compute.inc"
 
 // ---------------------------------------------------------------------------
 // Functions
@@ -6448,7 +6473,7 @@ static const char *attribute_type(emit *em, const type t)
 static bool listable(const shader *sh)
 {
     if (!sh->instanced || sh->skinned || sh->blit || sh->dims != 3 || sh->textures.count >= 12
-        || packs(sh->instance_floats) < 4) return false;
+        || packs(sh->instance_floats) < 4 || sh->storage.count) return false;
     for (int i = 0; i < sh->values.count; i++) {
         const shader_value *v = &sh->values.items[i];
         if (v->per_instance && v->source && v->source != sh->instance_type) return false;
@@ -6539,6 +6564,58 @@ static void write_glsl(program *prog, shader *sh)
     }
 }
 
+// The words of field `f` of struct `d`'s value, where they start: its floats among the value's floats, its ints
+// among the value's words (after all of its floats).
+static void field_words_at(const decl *d, const field *f, int *floats_at, int *ints_at)
+{
+    int floats = 0, ints = 0, all_floats = 0, all_ints = 0;
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *other = &d->fields.items[i];
+        if (other->hidden) continue;
+        if (other == f) floats = all_floats, ints = all_ints;
+        type_words(other->type, &all_floats, &all_ints);
+    }
+    *floats_at = floats;
+    *ints_at = all_floats + ints;
+}
+
+// An indirect draw's instance, from its list's storage (shader.gpu_instances): the instance's float4s and int4s
+// as its attributes would have them, read from the element `instance_index` of the list.
+static void put_instance_loads(emit *em, sb *o)
+{
+    const shader *sh = em->sh;
+    const int slot = sh->instance_storage;
+    need_storage(em, slot);
+    const type element = slot_element(em, slot);
+    sb_printf(o, "    let tide_e = 4u + tide_instance_index * %du;\n", element_words(element, NULL));
+    for (int v = 0; v < sh->values.count; v++) {
+        const shader_value *value = &sh->values.items[v];
+        if (!value->per_instance) continue;
+        int floats_at = 0, ints_at = 0;
+        if (!sh->instance_type) { // A list of transforms: each element is one
+            floats_at = 0;
+        } else if (value->source) {
+            field_words_at(sh->instance_type, value->field, &floats_at, &ints_at);
+        } else if (sh->instance_transform) {
+            field_words_at(sh->instance_type, sh->instance_transform, &floats_at, &ints_at);
+        } else { // No transform: the identity
+            for (int k = 0; k < 16; k++) {
+                const int w = value->float_at + k;
+                sb_printf(o, "    tide_n%d.%c = %s;\n", w / 4, "xyzw"[w % 4], k % 5 == 0 ? "1.0" : "0.0");
+            }
+            continue;
+        }
+        for (int k = 0; k < value->floats; k++) {
+            const int w = value->float_at + k;
+            sb_printf(o, "    tide_n%d.%c = bitcast<f32>(tide_word%d(tide_e + %du));\n", w / 4, "xyzw"[w % 4], slot, floats_at + k);
+        }
+        for (int k = 0; k < value->ints; k++) {
+            const int w = value->int_at + k;
+            sb_printf(o, "    tide_j%d.%c = bitcast<i32>(tide_word%d(tide_e + %du));\n", w / 4, "xyzw"[w % 4], slot, ints_at + k);
+        }
+    }
+}
+
 static void write_wgsl(program *prog, shader *sh)
 {
     emit em = emitter(prog, sh, WGSL);
@@ -6551,6 +6628,10 @@ static void write_wgsl(program *prog, shader *sh)
     const bool rolls = stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG);
     sb o = {0}, rest = {0};
     put_uniforms(sh, WGSL, &o);
+    for (int i = 0; i < sh->storage.count; i++) // The GPU lists its code reads, and an indirect draw's instances
+        sb_printf(&o, "@group(0) @binding(%d) var<storage, read> tide_s%d: array<u32>;\n", 25 + i, i);
+    sb loads = {0};
+    if (sh->gpu_instances) put_instance_loads(&em, &loads);
     put_wgsl_inputs(sh, &rest);
     put_dice_variable(&em, &rest, rolls);
     if (sh->frag && sh->frag->cutout) sb_put(&rest, "var<private> tide_cover: f32;\n"); // What it covers
@@ -6570,11 +6651,14 @@ static void write_wgsl(program *prog, shader *sh)
         location++;
     }
     const int listed_at = location;
-    for (int i = 0; i < packs(sh->instance_floats); i++, location++) sb_printf(&after, ", @location(%d) tide_in%d: vec4f", location, i);
-    for (int i = 0; i < packs(sh->instance_ints); i++, location++) sb_printf(&after, ", @location(%d) tide_ij%d: vec4i", location, i);
+    for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_floats); i++, location++)
+        sb_printf(&after, ", @location(%d) tide_in%d: vec4f", location, i);
+    for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_ints); i++, location++)
+        sb_printf(&after, ", @location(%d) tide_ij%d: vec4i", location, i);
     // Which vertex of the mesh, and which instance of the draw: what tells a vert's runs, and an instance's pixels, apart
     sb builtins = {0};
-    if (rolls || sh->skinned) sb_put(&builtins, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
+    if (rolls || sh->skinned || sh->gpu_instances)
+        sb_put(&builtins, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
     sb_put(&builtins, ") -> tide_corner {\n");
     if (sh->listed) {
         sb_printf(&listed, "%s@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n%s@vertex fn vertex(%s, @location(%d) tide_listed: i32%s",
@@ -6583,8 +6667,9 @@ static void write_wgsl(program *prog, shader *sh)
         sb_printf(&listed, "%s    return out;\n}\n", vertex.data ? vertex.data : "");
     }
     sb_printf(&o, "%s@vertex fn vertex(%s%s%s", rest.data, corners.data, after.data ? after.data : "", builtins.data);
-    for (int i = 0; i < packs(sh->instance_floats); i++) sb_printf(&o, "    tide_n%d = tide_in%d;\n", i, i);
-    for (int i = 0; i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
+    if (sh->gpu_instances) sb_put(&o, loads.data ? loads.data : "");
+    for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_floats); i++) sb_printf(&o, "    tide_n%d = tide_in%d;\n", i, i);
+    for (int i = 0; !sh->gpu_instances && i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
     sb_printf(&o, "%s    return out;\n}\n", vertex.data);
 
     // The fragment stage, the same for both
@@ -6624,7 +6709,7 @@ static bool check_shader(program *prog, decl *d)
         const decl *part = fields && p->type.kind != TY_RECORD ? p->type.decl->local_part : NULL;
         if (part && !p->local_reads) p->local_reads = arena_alloc((size_t)(part->fields.count + 1) * sizeof(bool));
     }
-    emit em = emitter(prog, NULL, GLSL);
+    emit em = emitter(prog, NULL, d->is_compute ? WGSL : GLSL);
     em.checking = true;
     em.root = em.code = d;
     sb scratch = {0};
@@ -6652,6 +6737,16 @@ static void add_bound(shader *sh, decl *d)
     vec_push(sh->bound, d);
 }
 
+// A GPU list the code names, as one of the shader's storage buffers.
+static void add_storage(shader *sh, const decl *source, const field *f)
+{
+    for (int i = 0; i < sh->storage.count; i++) {
+        if (sh->storage.items[i].source == source && sh->storage.items[i].field == f) return;
+    }
+    const shader_storage s = {.source = source, .field = f};
+    vec_push(sh->storage, s);
+}
+
 // A list the code reads, as one of the shader's textures.
 static void add_list(shader *sh, const decl *source, const field *f, const bool bound)
 {
@@ -6670,7 +6765,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
     if (!code) return;
     if (code->is_frag && code->pixel_world) sh->frag_world = true;
     if (code->is_frag && code->world_normal && sh->dims == 3) sh->frag_normals = true;
-    for (int i = 1; i < code->params.count; i++) {
+    for (int i = code->is_compute ? 0 : 1; i < code->params.count; i++) { // A kernel has no vertex first
         const param *p = &code->params.items[i];
         if (p->type.decl == prog->instance && p->reads && p->reads[0] && sh->dims == 3) {
             shader_value *v = add_value(sh, NULL, NULL, (type){TY_FLOAT4X4, NULL}, true);
@@ -6685,6 +6780,11 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
+            if (f->type.kind == TY_GPU_LIST) { // A storage buffer of the shader's
+                add_storage(sh, p->type.decl, f);
+                if (!explicit_instance && !given) add_bound(sh, p->type.decl);
+                continue;
+            }
             if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET) { // Its elements, as a texture of numbers
                 if (explicit_instance) sh->instance_list = f;
                 else add_list(sh, p->type.decl, f, !given);
@@ -6701,6 +6801,11 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
+            if (p->local_reads[k] && f->type.kind == TY_GPU_LIST) {
+                add_storage(sh, p->type.decl, f);
+                add_bound(sh, p->type.decl);
+                continue;
+            }
             if (p->local_reads[k] && (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET)) {
                 add_list(sh, p->type.decl, f, true);
                 continue;
@@ -6779,7 +6884,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         if (s->vertex == vertex && s->vert == call->vert && s->frag == call->frag && s->textured == textured
             && s->instanced == call->instanced && s->instance_type == call->instance_type
             && s->skinned == call->skinned
-            && s->values_type == call->values_type
+            && s->values_type == call->values_type && s->gpu_instances == call->gpu_instances
             && s->blit == call->blit && s->direct_texture == direct_texture) return s;
     }
     shader *sh = NEW(shader);
@@ -6795,6 +6900,12 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->skin_base_at = -1;
     sh->instance_type = call->instance_type;
     sh->values_type = call->values_type;
+    sh->gpu_instances = call->gpu_instances;
+    if (sh->gpu_instances) { // Its instances' list is its first storage buffer, which the draw gives
+        const shader_storage instances = {0};
+        vec_push(sh->storage, instances);
+        sh->instance_storage = 0;
+    }
     const field *position = field_called(vertex, "position");
     sh->dims = position->type.kind == TY_FLOAT3 ? 3 : 2;
     if (sh->instance_type && sh->dims == 3) sh->instance_transform = field_called(sh->instance_type, "transform");
@@ -6813,6 +6924,10 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     if (sh->dims == 3) add_value(sh, NULL, NULL, (type){TY_FLOAT4X4, NULL}, true)->vert_reads = true;
     plan_reads(prog, sh, sh->vert);
     plan_reads(prog, sh, sh->frag);
+    if (sh->storage.count > 7) {
+        diag_error(call->at, "this draw reads %d GPU lists, and a GPU binds 7", sh->storage.count);
+        return NULL;
+    }
     if (textured) {
         const shader_texture t = {.filter = 1}; // How it's read is the texture's to say, which the draw gives
         vec_push(sh->textures, t);
@@ -6952,6 +7067,10 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     return sh;
 }
 
+static void bind_view(decl *view, const shader *sh, const expr *call);
+
+#include "shader_kernel.inc"
+
 void plan_shaders(program *prog)
 {
     // Every frag and vert, whether a draw names it or not
@@ -6976,8 +7095,21 @@ void plan_shaders(program *prog)
         shader *sh = plan(prog, call, vertex, textured, direct_texture);
         if (!sh) continue;
         call->shader = sh;
-        // Views can infer missing inputs. Functions must already take them explicitly.
-        decl *view = draw->in;
+        bind_view(draw->in, sh, call);
+    }
+    for (int i = 0; i < prog->compute_runs.count; i++) {
+        const mesh_draw *run = &prog->compute_runs.items[i];
+        shader *sh = plan_kernel(prog, run->call, run->call->kernel);
+        if (!sh) continue;
+        run->call->shader = sh;
+        bind_view(run->in, sh, run->call);
+    }
+}
+
+// What a view's draws and runs read that it doesn't take itself, it's handed (codegen's bind_views): views can infer
+// missing inputs, and functions must already take them explicitly.
+static void bind_view(decl *view, const shader *sh, const expr *call)
+{
         for (int b = 0; b < sh->bound.count; b++) {
             decl *d = sh->bound.items[b];
             if (d->binding_of) continue;
@@ -6998,13 +7130,16 @@ void plan_shaders(program *prog)
             for (int k = 0; k < view->bound.count; k++) has |= view->bound.items[k] == d;
             if (!has && view->kind == DECL_SYSTEM) vec_push(view->bound, d);
         }
-    }
 }
 
 void print_shaders(const program *prog, sb *out)
 {
     for (int i = 0; i < prog->shaders.count; i++) {
         const shader *sh = prog->shaders.items[i];
+        if (sh->compute) { // A kernel is WGSL alone
+            sb_printf(out, "// %s: WGSL\n%s\n", sh->name, sh->wgsl);
+            continue;
+        }
         sb_printf(out, "// %s: GLSL, vertex\n%s\n// %s: GLSL, fragment\n%s\n// %s: WGSL\n%s\n", sh->name, sh->glsl_vertex,
                   sh->name, sh->glsl_fragment, sh->name, sh->wgsl);
     }
