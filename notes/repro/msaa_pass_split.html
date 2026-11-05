@@ -1,0 +1,195 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>A 4-sample pass split in two</title>
+<!--
+WebGPU alone, nothing of Tide's (notes/testing.md, A 4-sample pass ended and begun again): four instances of a box,
+two walls and a see-through pane, then one box in front of them, into a 4-sample bgra8unorm target with
+depth24plus-stencil8, drawn twice:
+
+  one pass: the walls and the pane, then the box, two draws in one render pass;
+  split:    the walls and the pane, the pass ended (storeOp 'store'), the box in a second pass (loadOp 'load').
+
+WebGPU says the second frame is the first: the box's draw sees the same attachments either way. Each frame is
+resolved and read back whole, and the samples of two pixels are read through a compute pass (?samples=0 leaves the
+textures without TEXTURE_BINDING and skips that). The numbers are tide_platform_occlusion's shot 2, captured: its
+camera (camera-relative, its origin taken from the instances' translations), its walls slid 6 to the right, its
+pane, and box 7 of its first patch.
+
+Open it in Chrome with WebGPU on the GPU to test (headless and muted: run.mjs beside it). It prints, and puts in
+the page's title, "same" or how many pixels differ.
+-->
+<pre id="out"></pre>
+<script>
+const out = document.getElementById('out');
+const reporting = new URLSearchParams(location.search).has('report'); // run.mjs's: each line sent to it
+let said = Promise.resolve();
+const say = text => {
+    out.textContent += text + '\n';
+    console.log(text);
+    if (reporting) said = said.then(() => fetch('/log', { method: 'POST', body: text }));
+};
+(async () => {
+    const W = 160, H = 96, at = [[120, 54], [121, 54]];
+    const query = new URLSearchParams(location.search);
+    const probing = query.get('samples') !== '0';
+    // A box of side 1 about its middle: position, uv, color
+    const corners = [];
+    for (let c = 0; c < 8; c++) {
+        corners.push((c & 1) ? 0.5 : -0.5, (c & 2) ? 0.5 : -0.5, (c & 4) ? 0.5 : -0.5, (c & 1) ? 0.5 : -0.5, (c & 2) ? 0.5 : -0.5,
+            Math.fround(0.3 + 0.7 * (c & 1)), Math.fround(0.3 + 0.35 * (c & 2)), Math.fround(0.3 + 0.175 * (c & 4)), 1);
+    }
+    const faces = [0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5];
+    // Each instance: its transform's four columns, then its tint
+    const instances = [
+        14, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0.5, 0, -20, 0, 6, 1, 0.6, 0.6, 0.55, 1,   // A wall
+        14, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0.5, 0, 6, 0, 9, 1, 0.6, 0.6, 0.55, 1,     // Another
+        10, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0.2, 0, -6, 1, 8, 1, 0.4, 0.8, 1, 0.5,      // The pane, see-through
+        -1.2767574787139893, 0.9873225688934326, -0.7748968005180359, 0, 0.6133374571800232, 1.1509102582931519,
+        0.8140421509742737, 0, 1.0950287580490112, 0.25306451320648193, -1.4101457595825195, 0, 10.421998977661133,
+        -0.5673999786376953, 8.42080020904541, 1, 0.5759199857711792, 0.6739600300788879, 1, 1, // The box
+    ];
+    // The camera, world (less its origin) to clip, and its origin
+    const camera = [0.9786248803138733, 0, 0, 0, 0, 1.631041407585144, 0, 0, 0, 0, 1.0015010833740234, 1, 0, 0,
+        -0.600450336933136, 0, 0, 1, -12, 0];
+    try {
+        const adapter = await navigator.gpu.requestAdapter();
+        const device = await adapter.requestDevice();
+        device.addEventListener('uncapturederror', e => say('error: ' + e.error.message));
+        const about = adapter.info || {};
+        say(`adapter: ${about.vendor} ${about.architecture} ${about.description}`);
+        const made = (data, usage) => {
+            const b = device.createBuffer({ size: (data.byteLength + 3) & ~3, usage: usage | GPUBufferUsage.COPY_DST });
+            device.queue.writeBuffer(b, 0, data.buffer, 0, (data.byteLength + 3) & ~3);
+            return b;
+        };
+        const vertices = made(new Float32Array(corners), GPUBufferUsage.VERTEX);
+        const indices = made(new Uint16Array(faces), GPUBufferUsage.INDEX);
+        const each = made(new Float32Array(instances), GPUBufferUsage.VERTEX);
+        const uniforms = made(new Float32Array(camera), GPUBufferUsage.UNIFORM);
+        const module = device.createShaderModule({ code: `
+struct Camera { toClip: mat4x4f, origin: vec4f }
+@group(0) @binding(0) var<uniform> camera: Camera;
+struct Corner { @builtin(position) at: vec4f, @location(0) color: vec4f, @location(1) @interpolate(flat) tint: vec4f }
+@vertex fn vertex(@location(0) position: vec3f, @location(1) color: vec4f, @location(2) c0: vec4f, @location(3) c1: vec4f,
+                  @location(4) c2: vec4f, @location(5) c3: vec4f, @location(6) tint: vec4f) -> Corner {
+    let model = mat4x4f(c0, c1, c2, c3 - camera.origin * c3.w);
+    let clip = camera.toClip * (model * vec4f(position, 1.0));
+    var corner: Corner;
+    corner.at = vec4f(clip.xy, (clip.z + clip.w) * 0.5, clip.w);
+    corner.color = color;
+    corner.tint = tint;
+    return corner;
+}
+@fragment fn fragment(corner: Corner) -> @location(0) vec4f {
+    let color = corner.tint * corner.color;
+    return vec4f(color.rgb * color.a, color.a);
+}` });
+        const blend = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' } };
+        const pipeline = device.createRenderPipeline({ layout: 'auto',
+            vertex: { module, entryPoint: 'vertex', buffers: [
+                { arrayStride: 36, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 20, format: 'float32x4' }] },
+                { arrayStride: 80, stepMode: 'instance', attributes: [0, 1, 2, 3, 4].map(k => ({ shaderLocation: 2 + k, offset: 16 * k, format: 'float32x4' })) }] },
+            fragment: { module, entryPoint: 'fragment', targets: [{ format: 'bgra8unorm', blend }] },
+            primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'cw' },
+            depthStencil: { format: 'depth24plus-stencil8', depthWriteEnabled: true, depthCompare: 'less-equal' },
+            multisample: { count: 4 } });
+        const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniforms } }] });
+        const bound = probing ? GPUTextureUsage.TEXTURE_BINDING : 0;
+        const color = device.createTexture({ size: [W, H], sampleCount: 4, format: 'bgra8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | bound });
+        const depth = device.createTexture({ size: [W, H], sampleCount: 4, format: 'depth24plus-stencil8', usage: GPUTextureUsage.RENDER_ATTACHMENT | bound });
+        const resolved = device.createTexture({ size: [W, H], format: 'bgra8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+        const pixels = device.createBuffer({ size: 768 * H, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        // Each sample's depth and color at the two pixels
+        let probe, probed, probeRead, probeGroup;
+        if (probing) {
+            probe = device.createComputePipeline({ layout: 'auto', compute: { entryPoint: 'main', module: device.createShaderModule({ code: `
+@group(0) @binding(0) var depth: texture_depth_multisampled_2d;
+@group(0) @binding(1) var color: texture_multisampled_2d<f32>;
+@group(0) @binding(2) var<storage, read_write> found: array<u32>;
+@compute @workgroup_size(1) fn main(@builtin(global_invocation_id) g: vec3<u32>) {
+    let p = vec2<i32>(${at[0][0]} + i32(g.x), ${at[0][1]});
+    for (var s = 0; s < 4; s++) {
+        found[g.x * 8u + u32(s) * 2u] = bitcast<u32>(textureLoad(depth, p, s));
+        found[g.x * 8u + u32(s) * 2u + 1u] = pack4x8unorm(textureLoad(color, p, s));
+    }
+}` }) } });
+            probed = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+            probeRead = device.createBuffer({ size: 64, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+            probeGroup = device.createBindGroup({ layout: probe.getBindGroupLayout(0), entries: [
+                { binding: 0, resource: depth.createView({ aspect: 'depth-only' }) }, { binding: 1, resource: color.createView() },
+                { binding: 2, resource: { buffer: probed } }] });
+        }
+        async function frame(split) {
+            const encoder = device.createCommandEncoder();
+            const pass = load => {
+                const p = encoder.beginRenderPass({
+                    colorAttachments: [{ view: color.createView(), resolveTarget: resolved.createView(), loadOp: load, storeOp: 'store',
+                                         clearValue: { r: 38 / 255, g: 26 / 255, b: 26 / 255, a: 1 } }],
+                    depthStencilAttachment: { view: depth.createView(), depthLoadOp: load, depthStoreOp: 'store', depthClearValue: 1,
+                                              stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 } });
+                p.setPipeline(pipeline);
+                p.setBindGroup(0, group);
+                p.setVertexBuffer(0, vertices);
+                p.setVertexBuffer(1, each);
+                p.setIndexBuffer(indices, 'uint16');
+                return p;
+            };
+            let p = pass('clear');
+            p.drawIndexed(36, 3, 0, 0, 0); // The walls and the pane
+            if (split) {
+                p.end();
+                p = pass('load');
+            }
+            p.drawIndexed(36, 1, 0, 0, 3); // The box
+            p.end();
+            if (probing) {
+                const c = encoder.beginComputePass();
+                c.setPipeline(probe);
+                c.setBindGroup(0, probeGroup);
+                c.dispatchWorkgroups(2);
+                c.end();
+                encoder.copyBufferToBuffer(probed, 0, probeRead, 0, 64);
+            }
+            encoder.copyTextureToBuffer({ texture: resolved }, { buffer: pixels, bytesPerRow: 768 }, [W, H]);
+            device.queue.submit([encoder.finish()]);
+            await pixels.mapAsync(GPUMapMode.READ);
+            const bytes = new Uint8Array(pixels.getMappedRange().slice(0));
+            pixels.unmap();
+            let samples = '';
+            if (probing) {
+                await probeRead.mapAsync(GPUMapMode.READ);
+                const w = new Uint32Array(probeRead.getMappedRange().slice(0));
+                probeRead.unmap();
+                for (let k = 0; k < 2; k++) {
+                    const rgba = s => w[k * 8 + s * 2 + 1].toString(16).padStart(8, '0').match(/../g).reverse().join('');
+                    samples += `\n    (${at[k][0]}, ${at[k][1]}): samples ` + [0, 1, 2, 3].map(s => rgba(s)).join(' ')
+                        + ', depths ' + [0, 1, 2, 3].map(s => w[k * 8 + s * 2].toString(16)).join(' ');
+                }
+            }
+            return { bytes, samples };
+        }
+        const hex = (b, x, y) => [2, 1, 0, 3].map(i => b[y * 768 + x * 4 + i].toString(16).padStart(2, '0')).join('');
+        const first = await frame(false);
+        let worst = 0;
+        for (let round = 0; round < 4; round++) {
+            for (const split of [false, true]) {
+                const f = await frame(split);
+                const differ = [];
+                for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+                    if (hex(f.bytes, x, y) !== hex(first.bytes, x, y)) differ.push(`(${x}, ${y}) ${hex(first.bytes, x, y)} -> ${hex(f.bytes, x, y)}`);
+                }
+                worst = Math.max(worst, differ.length);
+                say(`${split ? 'split   ' : 'one pass'}: ${differ.length} pixels differ from the first frame (one pass)${differ.length ? ': ' + differ.join(', ') : ''}`
+                    + `; resolved ${at.map(([x, y]) => hex(f.bytes, x, y)).join(' ')}${round ? '' : f.samples}`);
+            }
+        }
+        document.title = worst ? `${worst} pixels differ` : 'same';
+        say(document.title);
+    } catch (error) {
+        say('error: ' + (error && error.stack || error));
+        document.title = 'error';
+    }
+    if (reporting) said.then(() => fetch('/done', { method: 'POST' }));
+})();
+</script>
