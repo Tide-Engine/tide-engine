@@ -11,7 +11,7 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 
 - [ ] `gpu.h` compute API (storage buffers, compute passes, dispatch and
       indirect dispatch, indirect draws, copies, asynchronous reads)
-- [ ] Vulkan backend (`gpu_vk.c`)
+- [x] Vulkan backend (`gpu_vk.c`; `notes/rendering.md`, Vulkan compute)
 - [ ] WebGPU backend (`web/gpu_web.c`, `web/tide.js`)
 - [ ] Recorder for Unity (`gpu_record.c`) and its replay (`TideRender.cs`)
 - [ ] WGSL compute and storage in the translators (`wgsl_read.inc`, `spirv.c`, `hlsl.c`)
