@@ -60,6 +60,15 @@ The full web run passed 3015/3016 with the same existing Render3D expectation as
 suites also pass after the session changes. Final merged validation is recorded below. Other OSes/Android are CI's;
 no CI was dispatched and no private prototype was changed.
 
+Merged validation (2026-11-06): kept both sides of the worker pack-binding conflict, using
+`is_worker || preparation_cpu` for parallel callbacks. Full sanitize and web-debug builds are warning-free.
+The affected preparation/readiness/diagnostic/schedule/worker/query/world-set/visibility/split-code/Render3D checks
+pass 49/49 natively (including the complete LSP suite) and 47/47 on WASI. The incoming Render3D post fix passes on
+both. Debug code/plumbing partitions and ordinary distribution partitions each compile, link and run all seven
+non-platform preparation cases. The merged docs production build and all 356 grammar checks pass. No remaining
+failure from either full-suite run is unresolved; the new tests and merge overlaps were validated without repeating
+unrelated suites. Provisional feature limits above remain explicit in the spec and user guide.
+
 ## Build-code constants in workers (2026-11-05)
 
 Build-code list constants are hidden packed assets even when their producer reads
