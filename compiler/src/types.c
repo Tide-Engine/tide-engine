@@ -319,6 +319,14 @@ bool type_is_texture_grid(const type t)
     return cell == TY_COLOR || cell == TY_FLOAT;
 }
 
+// A Grid3 of colors or of floats: what's a TextureArray where one is wanted, its layers its z.
+bool type_is_array_grid(const type t)
+{
+    if (t.kind != TY_GRID || !t.decl || t.decl->dims != 3 || t.decl->fields.count < 1) return false;
+    const type_kind cell = t.decl->fields.items[0].type.kind;
+    return cell == TY_COLOR || cell == TY_FLOAT;
+}
+
 static bool skin_catalog_guarantees(const decl *wanted, const decl *known)
 {
     if (known->skin_metadata_status != 1) return false;
@@ -408,6 +416,7 @@ bool type_assignable(const type to, const type from)
     // A char goes where an int does, as its code point; an int becomes a char only with char(n)
     if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
+    if (to.kind == TY_TEXTURE_ARRAY) return type_is_array_grid(from); // ...and one of three dimensions an array
     if (type_is_double_based(to)) {
         if (matrix_dim(to)) return matrix_dim(to) == matrix_dim(from) && !type_is_double_based(from);
         return (type_dim(to) == type_dim(from) && (type_is_int_based(from) || type_is_float_based(from)))

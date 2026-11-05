@@ -81,6 +81,43 @@ TIDE_TEST(texture_arrays_are_assets_of_files_and_arrays_a_view_draws_into_a_laye
     // ...the same file twice is one image in the pack, which both layers name; sky_pz is the glob's sixth
     TIDE_CHECK(picked_pixels[0] == picked_pixels[2] && picked_pixels[0] == pixels[5] && picked_pixels[1] == pixels[3]);
 
+    // Layers big enough are compressed as a Texture's are, each in its own kind, and kept as blocks alone; [Lossless]
+    // keeps them exact, as pixels
+    const tide_texture_array_ref packed = tide_pack_texture_array_of(tide_pack_find("packed", TIDE_PACK_TEXTURE_ARRAY));
+    const uint8_t *const *packed_pixels;
+    TIDE_REQUIRE(tide_pack_texture_array_find(packed.named, &width, &height, &layers, &version, &packed_pixels));
+    TIDE_CHECK(width == 128 && height == 128 && layers == 2 && !packed_pixels[0] && !packed_pixels[1]);
+    const tide_texture_blocks *packed_blocks = tide_pack_texture_array_blocks(packed.named);
+    TIDE_REQUIRE(packed_blocks != NULL);
+    TIDE_CHECK(packed_blocks[0].format == TIDE_BLOCKS_BC1 && packed_blocks[1].format == TIDE_BLOCKS_BC3);
+    TIDE_CHECK(packed_blocks[0].levels == 8 && packed_blocks[1].levels == 8 && packed_blocks[0].pixels && packed_blocks[1].pixels);
+    const tide_texture_array_ref exact = tide_pack_texture_array_of(tide_pack_find("exact", TIDE_PACK_TEXTURE_ARRAY));
+    const uint8_t *const *exact_pixels;
+    TIDE_REQUIRE(tide_pack_texture_array_find(exact.named, &width, &height, &layers, &version, &exact_pixels));
+    TIDE_CHECK(layers == 2 && exact_pixels[0] && exact_pixels[1] && !tide_pack_texture_array_blocks(exact.named)[0].pixels);
+    // ...and the draw list hands the blocks on with the layers
+    const tide_draw_run *with_blocks = run_through("Packed on Vertex");
+    bool handed = false;
+    for (uint32_t i = 0; with_blocks && i < with_blocks->shader->texture_count; i++) {
+        const tide_draw_texture *t = texture_of(with_blocks, i);
+        handed |= t && t->space == TIDE_PIXELS_PACK_ARRAY && t->layer_blocks == packed_blocks && t->layers == 2;
+    }
+    TIDE_CHECK(handed);
+
+    // A Grid3 as an array: its z its layers, one under another in the list's pixels, as halves for floats
+    TIDE_CHECK(art->gridCount == 4 && tide_texture_array_size(art->fromGrid).x == 5 && tide_texture_array_size(art->fromGrid).y == 3);
+    TIDE_CHECK(tide_texture_array_layer(art->fromGrid, 0).id == TIDE_RENDER_INVALID); // No destination
+    const tide_draw_run *with_grid = run_through("Show on Vertex");
+    bool gridded = false;
+    for (uint32_t i = 0; with_grid && i < with_grid->shader->texture_count; i++) {
+        const tide_draw_texture *t = texture_of(with_grid, i);
+        if (!t || t->space != TIDE_PIXELS_GRID_ARRAY) continue;
+        const uint16_t *halves = (const uint16_t *)t->pixels;
+        gridded = t->layers == 4 && t->width == 5 && t->height == 12 && t->format == TIDE_TEXELS_HALF
+               && halves[(3 * 3 + 2) * 5 + 4] == 0x3800u && halves[0] == 0;
+    }
+    TIDE_CHECK(gridded);
+
     // Counts, on the CPU: a drawn one's, its depth's, an asset's, and none
     TIDE_CHECK(art->count == 3 && art->depthCount == 4 && art->assetCount == 6 && art->pickedCount == 3 && art->none == 0);
     TIDE_CHECK(tide_texture_array_size(art->kept).x == 4 && tide_texture_array_size(art->kept).y == 4);
@@ -99,11 +136,11 @@ TIDE_TEST(texture_arrays_are_assets_of_files_and_arrays_a_view_draws_into_a_laye
     TIDE_CHECK(tide_render_target_color(first).target.id == TIDE_RENDER_INVALID);
 
     // A frag reads them as textures of the list's: the drawn array, by its id, with its layers; the asset's; the
-    // depth array, one texture read as a number and compared through two samplers
+    // depth array, one texture read as a number and compared through two samplers; and the grid's
     const tide_draw_run *show = run_through("Show on Vertex");
-    TIDE_REQUIRE(show && show->shader->texture_count == 3);
+    TIDE_REQUIRE(show && show->shader->texture_count == 4);
     bool drawn = false, asset = false, depth = false;
-    for (uint32_t i = 0; i < 3; i++) {
+    for (uint32_t i = 0; i < 4; i++) {
         const tide_draw_texture *t = texture_of(show, i);
         TIDE_REQUIRE(t != NULL);
         if (t->space == TIDE_PIXELS_TARGET_ARRAY) {
@@ -116,14 +153,14 @@ TIDE_TEST(texture_arrays_are_assets_of_files_and_arrays_a_view_draws_into_a_laye
         }
     }
     TIDE_CHECK(drawn && asset && depth);
-    // Its samplers: a color's (both arrays read alike, blended and clamped), a depth's and a compared one's
+    // Its samplers: a color's (the arrays of colors read alike, blended and clamped), a depth's and a compared one's
     TIDE_REQUIRE(show->shader->sampler_count == 3);
     TIDE_CHECK(show->shader->sampler_reads[0] == TIDE_SHADER_READ_COMPARE || show->shader->sampler_reads[1] == TIDE_SHADER_READ_COMPARE
                || show->shader->sampler_reads[2] == TIDE_SHADER_READ_COMPARE);
-    const tide_draw_run *packed = run_through("Packed on Vertex");
-    TIDE_REQUIRE(packed && packed->shader->texture_count == 2 && packed->shader->sampler_count == 0); // Each its own
-    TIDE_CHECK(tide_sampling_filter(packed->sampling, 1) == TIDE_FILTER_POINT && tide_sampling_wrap(packed->sampling, 1) == TIDE_WRAP_REPEAT);
-    TIDE_CHECK(tide_sampling_filter(packed->sampling, 0) == TIDE_FILTER_BILINEAR);
+    const tide_draw_run *packed_run = run_through("Packed on Vertex");
+    TIDE_REQUIRE(packed_run && packed_run->shader->texture_count == 4); // The two of six, and the compressed and exact ones
+    TIDE_CHECK(tide_sampling_filter(packed_run->sampling, 1) == TIDE_FILTER_POINT && tide_sampling_wrap(packed_run->sampling, 1) == TIDE_WRAP_REPEAT);
+    TIDE_CHECK(tide_sampling_filter(packed_run->sampling, 0) == TIDE_FILTER_BILINEAR);
 #ifdef __wasm__ // A shader's text is its WGSL, which a build keeps on the web
     TIDE_CHECK(strstr(show->shader->wgsl, "texture_2d_array<f32>") != NULL);
     TIDE_CHECK(strstr(show->shader->wgsl, "texture_depth_2d_array") != NULL);

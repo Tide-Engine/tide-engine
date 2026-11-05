@@ -45,6 +45,14 @@ layer of both (`RenderTargetIdentifier(rt, 0, CubemapFace.Unknown, layer)`); fre
 reads `Texture2DArray<float4>`/`<float>` with `float3(uv, layer)` (notes/shaders.md). `TIDE_EMBED_ABI` and
 `TideLibrary.Abi` are 15. Not run in Unity.
 
+ABI 16 (the same day, a `Grid3` as an array): `TIDE_EMBED_RENDER_ARRAY_OF` (id, format, width, height, layers: zeros)
+and `TIDE_EMBED_RENDER_ARRAY_WRITE` (id, layer, x, y, width, height, then that part's rows packed, padded to 4 bytes).
+TideRender's `MakeArrayOf` makes a `Texture2DArray` of the format (RGBA32 or RHalf, `TextureFormat`) with a mip chain
+and keeps its pixels (`Image.layers`); `WriteArray` copies the part into them and sets that layer's
+(`SetPixelData(pixels, 0, layer, offset)`), or makes a new array when a draw of this frame already reads it, as
+`WriteTexture` does; `Mipmaps` applies a `Texture2DArray`'s. Compressed pack layers reach Unity decoded, through
+`ARRAY`. Compiled, not run in Unity.
+
 ## One image a texture: embed ABI 14 (2026-11-05)
 
 Textures and samplers are counted apart (notes/rendering.md, One image a texture). The recording's PIPELINE packet

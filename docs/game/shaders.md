@@ -944,7 +944,21 @@ frag Lit(Vertex3 vertex, out Color color, Lamp lamp, Sun sun)
 }
 ```
 
-`array.size` and `array.count` say a layer's pixels and how many there are, in a view. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
+`array.size` and `array.count` say a layer's pixels and how many there are, in a view or a frag. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
+
+An asset's layers are compressed as a [`Texture` asset's](./assets.md) are, where they're big enough; `[Lossless]` before it keeps them exact.
+
+A `Grid3<Color>` or a `Grid3<float>` is an array wherever one goes, its z its layers, as a `Grid2` of them is a texture: the GPU gets the parts whose cells changed.
+
+```tide
+local singleton Terrain { Grid3<Color> paint = Grid3(256, 256, 4); TextureArray layers; }
+
+view Paint(mut Terrain terrain)
+{
+    terrain.paint[10, 20, 2] = Color.red; // Layer 2, sent as that part alone
+    terrain.layers = terrain.paint;
+}
+```
 
 ## Where the pixel is
 

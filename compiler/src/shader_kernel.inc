@@ -192,7 +192,7 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
     }
     for (int i = 0; i < sh->sizes.count; i++) {
         sh->sizes.items[i].count_at = sh->uniform_ints;
-        sh->uniform_ints += 2;
+        sh->uniform_ints += shader_size_words(&sh->sizes.items[i]);
     }
     sh->rolled_at = sh->seed_at = -1;
     if (k->rolls) sh->rolled_at = sh->uniform_ints++;

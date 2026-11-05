@@ -13,6 +13,12 @@ reads `TIDE_SHADER_READ_ARRAY`/`_DEPTH_ARRAY`. gpu.h: `image`/`sampler` in place
 `array_depth`, `array_layer`. Embed ABI 15. Contracts and tests: notes/rendering.md, One image a texture, and
 notes/textures.md, Texture arrays: built.
 
+Closing their gaps (the owner: "work on the gaps"): generated code also calls `tide_texture_array_of_grid`
+(`tide/mesh.h`), and the draw list `tide_pack_texture_array_blocks` (`tide/pack.h`), `tide_draw_grid_array_texture`
+and `tide_grid_array_extent`; `tide_draw_texture` gains `layer_blocks` and the space `TIDE_PIXELS_GRID_ARRAY`;
+`tide/texture_blocks.h` `tide_texture_blocks_bc1_to_bc3`. gpu.h: `array_blocks`, `array_of`, `array_write`. Embed ABI
+16. Details: notes/textures.md, The gaps closed.
+
 ## Sixteen textures, shared samplers (2026-11-05)
 
 Within the drawing maintenance exception, with the owner's "not cap ourselves to arbitrary limits": `tide/draw.h`'s

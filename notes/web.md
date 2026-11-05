@@ -2,7 +2,10 @@
 
 ## Texture arrays (2026-11-05)
 
-Imports `gpu_array`, `gpu_array_depth`, `gpu_array_layer`; reads 6 and 7 are `'2d-array'` in a layout. A cube's and an
+Imports `gpu_array`, `gpu_array_depth`, `gpu_array_layer`, and since the gaps were closed `gpu_array_blocks` (BC
+layers, each a whole chain), `gpu_array_of` and `gpu_array_write` (a `Grid3`'s: `writeTexture` at `[x, y, layer]`,
+dropping the bind groups that read its smaller images, made again when next read); reads 6 and 7 are `'2d-array'` in a
+layout. A cube's and an
 array's per-layer views are `layered`. Details: notes/textures.md, Texture arrays: built.
 
 ## Textures and samplers apart (2026-11-05)

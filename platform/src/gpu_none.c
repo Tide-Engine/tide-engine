@@ -70,6 +70,18 @@ static tide_gpu_id none_array(const tide_gpu_target_format format, const int wid
     return made();
 }
 
+static tide_gpu_id none_array_of(const tide_gpu_format format, const int width, const int height, const uint32_t layers)
+{
+    (void)format, (void)width, (void)height, (void)layers;
+    return made();
+}
+
+static void none_array_write(const tide_gpu_id array, const uint32_t layer, const void *pixels, const int x, const int y,
+                             const int width, const int height)
+{
+    (void)array, (void)layer, (void)pixels, (void)x, (void)y, (void)width, (void)height;
+}
+
 static tide_gpu_id none_array_depth(const tide_gpu_id array)
 {
     (void)array;
@@ -180,6 +192,8 @@ const tide_gpu tide_gpu_none = {
     .cube_face = none_cube_face,
     .array = none_array,
     .array_depth = none_array_depth,
+    .array_of = none_array_of,
+    .array_write = none_array_write,
     .array_layer = none_array_layer,
     .pipeline = none_pipeline,
     .pipeline_free = none_free,

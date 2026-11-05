@@ -701,6 +701,9 @@ if(NOT TIDE_ANDROID)
         # Software WebGPU took 65-90 seconds on CI's macOS runner, and past 100 now and then
         tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders PIXELS EXPECT "renderer: WebGPU"
             SECONDS 240)
+        # Without BC: compressed layers of an array are decoded to pixels, and read as their files do as Textures
+        tide_add_web_test(tide_platform_shaders_rgba_fallback TARGET tide_platform_shaders QUERY "texture-compression=off"
+            PIXELS EXPECT "compressed array's opaque layer" SECONDS 240)
     else()
         add_test(NAME tide_platform_shaders COMMAND tide_platform_shaders)
         tide_gpu_test(tide_platform_shaders)

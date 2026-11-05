@@ -430,6 +430,17 @@ typedef struct tide_gpu {
     // them (array_depth) that starts at the far limit. Its samples are 1. It's a texture to `image`, `mipmaps`
     // (every layer's) and `texture_free` (with its depth array, after its layers' targets).
     tide_gpu_id (*array)(tide_gpu_target_format format, int width, int height, uint32_t layers, const void *const *layer_pixels);
+    // Optional: an array of blocks, `layers` images of `width` by `height`, each a whole chain of `blocks`' format and
+    // levels, one after another from `blocks.pixels`, `blocks.bytes` each: compressed (BC1, BC3, where the device has
+    // them) or RGBA8 mip chains. Its smaller images are its own. 0 where the device can't, which the renderer then
+    // gives an array of pixels.
+    tide_gpu_id (*array_blocks)(int width, int height, uint32_t layers, tide_texture_blocks blocks);
+    // An array of `layers` images of `format` (TIDE_GPU_RGBA8 or TIDE_GPU_R16F), zeros until written, read as
+    // TIDE_GPU_READ_ARRAY, a texture to `mipmaps` (each layer's, made of what's written) and `texture_free`...
+    tide_gpu_id (*array_of)(tide_gpu_format format, int width, int height, uint32_t layers);
+    // ...whose layer `layer` gets the `width` by `height` of `pixels` from (x, y): the layer's whole image, rows the
+    // array's width apart, read where the part is.
+    void (*array_write)(tide_gpu_id array, uint32_t layer, const void *pixels, int x, int y, int width, int height);
     // The depth array of one that's drawn into, read as TIDE_GPU_READ_DEPTH_ARRAY: 0 for one of pixels.
     tide_gpu_id (*array_depth)(tide_gpu_id array);
     // A target whose color image is layer `layer` of an array that's drawn into and whose depth and stencil are

@@ -25,7 +25,7 @@ frag Ground(Vertex3 vertex, out Color color, Field field)
     Color steep = field.layers.SampleGrad(vertex.uv, float2(0.1, 0), float2(0, 0.1), layer);
     float lit = field.cascades.Compare(vertex.uv, field.pick, 0.5);
     float depth = field.cascades.Sample(vertex.uv, 1);
-    color = said * blended + far * steep * lit * depth;
+    color = said * blended + far * steep * lit * depth * float(field.layers.count + ground.size.x + field.cascades.count);
 }
 
 vert Lift(mut Vertex3 vertex, Field field)

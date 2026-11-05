@@ -69,6 +69,18 @@ TIDE_WEB_IMPORT(gpu_image) void tide_web_gpu_image(uint32_t slot, tide_gpu_id te
 TIDE_WEB_IMPORT(gpu_array)
 tide_gpu_id tide_web_gpu_array(tide_gpu_target_format format, int width, int height, uint32_t layers, const void *const *pixels);
 TIDE_WEB_IMPORT(gpu_array_depth) tide_gpu_id tide_web_gpu_array_depth(tide_gpu_id array);
+TIDE_WEB_IMPORT(gpu_array_blocks)
+tide_gpu_id tide_web_gpu_array_blocks(int width, int height, uint32_t layers, uint32_t format, uint32_t levels, uint32_t bytes,
+                                      const void *pixels);
+
+TIDE_WEB_IMPORT(gpu_array_of) tide_gpu_id tide_web_gpu_array_of(tide_gpu_format format, int width, int height, uint32_t layers);
+TIDE_WEB_IMPORT(gpu_array_write)
+void tide_web_gpu_array_write(tide_gpu_id array, uint32_t layer, const void *pixels, int x, int y, int width, int height);
+
+static tide_gpu_id web_array_blocks(const int width, const int height, const uint32_t layers, const tide_texture_blocks blocks)
+{
+    return tide_web_gpu_array_blocks(width, height, layers, blocks.format, blocks.levels, blocks.bytes, blocks.pixels);
+}
 TIDE_WEB_IMPORT(gpu_array_layer) tide_gpu_id tide_web_gpu_array_layer(tide_gpu_id array, uint32_t layer);
 TIDE_WEB_IMPORT(gpu_sampler) void tide_web_gpu_sampler(uint32_t slot, tide_gpu_filter filter, tide_gpu_wrap wrap);
 TIDE_WEB_IMPORT(gpu_mipmaps) void tide_web_gpu_mipmaps(tide_gpu_id texture);
@@ -190,6 +202,9 @@ const tide_gpu tide_gpu_webgpu = {
     .image = tide_web_gpu_image,
     .array = tide_web_gpu_array,
     .array_depth = tide_web_gpu_array_depth,
+    .array_blocks = web_array_blocks,
+    .array_of = tide_web_gpu_array_of,
+    .array_write = tide_web_gpu_array_write,
     .array_layer = tide_web_gpu_array_layer,
     .sampler = tide_web_gpu_sampler,
     .vertices = tide_web_gpu_vertices,

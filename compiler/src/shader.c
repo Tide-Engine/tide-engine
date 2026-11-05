@@ -202,6 +202,12 @@ static shader_read base_read(const shader_read read)
     return read == READ_ARRAY ? READ_COLOR : read == READ_DEPTH_ARRAY ? READ_DEPTH : read == READ_COMPARE_ARRAY ? READ_COMPARE : read;
 }
 
+int shader_size_words(const shader_texture *t)
+{
+    const type held = t->asset ? t->asset->return_type : t->field ? t->field->type : (type){TY_TEXTURE, NULL};
+    return held.kind == TY_TEXTURE_ARRAY || held.kind == TY_DEPTH_TEXTURE_ARRAY ? 3 : 2;
+}
+
 // Whether a texture is read by a uv and a layer.
 static bool arrayed_read(const shader_read read)
 {
@@ -2875,7 +2881,9 @@ static void ex_texture_size(emit *em, const expr *e);
 
 static void ex_member(emit *em, const expr *e)
 {
-    if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
+    if (((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size"))
+        || ((e->object->type.kind == TY_TEXTURE_ARRAY || e->object->type.kind == TY_DEPTH_TEXTURE_ARRAY)
+            && (str_eq_c(e->member, "size") || str_eq_c(e->member, "count")))) {
         ex_texture_size(em, e);
         return;
     }
@@ -3894,6 +3902,7 @@ static void ex_texture_size(emit *em, const expr *e)
     }
     const int slot = sample_slot(em, of, sampling_of(of, READ_SIZE, 0, 0));
     if (em->checking) sb_printf(em->o, "%s(0)", ty(em, e->type));
+    else if (str_eq_c(e->member, "count")) put_words(em, 'v', em->sh->sizes.items[slot].count_at + 2, 1, ty(em, e->type));
     else put_words(em, 'v', em->sh->sizes.items[slot].count_at, 2, ty(em, e->type));
 }
 
@@ -6808,7 +6817,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     for (int i = 0; i < sh->sizes.count; i++) {
         sh->sizes.items[i].count_at = sh->uniform_ints;
-        sh->uniform_ints += 2;
+        sh->uniform_ints += shader_size_words(&sh->sizes.items[i]);
     }
     // The number the frame rolled, which the generators of code that rolls are made of, and the match's seed
     // for code that reads it: a word each of the draw's ints, the same for every draw of a frame

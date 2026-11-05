@@ -1054,8 +1054,9 @@ typedef struct tide_texture_array_ref {
     tide_render_target target; // An array that's drawn into; its id is 0 for the pack's
     uint64_t named;            // The pack's: what its declaration is named by
     uint32_t layers;           // One that's drawn into: how many (the pack's says its own)
-    uint32_t reserved;
+    uint32_t reserved;         // TIDE_TEXTURE_ARRAY_GRID for a Grid3's: `named` its handle, `layers` its cells' shape
 } tide_texture_array_ref;
+#define TIDE_TEXTURE_ARRAY_GRID 0x47524944u
 
 // An array to draw into: `layers` images (1 to TIDE_TEXTURE_ARRAY_LAYERS) of `size` (a target's: logical pixels
 // at the display's scale, or its own pixels a unit), each holding `format` (a color's, or TIDE_TARGET_DEPTH for
@@ -1136,6 +1137,9 @@ typedef struct tide_draw_texture {
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
     uint32_t capacity; // Bytes `pixels` has room for: 0 where they aren't the list's own
     uint32_t layers;   // An array's: how many images of `width` by `height` (TIDE_PIXELS_*_ARRAY)
+    // An array of the pack's: each layer's blocks where it keeps them (tide_pack_texture_array_blocks), where `pixels`
+    // has NULL for a layer kept as blocks alone
+    const tide_texture_blocks *layer_blocks;
     // width * height pixels, rows from the first, 4 bytes each or 2 (tide_texels_bytes): the list's own copy,
     // or for TIDE_PIXELS_PACK the pack's, where the pack has them, noted again by each frame that draws with them
     uint8_t *pixels;
@@ -1168,6 +1172,10 @@ enum {
     // is given either. An array's depth is TIDE_PIXELS_TARGET_DEPTH of the array's id (TIDE_SHADER_READ_DEPTH_ARRAY)
     TIDE_PIXELS_TARGET_ARRAY,
     TIDE_PIXELS_PACK_ARRAY,
+    // A Grid3's cells as an array (tide_texture_array_of_grid): `width` by `height` pixels holding its `layers` one
+    // under another, each `height / layers` rows, bytes or halves as a grid's texture's are, kept and written where
+    // its chunks changed
+    TIDE_PIXELS_GRID_ARRAY,
 };
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a

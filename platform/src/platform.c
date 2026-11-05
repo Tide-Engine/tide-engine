@@ -4409,6 +4409,9 @@ static void free_spare_data_textures(void)
 }
 
 // The GPU's copy of a list's texture, uploaded if it hasn't got these pixels.
+static tide_gpu_id pack_array_texture(const tide_draw_texture *t, bool *mipped);
+static void grid_array_texture(const tide_draw_texture *t, gpu_texture *g, bool since);
+
 static gpu_texture *texture_for(const tide_draw_texture *t)
 {
     gpu_texture *g = find_gpu_texture(t->space, t->id);
@@ -4434,11 +4437,11 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = made_cube(TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
-    } else if (t->space == TIDE_PIXELS_PACK_ARRAY) { // An array of the pack's: its layers' pixels, where the pack has them
+    } else if (t->space == TIDE_PIXELS_PACK_ARRAY) { // An array of the pack's: its layers, where the pack has them
         if (g->texture) free_texture(g->texture);
-        const uint32_t layers = t->layers <= TIDE_GPU_MAX_LAYERS ? t->layers : TIDE_GPU_MAX_LAYERS;
-        g->texture = layers ? made_array(TIDE_GPU_TARGET_COLOR, t->width, t->height, layers, (const void *const *)(uintptr_t)t->pixels)
-                            : 0;
+        g->texture = pack_array_texture(t, &resident_mips);
+    } else if (t->space == TIDE_PIXELS_GRID_ARRAY) { // A Grid3's: its layers one under another in the list's pixels
+        grid_array_texture(t, g, shaped && g->epoch == t->epoch && tide_draw_texture_since(t, g->version, &areas, &count));
     } else if (shaped && g->epoch == t->epoch && tide_draw_texture_since(t, g->version, &areas, &count)) {
         // The list says all that changed since the pixels the GPU has: those go, and nothing else
         for (uint32_t i = 0; i < count; i++) {
@@ -4591,7 +4594,7 @@ static bool of_cube(const tide_draw_texture *t)
 // ...or an array's, its layers' or their depth.
 static bool of_array(const tide_draw_texture *t)
 {
-    return t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_PACK_ARRAY
+    return t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_PACK_ARRAY || t->space == TIDE_PIXELS_GRID_ARRAY
         || (t->space == TIDE_PIXELS_TARGET_DEPTH && tide_render_target_arrayed(t->id));
 }
 
@@ -4621,7 +4624,7 @@ static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t te
     const tide_draw_texture *t = &list->textures[texture - 1u];
     // An array's colors, or its depth, only for a read of that kind
     if ((array || depth_array) != of_array(t)) return none;
-    if (array != (t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_PACK_ARRAY)) return none;
+    if (array != (t->space == TIDE_PIXELS_TARGET_ARRAY || t->space == TIDE_PIXELS_PACK_ARRAY || t->space == TIDE_PIXELS_GRID_ARRAY)) return none;
     if (t->space == TIDE_PIXELS_TARGET_ARRAY || depth_array) {
         const gpu_array *a = find_array(tide_render_target_array_of(t->id));
         const tide_gpu_id image = !a || !a->texture ? 0 : depth_array ? gpu->array_depth(a->texture) : a->texture;
@@ -4875,6 +4878,117 @@ static void bind_shader_textures(const tide_draw_list *list, const tide_shader *
         if (reads[j] == TIDE_SHADER_READ_DATA) continue;
         gpu->sampler(j, gpu_filter(tide_sampling_filter(sampling, j)), gpu_wrap(tide_sampling_wrap(sampling, j)));
     }
+}
+
+// A Grid3's array on the GPU: made, all of it written, or where the list says its pixels changed since the version the
+// GPU has, those parts alone, each in the layers it crosses (`since`, `areas` and their count in the list).
+static void grid_array_texture(const tide_draw_texture *t, gpu_texture *g, const bool since)
+{
+    const uint32_t layers = t->layers;
+    if (!layers || t->height % (int32_t)layers || layers > TIDE_GPU_MAX_LAYERS || !gpu->array_of) return;
+    const int32_t high = t->height / (int32_t)layers;
+    const size_t pixel = tide_texels_bytes(t->format), layer_bytes = (size_t)t->width * (size_t)high * pixel;
+    const tide_draw_area *areas = NULL;
+    uint32_t count = 0;
+    if (since) (void)tide_draw_texture_since(t, g->version, &areas, &count);
+    else {
+        if (g->texture) free_texture(g->texture);
+        g->texture = gpu->array_of(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : TIDE_GPU_RGBA8, t->width, high, layers);
+        if (!g->texture) return;
+        hold(held(&held_textures, &held_texture_count, g->texture), layer_bytes * layers);
+    }
+    const tide_draw_area whole = {0, 0, t->width, t->height};
+    if (!since) areas = &whole, count = 1;
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_draw_area *a = &areas[i];
+        for (int32_t y = a->y; y < a->y + a->height;) { // A layer's rows of the area at a time
+            const uint32_t layer = (uint32_t)(y / high);
+            const int32_t top = y - (int32_t)layer * high;
+            const int32_t rows = a->y + a->height - y < high - top ? a->y + a->height - y : high - top;
+            gpu->array_write(g->texture, layer, t->pixels + layer_bytes * layer, a->x, top, a->width, rows);
+            gpu_written += (uint64_t)a->width * (uint64_t)rows * pixel;
+            y += rows;
+        }
+    }
+}
+
+// An array of the pack's on the GPU: its layers' blocks as one array where every layer has them in one kind (BC1
+// and BC3 together are all BC3: a BC1 block is BC3's color with its alpha whole) and the device takes them, with
+// their smaller images; and otherwise its pixels, each layer's that's kept as blocks alone decoded from them.
+static tide_gpu_id pack_array_texture(const tide_draw_texture *t, bool *mipped)
+{
+    const uint32_t layers = t->layers <= TIDE_GPU_MAX_LAYERS ? t->layers : TIDE_GPU_MAX_LAYERS;
+    if (!layers) return 0;
+    const uint8_t *const *pixels = (const uint8_t *const *)(uintptr_t)t->pixels;
+    const tide_texture_blocks *blocks = t->layer_blocks;
+    bool all = blocks != NULL, bc = true, bc3 = false;
+    for (uint32_t i = 0; all && i < layers; i++) {
+        const uint32_t f = blocks[i].format;
+        const bool block_kind = f == TIDE_BLOCKS_BC1 || f == TIDE_BLOCKS_BC3;
+        const bool first_kind = blocks[0].format == TIDE_BLOCKS_BC1 || blocks[0].format == TIDE_BLOCKS_BC3;
+        all = blocks[i].pixels && (f == blocks[0].format || (block_kind && first_kind));
+        bc = bc && (f == TIDE_BLOCKS_BC1 || f == TIDE_BLOCKS_BC3);
+        bc3 = bc3 || f == TIDE_BLOCKS_BC3;
+    }
+    if (all && gpu->array_blocks) {
+        const uint32_t format = bc ? (bc3 ? TIDE_BLOCKS_BC3 : TIDE_BLOCKS_BC1) : blocks[0].format;
+        uint32_t levels, bytes;
+        if (tide_texture_blocks_size(t->width, t->height, format, &levels, &bytes)) {
+            uint8_t *chain = malloc((size_t)bytes * layers);
+            if (!chain) tide_out_of_memory();
+            for (uint32_t i = 0; i < layers; i++) {
+                uint8_t *to = chain + (size_t)bytes * i;
+                if (blocks[i].format == format) memcpy(to, blocks[i].pixels, bytes);
+                else tide_texture_blocks_bc1_to_bc3(blocks[i].pixels, blocks[i].bytes, to); // Its alpha whole
+            }
+            tide_gpu_id id = gpu->array_blocks(t->width, t->height, layers, (tide_texture_blocks){chain, format, levels, bytes});
+            free(chain);
+            uint32_t rgba_levels, rgba_bytes;
+            if (!id && bc && tide_texture_blocks_size(t->width, t->height, TIDE_BLOCKS_RGBA8, &rgba_levels, &rgba_bytes)) {
+                // A device without BC: every level of every layer decoded, as a Texture's are, so its smaller images
+                // are the ones the blocks have
+                uint8_t *rgba = malloc((size_t)rgba_bytes * layers);
+                if (!rgba) tide_out_of_memory();
+                bool decoded = true;
+                for (uint32_t i = 0; decoded && i < layers; i++) {
+                    size_t offset = 0;
+                    uint32_t w = (uint32_t)t->width, h = (uint32_t)t->height;
+                    for (uint32_t level = 0; decoded && level < rgba_levels; level++) {
+                        decoded = tide_texture_blocks_decode_level(blocks[i], t->width, t->height, level,
+                                                                   rgba + (size_t)rgba_bytes * i + offset);
+                        offset += (size_t)w * h * 4u;
+                        if (w > 1u) w /= 2u;
+                        if (h > 1u) h /= 2u;
+                    }
+                }
+                if (decoded) {
+                    id = gpu->array_blocks(t->width, t->height, layers,
+                                           (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8, rgba_levels, rgba_bytes});
+                    bytes = rgba_bytes;
+                }
+                free(rgba);
+            }
+            if (id) {
+                hold(held(&held_textures, &held_texture_count, id), (uint64_t)bytes * layers);
+                *mipped = true;
+                return id;
+            }
+        }
+    }
+    const size_t layer = (size_t)t->width * (size_t)t->height * 4u;
+    const void **each = tide_alloc_zeroed(layers, sizeof *each);
+    uint8_t *decoded = NULL;
+    for (uint32_t i = 0; i < layers; i++) {
+        if (pixels[i]) { each[i] = pixels[i]; continue; }
+        if (!decoded) decoded = tide_alloc_zeroed(layers, layer);
+        uint8_t *to = decoded + layer * i;
+        if (blocks && blocks[i].pixels) tide_texture_blocks_decode(blocks[i], t->width, t->height, to);
+        each[i] = to;
+    }
+    const tide_gpu_id id = made_array(TIDE_GPU_TARGET_COLOR, t->width, t->height, layers, each);
+    free(decoded);
+    free(each);
+    return id;
 }
 
 // The texture a mesh step samples, sampled as the step says.

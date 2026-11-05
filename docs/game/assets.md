@@ -144,7 +144,7 @@ A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarte
 
 Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. Images that come out the same bytes are one image in the pack and on the GPU, whichever declarations name them: the same opaque file declared with and without `[Raw]`, or two copies of one picture.
 
-`[Lossless]` keeps an image exact, a byte per channel, for numbers that must not move: a lookup table, a flow map, an ID mask. It goes before a `Texture` asset, alone or a glob's list or map, and beside `[Raw]` too:
+`[Lossless]` keeps an image exact, a byte per channel, for numbers that must not move: a lookup table, a flow map, an ID mask. It goes before a `Texture` asset, alone or a glob's list or map, or a `TextureArray` asset, and beside `[Raw]` too:
 
 ```csharp
 [Raw, Lossless] asset Texture flow = "art/flow.png";   // Every byte as the file has it

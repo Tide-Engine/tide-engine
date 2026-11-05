@@ -1767,6 +1767,75 @@ static tide_gpu_id vk_array(const tide_gpu_target_format format, const int width
     return id;
 }
 
+// An array of blocks: every layer's chain, as an uploaded texture's are (vk_texture_blocks), into one image
+static tide_gpu_id vk_array_blocks(const int width, const int height, const uint32_t layers, const tide_texture_blocks blocks)
+{
+    uint32_t levels, total;
+    const bool rgba = blocks.format == TIDE_BLOCKS_RGBA8;
+    if (vk.lost || (!rgba && !vk.compression) || !blocks.pixels || layers == 0 || layers > TIDE_GPU_MAX_LAYERS
+        || layers > vk.properties.limits.maxImageArrayLayers
+        || !tide_texture_blocks_size(width, height, blocks.format, &levels, &total) || blocks.levels != levels
+        || blocks.bytes != total) return 0;
+    const VkFormat format = rgba ? VK_FORMAT_R8G8B8A8_UNORM : blocks.format == TIDE_BLOCKS_BC1 ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK
+                                                                                                : VK_FORMAT_BC3_UNORM_BLOCK;
+    const tide_gpu_id id = texture_place();
+    vk_texture *t = &vk.textures[id - 1u];
+    const VkImageCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = format,
+        .extent = {(uint32_t)width, (uint32_t)height, 1}, .mipLevels = levels, .arrayLayers = layers,
+        .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    *t = (vk_texture){.format = format, .width = width, .height = height, .levels = levels, .layers = layers,
+                      .rest = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .usage = info.usage, .arrayed = true, .mipped = true};
+    if (!make_image(&info, &t->memory, &t->image)) {
+        fprintf(stderr, "tide: Vulkan: no memory for an array of %u layers of %d by %d\n", (unsigned)layers, width, height);
+        abort();
+    }
+    t->view = make_view(t->image, VK_IMAGE_VIEW_TYPE_2D_ARRAY, format, VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, layers);
+    t->base = t->attach = t->view;
+    const VkCommandBuffer cb = outside();
+    turn_texture(cb, t, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    for (uint32_t layer = 0; layer < layers; layer++) {
+        uint32_t w = (uint32_t)width, h = (uint32_t)height;
+        size_t offset = (size_t)blocks.bytes * layer;
+        for (uint32_t level = 0; level < levels; level++) {
+            const size_t bytes = tide_texture_level_bytes(w, h, blocks.format);
+            VkBuffer from;
+            uint8_t *at;
+            const VkDeviceSize start = ring_take(bytes, 16u, bytes, &from, &at);
+            memcpy(at, blocks.pixels + offset, bytes);
+            const VkBufferImageCopy copy = {start, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, level, layer, 1}, {0, 0, 0}, {w, h, 1}};
+            vkCmdCopyBufferToImage(cb, from, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            offset += bytes;
+            if (w > 1) w /= 2;
+            if (h > 1) h /= 2;
+        }
+    }
+    turn_texture(cb, t, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, t->rest);
+    return id;
+}
+
+// An array of a format, written a part at a time: room for its smaller images where the format blits
+static tide_gpu_id vk_array_of(const tide_gpu_format format, const int width, const int height, const uint32_t layers)
+{
+    if (vk.lost || layers == 0 || layers > TIDE_GPU_MAX_LAYERS || layers > vk.properties.limits.maxImageArrayLayers) return 0;
+    const VkFormat f = format_of(format);
+    const tide_gpu_id id = make_layers(f, width, height, blits(f) ? levels_for(width, height) : 1u, layers,
+                                       VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    vk.textures[id - 1u].pixels = format;
+    return id;
+}
+
+static void vk_array_write(const tide_gpu_id id, const uint32_t layer, const void *pixels, const int x, const int y,
+                           const int width, const int height)
+{
+    vk_texture *t = texture_of(id);
+    if (vk.lost || !t || !t->arrayed || layer >= t->layers) return;
+    write_pixels(t, pixels, x, y, width, height, t->width, layer);
+}
+
 static tide_gpu_id vk_array_depth(const tide_gpu_id id)
 {
     const vk_texture *t = texture_of(id);
@@ -3713,6 +3782,9 @@ const tide_gpu tide_gpu_vulkan = {
     .cube_face = vk_cube_face,
     .array = vk_array,
     .array_depth = vk_array_depth,
+    .array_blocks = vk_array_blocks,
+    .array_of = vk_array_of,
+    .array_write = vk_array_write,
     .array_layer = vk_array_layer,
     .mipmaps = vk_mipmaps,
     .pipeline = vk_pipeline_make,

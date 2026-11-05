@@ -2311,6 +2311,12 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         gen_mesh_of_asset(g, o, e, want);
         return;
     }
+    if (want.kind == TY_TEXTURE_ARRAY && have.kind == TY_GRID) { // A Grid3 where an array goes: its layers, its z
+        sb_put(o, "tide_texture_array_of_grid(");
+        gen_expr(g, o, e);
+        sb_printf(o, ", &%s)", grid_shape_name(have.decl));
+        return;
+    }
     if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
         // A grid of colors or of floats where a Texture goes: the texture it is, sampled as its declaration
         // says ([Filter], [Wrap]), which the value then carries
@@ -21983,7 +21989,7 @@ static void build_pack(gen *g)
             uint64_t *layers = arena_alloc(sizeof *layers * (size_t)(v->count ? v->count : 1));
             uint32_t extra;
             for (int k = 0; k < v->count; k++) {
-                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, &extra, prog->game_folder, NULL);
+                layers[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, !d->lossless, &extra, prog->game_folder, NULL);
             }
             tide_pack_name(&b, qualified, TIDE_PACK_TEXTURE_ARRAY, tide_pack_list(&b, layers, (uint32_t)v->count), (uint32_t)v->count,
                            (uint32_t)(v->count ? v->items[0].image.width : 0));
@@ -25192,6 +25198,19 @@ static void gen_shader_skin_bindings(sb *o, const shader *sh)
     }
 }
 
+// An array's size and count, for code the GPU runs that reads them: three of the uniforms' ints from `at`.
+static void gen_array_size(sb *o, const int t, const char *from, const type held, const int at)
+{
+    if (held.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size((tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, "
+                     ".target = (%s).target});\n    tide_uniforms.i[%d] = tide_depth_array_count(%s);\n", t, from, at + 2, from);
+    } else {
+        sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_array_size(%s);\n    tide_uniforms.i[%d] = tide_texture_array_count(%s);\n",
+                  t, from, at + 2, from);
+    }
+    sb_printf(o, "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n", at, t, at + 1, t);
+}
+
 // What a shader's textures are, for its draw or run: each one's slot of the list's (tide_textures), and how each
 // of its samplers samples, the bits of `blended` and the expressions `carried` adds for what a Texture given says.
 static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, uint64_t *blended, sb *carried)
@@ -25463,6 +25482,10 @@ static void gen_kernel(gen *g, const shader *sh, const int s)
             sb converted = {0};
             sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
             from = converted;
+        }
+        if (source_type.kind == TY_TEXTURE_ARRAY || source_type.kind == TY_DEPTH_TEXTURE_ARRAY) { // ...and its layers
+            gen_array_size(o, t, from.data, source_type, texture->count_at);
+            continue;
         }
         sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"
                      "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n",
@@ -25748,6 +25771,10 @@ static void gen_shaders(gen *g)
                 sb converted = {0};
                 sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
                 from = converted;
+            }
+            if (source_type.kind == TY_TEXTURE_ARRAY || source_type.kind == TY_DEPTH_TEXTURE_ARRAY) { // ...and its layers
+                gen_array_size(o, t, from.data, source_type, texture->count_at);
+                continue;
             }
             if (source_type.kind == TY_DEPTH_TEXTURE) {
                 sb converted = {0};

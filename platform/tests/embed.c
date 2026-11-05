@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_ARRAY_LAYER + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_ARRAY_WRITE + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_ARRAY_LAYER) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_ARRAY_WRITE) {
             r.whole = false;
             break;
         }
@@ -560,6 +560,31 @@ TIDE_TEST(embed_render_pipeline_carries_samplers_apart)
     TIDE_CHECK(u32_at(packet, ops + 16u) == TIDE_EMBED_RENDER_SAMPLER && u32_at(packet, ops + 20u) == 12u);
     TIDE_CHECK(u32_at(packet, ops + 24u) == 2u && u32_at(packet, ops + 28u) == TIDE_GPU_FILTER_MIPMAPS
                && u32_at(packet, ops + 32u) == TIDE_GPU_WRAP_MIRROR);
+}
+
+// An array written a part at a time (a Grid3's): made of its format and layers, then a part of a layer, its rows
+// one after another, read out of the layer's whole image.
+TIDE_TEST(embed_render_array_written_in_parts)
+{
+    tide_gpu_record_begin();
+    const tide_gpu_id array = tide_gpu_record.array_of(TIDE_GPU_R16F, 4, 3, 2);
+    uint16_t layer[3][4];
+    for (uint16_t y = 0; y < 3; y++) {
+        for (uint16_t x = 0; x < 4; x++) layer[y][x] = (uint16_t)(y * 10u + x);
+    }
+    tide_gpu_record.array_write(array, 1, layer, 1, 1, 3, 2);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 8u + 20u + 8u + 24u + 12u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_ARRAY_OF && u32_at(packet, 4) == 20u);
+    TIDE_CHECK(u32_at(packet, 8) == array && u32_at(packet, 12) == TIDE_GPU_R16F && u32_at(packet, 16) == 4u
+               && u32_at(packet, 20) == 3u && u32_at(packet, 24) == 2u);
+    TIDE_CHECK(u32_at(packet, 28) == TIDE_EMBED_RENDER_ARRAY_WRITE && u32_at(packet, 32) == 36u);
+    TIDE_CHECK(u32_at(packet, 36) == array && u32_at(packet, 40) == 1u && u32_at(packet, 44) == 1u && u32_at(packet, 48) == 1u
+               && u32_at(packet, 52) == 3u && u32_at(packet, 56) == 2u);
+    uint16_t part[6];
+    memcpy(part, packet + 60, sizeof part);
+    TIDE_CHECK(part[0] == 11 && part[2] == 13 && part[3] == 21 && part[5] == 23);
 }
 
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds

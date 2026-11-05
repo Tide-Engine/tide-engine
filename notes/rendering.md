@@ -3,7 +3,9 @@
 ## Texture arrays (2026-11-05)
 
 `gpu.h`'s `array`, `array_depth`, `array_layer` and the reads `TIDE_GPU_READ_ARRAY`/`_DEPTH_ARRAY`, on Vulkan, WebGPU
-and the recorder; the renderer's `gpu_array`. Details: notes/textures.md, Texture arrays: built.
+and the recorder; the renderer's `gpu_array`. Later the same day `array_blocks` (compressed layers), `array_of` and
+`array_write` (a `Grid3`'s, written a part of a layer at a time), and the renderer's `pack_array_texture` and
+`grid_array_texture`. Details: notes/textures.md, Texture arrays: built, and The gaps closed.
 
 ## One image a texture, its samplers apart (2026-11-05)
 

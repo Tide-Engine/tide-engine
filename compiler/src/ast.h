@@ -1487,6 +1487,10 @@ typedef struct shader_texture {
     int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
 } shader_texture;
 
+// The uniform ints a size (shader.sizes) takes: a texture's two, its width and height, and an array's three, its
+// layers' count after them.
+int shader_size_words(const shader_texture *t);
+
 // One way a shader's code reads one of its textures: the texture, how (a color's filter and wrap, a depth read or
 // compared, a cube's filter), and the sampler that reads it so (shader.samplers).
 typedef struct shader_way {
