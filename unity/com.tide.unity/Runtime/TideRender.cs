@@ -185,12 +185,13 @@ namespace Tide
             Shader.PropertyToID("_TideTexture10"), Shader.PropertyToID("_TideTexture11"),
         };
 
-        // Whether this GPU replays Tide's drawing: its shaders read vertices from buffers, or on OpenGL ES 3.0 and
-        // WebGL 2 from textures.
+        // Whether this GPU replays Tide's drawing: its shaders read vertices from buffers, and it computes. Unity's
+        // OpenGL (Core, ES 3.0 and WebGL 2) doesn't replay it, as Tide has no backend that can't compute.
         public static bool Supported =>
             SystemInfo.supportsSetConstantBuffer
-            && (SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3
-                || SystemInfo.supportsComputeShaders && SystemInfo.graphicsShaderLevel >= 45);
+            && SystemInfo.graphicsDeviceType != GraphicsDeviceType.OpenGLES3
+            && SystemInfo.graphicsDeviceType != GraphicsDeviceType.OpenGLCore
+            && SystemInfo.supportsComputeShaders && SystemInfo.graphicsShaderLevel >= 45;
 
         // Whether a scriptable render pipeline draws the frame, whose pass records Tide's drawing (Record), rather
         // than the built-in pipeline's camera events.

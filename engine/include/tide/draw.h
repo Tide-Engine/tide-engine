@@ -1447,9 +1447,8 @@ typedef enum tide_shader_read {
 //   game's.
 // - `texture_count` textures: `pixels0`, `pixels1`... each read as
 //   `texture_reads` says, a color where it says nothing. One read as depth is
-//   a `sampler2D` whose red is the depth in GLSL, and a `texture_depth_2d`
-//   with a `sampler` in WGSL; one that's compared is a `sampler2DShadow`, and
-//   a `texture_depth_2d` with a `sampler_comparison`.
+//   a `texture_depth_2d` with a `sampler`; one that's compared is a
+//   `texture_depth_2d` with a `sampler_comparison`.
 //
 // Its fragment stage writes `outputs` colors, at locations 0 on (one, for 0):
 // the first is the pixel's in the window and in a target's first color image,
@@ -1457,8 +1456,7 @@ typedef enum tide_shader_read {
 // several (tide_render_target_make_of). Those a target has no image for go
 // nowhere, and the images past them are left as they were.
 //
-// GLSL is without its version line, its uniforms a std140 block named
-// `uniforms`. WGSL has both stages, `vertex` and `fragment`, its uniforms at
+// WGSL has both stages, `vertex` and `fragment`, its uniforms at
 // binding 0 of group 0, and texture i and its sampler at bindings 1 + 2i and
 // 2 + 2i; it's NULL off the web. SPIR-V, for Vulkan, is the WGSL's (tidec
 // translates it): its entry points `vertex` and `fragment`, its bindings
@@ -1469,7 +1467,6 @@ typedef enum tide_shader_read {
 #endif
 typedef struct tide_shader {
     const char *name; // For messages: "Wave and Shade on BoxVertex"
-    const char *glsl_vertex, *glsl_fragment;
     const char *wgsl;
     const uint32_t *spirv; // ...and its words
     uint32_t spirv_words;
@@ -1493,11 +1490,12 @@ typedef struct tide_shader {
     // uniforms' `screen.w` is below 0, and it cuts at 0.5 itself.
     bool cutout;
     uint32_t bounds_position; // 1 + float3 position's byte offset, only for undeformed 3D geometry; 0: unknown
-    // Its vertex stage for a listed run (tide_draw_run.listed), where it has one: an int instance attribute,
-    // the instance's place in its list, in place of the packs, which it reads from texture `texture_count` (its
-    // list's numbers: tide_draw_mesh_shaded_list), each pack a pixel. The fragment stage is glsl_fragment and
-    // the WGSL module's. NULL for a shader whose instances don't come from a list alone.
-    const char *glsl_listed_vertex;
+    // Whether it has a vertex stage for a listed run (tide_draw_run.listed): an int instance attribute, the
+    // instance's place in its list, in place of the packs, which it reads from texture `texture_count` (its
+    // list's numbers: tide_draw_mesh_shaded_list), each pack a pixel. That stage is a WGSL module of its own, the
+    // fragment stage the same as `wgsl`'s, and its SPIR-V; both NULL where `listed` is false, which is for a
+    // shader whose instances don't come from a list alone.
+    bool listed;
     const char *wgsl_listed;
     const uint32_t *spirv_listed;
     uint32_t spirv_listed_words;

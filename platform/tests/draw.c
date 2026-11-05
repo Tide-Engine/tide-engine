@@ -1043,22 +1043,6 @@ typedef struct lit_instance {
 
 static const tide_shader lit_shader = {
     .name = "lit",
-    .glsl_vertex = "layout(location = 0) in vec3 position;\n"
-                   "layout(location = 1) in vec3 normal;\n"
-                   "layout(location = 2) in vec4 model0;\n"
-                   "layout(location = 3) in vec4 model1;\n"
-                   "layout(location = 4) in vec4 model2;\n"
-                   "layout(location = 5) in vec4 model3;\n"
-                   "layout(location = 6) in vec4 color;\n"
-                   GLSL_UNIFORMS("vec4 origin; ")
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    tint = vec4(color.rgb * -normal.z, color.a);\n"
-                   "    mat4 relative = mat4(model0 - origin * model0.w, model1 - origin * model1.w,\n"
-                   "                         model2 - origin * model2.w, model3 - origin * model3.w);\n"
-                   "    gl_Position = tide_camera * (relative * vec4(position, 1.0));\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT_WITH("vec4 origin; "),
     .wgsl = WGSL(WGSL_UNIFORMS("origin: vec4f, ") WGSL_TINT_CORNER
         "@vertex fn vertex(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) model0: vec4f,\n"
         "                  @location(3) model1: vec4f, @location(4) model2: vec4f, @location(5) model3: vec4f,\n"
@@ -1084,15 +1068,6 @@ static const tide_shader lit_shader = {
 // In 2D: a position, in its instance's color.
 static const tide_shader flat_shader = {
     .name = "flat",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in vec4 color;\n"
-                   GLSL_UNIFORMS("")
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    tint = color;\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
     .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
         "@vertex fn vertex(@location(0) position: vec2f, @location(1) color: vec4f) -> Corner {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -1120,19 +1095,6 @@ typedef struct picked_uniforms {
 
 static const tide_shader picked_shader = {
     .name = "picked",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   PICKED_GLSL_UNIFORMS
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = PICKED_GLSL_UNIFORMS
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    vec4 c = tint;\n"
-                     "    if (pick.x == 1) c = c.gbra;\n"
-                     "    if (pick.w == -3) c.rgb = 1.0 - c.rgb;\n"
-                     "    pixel = vec4(c.rgb * c.a, c.a);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("tint: vec4f, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -1166,16 +1128,6 @@ _Static_assert(sizeof(many_uniforms) == TIDE_SHADER_UNIFORM_BYTES, "all the unif
 
 static const tide_shader many_shader = {
     .name = "many",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   MANY_GLSL_UNIFORMS
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = MANY_GLSL_UNIFORMS
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    pixel = vec4(colors[pick.x].rgb * colors[pick.x].a, colors[pick.x].a);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 248>, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -1208,18 +1160,6 @@ typedef struct counted_instance {
 
 static const tide_shader counted_shader = {
     .name = "counted",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in int bits;\n"
-                   "layout(location = 2) in vec4 shift;\n"
-                   "layout(location = 3) in ivec4 mask;\n"
-                   GLSL_UNIFORMS("")
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    int c = (bits & mask.x) ^ mask.w;\n"
-                   "    tint = vec4(float((c >> 16) & 255), float((c >> 8) & 255), float(c & 255), 255.0) / 255.0;\n"
-                   "    gl_Position = tide_camera * vec4(position + shift.xy + vec2(mask.yz), 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
     .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
         "@vertex fn vertex(@location(0) position: vec2f, @location(1) bits: i32, @location(2) shift: vec4f,\n"
         "                  @location(3) mask: vec4i) -> Corner {\n"
@@ -1249,23 +1189,6 @@ typedef struct uv_vertex {
 
 static const tide_shader halves_shader = {
     .name = "halves",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in vec2 uv;\n"
-                   GLSL_UNIFORMS("")
-                   "out vec2 at;\n"
-                   "void main() {\n"
-                   "    at = uv;\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = "in vec2 at;\n"
-                     "uniform sampler2D pixels0;\n"
-                     "uniform sampler2D pixels1;\n"
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    vec4 left = texture(pixels0, vec2(at.x * 2.0, at.y));\n"
-                     "    vec4 right = texture(pixels1, vec2(at.x * 2.0 - 1.0, at.y));\n"
-                     "    pixel = at.x < 0.5 ? left : right;\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("")
         "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
         "@group(0) @binding(2) var how0: sampler;\n"
@@ -1299,16 +1222,6 @@ static const tide_shader halves_shader = {
 // in the texture its color is.
 static const tide_shader sampled_shader = {
     .name = "sampled",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   "layout(location = 1) in vec4 place;\n"
-                   GLSL_UNIFORMS("")
-                   "uniform sampler2D pixels0;\n"
-                   "out vec4 tint;\n"
-                   "void main() {\n"
-                   "    tint = textureLod(pixels0, place.zw, 0.0);\n"
-                   "    gl_Position = tide_camera * vec4(position + place.xy, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_TINT_FRAGMENT,
     .wgsl = WGSL(WGSL_UNIFORMS("")
         "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
         "@group(0) @binding(2) var how0: sampler;\n"
@@ -1335,17 +1248,6 @@ static const tide_shader sampled_shader = {
 // green above 256. OpenGL counts rows from the bottom.
 static const tide_shader placed_shader = {
     .name = "placed",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   GLSL_UNIFORMS("")
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_UNIFORMS("")
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    vec2 p = vec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y) / tide_screen.xy;\n"
-                     "    pixel = vec4(p.x < 32.0 ? 1.0 : 0.0, p.y < 256.0 ? 1.0 : 0.0, 0.0, 1.0);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
@@ -4136,24 +4038,6 @@ static void bench_light_read(const void *element, int32_t *words)
 // texture each takes, and which of an element's numbers its color starts at.
 static const tide_shader lights_shader = {
     .name = "lights",
-    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
-                   GLSL_UNIFORMS("ivec4 lights; ")
-                   "void main() {\n"
-                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
-                   "}\n",
-    .glsl_fragment = GLSL_UNIFORMS("ivec4 lights; ")
-                     "uniform highp isampler2D pixels0;\n"
-                     "out vec4 pixel;\n"
-                     "void main() {\n"
-                     "    int light = (int(gl_FragCoord.x) + int(gl_FragCoord.y) * 256) % max(lights.x, 1);\n"
-                     "    int word = light * lights.y + lights.z;\n"
-                     "    int first = word >> 2;\n"
-                     "    ivec4 a = texelFetch(pixels0, ivec2(first & 1023, first >> 10), 0);\n"
-                     "    ivec4 b = texelFetch(pixels0, ivec2((first + 1) & 1023, (first + 1) >> 10), 0);\n"
-                     "    int at = word & 3;\n"
-                     "    ivec3 color = at == 0 ? a.xyz : at == 1 ? a.yzw : at == 2 ? ivec3(a.zw, b.x) : ivec3(a.w, b.xy);\n"
-                     "    pixel = vec4(intBitsToFloat(color), 1.0);\n"
-                     "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("lights: vec4i, ")
         "@group(0) @binding(1) var pixels0: texture_2d<i32>;\n"
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"

@@ -65,7 +65,7 @@ has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
   names is a storage slot (`shader.storage`, by source decl and field, from
   `plan_reads`), read through per-slot functions (`need_storage`: `tide_word`,
   `tide_count`, `tide_capacity`, `tide_get`, and `tide_put` where a kernel
-  writes it; zeros in GLSL); atomics through `need_atomic` (each `&array[i]`
+  writes it); atomics through `need_atomic` (each `&array[i]`
   inline, as the HLSL translator takes them; capacity-guarded); shared atomic
   arrays through `need_shared_access`. `plan_kernel` plans one shader a kernel
   (`shader.compute`, `.kernel`): its values all uniforms, no engine header,

@@ -241,7 +241,9 @@ TIDE_TEST(render3d_wind_bounds_cull_color_and_opaque_cutout_shadows)
                     if (command->kind != TIDE_DRAW_SHADED) continue;
                     const tide_draw_run *run = &draw.runs[command->shaded.run];
                     if (!run->count || run->shader->dims != 3) continue;
-                    TIDE_CHECK(strstr(run->shader->glsl_vertex, "ApplyWind") != NULL);
+#ifdef __wasm__ // The shader's text, where the build keeps it (the web's WGSL)
+                    TIDE_CHECK(run->shader->wgsl && strstr(run->shader->wgsl, "ApplyWind") != NULL);
+#endif
                     // Captured frame time must reach BOTH passes on each
                     // frame, without a stale per-material/shadow snapshot.
                     bool captured = false;
