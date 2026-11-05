@@ -8,6 +8,7 @@
 #include "tide/list.h"
 #include "tide/mesh.h"
 #include "tide/text.h"
+#include "list_data_cache.h" // The idle budget, engine/src
 #include "tide_test.h"
 
 // Instances of a list the draw list keeps (tide_draw_mesh_shaded_list): the runs it records are the runs the same
@@ -215,18 +216,26 @@ TIDE_TEST(draw_listed_numbers_are_sent_once)
     TIDE_CHECK(versions[1] == versions[0] && versions[2] == versions[1] && versions[3] == versions[2]);
     TIDE_CHECK(versions[4] != versions[3]);
     const tide_draw_texture *page = &d.textures[slots[4] - 1u];
+    const uint64_t page_id = page->id;
     const tide_draw_area *areas;
     uint32_t count;
     TIDE_REQUIRE(tide_draw_texture_since(page, versions[3], &areas, &count));
     TIDE_CHECK(count >= 1 && areas[0].height <= 19 && areas[0].height < page->height);
-    // A frame that draws none of it lets its page go, and the next makes it again, right
+    // A frame that draws none of it keeps its page and its regions (the idle budget, list_data_cache.h): the next
+    // draws them as they are, writing nothing
     tide_draw_reset(&d);
+    bool held = false;
+    for (uint32_t i = 0; i < d.texture_count; i++) held |= d.textures[i].id == page_id && d.textures[i].held;
+    TIDE_CHECK(held);
     tide_draw_reset(&d);
     tide_draw_reset(&copied);
     camera(&d);
     camera(&copied);
     draw_both(&d, &copied, &listed_shader, list, vertices, indices, true);
     same_runs(&d, &copied, -1);
+    const uint32_t again = d.runs[d.commands[d.count - 1u].shaded.run].textures[0];
+    TIDE_REQUIRE(again && again <= d.texture_count);
+    TIDE_CHECK(d.textures[again - 1u].id == page_id && d.textures[again - 1u].version == versions[4]);
     // Forgetting forgets them all
     tide_draw_forget(&d);
     tide_draw_reset(&d);
@@ -335,6 +344,123 @@ TIDE_TEST(draw_listed_declines_what_it_cannot_draw)
     tide_draw_free(&d);
     tide_draw_free(&copied);
     tide_list_release(&list, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
+// The page of the frame's first listed run, and its version.
+static uint64_t page_version(const tide_draw_list *d, const tide_list items)
+{
+    (void)items;
+    for (uint32_t i = 0; i < d->count; i++) {
+        if (d->commands[i].kind != TIDE_DRAW_SHADED) continue;
+        const tide_draw_run *run = &d->runs[d->commands[i].shaded.run];
+        if (!run->listed) continue;
+        return d->textures[run->textures[0] - 1u].version;
+    }
+    return 0;
+}
+
+static bool listed_draw(tide_draw_list *d, const tide_list items, const tide_list vertices, const tide_list indices)
+{
+    return tide_draw_mesh_shaded_list(d, &listed_shader, vertices, indices, items, sizeof(item), write_item, 0x80000001u,
+                                      NULL, NULL, 0);
+}
+
+// A list drawn every other frame, or skipped for a while, keeps its region: its numbers are written once. One
+// unused for longer than TIDE_DRAW_LISTED_IDLE_FRAMES is written again.
+TIDE_TEST(draw_listed_numbers_stay_while_skipped)
+{
+    const uint64_t mark = tide_scratch_mark();
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
+    tide_list every = items_of(50, 1), other = items_of(60, 2);
+    tide_draw_list d = {0}, copied = {0};
+    uint64_t version = 0;
+    for (int frame = 0; frame < 8; frame++) {
+        tide_draw_reset(&d);
+        tide_draw_reset(&copied);
+        camera(&d);
+        camera(&copied);
+        draw_both(&d, &copied, &listed_shader, every, vertices, indices, true);
+        if (frame % 2 == 0) draw_both(&d, &copied, &listed_shader, other, vertices, indices, true);
+        same_runs(&d, &copied, -1);
+        if (frame) TIDE_CHECK(page_version(&d, every) == version); // Nothing written since the first frame
+        version = page_version(&d, every);
+    }
+    // Skipped for as long as it's kept, then drawn: its numbers are where they were
+    for (uint32_t i = 0; i + 1u < TIDE_DRAW_LISTED_IDLE_FRAMES; i++) {
+        tide_draw_reset(&d);
+        camera(&d);
+        TIDE_CHECK(listed_draw(&d, every, vertices, indices));
+    }
+    tide_draw_reset(&d);
+    tide_draw_reset(&copied);
+    camera(&d);
+    camera(&copied);
+    draw_both(&d, &copied, &listed_shader, other, vertices, indices, true);
+    same_runs(&d, &copied, -1);
+    TIDE_CHECK(page_version(&d, other) == version);
+    // ...and skipped for longer, its region goes: drawn, it's written again, right
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_IDLE_FRAMES + 1u; i++) {
+        tide_draw_reset(&d);
+        camera(&d);
+        TIDE_CHECK(listed_draw(&d, every, vertices, indices));
+    }
+    tide_draw_reset(&d);
+    tide_draw_reset(&copied);
+    camera(&d);
+    camera(&copied);
+    draw_both(&d, &copied, &listed_shader, other, vertices, indices, true);
+    same_runs(&d, &copied, -1);
+    TIDE_CHECK(page_version(&d, other) != version);
+    tide_draw_free(&d);
+    tide_draw_free(&copied);
+    tide_list_release(&every, TIDE_IN_LOCAL);
+    tide_list_release(&other, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
+// Regions not drawn lately are kept within TIDE_DRAW_LISTED_IDLE_BYTES: past it, the longest unused go first, and
+// of as old, the one on the later page.
+TIDE_TEST(draw_listed_idle_regions_past_the_budget_go)
+{
+    const uint64_t mark = tide_scratch_mark();
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    const tide_list vertices = tide_list_from(corners, 3, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(faces, 3, sizeof(uint32_t));
+    // Two lists of 6 packs an instance, each over half the budget, too many for one page together
+    const int32_t big = (int32_t)(TIDE_DRAW_LISTED_IDLE_BYTES / 2u / sizeof(instance)) + 4096;
+    tide_list small = items_of(10, 1), first = items_of(big, 2), second = items_of(big, 3);
+    tide_draw_list d = {0};
+    uint64_t pages[2] = {0};
+    for (int frame = 0; frame < 4; frame++) {
+        tide_draw_reset(&d);
+        camera(&d);
+        TIDE_CHECK(listed_draw(&d, small, vertices, indices));
+        if (frame == 0 || frame == 3) { // Both, then neither for two frames, then both again
+            TIDE_CHECK(listed_draw(&d, first, vertices, indices));
+            const uint32_t at = d.count;
+            TIDE_CHECK(listed_draw(&d, second, vertices, indices));
+            for (uint32_t i = 0; i < d.count; i++) {
+                const tide_draw_command *c = &d.commands[i];
+                if (c->kind != TIDE_DRAW_SHADED || !d.runs[c->shaded.run].listed) continue;
+                const tide_draw_texture *page = &d.textures[d.runs[c->shaded.run].textures[0] - 1u];
+                if (frame == 0) pages[i >= at] = page->version;
+                else TIDE_CHECK((page->version == pages[i >= at]) == (i < at)); // The first stayed; the second was written again
+            }
+        }
+    }
+    tide_draw_free(&d);
+    tide_list_release(&small, TIDE_IN_LOCAL);
+    tide_list_release(&first, TIDE_IN_LOCAL);
+    tide_list_release(&second, TIDE_IN_LOCAL);
     tide_scratch_reset(mark);
     tide_text_use(NULL, NULL);
     tide_heap_free(&heap);

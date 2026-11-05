@@ -36,7 +36,7 @@ foreach(font Tuffy Tuffy_Bold)
 endforeach()
 
 add_executable(tide_tests ${TIDE_TEST_SOURCES} ${TIDE_TEST_FONTS} "${PROJECT_SOURCE_DIR}/platform/src/png.c")
-target_include_directories(tide_tests PRIVATE "${PROJECT_SOURCE_DIR}/platform/src")
+target_include_directories(tide_tests PRIVATE "${PROJECT_SOURCE_DIR}/platform/src" "${PROJECT_SOURCE_DIR}/engine/src")
 target_link_libraries(tide_tests PRIVATE tide tide_audio_refs)
 
 add_test(NAME tide_tests COMMAND tide_tests)

@@ -438,12 +438,13 @@ static uint64_t mesh_bytes(const tide_draw_mesh_data *m)
     return m->vertex_capacity + ((uint64_t)m->index_capacity + m->level_index_capacity) * sizeof(uint32_t);
 }
 
-// Lists made along the way, and a pack's, are all one place's (mesh3_slot): which one was drawn at another
-// version since can't be told, so only the budget lets theirs go.
+// Lists made along the way, and a pack's, are all one place's (mesh3_slot), as made meshes are (tide_draw_mesh_key's
+// UINT64_MAX, no handle's): which one was drawn at another version since can't be told, so only the budget lets
+// theirs go.
 static bool mesh_of_scratch(const tide_draw_mesh_data *m)
 {
     const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
-    return m->space != TIDE_MESH_MEMORY && (m->id == scratch || m->other == scratch);
+    return m->space != TIDE_MESH_MEMORY && (m->id == scratch || m->other == scratch || m->id == UINT64_MAX);
 }
 
 static bool same_lists(const tide_draw_mesh_data *a, const tide_draw_mesh_data *b)
@@ -454,6 +455,7 @@ static bool same_lists(const tide_draw_mesh_data *a, const tide_draw_mesh_data *
 typedef struct idle_mesh {
     uint64_t bytes;
     uint32_t age, place;
+    bool once; // Only one frame drew it: TIDE_MESH_ONCE_*'s
 } idle_mesh;
 
 static int idle_mesh_order(const void *left, const void *right)
@@ -476,13 +478,12 @@ static void forget_unplaced_levels(tide_draw_list *d)
     reindex_meshes(d);
 }
 
-// The meshes the frame didn't draw: kept, within the idle budget (TIDE_MESH_IDLE_FRAMES, tide/draw.h), where a
-// frame before drew them too and their lists weren't drawn at another version this frame. Each level of detail
-// goes with the mesh it's of. Which go is the list's alone, so it's the same each run.
+// The meshes the frame didn't draw: kept, within the idle budget (TIDE_MESH_IDLE_FRAMES, tide/draw.h), or one frame
+// alone drew them within TIDE_MESH_ONCE_FRAMES', where their lists weren't drawn at another version this frame.
+// Each level of detail goes with the mesh it's of. Which go is the list's alone, so it's the same each run.
 static void forget_idle_meshes(tide_draw_list *d)
 {
-    // What one frame alone drew (a mesh made again each frame) and what's past its frames go first, with nothing
-    // to make: the rest are weighed below
+    // What's past its frames goes first, with nothing to make: the rest are weighed below
     uint32_t idle = 0, drawn = 0;
     bool freed = false;
     for (uint32_t i = 0; i < d->mesh_count; i++) {
@@ -490,7 +491,7 @@ static void forget_idle_meshes(tide_draw_list *d)
         if (m->space == TIDE_MESH_NONE) continue;
         if (m->frame == d->frame) {
             if (!m->base && !mesh_of_scratch(m)) drawn++;
-        } else if (m->made == m->frame || d->frame - m->frame > TIDE_MESH_IDLE_FRAMES) {
+        } else if (d->frame - m->frame > (m->made == m->frame ? (uint32_t)TIDE_MESH_ONCE_FRAMES : (uint32_t)TIDE_MESH_IDLE_FRAMES)) {
             free_mesh_place(d, i);
             freed = true;
         } else {
@@ -531,24 +532,31 @@ static void forget_idle_meshes(tide_draw_list *d)
             }
         }
         if (keep) {
-            kept[count++] = (idle_mesh){.bytes = mesh_bytes(m), .age = d->frame - m->frame, .place = i};
+            kept[count++] = (idle_mesh){.bytes = mesh_bytes(m), .age = d->frame - m->frame, .place = i,
+                                        .once = m->made == m->frame};
         } else {
             free_mesh_place(d, i);
             freed = true;
         }
     }
     free(seen);
-    // The budget: sorted, the most recently drawn first, only where they're past it
-    uint64_t total = 0;
-    for (uint32_t i = 0; i < count; i++) total += kept[i].bytes;
-    if (count > TIDE_MESH_IDLE_COUNT || total > TIDE_MESH_IDLE_BYTES) {
+    // The budgets: sorted, the most recently drawn first, only where they're past one
+    uint64_t total[2] = {0, 0};
+    uint32_t counted[2] = {0, 0};
+    for (uint32_t i = 0; i < count; i++) {
+        total[kept[i].once] += kept[i].bytes;
+        counted[kept[i].once]++;
+    }
+    if (counted[0] > TIDE_MESH_IDLE_COUNT || total[0] > TIDE_MESH_IDLE_BYTES || counted[1] > TIDE_MESH_ONCE_COUNT
+        || total[1] > TIDE_MESH_ONCE_BYTES) {
         qsort(kept, count, sizeof *kept, idle_mesh_order);
-        uint64_t remaining = TIDE_MESH_IDLE_BYTES;
-        uint32_t room = TIDE_MESH_IDLE_COUNT;
+        uint64_t remaining[2] = {TIDE_MESH_IDLE_BYTES, TIDE_MESH_ONCE_BYTES};
+        uint32_t room[2] = {TIDE_MESH_IDLE_COUNT, TIDE_MESH_ONCE_COUNT};
         for (uint32_t i = 0; i < count; i++) {
-            if (room && kept[i].bytes <= remaining) {
-                remaining -= kept[i].bytes;
-                room--;
+            const bool once = kept[i].once;
+            if (room[once] && kept[i].bytes <= remaining[once]) {
+                remaining[once] -= kept[i].bytes;
+                room[once]--;
                 continue;
             }
             free_mesh_place(d, kept[i].place);
@@ -590,11 +598,12 @@ void tide_draw_reset(tide_draw_list *d)
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
     d->font_count = 0;
     // The textures the frame drew with stay, for the next to find its pixels
-    // here already
+    // here already, and the pages of listed regions kept for frames to come
+    if (d->listed) tide_draw_listed_hold(d);
     uint32_t kept = 0;
     for (uint32_t i = 0; i < d->texture_count; i++) {
         tide_draw_texture *t = &d->textures[i];
-        if (t->frame != d->frame) {
+        if (t->frame != d->frame && !t->held) {
             free_pixels(t);
             continue;
         }
@@ -633,7 +642,7 @@ void tide_draw_free(tide_draw_list *d)
     tide_draw_lod_free(d); // First: what its jobs make is stopped and waited for
     tide_skinned_draw_cache_free(d);
     free(d->list_data);
-    free(d->listed);
+    if (d->listed) tide_draw_listed_clear(d, true);
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     free_meshes(d);
     free(d->profile_links);
@@ -1527,7 +1536,7 @@ void tide_draw_forget(tide_draw_list *d)
     d->profile_mesh_name = NULL;
     tide_skinned_draw_cache_reset(d);
     if (d->list_data) memset(d->list_data, 0, sizeof *d->list_data);
-    if (d->listed) memset(d->listed, 0, sizeof *d->listed); // Its lists are drawn as if never seen
+    if (d->listed) tide_draw_listed_clear(d, false); // Its lists are drawn as if never seen
     const bool had_targets = d->target_count != 0;
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     d->texture_count = 0;

@@ -225,14 +225,14 @@ TIDE_TEST(draw_levels_are_meshes_with_the_full_meshes_vertices)
     }
     const uint32_t first = runs[1]->mesh3.mesh, second = runs[2]->mesh3.mesh;
     // The next frame draws the second level alone: it has its place still, and so has the full mesh, and the
-    // first level's is free
+    // first level, which one frame drew, keeps its own a while (TIDE_MESH_ONCE_FRAMES)
     frame(&d);
     TIDE_REQUIRE(leveled_mesh(&d) == mesh && d.meshes[mesh - 1u].levels == 2);
     tide_draw_instance(&d, mesh, at(0.0f, 100.0f), 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_REQUIRE(runs_of(&d, runs, 4) == 1);
     TIDE_CHECK(runs[0]->mesh3.mesh == second);
     frame(&d);
-    TIDE_CHECK(d.meshes[first - 1u].space == TIDE_MESH_NONE && d.meshes[second - 1u].space != TIDE_MESH_NONE);
+    TIDE_CHECK(d.meshes[first - 1u].space != TIDE_MESH_NONE && d.meshes[second - 1u].space != TIDE_MESH_NONE);
     // ...and a frame that drew a level alone still kept the mesh it's a level of
     const uint32_t again = leveled_mesh(&d);
     TIDE_CHECK(again == mesh && d.meshes[mesh - 1u].vertices != NULL && d.meshes[mesh - 1u].levels == 2);

@@ -644,16 +644,19 @@ static uint64_t held_with_target(const int width, const int height)
     render_expect(expected, "a target the count is of");
     const uint64_t held = tide_platform_gpu_memory();
     tide_render_target_dispose(owned);
-    tide_draw_reset(&render_list);
-    tide_draw_clear(&render_list, (tide_color){1, 1, 0, 1});
-    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0xffff00ffu;
-    render_expect(expected, "a frame without the disposed target");
+    // The blit's quad, drawn in one frame, stays for TIDE_MESH_ONCE_FRAMES more (tide/draw.h): frames past them
+    for (int frame = 0; frame <= TIDE_MESH_ONCE_FRAMES; frame++) {
+        tide_draw_reset(&render_list);
+        tide_draw_clear(&render_list, (tide_color){1, 1, 0, 1});
+        for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0xffff00ffu;
+        render_expect(expected, "a frame without the disposed target");
+    }
     return held;
 }
 
 // The count grows by a target's bytes (4 of color and 4 of depth a pixel) as
-// frames draw into it, and is back where it was once it's disposed and a
-// frame drew without it. Two sizes, as the blit's mesh is held with the
+// frames draw into it, and is back where it was once it's disposed and
+// frames drew without it. Two sizes, as the blit's mesh is held with the
 // target: the difference between them is the targets' alone. It's what was
 // asked for, so it's the same number on every backend.
 static void check_gpu_memory(void)

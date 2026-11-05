@@ -3628,7 +3628,22 @@ static void idle_meshes_kept(void)
     expect(idle_frame(true, got) == 1u, "then it's sent again from the list's copy when it's drawn");
     expect(near(got[0], rgba(red), 0) && tide_platform_gpu_memory() == both, "and drawn, with its buffers back");
     tide_mesh_idle_frames = frames;
+    // A mesh one frame drew stays too, for TIDE_MESH_ONCE_FRAMES: drawn every other frame, it isn't sent again
+    tide_draw_forget(&list);
+    expect(idle_frame(true, got) == 2u, "after forgetting, both are sent again");
+    const uint64_t once = tide_platform_gpu_memory();
+    expect(idle_frame(false, got) == 0u && tide_platform_gpu_memory() == once,
+           "a mesh one frame drew stays on the GPU through a frame without it");
+    expect(idle_frame(true, got) == 0u, "drawn every other frame, it isn't sent again");
+    expect(near(got[0], rgba(red), 0) && near(got[1], rgba(blue), 0), "and draws as it did");
+    // ...and one drawn once goes after TIDE_MESH_ONCE_FRAMES frames without it
+    tide_draw_forget(&list);
+    idle_frame(true, got);
+    for (uint32_t i = 0; i <= TIDE_MESH_ONCE_FRAMES; i++) idle_frame(false, got);
+    expect(tide_platform_gpu_memory() < once, "a mesh drawn once is let go after TIDE_MESH_ONCE_FRAMES frames");
+    expect(idle_frame(true, got) == 1u && near(got[0], rgba(red), 0), "then it's sent again when it's drawn");
 }
+
 
 // Levels of detail: a mesh whose levels are other triangles of its corners,
 // so a pixel says which was drawn. The full mesh is two squares side by side,
@@ -4346,6 +4361,62 @@ static void transient_data_textures(void)
     tide_draw_free(&extra);
 }
 
+// A texture the list holds though no step draws with it (a page of listed
+// regions, tide_draw_texture.held) stays on the GPU as it is, counted in its
+// memory, and isn't sent again when it's drawn again; once let go, it goes.
+static void held_data_textures(void)
+{
+    const tide_float2 point = tide_f2(4.5f, 4.5f);
+    uint32_t got;
+    tide_draw_forget(&list); // No other fixture's meshes or textures
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, &point, 1, &got);
+    const uint64_t base = tide_platform_gpu_memory();
+    uint64_t drawn = 0;
+    for (int frame = 0; frame < 3; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_draw_set_screen(&list);
+        if (frame != 1) {
+            const uint64_t mark = tide_scratch_mark();
+            transient_data_cell(&list, 0, 5u, 1u);
+            tide_scratch_reset(mark);
+        }
+        const uint64_t before = tide_platform_gpu_written();
+        tide_platform_read_pixels(&list, &point, 1, &got);
+        const bool data = frame != 1;
+        expect(near(got, rgba(data ? transient_data_color(0, 5u) : background), 8), "held data: each frame's pixels");
+        if (frame == 0) {
+            drawn = tide_platform_gpu_memory();
+            expect(drawn > base, "held data: the data and its mesh are on the GPU");
+            bool found = false;
+            for (uint32_t i = 0; i < list.texture_count; i++) {
+                if (list.textures[i].space != TIDE_PIXELS_LIST) continue;
+                list.textures[i].held = 1u; // As a page with regions that stay is held
+                found = true;
+            }
+            expect(found, "held data: the frame's data texture");
+        } else {
+            expect(tide_platform_gpu_memory() == drawn, "held data: a frame without it keeps it on the GPU");
+            if (frame == 2) expect(tide_platform_gpu_written() == before, "held data: drawn again, nothing is sent");
+        }
+    }
+    // Let go: the list frees it at its next reset that doesn't draw it, and the renderer at its next frame
+    for (uint32_t i = 0; i < list.texture_count; i++) list.textures[i].held = 0;
+    for (int frame = 0; frame < 2; frame++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_platform_read_pixels(&list, &point, 1, &got);
+    }
+    expect(tide_platform_gpu_memory() < drawn, "held data: let go, it leaves the GPU");
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, &point, 1, &got);
+    expect(tide_platform_gpu_memory() == base, "held data: and nothing else stays");
+}
+
 static void bench_keep(void)
 {
     if (bench_heap.pages) return;
@@ -4817,6 +4888,7 @@ static int frame(void *user, const float seconds)
         primitives();
         shaded();
         transient_data_textures();
+        held_data_textures();
         wraps();
         mipmaps();
         smooth_shapes();
@@ -4857,6 +4929,7 @@ static int frame(void *user, const float seconds)
         large_gl_attribute_offset();
 #endif
         transient_data_textures();
+        held_data_textures();
         wraps();
         mipmaps();
         smooth_shapes();

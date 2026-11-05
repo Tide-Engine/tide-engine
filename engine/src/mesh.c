@@ -1003,6 +1003,8 @@ void tide_draw_mesh_shaded_indirect(tide_draw_list *d, const tide_shader *shader
     if (mesh) tide_draw_shaded_indirect(d, shader, mesh, instances, storage, uniforms, textures, sampling);
 }
 
+static void listed_spans_stale(tide_draw_list *d, uint32_t p);
+
 // The list's entry for an instance list (tide_draw_listed), NULL where none can be had: the table is full of
 // lists drawn this frame and the last.
 static tide_draw_listed_entry *listed_entry(tide_draw_list *d, const tide_handle at, const uint32_t item_size,
@@ -1027,6 +1029,7 @@ static tide_draw_listed_entry *listed_entry(tide_draw_list *d, const tide_handle
         break;
     }
     // Full: the lists no frame asked for since the last go, and the rest are placed again
+    listed_spans_stale(d, TIDE_DRAW_LISTED_PAGES);
     tide_draw_listed_entry *old = tide_alloc((size_t)TIDE_DRAW_LISTED_SLOTS * sizeof *old);
     memcpy(old, t->entries, sizeof t->entries);
     memset(t->entries, 0, sizeof t->entries);
@@ -1098,6 +1101,7 @@ static uint32_t listed_page(tide_draw_list *d, const uint32_t p, const uint32_t 
 {
     tide_draw_listed_page *page = &d->listed->pages[p];
     if (!listed_page_kept(d, page)) {
+        listed_spans_stale(d, p);
         page->made++;
         page->rows = 0;
         page->end = 0;
@@ -1127,20 +1131,181 @@ static uint32_t listed_page(tide_draw_list *d, const uint32_t p, const uint32_t 
     return slot;
 }
 
-typedef struct listed_span {
-    uint32_t start, end;
-} listed_span;
-
-static int listed_span_order(const void *left, const void *right)
+// Whether the frame drew the entry's list, or the frame before: its region is outside the idle budget.
+static bool listed_lately(const tide_draw_list *d, const tide_draw_listed_entry *e)
 {
-    const listed_span *a = left, *b = right;
+    return e->seen == d->frame || e->seen + 1u == d->frame;
+}
+
+// Whether the entry's region is where it was written: on its page, in the pixels it was written in.
+static bool listed_placed(const tide_draw_list *d, const tide_draw_listed_entry *e)
+{
+    if (!e->at || !e->page || e->page > TIDE_DRAW_LISTED_PAGES) return false;
+    const tide_draw_listed_page *page = &d->listed->pages[e->page - 1u];
+    return e->made == page->made && listed_page_kept(d, page);
+}
+
+typedef struct listed_idle {
+    uint64_t bytes;
+    uint32_t age, page, start;
+    tide_draw_listed_entry *e;
+} listed_idle;
+
+static int listed_idle_order(const void *left, const void *right)
+{
+    const listed_idle *a = left, *b = right;
+    if (a->age != b->age) return a->age < b->age ? -1 : 1;
+    if (a->page != b->page) return a->page < b->page ? -1 : 1;
     return a->start < b->start ? -1 : a->start != b->start;
 }
 
-// Where in page `p` `pixels` pixels can start, a multiple of `packs`, past the regions of its lists drawn this
-// frame or the last (those of others go): UINT32_MAX for nowhere within TIDE_DRAW_LISTED_ROWS rows.
-static uint32_t listed_room(tide_draw_list *d, const uint32_t p, const tide_draw_listed_entry *self,
-                            const uint32_t pixels, const uint32_t packs)
+// The regions of lists no frame drew lately: those past TIDE_DRAW_LISTED_IDLE_FRAMES go (all of them, where
+// `all`), and the rest stay within TIDE_DRAW_LISTED_IDLE_BYTES, the longest unused going first. Which go is the
+// list's alone, so it's the same each run.
+static void listed_trim(tide_draw_list *d, const bool all)
+{
+    tide_draw_listed *t = d->listed;
+    uint32_t idle = 0;
+    uint64_t bytes = 0;
+    bool went = false;
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS; i++) {
+        tide_draw_listed_entry *e = &t->entries[i];
+        if (!e->page) continue;
+        if (!listed_placed(d, e)) {
+            e->page = 0;
+            went = true;
+            continue;
+        }
+        if (listed_lately(d, e)) continue;
+        if (all || d->frame - e->seen > (uint32_t)TIDE_DRAW_LISTED_IDLE_FRAMES + 1u) { // Skipped for more frames in a row
+            e->page = 0;
+            went = true;
+            continue;
+        }
+        idle++;
+        bytes += (uint64_t)e->count * e->packs * 16u;
+    }
+    if (went) listed_spans_stale(d, TIDE_DRAW_LISTED_PAGES);
+    if (bytes <= TIDE_DRAW_LISTED_IDLE_BYTES) return;
+    listed_spans_stale(d, TIDE_DRAW_LISTED_PAGES);
+    listed_idle *order = tide_alloc((size_t)idle * sizeof *order);
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS && count < idle; i++) {
+        tide_draw_listed_entry *e = &t->entries[i];
+        if (!e->page || listed_lately(d, e)) continue;
+        order[count++] = (listed_idle){.bytes = (uint64_t)e->count * e->packs * 16u, .age = d->frame - e->seen,
+                                       .page = e->page, .start = e->start, .e = e};
+    }
+    qsort(order, count, sizeof *order, listed_idle_order);
+    uint64_t room = TIDE_DRAW_LISTED_IDLE_BYTES;
+    for (uint32_t i = 0; i < count; i++) {
+        if (order[i].bytes <= room) room -= order[i].bytes;
+        else order[i].e->page = 0;
+    }
+    free(order);
+}
+
+void tide_draw_listed_hold(tide_draw_list *d)
+{
+    tide_draw_listed *t = d->listed;
+    bool held[TIDE_DRAW_LISTED_PAGES] = {false};
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS; i++) {
+        const tide_draw_listed_entry *e = &t->entries[i];
+        // Still within its frames as the next starts (the budget's bytes are weighed as a frame draws)
+        if (listed_placed(d, e) && d->frame - e->seen <= (uint32_t)TIDE_DRAW_LISTED_IDLE_FRAMES) held[e->page - 1u] = true;
+    }
+    for (uint32_t i = 0; i < d->texture_count; i++) {
+        tide_draw_texture *x = &d->textures[i];
+        if (x->space != TIDE_PIXELS_LIST) continue;
+        for (uint32_t p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) {
+            if (x->id != listed_page_id(p)) continue;
+            x->held = held[p];
+            if (held[p]) t->pages[p].frame = d->frame; // Kept, as though drawn
+        }
+    }
+}
+
+static int listed_span_order(const void *left, const void *right)
+{
+    const tide_draw_listed_span *a = left, *b = right;
+    return a->start < b->start ? -1 : a->start != b->start;
+}
+
+void tide_draw_listed_clear(tide_draw_list *d, const bool release)
+{
+    for (uint32_t p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) free(d->listed->spans[p].spans);
+    if (release) {
+        free(d->listed);
+        d->listed = NULL;
+    } else {
+        memset(d->listed, 0, sizeof *d->listed);
+    }
+}
+
+// Page `p`'s regions are to be found again (they moved, or went), or all pages' where `p` is past them.
+static void listed_spans_stale(tide_draw_list *d, const uint32_t p)
+{
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_PAGES; i++) {
+        if (p >= TIDE_DRAW_LISTED_PAGES || i == p) d->listed->spans[i].frame = 0;
+    }
+}
+
+// Page `p`'s regions this frame, in order of place: found once, then kept as regions are placed.
+static tide_draw_listed_spans *listed_spans(tide_draw_list *d, const uint32_t p)
+{
+    tide_draw_listed *t = d->listed;
+    tide_draw_listed_spans *s = &t->spans[p];
+    if (s->frame == d->frame + 1u) return s;
+    const tide_draw_listed_page *page = &t->pages[p];
+    s->count = 0;
+    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS; i++) {
+        const tide_draw_listed_entry *e = &t->entries[i];
+        if (!e->at || e->page != p + 1u || e->made != page->made) continue; // listed_trim kept the rest
+        if (s->count == s->capacity) {
+            const uint32_t room = s->capacity ? s->capacity * 2u : 64u;
+            s->spans = tide_realloc(s->spans, (size_t)s->capacity * sizeof *s->spans, (size_t)room * sizeof *s->spans);
+            s->capacity = room;
+        }
+        s->spans[s->count++] = (tide_draw_listed_span){e->start, e->start + e->count * e->packs};
+    }
+    if (s->count) qsort(s->spans, s->count, sizeof *s->spans, listed_span_order);
+    s->frame = d->frame + 1u;
+    return s;
+}
+
+// A region placed in page `p` from `start` to `end`, among its spans where they're found already.
+static void listed_spans_add(tide_draw_list *d, const uint32_t p, const uint32_t start, const uint32_t end)
+{
+    tide_draw_listed_spans *s = &d->listed->spans[p];
+    if (s->frame != d->frame + 1u) return;
+    uint32_t at = s->count;
+    while (at && s->spans[at - 1u].start > start) at--;
+    if (s->count == s->capacity) {
+        const uint32_t room = s->capacity ? s->capacity * 2u : 64u;
+        s->spans = tide_realloc(s->spans, (size_t)s->capacity * sizeof *s->spans, (size_t)room * sizeof *s->spans);
+        s->capacity = room;
+    }
+    memmove(s->spans + at + 1u, s->spans + at, (size_t)(s->count - at) * sizeof *s->spans);
+    s->spans[at] = (tide_draw_listed_span){start, end};
+    s->count++;
+}
+
+// ...and one that's let go, where they're found: its room is free again.
+static void listed_spans_remove(tide_draw_list *d, const uint32_t p, const uint32_t start)
+{
+    tide_draw_listed_spans *s = &d->listed->spans[p];
+    if (s->frame != d->frame + 1u) return;
+    for (uint32_t i = 0; i < s->count; i++) {
+        if (s->spans[i].start != start) continue;
+        memmove(s->spans + i, s->spans + i + 1u, (size_t)(s->count - i - 1u) * sizeof *s->spans);
+        s->count--;
+        return;
+    }
+}
+
+// Where in page `p` `pixels` pixels can start, a multiple of `packs`, past the regions that stay (listed_trim):
+// UINT32_MAX for nowhere within TIDE_DRAW_LISTED_ROWS rows.
+static uint32_t listed_room(tide_draw_list *d, const uint32_t p, const uint32_t pixels, const uint32_t packs)
 {
     tide_draw_listed *t = d->listed;
     const tide_draw_listed_page *page = &t->pages[p];
@@ -1152,32 +1317,26 @@ static uint32_t listed_room(tide_draw_list *d, const uint32_t p, const tide_draw
     const uint32_t end = transient && page->transient_end > page->end ? page->transient_end : page->end;
     const uint64_t after = (end + (uint64_t)packs - 1u) / packs * packs;
     if (after + pixels <= (uint64_t)page->rows * TIDE_LIST_DATA_ACROSS) return (uint32_t)after;
-    listed_span *spans = tide_alloc(64u * sizeof *spans);
-    uint32_t count = 0, room = 64u;
-    if (transient) spans[count++] = (listed_span){page->transient_start, page->transient_end};
-    for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS; i++) {
-        tide_draw_listed_entry *e = &t->entries[i];
-        if (!e->at || e == self || e->page != p + 1u || e->made != page->made) continue;
-        if (e->seen != d->frame && e->seen + 1u != d->frame) { // Not drawn lately: its room is free
-            e->page = 0;
-            continue;
-        }
-        if (count == room) {
-            room = room ? room * 2u : 64u;
-            spans = tide_realloc(spans, (size_t)count * sizeof *spans, (size_t)room * sizeof *spans);
-        }
-        spans[count++] = (listed_span){e->start, e->start + e->count * e->packs};
-    }
-    if (count) qsort(spans, count, sizeof *spans, listed_span_order);
-    // The first gap it fits in, or after them all
+    const tide_draw_listed_spans *s = listed_spans(d, p);
+    // The first gap it fits in, or after them all, the frame's own among them
+    const tide_draw_listed_span own = {transient ? page->transient_start : 0u, transient ? page->transient_end : 0u};
+    bool own_passed = !transient || own.end <= own.start;
     uint64_t at = 0;
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint32_t i = 0;;) {
         at = (at + packs - 1u) / packs * packs;
-        if (at + pixels <= spans[i].start) break;
-        if (spans[i].end > at) at = spans[i].end;
+        tide_draw_listed_span next;
+        if (!own_passed && (i == s->count || own.start < s->spans[i].start)) {
+            next = own;
+            own_passed = true;
+        } else if (i < s->count) {
+            next = s->spans[i++];
+        } else {
+            break;
+        }
+        if (at + pixels <= next.start) break;
+        if (next.end > at) at = next.end;
     }
     at = (at + packs - 1u) / packs * packs;
-    free(spans);
     return at + pixels <= most ? (uint32_t)at : UINT32_MAX;
 }
 
@@ -1191,11 +1350,21 @@ static uint32_t listed_numbers(tide_draw_list *d, tide_draw_listed_entry *e, con
     uint32_t p = e->page ? e->page - 1u : 0u;
     bool here = e->page && e->made == t->pages[p].made && listed_page_kept(d, &t->pages[p]) && e->packs == packs;
     if (here && e->written == e->version && e->count == count) return listed_page(d, p, t->pages[p].rows, false);
-    if (!(here && count <= e->count)) { // Room of its own, on the first page that has it
+    const bool placed = !(here && count <= e->count);
+    if (placed) { // Room of its own, on the first page that has it, its own room as it was free
+        if (listed_placed(d, e)) listed_spans_remove(d, e->page - 1u, e->start);
+        e->page = 0;
         uint32_t start = UINT32_MAX;
         for (p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) {
-            start = listed_room(d, p, e, count * packs, packs);
+            start = listed_room(d, p, count * packs, packs);
             if (start != UINT32_MAX) break;
+        }
+        if (start == UINT32_MAX) { // No room beside the regions that stay: those not drawn lately go, and it's looked for again
+            listed_trim(d, true);
+            for (p = 0; p < TIDE_DRAW_LISTED_PAGES; p++) {
+                start = listed_room(d, p, count * packs, packs);
+                if (start != UINT32_MAX) break;
+            }
         }
         if (start == UINT32_MAX) {
             e->page = 0;
@@ -1220,6 +1389,7 @@ static uint32_t listed_numbers(tide_draw_list *d, tide_draw_listed_entry *e, con
     e->page = p + 1u;
     e->made = t->pages[p].made;
     if (end > t->pages[p].end) t->pages[p].end = end;
+    if (placed) listed_spans_add(d, p, e->start, end);
     e->count = count;
     e->packs = packs;
     e->written = e->version;
@@ -1236,28 +1406,21 @@ static int listed_entry_order(const void *left, const void *right)
     return a->start < b->start ? -1 : a->start != b->start;
 }
 
-// As a frame's first listed draw starts, before any run of the frame names a place: the regions of lists not
-// drawn lately go, and a page whose regions left too much room between them (where lists changed, or a list kept
-// its numbers after the frame's own) has them moved down together, its own copy's pixels, and sends what moved.
+// As a frame's first listed draw starts, before any run of the frame names a place: the regions past the idle
+// budget go (listed_trim), and a page whose regions left too much room between them (where lists changed, or a
+// list kept its numbers after the frame's own) has them moved down together, its own copy's pixels, and sends
+// what moved.
 static void listed_pack(tide_draw_list *d)
 {
     tide_draw_listed *t = d->listed;
     if (t->packed == d->frame + 1u) return;
     t->packed = d->frame + 1u;
+    listed_trim(d, false);
     uint64_t live[TIDE_DRAW_LISTED_PAGES] = {0};
     uint32_t held[TIDE_DRAW_LISTED_PAGES] = {0};
     for (uint32_t i = 0; i < TIDE_DRAW_LISTED_SLOTS; i++) {
-        tide_draw_listed_entry *e = &t->entries[i];
-        if (!e->at || !e->page || e->page > TIDE_DRAW_LISTED_PAGES) continue;
-        const tide_draw_listed_page *page = &t->pages[e->page - 1u];
-        if (e->made != page->made || !listed_page_kept(d, page)) {
-            e->page = 0;
-            continue;
-        }
-        if (e->seen != d->frame && e->seen + 1u != d->frame) { // Not drawn lately
-            e->page = 0;
-            continue;
-        }
+        const tide_draw_listed_entry *e = &t->entries[i];
+        if (!e->page) continue; // What listed_trim left is placed
         live[e->page - 1u] += (uint64_t)e->count * e->packs;
         held[e->page - 1u]++;
     }
@@ -1284,6 +1447,7 @@ static void listed_pack(tide_draw_list *d)
             at += (uint64_t)e->count * e->packs;
         }
         free(order);
+        listed_spans_stale(d, p);
         page->end = (uint32_t)at;
         page->transient_frame = 0;
         const uint32_t rows = (uint32_t)((at + TIDE_LIST_DATA_ACROSS - 1u) / TIDE_LIST_DATA_ACROSS);

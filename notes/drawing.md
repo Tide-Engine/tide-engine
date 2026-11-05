@@ -16,6 +16,82 @@ another, and runs with different lists don't join. `tide_draw_reset` empties the
 new arrays, `tide_draw_forget` forgets runs' shaders. Tests: `tidec_e2e_compute`.
 `notes/compute.md`, Built.
 
+## Idle listed regions, held pages and one-frame meshes (2026-11-05)
+
+Task (owner, from Mount & Rifle's gap "What's drawn every other frame is packed and sent again each time"):
+measure what makes the route's yaw turns stutter, then give listed regions, listed pages and one-frame meshes an
+idle budget like meshes'. Internal; no Tide or C API change. The budgets' numbers are Claude's picks.
+
+- **What the yaw turns' long frames were** (mount-and-rifle 2330682, route `tools/performance-route.txt`
+  without captures, release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER, pinned to logical CPUs 0-11, temporary
+  per-frame counters, not committed). The worst frame (1480, the -1300 turn, 120-150 ms) is first sight: about
+  850 meshes no frame had drawn (lists never seen, at any version) are copied into the list (about 275 MB,
+  65-75 ms of the views) and sent to the GPU (about 240 MB, 26-38 ms of `upload_shaded`). Frame 1440 is the same
+  at a quarter of the size (about 240 new meshes, 37-45 ms). Eviction was a smaller part: listed regions dropped
+  and written again (about 300 on 1480, 385 on each pitch frame, 1-5 ms), a page pack after the turn (17 MB moved
+  and sent), and the 64 MiB idle mesh budget letting 270-900 meshes go right after a turn, whose frees took up to
+  19 ms in one reset (frame 1521). Frame 1456 (25-40 ms) does no drawing work: it's outside the draw list. So
+  the owner's hypothesis is refuted for the worst frames; first-time mesh copies and uploads are what's left
+  (Not done, below).
+- **One-frame meshes** (`forget_idle_meshes`, `spare_unused_meshes`). A mesh only one frame drew (`made ==
+  frame`) is kept `TIDE_MESH_ONCE_FRAMES` (8) frames, within its own budget, `TIDE_MESH_ONCE_COUNT` (1,024) and
+  `TIDE_MESH_ONCE_BYTES` (16 MiB), the longest unused first, then by place; found again, it's in the ordinary
+  budget. Lists drawn at another version still supersede it. The renderer keeps its buffers the same way (a
+  second `tide_texture_idle_trim` over the once-drawn places). So a mesh drawn every other frame, or every few, is
+  neither copied nor sent again; one made again each frame of scratch lists (told apart by version alone) costs
+  up to 8 frames of copies and buffers, which then become spares as before.
+- **Made meshes** (`tide_draw_mesh_key`'s `UINT64_MAX`) are told apart by version alone, as scratch lists are
+  (`mesh_of_scratch`): before, any made mesh drawn in a frame superseded every other idle one.
+- **Listed regions** (`listed_trim`, at the frame's first listed draw, before `listed_pack`). A region whose list
+  wasn't drawn this frame or the last stays for `TIDE_DRAW_LISTED_IDLE_FRAMES` (36,000) skipped frames, within
+  `TIDE_DRAW_LISTED_IDLE_BYTES` (32 MiB) of such regions, the longest unused first, then by page and place. A
+  region that finds no room beside the ones that stay lets every idle one go and looks again. A list drawn
+  intermittently uses its numbers as they are (`listed_steady` already took them whatever frame it was last
+  asked in).
+- **Gaps among them** (`tide_draw_listed_spans`). With idle regions kept, a page has no room at its end more often,
+  and the first version looked for a gap by going through all 8,192 entries and sorting them for every region it
+  placed: 216 of 216 placements on frame 1440, 0.1 ms each, the listed writes 20-40 ms on the turns. Each page now
+  keeps its regions in order for the frame, found once and kept as regions are placed (`listed_spans_add`) or
+  moved (`listed_spans_remove`); trimming, packing, a page lost and a full table make them found again.
+- **Held pages** (`tide_draw_listed_hold`, `tide_draw_texture.held`). As `tide_draw_reset` ends a frame, a page
+  with a region that stays is held: it isn't let go as a texture a frame didn't draw with, and its `frame` is
+  kept. The renderer keeps a held texture as it is on the GPU (`hold_textures`, before `prepare_data_textures`,
+  whose pool of spares leaves it alone, and `forget_textures`); once the list lets it go, the next frame frees
+  it. Only pages are held: other data textures are the frame's as before.
+- **Layout**: `tide_draw_texture.held`, `tide_draw_listed.spans`; hosts, libraries and games rebuild together.
+  `tide_draw_listed_clear` frees the spans with the list and on `tide_draw_forget`.
+- **Tests**: `draw_idle_meshes_are_kept_for_when_drawn_again` (a one-frame mesh found uncopied after a skipped
+  frame, one drawn once gone after 8 more, made meshes on alternate frames each found);
+  `draw_idle_meshes_past_the_budget_go_longest_unused_first` (the once budget's count, apart from the other);
+  `draw_levels_are_meshes_with_the_full_meshes_vertices` (a level one frame drew keeps its place);
+  `draw_listed_numbers_are_sent_once` (a skipped frame keeps the page held and its version);
+  `draw_listed_numbers_stay_while_skipped` (alternate frames write nothing after the first; kept for exactly
+  `TIDE_DRAW_LISTED_IDLE_FRAMES` skipped frames, written again after more); `draw_listed_idle_regions_past_the_budget_go`
+  (two idle lists over the budget: the one on the later page goes). Platform: `idle_meshes_kept` (a one-frame mesh
+  stays on the GPU through a skipped frame and isn't sent again; drawn once, it goes after 9 frames);
+  `held_data_textures` (a held texture stays counted, isn't sent again, and goes once let go);
+  `check_gpu_memory` now draws 9 frames past a disposed target, as its blit's quad is a one-frame mesh.
+  `transient_data_textures` is unchanged: its data textures aren't pages. Native ASan: `tide_tests` (635) and 566
+  draw/mesh/LOD/skinned/target/embed/prewarm/shader/Render3D/game CTests including every `gpu` one, Vulkan and
+  OpenGL. Web debug: `tide_tests`, `tide_platform_draw` and `_targets` on WebGL, WebGPU and the RGBA fallback, and
+  the instancing/LOD/frustum/skinned e2es (the external Foldline layout check fails as before, unrelated).
+- **Measured** (the route above, two alternating before/after pairs each, the same counters):
+  - Shadows as the game draws them (each frame): listed regions dropped and written again 4,047-4,078 -> 111-143
+    over the route, packs 36-39 -> 2-3 (262-268 MB -> 18-40 MB moved). Section means unchanged within noise (yaw
+    turns 8.5-8.7 vs 8.6-8.8 ms, worst 120-126 ms both: first sight, above).
+  - The sun's near and far images drawn on alternate frames (a scratch copy of the game; `castNear`/`castFar`
+    gating the Clear and the draws in stage.tide, compound_kit, ways, farmen, rig, FloraCast and FloraCastFar;
+    shadows' look not checked): regions written again 280,733/281,175 -> 142/176, texture bytes sent 13.3-13.4 GB
+    -> 1.2-1.5 GB, packs 81-83 -> 3-4. Frame means: on foot 8.07/8.52 -> 6.76/6.57 ms, aim 6.35/5.96 -> 5.41/5.30,
+    sprint 7.19/7.63 -> 6.72/6.55; against shadows every frame (on foot 6.9-7.4) alternating now gains.
+  - What it costs: the list's reset 0.06 -> 0.12 ms a frame and the listed writes' time 0.027 -> 0.053 ms a frame
+    on the route (more idle meshes weighed each reset, `listed_trim`'s pass over the entries).
+- **Not done**: first-sight copies and uploads of many new meshes in one frame (the turn's 100+ ms) would need
+  them spread over frames or made cheaper to copy (the copies are fresh allocations: page faults); the game's idle
+  meshes are over the 64 MiB budget (`TIDE_MESH_IDLE_BYTES`), so a turn back fills about 100 again and the frees
+  after a turn take up to 19 ms; a budget by the device's memory, as images have, is the owner's call. Other GPUs,
+  web timings and Android unmeasured.
+
 ## Geometry attribution (2026-11-03)
 
 Capture-only geometry rows retain mesh/version, view source, destination and
@@ -141,14 +217,16 @@ task's authorization for internal choices.
   generation (`made`) changes and its lists are written again.
   `tide_draw_forget` clears the table. Lost devices and render-target
   recreation: the page is an ordinary data texture, made again from the list's
-  copy. Prewarming makes each shader's listed pipeline beside its ordinary one
+  copy. (Since 2026-11-05 a page with regions that stay is held through frames that skip it: Idle listed
+  regions, held pages and one-frame meshes, above.) Prewarming makes each shader's listed pipeline beside its ordinary one
   (`warm_key`), since `tide_platform_shaders` checks that nothing is made after
   prewarming.
 - **Memory bounds.** At most `TIDE_DRAW_LISTED_PAGES` (4) pages of
   `TIDE_DRAW_LISTED_ROWS` (2,048) rows, 32 MiB each, on the CPU and the GPU.
   A page grows by doubling from 16 rows, in place (its pixels kept). The table
   holds `TIDE_DRAW_LISTED_MOST` (4,096) lists; when full, those not drawn this
-  frame or the last go. A region not drawn this frame or the last is free. At
+  frame or the last go. A region not drawn this frame or the last is free (since 2026-11-05 it stays within an idle
+  budget: Idle listed regions, held pages and one-frame meshes, above). At
   a frame's first listed draw, before any run names a place, a page whose span
   exceeds its live regions by half plus 65,536 pixels is packed down
   (`listed_pack`: memmove in its copy, the moved rows sent). A list bigger than
