@@ -53,6 +53,16 @@ add_test(NAME bench_hash COMMAND bench_hash --quick)
 # Presentation correction costs, without changing Transform's defaults.
 add_subdirectory(corrections)
 
+# Occlusion culling at street level: 256 lists of props among houses, frames with Draw.Occlusion off and on in
+# turn, GPU time and what it hid (notes/drawing.md, Occlusion culling from a depth pyramid). The test checks the
+# same frame both ways is the same pixels.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(bench_occlusion SOURCES occlusion/game.tide NAME game HOST occlusion/main.c)
+    target_link_libraries(bench_occlusion PRIVATE tide_platform)
+    add_test(NAME bench_occlusion COMMAND bench_occlusion --quick)
+    tide_gpu_test(bench_occlusion)
+endif()
+
 tide_add_game(bench_workers SOURCES workers/game.tide NAME game HOST workers/main.c)
 target_link_libraries(bench_workers PRIVATE tide_platform)
 add_test(NAME bench_workers COMMAND bench_workers --quick)

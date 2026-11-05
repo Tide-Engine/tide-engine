@@ -51,6 +51,7 @@ TIDE_WEB_IMPORT(gpu_target_limit) int tide_web_gpu_target_limit(void);
 TIDE_WEB_IMPORT(gpu_target_texture) tide_gpu_id tide_web_gpu_target_texture(tide_gpu_id target, uint32_t color);
 TIDE_WEB_IMPORT(gpu_target_depth) tide_gpu_id tide_web_gpu_target_depth(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_resolve_depth) void tide_web_gpu_resolve_depth(tide_gpu_id target);
+TIDE_WEB_IMPORT(gpu_depth_far) tide_gpu_id tide_web_gpu_depth_far(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_target_free) void tide_web_gpu_target_free(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_target_read) void tide_web_gpu_target_read(tide_gpu_id target, uint8_t *rgba);
 TIDE_WEB_IMPORT(gpu_begin) void tide_web_gpu_begin(tide_gpu_id target, bool clear);
@@ -144,6 +145,7 @@ const tide_gpu tide_gpu_webgpu = {
     .target_texture = tide_web_gpu_target_texture,
     .target_depth = tide_web_gpu_target_depth,
     .resolve_depth = tide_web_gpu_resolve_depth,
+    .depth_far = tide_web_gpu_depth_far,
     .target_free = tide_web_gpu_target_free,
     .target_read = tide_web_gpu_target_read,
     .begin = tide_web_gpu_begin,

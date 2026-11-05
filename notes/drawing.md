@@ -2,6 +2,116 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Occlusion culling from a depth pyramid (2026-11-05)
+
+Task (owner, the culling plan's next step, "close the gaps"): Hi-Z occlusion in the GPU culling of listed runs, with a
+per-draw setting; pixel-identical frames as the bar. Every pick below is Claude's, Provisional (spec: Draw settings,
+`Occlusion`).
+
+- **What it is.** `Draw.Occlusion(enabled) { }` / `Draw.SetOcclusion(enabled)` / `Draw.SetOcclusion()`, a
+  destination's own (`target.Occlusion`), off each frame (`tide_draw_place.occlusion`, `tide_draw_set_occlusion`,
+  `_unset_`, `_push_`, `TIDE_DRAW_SAVED_OCCLUSION`; `add_setting` in builtins.c, so both forms, misuse errors, quick
+  fixes and completion are the family's). Each GPU-culled draw carries it (`tide_draw_cull.occlusion`, a byte of the
+  old padding); a set joins only draws with the same value.
+- **The test is against this frame's depth drawn so far, not last frame's.** Before the first of a *span* (GPU-culled
+  steps into one destination whose draws all have it on, with any steps between them but GPU-culled ones without it,
+  till a clear of that destination: `hiz_plan`, cull.inc), the renderer ends the pass, measures the destination's
+  depth into a max pyramid and culls the span's buckets again (`cull_span_start`). Depth only gets nearer between
+  there and each draw (LESS/LEQUAL tests, writes only where nearer; a clear ends the span), so an instance whose box
+  is behind the pyramid everywhere it can cover fails the depth test at every sample when drawn: the frame is the
+  same pixels, by construction, with no assumption about what was drawn before (see-through depth writers included),
+  camera cuts, moving occluders, resizes, first frames. Draws in a span don't hide each other (their depth isn't in the
+  measure). Spans in a destination whose pass hasn't begun this frame (`frame_target.begun`: the window's first pass
+  clears) aren't measured.
+- **Why not last frame's depth, as planned.** Last frame's depth (projected with last frame's camera) is only a guess
+  for this frame: anything that moved, or a cut, can uncover what it hid. Built first was the two-phase form (phase 0
+  leaves out what last frame's pyramid hid; at the span's end the pyramid of this frame's depth finds those it doesn't
+  hide and they're drawn there). Vulkan passed byte for byte, but WebGPU's frames differed by 1-15 pixels exactly on
+  frames that redrew instances: drawing them later than their place changes which of two surfaces at the same 24-bit
+  depth wins (where boxes interpenetrate, every seam is such a tie). No compare op fixes that order. So it was
+  replaced; no frame-to-frame state is left.
+- **Kernels** (cull.tide, `tidec --kernels` with `occlusion.tide`): `HiZFirst` (8 by 8 groups) reads the depth
+  texture (a `local singleton HiZSource { DepthTexture depth; }`: a values struct can't hold a texture) and writes level
+  0, each texel the farthest of the 2 by 2 pixels it covers; `HiZDown` halves a level; a level k is
+  `((size - 1) >> (k + 1)) + 1` texels across, the last texel of an odd level covering one less. Levels are float bits
+  in `Culling.depths` (a `GPUList<int>`: depths are never negative, so the greatest bits are the farthest) after four
+  count words (tested, hidden; `AtomicAdd` once a group). `CullListed` with `phase` 1: frustum and level as phase 0,
+  then where its job's `more.w` is 1 and the box was frustum-tested, `HiZFind` (occlusion.tide, pure numbers) and the
+  max of four texels: hidden when `nearest > max`.
+- **HiZFind**: the box's 8 corners through world-to-clip x transform (the job's camera's `toClip`, new in
+  `CullCamera`), each number with an allowance of 2^-17 of |M||T||v| (far past a vertex stage's rounding); any corner's
+  w within that of 0 or below: not sure (never culled: across the near plane, behind). The rectangle is every pixel a
+  sample of it can fall in (floor of each edge, one more each way, clamped), the level the first where its level-0
+  texels fit 2 by 2, and `nearest` is the corners' least (z/w+1)/2, nearer by 2^-20 than the 24-bit step and rounding.
+  Valid for any projection with LESS/LEQUAL depth: z/w over a box in front of the camera is least at a corner. The
+  rows are from the top, (1 - y/w)/2, as both backends store depth.
+- **Depth to measure: `gpu.h depth_far(target)`** (optional): a one-sample target's own depth texture; a multisampled
+  target's samples resolved by the farthest into a texture of its own (Vulkan `VK_RESOLVE_MODE_MAX_BIT` where
+  `supportedDepthResolveModes` has it, else 0: those targets aren't measured; WebGPU a pass whose frag loads every
+  sample, `depthFarthest`), never the sample-0 `resolve_depth` texture games read; the window (target 0): Vulkan copies
+  its depth image (now `TRANSFER_SRC`) into a texture (`window_far`), WebGPU makes the canvas's depth sampled and gives
+  it. NULL on the recorder and `gpu_none`.
+- **Renderer** (cull.inc, platform.c): the frame's culling (phase 0) as before, then `hiz_plan` marks span jobs
+  (`CullJob.more.w`) and sizes the pyramid's room (one region all spans take turns in: each span's is made and read in
+  its own compute pass). In the step loop, after the destination is selected and before its pass begins,
+  `cull_span_at(i)` ends the pass and `cull_span_start` runs HiZFirst, HiZDown a level at a time, then CullListed (phase
+  1, `first` = the span's first group), CullOffsets and CullScatter (`first` = its first bucket / group) over the span
+  alone, rewriting its buckets' places and arguments, which its draws then read. `cull_frame_end` begins a read of the
+  counts; `tide_platform_occlusion(report, wait)` gives the last ones back (with `serial`), and `tide/host.h` adds each
+  frame's to `--profile`'s report (`"occlusion": {frames, tested, hidden}`, `tide_profile_report_occlusion`).
+- **Contract for the emission work (multi-draw indirect, joined runs, stats) to merge with this:** phase 1 is the
+  frame's culling again over a contiguous range of groups and buckets, so (1) whatever kernels turn kept candidates
+  into places and draw arguments must take an offset (`Culling.first`) and rewrite exactly that range's outputs; (2) a
+  GPU draw count or a joined draw that spans buckets must be recomputed at the span's start for the buckets it touches
+  (or spans must not share a joined draw with buckets outside them); (3) the span's draws must read their arguments
+  after the span's compute pass (they're drawn later in the same frame, so any per-frame count buffer written at the
+  frame's start is stale for them). `tide_platform_cull_compare` reads places after phase 1: with occlusion its
+  "missing" counts what occlusion hid.
+- **Unity**: the recorder never culls on the GPU (`cull_plan`), so the setting draws everything there; `depth_far` is
+  NULL for it. Nothing new is recorded.
+- **Layout**: `tide_draw_place.occlusion`, `tide_draw_cull.occlusion`, `frame_target.begun`, `tide_gpu.depth_far`,
+  `tide_platform_occlusion_report`; hosts, libraries and games rebuild together. Generated code calls only the
+  setting's three functions.
+- **Tests**: `tide_platform_occlusion` (platform/tests/occlusion.tide, .c; Vulkan with validation, label `gpu`, and
+  WebGPU, `pixels`): HiZFind for 9 crafted boxes (small far: level <= 1; big near: higher; past the left edge; across
+  the near plane and behind: never; flat; orthographic; a 1x1 and a 1000x3 pyramid) and 1,400 random ones, on the CPU
+  (the same Tide as C) and the GPU, each checked against doubles: no corner at or behind w = 0 when sure, `nearest`
+  never nearer than a corner, the four texels covering every pixel a sample can fall in, the level within two of the
+  least (530 sure, 0 wrong, 242 at the least, CPU and GPU agreeing on all 1,409). Then 12 shots into the window, a
+  target and a 4-sample target (walls sliding, a cut to the field's far side, a camera inside it, the window resized),
+  each with a see-through pane writing depth before the field, a second span after a draw without it and a third after
+  `ClearDepth`: each the same pixels as the CPU path, byte for byte; on Vulkan each shot with walls before the field
+  hid some (about 12,000 instances over the window's shots) and every span made its pyramid; then a lost device and
+  all again. Vulkan 96 checks, WebGPU 92. `draw_culled_carry_occlusion` (tide_tests: the setting per destination,
+  blocks put back, carried per draw, sets split by it), `tidec_e2e_draw_frustum` mode 4 (every form, early exit, a
+  target's own), `tidec_error_draw_occlusion_without_block` and `_not_bool`, `profile_report` (the report's
+  `"occlusion"`), `bench_occlusion --quick` (gpu).
+- **Found while testing, not occlusion's**: a 4-sample target on WebGPU (Chrome, Dawn's D3D12, RTX 4080 SUPER) draws a
+  box that's wholly behind a wall at one pixel: wall 1 and box 32 of the first patch alone, the camera of shot 3, pixel
+  (139, 38) is the box's color mixed in, with culling on or off, CPU path or GPU; Vulkan draws the wall. The test shoots
+  the walls at 4 rather than 9-13, where that happens; not investigated further.
+- **Measured** (release, hidden, Vulkan, RTX 4080 SUPER):
+  - `bench_occlusion` (a town at street level, 256 lists of 1,000 balls of 320 triangles behind houses, 1920x1080,
+    two alternating pairs of 300 frames): GPU 3.88 / 3.62 ms -> 0.355 / 0.344 ms a frame (median), 96% of the 167k-180k
+    tested instances hidden, about 160 M indices a frame not drawn; the same frame both ways is the same bytes. With one
+    prop a list (nothing to save) 0.053 -> 0.126 ms: the measure's fixed cost at 1080p, one sample.
+  - Mount & Rifle at its dev f34b07a, a copy built through a scratch `TIDE_EXTERNAL_DIRS` folder as in benchmarks.md,
+    `stage.scene.SetOcclusion(true)` at DrawFlora's draws (under a define, so the same code with it off is the base);
+    menu field scene, 1920x1080, `--profile --profile-warmup 300`, 1,500 frames, three alternating pairs, and a
+    temporary per-frame read back of the culled runs' arguments (not committed): occlusion tested 2,623 flora
+    instances a frame and hid 1,470 (56%), but they're far, cheap levels: the culled runs' indices 6.71 -> 6.34 M a
+    frame (-5.5%), the vegetation pass 0.662 -> 0.617 + 0.072 ms (split by the measure), and the whole GPU 5.34 / 5.34 /
+    5.45 -> 5.68 / 5.81 / 5.76 ms. The scene is a 4-sample Rgba16f target: splitting its pass (an extra color resolve
+    and load) and resolving its depth by the most cost about 0.35-0.45 ms, which this scene doesn't win back. Its route
+    still can't run at this commit (its first click misses the new menu).
+- **Gaps**: no occlusion among a span's own draws (the two-phase form that had it couldn't keep ties' order); the
+  measure always splits the pass at the span (riding a break the destination already has before it would save most of
+  the multisampled cost, and a single-dispatch downsample the per-level barriers); the visible window's paths
+  (Vulkan's copy, WebGPU's canvas texture) are built but run by no test (every test draws into targets, and no window
+  may be shown); a Vulkan device without the MAX depth resolve measures no multisampled target; the CPU's decided runs
+  and the recorder don't occlusion-cull; counts are per frame, not per draw row; Linux, macOS, Android, other GPUs and
+  WebGPU's timings unmeasured.
+
 ## Meshes of a world's lists kept as the game keeps them (2026-11-05)
 
 The owner, after Turning round (below): is 64 MiB enough, and should a game tune it? Ideally games don't worry
@@ -152,7 +262,7 @@ same pixels. Every pick below is Claude's, Provisional.
   - GPU, the culling's compute pass included: 8.55 (an outlier) / 4.43 / 4.26 -> 4.17 / 4.22 / 4.16 ms.
   - Captures at frame 600 differ run to run with either culling (91k-136k pixels, at most 9 levels, between two
     runs of one mode as between modes): the game's own frames aren't bit-stable, as before.
-- **Gaps**: Hi-Z occlusion isn't built (the parts and the kernel's test are where it would go). 166 more draw calls
+- **Gaps**: Hi-Z occlusion is built since (Occlusion culling from a depth pyramid, above). 166 more draw calls
   a frame on that scene: levels of a draw's range that end up empty are still indirect draws, sets don't join runs
   of bytes, and a draw whose levels start lower than its set's starts another. Stats' vertices count a GPU-culled
   run's index count once (its count is the GPU's), and geometry rows don't see them. Lists that mirror and don't,

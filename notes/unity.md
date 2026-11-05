@@ -1,5 +1,11 @@
 # Unity as a front end
 
+## Occlusion culling in Unity (2026-11-05)
+
+`Draw.Occlusion` (drawing.md, Occlusion culling from a depth pyramid) culls only on the GPU, and the recorder never
+does (`cull_plan`): a game's draws with it on are recorded and replayed whole, as with it off, the same pixels.
+`gpu.h depth_far` is NULL in the recorder; nothing new is recorded and the embed ABI is unchanged.
+
 ## Unity's OpenGL: Core stays, ES 3 and WebGL go (2026-11-05)
 
 With the GL backends removed (compute is guaranteed on every backend), Tide's

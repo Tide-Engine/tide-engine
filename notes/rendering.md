@@ -25,6 +25,14 @@ passes the last list drawn began, which `tide_platform_kernels` pins (2; 3 witho
 shader's pipeline has a vertex slot of stride 0, and one with GPU indices draws `draw_indirect` with the list's count.
 Details: notes/compute.md, Meshes over GPU lists.
 
+## Occlusion culling's depth (2026-11-05)
+
+`gpu.h depth_far(target)`: what a destination's depth holds now, each pixel the farthest of its samples (a target's
+own depth texture; a multisampled one's resolved by the most: Vulkan's `VK_RESOLVE_MODE_MAX_BIT`, WebGPU's pass over
+every sample; the window's copied on Vulkan, the canvas's depth sampled on WebGPU), which `Draw.Occlusion`'s pyramid is
+made from; and `occlusion.tide`, the renderer's second Tide source. Everything else: drawing.md, Occlusion culling from
+a depth pyramid.
+
 ## The renderer's own kernels, in Tide (2026-11-05)
 
 `platform/src/cull.tide` is the renderer's first Tide source: `tidec --kernels` makes it `kernels/cull_kernels.h`

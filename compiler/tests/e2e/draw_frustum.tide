@@ -1,5 +1,6 @@
 // Automatic undeformed bounds, explicit deformation bounds, destination settings
-// and early-exit restoration, without changing evaluation of a draw's operands.
+// and early-exit restoration, without changing evaluation of a draw's operands;
+// occlusion culling's setting in each form (Draw.Occlusion).
 scene Main { }
 
 struct Corner
@@ -25,6 +26,14 @@ void Early()
 {
     Draw.FrustumCulling(false),
     Draw.Bounds(float3(100), float3(1))
+    {
+        return;
+    }
+}
+
+void EarlyOcclusion()
+{
+    Draw.Occlusion(true)
     {
         return;
     }
@@ -78,5 +87,21 @@ view Draws(mut Probe probe)
         probe.target.Mesh(vertices, faces, Placed(probe), Flat);
         probe.target.SetFrustumCulling();
         Draw.SetFrustumCulling();
+    }
+    if (probe.mode == 4)
+    {
+        EarlyOcclusion();
+        Draw.Occlusion(true)
+        {
+            Draw.Mesh(vertices, faces, float4x4.identity, Flat);
+        }
+        Draw.SetOcclusion(true);
+        probe.target.SetOcclusion(true);
+        probe.target.Occlusion(false), Draw.Occlusion(false)
+        {
+            Draw.Mesh(vertices, faces, float4x4.identity, Flat);
+        }
+        probe.target.SetOcclusion();
+        probe.target.SetOcclusion(true);
     }
 }

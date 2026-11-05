@@ -10,7 +10,13 @@
 // bucket's count to its indirect draw; CullScatter puts them there. So a bucket's places are in the candidates'
 // order, whatever order the GPU ran them in.
 //
-// Every number is as the engine wrote it (platform/src/compute.inc, cull_*): an element's floats, then its ints.
+// Occlusion (notes/drawing.md, Occlusion culling from a depth pyramid): just before the first of a run of draws that
+// test it, HiZFirst and HiZDown make a pyramid of the depth drawn so far into their destination, and CullListed runs
+// again over the run's groups (phase 1), leaving out what that depth surely hides as well, before any of them draws.
+// Depth only gets nearer until the destination is cleared, so whatever it hides then fails the depth test when it's
+// drawn: the frame's pixels are the same, whatever was drawn before, in whatever order.
+//
+// Every number is as the engine wrote it (platform/src/cull.inc): an element's floats, then its ints.
 
 scene Main { }
 
@@ -24,6 +30,10 @@ struct CullCamera
     float4 lodX;     // ...and out to the side, and up
     float4 lodY;
     float4 lodSizes; // How many times the pixels a level may be off a unit of the world is, and the three rows' lengths
+    float4 toClip0;  // Its world-to-clip matrix, column by column: what occlusion projects a box with
+    float4 toClip1;
+    float4 toClip2;
+    float4 toClip3;
     int4 flags;      // x: 1 where the planes cull; y: 1 where levels are picked; z: 1 + the level every mesh draws at
 }
 
@@ -36,7 +46,7 @@ struct CullJob
     float4 errors;  // How far its levels are off, the first four...
     float4 errorsMore; // ...the other three, and its asset's tolerance multiplier
     int4 at;        // x: its camera; y: its page; z: the place of the first; w: how many
-    int4 more;      // x: 16-byte packs an instance; y: its levels; z: 1 where its box is tested
+    int4 more;      // x: 16-byte packs an instance; y: its levels; z: 1 where its box is tested; w: 1 where occlusion is
 }
 
 // A draw's candidates in a bucket: x its job, y the bucket's level, z its first group, w its bucket.
@@ -65,6 +75,21 @@ struct Culling
     List<int4> page1;
     List<int4> page2;
     List<int4> page3;
+    // Words 0 to 3 the frame's counts (instances tested for occlusion, and hidden), then a depth pyramid's levels from
+    // `pyramid`, the farthest depths as bits (occlusion.tide)
+    GPUList<int> depths;
+    int phase;                   // CullListed: 0 the frame's culling, 1 a run of draws' that test occlusion
+    int first;                   // Where this run's groups start (CullListed, CullScatter), or its buckets (CullOffsets)
+    int width;                   // The pyramid's depth's pixels (HiZFirst, CullListed's phase 1)
+    int height;
+    int levels;                  // ...its levels, and where level 0 starts in `depths`
+    int pyramid;
+    int from;                    // HiZDown: the level it halves, where it starts in `depths` and its texels
+    int fromWidth;
+    int fromHeight;
+    int to;                      // HiZFirst and HiZDown: the level they write
+    int toWidth;
+    int toHeight;
 }
 
 // Whether a float's bits are a number under 2^40 each way: finite, and small enough that nothing the test or the
@@ -165,27 +190,31 @@ bool Outside(CullCamera camera, CullJob job, float4 c0, float4 c1, float4 c2, fl
     return outside;
 }
 
-// Whether the candidate whose transform's columns are the bits q0..q3 is drawn at `level`.
-bool Kept(CullCamera camera, CullJob job, int level, int4 q0, int4 q1, int4 q2, int4 q3)
+// Whether the candidate whose transform's columns are the bits q0..q3 is drawn at `level`: 0 not, 1 drawn, 2 drawn
+// where occlusion can be tested (its box is tested against the frustum).
+int Decide(CullCamera camera, CullJob job, int level, int4 q0, int4 q1, int4 q2, int4 q3)
 {
     // A transform with a number past what floats test safely is drawn whole, untested: the CPU draws one that's
     // infinite or NaN too, and picks its full mesh where it's NaN
-    if (!(SmallAll(q0) && SmallAll(q1) && SmallAll(q2) && SmallAll(q3))) return level == 0;
+    if (!(SmallAll(q0) && SmallAll(q1) && SmallAll(q2) && SmallAll(q3))) return level == 0 ? 1 : 0;
     float4 c0 = Math.AsFloat(q0);
     float4 c1 = Math.AsFloat(q1);
     float4 c2 = Math.AsFloat(q2);
     float4 c3 = Math.AsFloat(q3);
-    if (Pick(camera, job, c0, c1, c2, c3) != level) return false;
+    if (Pick(camera, job, c0, c1, c2, c3) != level) return 0;
     // What isn't affine isn't tested
-    if (camera.flags.x == 0 || job.more.z == 0 || c0.w != 0.0 || c1.w != 0.0 || c2.w != 0.0 || c3.w != 1.0) return true;
-    return !Outside(camera, job, c0, c1, c2, c3);
+    if (camera.flags.x == 0 || job.more.z == 0 || c0.w != 0.0 || c1.w != 0.0 || c2.w != 0.0 || c3.w != 1.0) return 1;
+    return Outside(camera, job, c0, c1, c2, c3) ? 0 : 2;
 }
+
 
 [Group(64)]
 compute CullListed(Culling c)
 {
     shared int[2] kept;
-    int g = this.group.x;
+    shared int[2] tested;
+    shared int[2] hidden;
+    int g = c.first + this.group.x;
     int t = this.local.x;
     // The part this group is of: the last whose first group is no later
     mut int low = 0;
@@ -203,6 +232,8 @@ compute CullListed(Culling c)
     CullJob job = c.jobs[part.a.x];
     int i = (g - part.a.z) * 64 + t;
     mut bool keep = false;
+    mut bool tests = false;
+    mut bool hides = false;
     if (i < job.at.w)
     {
         // Its transform: the first four of its packs in its page
@@ -240,22 +271,49 @@ compute CullListed(Culling c)
             q2 = c.page3[first + 2];
             q3 = c.page3[first + 3];
         }
-        keep = Kept(c.cameras[job.at.x], job, part.a.y, q0, q1, q2, q3);
+        CullCamera camera = c.cameras[job.at.x];
+        int decided = Decide(camera, job, part.a.y, q0, q1, q2, q3);
+        keep = decided != 0;
+        if (c.phase != 0 && decided == 2 && job.more.w != 0)
+        {
+            // Behind the depth drawn so far into its destination: nearer depths hold every pixel its box could
+            // cover (occlusion.tide, HiZFind), so every fragment of it would fail the depth test
+            tests = true;
+            HiZLook look = HiZFind(c.width, c.height, c.levels, c.pyramid, camera.toClip0, camera.toClip1, camera.toClip2,
+                                   camera.toClip3, job.center, job.extents, Math.AsFloat(q0), Math.AsFloat(q1),
+                                   Math.AsFloat(q2), Math.AsFloat(q3));
+            if (look.sure && look.nearest > Math.AsFloat(Math.Max(Math.Max(c.depths[look.texels.x], c.depths[look.texels.y]),
+                Math.Max(c.depths[look.texels.z], c.depths[look.texels.w]))))
+            {
+                keep = false;
+                hides = true;
+            }
+        }
     }
     if (keep) kept.AtomicOr(t / 32, 1 << (t % 32));
+    if (tests) tested.AtomicOr(t / 32, 1 << (t % 32));
+    if (hides) hidden.AtomicOr(t / 32, 1 << (t % 32));
     GPU.Barrier();
     int low0 = kept[0];
     int low1 = kept[1];
     int below = t < 32 ? Bits(low0 & ((1 << t) - 1)) : Bits(low0) + Bits(low1 & ((1 << (t - 32)) - 1));
     if (keep) c.scratch[g * 64 + below] = job.at.z + i;
-    if (t == 0) c.groups[g] = int2(Bits(low0) + Bits(low1), 0);
+    if (t == 0)
+    {
+        int count = Bits(low0) + Bits(low1);
+        c.groups[g] = int2(count, 0);
+        int testedCount = Bits(tested[0]) + Bits(tested[1]);
+        int hiddenCount = Bits(hidden[0]) + Bits(hidden[1]);
+        if (testedCount > 0) c.depths.AtomicAdd(0, testedCount);
+        if (hiddenCount > 0) c.depths.AtomicAdd(1, hiddenCount);
+    }
 }
 
 [Group(64)]
 compute CullOffsets(Culling c)
 {
     shared int[64] sums;
-    int b = this.group.x;
+    int b = c.first + this.group.x;
     int t = this.local.x;
     CullBucket bucket = c.buckets[b];
     int n = bucket.a.y;
@@ -286,10 +344,54 @@ compute CullOffsets(Culling c)
 [Group(64)]
 compute CullScatter(Culling c)
 {
-    int g = this.group.x;
+    int g = c.first + this.group.x;
     int t = this.local.x;
     int2 info = c.groups[g];
     if (t < info.x) c.places[info.y + t] = c.scratch[g * 64 + t];
+}
+
+// What HiZFirst reads: a destination's depth, the farthest of each pixel's samples (a singleton, as a kernel's
+// textures are; the renderer binds it).
+local singleton HiZSource
+{
+    DepthTexture depth;
+}
+
+// A destination's pyramid's level 0: each texel the farthest depth of the 2 by 2 pixels of `depth` it covers.
+[Group(8, 8)]
+compute HiZFirst(HiZSource source, Culling c)
+{
+    int x = this.at.x;
+    int y = this.at.y;
+    if (x >= c.toWidth || y >= c.toHeight) return;
+    float w = float(c.width);
+    float h = float(c.height);
+    float left = (float(2 * x) + 0.5) / w;
+    float right = (float(Math.Min(2 * x + 1, c.width - 1)) + 0.5) / w;
+    float up = (float(2 * y) + 0.5) / h;
+    float down = (float(Math.Min(2 * y + 1, c.height - 1)) + 0.5) / h;
+    float a = source.depth.Sample(float2(left, up));
+    float b = source.depth.Sample(float2(right, up));
+    float d = source.depth.Sample(float2(left, down));
+    float e = source.depth.Sample(float2(right, down));
+    c.depths[c.to + y * c.toWidth + x] = Math.AsInt(Math.Max(Math.Max(a, b), Math.Max(d, e)));
+}
+
+// Its next level: each texel the farthest of the 2 by 2 of the level before that it covers. Depths are never under
+// 0, so the greatest bits are the farthest.
+[Group(8, 8)]
+compute HiZDown(Culling c)
+{
+    int x = this.at.x;
+    int y = this.at.y;
+    if (x >= c.toWidth || y >= c.toHeight) return;
+    int x0 = 2 * x;
+    int x1 = Math.Min(2 * x + 1, c.fromWidth - 1);
+    int y0 = (2 * y) * c.fromWidth;
+    int y1 = Math.Min(2 * y + 1, c.fromHeight - 1) * c.fromWidth;
+    int a = Math.Max(c.depths[c.from + y0 + x0], c.depths[c.from + y0 + x1]);
+    int b = Math.Max(c.depths[c.from + y1 + x0], c.depths[c.from + y1 + x1]);
+    c.depths[c.to + y * c.toWidth + x] = Math.Max(a, b);
 }
 
 view RunCulling()
@@ -298,4 +400,6 @@ view RunCulling()
     GPU.Run(CullListed, 64, c);
     GPU.Run(CullOffsets, 64, c);
     GPU.Run(CullScatter, 64, c);
+    GPU.Run(HiZFirst, int2(8, 8), c);
+    GPU.Run(HiZDown, int2(8, 8), c);
 }

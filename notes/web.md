@@ -1,5 +1,13 @@
 # Web builds
 
+## Occlusion culling's depth on WebGPU (2026-11-05)
+
+`gpu_depth_far` (tide.js, `depth_far` in gpu_web.c): a target's depth texture; a multisampled target's every sample's
+farthest, written by a pass of its own (`depthFarthest`) into a texture kept with it (`t.far`, freed with it); the
+canvas's depth, now made `TEXTURE_BINDING` too, as a texture of the program's (`windowTarget.far`, let go, with its
+bind groups, when the canvas's depth is made again; 0 after a lost device). The release runtime was regenerated.
+`tide_platform_occlusion` runs on WebGPU (`pixels`). drawing.md, Occlusion culling from a depth pyramid.
+
 ## WebGL removed (2026-11-05)
 
 WebGL 2 went with the other GL backends (`notes/rendering.md`, GL backends removed): compute is guaranteed, and WebGL can't compute. Claude's, Provisional:

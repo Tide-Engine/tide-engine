@@ -8,9 +8,9 @@ TIDE_TEST(draw_frustum_generated_metadata_settings_and_operand_effects)
     local.Probe.target = tide_render_target_make(100, 100);
     tide_draw_list draw = {0};
     tide_gui gui = {0};
-    const uint32_t expected[] = {1, 1, 2, 2};
-    const int effects[] = {1, 2, 3, 3};
-    for (int mode = 0; mode < 4; mode++) {
+    const uint32_t expected[] = {1, 1, 2, 2, 2};
+    const int effects[] = {1, 2, 3, 3, 0};
+    for (int mode = 0; mode < 5; mode++) {
         tide_draw_reset(&draw);
         tide_draw_screen_size(&draw, tide_f2(400, 400));
         local.Probe.mode = mode;
@@ -26,6 +26,11 @@ TIDE_TEST(draw_frustum_generated_metadata_settings_and_operand_effects)
         TIDE_CHECK(local.Probe.evaluated == effects[mode]);
         TIDE_CHECK(draw.saved_count == 0);
         TIDE_CHECK(draw.place.bounds.set == 0 && draw.place.no_frustum_culling == 0);
+        // Occlusion: the Set forms stay for the frame, blocks put back what they found, each destination its own
+        TIDE_CHECK(draw.place.occlusion == (mode == 4 ? 1u : 0u));
+        uint32_t targets_on = 0;
+        for (uint32_t t = 0; t < draw.target_count; t++) targets_on += draw.targets[t].place.occlusion;
+        TIDE_CHECK(targets_on == (mode == 4 ? 1u : 0u));
     }
     tide_draw_free(&draw);
     tide_render_target_dispose(local.Probe.target);

@@ -1677,8 +1677,17 @@ static inline int tide_run_frame(void *user, const float seconds)
         profiler->memory = tide_run_memory;
         profiler->gpu_memory = tide_platform_gpu_memory();
     }
-    if (tide_run_reporting) tide_profile_report_end(&tide_run_report, &tide_run_profiler.profile,
-                                                   tide_platform_draw_calls(), tide_platform_draw_vertices());
+    if (tide_run_reporting) {
+        tide_profile_report_end(&tide_run_report, &tide_run_profiler.profile, tide_platform_draw_calls(),
+                                tide_platform_draw_vertices());
+        // Occlusion culling's counts, each frame's once as they come back
+        static uint64_t occlusion_serial;
+        tide_platform_occlusion_report occlusion;
+        if (tide_platform_occlusion(&occlusion, false) && occlusion.serial != occlusion_serial) {
+            occlusion_serial = occlusion.serial;
+            tide_profile_report_occlusion(&tide_run_report, occlusion.tested, occlusion.hidden);
+        }
+    }
     tide_profiler_end(profiler, status.client.again_ticks);
     return TIDE_KEEP_RUNNING;
 }

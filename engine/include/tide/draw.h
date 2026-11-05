@@ -1162,6 +1162,9 @@ typedef struct tide_draw_place {
     uint32_t lod_camera; // 0: the pick is through `camera_3d`. Else 1 + the place in cameras_3d of the camera it's through
     float lod_pixels; // How many pixels a level may be off by to be picked; 0 is 1
     uint32_t no_frustum_culling; // Zero enables rejection against this destination's camera
+    // 1: the 3D draws to come may be left out where the depth drawn before them in the frame hides them (occlusion
+    // culling, Draw.Occlusion: a list the GPU culls, notes/drawing.md); 0, each frame's first: never
+    uint32_t occlusion;
     tide_draw_bounds bounds;    // Optional mesh-local bounds, before the instance and Draw.Transform
     uint32_t tinted;  // Whether `tint` is anything but white: it's unset otherwise
     tide_color tint;  // What the commands to come have their colors multiplied by
@@ -1257,6 +1260,7 @@ enum {
     TIDE_DRAW_SAVED_LOD_PIXELS,
     TIDE_DRAW_SAVED_FRUSTUM_CULLING,
     TIDE_DRAW_SAVED_BOUNDS,
+    TIDE_DRAW_SAVED_OCCLUSION,
 };
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
@@ -1615,7 +1619,9 @@ typedef struct tide_draw_cull_camera {
 // candidates are at levels `low` to `high` at most: its set's runs of the others leave it out.
 typedef struct tide_draw_cull {
     uint32_t camera, mesh, page, first, count, packs;
-    uint8_t low, high, pad[2];
+    uint8_t low, high;
+    uint8_t occlusion; // 1: what the depth drawn before it hides may be left out (tide_draw_place.occlusion)
+    uint8_t pad;
     tide_draw_bounds bounds;
 } tide_draw_cull;
 
@@ -2159,6 +2165,12 @@ void tide_draw_screen_size(tide_draw_list *d, tide_float2 size);
 void tide_draw_set_frustum_culling(tide_draw_list *d, bool enabled);
 void tide_draw_unset_frustum_culling(tide_draw_list *d);
 uint32_t tide_draw_push_frustum_culling(tide_draw_list *d, bool enabled);
+// Occlusion culling, per destination and off each frame: with it on, the instances of a list the GPU culls that the
+// depth drawn into the destination before them in the frame surely hides aren't drawn: they'd fail the depth test,
+// so the pixels are the same (notes/drawing.md, Occlusion culling from a depth pyramid).
+void tide_draw_set_occlusion(tide_draw_list *d, bool enabled);
+void tide_draw_unset_occlusion(tide_draw_list *d);
+uint32_t tide_draw_push_occlusion(tide_draw_list *d, bool enabled);
 void tide_draw_set_bounds(tide_draw_list *d, tide_float3 center, tide_float3 size);
 void tide_draw_unset_bounds(tide_draw_list *d);
 uint32_t tide_draw_push_bounds(tide_draw_list *d, tide_float3 center, tide_float3 size);

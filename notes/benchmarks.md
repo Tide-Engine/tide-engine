@@ -2,6 +2,14 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Occlusion culling: bench_occlusion and Mount & Rifle's menu (2026-11-05)
+
+`bench_occlusion` (bench/occlusion: a town at street level, 256 lists of props behind houses, alternating blocks of
+frames with `Draw.Occlusion` off and on, GPU time, what it hid; `--quick` is its test). Numbers and Mount & Rifle's
+(the same scratch-folder build as below, two variants by a define): drawing.md, Occlusion culling from a depth pyramid.
+In short: the town 3.6-3.9 -> 0.35 ms of GPU a frame; Mount & Rifle's menu scene no gain (+0.35-0.45 ms, its
+multisampled scene target's split and depth resolve, for 5.5% fewer flora indices).
+
 ## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
 
 Numbers, method and why the route couldn't run: drawing.md, Listed runs culled on the GPU. In short, the menu's
