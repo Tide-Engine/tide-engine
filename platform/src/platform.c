@@ -987,7 +987,9 @@ typedef struct quad {
 // of meshes through shaders of the game's. A STEP_STENCIL only ends the run
 // before it: the steps after it have another stencil than the ones before.
 enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, STEP_MESH_3D, STEP_SHADED,
-       STEP_TARGET, STEP_BLIT, STEP_STENCIL };
+       STEP_TARGET, STEP_BLIT, STEP_STENCIL,
+       STEP_COMPUTE, // A kernel's run (tide_draw_list.computes, `first`), outside passes
+       STEP_GPU_OP }; // A GPU list's Set, Clear or SetCount (tide_draw_list.gpu_ops, `first`), outside passes
 
 typedef struct draw_step {
     uint32_t kind;    // STEP_*
@@ -1019,6 +1021,7 @@ typedef struct draw_step {
     // (gathered after the list's for a listed run drawn the ordinary way: upload_shaded)
     uint32_t listed;
     uint32_t instances_at;
+    tide_gpu_id indirect; // STEP_SHADED over a GPU list: its arguments, the mesh's index count and the list's count
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
     tide_gpu_id pipeline; // What draws it, once it's found: its shader's, for a STEP_SHADED
     tide_color tint;  // STEP_MESH_3D: what its pixels' colors are multiplied by
@@ -2937,6 +2940,8 @@ void tide_platform_background_pipelines(const bool on)
     background_pipelines = on;
 }
 
+static void forget_compute(void);
+
 static bool gpu_ready(void)
 {
     follow_cache_folder();
@@ -2961,6 +2966,7 @@ static bool gpu_ready(void)
     engine_made_count = 0;
     shader_pipeline_count = 0;
     stencil_pipeline_count = 0;
+    forget_compute();
     if (shader_index) memset(shader_index, 0, shader_index_capacity * sizeof(uint32_t));
     gpu_epoch = epoch;
     return true;
@@ -3586,6 +3592,7 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
         .stencil_op = (tide_gpu_stencil_op)(state >> 4),
         .into = into,
         .outputs = tide_shader_outputs(shader),
+        .storage_count = shader->storage_count, // The GPU lists it reads, a storage buffer each
     };
     if (shader->cutout) { // What a cut-out covers it covers wholly, its alpha the share of the samples it covers
         if (desc.blend == TIDE_GPU_BLEND_ALPHA) desc.blend = TIDE_GPU_BLEND_REPLACE;
@@ -3638,6 +3645,8 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
 // Lets go of the pipelines the frame didn't draw through: for the first frame
 // of another build of the game (see tide_draw_forget), whose shaders that
 // didn't change keep theirs.
+static void forget_kernel_pipelines(void);
+
 static void forget_pipelines(void)
 {
     uint32_t kept = 0;
@@ -3649,14 +3658,16 @@ static void forget_pipelines(void)
         }
         shader_pipelines[kept++] = shader_pipelines[i];
     }
+    forget_kernel_pipelines();
     if (kept == shader_pipeline_count) return;
     shader_pipeline_count = kept;
     index_shaders();
 }
 
-// Whether a shader takes no more than a pipeline does.
+// Whether a shader takes no more than a pipeline does: a draw's (a kernel is run, never drawn).
 static bool shader_fits(const tide_shader *shader)
 {
+    if (shader->compute) return false;
     const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
     const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
     if (shader->attribute_count + instance_fields > TIDE_SHADER_ATTRIBUTES
@@ -3766,6 +3777,8 @@ static tide_gpu_id warm_key(const tide_shader *shader, const used_key *key)
     return pipeline_for(shader, key->blit, key->blend, key->depth, key->cull, key->into, key->state);
 }
 
+static tide_gpu_id kernel_pipeline_for(const tide_shader *shader);
+
 void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
 {
     if (!shaders) count = 0;
@@ -3797,6 +3810,11 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
         // Each of the game's, every way it was drawn before
         for (uint32_t i = 0; i < count; i++) {
             const tide_shader *shader = shaders[i];
+            if (shader && shader->compute) { // A kernel: its one pipeline
+                if (gpu->dispatch) warm_ask(kernel_pipeline_for(shader));
+                warm_done[i] = true;
+                continue;
+            }
             if (!shader || !shader_fits(shader)) continue;
             for (uint32_t k = 0; k < used_key_count; k++) {
                 if (!key_for(&used_keys[k], shader, warm_names[i])) continue;
@@ -4021,6 +4039,18 @@ static uint32_t data_shape_hash(const int32_t width, const int32_t height)
 static void prepare_data_textures(const tide_draw_list *list)
 {
     for (uint32_t i = 0; i < gpu_texture_count; i++) gpu_textures[i].protected = false;
+    for (uint32_t i = 0; i < step_count; i++) { // A kernel's lists' numbers are its run's
+        const draw_step *s = &steps[i];
+        if (s->kind != STEP_COMPUTE || !list->computes[s->first].shader) continue;
+        const tide_draw_compute *r = &list->computes[s->first];
+        for (uint32_t k = 0; k < r->shader->texture_count && k < TIDE_SHADER_TEXTURES; k++) {
+            const uint32_t slot = r->textures[k];
+            if (gpu_read(r->shader, k) != TIDE_GPU_READ_DATA || !slot || slot > list->texture_count) continue;
+            const tide_draw_texture *t = &list->textures[slot - 1u];
+            gpu_texture *g = find_gpu_texture(t->space, t->id);
+            if (g) g->protected = true;
+        }
+    }
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
         if (s->kind != STEP_SHADED && s->kind != STEP_BLIT) continue;
@@ -4544,6 +4574,8 @@ static tide_float4x4 camera_to_clip(const camera *cam)
 }
 
 // A run of instances of a mesh through a shader of the game's, at once.
+#include "compute.inc"
+
 static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
 {
     static union {
@@ -4585,9 +4617,14 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
         gpu->sample(t, texture_to_read(list, run->textures[t], TIDE_GPU_READ_DATA), gpu_filter(TIDE_FILTER_POINT),
                     gpu_wrap(TIDE_WRAP_CLAMP));
     }
+    if (shader->storage_count) bind_storage(list, run);
     gpu->vertices(0, corners_of(g), 0);
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, s->instances_at);
     gpu->indices(g->indices, g->wide);
+    if (run->indirect) { // As many as its list has on the GPU: their count isn't the CPU's to know
+        gpu->draw_indexed_indirect(s->indirect, 0);
+        return g->index_count;
+    }
     gpu->draw_indexed(g->index_count, run->count);
     return (uint64_t)g->index_count * run->count;
 }
@@ -4759,6 +4796,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         return;
     }
     tide_draw_prepare(list, tide_platform_jobs());
+    if (!over) compute_frame_start(list);
     const tide_gpu_id target = to.gpu;
     root = to;
     if (!over && target_epoch != list->epoch) {
@@ -4820,6 +4858,11 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         const tide_draw_command *c = &list->commands[i];
         frame_target *f = &frame_targets[draw_target];
         camera *cam = &f->through;
+        if (c->kind == TIDE_DRAW_COMPUTE || c->kind == TIDE_DRAW_GPU_LIST) { // Any destination's: none of them is drawn into
+            if (!over) add_step(c->kind == TIDE_DRAW_COMPUTE ? STEP_COMPUTE : STEP_GPU_OP)->first =
+                c->kind == TIDE_DRAW_COMPUTE ? c->compute.run : c->gpu_list.op;
+            continue;
+        }
         if (c->kind != TIDE_DRAW_TARGET && !f->valid) continue;
         draw_blend = c->blend;
         if (c->kind == TIDE_DRAW_PLAIN) {
@@ -4919,6 +4962,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case TIDE_DRAW_SHAPE:
         case TIDE_DRAW_PLAIN:
             break; // add_plain_run's and add_smooth_run's, above
+        case TIDE_DRAW_COMPUTE:
+        case TIDE_DRAW_GPU_LIST:
+            break; // Steps of their own, above
         case TIDE_DRAW_CIRCLE:
         case TIDE_DRAW_WIRE_CIRCLE:
         case TIDE_DRAW_RECT:
@@ -4952,6 +4998,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     upload_meshes_3d(list);
     const bool shaded = upload_shaded(list);
     upload_atlas();
+    prepare_storage(list); // GPU lists the draws read, made, and the first indirect draws' arguments
     select_target(0);
     screen_uniforms uniforms = target_uniforms();
     // Start after the CPU expanded the list and prepared/uploaded resources.
@@ -4971,6 +5018,14 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     uint64_t vertices = 0;
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
+        if (s->kind == STEP_COMPUTE || s->kind == STEP_GPU_OP) { // Outside passes, in their place among the draws
+            if (pass_active) end_pass();
+            pass_active = false;
+            if (s->kind == STEP_COMPUTE) run_compute(list, s);
+            else run_gpu_op(list, s);
+            prepare_storage_draws(list, i + 1u); // The indirect draws up to the next one's, with the counts it left
+            continue;
+        }
         if (s->target != draw_target) {
             if (pass_active) end_pass();
             pass_active = false;
@@ -5070,6 +5125,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case STEP_SHADED:
             if (!pipeline_made(s)) break;
+            if (list->runs[s->first].shader->storage_count && !can_compute()) break; // It reads GPU lists
+            if (list->runs[s->first].indirect && !s->indirect) break; // Its list isn't there
             vertices += draw_shaded(list, s);
             calls++;
             break;
@@ -5111,6 +5168,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     scaled = false;
     draw_target = 0;
     if (!over) {
+        compute_frame_end(); // Reads of the frame's lists begin, as it leaves them
         free_spare_data_textures();
         draw_calls = calls;
         draw_vertices = vertices;

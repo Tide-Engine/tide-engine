@@ -1628,7 +1628,7 @@ static inline bool tide_gpu_list_live(const uint64_t id)
 // GPUList<T>(capacity) for an element of `stride` words: empty, of a capacity from 0 up, which is clamped to
 // what the list's bytes can be.
 tide_gpu_list tide_gpu_list_make(int32_t capacity, uint32_t stride);
-void tide_gpu_list_resize(tide_gpu_list *list, int32_t capacity); // Another capacity, and empty
+void tide_gpu_list_resize(tide_gpu_list list, int32_t capacity); // Another capacity, and empty
 void tide_gpu_list_dispose(tide_gpu_list list);
 int32_t tide_gpu_list_capacity(tide_gpu_list list); // 0 for none, or one disposed
 int64_t tide_gpu_list_content_revision(tide_gpu_list list); // Positive for a live list; 0 otherwise
@@ -1706,9 +1706,19 @@ typedef struct tide_gpu_read_request {
     uint32_t *data; // `bytes` of it
     bool count_only;
     bool forgotten; // Let go of while begun: the renderer finishes it, and it goes free then
+    uint32_t age;   // Frames since it was done (tide_gpu_reads_frame)
 } tide_gpu_read_request;
 tide_gpu_read_request *tide_gpu_read_requests(void);
 void tide_gpu_read_finished(tide_gpu_read_request *r, bool ok);
+// Once a frame, by the renderer: a read done long since that nobody polls (its task was cancelled) goes free.
+void tide_gpu_reads_frame(void);
+enum { TIDE_GPU_READ_KEPT_FRAMES = 600 };
+
+// A count of invocations from an int: none below 0.
+static inline uint32_t tide_gpu_size(const int32_t n)
+{
+    return n > 0 ? (uint32_t)n : 0u;
+}
 
 // One frame's commands. Not simulation state: it lives outside the world. A
 // zeroed list is ready to use, and it grows as it needs, with no limit but

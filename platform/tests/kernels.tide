@@ -1,0 +1,227 @@
+// Kernels written in Tide (tests/kernels.c): values worked out on the GPU
+// against the same functions on the CPU, ordered Add's order and count at
+// several group sizes, atomics, shared memory with barriers, a run over a GPU
+// list's count chained after the run that filled it, a list sent and changed
+// and read back, and an indirect draw of a list a kernel filled.
+
+struct Item
+{
+    float a;
+    int b;
+    float2 p;
+    bool on;
+}
+
+struct Spot
+{
+    float2 at;
+    Color color;
+}
+
+struct Corner
+{
+    float2 position;
+}
+
+struct Wave
+{
+    float speed;
+    int keepEvery;
+}
+
+local singleton Lists
+{
+    GPUList<float> shapes;
+    GPUList<int> kept;
+    GPUList<int> keptWide;
+    GPUList<int> doubled;
+    GPUList<int> tally;
+    GPUList<int> sums;
+    GPUList<int> groups;
+    GPUList<Item> items;
+    GPUList<Spot> spots;
+    List<Item> sent;
+    float scale;
+    int frame;
+    bool read;
+}
+
+local singleton Results
+{
+    List<float> shapes;
+    List<int> kept;
+    List<int> keptWide;
+    List<int> doubled;
+    List<int> tally;
+    List<int> sums;
+    List<int> groups;
+    List<Item> items;
+    List<float> expected; // Curve on the CPU, for what Shapes works out on the GPU
+    int keptCount;
+    int reads;
+    bool failed;
+    long revision;    // The shapes list's contentRevision as it was made...
+    long revisionNow; // ...and as it is
+}
+
+// The same on the CPU and on the GPU
+float Curve(float x, float scale)
+{
+    return Math.Sin(x) * scale + Math.Sqrt(Math.Abs(x)) - x * x * 0.125;
+}
+
+bool Keeps(int i, int every)
+{
+    return i % every == 0 || i % 7 == 3;
+}
+
+[Group(64)]
+compute Shapes(Lists lists)
+{
+    lists.shapes[this.index] = Curve(float(this.index) * 0.37 - 5.0, lists.scale);
+}
+
+// Over a size of 2D, this.index along its rows: groups of one axis keep its order
+[Group(8)]
+compute KeepNarrow(Lists lists, Wave wave)
+{
+    if (Keeps(this.index, wave.keepEvery))
+        lists.kept.Add(this.index * 10);
+}
+
+[Group(256)]
+compute KeepWide(Lists lists, Wave wave)
+{
+    if (!Keeps(this.index, wave.keepEvery)) return;
+    lists.keptWide.Add(this.index * 10);
+}
+
+// Over the kept list's count on the GPU, which the run before it left
+[Group(16)]
+compute Double(Lists lists)
+{
+    lists.doubled.Add(lists.kept[this.index] * 2);
+}
+
+[Group(64)]
+compute Tally(Lists lists)
+{
+    lists.tally.AtomicAdd(this.index % 5, 1);
+    lists.tally.AtomicMax(5, this.index);
+    lists.tally.AtomicCompareExchange(6, 0, 7);
+}
+
+// Sums within each group of 64, through shared memory; and how many of a group were inside, by an atomic on it
+[Group(64)]
+compute Prefix(Lists lists)
+{
+    shared int[64] sums;
+    shared int[1] inside;
+    int i = this.local.x;
+    sums[i] = this.index < 100 ? this.index : 0;
+    if (this.index < 100) inside.AtomicAdd(0, 1);
+    GPU.Barrier();
+    for (var step = 1; step < 64; step *= 2)
+    {
+        mut int v = 0;
+        if (i >= step) v = sums[i - step];
+        GPU.Barrier();
+        sums[i] += v;
+        GPU.Barrier();
+    }
+    if (this.index < 100) lists.sums[this.index] = sums[i];
+    if (i == 0) lists.groups[this.group.x] = inside[0];
+}
+
+// Each element of a list the CPU sent, changed where it is
+[Group(32)]
+compute Bump(Lists lists)
+{
+    Item item = lists.items[this.index];
+    lists.items[this.index] = Item { a = item.a * 2.0, b = item.b + this.index, p = item.p.yx, on = !item.on };
+}
+
+[Group(4)]
+compute PlaceSpots(Lists lists)
+{
+    if (this.index % 2 == 1) return;
+    float x = float(this.index) * 10.0 - 20.0;
+    lists.spots.Add(Spot { at = float2(x, 0), color = Color(float(this.index) * 0.25, 1.0 - float(this.index) * 0.25, 0.5, 1) });
+}
+
+vert PlaceSpot(mut Corner corner, Spot spot)
+{
+    corner.position += spot.at;
+}
+
+frag ShowSpot(Corner corner, Spot spot, out Color color)
+{
+    color = spot.color;
+}
+
+view Compute(mut Lists lists, mut Results results)
+{
+    if (lists.frame == 0)
+    {
+        lists.shapes = GPUList<float>(256);
+        lists.kept = GPUList<int>(1024);
+        lists.keptWide = GPUList<int>(1024);
+        lists.doubled = GPUList<int>(1024);
+        lists.tally = GPUList<int>(8);
+        lists.sums = GPUList<int>(128);
+        lists.groups = GPUList<int>(4);
+        lists.items = GPUList<Item>(16);
+        lists.spots = GPUList<Spot>(8);
+        lists.scale = 1.5;
+        results.revision = lists.shapes.contentRevision;
+        for (var i = 0; i < 200; i++) results.expected.Add(Curve(float(i) * 0.37 - 5.0, lists.scale));
+        for (var i = 0; i < 5; i++)
+            lists.sent.Add(Item { a = float(i) + 0.5, b = i * 3, p = float2(float(i), -float(i)), on = i % 2 == 0 });
+    }
+    results.revisionNow = lists.shapes.contentRevision;
+    lists.frame += 1;
+    Draw.Clear(Color.black);
+    lists.shapes.SetCount(200);
+    GPU.Run(Shapes, 200);
+    lists.kept.Clear();
+    lists.keptWide.Clear();
+    lists.doubled.Clear();
+    GPU.Run(KeepNarrow, int2(30, 20), Wave { speed = 1, keepEvery = 3 });
+    GPU.Run(KeepWide, 600, Wave { speed = 1, keepEvery = 3 });
+    GPU.Run(Double, lists.kept);
+    lists.tally.Set([0, 0, 0, 0, 0, 0, 0]);
+    GPU.Run(Tally, 1000);
+    lists.sums.SetCount(100);
+    lists.groups.SetCount(2);
+    GPU.Run(Prefix, 128);
+    lists.items.Set(lists.sent);
+    GPU.Run(Bump, lists.items);
+    lists.spots.Clear();
+    GPU.Run(PlaceSpots, 6);
+    List<Corner> square = [Corner { position = float2(-4, -4) }, Corner { position = float2(4, -4) },
+                           Corner { position = float2(4, 4) }, Corner { position = float2(-4, 4) }];
+    Draw.Instanced(square, [0, 1, 2, 0, 2, 3], lists.spots, PlaceSpot, ShowSpot);
+    if (lists.read)
+    {
+        lists.read = false; // The host asks for each read
+        ReadBack(lists, results);
+    }
+}
+
+async void ReadBack(Lists lists, mut Results results)
+{
+    if (await lists.shapes.Read() is List<float> shapes) results.shapes = shapes;
+    else results.failed = true;
+    if (await lists.kept.ReadCount() is int count) results.keptCount = count;
+    else results.failed = true;
+    if (await lists.kept.Read() is List<int> kept) results.kept = kept;
+    if (await lists.keptWide.Read() is List<int> wide) results.keptWide = wide;
+    if (await lists.doubled.Read() is List<int> doubled) results.doubled = doubled;
+    if (await lists.tally.Read() is List<int> tally) results.tally = tally;
+    if (await lists.sums.Read() is List<int> sums) results.sums = sums;
+    if (await lists.groups.Read() is List<int> groups) results.groups = groups;
+    if (await lists.items.Read() is List<Item> items) results.items = items;
+    results.reads += 1;
+}
+
+scene Main { }

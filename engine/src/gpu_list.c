@@ -43,9 +43,9 @@ tide_gpu_list tide_gpu_list_make(const int32_t capacity, const uint32_t stride)
     return made(clamped_capacity(capacity, stride), stride);
 }
 
-void tide_gpu_list_resize(tide_gpu_list *list, const int32_t capacity)
+void tide_gpu_list_resize(const tide_gpu_list list, const int32_t capacity)
 {
-    tide_gpu_list_state *s = tide_gpu_list_state_of(list->id);
+    tide_gpu_list_state *s = tide_gpu_list_state_of(list.id);
     if (!s || !s->alive) {
         fprintf(stderr, "GPUList.Resize: the list was never made, or was disposed: make one with 'GPUList<T>(capacity)'\n");
         return;
@@ -54,7 +54,6 @@ void tide_gpu_list_resize(tide_gpu_list *list, const int32_t capacity)
     s->capacity = clamped_capacity(capacity, s->stride);
     s->version++;
     s->content_revision = tide_render_revision_next();
-    list->capacity = (int32_t)s->capacity;
 }
 
 void tide_gpu_list_dispose(const tide_gpu_list list)
@@ -205,6 +204,17 @@ bool tide_gpu_list_read_poll(const uint32_t ticket, tide_gpu_read_result *out)
     *out = (tide_gpu_read_result){.ok = true, .count = (int32_t)count, .stride = stride,
                                   .words = r->data + TIDE_GPU_LIST_HEADER_WORDS};
     return true;
+}
+
+void tide_gpu_reads_frame(void)
+{
+    for (uint32_t i = 0; i < TIDE_GPU_READS; i++) {
+        tide_gpu_read_request *r = &reads[i];
+        if (r->state != TIDE_GPU_READ_DONE && r->state != TIDE_GPU_READ_FAILED) continue;
+        if (++r->age <= TIDE_GPU_READ_KEPT_FRAMES) continue;
+        free(r->data);
+        *r = (tide_gpu_read_request){.serial = r->serial};
+    }
 }
 
 void tide_gpu_list_read_forget(const uint32_t ticket)

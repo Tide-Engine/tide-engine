@@ -567,6 +567,25 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
+# Kernels written in Tide (tests/kernels.tide): what they work out against the
+# CPU's, ordered Add, atomics, shared memory, chained and indirect runs, reads
+# back and an indirect draw's pixels, on Vulkan and WebGPU (whose device is lost
+# and found again). OpenGL runs no kernels, and says so.
+if(NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_kernels SOURCES tests/kernels.tide NAME game HOST tests/kernels.c)
+    target_include_directories(tide_platform_kernels PRIVATE src)
+    target_link_libraries(tide_platform_kernels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_kernels SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_kernels TARGET tide_platform_kernels SERVED WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        add_test(NAME tide_platform_kernels COMMAND tide_platform_kernels)
+        add_test(NAME tide_platform_kernels_opengl COMMAND tide_platform_kernels)
+        tide_gpu_test(tide_platform_kernels)
+        tide_gpu_test(tide_platform_kernels_opengl OPENGL)
+    endif()
+endif()
+
 # frag and vert, written in Tide: every shader tidec writes for
 # tests/shaders.tide has to compile on the backend that draws, without a
 # warning, and give the pixels tests/shaders.c expects.

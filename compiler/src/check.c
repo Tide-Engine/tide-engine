@@ -11957,6 +11957,7 @@ static type check_await(checker *c, expr *e)
     }
     if (call->call == CALL_WAIT) return T_VOID_;
     if (call->storage_flush || call->web_fetch) return t;
+    if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT) return t; // A GPU list's read back
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && (call->method->is_async || call->method->is_worker)) return t;
     diag_error(e->at, "'await' needs a task handle or an async call, like 'await Wait.Ticks(30)'");
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION) {

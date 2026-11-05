@@ -168,7 +168,7 @@ static void shader_prep_routine(shader_prep_walk *w, const decl *d)
 
 static bool shader_prep_supported(const shader *sh)
 {
-    if (sh->skinned || sh->instanced || sh->blit || sh->sizes.count) return false;
+    if (sh->skinned || sh->instanced || sh->blit || sh->sizes.count || sh->compute || sh->storage.count) return false;
     if (!sh->textures.count) return false; // Binding resolution is what this optimization saves.
     for (int i = 0; i < sh->textures.count; i++) {
         const shader_texture *t = &sh->textures.items[i];

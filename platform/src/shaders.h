@@ -739,6 +739,94 @@ static const char *const clear_all_wgsl = WGSL(
     "    return Colors(c, c, c, c);\n"
     "}\n");
 
+// The renderer's own kernels (compute.inc, notes/compute.md), WGSL alone: no GL backend runs kernels.
+//
+// A run over a GPU list's count, on the GPU: its record (TIDE_GPU_RUN_WORDS words: the dispatch's groups, its
+// invocations, its size) from the list's count, for a kernel of `u.x` invocations a group along x. At most 65535
+// groups, what every GPU dispatches along an axis.
+static const char *const run_size_wgsl = WGSL(
+    "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
+    "@group(0) @binding(25) var<storage, read> list: array<u32>;\n"
+    "@group(0) @binding(26) var<storage, read_write> run: array<u32>;\n"
+    "@compute @workgroup_size(1) fn compute(@builtin(local_invocation_index) i: u32) {\n"
+    "    if (i == 0u) {\n"
+    "        let count = min(list[0], list[1]);\n"
+    "        let groups = min((count + u.x - 1u) / u.x, 65535u);\n"
+    "        run[0] = groups;\n"
+    "        run[1] = 1u;\n"
+    "        run[2] = 1u;\n"
+    "        run[3] = count;\n"
+    "        run[4] = count;\n"
+    "        run[5] = 1u;\n"
+    "        run[6] = 1u;\n"
+    "        run[7] = 0u;\n"
+    "    }\n"
+    "}\n");
+
+// Ordered Add, once a kernel's groups have each written their survivors to their region of the scratch (`u.x`
+// words each: how many, where they go, then them): where each group's go in the list, after what it holds (an
+// exclusive prefix of the groups' counts, from the list's count), and the list's new count, no more than its
+// capacity. One group of 256, each invocation a run of the groups.
+static const char *const add_offsets_wgsl = WGSL(
+    "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
+    "@group(0) @binding(25) var<storage, read_write> scratch: array<u32>;\n"
+    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
+    "@group(0) @binding(27) var<storage, read> run: array<u32>;\n"
+    "var<workgroup> sums: array<u32, 256>;\n"
+    "@compute @workgroup_size(256) fn compute(@builtin(local_invocation_index) t: u32) {\n"
+    "    let groups = run[0] * run[1] * run[2];\n"
+    "    let each = (groups + 255u) / 256u;\n"
+    "    let first = t * each;\n"
+    "    let last = min(first + each, groups);\n"
+    "    let base = list[0];\n"
+    "    let capacity = list[1];\n"
+    "    var mine = 0u;\n"
+    "    for (var g = first; g < last; g = g + 1u) {\n"
+    "        mine = mine + scratch[g * u.x];\n"
+    "    }\n"
+    "    sums[t] = mine;\n"
+    "    workgroupBarrier();\n"
+    "    for (var d = 1u; d < 256u; d = d * 2u) {\n"
+    "        var v = 0u;\n"
+    "        if (t >= d) {\n"
+    "            v = sums[t - d];\n"
+    "        }\n"
+    "        workgroupBarrier();\n"
+    "        sums[t] = sums[t] + v;\n"
+    "        workgroupBarrier();\n"
+    "    }\n"
+    "    var at = base + sums[t] - mine;\n"
+    "    for (var g = first; g < last; g = g + 1u) {\n"
+    "        scratch[g * u.x + 1u] = at;\n"
+    "        at = at + scratch[g * u.x];\n"
+    "    }\n"
+    "    if (t == 255u) {\n"
+    "        list[0] = min(base + sums[255], capacity);\n"
+    "    }\n"
+    "}\n");
+
+// ...then each group's survivors to where they go, `u.y` words each, those past the capacity dropped: one group of
+// 64 for each of the kernel's.
+static const char *const add_scatter_wgsl = WGSL(
+    "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
+    "@group(0) @binding(25) var<storage, read_write> scratch: array<u32>;\n"
+    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
+    "@compute @workgroup_size(64) fn compute(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) w: vec3u,\n"
+    "                                        @builtin(num_workgroups) n: vec3u) {\n"
+    "    let region = (w.x + n.x * (w.y + n.y * w.z)) * u.x;\n"
+    "    let count = scratch[region];\n"
+    "    let at = scratch[region + 1u];\n"
+    "    let capacity = list[1];\n"
+    "    for (var j = t; j < count; j = j + 64u) {\n"
+    "        let to = at + j;\n"
+    "        if (to < capacity) {\n"
+    "            for (var k = 0u; k < u.y; k = k + 1u) {\n"
+    "                list[4u + to * u.y + k] = scratch[region + 2u + j * u.y + k];\n"
+    "            }\n"
+    "        }\n"
+    "    }\n"
+    "}\n");
+
 // Each pipeline's WGSL as the renderer gives it, by the name its SPIR-V has
 // (shaders_spirv.h): one piece, or two it joins (joined in platform.c), whose
 // whole is longer than C promises a string literal can be. What its SPIR-V
@@ -753,4 +841,7 @@ static const char *const clear_all_wgsl = WGSL(
     X(text_quad, text_quad_wgsl, NULL)                                                                                 \
     X(mesh_3d, mesh_3d_wgsl, NULL)                                                                                     \
     X(clear, clear_wgsl, NULL)                                                                                         \
-    X(clear_all, clear_all_wgsl, NULL)
+    X(clear_all, clear_all_wgsl, NULL)                                                                                 \
+    X(run_size, run_size_wgsl, NULL)                                                                                   \
+    X(add_offsets, add_offsets_wgsl, NULL)                                                                             \
+    X(add_scatter, add_scatter_wgsl, NULL)

@@ -779,6 +779,13 @@ static void check_kernel_flow(const checker *c, decl *d)
         diag_error(d->at, "kernel '" STR_FMT "' shares %d bytes within a group, and a group has 16384 (16 KiB) on every GPU",
                    STR_ARG(d->name), shared_bytes);
     }
+    if (d->adds.count && (d->group[1] > 1 || d->group[2] > 1)) {
+        diag_error(d->at, "kernel '" STR_FMT "' adds to a GPU list, so its group is along one axis, like '[Group(%d)]': Add keeps "
+                   "this.index's order, which a group of %d by %d%s doesn't run in", STR_ARG(d->name),
+                   d->group[0] * d->group[1] * d->group[2], d->group[0], d->group[1], d->group[2] > 1 ? " by more" : "");
+        diag_note("a run over a size of two or three axes is still in this.index's order with a group of one axis: each row "
+                  "of its size is groups after each other");
+    }
     for (int i = 0; i < d->adds.count; i++) {
         int most = 0;
         const stmt *second = NULL;

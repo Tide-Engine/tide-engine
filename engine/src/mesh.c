@@ -995,6 +995,14 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
     if (mesh) tide_draw_shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling);
 }
 
+void tide_draw_mesh_shaded_indirect(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
+                                    const tide_list indices, const tide_gpu_list instances, const tide_gpu_list *storage,
+                                    const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+{
+    const uint32_t mesh = shaded_mesh(d, shader, vertices, indices, 1);
+    if (mesh) tide_draw_shaded_indirect(d, shader, mesh, instances, storage, uniforms, textures, sampling);
+}
+
 // The list's entry for an instance list (tide_draw_listed), NULL where none can be had: the table is full of
 // lists drawn this frame and the last.
 static tide_draw_listed_entry *listed_entry(tide_draw_list *d, const tide_handle at, const uint32_t item_size,

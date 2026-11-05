@@ -202,6 +202,12 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
                                      const void *instances, uint32_t count, const void *uniforms,
                                      const uint32_t *textures, uint64_t sampling);
 
+// Draw.Instanced over a GPU list (tide_draw_shaded_indirect): the mesh of the two lists, once for each element
+// `instances` has on the GPU, indirect.
+void tide_draw_mesh_shaded_indirect(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
+                                    tide_gpu_list instances, const tide_gpu_list *storage, const void *uniforms,
+                                    const uint32_t *textures, uint64_t sampling);
+
 // Draw.Instanced of a list the list keeps: `write` writes an item's instance (tide_shader_instance_size bytes, as
 // ints) from the item alone, and `layout` names that writing (two layouts of one list are kept apart). Where the
 // shader has a listed vertex stage (tide_shader.glsl_listed_vertex...), the items' instances go into a region of
