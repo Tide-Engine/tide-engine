@@ -148,6 +148,9 @@ try {
     }
     await command('Page.enable');
     await command('Runtime.enable');
+    // Examples start by themselves unless the machine prefers reduced motion (eager(), src/lib/examples.ts),
+    // as a Windows server with its animations off says it does
+    await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     await command('Page.addScriptToEvaluateOnNewDocument', { source: `
         window.__draws = 0;
         // WebGPU's draws, not its submits: a frame that draws nothing still submits its pass
