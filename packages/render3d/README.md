@@ -412,6 +412,5 @@ environment specular or automatic occlusion bake.
 It then applies linear exposure, Reinhard tone mapping and one sRGB encode.
 Base-map filtering currently happens in display space before decoding; it is not
 automatic hardware sRGB sampling.
-The engine's existing float-target fallback on older OpenGL/WebGL devices uses
-RGBA8 and clips HDR before tone mapping. Broader rendering features remain future
-work.
+Every backend draws into float targets, so HDR isn't clipped before tone
+mapping. Broader rendering features remain future work.

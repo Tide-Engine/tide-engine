@@ -1,0 +1,20 @@
+// expect: a GPU list's count is on the GPU: the CPU reads it back with 'await list.ReadCount()'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+view Show(Meadow meadow)
+{
+    int n = meadow.blades.count;
+    Draw.Circle(float2(0, 0), float(n), Color.white);
+}

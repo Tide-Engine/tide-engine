@@ -169,6 +169,7 @@ typedef enum type_kind {
     TY_DOUBLE3X3,
     TY_DOUBLE4X4,
     TY_FONT,      // Font: a local reference to a font of this machine's registry (tide/font.h): Font.Regular, Font.Bold, an asset's or a decoded one
+    TY_GPU_LIST,  // GPUList<T>: a list that lives on the GPU, this machine's (tide_gpu_list); decl's one field is its element
 } type_kind;
 
 typedef struct type {
@@ -470,6 +471,7 @@ typedef enum decl_kind {
     DECL_ALIAS,    // using Name = Type;: a namespace-scoped name for an existing closed type.
     DECL_GENERIC,  // T Max<T>(T a, T b) { ... }: a generic function, never checked or generated as written; each
                    // instantiation is a DECL_FUNCTION of its own (generic_instances)
+    DECL_GPU_LIST, // GPUList<T>, one per element type: its one field is the element; in program.gpu_lists
 } decl_kind;
 
 // How a frag or vert reads a texture: a color, or a target's depth, as a
@@ -798,6 +800,7 @@ typedef struct decl {
     loc io_at;
     bool io_network;      // ...and what it first reaches is the network (Web.Fetch), for the message
     bool uses_fetch;      // Awaits Web.Fetch itself: its task's frame keeps the fetch's ticket
+    bool uses_gpu_read;   // Awaits a GPU list's Read or ReadCount itself: its task's frame keeps the read's ticket
     bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
     loc frame_time_at;
     bool rolls;           // Rolls with Random.NextInt and the like, directly or through helpers: it's handed a generator
@@ -908,7 +911,13 @@ typedef struct decl {
     int stage;                    // 1 + the deepest stage it waits for; 0 before the analysis
 
     // Frags and verts (DECL_SHADER), and the functions they call
-    bool is_frag;                 // A frag; else a vert
+    bool is_frag;                 // A frag; else a vert, or a kernel (is_compute)
+    bool is_compute;              // `compute Name(...)`: a kernel, code GPU.Run runs over a size, tied to no draw
+    int group[3];                 // A kernel's invocations a group along each axis ([Group(x, y, z)]): 64, 1, 1 when it says none
+    bool barrier;                 // A kernel that calls GPU.Barrier(): every invocation of a group runs its body
+    VEC(const field *) adds;      // A kernel's GPU lists it Adds to, by the field that names each, once each
+    VEC(const field *) atomics;   // ...and those it calls atomics on (GPUList<int>)
+    VEC(const field *) gpu_writes; // ...and every one it writes
     bool cutout;                  // A frag that says how much of its pixel it covers (this.Cutout or this.Coverage): drawn with alpha to coverage
     bool raw_coverage;            // ...with this.Coverage(share): the share as given, not sharpened
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
@@ -979,6 +988,28 @@ typedef enum is_pattern {
     IS_ERROR,  // is ParseError why: the error
     IS_MEMBER, // is ParseError.Empty: that error, one of an enum's members (enum_member)
 } is_pattern;
+
+// What an expression does with a GPU list or a kernel (expr.gpu): docs/spec.md, Compute on the GPU.
+typedef enum gpu_op {
+    GPU_NONE,
+    GPU_COUNT,       // list.count, on the GPU
+    GPU_CAPACITY,    // list.capacity
+    GPU_REVISION,    // list.contentRevision, on the CPU
+    GPU_INDEX,       // list[i], on the GPU; an assignment's target in a kernel writes it
+    GPU_MAKE,        // GPUList<T>(capacity)
+    GPU_RESIZE,      // list.Resize(capacity)
+    GPU_DISPOSE,     // list.Dispose()
+    GPU_SET,         // list.Set(items): in the frame's draw list
+    GPU_CLEAR,       // list.Clear()
+    GPU_SET_COUNT,   // list.SetCount(n)
+    GPU_READ,        // await list.Read()
+    GPU_READ_COUNT,  // await list.ReadCount()
+    GPU_ADD,         // list.Add(v), in a kernel: in invocation order
+    GPU_ATOMIC,      // list.AtomicAdd(i, v) and the rest, on a GPUList<int>; `name` says which
+    GPU_SHARED_ATOMIC, // ...on an element of a kernel's `shared int[N]`
+    GPU_RUN,         // GPU.Run(kernel, over[, values])
+    GPU_BARRIER,     // GPU.Barrier()
+} gpu_op;
 
 typedef enum builtin_call {
     CALL_NONE,
@@ -1234,6 +1265,11 @@ struct expr {
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
     bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
     bool web_request;        // ...and a WebRequest's Send, with web_fetch: its object is the request, its value a WebResponse
+    int gpu;                 // What it does with a GPU list or a kernel (gpu_op), or 0
+    bool gpu_instances;      // Draw.Instanced over a GPUList: drawn indirect, its instances read on the GPU
+    bool gpu_vertices;       // A mesh draw over a GPUList of vertices: each read on the GPU by its index (shader.vertex_storage)
+    bool gpu_indices;        // ...and a GPUList<int> of indices, read there too: drawn indirect, as many as the list has
+    struct decl *kernel;     // GPU.Run: the kernel it runs
     int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct expr *values;        // mesh draw and Blit: the struct it gives its vert and frag after their names, or NULL
@@ -1355,6 +1391,9 @@ struct stmt {
     // its own, and is unassigned until the call that makes it has run
     bool out_decl;
     bool delayed; // An explicitly typed local declared without an initializer
+    bool is_shared; // `shared int[64] sums;`: a kernel's local that its whole group shares (var<workgroup>)
+    bool shared_atomic; // ...that atomics are used on: an array<atomic<i32>, N>, each read and write atomic
+    loc shared_at;
     bool discard;  // ...or the place `out _` makes for what the call gives, which no code names
     const expr *out_arg; // ...and the argument that declares it
     str type_name; // Empty for `var`. With its namespace if it's qualified.
@@ -1427,6 +1466,19 @@ typedef struct shader_texture {
     int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
 } shader_texture;
 
+// A GPU list a shader's code names: a field of what the engine supplies (a
+// component, a singleton, the values), a storage buffer of the shader's.
+typedef enum storage_role { STORAGE_FIELD, STORAGE_INSTANCES, STORAGE_VERTICES, STORAGE_INDICES } storage_role;
+
+typedef struct shader_storage {
+    const struct decl *source;
+    const field *field;
+    storage_role role; // A field's list, or one the draw gives: its instances, its vertices or its indices (no field)
+    bool write;  // A kernel writes it: var<storage, read_write>
+    bool atomic; // ...with atomics: its words are array<atomic<i32>>
+    bool add;    // ...and Adds to it: in invocation order, through a scratch buffer after the lists
+} shader_storage;
+
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
 // fields the frag reads go from the mesh's corners to its pixels, blended.
 typedef struct shader_handed {
@@ -1449,6 +1501,15 @@ typedef struct shader {
     bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
+    bool gpu_instances;  // ...a GPU list's, read from its storage slot (instance_storage), drawn indirect
+    bool compute;        // A kernel's: `kernel`, run by GPU.Run, with no vertex, vert or frag
+    struct decl *kernel;
+    VEC(shader_storage) storage; // The GPU lists its code names, a storage buffer each, in slot order
+    int instance_storage;        // gpu_instances: the slot of the list its instances are read from
+    bool gpu_vertices;           // Its vertices are a GPU list's, read by their index from slot vertex_storage: no attributes
+    bool gpu_indices;            // ...and its indices too, from slot index_storage, each vertex by its place among them
+    int vertex_storage, index_storage;
+    int through_at;              // gpu_instances in 3D: the uniforms' float word Draw.Transform's matrix starts at, or -1
     bool skinned;        // Skin deformation before the optional user vert
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
@@ -1471,12 +1532,12 @@ typedef struct shader {
     bool frag_world;            // ...and whether they read where they are in the world
     bool frag_normals;          // ...and whether they call instance.Normal: the vertex stage passes on what normals go through
     const char *name;           // For messages: "Wave and Shade on BoxVertex"
-    const char *glsl_vertex, *glsl_fragment, *wgsl;
+    const char *wgsl;
     // An instanced 3D draw whose instances come from its list's items alone (and constants): its draws can be
     // listed (tide_draw_mesh_shaded_list), with this vertex stage, which reads each instance's packs from texture
     // `textures.count` by the instance's place in the list, an int attribute, and this WGSL module
     bool listed;
-    const char *glsl_listed_vertex, *wgsl_listed;
+    const char *wgsl_listed;
 } shader;
 
 // A mesh draw with a vertex struct of the game's, a vert or a frag, and the
@@ -1580,6 +1641,8 @@ typedef struct program {
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
     decl *placed;        // The built-in record a vert's `this` is: its vertex as the engine would place it
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
+    decl *invocation;    // The built-in record a kernel's `this` is: which invocation of its run
+    VEC(mesh_draw) compute_runs; // Every GPU.Run, and the code it's in
     decl *time;          // The built-in singleton Time
     decl *random;        // The built-in struct Random: a random number generator's state
     // Time.seed, the match's seed: Time's last field while code is checked, and
@@ -1613,6 +1676,7 @@ typedef struct program {
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
     bool local_heap;     // Some local field of the match's does: the local world has a heap, whether the match has or not
     VEC(decl *) lists;   // Every List<T> type the program uses, one per element type
+    VEC(decl *) gpu_lists; // ...and every GPUList<T>
     VEC(decl *) maps;    // Every Map<K, V> and Set<K> type, one per key and value type
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
     VEC(decl *) arrays;  // Every T[N] type, one per element type and length
@@ -1821,7 +1885,7 @@ int switch_choice(const expr *e); // A constant switch's selected arm, or -1 for
 
 // Checks every frag and vert, and the functions they call, for what the GPU
 // runs, and plans the shader each mesh draw draws through (program.shaders):
-// what it reads, how that's laid out, and its GLSL and WGSL (shader.c).
+// what it reads, how that's laid out, and its WGSL (shader.c).
 void plan_shaders(program *prog);
 
 // How the declaration of the texture `texture` names says it's sampled: the
@@ -1863,3 +1927,7 @@ void print_shaders(const program *prog, sb *out);
 bool write_spirv(const program *prog, const char *dir, sb *out);
 // ...or its HLSL, as <n>.hlsl, for `tidec --hlsl` (hlsl.h).
 bool write_hlsl(const program *prog, const char *dir, sb *out);
+// ...or the kernels of a file of the renderer's own (platform/src/cull.tide) as C, for `tidec --kernels`: each
+// one's WGSL, SPIR-V and tide_shader, and an enum of where each field of its values goes (its storage slot, its
+// texture and the uniform int that holds its count, its uniform words), which the renderer binds by.
+bool write_kernels(const program *prog, const char *path);

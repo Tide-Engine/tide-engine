@@ -123,9 +123,8 @@ TIDE_TEST(overrides_frags_and_verts)
     TIDE_REQUIRE(shader != NULL);
     // The mesh names Wave and Shade, and draws through what's built under those names
     TIDE_CHECK(strcmp(shader->name, "Wave and Shade on Corner") == 0);
-    TIDE_CHECK(strstr(shader->glsl_vertex, "0.25") && !strstr(shader->glsl_vertex, "0.75"));
-    TIDE_CHECK(strstr(shader->glsl_fragment, "0.125") && !strstr(shader->glsl_fragment, "0.875"));
-#ifdef __wasm__ // A game has its WGSL where WebGPU is
+#ifdef __wasm__ // A game has its WGSL where WebGPU is (natively, its SPIR-V)
+    TIDE_CHECK(strstr(shader->wgsl, "0.25") && !strstr(shader->wgsl, "0.75"));
     TIDE_CHECK(strstr(shader->wgsl, "0.125") && !strstr(shader->wgsl, "0.875"));
 #endif
 }

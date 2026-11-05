@@ -52,7 +52,7 @@ if(wgsl MATCHES "@vertex")
 endif()
 get_filename_component(repository "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 file(WRITE "${program}.unity.hlsl" "#include \"${repository}/unity/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n#include \"${program}\"\n")
-foreach(api SHADER_API_D3D11 SHADER_API_GLCORE SHADER_API_GLES3)
+foreach(api SHADER_API_D3D11) # Every API Tide draws on in Unity compiles alike (hlsl.c: reversed depth)
     set(index 0) # Pairs: a profile, then its entry point
     list(LENGTH stages count)
     while(index LESS count)

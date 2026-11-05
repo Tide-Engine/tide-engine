@@ -104,7 +104,6 @@ enum {
     ATTR_VERSION_CODE = 0x0101021b,
     ATTR_VERSION_NAME = 0x0101021c,
     ATTR_TARGET_SDK = 0x01010270,
-    ATTR_GL_ES_VERSION = 0x01010281,
     ATTR_REQUIRED = 0x0101028e,
     ATTR_EXTRACT_NATIVE_LIBS = 0x010104ea,
     ATTR_APP_CATEGORY = 0x01010545,
@@ -330,11 +329,6 @@ static void manifest_nodes(const apk_desc *desc, xml *x)
     attr_value(n, ATTR_MIN_SDK, "minSdkVersion", VALUE_INT, (uint32_t)desc->min_sdk);
     attr_value(n, ATTR_TARGET_SDK, "targetSdkVersion", VALUE_INT, (uint32_t)desc->target_sdk);
     close_node(x, "uses-sdk");
-
-    n = open_node(x, "uses-feature"); // OpenGL ES 3, which the renderer needs
-    attr_value(n, ATTR_GL_ES_VERSION, "glEsVersion", VALUE_HEX, 0x00030000);
-    attr_value(n, ATTR_REQUIRED, "required", VALUE_BOOL, 0xffffffffu);
-    close_node(x, "uses-feature");
 
     n = open_node(x, "uses-permission"); // Matches go over the network
     attr_text(n, ATTR_NAME, "name", "android.permission.INTERNET");

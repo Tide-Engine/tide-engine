@@ -1786,11 +1786,6 @@ static uint64_t vk_device_memory(void)
     return most;
 }
 
-static bool vk_float_targets(void)
-{
-    return true; // Vulkan draws into, blends and samples blended RGBA16F on every device
-}
-
 static tide_gpu_id vk_target_texture(const tide_gpu_id id, const uint32_t color)
 {
     const vk_target *t = &vk.targets[id - 1u];
@@ -2758,7 +2753,7 @@ static bool validating(void)
 }
 
 // What the validation layer finds wrong stops the program, as a web test
-// page's WebGL and WebGPU errors fail it.
+// page's WebGPU errors fail it.
 static VKAPI_ATTR VkBool32 VKAPI_CALL on_validation(const VkDebugUtilsMessageSeverityFlagBitsEXT severity,
                                                     const VkDebugUtilsMessageTypeFlagsEXT types,
                                                     const VkDebugUtilsMessengerCallbackDataEXT *data, void *user)
@@ -3375,7 +3370,6 @@ const tide_gpu tide_gpu_vulkan = {
     .target = vk_target_make,
     .target_limit = vk_target_limit,
     .target_samples = vk_target_samples,
-    .float_targets = vk_float_targets,
     .target_texture = vk_target_texture,
     .target_depth = vk_target_depth,
     .resolve_depth = vk_resolve_depth,

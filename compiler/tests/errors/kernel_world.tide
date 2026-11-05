@@ -1,0 +1,16 @@
+// expect: a kernel can't reach other entities
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow, World world) { meadow.counts[0] = 1; }

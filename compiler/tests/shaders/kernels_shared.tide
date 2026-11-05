@@ -1,0 +1,59 @@
+// Kernels' WGSL: atomics on a GPUList<int> (array<atomic<i32>>, every read and
+// write of it atomic, each atomic guarded by the capacity), a shared array and
+// a shared int array used with atomics (array<atomic<i32>, N>, its reads and
+// writes atomic too), GPU.Barrier() in the body and in a loop of a constant
+// count, a kernel with a barrier running its body for every invocation, a
+// group of three axes, Random's rolls, and a sampled grid of a singleton.
+scene Main { }
+
+local singleton Counts
+{
+    GPUList<int> bins;
+    GPUList<float> sums;
+    Grid2<float> noise;
+}
+
+[Group(64)]
+compute Tally(Counts counts)
+{
+    int bin = this.index % 8;
+    int before = counts.bins.AtomicAdd(bin, 1);
+    counts.bins.AtomicMax(8, before);
+    counts.bins.AtomicCompareExchange(9, 0, this.index);
+    counts.bins.AtomicExchange(10, counts.bins[0]);
+    counts.bins[11] = Random.NextInt(100);
+}
+
+[Group(64)]
+compute Sum(Counts counts)
+{
+    shared float[64] partial;
+    shared int[2] seen;
+    int i = this.local.x;
+    partial[i] = this.index < counts.sums.count ? counts.sums[this.index] : 0.0;
+    seen.AtomicAdd(0, 1);
+    GPU.Barrier();
+    for (var step = 32; step > 0; step /= 2)
+    {
+        if (i < step) partial[i] += partial[i + step];
+        GPU.Barrier();
+    }
+    if (i == 0)
+    {
+        counts.sums[this.group.x] = partial[0] + counts.noise[int2(0, 0)];
+        seen[1] = seen[0];
+    }
+}
+
+[Group(4, 4, 4)]
+compute Fill(Counts counts)
+{
+    counts.sums[this.index] = float(this.at.x + this.at.y + this.at.z) + float(this.local.z);
+}
+
+view Run(Counts counts)
+{
+    GPU.Run(Tally, 1000);
+    GPU.Run(Sum, counts.sums);
+    GPU.Run(Fill, int3(8, 8, 8));
+}

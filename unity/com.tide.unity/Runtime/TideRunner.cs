@@ -250,6 +250,14 @@ namespace Tide
             return commands;
         }
 
+        // A read back Tide's renderer asked for (TideRender's), for the game's GPU list reads: `size` bytes, or null
+        // for one Unity couldn't make (tide_embed_render_read).
+        public void RenderRead(uint token, byte* data, uint size)
+        {
+            if (embed == IntPtr.Zero) return;
+            library.RenderRead(embed, token, data, size);
+        }
+
         // What the embedded game takes (tide/embed.h), each with the values it's followed by: the first word it
         // doesn't take, or null. tide run's others (--players, --capture, --size...) are for its own window.
         public static string UnknownArguments(List<string> words)

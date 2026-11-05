@@ -1,0 +1,20 @@
+// expect: A GPU list's Set, Clear and SetCount can only be used in views, and in functions they call
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+local event Tapped { }
+local event(Tapped t) Fill(Meadow meadow)
+{
+    meadow.blades.Clear();
+}

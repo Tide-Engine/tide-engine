@@ -382,7 +382,7 @@ What's different there:
 
 - **Each pixel and each vertex has a generator of its own**, made as its code starts: from where the pixel is, or which vertex it is, and from a number the frame rolls. So no two pixels roll alike, and a frame later they all roll something else. That's what grain, static and sparkle want. What should stay put from frame to frame is [`Math.Hash`](#functions) or [noise](#noise).
 - **They aren't the CPU's numbers.** A GPU's ints are 32 bits, so it rolls with a smaller generator than a system does. What a roll gives is the same: the table above holds, ranges and all.
-- **Give separate rolls separate statements when their order matters.** OpenGL doesn't promise the CPU's left-to-right order for several rolls in one expression. Also, a `?:` that rolls evaluates the rolls on both sides on the GPU; use an `if` when only the selected branch should roll.
+- **Give separate rolls separate statements when their order matters.** Not every shader language Tide translates to promises the CPU's left-to-right order for several rolls in one expression (Unity's HLSL doesn't). Also, a `?:` that rolls evaluates the rolls on both sides on the GPU; use an `if` when only the selected branch should roll.
 - **`Random.seed` is there too**, so a frag can draw noise from the match's seed.
 - **A `Random` of your own stays on the CPU.** Its state is 64 bits. A frag rolls on the type.
 

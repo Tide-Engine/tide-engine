@@ -1,0 +1,21 @@
+// expect: so a loop with one counts the same for each: from a constant to a constant
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Wait(Meadow meadow)
+{
+    for (var i = 0; i < this.index; i++) GPU.Barrier();
+    meadow.counts[0] = 1;
+}
+view Show(Meadow meadow) { GPU.Run(Wait, 64); }

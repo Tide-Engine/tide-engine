@@ -1,0 +1,17 @@
+// expect: a kernel runs over a count (an int), a size (an int2 or int3), a List<T> or a GPUList<T>, and this is float
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow) { meadow.counts[0] = 1; }
+view Show(Meadow meadow) { GPU.Run(Inner, 2.5); }

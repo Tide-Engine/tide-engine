@@ -1,5 +1,7 @@
 # Render3D package
 
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
 ## Forest depth order after quiet measurements (2026-11-02)
 
 The first quiet foliage cohort completed twelve release processes and 1200 GPU

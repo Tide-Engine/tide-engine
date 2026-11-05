@@ -22,26 +22,6 @@
 
 enum { WIDTH = 4, HEIGHT = 6 };
 
-static const char vertex[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "out vec2 uv;\n"
-    "void main() {\n"
-    "    vec2 at = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;\n" // (-1, -1), (3, -1), (-1, 3)
-    "    uv = at * vec2(0.5, -0.5) + vec2(0.5);\n"
-    "    gl_Position = vec4(at, settings.z, 1);\n"
-    "}\n";
-
-static const char fragment[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "uniform sampler2D pixels0;\n"
-    "in vec2 uv;\n"
-    "out vec4 color;\n"
-    "void main() {\n"
-    "    vec4 sampled = textureLod(pixels0, uv, 0.0);\n"
-    "    color = settings.x > 1.0 ? vec4(sampled.a, sampled.rg, 1) :\n"
-    "            settings.x > 0.0 ? vec4(uv, gl_FragCoord.y / settings.y, 1) : sampled;\n"
-    "}\n";
-
 static const char wgsl[] =
     "struct Uniforms { settings: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -61,26 +41,8 @@ static const char wgsl[] =
     "}\n";
 
 // A target's depth, read as a number: 0 at the near plane to 1 at the far limit.
-static const char depth_fragment[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "uniform highp sampler2D pixels0;\n"
-    "in vec2 uv;\n"
-    "out vec4 color;\n"
-    "void main() {\n"
-    "    float depth = textureLod(pixels0, uv, 0.0).r;\n"
-    "    color = vec4(depth, depth, depth, 1);\n"
-    "}\n";
 
 // ...and compared with `settings.x`: how much of what's stored isn't nearer.
-static const char compare_fragment[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "uniform highp sampler2DShadow pixels0;\n"
-    "in vec2 uv;\n"
-    "out vec4 color;\n"
-    "void main() {\n"
-    "    float lit = textureLod(pixels0, vec3(uv, clamp(settings.x, 0.0, 1.0)), 0.0);\n"
-    "    color = vec4(lit, lit, lit, 1);\n"
-    "}\n";
 
 #define DEPTH_WGSL(sampler_type, read)                                                                                 \
     "struct Uniforms { settings: vec4f }\n"                                                                            \
@@ -113,23 +75,6 @@ static const tide_shader list_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "layout(location=2) in vec4 tint;\n"
-        "out vec2 uv; out vec4 shade;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; shade = tint; }\n",
-    .glsl_fragment =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "uniform sampler2D pixels0;\n"
-        "in vec2 uv; in vec4 shade; out vec4 color;\n"
-        "void main() {\n"
-        "  vec4 sampled = textureLod(pixels0, uv, 0.0) * shade;\n"
-        "  color = settings.x > 1.0 ? vec4(sampled.a, sampled.rg, 1) :\n"
-        "          settings.x > 0.0 ? vec4(gl_FragCoord.x / screen.x / settings.y,\n"
-        "               (screen.z - gl_FragCoord.y) / screen.y / settings.z, screen.z / settings.z, 1) : sampled;\n"
-        "}\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -157,17 +102,6 @@ static const tide_shader depth_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_DEPTH},
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "out vec2 uv;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
-    .glsl_fragment =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "uniform highp sampler2D pixels0;\n"
-        "in vec2 uv; out vec4 color;\n"
-        "void main() { float depth = textureLod(pixels0, uv, 0.0).r; color = vec4(depth, depth, depth, 1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -191,20 +125,6 @@ static const tide_shader compare_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_COMPARE},
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "out vec2 uv;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
-    .glsl_fragment =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
-        "uniform highp sampler2DShadow pixels0;\n"
-        "in vec2 uv; out vec4 color;\n"
-        "void main() {\n"
-        "  float lit = textureLod(pixels0, vec3(uv, clamp(settings.x, 0.0, 1.0)), 0.0);\n"
-        "  color = vec4(lit, lit, lit, 1);\n"
-        "}\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -229,20 +149,6 @@ static const tide_shader caster_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex3, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex3, color)}},
     .instance_floats = 4,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 origin; };\n"
-        "layout(location=0) in vec3 position;\n"
-        "layout(location=3) in vec4 m0;\n"
-        "layout(location=4) in vec4 m1;\n"
-        "layout(location=5) in vec4 m2;\n"
-        "layout(location=6) in vec4 m3;\n"
-        "void main() {\n"
-        "  mat4 relative = mat4(m0 - origin * m0.w, m1 - origin * m1.w, m2 - origin * m2.w, m3 - origin * m3.w);\n"
-        "  gl_Position = camera * (relative * vec4(position, 1));\n"
-        "}\n",
-    .glsl_fragment =
-        "out vec4 color;\n"
-        "void main() { if (gl_FragCoord.x > 2.0) discard; color = vec4(1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, origin: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -1315,19 +1221,19 @@ static void check_depth(void)
     static const float depths[WIDTH] = {0.2f, 0.4f, 0.6f, 0.8f};
     uint8_t actual[WIDTH * HEIGHT * 4 * 4];
     const tide_gpu_id solid = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 0, 255, 255});
-    tide_gpu_pipeline_desc fill = {.name = "depth fill", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+    tide_gpu_pipeline_desc fill = {.name = "depth fill", .wgsl = wgsl,
                                    .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
                                    .depth = TIDE_GPU_DEPTH_TEST, .into = TIDE_GPU_TARGET_DEPTH};
     const tide_gpu_id into_depth = gpu->pipeline(&fill);
     fill.into = TIDE_GPU_TARGET_COLOR;
     const tide_gpu_id into_color = gpu->pipeline(&fill);
     const tide_gpu_id read = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "depth read", .glsl_vertex = vertex, .glsl_fragment = depth_fragment, .wgsl = depth_wgsl,
+        .name = "depth read", .wgsl = depth_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_DEPTH}, .blend = TIDE_GPU_BLEND_REPLACE,
         .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id compare = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "depth compare", .glsl_vertex = vertex, .glsl_fragment = compare_fragment, .wgsl = compare_wgsl,
+        .name = "depth compare", .wgsl = compare_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_COMPARE}, .blend = TIDE_GPU_BLEND_REPLACE,
         .into = TIDE_GPU_TARGET_COLOR,
     });
@@ -1506,7 +1412,7 @@ static void check_stencil(void)
     uint8_t actual[WIDTH * HEIGHT * 4];
     const tide_gpu_id dark = gpu->texture(TIDE_GPU_RGBA8, 1, 1, black), bright = gpu->texture(TIDE_GPU_RGBA8, 1, 1, magenta);
     const tide_gpu_id right = gpu->texture(TIDE_GPU_RGBA8, 1, 1, green);
-    tide_gpu_pipeline_desc desc = {.name = "stencil", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+    tide_gpu_pipeline_desc desc = {.name = "stencil", .wgsl = wgsl,
                                    .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
                                    .into = TIDE_GPU_TARGET_COLOR};
     const tide_gpu_id paint = gpu->pipeline(&desc); // Neither tests nor stores
@@ -1606,8 +1512,7 @@ static void check_stencil(void)
     for (int i = 0; i < WIDTH * HEIGHT; i++) expect_color(actual, i % WIDTH, i / WIDTH, black, "stencil cleared with its pass");
 
     // A target of depth alone has it too: a depth written only where its stencil lets it be
-    desc = (tide_gpu_pipeline_desc){.name = "stencil into depth alone", .glsl_vertex = vertex, .glsl_fragment = fragment,
-                                    .wgsl = wgsl, .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
+    desc = (tide_gpu_pipeline_desc){.name = "stencil into depth alone",                                     .wgsl = wgsl, .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
                                     .stencil_op = TIDE_GPU_STENCIL_REPLACE, .into = TIDE_GPU_TARGET_DEPTH};
     const tide_gpu_id mask = gpu->pipeline(&desc); // Stores, and writes no depth
     desc.stencil_op = TIDE_GPU_STENCIL_KEEP;
@@ -1615,7 +1520,7 @@ static void check_stencil(void)
     desc.depth = TIDE_GPU_DEPTH_TEST;
     const tide_gpu_id masked = gpu->pipeline(&desc);
     const tide_gpu_id read = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "depth read", .glsl_vertex = vertex, .glsl_fragment = depth_fragment, .wgsl = depth_wgsl,
+        .name = "depth read", .wgsl = depth_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_DEPTH}, .blend = TIDE_GPU_BLEND_REPLACE,
         .into = TIDE_GPU_TARGET_COLOR,
     });
@@ -1689,7 +1594,7 @@ static void check_targets(void)
     const tide_gpu_id image = gpu->texture(TIDE_GPU_RGBA8, WIDTH, HEIGHT, pixels);
     const tide_gpu_id solid = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 0, 255, 255});
     const tide_gpu_id pipeline = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "target copy", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .name = "target copy", .wgsl = wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .depth = TIDE_GPU_DEPTH_TEST,
         .into = TIDE_GPU_TARGET_COLOR,
     });
@@ -2172,17 +2077,6 @@ static void check_render_stencil(const float scale)
 // Several color images, and floats: the backend's part, then the renderer's.
 
 // Three colors at once: a color, numbers past 1 and under 0, and four times the uv.
-static const char three_fragment[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "in vec2 uv;\n"
-    "layout(location = 0) out vec4 first;\n"
-    "layout(location = 1) out vec4 second;\n"
-    "layout(location = 2) out vec4 third;\n"
-    "void main() {\n"
-    "    first = vec4(0.25, 0.5, 0.75, 1);\n"
-    "    second = vec4(3, -1, 0.5, 1);\n"
-    "    third = vec4(uv * 4.0, 2, 1);\n"
-    "}\n";
 
 static const char three_wgsl[] =
     "struct Uniforms { settings: vec4f }\n"
@@ -2199,14 +2093,6 @@ static const char three_wgsl[] =
     "}\n";
 
 // A texture's color times `settings.x`, plus `settings.y`: what floats hold, in what bytes show.
-static const char scaled_fragment[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "uniform sampler2D pixels0;\n"
-    "in vec2 uv;\n"
-    "out vec4 color;\n"
-    "void main() {\n"
-    "    color = vec4(textureLod(pixels0, uv, 0.0).rgb * settings.x + vec3(settings.y), 1);\n"
-    "}\n";
 
 static const char scaled_wgsl[] =
     "struct Uniforms { settings: vec4f }\n"
@@ -2289,7 +2175,7 @@ static void expect_three(const uint8_t *second, const uint8_t *third, const bool
 static void check_colors(void)
 {
     const tide_gpu *gpu = tide_window_gpu();
-    const bool floats = gpu->float_targets();
+    const bool floats = true; // Every backend draws into floats
     uint8_t actual[WIDTH * HEIGHT * 4], other[WIDTH * HEIGHT * 4];
     // 4 bytes a pixel, then floats twice
     const tide_gpu_target_format held =
@@ -2304,22 +2190,21 @@ static void check_colors(void)
     }
     const tide_gpu_id solid = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 0, 255, 255});
     const tide_gpu_id dim = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 128, 64, 255});
-    tide_gpu_pipeline_desc three_desc = {.name = "three colors", .glsl_vertex = vertex, .glsl_fragment = three_fragment,
-                                         .wgsl = three_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
+    tide_gpu_pipeline_desc three_desc = {.name = "three colors",                                          .wgsl = three_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
                                          .into = held, .outputs = 3};
     const tide_gpu_id three = gpu->pipeline(&three_desc);
     three_desc.into = TIDE_GPU_TARGET_COLOR; // More outputs than the target has images
     const tide_gpu_id three_into_one = gpu->pipeline(&three_desc);
     const tide_gpu_id one_into_three = gpu->pipeline(&(tide_gpu_pipeline_desc){ // Fewer: the others are left alone
-        .name = "one color into three", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .name = "one color into three", .wgsl = wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = held,
     });
     const tide_gpu_id scaled = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "scaled copy", .glsl_vertex = vertex, .glsl_fragment = scaled_fragment, .wgsl = scaled_wgsl,
+        .name = "scaled copy", .wgsl = scaled_wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id added = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "added into floats", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .name = "added into floats", .wgsl = wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_ADD, .into = one_float,
     });
     const tide_gpu_id several = gpu->target(held, WIDTH, HEIGHT);
@@ -2391,25 +2276,6 @@ static void check_colors(void)
         break;
     }
 
-    // OpenGL on a device that can't draw into floats: those images are bytes, and everything else is as it was
-    if (gpu == &tide_gpu_gl) {
-        tide_gpu_gl_no_floats = true;
-        if (gpu->float_targets()) failures++, fprintf(stderr, "float targets, with none to be had\n");
-        const tide_gpu_id plain = gpu->target(held, WIDTH, HEIGHT);
-        tide_gpu_gl_no_floats = false;
-        if (gpu->float_targets() != floats) failures++, fprintf(stderr, "float targets don't come back\n");
-        gpu->begin(plain, true);
-        gpu->scissor(0, 0, WIDTH / 2, HEIGHT);
-        fill(gpu, three);
-        gpu->end();
-        show_scaled(gpu, scaled, scene, gpu->target_texture(plain, 1), 0.25f, 0.25f, actual);
-        show_scaled(gpu, scaled, scene, gpu->target_texture(plain, 2), 0.25f, 0, other);
-        expect_three(actual, other, false, 0, "float images on a device with none are bytes");
-        gpu->target_read(plain, actual);
-        for (int y = 0; y < HEIGHT; y++) expect_rgb(actual, 0, y, 0.25f, 0.5f, 0.75f, "and its first image is as ever");
-        gpu->target_free(plain);
-    }
-
     gpu->target_free(several);
     gpu->target_free(scene);
     gpu->target_free(bright);
@@ -2430,14 +2296,6 @@ static const tide_shader two_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .outputs = 2,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); }\n",
-    .glsl_fragment =
-        "layout(location = 0) out vec4 first;\n"
-        "layout(location = 1) out vec4 second;\n"
-        "void main() { first = vec4(1, 1, 0, 1); second = vec4(2, 0.5, -1, 1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -2458,16 +2316,6 @@ static const tide_shader quarter_shader = {
                    {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .texture_count = 1,
-    .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
-        "layout(location=0) in vec2 position;\n"
-        "layout(location=1) in vec2 coords;\n"
-        "out vec2 uv;\n"
-        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
-    .glsl_fragment =
-        "uniform sampler2D pixels0;\n"
-        "in vec2 uv; out vec4 color;\n"
-        "void main() { color = vec4(textureLod(pixels0, uv, 0.0).rgb * 0.25 + vec3(0.25), 1); }\n",
     .wgsl =
         "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -2506,7 +2354,7 @@ static void show_color(const tide_texture_ref color, const tide_shader *through)
 // what the engine draws itself has one color, which goes into the first and
 // leaves the second, a clear fills both, and a shader's outputs go to them in
 // order. Each is a texture of its own.
-static void check_render_colors(const bool plain)
+static void check_render_colors(void)
 {
     enum { WIDE = WIDTH * 2, HIGH = HEIGHT * 2 };
     static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
@@ -2515,9 +2363,8 @@ static void check_render_colors(const bool plain)
                                           {{0, -1, 2}, {1, 1}, TIDE_COLOR_GREEN}, {{-1, -1, 2}, {0, 1}, TIDE_COLOR_GREEN}};
     const tide_mesh left = {left_vertices, 4, indices, 6, 1};
     const tide_float4x4 identity = tide_identity_f4x4(), across = tide_ortho_f4x4(2, 2, 0.1f, 10);
-    const bool floats = !plain && tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     const tide_target_format formats[] = {TIDE_TARGET_RGBA8, TIDE_TARGET_RGBA16F};
-    if (plain) tide_gpu_gl_no_floats = true; // Its images are made as it's first drawn into
     const tide_render_target scene = tide_render_target_make_scaled_of(WIDE, HIGH, 1, formats, 2);
     const tide_texture_ref first = tide_render_target_color(scene), second = tide_render_target_color_at(scene, 1);
     // What the two-output shader's second color is through quarter_shader
@@ -2535,7 +2382,6 @@ static void check_render_colors(const bool plain)
     tide_draw_to(&render_list, 0, 0, 0);
     blit_color(first, &list_shader);
     read_window(WIDE, HIGH, 1.0f);
-    tide_gpu_gl_no_floats = false;
     for (int y = 0; y < HIGH; y++) {
         for (int x = 0; x < WIDE; x++) {
             expect_pixel(x, y, x < WIDE / 2 ? 0x00ff00ffu : y < HIGH / 2 ? 0x0000ffffu : 0xff0000ffu,
@@ -2610,16 +2456,6 @@ enum { EDGE = 8 }; // A square target a triangle's edge crosses from corner to c
 // A triangle over the target's lower left half, its long edge a little short
 // of the diagonal, so that it goes through no pixel's middle: a pixel on it is
 // covered in part, whatever samples a device has there.
-static const char edge_vertex[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "void main() {\n"
-    "    gl_Position = vec4(gl_VertexID == 1 ? 0.9 : -1.0, gl_VertexID == 2 ? 0.9 : -1.0, 0, 1);\n"
-    "}\n";
-
-static const char edge_fragment[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "out vec4 color;\n"
-    "void main() { color = settings; }\n";
 
 static const char edge_wgsl[] =
     "struct Uniforms { settings: vec4f }\n"
@@ -2696,14 +2532,13 @@ static void check_samples(void)
         return;
     }
     const tide_gpu_target_format smooth_format = tide_gpu_target_sampled(TIDE_GPU_TARGET_COLOR, samples);
-    tide_gpu_pipeline_desc edge_desc = {.name = "an edge", .glsl_vertex = edge_vertex, .glsl_fragment = edge_fragment,
-                                        .wgsl = edge_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
+    tide_gpu_pipeline_desc edge_desc = {.name = "an edge",                                         .wgsl = edge_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
                                         .into = TIDE_GPU_TARGET_COLOR};
     const tide_gpu_id edge_plain = gpu->pipeline(&edge_desc);
     edge_desc.into = smooth_format; // A pipeline is for its targets' samples too
     const tide_gpu_id edge_smooth = gpu->pipeline(&edge_desc);
     const tide_gpu_id copied = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "a resolved image, sampled", .glsl_vertex = vertex, .glsl_fragment = scaled_fragment, .wgsl = scaled_wgsl,
+        .name = "a resolved image, sampled", .wgsl = scaled_wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id plain = gpu->target(TIDE_GPU_TARGET_COLOR, EDGE, EDGE);
@@ -2789,10 +2624,10 @@ static void check_samples(void)
         tide_gpu_target_with(tide_gpu_target_with(TIDE_GPU_TARGET_COLOR, TIDE_GPU_COLOR_FLOAT), TIDE_GPU_COLOR_FLOAT);
     const uint32_t held_samples = gpu->target_samples(tide_gpu_target_sampled(three_colors, samples));
     if (held_samples > 1) {
-        const bool floats = gpu->float_targets();
+        const bool floats = true; // Every backend draws into floats
         const tide_gpu_target_format held = tide_gpu_target_sampled(three_colors, held_samples);
         const tide_gpu_id three = gpu->pipeline(&(tide_gpu_pipeline_desc){
-            .name = "three colors, multisampled", .glsl_vertex = vertex, .glsl_fragment = three_fragment, .wgsl = three_wgsl,
+            .name = "three colors, multisampled", .wgsl = three_wgsl,
             .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE, .into = held, .outputs = 3});
         const tide_gpu_id several = gpu->target(held, WIDTH, HEIGHT);
         const tide_gpu_id view = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
@@ -2967,19 +2802,6 @@ static void check_render_samples(const int32_t samples)
 // Only the first failures say which pixels were wrong: this says which group
 // of checks any were in, and how many.
 // A cube read by a direction that's the same for every pixel (`settings.xyz`), at the level `settings.w`.
-static const char cube_vertex[] =
-    "out vec2 uv;\n"
-    "void main() {\n"
-    "    uv = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;\n"
-    "    gl_Position = vec4(uv, 0, 1);\n"
-    "}\n";
-
-static const char cube_fragment[] =
-    "layout(std140) uniform uniforms { vec4 settings; };\n"
-    "uniform highp samplerCube pixels0;\n"
-    "in vec2 uv;\n"
-    "out vec4 color;\n"
-    "void main() { color = textureLod(pixels0, settings.xyz, settings.w); }\n";
 
 static const char cube_wgsl[] =
     "struct Uniforms { settings: vec4f }\n"
@@ -3056,20 +2878,20 @@ static void check_cubes(void)
     const tide_gpu *gpu = tide_window_gpu();
     const tide_gpu_target_format one_float = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, TIDE_GPU_COLOR_FLOAT);
     const tide_gpu_id reads = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "cube by a direction", .glsl_vertex = cube_vertex, .glsl_fragment = cube_fragment, .wgsl = cube_wgsl,
+        .name = "cube by a direction", .wgsl = cube_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_CUBE}, .blend = TIDE_GPU_BLEND_REPLACE,
         .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id copies = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "copy into a face", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .name = "copy into a face", .wgsl = wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id adds = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "added into a float face", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .name = "added into a float face", .wgsl = wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_ADD, .into = one_float,
     });
     const tide_gpu_id scaled = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "cube read", .glsl_vertex = cube_vertex, .glsl_fragment = cube_fragment, .wgsl = cube_wgsl,
+        .name = "cube read", .wgsl = cube_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_CUBE}, .blend = TIDE_GPU_BLEND_REPLACE,
         .into = TIDE_GPU_TARGET_COLOR,
     });
@@ -3169,8 +2991,7 @@ static void check_cubes(void)
     gpu->end();
     const float back_way[3] = {0, 0, -1};
     const uint8_t *summed = cube_read(gpu, scaled, scene, bright, back_way, 0, TIDE_GPU_FILTER_LINEAR);
-    if (gpu->float_targets()) expect_side(summed, 1, 1, 0.5f, "a float cube, added into twice", 5);
-    else expect_side(summed, 1, 1, 0.5f, "a float cube that's bytes here, added into twice", 5);
+    expect_side(summed, 1, 1, 0.5f, "a float cube, added into twice", 5);
 
     gpu->target_free(bright_side);
     gpu->texture_free(bright);
@@ -3244,8 +3065,7 @@ static int frame(void *user, const float seconds)
     check_colors();
     check_colors();
     checked("the backend's targets of several colors");
-    check_render_colors(false);
-    if (tide_window_gpu() == &tide_gpu_gl) check_render_colors(true); // As on an OpenGL that can't draw into floats
+    check_render_colors();
     checked("the renderer's targets of several colors");
     check_samples();
     check_samples(); // Its pipelines and targets are made again

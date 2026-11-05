@@ -1,0 +1,19 @@
+// expect: a GPU list is made with its capacity, the most elements it holds
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+view Show(mut Meadow meadow)
+{
+    meadow.counts = GPUList<int>();
+}

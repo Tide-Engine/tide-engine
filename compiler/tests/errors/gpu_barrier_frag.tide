@@ -1,0 +1,25 @@
+// expect: GPU.Barrier() waits for a kernel's whole group, so it's a kernel's own body's
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+struct Corner { float2 position; }
+frag Paint(Corner corner, out Color color)
+{
+    GPU.Barrier();
+    color = Color.white;
+}
+view Show(Meadow meadow)
+{
+    Draw.Mesh([Corner { position = float2(0, 0) }, Corner { position = float2(1, 0) }, Corner { position = float2(0, 1) }], [0, 1, 2], Paint);
+}

@@ -93,17 +93,15 @@ TIDE_TEST(mipmaps_a_shader_run_says_how_each_texture_is_read)
         TIDE_CHECK(tide_sampling_filter(kept->sampling, t) != TIDE_FILTER_TRILINEAR || tide_sampling_blended(kept->sampling, t));
     }
     // The frag asks how fast its uvs change as it starts, and reads with the answer; the vert reads the texture's own
-    TIDE_CHECK(strstr(shader->glsl_fragment, "dFdx(tide_uv0)") && strstr(shader->glsl_fragment, "textureGrad(pixels"));
-#ifdef __wasm__ // Where there's WebGPU to read it
+#ifdef __wasm__ // A shader's text is its WGSL, which a build keeps on the web
     TIDE_CHECK(strstr(shader->wgsl, "dpdx(tide_uv0)") && strstr(shader->wgsl, "textureSampleGrad(pixels"));
+    TIDE_CHECK(strstr(shader->wgsl, "(*t_vertex).m_position.y + tide_straight(textureSampleLevel(pixels0, sampler0, (*t_vertex).m_uv, 0.0))"));
 #endif
-    TIDE_CHECK(!strstr(shader->glsl_vertex, "textureGrad") && strstr(shader->glsl_vertex, "textureLod(pixels"));
     // With no frag, the draw's own texture is read as it says, by the GPU's own pick
     const tide_draw_run *bare = shaded(9);
     TIDE_REQUIRE(bare && bare->shader != shader);
     const uint32_t own = bare->shader->texture_count - 1u;
     TIDE_CHECK(tide_sampling_filter(bare->sampling, own) == TIDE_FILTER_TRILINEAR);
-    TIDE_CHECK(strstr(bare->shader->glsl_fragment, "texture(pixels") != NULL);
 #ifdef __wasm__
     TIDE_CHECK(strstr(bare->shader->wgsl, "textureSample(pixels") != NULL);
 #endif

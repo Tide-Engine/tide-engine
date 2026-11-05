@@ -992,6 +992,12 @@ void tide_embed_render_reset(tide_embed *e)
     tide_platform_embed_render_reset();
 }
 
+void tide_embed_render_read(tide_embed *e, const uint32_t token, const void *data, const uint32_t size)
+{
+    if (e != &the_embed) return;
+    tide_gpu_record_read(token, data, size);
+}
+
 void tide_embed_background(tide_embed *e, const bool background)
 {
     if (e != &the_embed || !running || !background || !tide_run_game) return;

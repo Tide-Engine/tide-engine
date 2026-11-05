@@ -1,0 +1,17 @@
+// expect: a kernel has no entities to filter
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+component Tag { int a; }
+compute Inner(Meadow meadow, with Tag) { meadow.counts[0] = 1; }

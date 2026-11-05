@@ -1,0 +1,18 @@
+// expect: a kernel takes one struct, its run's values, and this is a second
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+struct A { float a; }
+struct B { float b; }
+compute Inner(Meadow meadow, A a, B b) { meadow.counts[0] = int(a.a + b.b); }

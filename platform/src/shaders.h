@@ -1,11 +1,10 @@
 #pragma once
 
-// The renderer's shaders (platform.c), each written for every backend (see
-// gpu.h): GLSL for OpenGL, without its version line, and WGSL for WebGPU on
-// the web and, as SPIR-V, for Vulkan on desktop. They draw the same pixels.
-// Until Tide code compiles to them, they're written by hand, so a change to
-// one goes to the other. Vulkan's is the WGSL, translated as the platform
-// layer builds (platform/tools/spirv_shaders.c, into shaders_spirv.h's).
+// The renderer's shaders (platform.c), in WGSL: WebGPU's on the web and, as
+// SPIR-V, Vulkan's on desktop and Android, translated as the platform layer
+// builds (platform/tools/spirv_shaders.c, into shaders_spirv.h's). They're
+// written by hand. (Until 2026-11-05 each had a GLSL twin for OpenGL 3.3,
+// OpenGL ES 3 and WebGL 2, which went with those backends.)
 
 // WGSL is the web's, and the SPIR-V tool's.
 #if defined(__wasm__) || defined(TIDE_SHADERS_WGSL)
@@ -51,82 +50,17 @@
 // where the pixel just past it, which it covers none of, could come out as a
 // millionth on one of them.
 
-#define SHAPE_GLSL_UNIFORMS "layout(std140) uniform uniforms { mat4 screen; vec2 texel; vec2 scale; vec4 fix; };\n"
-
 // A color as its pipeline blends it: times its alpha, which is how every
 // pipeline's blend takes what a shader writes (see tide_gpu_blend), and
 // towards white as it clears, by `by`. `whiten` takes a color whose alpha
 // isn't worked into it yet. `over` takes a texture's pixel, which has its
 // own worked in already, and the tint it's drawn with, which hasn't.
-#define GLSL_WHITEN \
-    "vec4 whiten(vec4 c, float by) { return vec4(c.rgb * c.a + by * (1.0 - c.a), c.a); }\n" \
-    "vec4 over(vec4 p, vec4 tint, float by) {\n" \
-    "    vec4 c = p * vec4(tint.rgb * tint.a, tint.a);\n" \
-    "    return vec4(c.rgb + by * (1.0 - c.a), c.a);\n" \
-    "}\n"
 #define WGSL_WHITEN \
     "fn whiten(c: vec4f, by: f32) -> vec4f { return vec4f(c.rgb * c.a + by * (1.0 - c.a), c.a); }\n" \
     "fn over(p: vec4f, tint: vec4f, by: f32) -> vec4f {\n" \
     "    let c = p * vec4f(tint.rgb * tint.a, tint.a);\n" \
     "    return vec4f(c.rgb + by * (1.0 - c.a), c.a);\n" \
     "}\n"
-
-// Where a plain kind's corner goes. `c` is the quad's, from -1 to 1.
-#define SHAPE_GLSL_PLACE                                                                                    \
-    "if (kind > 3.5) {\n" /* A line: a pixel wide, reaching half a pixel past its ends */                  \
-    "        vec2 d = shape.zw - shape.xy;\n"                                                               \
-    "        float len = length(d);\n"                                                                      \
-    "        vec2 along = len > 0.0 ? d / len : vec2(1.0, 0.0);\n"                                          \
-    "        extent = vec2(len * 0.5 + 0.5, 0.5);\n"                                                        \
-    "        local = c * extent;\n"                                                                         \
-    "        p = (shape.xy + shape.zw) * 0.5 + along * local.x + vec2(-along.y, along.x) * local.y;\n"      \
-    "    } else {\n"                                                                                        \
-    "        extent = abs(shape.zw);\n"                                                                     \
-    "        local = c * (extent + (kind > 1.5 ? 1.0 : 0.0));\n" /* Room for a circle's smooth edge */      \
-    "        p = shape.xy + local;\n"                                                                       \
-    "    }\n"
-
-// How much of a pixel a plain kind covers.
-#define SHAPE_GLSL_COVER                                                                                    \
-    "float cover = 1.0;\n"                                                                                  \
-    "    if (form > 0.5 && form < 1.5) {\n" /* A rect's outline: the pixel inside its edge */              \
-    "        if (all(lessThan(abs(local), extent - 1.0))) discard;\n"                                       \
-    "    } else if (form > 1.5 && form < 3.5) {\n" /* Circles, with a smooth edge */                        \
-    "        float d = length(local);\n"                                                                    \
-    "        cover = clamp(extent.x - d + 0.5, 0.0, 1.0);\n"                                                \
-    "        if (form > 2.5) cover *= clamp(d - extent.x + 1.5, 0.0, 1.0);\n" /* An outline: the pixel inside it */ \
-    "        if (cover <= 0.0) discard;\n"                                                                  \
-    "    }\n"
-
-static const char shape_glsl_vertex[] =
-    "layout(location = 0) in vec2 corner;\n" // A corner of the quad, 0 to 1
-    "layout(location = 1) in vec4 shape;\n"  // a, then b
-    "layout(location = 2) in vec4 color;\n"
-    "layout(location = 3) in float kind;\n"
-    "layout(std140) uniform uniforms { mat4 screen; };\n"
-    "out vec2 local;\n"  // Pixels from its middle; for a line, along and across it
-    "out vec2 extent;\n" // Half its size in pixels
-    "out vec4 tint;\n"
-    "out float form;\n"
-    "void main() {\n"
-    "    vec2 c = corner * 2.0 - 1.0;\n"
-    "    vec2 p;\n"
-    "    " SHAPE_GLSL_PLACE
-    "    tint = color;\n"
-    "    form = kind;\n"
-    "    gl_Position = screen * vec4(p, 0.0, 1.0);\n"
-    "}\n";
-
-static const char shape_glsl_fragment[] =
-    "in vec2 local;\n"
-    "in vec2 extent;\n"
-    "in vec4 tint;\n"
-    "in float form;\n"
-    "out vec4 pixel;\n"
-    "void main() {\n"
-    "    " SHAPE_GLSL_COVER
-    "    pixel = vec4(tint.rgb * (tint.a * cover), tint.a * cover);\n"
-    "}\n";
 
 // Smooth shapes are drawn by how far each pixel is from their edge, under 0
 // inside it, in the shape's own frame: its middle at the origin, before it's
@@ -143,161 +77,11 @@ static const char shape_glsl_fragment[] =
 // inside the edge; and colors blend with their alpha already in them, so a
 // fill that goes to a clear color fades out and doesn't darken on the way.
 
-#define SMOOTH_SHAPE_GLSL_OUT                                                                                          \
-    SHAPE_GLSL_UNIFORMS                                                                                                \
-    "out vec2 local;\n"                                                                                                \
-    "out vec2 extent;\n"                                                                                               \
-    "out vec4 tint;\n"                                                                                                 \
-    "out float form;\n"                                                                                                \
-    "out vec4 look;\n" /* Its corners' radius, its outline's width, how far its edge fades */                          \
-    "out vec2 gap;\n"  /* The cos and sin of half an arc's angle */                                                    \
-    "out vec4 tint2;\n"                                                                                                \
-    "out vec4 rim;\n"
-
-// From a shape's corner, its numbers (shape, color, kind) and its extra's (turn, fade, color2, rim_color).
-#define SMOOTH_SHAPE_GLSL_MAIN                                                                                         \
-    "    vec2 c = corner * 2.0 - 1.0;\n"                                                                               \
-    "    vec2 p;\n"                                                                                                    \
-    "    if (kind > 4.5) {\n" /* A smooth shape: turned about its middle, with room for its edge and what fades past it */ \
-    "        extent = abs(shape.zw);\n"                                                                                \
-    "        local = c * (extent + (kind > 7.5 ? 0.0 : max(fade.x, 0.0)) + 1.0);\n"                                                         \
-    "        p = shape.xy + vec2(local.x * turn.x - local.y * turn.y, local.x * turn.y + local.y * turn.x);\n"         \
-    "    } else " SHAPE_GLSL_PLACE                                                                                     \
-    "    tint = color;\n"                                                                                              \
-    "    form = kind;\n"                                                                                               \
-    "    look = kind > 7.5 ? vec4(turn.zw, fade) : vec4(turn.z, turn.w, fade.x, 0.0);\n"                                                                  \
-    "    gap = vec2(cos(fade.y), sin(fade.y));\n"                                                                      \
-    "    tint2 = color2;\n"                                                                                            \
-    "    rim = rim_color;\n"                                                                                           \
-    "    gl_Position = screen * vec4(p, 0.0, 1.0);\n"
-
-static const char smooth_shape_glsl_vertex[] =
-    "layout(location = 0) in vec2 corner;\n"
-    "layout(location = 1) in vec4 shape;\n"
-    "layout(location = 2) in vec4 color;\n"
-    "layout(location = 3) in float kind;\n"
-    "layout(location = 4) in vec4 turn;\n" // Its rotation's cos and sin, its corners' radius, its outline's width
-    "layout(location = 5) in vec2 fade;\n" // How far its edge fades, and half an arc's angle
-    "layout(location = 6) in vec4 color2;\n"
-    "layout(location = 7) in vec4 rim_color;\n"
-    SMOOTH_SHAPE_GLSL_OUT
-    "void main() {\n"
-    SMOOTH_SHAPE_GLSL_MAIN
-    "}\n";
-
-// A run whose smooth shapes are all solid ones (see solid_shape in
-// platform.c): a box or an ellipse, unturned, of one color, with no outline
-// and no fade. Of its extra, such a shape needs only its corners' radius,
-// which is all its run has beside its shapes: the rest is what its extra
-// would have said, for the same lines above and the same fragment shader.
-static const char solid_shape_glsl_vertex[] =
-    "layout(location = 0) in vec2 corner;\n"
-    "layout(location = 1) in vec4 shape;\n"
-    "layout(location = 2) in vec4 color;\n"
-    "layout(location = 3) in float kind;\n"
-    "layout(location = 4) in float radius;\n"
-    SMOOTH_SHAPE_GLSL_OUT
-    "void main() {\n"
-    "    vec4 turn = vec4(1.0, 0.0, radius, 0.0);\n"
-    "    vec2 fade = vec2(0.0, 0.0);\n"
-    "    vec4 color2 = color;\n"
-    "    vec4 rim_color = vec4(0.0);\n"
-    SMOOTH_SHAPE_GLSL_MAIN
-    "}\n";
-
-static const char smooth_shape_glsl_fragment[] =
-    "in vec2 local;\n"
-    "in vec2 extent;\n"
-    "in vec4 tint;\n"
-    "in float form;\n"
-    "in vec4 look;\n"
-    "in vec2 gap;\n"
-    "in vec4 tint2;\n"
-    "in vec4 rim;\n"
-    SHAPE_GLSL_UNIFORMS
-    "out vec4 pixel;\n"
-    GLSL_WHITEN
-    "float ellipse(vec2 at, vec2 radii) {\n"
-    "    vec2 q = abs(at);\n"
-    "    vec2 t = vec2(0.70710678);\n" // Where on the edge: the nearest point is radii * t
-    "    vec2 e = vec2(radii.x * radii.x - radii.y * radii.y, radii.y * radii.y - radii.x * radii.x) / radii;\n"
-    "    for (int i = 0; i < 3; i++) {\n" // Towards the pixel, around the middle of the edge's curve there
-    "        vec2 m = e * t * t * t;\n"
-    "        vec2 w = q - m;\n"
-    "        t = clamp((w * (length(radii * t - m) / max(length(w), 0.000001)) + m) / radii, 0.0, 1.0);\n"
-    "        float n = length(t);\n"
-    "        t = n > 0.00001 ? t / n : vec2(0.0, 1.0);\n"
-    "    }\n"
-    "    for (int i = 0; i < 2; i++) {\n" // Along the edge, to where the way to the pixel is straight across it
-    "        vec2 on = radii * t;\n"
-    "        vec2 along = radii * vec2(-t.y, t.x);\n"
-    "        vec2 to = q - on;\n"
-    "        float span = dot(along, along);\n"
-    "        float curve = span + dot(to, on);\n"
-    "        if (curve > 0.25 * span) {\n"
-    "            float slide = dot(to, along) / curve;\n"
-    "            vec2 next = clamp(vec2(t.x - t.y * slide, t.y + t.x * slide), 0.0, 1.0);\n"
-    "            float n = length(next);\n"
-    "            if (n > 0.00001) t = next / n;\n"
-    "        }\n"
-    "    }\n"
-    "    float apart = length(q - radii * t);\n"
-    "    vec2 s = q / radii;\n"
-    "    return dot(s, s) < 1.0 ? -apart : apart;\n"
-    "}\n"
-    "void main() {\n"
-    "    if (form < 4.5) {\n"
-    "    " SHAPE_GLSL_COVER
-    "        pixel = whiten(vec4(tint.rgb, tint.a * cover), fix.x);\n"
-    "        return;\n"
-    "    }\n"
-    "    float px = (scale.x + scale.y) * 0.5;\n"
-    "    float d;\n"
-    "    float outline = look.y;\n"
-    "    float soft = form > 7.5 ? 0.0 : look.z;\n"
-    "    if (form > 7.5) {\n"
-    "        float r = local.y < 0.0 ? (local.x < 0.0 ? look.x : look.y) : (local.x < 0.0 ? look.w : look.z);\n"
-    "        vec2 q = abs(local) - extent + r;\n"
-    "        d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;\n"
-    "        outline = 0.0;\n"
-    "    } else if (form > 6.5) {\n" // Part of a ring `outline` thick inside its radius
-    "        vec2 q = vec2(local.x, abs(local.y));\n"
-    "        float ring = abs(length(q) - extent.x + outline * 0.5) - outline * 0.5;\n"
-    "        float wedge = dot(q, gap) > 0.0 ? dot(q, vec2(-gap.y, gap.x)) : (gap.x > 0.0 ? length(q) : -length(q));\n"
-    "        d = min(max(ring, wedge), 0.0) + length(max(vec2(ring, wedge), 0.0));\n"
-    "        outline = 0.0;\n"
-    "    } else if (form > 5.5) {\n"
-    "        d = ellipse(local, extent);\n"
-    "    } else {\n" // A box, its corners round
-    "        vec2 q = abs(local) - extent + look.x;\n"
-    "        d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - look.x;\n"
-    "    }\n"
-    "    float cover = clamp(0.5 - d * px, 0.0, 1.0);\n"
-    "    if (soft > 0.0) {\n" // Its color goes on past its edge, fading
-    "        float glow = clamp(1.0 - (d * px + 0.5) / (soft * px + 1.0), 0.0, 1.0);\n"
-    "        cover = glow * glow;\n"
-    "    } else if (soft < 0.0) {\n" // It fades inwards from its edge
-    "        float glow = clamp(1.0 + (d * px - 0.5) / (1.0 - soft * px), 0.0, 1.0);\n"
-    "        cover *= glow * glow;\n"
-    "    }\n"
-    "    if (cover <= fix.y * 0.004) discard;\n"
-    "    float down = clamp(local.y / max(extent.y, 0.000001) * 0.5 + 0.5, 0.0, 1.0);\n" // 0 at its top
-    "    vec4 paint = mix(vec4(tint.rgb * tint.a, tint.a), vec4(tint2.rgb * tint2.a, tint2.a), down);\n"
-    "    if (outline > 0.0) {\n"
-    "        paint = mix(vec4(rim.rgb * rim.a, rim.a), paint, clamp(0.5 - (d + outline) * px, 0.0, 1.0));\n"
-    "    }\n"
-    "    if (paint.a <= 0.0) {\n" // Clear: nothing to draw, unless it's drawn for what it stores
-    "        if (fix.y < 0.5) discard;\n"
-    "        pixel = whiten(vec4(0.0), fix.x);\n"
-    "        return;\n"
-    "    }\n"
-    "    pixel = paint * cover + vec4(vec3(fix.x * (1.0 - paint.a * cover)), 0.0);\n"
-    "}\n";
-
 #define SHAPE_WGSL_UNIFORMS                                                      \
     "struct Uniforms { screen: mat4x4f, texel: vec2f, scale: vec2f, fix: vec4f }\n" \
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
 
+// Where a plain kind's corner goes. `c` is the quad's, from -1 to 1.
 #define SHAPE_WGSL_PLACE                                                                                            \
     "if (kind > 3.5) {\n"                                                                                           \
     "        let d = shape.zw - shape.xy;\n"                                                                        \
@@ -315,6 +99,7 @@ static const char smooth_shape_glsl_fragment[] =
     "        p = shape.xy + out.local;\n"                                                                           \
     "    }\n"
 
+// How much of a pixel a plain kind covers.
 #define SHAPE_WGSL_COVER                                                                                            \
     "var cover = 1.0;\n"                                                                                            \
     "    if (in.form > 0.5 && in.form < 1.5) {\n"                                                                   \
@@ -368,7 +153,7 @@ static const char *const shape_wgsl = WGSL(
     "    @location(7) rim: vec4f,\n"                                                                                   \
     "}\n"
 
-// As SMOOTH_SHAPE_GLSL_MAIN.
+// From a shape's corner, its numbers (shape, color, kind) and its extra's (turn, fade, color2, rim_color).
 #define SMOOTH_SHAPE_WGSL_MAIN                                                                                         \
     "    let c = corner * 2.0 - 1.0;\n"                                                                                \
     "    var out: Corner;\n"                                                                                           \
@@ -396,7 +181,11 @@ static const char *const smooth_shape_wgsl_vertex = WGSL(
     SMOOTH_SHAPE_WGSL_MAIN
     "}\n");
 
-// As solid_shape_glsl_vertex.
+// A run whose smooth shapes are all solid ones (see solid_shape in
+// platform.c): a box or an ellipse, unturned, of one color, with no outline
+// and no fade. Of its extra, such a shape needs only its corners' radius,
+// which is all its run has beside its shapes: the rest is what its extra
+// would have said, for the same lines above and the same fragment shader.
 static const char *const solid_shape_wgsl_vertex = WGSL(
     SMOOTH_SHAPE_WGSL_CORNER
     "@vertex fn vertex(@location(0) corner: vec2f, @location(1) shape: vec4f, @location(2) color: vec4f,\n"
@@ -496,32 +285,6 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
 // vertex stage hands the pixels `fix.x` (see above), as 2D and 3D meshes
 // share their fragment shader and not their uniforms.
 
-static const char mesh_glsl_vertex[] =
-    "layout(location = 0) in vec2 position;\n" // In window pixels
-    "layout(location = 1) in vec2 uv;\n"
-    "layout(location = 2) in vec4 color;\n"
-    SHAPE_GLSL_UNIFORMS
-    "out vec2 at;\n"
-    "out vec4 tint;\n"
-    "out float white;\n"
-    "void main() {\n"
-    "    at = uv;\n"
-    "    tint = color;\n"
-    "    white = fix.x;\n"
-    "    gl_Position = screen * vec4(position, 0.0, 1.0);\n"
-    "}\n";
-
-static const char mesh_glsl_fragment[] =
-    "in vec2 at;\n"
-    "in vec4 tint;\n"
-    "in float white;\n"
-    "uniform sampler2D pixels0;\n"
-    "out vec4 pixel;\n"
-    GLSL_WHITEN
-    "void main() {\n"
-    "    pixel = over(texture(pixels0, at), tint, white);\n"
-    "}\n";
-
 #define MESH_WGSL_CORNER                                                                                               \
     SHAPE_WGSL_UNIFORMS                                                                                                \
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"                                                            \
@@ -563,22 +326,6 @@ static const char *const mesh_wgsl = WGSL(MESH_WGSL_VERTEX MESH_WGSL_FRAGMENT);
 // to a power under 1, down to 0.55 for white (about what blending as light
 // would give it on a dark background). Dark text is left as it is.
 
-static const char text_glsl_fragment[] =
-    "in vec2 at;\n"
-    "in vec4 tint;\n"
-    "in float white;\n"
-    "uniform sampler2D pixels0;\n"
-    SHAPE_GLSL_UNIFORMS
-    "out vec4 pixel;\n"
-    GLSL_WHITEN
-    "void main() {\n"
-    "    float cover = texture(pixels0, at * texel).r;\n"
-    "    if (fix.y > 0.5 && cover < 0.002) discard;\n" // Where it stores stencil: only where a glyph is
-    "    float light = dot(tint.rgb, vec3(0.2126, 0.7152, 0.0722));\n"
-    "    if (cover > 0.0) cover = pow(cover, 1.0 - 0.45 * light);\n"
-    "    pixel = whiten(vec4(tint.rgb, tint.a * cover), white);\n"
-    "}\n";
-
 #define TEXT_WGSL_FRAGMENT                                                                                             \
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"                                                      \
     "    var cover = textureSample(pixels0, how0, in.at * u.texel).r;\n"                                              \
@@ -595,24 +342,6 @@ static const char *const text_wgsl = WGSL(MESH_WGSL_VERTEX TEXT_WGSL_FRAGMENT);
 // numbers on each axis, by the four bits of `pattern` that are the corner's:
 // the meshes' and the text's pixels from the very numbers their six vertices
 // would have had, through the same arithmetic, and their fragment shaders.
-
-static const char quad_glsl_vertex[] =
-    "layout(location = 0) in vec4 box;\n"    // Two numbers on each axis for the corners' places, in window pixels
-    "layout(location = 1) in vec4 span;\n"   // ...and for their uvs
-    "layout(location = 2) in vec4 color;\n"
-    "layout(location = 3) in int pattern;\n" // Which of them each corner takes: 4 bits a corner
-    SHAPE_GLSL_UNIFORMS
-    "out vec2 at;\n"
-    "out vec4 tint;\n"
-    "out float white;\n"
-    "void main() {\n"
-    "    int which = pattern >> (4 * gl_VertexID);\n"
-    "    vec2 position = vec2((which & 1) != 0 ? box.z : box.x, (which & 2) != 0 ? box.w : box.y);\n"
-    "    at = vec2((which & 4) != 0 ? span.z : span.x, (which & 8) != 0 ? span.w : span.y);\n"
-    "    tint = color;\n"
-    "    white = fix.x;\n"
-    "    gl_Position = screen * vec4(position, 0.0, 1.0);\n"
-    "}\n";
 
 #define QUAD_WGSL_VERTEX                                                                                               \
     MESH_WGSL_CORNER                                                                                                   \
@@ -633,27 +362,6 @@ static const char *const text_quad_wgsl = WGSL(QUAD_WGSL_VERTEX TEXT_WGSL_FRAGME
 
 // 3D meshes: a mesh's corners go through its instance's transform and the
 // camera, with depth; its pixels are as a mesh's, times `tint`, the run's.
-
-static const char mesh_3d_glsl_vertex[] =
-    "layout(location = 0) in vec3 position;\n"
-    "layout(location = 1) in vec2 uv;\n"
-    "layout(location = 2) in vec4 color;\n"
-    "layout(location = 3) in vec4 model0;\n" // Its instance's transform, column by column
-    "layout(location = 4) in vec4 model1;\n"
-    "layout(location = 5) in vec4 model2;\n"
-    "layout(location = 6) in vec4 model3;\n"
-    "layout(std140) uniform uniforms { mat4 camera; vec4 run_tint; vec4 fix; vec4 origin; };\n"
-    "out vec2 at;\n"
-    "out vec4 tint;\n"
-    "out float white;\n"
-    "void main() {\n"
-    "    at = uv;\n"
-    "    tint = color * run_tint;\n"
-    "    white = fix.x;\n"
-    "    mat4 relative = mat4(model0 - origin * model0.w, model1 - origin * model1.w,\n"
-    "                         model2 - origin * model2.w, model3 - origin * model3.w);\n"
-    "    gl_Position = camera * (relative * vec4(position, 1.0));\n"
-    "}\n";
 
 static const char *const mesh_3d_wgsl = WGSL(
     "struct Uniforms { camera: mat4x4f, tint: vec4f, fix: vec4f, origin: vec4f }\n"
@@ -687,19 +395,6 @@ static const char *const mesh_3d_wgsl = WGSL(
 // A clear: one triangle over the whole target, as far as depth goes, in one
 // color, which the clip cuts as it does everything else.
 
-static const char clear_glsl_vertex[] =
-    "void main() {\n"
-    "    vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n" // (0, 0), (2, 0), (0, 2)
-    "    gl_Position = vec4(corner * 2.0 - 1.0, 1.0, 1.0);\n"
-    "}\n";
-
-static const char clear_glsl_fragment[] =
-    "layout(std140) uniform uniforms { vec4 color; };\n"
-    "out vec4 pixel;\n"
-    "void main() {\n"
-    "    pixel = vec4(color.rgb * color.a, color.a);\n"
-    "}\n";
-
 static const char *const clear_wgsl = WGSL(
     "struct Uniforms { color: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
@@ -713,18 +408,6 @@ static const char *const clear_wgsl = WGSL(
 
 // A clear of a target of several color images: the same color into each of
 // them, as many as it has.
-static const char clear_all_glsl_fragment[] =
-    "layout(std140) uniform uniforms { vec4 color; };\n"
-    "layout(location = 0) out vec4 pixel0;\n"
-    "layout(location = 1) out vec4 pixel1;\n"
-    "layout(location = 2) out vec4 pixel2;\n"
-    "layout(location = 3) out vec4 pixel3;\n"
-    "void main() {\n"
-    "    pixel0 = vec4(color.rgb * color.a, color.a);\n"
-    "    pixel1 = vec4(color.rgb * color.a, color.a);\n"
-    "    pixel2 = vec4(color.rgb * color.a, color.a);\n"
-    "    pixel3 = vec4(color.rgb * color.a, color.a);\n"
-    "}\n";
 
 static const char *const clear_all_wgsl = WGSL(
     "struct Uniforms { color: vec4f }\n"
@@ -737,6 +420,94 @@ static const char *const clear_all_wgsl = WGSL(
     "@fragment fn fragment() -> Colors {\n"
     "    let c = vec4f(u.color.rgb * u.color.a, u.color.a);\n"
     "    return Colors(c, c, c, c);\n"
+    "}\n");
+
+// The renderer's own kernels (compute.inc, notes/compute.md), WGSL alone: no GL backend runs kernels.
+//
+// A run over a GPU list's count, on the GPU: its record (TIDE_GPU_RUN_WORDS words: the dispatch's groups, its
+// invocations, its size) from the list's count, for a kernel of `u.x` invocations a group along x. At most 65535
+// groups, what every GPU dispatches along an axis.
+static const char *const run_size_wgsl = WGSL(
+    "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
+    "@group(0) @binding(25) var<storage, read> list: array<u32>;\n"
+    "@group(0) @binding(26) var<storage, read_write> run: array<u32>;\n"
+    "@compute @workgroup_size(1) fn compute(@builtin(local_invocation_index) i: u32) {\n"
+    "    if (i == 0u) {\n"
+    "        let count = min(list[0], list[1]);\n"
+    "        let groups = min((count + u.x - 1u) / u.x, 65535u);\n"
+    "        run[0] = groups;\n"
+    "        run[1] = 1u;\n"
+    "        run[2] = 1u;\n"
+    "        run[3] = count;\n"
+    "        run[4] = count;\n"
+    "        run[5] = 1u;\n"
+    "        run[6] = 1u;\n"
+    "        run[7] = 0u;\n"
+    "    }\n"
+    "}\n");
+
+// Ordered Add, once a kernel's groups have each written their survivors to their region of the scratch (`u.x`
+// words each: how many, where they go, then them): where each group's go in the list, after what it holds (an
+// exclusive prefix of the groups' counts, from the list's count), and the list's new count, no more than its
+// capacity. One group of 256, each invocation a run of the groups.
+static const char *const add_offsets_wgsl = WGSL(
+    "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
+    "@group(0) @binding(25) var<storage, read_write> scratch: array<u32>;\n"
+    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
+    "@group(0) @binding(27) var<storage, read> run: array<u32>;\n"
+    "var<workgroup> sums: array<u32, 256>;\n"
+    "@compute @workgroup_size(256) fn compute(@builtin(local_invocation_index) t: u32) {\n"
+    "    let groups = run[0] * run[1] * run[2];\n"
+    "    let each = (groups + 255u) / 256u;\n"
+    "    let first = t * each;\n"
+    "    let last = min(first + each, groups);\n"
+    "    let base = list[0];\n"
+    "    let capacity = list[1];\n"
+    "    var mine = 0u;\n"
+    "    for (var g = first; g < last; g = g + 1u) {\n"
+    "        mine = mine + scratch[g * u.x];\n"
+    "    }\n"
+    "    sums[t] = mine;\n"
+    "    workgroupBarrier();\n"
+    "    for (var d = 1u; d < 256u; d = d * 2u) {\n"
+    "        var v = 0u;\n"
+    "        if (t >= d) {\n"
+    "            v = sums[t - d];\n"
+    "        }\n"
+    "        workgroupBarrier();\n"
+    "        sums[t] = sums[t] + v;\n"
+    "        workgroupBarrier();\n"
+    "    }\n"
+    "    var at = base + sums[t] - mine;\n"
+    "    for (var g = first; g < last; g = g + 1u) {\n"
+    "        scratch[g * u.x + 1u] = at;\n"
+    "        at = at + scratch[g * u.x];\n"
+    "    }\n"
+    "    if (t == 255u) {\n"
+    "        list[0] = min(base + sums[255], capacity);\n"
+    "    }\n"
+    "}\n");
+
+// ...then each group's survivors to where they go, `u.y` words each, those past the capacity dropped: one group of
+// 64 for each of the kernel's.
+static const char *const add_scatter_wgsl = WGSL(
+    "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n"
+    "@group(0) @binding(25) var<storage, read> scratch: array<u32>;\n"
+    "@group(0) @binding(26) var<storage, read_write> list: array<u32>;\n"
+    "@compute @workgroup_size(64) fn compute(@builtin(local_invocation_index) t: u32, @builtin(workgroup_id) w: vec3u,\n"
+    "                                        @builtin(num_workgroups) n: vec3u) {\n"
+    "    let region = (w.x + n.x * (w.y + n.y * w.z)) * u.x;\n"
+    "    let count = scratch[region];\n"
+    "    let at = scratch[region + 1u];\n"
+    "    let capacity = list[1];\n"
+    "    for (var j = t; j < count; j = j + 64u) {\n"
+    "        let to = at + j;\n"
+    "        if (to < capacity) {\n"
+    "            for (var k = 0u; k < u.y; k = k + 1u) {\n"
+    "                list[4u + to * u.y + k] = scratch[region + 2u + j * u.y + k];\n"
+    "            }\n"
+    "        }\n"
+    "    }\n"
     "}\n");
 
 // Each pipeline's WGSL as the renderer gives it, by the name its SPIR-V has
@@ -753,4 +524,7 @@ static const char *const clear_all_wgsl = WGSL(
     X(text_quad, text_quad_wgsl, NULL)                                                                                 \
     X(mesh_3d, mesh_3d_wgsl, NULL)                                                                                     \
     X(clear, clear_wgsl, NULL)                                                                                         \
-    X(clear_all, clear_all_wgsl, NULL)
+    X(clear_all, clear_all_wgsl, NULL)                                                                                 \
+    X(run_size, run_size_wgsl, NULL)                                                                                   \
+    X(add_offsets, add_offsets_wgsl, NULL)                                                                             \
+    X(add_scatter, add_scatter_wgsl, NULL)

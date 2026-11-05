@@ -1,0 +1,21 @@
+// expect: a draw over a GPU list picks no levels on the CPU
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+struct Corner { float3 position; }
+vert Place(mut Corner corner, Blade blade) { corner.position += blade.root; }
+view Show(Meadow meadow)
+{
+    Draw.Instanced([Corner { position = float3(0, 0, 0) }, Corner { position = float3(1, 0, 0) }, Corner { position = float3(0, 1, 0) }], [0, 1, 2], meadow.blades, Place, lod: 1);
+}

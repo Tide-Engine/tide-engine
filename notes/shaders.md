@@ -1,5 +1,88 @@
 # Code the GPU runs: frags and verts
 
+## GLSL removed: tidec writes WGSL alone (2026-11-05)
+
+The owner's decision that compute is guaranteed on every backend removed OpenGL
+3.3, OpenGL ES 3 and WebGL 2 (`notes/rendering.md`), so games' shaders no longer
+carry GLSL. What follows is Claude's, Provisional. Everything below this section
+that describes GLSL output (two languages, `glsl_*` fields, rows for arrays of
+arrays, GLSL-only workarounds) is history.
+
+- **The emitter is WGSL-only.** `write_glsl`, the `lang` enum and `emit.l` are
+  gone, every `wgsl ? a : b` keeps its WGSL side, and GLSL-only machinery went
+  with them: array rows (`in_rows`, `need_row`, `put_row`, `tide_row<n>`
+  structs), `H_INT4_LANE`, `on_a_line` and the `while (true)` for-loop shape,
+  inout parameters and copies through `in_array` (WGSL copies what isn't a whole
+  variable), constant-index clamps, `tide_gpu_height`'s Ddy sign, the GLSL
+  storage stubs ("zeros in GLSL") in `shader_compute.inc`. `put_varyings`,
+  `put_uniforms`, `put_listed_loads`, `put_vertex_main`, `put_fragment_main`,
+  `output_name` and `is_pointer` lost their language parameters.
+- **The checking pass runs in WGSL** (`check_shader`), where frags and verts
+  checked in GLSL before; kernels already did. Its output is thrown away, and
+  the GLSL-only early returns it took in `shader_compute.inc` (shared atomics,
+  `this.index`) are for kernel-only code. No diagnostic changed: every
+  `compiler/tests/errors` test passes unchanged.
+- **Helper texts stay in their C-like notation** (`helper_text`, the families),
+  which `put_helper` spells as WGSL; converting them to WGSL text would only
+  move the same spelling into the strings. The notation is described where they
+  are.
+- **`tide_shader`** (`tide/draw.h`) lost `glsl_vertex`, `glsl_fragment` and
+  `glsl_listed_vertex`; `bool listed` says a shader has a listed vertex stage
+  (`wgsl_listed` on the web, `spirv_listed` elsewhere), which `mesh.c` and
+  `platform.c` read where they tested `glsl_listed_vertex`. The shader `id` is
+  FNV-1a of the WGSL and the numbers (it was of GLSL, GLSL and WGSL), so every
+  id changes, and with it each listed draw's layout (`id ^ id >> 32`).
+- **`tide shaders` / `tidec --shaders`** print `// <name>: WGSL` sections only;
+  `shader_minify_names` runs over WGSL only. Goldens in `compiler/tests/shaders`
+  were regenerated with their package inputs; `shader_names.mjs` splits on WGSL
+  sections.
+- **Identity:** with old and new tidec, every fixture's `--shaders` WGSL section
+  is the same bytes, all 116 `--spirv` modules and all 116 `--hlsl` programs
+  (before the HLSL change below) are the same bytes, and the generated C of all
+  477 live `.sources` lists (`--no-line`) differs only by the GLSL arrays and
+  fields, ids, listed layouts and the compiler-source simulation id.
+- **Tests that read shader text** (`compiler/tests/e2e/*_test.c`,
+  `render3d/test/skinning_test.c`, `wind_test.c`, `platform/tests/shaders.c`'s
+  `roll_site`) read the WGSL, which only web builds keep, under `__wasm__`;
+  natively they check what doesn't need text (skinning by its atlas texture, the
+  roll site from the frag's name). CI's web jobs run them.
+- **HLSL for Unity:** `TIDEHL_TEXTURE_BUFFERS` is gone with its branches;
+  `tide_hlsl_unity_shader` writes one SubShader (target 4.5,
+  `exclude_renderers gles3`) where it wrote a second, target 3.5 for `gles3`
+  alone. `TIDEHL_OWN_SAMPLERS` stays, for `SHADER_API_GLCORE` alone: Unity's
+  OpenGL Core 4.5 computes, so Tide's drawing still replays there
+  (`notes/unity.md`, Unity's OpenGL: Core stays, ES 3 and WebGL go). Otherwise
+  the HLSL is unchanged. `TideRender.Supported` refuses OpenGL ES 3 (WebGL 2),
+  as `docs/spec.md` lists Unity's WebGL export among the losses.
+  `expect_hlsl.cmake` and `expect_wgsl.cmake` compile for `SHADER_API_D3D11`
+  alone. The Sample's checked-in `Assets/Tests/Resources/TideShaders` files
+  were written again by `tide_wgsl_translate --hlsl` after the merge.
+
+## Kernels and GPU lists (2026-11-05)
+
+`compute` declarations write WGSL alone (`shader_compute.inc`: GPU lists as
+storage slots, atomics, shared memory, barriers, `this` as `tide_inv_*`;
+`shader_kernel.inc`: `plan_kernel` and `write_kernel`, with ordered Add's
+compaction after the body). Frags and verts read GPU lists through the same
+per-slot functions (zeros in GLSL, which the renderer never runs for them), and
+an indirect draw's shader (`gpu_instances`) reads its instances from storage
+slot 0 into the instance packs. Kernels check in WGSL; `shader_word` says
+"kernel". The goldens `kernels_add` and `kernels_shared` pin both; every other
+golden is unchanged. `expect_hlsl.cmake` compiles a kernel's HLSL as cs_5_0.
+Contracts, layout and tests: `notes/compute.md`, Built. `tidec --kernels <file.h>` (`write_kernels`) writes a
+program's kernels as a C header for the renderer's own (`platform/src/cull.tide`): drawing.md, Listed runs culled on
+the GPU.
+
+## Pulled vertices and indices, Draw.Transform's matrix, shared races (2026-11-05)
+
+A shader whose vertices are a GPU list's (`shader.gpu_vertices`) reads its vertex from storage by
+`tide_vertex_index` (no `@location` vertex inputs; instance attributes start at 0); one whose indices are too reads
+each corner's index first (`tide_corner_at` is the built-in then). A 3D `gpu_instances` shader multiplies its loaded
+transform by Draw.Transform's matrix, four uniform float4s after its values (`through_at`). Kernels' shared-memory
+writes fxc refuses (X3695) are a tidec warning (`shared_races`), and X3584 (one value for all) is off in
+`TideWarnings.hlsl`. Contracts, measurements and tests: notes/compute.md, Meshes over GPU lists. Goldens:
+`gpu_meshes` (new), `kernels_add` (its indirect draw's matrix); every other golden is unchanged.
+
 ## Camera-relative 3D projection (2026-11-02)
 
 Generated 3D shaders add tide_origin after the existing camera/screen/tint
@@ -381,9 +464,7 @@ translation` of their own whose first fields the reader uses.
   slot, offset, tide_gpu_attribute_format; `_TideSlots[3]`: stride, per instance)
   and the draw's offsets and first vertex. Unity draws are `DrawProcedural` with no
   vertex buffers, an indexed one through Unity's index buffer (SV_VertexID is the
-  index). Under `TIDEHL_TEXTURE_BUFFERS` (OpenGL ES 3 and WebGL 2, which have no
-  buffers a vertex shader reads), each is an RGBA8 `Texture2D<float4>` of 4,096
-  pixels a row, a word each pixel's bytes (`round(texel * 255)`).
+  index).
 - **Uniforms:** the block is `cbuffer TideUniforms`, flattened into
   `tidehl_u_<member>`. Float pads go where HLSL would pack a member sooner than
   WGSL's layout does, and matrices are `row_major`. A struct, or a matrix of
@@ -393,15 +474,14 @@ translation` of their own whose first fields the reader uses.
   is not an HLSL object. It is the 4 bits of `_TideSampling` at 4i (filter, then
   wrap), which pick one of nine Unity inline sampler states
   (`tidehl_<point|linear|trilinear>_<clamp|repeat|mirror>_sampler`). Under
-  `TIDEHL_OWN_SAMPLERS` (OpenGL, GL ES, WebGL: Unity there has no samplers apart
+  `TIDEHL_OWN_SAMPLERS` (OpenGL Core: Unity there has no samplers apart
   from textures) each texture samples with its own, `sampler_TideTexture<i>`, which
   TideRender sets. Every helper takes the texture's own sampler (`own`); the D3D
   path ignores it. Nearest and linear read level 0 (`SampleLevel`), as Vulkan's
   samplers with maxLod 0 do.
   Mipmaps use `SampleGrad` with derivatives taken before the branch, so fxc keeps
   the branch. Bias scales those derivatives. Depth textures read the nearest
-  texel. A comparison is a 2x2 `GatherRed` blended bilinearly (four `Load`s on GL ES 3,
-  which gathers nothing). Both turn depth
+  texel. A comparison is a 2x2 `GatherRed` blended bilinearly. Both turn depth
   back to 0 near, 1 far where Unity reverses it (`TIDEHL_REVERSED_Z`, from the
   platform defines Unity's HLSLSupport uses).
 - **Matrices are WGSL's transposed:** an HLSL row is a WGSL column, so `m[i]` and

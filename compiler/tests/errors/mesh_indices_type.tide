@@ -1,4 +1,4 @@
-// expect: a mesh's indices are a List<int>, three for each triangle, and this is List<float>
+// expect: a mesh's indices are a List<int>, three for each triangle, or a GPUList<int>, and this is List<float>
 scene Main { }
 
 struct V

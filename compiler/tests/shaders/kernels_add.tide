@@ -1,0 +1,82 @@
+// Kernels' WGSL: GPU lists as storage buffers (their header and words), a
+// list read and written by index, ordered Add's private element and its
+// compaction after the body (a scan of the group's flags, the survivors to the
+// group's region of the scratch, its count by its last invocation), Adds to
+// two lists, a run's values and a singleton's field as uniforms, this's fields,
+// a list's elements read by a helper given the singleton, foreach, and a list
+// read by a frag and the instances of an indirect draw read from storage.
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+    int kind;
+    bool lit;
+}
+
+struct Reach
+{
+    float far;
+    int every;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<Blade> shown;
+    GPUList<int> kinds;
+    GPUList<float> heights;
+    float scale;
+}
+
+float Tallest(Meadow meadow)
+{
+    mut float most = 0.0;
+    foreach (var blade in meadow.blades)
+        most = Math.Max(most, blade.height);
+    return most;
+}
+
+[Group(64)]
+compute CullBlades(Meadow meadow, Reach reach)
+{
+    Blade blade = meadow.blades[this.index];
+    if (blade.height * meadow.scale > reach.far) return;
+    meadow.shown.Add(blade);
+    if (this.index % reach.every == 0)
+        meadow.kinds.Add(blade.kind);
+    meadow.heights[this.index] = blade.height / Tallest(meadow);
+}
+
+[Group(16)]
+compute Grow(Meadow meadow)
+{
+    var blade = meadow.blades[this.at.x + this.at.y * this.count.x];
+    meadow.blades[this.index] = Blade { root = blade.root, height = blade.height + 0.1, kind = blade.kind, lit = !blade.lit };
+}
+
+struct Corner
+{
+    float3 position;
+}
+
+vert Sway(mut Corner corner, Blade blade)
+{
+    corner.position.y *= blade.height;
+}
+
+frag Grass(Corner corner, Blade blade, Meadow meadow, out Color color)
+{
+    color = Color(blade.height / meadow.heights[blade.kind], float(meadow.heights.count), blade.lit ? 1.0 : 0.0, 1);
+}
+
+view Show(Meadow meadow)
+{
+    meadow.shown.Clear();
+    GPU.Run(CullBlades, meadow.blades, Reach { far = 4, every = 3 });
+    GPU.Run(Grow, int2(8, 8));
+    List<Corner> corners = [Corner { position = float3(0, 0, 0) }, Corner { position = float3(1, 0, 0) },
+                            Corner { position = float3(0, 1, 0) }];
+    Draw.Instanced(corners, [0, 1, 2], meadow.shown, Sway, Grass);
+}

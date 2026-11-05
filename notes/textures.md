@@ -1,5 +1,7 @@
 # Textures and how they are sampled
 
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
 ## `[Raw]` images compress too; `[Lossless]` keeps one exact (2026-11-04)
 
 From a game's feedback (Mount & Rifle, pinned 0.6.0-nightly.21): its 618 MB distribution pack was ~495 MB of 47

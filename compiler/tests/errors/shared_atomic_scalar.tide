@@ -1,0 +1,22 @@
+// expect: atomics on shared memory are on an element of a 'shared int[N]'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow)
+{
+    shared int total;
+    total.AtomicAdd(0, 1);
+    meadow.counts[0] = total;
+}
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

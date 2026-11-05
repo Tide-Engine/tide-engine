@@ -1,5 +1,57 @@
 # Runtime written by Claude for now
 
+## Meshes over GPU lists, moved runs (2026-11-05)
+
+Under compute's pre-approved boundary: `tide_draw_mesh_fill_pulled` (draw.h, a pulled shader's stand-in mesh, which
+mesh.c's `shaded_mesh` makes), `tide_shader.instance_through`, `.vertex_storage`, `.index_storage`, and the renderer's
+`tide_platform_render_passes`. Generated code calls nothing new: `tide_draw_mesh_shaded*` and
+`tide_draw_mesh_shaded_indirect` take the new forms as they are. No embed op or ABI change: the recorder already has
+`DRAW_INDIRECT` and a pipeline's slot strides. Contracts: notes/compute.md, Meshes over GPU lists.
+
+## Compute's reads back in Unity: embed ABI 11 (2026-11-05)
+
+Under compute's pre-approved boundary, for the Unity replay: `tide/embed.h`
+gains the op `TIDE_EMBED_RENDER_BUFFER_READ` (appended) and
+`tide_embed_render_read(e, token, data, size)`, which hands the bytes of a read
+the other program made back to the recorder; `gpu.h` gains
+`tide_gpu_record_read`, and `gpu_record.c`'s `buffer_read`/`buffer_read_done`
+keep a table of reads instead of failing each. Generated game code calls nothing
+new; the `tide unity --web` program exports `tide_unity_render_read`.
+`TIDE_EMBED_ABI` and Unity's `TideLibrary.Abi` are 11, so hosts, embeds and the
+package move together. Contracts and tests: notes/unity.md, Compute in Unity.
+
+## Listed runs culled on the GPU (2026-11-05)
+
+Within the drawing maintenance exception, an internal performance change (no Tide or generated-C change, the same
+pixels): `tide_draw_shaded_culled` (list_data_cache.h, from `tide_draw_mesh_shaded_list`), `tide_draw_culled_places`,
+`tide_draw_run_uncull`, `tide_draw_uncull`, `tide_draw_cull_planes` (`tide/draw.h`), the renderer's
+`tide_platform_gpu_culling` (which the standard host sets `tide_draw_list.gpu_culling` from) and
+`tide_platform_cull_compare` (tests and diagnostics). Generated code calls nothing new. The kernels are the
+renderer's own, in Tide (`platform/src/cull.tide`), built by `tidec --kernels`. Contracts: drawing.md, Listed runs
+culled on the GPU.
+
+## Compute: GPU lists, runs and reads back (2026-11-05)
+
+The owner pre-approved compute's boundary ("anything you decide should be
+provisional"). New generated-C/runtime functions, agent-maintained with
+`engine/src/gpu_list.c` and the draw.c/mesh.c additions:
+
+- `tide_gpu_list_make`, `_resize`, `_dispose`, `_capacity`,
+  `_content_revision`, `_adopt`, `_recreate`, `tide_gpu_lists_recreated`,
+  `tide_gpu_lists_free`; the renderer's `tide_gpu_list_made`;
+  `tide_render_revision_next` (draw.c, the revisions targets and lists share).
+- `tide_draw_compute_run`, `tide_draw_gpu_list_set`, `_clear`, `_count`,
+  `tide_draw_storage`, `tide_draw_set_storage`, `tide_draw_shaded_indirect`,
+  `tide_draw_mesh_shaded_indirect`, `tide_gpu_size`.
+- Reads: `tide_gpu_list_read_begin`, `_poll`, `_forget` (generated awaits), and
+  the renderer's `tide_gpu_read_requests`, `tide_gpu_read_finished`,
+  `tide_gpu_reads_frame`.
+- Generated per GPU list type: `tide_gpu_words_<n>`, `tide_gpu_set_<n>`,
+  `tide_gpu_list_of_<n>`; per kernel: `tide_run_<n>` and
+  `tide_shader_<n>_words_<t>`.
+
+Contracts are in `tide/draw.h` and `notes/compute.md`, Built.
+
 ## Cheaper draw diagnostics (2026-11-05)
 
 Within the drawing maintenance exception: `tide_draw_mesh_data` gains `profile_name`, `profile_named_by`

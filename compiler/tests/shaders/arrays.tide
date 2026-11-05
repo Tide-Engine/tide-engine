@@ -1,7 +1,7 @@
 // Arrays of a fixed length on the GPU: fields of a singleton, a component and
 // a struct, sent as their elements' words; locals, elements read and
 // written, a count, foreach, and an array handed to a function; arrays of
-// arrays, which are rows in structs in GLSL; a for whose step writes an
+// arrays; a for whose step writes an
 // element; and '?:' between structs, arrays and matrices.
 scene Main { }
 

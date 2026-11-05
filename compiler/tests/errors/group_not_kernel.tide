@@ -1,0 +1,17 @@
+// expect: Group says how many invocations of a kernel run together, and 'Show' isn't a kernel
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+[Group(64)]
+view Show(Meadow meadow) { }

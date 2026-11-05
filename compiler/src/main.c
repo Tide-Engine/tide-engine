@@ -16,6 +16,7 @@ static void usage(void)
             "       tidec <file.tide>... --outline\n"
             "       tidec <file.tide>... --spirv <dir>\n"
             "       tidec <file.tide>... --hlsl <dir>\n"
+            "       tidec <file.tide>... --kernels <file.h>\n"
             "\n"
             "Transpiles a Tide program, made of one or more files, to\n"
             "<output-dir>/<name>.h and <name>.c.\n"
@@ -51,14 +52,16 @@ static void usage(void)
             "                   each compile and link, --build-lib <l> to the link\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
             "                 wait, instead of generating code\n"
-            "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
-            "                 GLSL and WGSL, instead of generating code\n"
+            "  --shaders      print the shaders the game's mesh draw calls and GPU runs go\n"
+            "                 through, as WGSL, instead of generating code\n"
             "  --outline      print what the game declares, file by file, as JSON: kinds, names,\n"
             "                 places, fields, and what systems read, write and wait for,\n"
             "                 instead of generating code\n"
             "  --spirv <dir>  write each of those shaders as SPIR-V, Vulkan's, into <dir>\n"
             "                 as <n>.spv in --shaders' order, instead of generating code\n"
-            "  --hlsl <dir>   ...or as HLSL, Unity's (tide unity), as <n>.hlsl\n");
+            "  --hlsl <dir>   ...or as HLSL, Unity's (tide unity), as <n>.hlsl\n"
+            "  --kernels <file.h>  write the program's kernels as C for the renderer's own use: each\n"
+            "                 one's WGSL, SPIR-V and tide_shader, and where each field of its values goes\n");
 }
 
 // A game's files as they're named, each with the package it's in.
@@ -308,6 +311,10 @@ int main(const int argc, char **argv)
             schedule = true;
             opts.shaders = true;
             opts.spirv_dir = argv[++i];
+        } else if (strcmp(argv[i], "--kernels") == 0 && i + 1 < argc) {
+            schedule = true;
+            opts.shaders = true;
+            opts.kernels_out = argv[++i];
         } else if (strcmp(argv[i], "--hlsl") == 0 && i + 1 < argc) {
             schedule = true;
             opts.shaders = true;
@@ -318,7 +325,7 @@ int main(const int argc, char **argv)
             if (!add_define(argv[++i])) return 2;
         } else if (argv[i][0] == '-') {
             static const char *const valued[] = {"-o", "--name", "--scene", "--game", "--depfile", "--editor-prefab",
-                                                "--spirv", "--hlsl", "--package", "--define", "--build-cc",
+                                                "--spirv", "--hlsl", "--kernels", "--package", "--define", "--build-cc",
                                                 "--build-flag", "--build-lib", "--build-include", "--build-engine"};
             bool takes_value = false;
             for (size_t j = 0; j < sizeof valued / sizeof valued[0]; j++) {
@@ -391,6 +398,6 @@ int main(const int argc, char **argv)
     }
     sb text = {0};
     if (!compile_inputs(inputs.items, inputs.count, &opts, &text)) return 1;
-    fputs(text.data, stdout);
+    if (text.data) fputs(text.data, stdout); // --kernels says nothing
     return 0;
 }

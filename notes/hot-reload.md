@@ -1,5 +1,14 @@
 # Hot reloading
 
+## GPU lists across a reload (2026-11-05)
+
+`gen_resource_value` rebinds `GPUList` fields as targets are: native reloads
+adopt the state (`tide_gpu_list_adopt`, which makes a list of another element
+stride again, empty, with a new contentRevision), web reloads recreate it at the
+capacity its reference carries (`tide_gpu_list_recreate`). The renderer keeps a
+list's buffer only where the new build's first frame names it, and reads no old
+state before. `notes/compute.md`, Built.
+
 ## Repeated compiler generations keep no arena-backed lane cache (2026-11-02)
 
 The mount-and-rifle web-watch corruption report reproduced in the native
@@ -249,7 +258,7 @@ It's for quick iteration, enabled by default under `tide run`, native and web. `
 - A game's library has its own copy of the engine code it uses. So everything the host and the library share is data: worlds and local state (with their pages, from the C library's heap, which every build of the game shares), devices, the draw list and the GUI. Render targets are what a library keeps track of itself, so the new build takes over those the local state holds (`tide_host_game.rebind_resources`, the generated `tide_local_rebind_resources`). The library frees its scratch area and what's left of its targets' bookkeeping before it's unloaded (`tide_host_game.unload`).
 - On Linux, a library's objects are compiled with `-fPIC`. The engine's are kept apart in `engine-pic`, so running and building don't rebuild each other's.
 - On the web, each build is a WebAssembly program of its own. `tide run --web` serves the page on 127.0.0.1 (`compiler/cli/serve.c`), opens it (unless `--no-open`), and keeps running until it's stopped. The editors run it with `--no-open` and show the page themselves, at the address tide prints (`tide: the game is at ...`): VS Code's **Tide: Run on the Web** in its browser, and the JetBrains plugin's Tide run configurations in the Tide Game tool window. The page asks tide for the newest build 4 times a second (`/build`: the build and restart numbers; `/game-<n>.wasm`).
-- The page starts each new build in the running one's place (`platform/web/tide.js`, between its `tide run` markers): it asks the running one for its state (`tide_reload_save`), deletes what it made in WebGL or WebGPU, and starts the new one, which carries that state over (`tide_host_run_web` in `platform/src/reload.c`). The state is the old layout, packed with offsets for pointers (`tide_layout_pack`), the server's world and the local state as bytes (`tide_world_pack`, `tide_local_pack`), the GUI, and what the host keeps of its own: whether the stats' drawer is open. The new session goes on from the world with this machine's player in it already (`tide_session_start_from`), so there's no second `PlayerJoined`. A room closes at a reload, for now: the new build goes on with the match closed, and the other players drop out.
+- The page starts each new build in the running one's place (`platform/web/tide.js`, between its `tide run` markers): it asks the running one for its state (`tide_reload_save`), deletes what it made in WebGPU (WebGL too, until 2026-11-05), and starts the new one, which carries that state over (`tide_host_run_web` in `platform/src/reload.c`). The state is the old layout, packed with offsets for pointers (`tide_layout_pack`), the server's world and the local state as bytes (`tide_world_pack`, `tide_local_pack`), the GUI, and what the host keeps of its own: whether the stats' drawer is open. The new session goes on from the world with this machine's player in it already (`tide_session_start_from`), so there's no second `PlayerJoined`. A room closes at a reload, for now: the new build goes on with the match closed, and the other players drop out.
 - A match on a game's own network (`tide/network.h`, `notes/own-network.md`) isn't carried over a native reload: its transports are functions of the library that made them, so `swap` starts the game over, as a full reload does, before that library unloads. On the web a reload goes on with the match closed, as a room's does.
 - Pages without watching (`tide build --web`, `cmake/web_page.mjs`) leave out the lines between tide.js's `tide run` markers, and web programs only link reload code when the watching run's `main.c` calls it.
 

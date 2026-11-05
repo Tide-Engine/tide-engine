@@ -241,7 +241,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm' })
     }
     for (const route of rawPages) {
         for (const document of [route, `${route}/`, `${route}/index.html`]) {
-            const response = await fetch(`${local}${document}?embedded&backend=webgpu`);
+            const response = await fetch(`${local}${document}?embedded`);
             assert.equal(response.status, 200, document);
             assert.match(response.headers.get('x-robots-tag') ?? '', /\bnoindex\b/i, `${document}: raw game is not a search result`);
             assert.match(await response.text(), /SEO game fixture/);

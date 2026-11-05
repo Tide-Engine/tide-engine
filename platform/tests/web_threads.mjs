@@ -26,7 +26,7 @@ const body = request => new Promise(resolve => {
     request.on('end', () => resolve(text));
 });
 const server = createServer(async (request, response) => {
-    if (request.url === '/') {
+    if (request.url.split('?')[0] === '/') { // The page, with its query (gpu=none)
         response.writeHead(200, {
             'content-type': 'text/html; charset=utf-8',
             // What makes a page cross-origin isolated, so it can share memory
@@ -59,10 +59,16 @@ const child = spawn(browser, [
     '--disable-extensions',
     '--mute-audio', // Headless, it still plays through the machine's device
     `--user-data-dir=${profileDir}`,
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
+    // WebGPU in software, as cmake/run_web_served_test.mjs runs it: the browser's own drawing through WARP on
+    // Windows, without which Chrome has no WebGPU there, and SwiftShader's Vulkan on Linux
+    '--enable-unsafe-webgpu',
+    '--use-webgpu-adapter=swiftshader',
+    ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
+    ...(process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1'
+        ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : []),
     '--remote-debugging-pipe', // Close the entire browser before reusing its profile.
-    `http://127.0.0.1:${server.address().port}/`,
+    // A GPU that draws nothing where the browser gives none (TIDE_WEB_GPU_NONE=1: CI's Linux runners)
+    `http://127.0.0.1:${server.address().port}/${process.env.TIDE_WEB_GPU_NONE === '1' ? '?gpu=none' : ''}`,
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
 child.stdio[4].resume();
 child.stdio[3].on('error', error => {

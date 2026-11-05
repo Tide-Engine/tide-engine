@@ -110,8 +110,7 @@ for row in sorted(report["draw_diagnostics"], key=lambda row: row["mesh_recordin
 
 ### Finding expensive GPU passes
 
-The same `--profile` capture includes `gpu_passes.rows` on Vulkan and desktop
-OpenGL. Each row identifies a render target (`target` zero is the window), a
+The same `--profile` capture includes `gpu_passes.rows` on Vulkan. Each row identifies a render target (`target` zero is the window), a
 one-based `pass` in render order, physical `width`/`height`, and the distinct
 `shaders` used, separated by newlines. Shader labels retain the game's named
 shader combinations; built-in drawing has labels such as `Builtin mesh 3D`.
@@ -158,7 +157,7 @@ measures recording and cannot substitute for GPU execution time.
 The backend collector also supports WebGPU when timestamp queries are available;
 custom C hosts can attach it through `tide_platform_gpu_profile` and poll
 `tide_platform_gpu_profile_read`. JSON `--profile` export remains native desktop
-only. WebGL 2 and OpenGL ES 3 do not provide these timers. The F7 panel and stats
+only. A device without timestamp queries provides no timers. The F7 panel and stats
 continue to show their existing aggregate measurements.
 
 ### Finding oversized meshes

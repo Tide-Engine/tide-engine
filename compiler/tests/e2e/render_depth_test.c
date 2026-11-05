@@ -88,9 +88,10 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
     TIDE_REQUIRE(seen && seen->shader->texture_count == 1 && seen->shader->texture_reads[0] == TIDE_SHADER_READ_COMPARE);
     TIDE_REQUIRE(texture_of(seen, 0) != NULL);
     TIDE_CHECK(texture_of(seen, 0)->space == TIDE_PIXELS_TARGET_DEPTH && texture_of(seen, 0)->id == lamp->exact.id);
-    // The shaders say so in both languages
-    TIDE_CHECK(strstr(lit->shader->glsl_fragment, "uniform highp sampler2DShadow pixels0;") != NULL);
-    TIDE_CHECK(strstr(lit->shader->glsl_fragment, "uniform highp sampler2D pixels1;") != NULL);
+#ifdef __wasm__ // The shader says so: its WGSL, which a build keeps on the web
+    TIDE_CHECK(strstr(lit->shader->wgsl, "var pixels0: texture_depth_2d;\n@group(0) @binding(2) var sampler0: sampler_comparison;") != NULL);
+    TIDE_CHECK(strstr(lit->shader->wgsl, "var pixels1: texture_depth_2d;\n@group(0) @binding(4) var sampler1: sampler;") != NULL);
+#endif
 
     // The list draws into the target of depth alone as into any other
     uint32_t into = 0;

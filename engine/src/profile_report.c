@@ -369,11 +369,11 @@ bool tide_profile_report_write(const tide_profile_report *r, FILE *out, const ti
         fputs("{\"source\":", out); source(out, &d->source);
         fprintf(out, ",\"target\":\"%016llx\",\"camera_slot\":%u,\"calls\":%llu,\"mesh_recording_ms\":%.9g,"
                      "\"candidates\":%llu,\"tested\":%llu,\"rejected\":%llu,\"untestable\":%llu,\"bypassed\":%llu,\"submitted\":%llu,"
-                     "\"bounds_cache_hits\":%llu,\"bounds_builds\":%llu,\"frustum_builds\":%llu}",
+                     "\"gpu_culled\":%llu,\"bounds_cache_hits\":%llu,\"bounds_builds\":%llu,\"frustum_builds\":%llu}",
                 (unsigned long long)d->target, (unsigned)d->camera_slot, (unsigned long long)d->calls, (double)d->mesh_recording_ns * 1e-6,
                 (unsigned long long)d->candidates, (unsigned long long)d->tested, (unsigned long long)d->rejected,
                 (unsigned long long)d->untestable, (unsigned long long)d->bypassed, (unsigned long long)d->submitted,
-                (unsigned long long)d->bounds_cache_hits, (unsigned long long)d->bounds_builds, (unsigned long long)d->frustum_builds);
+                (unsigned long long)d->gpu_culled, (unsigned long long)d->bounds_cache_hits, (unsigned long long)d->bounds_builds, (unsigned long long)d->frustum_builds);
     }
     fprintf(out, "],\n\"limits\":{\"dropped_timing_observations\":%llu,\"dropped_draw_calls\":%llu,\"dropped_draw_candidates\":%llu},\n",
             (unsigned long long)s->dropped, (unsigned long long)r->draw.dropped_calls, (unsigned long long)r->draw.dropped_candidates);

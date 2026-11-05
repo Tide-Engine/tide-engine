@@ -1,0 +1,95 @@
+// Meshes over GPU lists: vertices a GPUList's, read in the vertex stage by
+// their index from its storage slot (no attributes), by a GPUList<int> of
+// indices read there too (each corner's index by its place among them, which
+// a vert's rolls go by), or by the CPU's indices; with no shader, a vert and a
+// frag, in 2D and 3D, into a target, instanced over a CPU list and over a GPU
+// list; and a 3D Draw.Instanced over a GPU list, whose transforms go through
+// Draw.Transform's matrix in the draw's uniforms.
+scene Main { }
+
+struct Dot
+{
+    float2 position;
+    Color color;
+}
+
+struct Point3
+{
+    float3 position;
+    float3 normal;
+    int kind;
+}
+
+struct Lean
+{
+    float2 offset;
+}
+
+struct Placed
+{
+    float4x4 transform;
+    Color tint;
+}
+
+local singleton Made
+{
+    GPUList<Dot> dots;
+    GPUList<int> order;
+    GPUList<Point3> points;
+    GPUList<int> triangles;
+    GPUList<Placed> placed;
+    List<Placed> kept;
+    RenderTarget image;
+}
+
+vert Wobble(mut Dot dot)
+{
+    dot.position += float2(Random.NextFloat(), Random.NextFloat()) * 0.1;
+}
+
+frag Shade(Dot dot, out Color color)
+{
+    color = dot.color * 0.5;
+}
+
+frag Light(Point3 point, out Color color)
+{
+    float lit = Math.Max(Math.Dot(point.normal, float3(0, 1, 0)), 0.0);
+    color = Color(lit, lit, lit, 1);
+}
+
+vert Raise(mut Point3 point)
+{
+    if (point.kind == 2) point.position.y += 1.0;
+}
+
+frag Tinted(Point3 point, Placed placed, out Color color)
+{
+    color = placed.tint;
+}
+
+vert Leaning(mut Dot dot, Lean lean)
+{
+    dot.position += lean.offset;
+}
+
+view DrawFlat(Made made)
+{
+    Draw.Mesh(made.dots, made.order);
+    Draw.Mesh(made.dots, made.order, Wobble, Shade);
+    Draw.Mesh(made.dots, [0, 1, 2], Leaning, Lean { offset = float2(1, 0) });
+    made.image.Mesh(made.dots, made.order, Shade);
+}
+
+view DrawDeep(Made made)
+{
+    Draw.Mesh(made.points, made.triangles, float4x4.Translate(float3(0, 0, 5)), Light);
+    Draw.Mesh(made.points, [0, 1, 2, 2, 1, 3], float4x4.Translate(float3(0, 0, 5)), Raise, Light);
+    Draw.Instanced(made.points, made.triangles, made.kept, Tinted);
+    Draw.Instanced(made.points, made.triangles, made.placed, Tinted);
+    List<Point3> quad = [Point3 { position = float3(0, 0, 0), normal = float3(0, 1, 0), kind = 1 }];
+    Draw.Transform(float4x4.Translate(float3(1, 2, 3)))
+    {
+        Draw.Instanced(quad, [0, 0, 0], made.placed, Tinted);
+    }
+}

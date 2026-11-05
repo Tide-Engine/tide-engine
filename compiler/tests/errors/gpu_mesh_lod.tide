@@ -1,0 +1,9 @@
+// expect: levels of detail are made of the CPU's vertices, and this mesh's are a GPU list's: 'lod:' isn't for it
+// A mesh of a GPU list's vertices asking for levels the CPU would make of them
+scene Main { }
+frag Shade(Vertex3 vertex, out Color color) { color = vertex.color; }
+local singleton Made
+{
+    GPUList<Vertex3> vertices;
+}
+view Show(Made made) { Draw.Mesh(made.vertices, [0, 1, 2], float4x4.identity, Shade, lod: 1); }

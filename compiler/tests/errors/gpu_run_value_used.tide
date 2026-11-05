@@ -1,0 +1,20 @@
+// expect: GPU.Run is a statement of its own
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow) { meadow.counts[0] = 1; }
+view Show(Meadow meadow)
+{
+    var x = GPU.Run(Inner, 4);
+}

@@ -131,7 +131,7 @@ const said = []; // Every line, as it came
 let finish;
 const result = new Promise(resolve => { finish = resolve; });
 const server = createServer((request, response) => {
-    if (request.url === '/') {
+    if (request.url.split('?')[0] === '/') { // The page, with its query (gpu=none)
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end(page);
     } else if (request.url.startsWith('/game.html')) {
@@ -181,13 +181,19 @@ const child = spawn(browser, [
     '--disable-extensions',
     '--mute-audio', // Headless, it still plays through the machine's device
     `--user-data-dir=${profileDir}`,
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
+    // WebGPU in software, as cmake/run_web_served_test.mjs runs it: the browser's own drawing through WARP on
+    // Windows, without which Chrome has no WebGPU there, and SwiftShader's Vulkan on Linux
+    '--enable-unsafe-webgpu',
+    '--use-webgpu-adapter=swiftshader',
+    ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
+    ...(process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1'
+        ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : []),
     '--remote-debugging-pipe', // Ask Chrome to close its children and release the profile.
     // Both players are on this machine: let WebRTC use its real addresses
     '--disable-features=WebRtcHideLocalIpsWithMdns',
     '--allow-loopback-in-peer-connection',
-    `http://127.0.0.1:${server.address().port}/`,
+    // A GPU that draws nothing where the browser gives none (TIDE_WEB_GPU_NONE=1: CI's Linux runners)
+    `http://127.0.0.1:${server.address().port}/${process.env.TIDE_WEB_GPU_NONE === '1' ? '?gpu=none' : ''}`,
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
 child.stdio[4].resume();
 child.stdio[3].on('error', error => finish({ passed: false, log: [`browser control: ${error.message}`] }));

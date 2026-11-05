@@ -24,7 +24,7 @@ Before running commands, set `TIDE_HIDDEN=1` in the agent's shell: PowerShell `$
 
 Tide is a networking-first game engine written in strict C17 and compiled with clang. Simulation uses deterministic floats, not fixed point. Its language transpiles to C; game and engine code are optimized together, allowing calls to be inlined. The ECS derives data dependencies from the language and schedules work automatically. Rendering is secondary to simulation and networking.
 
-Desktop and consoles are the main targets. Android, then iOS, are mobile targets. WebAssembly is actively supported and tested, with WebGL 2 and WebGPU rendering. Desktop and web players share a deterministic simulation. Touch is input wherever available. A phone that backgrounds or closes leaves the match; enabled host migration transfers its hosted match, rather than continuing simulation in the background.
+Desktop and consoles are the main targets. Android, then iOS, are mobile targets. WebAssembly is actively supported and tested, with WebGPU rendering. Desktop and web players share a deterministic simulation. Touch is input wherever available. A phone that backgrounds or closes leaves the match; enabled host migration transfers its hosted match, rather than continuing simulation in the background.
 
 ## Building
 
@@ -50,7 +50,7 @@ Warnings are errors. Fix warnings encountered during validation, including ones 
 
 - C uses `-Wall -Wextra -Wpedantic -Werror`; third-party sources have their warnings disabled. Under strict C17, a file calling POSIX functions defines `_DEFAULT_SOURCE` before its first include on platforms other than Windows and Apple, as `platform/src/rtc/net.c` does.
 - `tide_add_game` rejects unexpected tidec warnings. Fixtures expecting warnings declare them with `WARNINGS` and pin their messages.
-- Web test pages enable `Tide.checkGL`; WebGL/WebGPU validation errors fail tests. Keep the web build working.
+- Web test pages enable `Tide.checkGL`; WebGPU validation errors and shader warnings fail tests. Keep the web build working.
 
 ### Testing and merging
 
@@ -114,7 +114,7 @@ Do not depend on C's unspecified argument evaluation order. Draw random inputs i
 
 Simulation never includes platform headers. Views read the world and draw without modifying simulation state. Device input enters through `Devices`. Keep generated game headers separate from system/GLFW headers because type names collide; hosts use `tide/platform.h`.
 
-`frag` and `vert` compile to GLSL for OpenGL/OpenGL ES/WebGL, WGSL for WebGPU, and SPIR-V for Vulkan and HLSL for Unity, both of which tidec translates from the WGSL. Desktop and Android draw with Vulkan where the device has 1.3 (MoltenVK, which tide ships, on a Mac without a loader), OpenGL 3.3 and OpenGL ES 3 being the fallbacks. Compute shaders are guaranteed on every render backend, and a backend that can't run them is removed (owner, 2026-11-05). OpenGL 3.3, OpenGL ES 3 and WebGL 2 therefore go once compute lands, leaving Vulkan, WebGPU and Unity's compute (`docs/spec.md`, Compute on the GPU). Don't add GL-only paths in the meantime. GPU results are visual only, never match state. Read `notes/rendering.md` before changing backend design.
+`frag`, `vert` and `compute` compile to WGSL for WebGPU, and SPIR-V for Vulkan and HLSL for Unity, both of which tidec translates from the WGSL. Desktop and Android draw with Vulkan 1.3 (MoltenVK, which tide ships, on a Mac without a loader), the web with WebGPU, and Unity with its compute-capable APIs. Compute shaders are guaranteed on every render backend, and a backend that can't run them is removed (owner, 2026-11-05): OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed that day, with no fallback (`docs/spec.md`, Compute on the GPU). A machine or browser without the backend is told what it needs, never left blank. GPU results are visual only, never match state. Read `notes/rendering.md` before changing backend design.
 
 ## Networking
 

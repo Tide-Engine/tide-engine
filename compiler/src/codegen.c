@@ -4208,8 +4208,200 @@ static void gen_lod_layout(sb *o, const decl *vertex)
     sb_put(o, "}");
 }
 
+// ---------------------------------------------------------------------------
+// GPU lists and kernels' runs, in local code (notes/compute.md)
+
+static int gpu_list_stride(const decl *list)
+{
+    int floats = 0, ints = 0;
+    shader_part_words(list->fields.items[0].type, NULL, &(int){0}, &floats, &ints);
+    return floats + ints;
+}
+
+static void gen_shader_value(sb *o, const char *to, type t, const char *access, int *f, int *i);
+
+// The reverse of gen_shader_value: the value of type `t` at `access` from the floats and ints of `from`.
+static void gen_gpu_unpack(sb *o, const char *from, const type t, const char *access, int *f, int *i)
+{
+    const int dim = type_dim(t);
+    const int n = matrix_dim(t);
+    const int floats = dim > 0 && type_is_float_based(t) ? dim : t.kind == TY_COLOR || t.kind == TY_QUATERNION ? 4 : n * n;
+    if (t.kind == TY_BYTE) {
+        sb_printf(o, "    %s = (uint8_t)%s.i[%d];\n", access, from, (*i)++);
+    } else if (floats > 0) {
+        sb_printf(o, "    memcpy(&%s, &%s.f[%d], %d * sizeof(float));\n", access, from, *f, floats);
+        *f += floats;
+    } else if (dim > 0) {
+        sb_printf(o, "    memcpy(&%s, &%s.i[%d], %d * sizeof(int32_t));\n", access, from, *i, dim);
+        *i += dim;
+    } else if (t.kind == TY_BOOL) {
+        sb_printf(o, "    %s = %s.i[%d] != 0;\n", access, from, (*i)++);
+    } else if (t.kind == TY_ENUM || t.kind == TY_CHAR) {
+        sb_printf(o, "    %s = (%s)%s.i[%d];\n", access, c_type(t), from, (*i)++);
+    } else if (t.kind == TY_ARRAY) {
+        for (int k = 0; k < t.decl->array_length; k++) {
+            sb inner = {0};
+            sb_printf(&inner, "%s.at[%d]", access, k);
+            gen_gpu_unpack(o, from, t.decl->fields.items[0].type, inner.data, f, i);
+        }
+    } else {
+        for (int k = 0; k < t.decl->fields.count; k++) {
+            const field *fl = &t.decl->fields.items[k];
+            if (fl->hidden) continue;
+            sb inner = {0};
+            sb_printf(&inner, "%s.%s", access, field_cname(fl));
+            gen_gpu_unpack(o, from, fl->type, inner.data, f, i);
+        }
+    }
+}
+
+// For each GPUList<T>: an element's words (tide_gpu_words_<n>), list.Set(items) (tide_gpu_set_<n>) and what
+// `await list.Read()` gives (tide_gpu_list_of_<n>), floats then ints, as shader.c reads and writes them.
+static void gen_gpu_lists(gen *g)
+{
+    sb *o = &g->c;
+    for (int l = 0; l < g->prog->gpu_lists.count; l++) {
+        const decl *list = g->prog->gpu_lists.items[l];
+        const type element = list->fields.items[0].type;
+        const char *t = elem_ctype(element);
+        int floats = 0, ints = 0;
+        shader_part_words(element, NULL, &(int){0}, &floats, &ints);
+        const int stride = floats + ints;
+        if (l == 0) sb_put(o, "// GPU lists' elements as their words: floats, then ints\n\n");
+        sb words = {0};
+        sb_put(&words, "struct {");
+        if (floats) sb_printf(&words, " float f[%d];", floats);
+        if (ints) sb_printf(&words, " int32_t i[%d];", ints);
+        sb_put(&words, " } tide_w;\n");
+        sb_printf(o, "TIDE_HELPER void tide_gpu_words_%d(const %s *tide_e, uint32_t *tide_out)\n{\n    %s", l, t, words.data);
+        int f = 0, i = 0;
+        gen_shader_value(o, "tide_w", element, "(*tide_e)", &f, &i);
+        sb_put(o, "    memcpy(tide_out, &tide_w, sizeof tide_w);\n}\n\n");
+        sb_printf(o, "TIDE_HELPER void tide_gpu_set_%d(tide_draw_list *tide_draw, const tide_gpu_list tide_list_to, const tide_list tide_items)\n{\n"
+                     "    int32_t tide_n = tide_list_count(tide_items);\n"
+                     "    const int32_t tide_room = tide_gpu_list_capacity(tide_list_to);\n"
+                     "    if (tide_n > tide_room) tide_n = tide_room;\n"
+                     "    if (tide_n < 0) tide_n = 0;\n"
+                     "    const uint64_t tide_mark = tide_scratch_mark();\n"
+                     "    uint32_t *tide_words = tide_scratch_memory((size_t)tide_n * %du * sizeof(uint32_t) + sizeof(uint32_t));\n"
+                     "    tide_list_cache tide_cache = {0};\n"
+                     "    for (int32_t tide_k = 0; tide_k < tide_n; tide_k++)\n"
+                     "        tide_gpu_words_%d(tide_list_cached_at(&tide_cache, tide_items, tide_k, sizeof(%s)), tide_words + (size_t)tide_k * %du);\n"
+                     "    tide_draw_gpu_list_set(tide_draw, tide_list_to, tide_words, (uint32_t)tide_n);\n"
+                     "    tide_scratch_reset(tide_mark);\n}\n\n", l, stride, l, t, stride);
+        sb_printf(o, "TIDE_HELPER tide_list tide_gpu_list_of_%d(const tide_gpu_read_result tide_r)\n{\n"
+                     "    if (!tide_r.ok || tide_r.count <= 0 || tide_r.stride != %du) return (tide_list){0};\n"
+                     "    %s *tide_items = tide_scratch_memory((size_t)tide_r.count * sizeof(%s));\n"
+                     "    memset(tide_items, 0, (size_t)tide_r.count * sizeof(%s));\n"
+                     "    for (int32_t tide_k = 0; tide_k < tide_r.count; tide_k++) {\n"
+                     "        %s"
+                     "        memcpy(&tide_w, tide_r.words + (size_t)tide_k * %du, sizeof tide_w);\n", l, stride, t, t, t, words.data, stride);
+        f = i = 0;
+        gen_gpu_unpack(o, "tide_w", element, "tide_items[tide_k]", &f, &i);
+        sb_put(o, "    }\n    return tide_list_from(tide_items, tide_r.count, sizeof *tide_items);\n}\n\n");
+    }
+}
+
+static void gen_draw_list(gen *g, sb *o, const expr *e);
+
+// A GPU list's operation, or a kernel's run, in local code: written, and true; false for anything else.
+static bool gen_gpu(gen *g, sb *o, const expr *e)
+{
+    switch (e->gpu) {
+    case GPU_MAKE:
+        sb_put(o, "tide_gpu_list_make(");
+        gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
+        sb_printf(o, ", %du)", gpu_list_stride(e->type.decl));
+        return true;
+    case GPU_CAPACITY:
+    case GPU_REVISION:
+    case GPU_DISPOSE:
+        sb_put(o, e->gpu == GPU_CAPACITY ? "tide_gpu_list_capacity(" : e->gpu == GPU_REVISION ? "tide_gpu_list_content_revision("
+                                                                                               : "tide_gpu_list_dispose(");
+        gen_expr(g, o, e->object);
+        sb_put(o, ")");
+        return true;
+    case GPU_RESIZE:
+    case GPU_SET_COUNT:
+        sb_put(o, e->gpu == GPU_RESIZE ? "tide_gpu_list_resize(" : "tide_draw_gpu_list_count(tide_draw, ");
+        gen_expr(g, o, e->object);
+        sb_put(o, ", ");
+        gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
+        sb_put(o, ")");
+        return true;
+    case GPU_CLEAR:
+        sb_put(o, "tide_draw_gpu_list_clear(tide_draw, ");
+        gen_expr(g, o, e->object);
+        sb_put(o, ")");
+        return true;
+    case GPU_SET:
+        sb_printf(o, "tide_gpu_set_%d(tide_draw, ", e->object->type.decl->index);
+        gen_expr(g, o, e->object);
+        sb_put(o, ", ");
+        gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
+        sb_put(o, ")");
+        return true;
+    case GPU_RUN: {
+        const shader *sh = e->shader;
+        if (!sh) return false;
+        const expr *over = e->args.items[1];
+        sb_printf(o, "tide_run_%d(tide_draw, ", sh->index);
+        const type_kind kind = over->type.kind;
+        if (kind == TY_GPU_LIST) {
+            sb_put(o, "NULL, ");
+            gen_expr(g, o, over);
+        } else {
+            // How many invocations along each axis: none below 0
+            sb_put(o, "(const uint32_t[3]){");
+            for (int a = 0; a < 3; a++) {
+                if (a) sb_put(o, ", ");
+                if (kind == TY_LIST && a == 0) {
+                    sb_put(o, "(uint32_t)tide_list_count(");
+                    gen_expr(g, o, over);
+                    sb_put(o, ")");
+                } else if ((kind == TY_INT || kind == TY_BYTE) && a == 0) {
+                    sb_put(o, "tide_gpu_size((int32_t)(");
+                    gen_expr(g, o, over);
+                    sb_put(o, "))");
+                } else if ((kind == TY_INT2 && a < 2) || kind == TY_INT3) {
+                    sb_put(o, "tide_gpu_size((");
+                    gen_expr(g, o, over);
+                    sb_printf(o, ").%c)", "xyz"[a]);
+                } else {
+                    sb_put(o, "1u");
+                }
+            }
+            sb_put(o, "}, (tide_gpu_list){0}");
+        }
+        if (sh->values_type) {
+            sb_put(o, ", ");
+            gen_as(g, o, e->values, e->values->type);
+        }
+        const decl *code = g->routine ? g->routine : g->code;
+        for (int b = 0; b < sh->bound.count; b++) {
+            const param *from = NULL;
+            for (int k = 0; code && k < code->params.count; k++) {
+                const param *p = &code->params.items[k];
+                const bool takes = (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON)
+                                && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && !p->is_out;
+                if (!takes || p->type.decl != sh->bound.items[b]) continue;
+                if (!from || (from->verified && !p->verified)) from = p;
+            }
+            if (!from) continue;
+            sb_printf(o, ", %s%s", is_pointer_param(from) ? "" : "&", local_cname(g, from->name));
+            if (shader_reads_local(sh, sh->bound.items[b])) sb_printf(o, ", %s", fields_name(g, from->name));
+        }
+        sb_put(o, ")");
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
+    if (e->gpu && !e->hoisted && gen_gpu(g, o, e)) return;
     if (e->mesh_lod && e->mesh_lod_vertex && (e->kind == E_CALL || e->kind == E_METHOD)) {
         // A mesh the game made, drawn with `lod:` (tide_draw_want_levels): the draw asks for its levels, and the
         // draws after it don't. Arguments with effects of their own already ran, before the statement
@@ -5851,6 +6043,41 @@ static void gen_await(gen *g, expr *e, const char *name)
         g->indent++;
         gen_reload_live(g);
         line(g, o, "goto tide_fetch_resume%d;", k);
+        g->indent--;
+        line(g, o, "}");
+        task_declare(g, name, e->type);
+        return;
+    }
+    if (call->gpu == GPU_READ || call->gpu == GPU_READ_COUNT) {
+        // await list.Read(): a ticket of the frame's until the GPU is done with the frame drawn next (tide/draw.h)
+        line(g, o, "tide_f->tide_gpu_ticket = 0;");
+        line(g, o, "tide_gpu_resume%d:;", k);
+        indent(g, o);
+        sb_put(o, "if (!tide_f->tide_gpu_ticket) tide_f->tide_gpu_ticket = (int32_t)tide_gpu_list_read_begin(");
+        gen_expr(g, o, call->object);
+        sb_printf(o, ", %s);\n", call->gpu == GPU_READ_COUNT ? "true" : "false");
+        line(g, o, "tide_gpu_read_result tide_read%d;", k);
+        line(g, o, "if (!tide_gpu_list_read_poll((uint32_t)tide_f->tide_gpu_ticket, &tide_read%d)) {", k);
+        g->indent++;
+        gen_spill_live(g);
+        line(g, o, "tide_f->tide_state = %d;", k);
+        line(g, o, "return tide_l->tide_frames + 1;");
+        g->indent--;
+        line(g, o, "}");
+        if (call->gpu == GPU_READ)
+            line(g, o, "%s %s = {.ok = tide_read%d.ok, .error = (IOError)(tide_read%d.ok ? 0 : 10), .value = tide_gpu_list_of_%d(tide_read%d)};",
+                 c_type(e->type), name, k, k, call->object->type.decl->index, k);
+        else
+            line(g, o, "%s %s = {.ok = tide_read%d.ok, .error = (IOError)(tide_read%d.ok ? 0 : 10), .value = tide_read%d.count};",
+                 c_type(e->type), name, k, k, k);
+        line(g, o, "tide_gpu_list_read_forget((uint32_t)tide_f->tide_gpu_ticket);");
+        line(g, o, "tide_f->tide_gpu_ticket = 0;");
+        e->hoisted = name;
+        line(g, o, "if (0) {");
+        line(g, o, "tide_resume%d:;", k);
+        g->indent++;
+        gen_reload_live(g);
+        line(g, o, "goto tide_gpu_resume%d;", k);
         g->indent--;
         line(g, o, "}");
         task_declare(g, name, e->type);
@@ -8579,6 +8806,10 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_put(o, "(void)");
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
+        } else if (s->value->gpu) { // A GPU list's operation, or a kernel's run
+            indent(g, o);
+            gen_expr(g, o, s->value);
+            sb_put(o, ";\n");
         } else if (s->value->kind == E_METHOD) {
             gen_method(g, s->value);
         } else {
@@ -8663,6 +8894,7 @@ static void add_task(gen *g, decl *fn)
     }
     if (fn->uses_io) frame_field(frame, "tide_io_ticket", int_t);
     if (fn->uses_fetch) frame_field(frame, "tide_fetch_ticket", int_t);
+    if (fn->uses_gpu_read) frame_field(frame, "tide_gpu_ticket", int_t); // A GPU list's read back, while it's awaited
     if (fn->rolls) frame_field(frame, "tide_dice", (type){TY_STRUCT, g->prog->random}); // What it rolls with, across its waits
     if (fn->kind == DECL_SYSTEM) frame_field(frame, "tide_event", (type){TY_EVENT, fn->event});
     for (int i = 0; i < fn->params.count; i++) {
@@ -23174,7 +23406,8 @@ static bool resource_fields(const decl *d)
 
 static bool resource_type(const type t)
 {
-    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET) return true;
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
+        || t.kind == TY_GPU_LIST) return true;
     if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE
         || t.kind == TY_LIST || t.kind == TY_ARRAY || t.kind == TY_MAP) return resource_fields(t.decl);
     return false;
@@ -23218,6 +23451,12 @@ static void gen_resource_value(gen *g, const type t, const char *at, const char 
         const char *element = gen_resource_elements(g, t, at, pad, true);
         gen_resource_value(g, e, element, pad);
         sb_printf(o, "%s} } }\n", pad);
+        return;
+    }
+    if (t.kind == TY_GPU_LIST) { // Kept, or made again empty where its elements' words changed (tide_gpu_list_adopt)
+        const int stride = gpu_list_stride(t.decl);
+        sb_printf(o, "%sif (%s.id) {\n%s    if (same_memory) tide_gpu_list_adopt(&%s, %du);\n%s    else %s = tide_gpu_list_recreate(%s, %du);\n%s}\n",
+                  pad, at, pad, at, stride, pad, at, at, stride, pad);
         return;
     }
     if (t.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
@@ -23570,7 +23809,7 @@ static void gen_rebind_resources(gen *g)
         }
         sb_put(o, "            default: break;\n            }\n            break;\n        default: break;\n        }\n    }\n");
     }
-    sb_put(o, "    if (!same_memory) tide_render_targets_recreated();\n}\n\n");
+    sb_put(o, "    if (!same_memory) {\n        tide_render_targets_recreated();\n        tide_gpu_lists_recreated();\n    }\n}\n\n");
 }
 
 // Incoming lifecycle logs contain generated value records, never pointers.
@@ -24603,6 +24842,289 @@ static void gen_shader_skin_bindings(sb *o, const shader *sh)
     }
 }
 
+// What a shader's textures are, for its draw or run: each one's slot of the list's (tide_textures), and how
+// it's sampled, the bits of `blended` and the expressions `carried` adds for what the Texture given says.
+static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, uint64_t *blended, sb *carried)
+{
+    (void)g;
+    (void)s;
+    for (int t = 0; t < sh->textures.count; t++) {
+        const shader_texture *texture = &sh->textures.items[t];
+        if (texture->skin) continue; // Bound after this item's pose is captured
+        const bool own = sh->textured && !texture->source && !texture->asset && !texture->direct; // The draw's own
+        const bool given = own || (texture->read == READ_COLOR && !texture->asset
+                                   && (texture->direct || (texture->field && texture->field->type.kind == TY_TEXTURE)));
+        const bool filter_carried = own || (given && !texture->filter_said), wrap_carried = own || (given && !texture->wrap_said);
+        sb from = {0}; // The Texture it's given: the draw's, or the field's
+        if (given && !texture->source) sb_put(&from, "tide_texture");
+        else if (given) {
+            int b = 0;
+            while (sh->bound.items[b] != texture->source) b++;
+            sb_printf(&from, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+        }
+        if (filter_carried) sb_printf(carried, " | tide_sampling_filter_of(%du, %s)", (unsigned)t, from.data);
+        if (wrap_carried) sb_printf(carried, " | tide_sampling_wrap_of(%du, %s)", (unsigned)t, from.data);
+        else *blended |= (uint64_t)texture->wrap << (32 * (t / 8) + 8 + 2 * (t % 8)); // TIDE_SAMPLING_WRAP
+        if (filter_carried) {
+            // Its bit comes with the texture
+        } else if (texture->filter) {
+            *blended |= UINT64_C(1) << (32 * (t / 8) + t % 8);
+            if (texture->filter == 2) *blended |= UINT64_C(1) << (32 * (t / 8) + 24 + t % 8); // TIDE_SAMPLING_MIPS
+        }
+        if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
+            const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
+            const bool map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET);
+            const type element = !map ? list_elem(holds) : holds->is_set ? holds->fields.items[0].type : (type){TY_STRUCT, holds->entry};
+            // What's sent of each: the parts of it that are read, which the layout's number is of
+            const bool *leaves = shader_texture_leaves(texture);
+            int floats = 0, ints = 0, leaf = 0;
+            shader_part_words(element, leaves, &leaf, &floats, &ints);
+            const unsigned layout = shader_layout(element, leaves);
+            char words[48] = "NULL"; // What writes them: nothing, where the elements are only counted
+            if (floats + ints) snprintf(words, sizeof words, "tide_shader_%d_words_%d", s, t);
+            sb list = {0};
+            if (texture->asset) {
+                sb_put(&list, asset_cname(texture->asset));
+            } else if (sh->values_type && texture->source == sh->values_type) {
+                sb_printf(&list, "tide_values.%s", field_cname(texture->field));
+            } else {
+                int b = 0;
+                while (sh->bound.items[b] != texture->source) b++;
+                sb_printf(&list, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            }
+            if (holds->kind == DECL_GRID) { // A grid: its cells, and its size
+                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, %uu, %s, "
+                             "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), layout,
+                          words, texture->count_at);
+                continue;
+            }
+            if (map) { // A map or a set: its live entries, how many, and its index's slots. The key is the first of an
+                       // entry's ints, after its floats, which are its value's
+                sb_printf(o, "    tide_textures[%d] = tide_draw_map_data(tide_draw, %s, sizeof(tide_map%d_entry), %du, %du, %uu, "
+                             "%s, &tide_uniforms.i[%d]);\n", t, list.data, holds->index,
+                          (unsigned)(floats + ints), (unsigned)floats, layout, words, texture->count_at);
+                continue;
+            }
+            sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, %uu, "
+                         "%s, &tide_uniforms.i[%d]);\n", t, list.data, elem_ctype(element),
+                      (unsigned)(floats + ints), layout, words, texture->count_at);
+            continue;
+        }
+        if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
+            if (texture->asset) {
+                sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+            } else {
+                int b = 0;
+                while (sh->bound.items[b] != texture->source) b++;
+                sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source(tide_draw, tide_%sb%d->%s);\n", t,
+                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            }
+            continue;
+        }
+        if (texture->asset && texture->asset->return_type.kind == TY_TEXTURE) { // A Texture asset, by name
+            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+            continue;
+        }
+        if (texture->asset) { // A Grid2<Color> asset, by name
+            sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, %s, &%s);\n", t,
+                      texture->asset->sample_raw ? "_raw" : "", asset_cname(texture->asset),
+                      grid_shape_name(texture->asset->return_type.decl));
+            continue;
+        }
+        if (!texture->source) { // The one the draw was given
+            sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_texture);\n", t);
+            continue;
+        }
+        int b = 0;
+        while (sh->bound.items[b] != texture->source) b++;
+        if (texture->field->type.kind == TY_TEXTURE) {
+            if (field_is_raw(texture->field)) {
+                sb_printf(o, "    tide_grid tide_raw_grid%d;\n    tide_grid_shape tide_raw_shape%d;\n"
+                             "    tide_textures[%d] = tide_texture_grid(tide_%sb%d->%s, &tide_raw_grid%d, &tide_raw_shape%d)\n"
+                             "        ? tide_draw_grid_texture_raw(tide_draw, tide_raw_grid%d, &tide_raw_shape%d)\n"
+                             "        : tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n",
+                          t, t, t, texture->field->is_local ? "l" : "", b, field_cname(texture->field), t, t, t, t,
+                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
+                             texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+        }
+        else if (texture->field->type.kind == TY_DEPTH_TEXTURE)
+            sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
+                      texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+        else
+            sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, tide_%sb%d->%s, &%s);\n", t,
+                      field_is_raw(texture->field) ? "_raw" : "", texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
+    }
+}
+
+// Where a shader's GPU list in storage slot `i` comes from, in its wrapper: a bound component's or singleton's field,
+// the values', or for an Instanced draw's own (the slot with no field) the list it draws.
+static void gen_storage_source(sb *o, const shader *sh, const int i)
+{
+    const shader_storage *st = &sh->storage.items[i];
+    if (!st->field) { // One the draw gives
+        sb_put(o, st->role == STORAGE_VERTICES ? "tide_gpu_vertices" : st->role == STORAGE_INDICES ? "tide_gpu_indices" : "tide_items");
+        return;
+    }
+    if (sh->values_type && st->source == sh->values_type) {
+        sb_printf(o, "tide_values.%s", field_cname(st->field));
+        return;
+    }
+    int b = 0;
+    while (b < sh->bound.count && sh->bound.items[b] != st->source) b++;
+    sb_printf(o, "tide_%sb%d->%s", st->field->is_local ? "l" : "", b, field_cname(st->field));
+}
+
+// The GPU lists a shader reads and writes, as its wrapper hands them on: `tide_storage`.
+static void gen_storage_array(sb *o, const shader *sh)
+{
+    if (!sh->storage.count) return;
+    sb_printf(o, "    const tide_gpu_list tide_storage[%d] = {", sh->storage.count);
+    for (int i = 0; i < sh->storage.count; i++) {
+        if (i) sb_put(o, ", ");
+        gen_storage_source(o, sh, i);
+    }
+    sb_put(o, "};\n");
+}
+
+// A kernel (sh->compute): its WGSL and SPIR-V, its tide_shader, and the wrapper GPU.Run's calls go through,
+// tide_run_<n>: what it reads of the run's values, of singletons and of the components of the entity the view runs
+// for goes with the run, and its GPU lists by their ids.
+static void gen_kernel(gen *g, const shader *sh, const int s)
+{
+    sb *o = &g->c;
+    char name[64];
+    sb_put(o, "#ifdef __wasm__\n");
+    snprintf(name, sizeof name, "tide_shader_%d_wgsl", s);
+    gen_shader_text(o, name, sh->wgsl);
+    sb_put(o, "#endif\n#ifdef TIDE_SPIRV\n");
+    snprintf(name, sizeof name, "tide_shader_%d_spirv", s);
+    const size_t spirv_words = gen_shader_spirv(o, name, sh, sh->wgsl);
+    sb_put(o, "#endif\n");
+    const decl *k = sh->kernel;
+    const int numbers[] = {k->group[0], k->group[1], k->group[2], sh->uniform_floats, sh->uniform_ints, sh->textures.count,
+                           sh->storage.count};
+    uint64_t id = hash_more(0xCBF29CE484222325ull, sh->wgsl, strlen(sh->wgsl));
+    id = hash_more(id, numbers, sizeof numbers);
+    sb_printf(o, "static const tide_shader tide_shader_%d = {\n    .name = ", s);
+    gen_c_raw_literal(o, diagnostic_name(g, str_from(sh->name), "shader", s));
+    sb_printf(o, ",\n#ifdef __wasm__\n    .wgsl = tide_shader_%d_wgsl,\n#endif\n", s);
+    sb_printf(o, "#ifdef TIDE_SPIRV\n    .spirv = tide_shader_%d_spirv,\n    .spirv_words = %d,\n#endif\n", s, (int)spirv_words);
+    sb_printf(o, "    .id = 0x%llxull,\n    .uniform_floats = %d,\n    .uniform_ints = %d,\n    .texture_count = %d,\n",
+              (unsigned long long)id, word_packs(sh->uniform_floats), word_packs(sh->uniform_ints), sh->textures.count);
+    bool data = false;
+    for (int t = 0; t < sh->textures.count; t++) data |= sh->textures.items[t].read != READ_COLOR;
+    if (data) {
+        sb_put(o, "    .texture_reads = {");
+        for (int t = 0; t < sh->textures.count; t++) {
+            const shader_read read = sh->textures.items[t].read;
+            sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH" :
+                      read == READ_CUBE ? "CUBE" : read == READ_DATA ? "DATA" : "COLOR");
+        }
+        sb_put(o, "},\n");
+    }
+    unsigned writes = 0;
+    int adds = 0;
+    for (int i = 0; i < sh->storage.count; i++) {
+        if (sh->storage.items[i].write) writes |= 1u << i;
+        adds += sh->storage.items[i].add;
+    }
+    sb_printf(o, "    .storage_count = %d,\n    .storage_writes = 0x%xu,\n    .compute = true,\n    .group = {%d, %d, %d},\n",
+              sh->storage.count, writes, k->group[0], k->group[1], k->group[2]);
+    if (adds) {
+        sb_printf(o, "    .add_count = %d,\n    .adds = {", adds);
+        for (int i = 0, a = 0; i < sh->storage.count; i++) {
+            if (!sh->storage.items[i].add) continue;
+            const type element = sh->storage.items[i].field->type.decl->fields.items[0].type;
+            int floats = 0, ints = 0;
+            shader_part_words(element, NULL, &(int){0}, &floats, &ints);
+            sb_printf(o, "%s{%d, %d, %d}", a ? ", " : "", i, sh->storage.count + a, floats + ints);
+            a++;
+        }
+        sb_put(o, "},\n");
+    }
+    sb_put(o, "};\n\n");
+    // Its lists' elements as numbers, as a frag's are (tide_shader_<n>_words_<t>)
+    for (int t = 0; t < sh->textures.count; t++) {
+        const shader_texture *texture = &sh->textures.items[t];
+        if (texture->read != READ_DATA || texture->skin) continue;
+        const decl *map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET)
+                        ? texture->field->type.decl : NULL;
+        const type element = map ? (map->is_set ? map->fields.items[0].type : (type){TY_STRUCT, map->entry})
+                                 : list_elem(texture->asset ? texture->asset->return_type.decl : texture->field->type.decl);
+        const bool *leaves = shader_texture_leaves(texture);
+        int floats = 0, ints = 0, leaf = 0;
+        shader_part_words(element, leaves, &leaf, &floats, &ints);
+        if (floats + ints == 0) continue;
+        char entry[32];
+        snprintf(entry, sizeof entry, "tide_map%d_entry", map ? map->index : 0);
+        sb_printf(o, "static void tide_shader_%d_words_%d(const void *tide_in, int32_t *tide_out)\n{\n"
+                     "    const %s *tide_e = tide_in;\n    struct {", s, t, map ? entry : elem_ctype(element));
+        if (floats) sb_printf(o, " float f[%d];", floats);
+        if (ints) sb_printf(o, " int32_t i[%d];", ints);
+        sb_put(o, " } tide_w;\n");
+        int f = 0, i = 0;
+        leaf = 0;
+        gen_shader_part(o, "tide_w", element, map && map->is_set ? "tide_e->key" : "(*tide_e)", &f, &i, leaves, &leaf);
+        sb_put(o, "    memcpy(tide_out, &tide_w, sizeof tide_w);\n}\n\n");
+    }
+    sb_printf(o, "TIDE_HELPER void tide_run_%d(tide_draw_list *tide_draw, const uint32_t tide_size[3], tide_gpu_list tide_over", s);
+    if (sh->values_type) sb_printf(o, ", %s tide_values", type_cname(sh->values_type));
+    for (int b = 0; b < sh->bound.count; b++) {
+        const decl *d = sh->bound.items[b];
+        sb_printf(o, ", const %s *tide_b%d", type_cname(d), b);
+        if (shader_reads_local(sh, d)) sb_printf(o, ", const %s *tide_lb%d", type_cname(d->local_part), b);
+    }
+    sb_put(o, ")\n{\n");
+    if (sh->values_type) sb_put(o, "    (void)tide_values;\n");
+    for (int b = 0; b < sh->bound.count; b++) sb_printf(o, "    (void)tide_b%d;\n", b);
+    const bool uniforms = gen_shader_words(o, "tide_uniforms", sh->uniform_floats, sh->uniform_ints);
+    if (sh->rolled_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = (int32_t)tide_gpu_rolled;\n", sh->rolled_at);
+    if (sh->seed_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = tide_gpu_seed;\n", sh->seed_at);
+    for (int v = 0; v < sh->values.count; v++) {
+        const shader_value *value = &sh->values.items[v];
+        int f = value->float_at, i = value->int_at;
+        sb access = {0};
+        if (sh->values_type && value->source == sh->values_type) {
+            sb_printf(&access, "tide_values.%s", field_cname(value->field));
+        } else {
+            int b = 0;
+            while (b < sh->bound.count && sh->bound.items[b] != value->source) b++;
+            sb_printf(&access, "tide_%sb%d->%s", value->field->is_local ? "l" : "", b, field_cname(value->field));
+        }
+        gen_shader_value(o, "tide_uniforms", value->field->type, access.data, &f, &i);
+    }
+    sb_printf(o, "    uint32_t tide_textures[%d] = {0};\n", sh->textures.count ? sh->textures.count : 1);
+    for (int t = 0; t < sh->sizes.count; t++) {
+        const shader_texture *texture = &sh->sizes.items[t];
+        sb from = {0};
+        if (texture->asset) sb_put(&from, asset_cname(texture->asset));
+        else {
+            int b = 0;
+            while (sh->bound.items[b] != texture->source) b++;
+            sb_printf(&from, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+        }
+        const type source_type = texture->asset ? texture->asset->return_type : texture->field->type;
+        if (source_type.kind == TY_GRID) {
+            sb converted = {0};
+            sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
+            from = converted;
+        }
+        sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"
+                     "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n",
+                  t, from.data, texture->count_at, t, texture->count_at + 1, t);
+    }
+    uint64_t blended = 0;
+    sb carried = {0};
+    gen_shader_textures(g, o, sh, s, &blended, &carried);
+    sb sampling = {0};
+    if (blended <= UINT32_MAX) sb_printf(&sampling, "0x%xu%s", (unsigned)blended, carried.data ? carried.data : "");
+    else sb_printf(&sampling, "0x%llxull%s", (unsigned long long)blended, carried.data ? carried.data : "");
+    gen_storage_array(o, sh);
+    sb_printf(o, "    tide_draw_compute_run(tide_draw, &tide_shader_%d, tide_size, tide_over, %s, %s, tide_textures, %s);\n}\n\n",
+              s, sh->storage.count ? "tide_storage" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data);
+}
+
 static void gen_shaders(gen *g)
 {
     const program *prog = g->prog;
@@ -24622,16 +25144,18 @@ static void gen_shaders(gen *g)
     }
     for (int s = 0; s < prog->shaders.count; s++) {
         shader compact = *prog->shaders.items[s];
+        if (compact.compute) { // A kernel: WGSL alone
+            if (g->opts->strip_names) {
+                sb_printf(&g->shader_names, "# shader %d WGSL\n", s);
+                compact.wgsl = shader_minify_names(compact.wgsl, &g->shader_names);
+            }
+            gen_kernel(g, &compact, s);
+            continue;
+        }
         if (g->opts->strip_names) {
-            sb_printf(&g->shader_names, "# shader %d GLSL vertex\n", s);
-            compact.glsl_vertex = shader_minify_names(compact.glsl_vertex, &g->shader_names);
-            sb_printf(&g->shader_names, "# shader %d GLSL fragment\n", s);
-            compact.glsl_fragment = shader_minify_names(compact.glsl_fragment, &g->shader_names);
             sb_printf(&g->shader_names, "# shader %d WGSL\n", s);
             compact.wgsl = shader_minify_names(compact.wgsl, &g->shader_names);
             if (compact.listed) {
-                sb_printf(&g->shader_names, "# shader %d GLSL listed vertex\n", s);
-                compact.glsl_listed_vertex = shader_minify_names(compact.glsl_listed_vertex, &g->shader_names);
                 sb_printf(&g->shader_names, "# shader %d WGSL listed\n", s);
                 compact.wgsl_listed = shader_minify_names(compact.wgsl_listed, &g->shader_names);
             }
@@ -24639,10 +25163,6 @@ static void gen_shaders(gen *g)
         const shader *sh = &compact;
         const char *vertex = type_cname(sh->vertex);
         char name[64];
-        snprintf(name, sizeof name, "tide_shader_%d_vertex", s);
-        gen_shader_text(o, name, sh->glsl_vertex);
-        snprintf(name, sizeof name, "tide_shader_%d_fragment", s);
-        gen_shader_text(o, name, sh->glsl_fragment);
         sb_put(o, "#ifdef __wasm__\n");
         snprintf(name, sizeof name, "tide_shader_%d_wgsl", s);
         gen_shader_text(o, name, sh->wgsl);
@@ -24653,8 +25173,6 @@ static void gen_shaders(gen *g)
         // Its vertex stage for listed runs (tide_draw_mesh_shaded_list), each backend's
         size_t listed_words = 0;
         if (sh->listed) {
-            snprintf(name, sizeof name, "tide_shader_%d_listed_vertex", s);
-            gen_shader_text(o, name, sh->glsl_listed_vertex);
             sb_put(o, "#ifdef __wasm__\n");
             snprintf(name, sizeof name, "tide_shader_%d_listed_wgsl", s);
             gen_shader_text(o, name, sh->wgsl_listed);
@@ -24666,38 +25184,39 @@ static void gen_shaders(gen *g)
 
         const int numbers[] = {sh->dims, sh->vertex->fields.count, sh->instance_floats, sh->instance_ints,
                                sh->uniform_floats, sh->uniform_ints, sh->textures.count};
-        uint64_t id = hash_more(0xCBF29CE484222325ull, sh->glsl_vertex, strlen(sh->glsl_vertex));
-        id = hash_more(id, sh->glsl_fragment, strlen(sh->glsl_fragment));
-        id = hash_more(id, sh->wgsl, strlen(sh->wgsl));
+        uint64_t id = hash_more(0xCBF29CE484222325ull, sh->wgsl, strlen(sh->wgsl));
         id = hash_more(id, numbers, sizeof numbers);
 
         sb_printf(o, "static const tide_shader tide_shader_%d = {\n    .name = ", s);
         gen_c_raw_literal(o, diagnostic_name(g, str_from(sh->name), "shader", s));
         // A fragment shader cannot move vertices. Skinning and a user vert can,
         // so only an undeformed 3D mesh advertises automatic geometry bounds.
-        if (sh->dims == 3 && !sh->vert && !sh->skinned) {
+        if (sh->dims == 3 && !sh->vert && !sh->skinned && !sh->gpu_vertices) {
             for (int i = 0; i < sh->vertex->fields.count; i++) {
                 const field *f = &sh->vertex->fields.items[i];
                 if (str_eq_c(f->name, "position"))
                     sb_printf(o, ",\n    .bounds_position = 1 + offsetof(%s, %s)", vertex, field_cname(f));
             }
         }
-        sb_printf(o, ",\n    .glsl_vertex = tide_shader_%d_vertex,\n    .glsl_fragment = tide_shader_%d_fragment,\n", s, s);
+        sb_put(o, ",\n");
         sb_printf(o, "#ifdef __wasm__\n    .wgsl = tide_shader_%d_wgsl,\n#endif\n", s);
         sb_printf(o, "#ifdef TIDE_SPIRV\n    .spirv = tide_shader_%d_spirv,\n    .spirv_words = %d,\n#endif\n", s,
                   (int)spirv_words);
         sb_printf(o, "    .id = 0x%llxull,\n    .dims = %d,\n    .vertex_size = sizeof(%s),\n    .attribute_count = %d,\n"
                      "    .attributes = {",
-                  (unsigned long long)id, sh->dims, vertex, sh->vertex->fields.count);
-        for (int i = 0; i < sh->vertex->fields.count; i++) {
+                  (unsigned long long)id, sh->dims, vertex, sh->gpu_vertices ? 0 : sh->vertex->fields.count);
+        if (sh->gpu_vertices) sb_put(o, "{0}"); // Read from their list, by index: none are attributes
+        for (int i = 0; !sh->gpu_vertices && i < sh->vertex->fields.count; i++) {
             const field *f = &sh->vertex->fields.items[i];
             const int dim = f->type.kind == TY_COLOR ? 4 : type_dim(f->type);
             sb_printf(o, "%s{TIDE_SHADER_%s + %d, offsetof(%s, %s)}", i ? ", " : "", type_is_int_based(f->type) ? "INT" : "FLOAT",
                       dim - 1, vertex, field_cname(f));
         }
+        // An indirect draw's instances are read from its list's storage: none are attributes
         sb_printf(o, "},\n    .instance_floats = %d,\n    .instance_ints = %d,\n    .uniform_floats = %d,\n"
                      "    .uniform_ints = %d,\n    .texture_count = %d,\n",
-                  word_packs(sh->instance_floats), word_packs(sh->instance_ints), word_packs(sh->uniform_floats),
+                  sh->gpu_instances ? 0 : word_packs(sh->instance_floats), sh->gpu_instances ? 0 : word_packs(sh->instance_ints),
+                  word_packs(sh->uniform_floats),
                   word_packs(sh->uniform_ints), sh->textures.count);
         // How each texture is read, where any isn't a color: a target's depth, as a number or compared
         bool depths = false;
@@ -24715,11 +25234,16 @@ static void gen_shaders(gen *g)
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
         if (sh->blit) sb_put(o, "    .blit = true,\n");
         if (sh->frag && sh->frag->cutout) sb_put(o, "    .cutout = true,\n"); // Its alpha is its coverage
+        if (sh->storage.count) sb_printf(o, "    .storage_count = %d,\n", sh->storage.count); // The GPU lists it reads
+        if (sh->gpu_instances) sb_printf(o, "    .instance_storage = %d,\n", sh->instance_storage + 1);
+        if (sh->through_at >= 0) sb_printf(o, "    .instance_through = %d,\n", sh->through_at + 1);
+        if (sh->gpu_vertices) sb_printf(o, "    .vertex_storage = %d,\n", sh->vertex_storage + 1);
+        if (sh->gpu_indices) sb_printf(o, "    .index_storage = %d,\n", sh->index_storage + 1);
         if (sh->listed) {
-            sb_printf(o, "    .glsl_listed_vertex = tide_shader_%d_listed_vertex,\n#ifdef __wasm__\n"
+            sb_printf(o, "    .listed = true,\n#ifdef __wasm__\n"
                          "    .wgsl_listed = tide_shader_%d_listed_wgsl,\n#endif\n#ifdef TIDE_SPIRV\n"
                          "    .spirv_listed = tide_shader_%d_listed_spirv,\n    .spirv_listed_words = %d,\n#endif\n",
-                      s, s, s, (int)listed_words);
+                      s, s, (int)listed_words);
         }
         sb_put(o, "};\n\n");
 
@@ -24781,8 +25305,12 @@ static void gen_shaders(gen *g)
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
         sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw", s);
-        if (!sh->blit) sb_put(o, ", tide_list tide_vertices, tide_list tide_indices");
-        if (sh->instanced) sb_put(o, ", tide_list tide_items");
+        if (!sh->blit) {
+            sb_put(o, sh->gpu_vertices ? ", tide_gpu_list tide_gpu_vertices" : ", tide_list tide_vertices");
+            sb_put(o, sh->gpu_indices ? ", tide_gpu_list tide_gpu_indices" : ", tide_list tide_indices");
+        }
+        if (sh->gpu_instances) sb_put(o, ", tide_gpu_list tide_items");
+        else if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
         if (sh->direct_texture || sh->textured) sb_put(o, ", tide_texture_ref tide_texture");
         if (sh->skinned) {
@@ -24799,6 +25327,11 @@ static void gen_shaders(gen *g)
         }
         sb_put(o, ")\n{\n");
         if (sh->blit) sb_put(o, "    tide_draw = tide_draw_render_target(tide_draw, tide_destination);\n");
+        // A GPU list's vertices or indices are read on the GPU: the engine is given none of the CPU's for them
+        if (sh->gpu_vertices) sb_put(o, "    const tide_list tide_vertices = {0};\n");
+        if (sh->gpu_indices) sb_put(o, "    const tide_list tide_indices = {0};\n");
+        const char *no_vertices = sh->gpu_vertices ? "tide_gpu_vertices.id == 0" : "tide_list_count(tide_vertices) <= 0";
+        const char *no_indices = sh->gpu_indices ? "tide_gpu_indices.id == 0" : "tide_list_count(tide_indices) < 3";
         for (int b = 0; b < sh->bound.count; b++) {
             const decl *binding = sh->bound.items[b];
             if (!binding->binding_of) continue;
@@ -24812,15 +25345,17 @@ static void gen_shaders(gen *g)
             }
         }
         if (sh->direct_texture || sh->textured) sb_put(o, "    (void)tide_texture;\n");
-        if (sh->instanced) {
-            sb_put(o, "    const int32_t tide_count = tide_list_count(tide_items);\n"
-                      "    if (tide_count <= 0 || tide_list_count(tide_vertices) <= 0 || tide_list_count(tide_indices) < 3) return;\n");
+        if (sh->gpu_instances) {
+            sb_printf(o, "    if (%s || %s) return;\n", no_vertices, no_indices);
+        } else if (sh->instanced) {
+            sb_printf(o, "    const int32_t tide_count = tide_list_count(tide_items);\n"
+                         "    if (tide_count <= 0 || %s || %s) return;\n", no_vertices, no_indices);
             if (sh->dims == 3 && sh->instance_type && !sh->instance_transform)
                 sb_put(o, "    const tide_float4x4 tide_transform = tide_identity_f4x4();\n");
         }
         if (sh->values_type) sb_put(o, "    (void)tide_values;\n");
         for (int b = 0; b < sh->bound.count; b++) sb_printf(o, "    (void)tide_b%d;\n", b);
-        const bool instance = gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
+        const bool instance = !sh->gpu_instances && gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
         const bool uniforms = gen_shader_words(o, "tide_uniforms", sh->uniform_floats, sh->uniform_ints);
         // What its code's rolls are made of this frame, and the seed it reads: the frame's (tide_frame)
         if (sh->rolled_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = (int32_t)tide_gpu_rolled;\n", sh->rolled_at);
@@ -24830,6 +25365,7 @@ static void gen_shaders(gen *g)
             const shader_value *value = &sh->values.items[v];
             if (sh->instanced && (value->source == sh->instance_type
                 || (!value->source && (!sh->instance_type || sh->instance_transform)))) continue;
+            if (sh->gpu_instances && value->per_instance) continue; // The GPU reads them from the list
             int f = value->float_at, i = value->int_at;
             const char *to = value->per_instance ? "tide_instance" : "tide_uniforms";
             if (!value->source) {
@@ -24880,113 +25416,7 @@ static void gen_shaders(gen *g)
         // What's read as the Texture it's given says: that texture's filter's and wrap's bits, for the draw's own
         // (a shader with no frag) all of it, and for a Sample what it leaves unsaid of a Texture that's no asset's
         sb carried = {0};
-        for (int t = 0; t < sh->textures.count; t++) {
-            const shader_texture *texture = &sh->textures.items[t];
-            if (texture->skin) continue; // Bound after this item's pose is captured
-            const bool own = sh->textured && !texture->source && !texture->asset && !texture->direct; // The draw's own
-            const bool given = own || (texture->read == READ_COLOR && !texture->asset
-                                       && (texture->direct || (texture->field && texture->field->type.kind == TY_TEXTURE)));
-            const bool filter_carried = own || (given && !texture->filter_said), wrap_carried = own || (given && !texture->wrap_said);
-            sb from = {0}; // The Texture it's given: the draw's, or the field's
-            if (given && !texture->source) sb_put(&from, "tide_texture");
-            else if (given) {
-                int b = 0;
-                while (sh->bound.items[b] != texture->source) b++;
-                sb_printf(&from, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-            }
-            if (filter_carried) sb_printf(&carried, " | tide_sampling_filter_of(%du, %s)", (unsigned)t, from.data);
-            if (wrap_carried) sb_printf(&carried, " | tide_sampling_wrap_of(%du, %s)", (unsigned)t, from.data);
-            else blended |= (uint64_t)texture->wrap << (32 * (t / 8) + 8 + 2 * (t % 8)); // TIDE_SAMPLING_WRAP
-            if (filter_carried) {
-                // Its bit comes with the texture
-            } else if (texture->filter) {
-                blended |= UINT64_C(1) << (32 * (t / 8) + t % 8);
-                if (texture->filter == 2) blended |= UINT64_C(1) << (32 * (t / 8) + 24 + t % 8); // TIDE_SAMPLING_MIPS
-            }
-            if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
-                const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
-                const bool map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET);
-                const type element = !map ? list_elem(holds) : holds->is_set ? holds->fields.items[0].type : (type){TY_STRUCT, holds->entry};
-                // What's sent of each: the parts of it that are read, which the layout's number is of
-                const bool *leaves = shader_texture_leaves(texture);
-                int floats = 0, ints = 0, leaf = 0;
-                shader_part_words(element, leaves, &leaf, &floats, &ints);
-                const unsigned layout = shader_layout(element, leaves);
-                char words[48] = "NULL"; // What writes them: nothing, where the elements are only counted
-                if (floats + ints) snprintf(words, sizeof words, "tide_shader_%d_words_%d", s, t);
-                sb list = {0};
-                if (texture->asset) {
-                    sb_put(&list, asset_cname(texture->asset));
-                } else if (sh->values_type && texture->source == sh->values_type) {
-                    sb_printf(&list, "tide_values.%s", field_cname(texture->field));
-                } else {
-                    int b = 0;
-                    while (sh->bound.items[b] != texture->source) b++;
-                    sb_printf(&list, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-                }
-                if (holds->kind == DECL_GRID) { // A grid: its cells, and its size
-                    sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, %uu, %s, "
-                                 "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), layout,
-                              words, texture->count_at);
-                    continue;
-                }
-                if (map) { // A map or a set: its live entries, how many, and its index's slots. The key is the first of an
-                           // entry's ints, after its floats, which are its value's
-                    sb_printf(o, "    tide_textures[%d] = tide_draw_map_data(tide_draw, %s, sizeof(tide_map%d_entry), %du, %du, %uu, "
-                                 "%s, &tide_uniforms.i[%d]);\n", t, list.data, holds->index,
-                              (unsigned)(floats + ints), (unsigned)floats, layout, words, texture->count_at);
-                    continue;
-                }
-                sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, %uu, "
-                             "%s, &tide_uniforms.i[%d]);\n", t, list.data, elem_ctype(element),
-                          (unsigned)(floats + ints), layout, words, texture->count_at);
-                continue;
-            }
-            if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
-                if (texture->asset) {
-                    sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
-                } else {
-                    int b = 0;
-                    while (sh->bound.items[b] != texture->source) b++;
-                    sb_printf(o, "    tide_textures[%d] = tide_draw_cube_source(tide_draw, tide_%sb%d->%s);\n", t,
-                              texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-                }
-                continue;
-            }
-            if (texture->asset && texture->asset->return_type.kind == TY_TEXTURE) { // A Texture asset, by name
-                sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
-                continue;
-            }
-            if (texture->asset) { // A Grid2<Color> asset, by name
-                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, %s, &%s);\n", t,
-                          texture->asset->sample_raw ? "_raw" : "", asset_cname(texture->asset),
-                          grid_shape_name(texture->asset->return_type.decl));
-                continue;
-            }
-            if (!texture->source) { // The one the draw was given
-                sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_texture);\n", t);
-                continue;
-            }
-            int b = 0;
-            while (sh->bound.items[b] != texture->source) b++;
-            if (texture->field->type.kind == TY_TEXTURE) {
-                if (field_is_raw(texture->field)) {
-                    sb_printf(o, "    tide_grid tide_raw_grid%d;\n    tide_grid_shape tide_raw_shape%d;\n"
-                                 "    tide_textures[%d] = tide_texture_grid(tide_%sb%d->%s, &tide_raw_grid%d, &tide_raw_shape%d)\n"
-                                 "        ? tide_draw_grid_texture_raw(tide_draw, tide_raw_grid%d, &tide_raw_shape%d)\n"
-                                 "        : tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n",
-                              t, t, t, texture->field->is_local ? "l" : "", b, field_cname(texture->field), t, t, t, t,
-                              texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-                } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
-                                 texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-            }
-            else if (texture->field->type.kind == TY_DEPTH_TEXTURE)
-                sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
-                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
-            else
-                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, tide_%sb%d->%s, &%s);\n", t,
-                          field_is_raw(texture->field) ? "_raw" : "", texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
-        }
+        gen_shader_textures(g, o, sh, s, &blended, &carried);
         gen_shader_prep_end(g, sh);
         sb sampling = {0};
         if (blended <= UINT32_MAX) sb_printf(&sampling, "0x%xu%s", (unsigned)blended, carried.data ? carried.data : "");
@@ -24998,6 +25428,14 @@ static void gen_shaders(gen *g)
                          "sizeof(%s), tide_shader_%d_listed, 0x%xu, %s, tide_textures, %s)) return;\n",
                       s, item_type, s, layout, uniforms ? "&tide_uniforms" : "NULL", sampling.data);
         }
+        gen_storage_array(o, sh);
+        if (sh->gpu_instances) { // As many as the list has on the GPU, each read there
+            sb_printf(o, "    tide_draw_mesh_shaded_indirect(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, tide_items, "
+                         "tide_storage, %s, tide_textures, %s);\n}\n\n", s, uniforms ? "&tide_uniforms" : "NULL", sampling.data);
+            continue;
+        }
+        if (sh->storage.count) sb_printf(o, "    tide_draw_set_storage(tide_draw, tide_storage, %d);\n", sh->storage.count);
+        const size_t call_from = o->len;
         if (sh->instanced && instance) {
             if (!sh->skinned) {
                 sb_put(o, "    const uint64_t tide_bytes = (uint64_t)(uint32_t)tide_count * sizeof tide_instance;\n"
@@ -25054,6 +25492,10 @@ static void gen_shaders(gen *g)
             sb_printf(o, "    tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, %s, tide_textures, %s);\n%s}\n\n",
                       s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data,
                       sh->skinned ? "    tide_scratch_reset(tide_skin_mark);\n" : "");
+        if (sh->storage.count && o->len >= call_from + 3 && !memcmp(o->data + o->len - 3, "}\n\n", 3)) {
+            o->len -= 3; // The runs after it read no lists
+            sb_put(o, "    tide_draw->storage_next = 0;\n}\n\n");
+        }
     }
 }
 
@@ -25377,6 +25819,7 @@ bool codegen(program *prog, const codegen_options *opts)
     }
     gen_shard_main(&g);
     gen_hear(&g);
+    gen_gpu_lists(&g);
     gen_shaders(&g);
     gen_shader_table(&g);
     if (diag_error_count()) { // A shader that didn't become SPIR-V

@@ -1,6 +1,7 @@
 // WebGPU under the renderer (see src/gpu.h): the page's (tide.js), which has
 // each of these as an import. The program draws with it when the page found a
-// device before it started (tide_web_init_canvas says), else with WebGL 2.
+// device before it started (tide_web_init_canvas says); a browser without
+// WebGPU has no canvas to draw in, and the page says what it needs.
 
 #include "gpu.h"
 
@@ -106,12 +107,6 @@ static uint32_t tide_web_gpu_target_samples(const tide_gpu_target_format format)
     return tide_gpu_target_samples(format) > 1u && tide_gpu_target_colors(format) ? 4u : 1u;
 }
 
-// Every WebGPU draws into floats of 16 bits, blends them and reads them blended.
-static bool tide_web_gpu_float_targets(void)
-{
-    return true;
-}
-
 static tide_gpu_id web_texture_blocks(const int width, const int height, const tide_texture_blocks blocks)
 {
     return tide_web_gpu_texture_blocks(width, height, blocks.format, blocks.levels, blocks.pixels);
@@ -146,7 +141,6 @@ const tide_gpu tide_gpu_webgpu = {
     .target = tide_web_gpu_target,
     .target_limit = tide_web_gpu_target_limit,
     .target_samples = tide_web_gpu_target_samples,
-    .float_targets = tide_web_gpu_float_targets,
     .target_texture = tide_web_gpu_target_texture,
     .target_depth = tide_web_gpu_target_depth,
     .resolve_depth = tide_web_gpu_resolve_depth,

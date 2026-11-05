@@ -1,0 +1,62 @@
+// warnings: 6
+// expect: every invocation of a group writes 'last' here, each its own value, and Unity's Direct3D 11 compiler refuses a write like that, so kernel 'Races' won't run there
+// expect: have one invocation write it, and the others read it after a barrier: 'if (this.local.x == 0) ...', then 'GPU.Barrier();'
+// expect: every invocation of a group writes 'slots' here
+// expect: every invocation of a group writes 'pair' here
+// Writes to one place of shared memory by every invocation of a group with values that differ, which fxc (Unity's
+// Direct3D 11 compiler) refuses: at a constant place, a place the run's values or this.group say, a field, under a
+// condition the same for the group, and adding to one. Not warned: one value for all (fxc only warns, which Unity's
+// shaders turn off), a place each invocation has (this.local, this.index), a loop's index, a condition that differs
+// between invocations, after a return, and atomics.
+scene Main { }
+
+struct Knob
+{
+    int slot;
+    bool on;
+}
+
+struct Pair
+{
+    int a;
+    float b;
+}
+
+local singleton Out
+{
+    GPUList<int> list;
+}
+
+[Group(64)]
+compute Races(Out o, Knob knob)
+{
+    shared int last;
+    shared int[64] slots;
+    shared Pair pair;
+    shared int[4] counted;
+    last = this.index;
+    slots[knob.slot * 2] = this.local.x;
+    slots[this.group.x % 64] = this.index;
+    pair.a = this.local.x;
+    if (knob.on) slots[1] = this.index;
+    slots[3] += 1;
+    // Not warned
+    int fixed = knob.slot + 1;
+    slots[2] = fixed;
+    slots[this.local.x] = this.index;
+    for (var i = 0; i < 2; i++)
+    {
+        slots[i] = this.index;
+    }
+    if (this.local.x == 0) slots[5] = this.index;
+    counted.AtomicAdd(0, 1);
+    GPU.Barrier();
+    o.list[this.index] = last + slots[this.local.x] + pair.a + counted[0];
+    if (this.index > 3) return;
+    slots[6] = this.index;
+}
+
+view Show()
+{
+    GPU.Run(Races, 64, Knob { slot = 1, on = true });
+}

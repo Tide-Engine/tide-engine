@@ -147,7 +147,7 @@ static uint64_t world_hash(const tide_world *w)
 }
 
 // Renders the views offscreen and reads pixels back, which proves the whole
-// path works (Tide views, the draw list, the renderer, WebGL on the web) without
+// path works (Tide views, the draw list, the renderer, WebGPU on the web) without
 // needing a visible window. The frame's render() set the camera for
 // tide_platform_world_to_screen.
 static bool smoke_pixels(const tide_world *w)

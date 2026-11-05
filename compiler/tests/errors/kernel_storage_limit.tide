@@ -1,0 +1,24 @@
+// expect: binds 8 storage buffers, and a GPU binds 7
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+local singleton Many
+{
+    GPUList<int> a; GPUList<int> b; GPUList<int> c; GPUList<int> d; GPUList<int> e; GPUList<int> f; GPUList<int> g;
+}
+compute Inner(Many many)
+{
+    many.a[0] = many.b[0] + many.c[0] + many.d[0] + many.e[0] + many.f[0] + many.g[0];
+}
+view Show(Many many) { GPU.Run(Inner, 4); }

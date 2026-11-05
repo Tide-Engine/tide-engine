@@ -13,7 +13,7 @@
 #include "tide/net.h"
 
 // The platform layer: a window, the frame loop, input devices and a renderer
-// for draw lists, on OpenGL (3.3, ES 3 or WebGL 2) or, on the web, WebGPU.
+// for draw lists, on Vulkan 1.3 (desktop and Android) or, on the web, WebGPU.
 // Hosts use it; the simulation never does. This header includes no system
 // header, nor GLFW's, and a file that includes a game's generated header
 // shouldn't either: their names would clash with the game's components
@@ -280,9 +280,8 @@ void tide_platform_draw_over(const tide_draw_list *list);
 // Frames per second, averaged over the last frames.
 int tide_platform_fps(void);
 
-// What the open window draws with: "WebGPU", "WebGL 2", "OpenGL 3.3" or
-// "OpenGL ES 3". The web draws with WebGPU where the browser has it on a GPU,
-// and with WebGL 2 where it doesn't.
+// What the open window draws with: "Vulkan" or "WebGPU" (or, inside another
+// program, its recorder's name).
 const char *tide_platform_renderer(void);
 
 // Measure the GPU work of tide_platform_draw, including its render targets,
@@ -315,8 +314,7 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory);
 // is only made once something's kept there. tide_platform_io_init names it too.
 void tide_platform_name_game(const char *app_id);
 // Whether a GPU pipeline (a shader with how it blends, tests depth and culls)
-// is made in the background where the backend can: WebGPU, and WebGL where
-// the browser compiles shaders in parallel. Making one takes tens of
+// is made in the background where the backend can: WebGPU. Making one takes tens of
 // milliseconds; in the background, nothing that draws with it shows till it's
 // made, a frame or a few later, where otherwise the frame that first draws it
 // waits for it. Off at first, so a frame read back draws everything it's
@@ -349,6 +347,12 @@ uint32_t tide_platform_prewarm_waiting(void);
 // tide_platform_draw_over): a run of shapes, of text, or of one mesh's
 // instances is one.
 uint32_t tide_platform_draw_calls(void);
+
+// How many render passes the last list drawn began, with the same scope as
+// draw calls: one for each destination drawn into in a row, and another
+// after a kernel's run or a GPU list's Set, Clear or SetCount that a draw
+// after it waits for (one nothing drawn before it reads goes before them).
+uint32_t tide_platform_render_passes(void);
 
 // Vertices submitted by the last list drawn, with the same scope as draw
 // calls above: all render-target passes, without the host's overlays. Each
@@ -402,6 +406,9 @@ uint64_t tide_platform_entropy(void);
 tide_float2 tide_platform_screen_size(void);
 // Physical pixels per logical pixel on each axis, as the renderer fits them.
 tide_float2 tide_platform_screen_scale(void);
+// Whether the renderer culls listed runs on the GPU (tide_draw_list.gpu_culling), which a host sets each frame
+// before its views record: unless it records for another program (tide/embed.h) or TIDE_GPU_CULLING is 0.
+bool tide_platform_gpu_culling(void);
 tide_int2 tide_platform_target_pixels(tide_target_size size);
 tide_target_content tide_platform_target_content(tide_target_size size);
 
@@ -430,6 +437,18 @@ void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *po
 // tide_platform_measure_text with a target of that size and scale.
 void tide_platform_read_pixels_as(const tide_draw_list *list, int width, int height, float scale,
                                   const tide_float2 *points, int count, uint32_t *rgba);
+
+// What the GPU culled of the listed runs of the frame drawn last (tide_draw_list.gpu_culling), read back and set
+// beside the CPU's decisions for the same runs (tide_draw_culled_places), for tests and diagnostics: false where
+// it can't be (no run of it was culled on the GPU, or a backend that can't wait for a read: the web's). `list` is
+// the one drawn, as it was.
+typedef struct tide_platform_cull_report {
+    uint32_t runs;      // Culled on the GPU
+    uint64_t gpu, cpu;  // The instances each drew
+    uint64_t missing;   // The CPU's that the GPU's leave out, or have out of order: none where the decisions agree
+    uint64_t extra;     // The GPU's that the CPU's leave out: its slack at the frustum's edges, picks at a threshold
+} tide_platform_cull_report;
+bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
 
 // Networking for sessions (tide/session.h): a UDP transport, taking datagrams
 // on `port` (0: any free one). False where there's no network, like the web

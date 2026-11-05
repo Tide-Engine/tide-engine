@@ -1,0 +1,21 @@
+// expect: every invocation of a group reaches GPU.Barrier(), and this 'if' can send them different ways
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Wait(Meadow meadow)
+{
+    if (this.index < 3) GPU.Barrier();
+    meadow.counts[0] = 1;
+}
+view Show(Meadow meadow) { GPU.Run(Wait, 64); }

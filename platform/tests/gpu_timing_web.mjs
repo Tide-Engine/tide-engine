@@ -117,7 +117,7 @@ async function runtime({ timing = true, rejectFeature = false, compression = fal
     const requests = [];
     let adapters = 0;
     const context = {
-        wantedBackend: 'webgpu', config: { textureCompression: compressionEnabled }, platform: {}, canvas: { width: 10, height: 10 },
+        noDevice: '', config: { textureCompression: compressionEnabled }, platform: {}, canvas: { width: 10, height: 10 },
         memory: { buffer: new ArrayBuffer(64) }, device: null, gpuFormat: null, GPUBufferUsage: usage, GPUMapMode: { READ: 1 },
         GPUTextureUsage: { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2, COPY_SRC: 4 },
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 },

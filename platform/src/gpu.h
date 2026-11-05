@@ -12,11 +12,12 @@
 // - Drawing happens in a pass on a target, which starts cleared or as it was
 //   left. There's no clear inside a pass: the renderer draws one.
 //
-// Each has one, which the window says (tide_window_gpu): Vulkan on desktop
-// (gpu_vk.c), OpenGL where there's none (gpu_gl.c, on gl.h) and, on the web,
-// WebGPU (web/gpu_web.c, in tide.js). Clip space is OpenGL's (depth from -1
-// to 1, y up), pixels are counted from a target's top left, and textures' and
-// targets' rows go from the top.
+// Each has one, which the window says (tide_window_gpu): Vulkan 1.3 on
+// desktop and Android (gpu_vk.c) and, on the web, WebGPU (web/gpu_web.c, in
+// tide.js); inside another program, a recorder (gpu_record.c). Every one
+// computes: a machine without either has no window to draw in. Clip space is
+// OpenGL's (depth from -1 to 1, y up), pixels are counted from a target's top
+// left, and textures' and targets' rows go from the top.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -35,8 +36,7 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GP
 // float of 16 bits (red: any number a half holds). One of a single channel
 // reads as that for red, 0 for green and blue and 1 for alpha. A float of 16
 // bits is what every backend samples blended between pixels with nothing
-// asked of the device (OpenGL 3.3, OpenGL ES 3, WebGL 2 and WebGPU alike),
-// where one of 32 needs an extension or a feature a device may lack.
+// asked of the device, where one of 32 needs a feature a device may lack.
 // TIDE_GPU_RGBA32I is four ints of 32 bits, which a pipeline reads as they
 // are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
 // of any kind, a float's as its bits. Every backend has it with nothing asked.
@@ -50,11 +50,10 @@ static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 
 // What one of a target's color images holds for each pixel: 4 bytes (red,
 // green, blue, alpha, each from 0 to 1), or four floats of 16 bits, which
-// hold any number. A device that can't draw into floats (float_targets) has 4
-// bytes for those too.
+// hold any number. Every backend draws into, blends and samples both.
 typedef enum tide_gpu_color { TIDE_GPU_COLOR_NONE, TIDE_GPU_COLOR_BYTES, TIDE_GPU_COLOR_FLOAT } tide_gpu_color;
 
-enum { TIDE_GPU_MAX_COLORS = 4 }; // The most color images a target has: what OpenGL ES 3 and WebGL 2 promise
+enum { TIDE_GPU_MAX_COLORS = 4 }; // The most color images a target has
 
 // What a target holds beside its depth, which every target has: its color
 // images in order, 4 bits each (tide_gpu_color), and 0 past the last. So 0 is
@@ -113,8 +112,8 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // from 0 to 1, as the GPU filters it.
 // A cube (tide_gpu.cube) is read by a direction, as a color.
 // TIDE_GPU_READ_DATA reads a texture of ints (TIDE_GPU_RGBA32I) a pixel at a
-// time, by its place: GLSL's `isampler2D` with texelFetch, and WGSL's
-// `texture_2d<i32>` with textureLoad, whose sampler binding nothing names.
+// time, by its place: WGSL's `texture_2d<i32>` with textureLoad, whose sampler
+// binding nothing names.
 typedef enum tide_gpu_read {
     TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA
 } tide_gpu_read;
@@ -226,20 +225,12 @@ enum { TIDE_GPU_MAX_STORAGE = 7, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX
 
 typedef struct tide_gpu_pipeline_desc {
     const char *name; // For what the backend says when its shaders are wrong
-    // Its shaders, of which a backend takes its own. OpenGL's: a vertex and a
-    // fragment shader without their version line, their attributes at the
-    // locations below, their uniforms in a std140 block named `uniforms`, and
-    // their textures `pixels0`, `pixels1`... WebGPU's: both in one, `vertex`
-    // and `fragment`, their uniforms at binding 0 of group 0, and texture i
-    // and its sampler at bindings 1 + 2i and 2 + 2i. Either stage may sample.
-    // A texture read as depth is a `sampler2D` whose red is the depth, and a
-    // `texture_depth_2d` with a `sampler`; one that's compared is a
-    // `sampler2DShadow`, and a `texture_depth_2d` with a `sampler_comparison`.
-    // A cube is a `samplerCube`, and a `texture_cube<f32>` with a `sampler`.
-    // OpenGL's are handed `uniform int tide_gpu_height`, above 0 in a pass on
-    // a target, which is drawn upside down, and 0 in the window's: tidec's
-    // this.Ddy reads it, for which way a row down goes.
-    const char *glsl_vertex, *glsl_fragment;
+    // Its shaders: WGSL, both stages in one, `vertex` and `fragment`, their
+    // attributes at the locations below, their uniforms at binding 0 of group
+    // 0, and texture i and its sampler at bindings 1 + 2i and 2 + 2i. Either
+    // stage may sample. A texture read as depth is a `texture_depth_2d` with a
+    // `sampler`; one that's compared, a `texture_depth_2d` with a
+    // `sampler_comparison`. A cube is a `texture_cube<f32>` with a `sampler`.
     const char *wgsl;
     // Vulkan's: the WGSL as SPIR-V (tidec translates it, and the renderer's
     // own at its build), whose entry points and bindings are the WGSL's.
@@ -275,9 +266,8 @@ typedef struct tide_gpu_pipeline_desc {
     // How many colors its fragment shader writes, at locations 0 on: one, for
     // 0. They go to the target's color images in that order, each blended the
     // way `blend` says. Those the target has no image for go nowhere, and the
-    // images past them are left as they were. GLSL's are `out vec4`s, each
-    // with its `layout(location = i)` where there are several; WGSL's, the
-    // `@location(i)`s of what `fragment` returns.
+    // images past them are left as they were: the `@location(i)`s of what
+    // `fragment` returns.
     uint32_t outputs;
     // Alpha to coverage: the alpha of its first output is the share of each
     // pixel's samples it draws into, depth and stencil too, and what it
@@ -297,7 +287,7 @@ typedef struct tide_gpu_pipeline_desc {
 } tide_gpu_pipeline_desc;
 
 typedef struct tide_gpu {
-    const char *name; // What draws: "WebGPU", "OpenGL 3.3"...
+    const char *name; // What draws: "WebGPU", "Vulkan"...
 
     // Which device there is to draw with: 0 while there's none, and another
     // number once one was lost and another found (WebGPU's can be: a driver
@@ -388,7 +378,7 @@ typedef struct tide_gpu {
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
     // Optional, for a backend that can make pipelines in the background
-    // (WebGPU's, and WebGL's where the browser compiles in parallel): while
+    // (WebGPU's): while
     // `background` is on, `pipeline` begins one and returns at once, and
     // `pipeline_ready` says once it's made. Till then nothing is drawn with
     // it: the renderer leaves its steps out (tide_platform_background_pipelines).
@@ -428,11 +418,6 @@ typedef struct tide_gpu {
     // and 1 where it has none. What a format given to `target`, and a
     // pipeline's `into`, say.
     uint32_t (*target_samples)(tide_gpu_target_format format);
-    // Whether a color image of floats (TIDE_GPU_COLOR_FLOAT) is one on this
-    // device. Where it isn't (an OpenGL ES 3 or a WebGL 2 with no way to draw
-    // into floats), such an image is 4 bytes a pixel, having said so once:
-    // what's drawn into it is kept from 0 to 1.
-    bool (*float_targets)(void);
     tide_gpu_id (*target_texture)(tide_gpu_id target, uint32_t color); // 0 for an image it hasn't got
     tide_gpu_id (*target_depth)(tide_gpu_id target);
     // Outside a pass: a multisampled target's depth texture is made, the
@@ -484,9 +469,8 @@ typedef struct tide_gpu {
     void (*draw)(uint32_t first, uint32_t count, uint32_t instances);
     void (*draw_indexed)(uint32_t count, uint32_t instances);
 
-    // Compute and what it gives draws. NULL on a backend that can't compute
-    // (OpenGL's, which goes: compute is guaranteed on every render backend),
-    // all of them together.
+    // Compute and what it gives draws, which every backend has: compute is
+    // guaranteed wherever Tide draws.
     //
     // Storage buffer `slot` (TIDE_GPU_STORAGE_BINDING + slot), all of it, for
     // the draws or dispatches after it, set as `sample` is, after `use`.
@@ -533,8 +517,6 @@ typedef struct tide_gpu {
 // game, whose shaders tidec translated as it built them.
 extern uint32_t *(*tide_gpu_spirv_of)(const char *wgsl, size_t *count, char *error, size_t error_size);
 
-extern const tide_gpu tide_gpu_gl; // gpu_gl.c
-
 // Inside another program (tide/embed.h): each call written down as
 // tide_embed_render's commands, for that program to replay (gpu_record.c).
 // Begin starts a frame's, which end gives, valid until the next begin. Reset
@@ -542,16 +524,15 @@ extern const tide_gpu tide_gpu_gl; // gpu_gl.c
 // the renderer makes it again (tide_embed_render_reset). Close frees what it
 // held.
 extern const tide_gpu tide_gpu_record;
+// A GPU that draws nothing, for a test's page that checks nothing drawn (gpu_none.c)
+extern const tide_gpu tide_gpu_none;
 void tide_gpu_record_begin(void);
 const uint8_t *tide_gpu_record_end(uint32_t *size);
 void tide_gpu_record_reset(void);
 void tide_gpu_record_close(void);
-// A test's: has OpenGL make its targets as a device that can't draw into
-// floats does, while it's set. The targets there already stay as they are.
-extern bool tide_gpu_gl_no_floats;
-// A test's: make subsequent OpenGL pipelines use the 3.3 vertex attribute
-// path even where shared vertex bindings are supported. Set before opening.
-extern bool tide_gpu_gl_no_vertex_binding;
+// What the other program read for a buffer_read's token (tide_embed_render_read): `size` bytes, or NULL for a read
+// that failed, which buffer_read_done then gives. False for a token it isn't waiting for, or another size.
+bool tide_gpu_record_read(uint32_t token, const void *data, uint32_t size);
 // A test's: how many pipelines of games' shaders the renderer has (platform.c),
 // so a test sees whether a draw made one.
 uint32_t tide_platform_shader_pipelines(void);

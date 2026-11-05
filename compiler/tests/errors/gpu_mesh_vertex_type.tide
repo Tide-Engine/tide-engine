@@ -1,0 +1,8 @@
+// expect: Draw.Mesh draws a list of vertices, and this is GPUList<float>
+// A GPU list of numbers where the vertices go
+scene Main { }
+local singleton Made
+{
+    GPUList<float> vertices;
+}
+view Show(Made made) { Draw.Mesh(made.vertices, [0, 1, 2]); }

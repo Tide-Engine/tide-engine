@@ -9,7 +9,7 @@
 // others join; players_menu.tide starts in a menu, and the script has its
 // players open and join by the rooms' codes; players_leave.tide's script has
 // its players leave, drop and rejoin. Without `refused`, the games
-// run, which needs a desktop session with OpenGL, though nothing shows on it.
+// run, which needs a desktop session with Vulkan, though nothing shows on it.
 // With it, only what a run refuses before it opens anything, which needs no GPU.
 
 import { spawnSync } from 'node:child_process';

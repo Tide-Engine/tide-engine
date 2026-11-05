@@ -1,5 +1,23 @@
 # The language server and the editors
 
+## Meshes over GPU lists (2026-11-05)
+
+The mesh draws' hover (`MESH_SHADER_DOC`) says vertices can be a `GPUList` and indices a `GPUList<int>`; the
+checker's forms note (`note_mesh_forms`) says the lists can be GPU lists. No completion or grammar change.
+
+## Kernels and GPU lists (2026-11-05)
+
+`compute` is a declaration word in the language server (snippets in both
+declaration completions, `HEADER_SHADER`, the declaration starts, and the
+contextual words rename checks, now 15 of them) and in both grammars (with
+`GPUList<` scoped as `List<`, and `GPU` as a support class). Completion offers
+`GPU` (Run in drawing code, Barrier in a kernel), a GPU list's members by side
+(capacity, contentRevision and Set, Clear, SetCount, Resize, Dispose, Read,
+ReadCount on the CPU; count, capacity, and in a kernel Add and the atomics on
+the GPU), and a kernel's `this` (`Invocation`, read-only, with hovers for its
+fields); `GPUList<T>` has a type hover. Tests: `lsp_compute_complete`; the
+grammar test's `compute Cull(` case and the probe's kernel line.
+
 ## tidels in the docs playground (2026-11-04)
 
 The docs playground runs tidels compiled to a WASI reactor (`tidels_browser`,

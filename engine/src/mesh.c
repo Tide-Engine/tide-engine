@@ -981,12 +981,46 @@ void tide_draw_mesh_relist(tide_draw_list *d, const uint32_t slot, const tide_dr
     to->indices_version = m->indices_version;
 }
 
+// Where a shader reads its vertices from a GPU list (tide_shader.vertex_storage), its mesh is the CPU's indices alone,
+// by their list and its version, or for indices a GPU list's too, one triangle the draw doesn't use: a vertex of
+// zeros each (tide_draw_mesh_fill_pulled), so the renderer has a mesh as for any draw.
+#define MESH_PULLED (UINT64_MAX - 1u)
+
+static uint32_t pulled_mesh(tide_draw_list *d, const tide_shader *shader, const tide_list indices)
+{
+    static const uint32_t unused[3] = {0, 0, 0};
+    const uint32_t size = shader->vertex_size;
+    const int32_t index_count = shader->index_storage ? 3 : tide_list_count(indices);
+    if (index_count < 3) return 0;
+    uint64_t version = tide_hash_more(tide_hash_more(0, &size, sizeof size), &shader->index_storage, sizeof shader->index_storage);
+    uint64_t id = MESH_PULLED;
+    if (!shader->index_storage) {
+        const uint64_t index_version = list_version(indices, sizeof(uint32_t));
+        version = tide_hash_more(version, &index_version, sizeof index_version);
+        id = tide_handle_where(indices.at) == TIDE_IN_SCRATCH ? tide_handle_of(TIDE_IN_SCRATCH, 0) : indices.at;
+    }
+    version = tide_hash_end(version);
+    bool fill;
+    const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_BYTES, id, MESH_PULLED, version, &fill);
+    if (fill && shader->index_storage) {
+        tide_draw_mesh_fill_pulled(d, mesh, size, unused, 3);
+    } else if (fill) {
+        bool copied;
+        uint32_t *i = tide_list_flatten(indices, sizeof(uint32_t), false, &copied);
+        tide_draw_mesh_fill_pulled(d, mesh, size, i, (uint32_t)index_count);
+        tide_list_unflatten(indices, i, sizeof(uint32_t), false, copied);
+    }
+    if (d->diagnostics && mesh) d->meshes[mesh - 1u].profile_indices = indices.at;
+    return mesh;
+}
+
 // The mesh of a shader's draw of two lists, 0 for none: found by their versions, and filled where it's new.
 static uint32_t shaded_mesh(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
                             const tide_list indices, const uint32_t count)
 {
     const uint64_t key = take_mesh_key(d, vertices, indices);
     if (count == 0 || !shader) return 0;
+    if (shader->vertex_storage) return pulled_mesh(d, shader, indices); // Its vertices are on the GPU
     const int32_t vertex_count = tide_list_count(vertices);
     const int32_t index_count = tide_list_count(indices);
     if (vertex_count <= 0 || index_count < 3) return 0;
@@ -1032,6 +1066,14 @@ void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shade
 {
     const uint32_t mesh = shaded_mesh(d, shader, vertices, indices, count);
     if (mesh) tide_draw_shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling);
+}
+
+void tide_draw_mesh_shaded_indirect(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
+                                    const tide_list indices, const tide_gpu_list instances, const tide_gpu_list *storage,
+                                    const void *uniforms, const uint32_t *textures, const uint64_t sampling)
+{
+    const uint32_t mesh = shaded_mesh(d, shader, vertices, indices, 1);
+    if (mesh) tide_draw_shaded_indirect(d, shader, mesh, instances, storage, uniforms, textures, sampling);
 }
 
 static void listed_spans_stale(tide_draw_list *d, uint32_t p);
@@ -1371,6 +1413,36 @@ static uint32_t listed_room(tide_draw_list *d, const uint32_t p, const uint32_t 
     return at + pixels <= most ? (uint32_t)at : UINT32_MAX;
 }
 
+// What a list's instances are, from their numbers (tide_draw_listed_stats): each one's transform starts it.
+static void listed_stats(tide_draw_listed_stats *s, const uint8_t *numbers, const uint32_t count, const uint32_t packs)
+{
+    *s = (tide_draw_listed_stats){.ok = count > 0, .affine = true};
+    for (uint32_t i = 0; i < count; i++) {
+        tide_float4x4 m;
+        memcpy(&m, numbers + (size_t)i * packs * 16u, sizeof m);
+        const float *f = (const float *)(const void *)&m;
+        for (uint32_t k = 0; k < 16; k++) s->ok &= tide_is_finite_f(f[k]);
+        s->affine &= m.c0.w == 0.0f && m.c1.w == 0.0f && m.c2.w == 0.0f && m.c3.w == 1.0f;
+        s->mirrored += m.c0.x * (m.c1.y * m.c2.z - m.c1.z * m.c2.y) + m.c0.y * (m.c1.z * m.c2.x - m.c1.x * m.c2.z)
+                           + m.c0.z * (m.c1.x * m.c2.y - m.c1.y * m.c2.x) < 0.0f;
+        const float at[3] = {m.c3.x, m.c3.y, m.c3.z};
+        const float columns[3] = {m.c0.x * m.c0.x + m.c0.y * m.c0.y + m.c0.z * m.c0.z,
+                                  m.c1.x * m.c1.x + m.c1.y * m.c1.y + m.c1.z * m.c1.z,
+                                  m.c2.x * m.c2.x + m.c2.y * m.c2.y + m.c2.z * m.c2.z};
+        const float most = columns[0] > columns[1] ? (columns[0] > columns[2] ? columns[0] : columns[2])
+                                                   : (columns[1] > columns[2] ? columns[1] : columns[2]);
+        for (uint32_t axis = 0; axis < 3; axis++) {
+            if (!i || at[axis] < s->low[axis]) s->low[axis] = at[axis];
+            if (!i || at[axis] > s->high[axis]) s->high[axis] = at[axis];
+        }
+        if (!i || most < s->least) s->least = most;
+        if (!i || most > s->most) s->most = most;
+    }
+    s->least = tide_sqrt_f(s->least);
+    s->most = tide_sqrt_f(s->most);
+    s->ok &= tide_is_finite_f(s->least) && tide_is_finite_f(s->most);
+}
+
 // The page slot of the list's numbers this frame, as they are at its version, written where they weren't: 0
 // where there's no room for them.
 static uint32_t listed_numbers(tide_draw_list *d, tide_draw_listed_entry *e, const tide_list items,
@@ -1415,6 +1487,7 @@ static uint32_t listed_numbers(tide_draw_list *d, tide_draw_listed_entry *e, con
     const uint8_t *flat = tide_list_flatten(items, item_size, false, &copied);
     for (uint32_t i = 0; i < count; i++) write(flat + (size_t)i * item_size, (int32_t *)(void *)(to + (size_t)i * packs * 16u));
     tide_list_unflatten(items, (void *)(uintptr_t)flat, item_size, false, copied);
+    listed_stats(&e->stats, to, count, packs);
     const uint32_t top = e->start / (uint32_t)TIDE_LIST_DATA_ACROSS;
     tide_draw_texture_changed(d, slot, 0, (int32_t)top, TIDE_LIST_DATA_ACROSS, (int32_t)(rows - top));
     e->page = p + 1u;
@@ -1527,7 +1600,7 @@ bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, co
                                 const uint32_t *textures, const uint64_t sampling)
 {
     // What the renderer draws a listed run with, and what keeps one from being one
-    if (!d || !shader || !write || !item_size || shader->dims != 3 || !shader->glsl_listed_vertex
+    if (!d || !shader || !write || !item_size || shader->dims != 3 || !shader->listed
         || shader->texture_count >= TIDE_SHADER_TEXTURES || (d->place.moved & TIDE_DRAW_MOVED_3D)) return false;
     const uint32_t size = tide_shader_instance_size(shader), packs = size / 16u;
     const int32_t count = tide_list_count(items);
@@ -1545,7 +1618,10 @@ bool tide_draw_mesh_shaded_list(tide_draw_list *d, const tide_shader *shader, co
     const uint32_t start = e->start;
     const uint32_t first = start / packs;
     const uint32_t mesh = shaded_mesh(d, shader, vertices, indices, (uint32_t)count);
-    if (mesh) tide_draw_shaded_listed(d, shader, mesh, slot, first, (uint32_t)count, uniforms, textures, sampling);
+    if (mesh && !tide_draw_shaded_culled(d, shader, mesh, slot, first, (uint32_t)count, &e->stats, uniforms, textures,
+                                         sampling)) {
+        tide_draw_shaded_listed(d, shader, mesh, slot, first, (uint32_t)count, uniforms, textures, sampling);
+    }
     return true;
 }
 

@@ -1,5 +1,15 @@
 # Benchmarks
 
+OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
+
+## Listed runs culled on the GPU, Mount & Rifle's menu (2026-11-05)
+
+Numbers, method and why the route couldn't run: drawing.md, Listed runs culled on the GPU. In short, the menu's
+field scene at 1080p, three alternating pairs: views 1.68-2.10 -> 0.99-1.07 ms, DrawFlora's mesh recording
+0.49-0.60 -> 0.045 ms, GPU 4.26-4.43 -> 4.16-4.22 ms with the culling's compute, draw calls 772 -> 938. The scratch
+folder's CMakeLists.txt was `tide_add_game(mount_and_rifle SOURCES <every .tide under game/ but .tide/> <game/*.c>
+packages/box3d/bridge.c PACKAGES Box3D ... Rooms ... DEFINES PERFORMANCE_TRACE)` linking `tide_box3d`.
+
 ## Mount & Rifle's views, for parallel views (2026-11-04)
 
 Before building parallel views (agreed 2026-11-04: automatic, draws kept in source order; planned in three

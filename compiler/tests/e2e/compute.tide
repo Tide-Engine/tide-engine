@@ -1,0 +1,110 @@
+// What GPU.Run, GPU lists' operations and an indirect draw over a GPU list
+// record into the frame's draw list, in their order among the draws
+// (compute_test.c): each run's kernel, size or list it's over, uniforms and
+// GPU lists; Set's words, Clear and SetCount; the indirect draw's list, and
+// Draw.Transform's matrix in its uniforms; and meshes over a GPU list of
+// vertices, by a GPU list of indices or the CPU's.
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+    int kind;
+    bool lit;
+}
+
+struct Settings
+{
+    float far;
+    int every;
+}
+
+struct Corner
+{
+    float3 position;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<Blade> shown;
+    GPUList<int> counts;
+    GPUList<Corner> points;
+    GPUList<int> order;
+    List<Blade> sent;
+    float scale;
+    int frames;
+    int capacity;
+    long revision;
+}
+
+[Group(32)]
+compute Thin(Meadow meadow, Settings settings)
+{
+    Blade blade = meadow.blades[this.index];
+    if (blade.height * meadow.scale < settings.far && this.index % settings.every == 0)
+        meadow.shown.Add(blade);
+}
+
+[Group(4, 4)]
+compute Count(Meadow meadow)
+{
+    meadow.counts.AtomicAdd(this.at.x, 1);
+}
+
+vert Place(mut Corner corner, Blade blade)
+{
+    corner.position += blade.root;
+}
+
+frag Paint(Corner corner, Blade blade, out Color color)
+{
+    color = Color(blade.height, 0, 0, 1);
+}
+
+frag Flat(Corner corner, out Color color)
+{
+    color = Color(corner.position.x, 1, 0, 1);
+}
+
+view Show(mut Meadow meadow)
+{
+    if (meadow.frames == 0)
+    {
+        meadow.blades = GPUList<Blade>(16);
+        meadow.shown = GPUList<Blade>(16);
+        meadow.counts = GPUList<int>(4);
+        meadow.points = GPUList<Corner>(8);
+        meadow.order = GPUList<int>(12);
+        meadow.sent.Add(Blade { root = float3(1, 2, 3), height = 0.5, kind = 7, lit = true });
+        meadow.sent.Add(Blade { root = float3(4, 5, 6), height = 1.5, kind = -2, lit = false });
+        meadow.scale = 2;
+        meadow.shown.Resize(32);
+    }
+    meadow.frames += 1;
+    meadow.capacity = meadow.shown.capacity;
+    meadow.revision = meadow.shown.contentRevision;
+    Draw.Clear(Color.black);
+    meadow.blades.Set(meadow.sent);
+    meadow.shown.Clear();
+    meadow.counts.SetCount(3);
+    GPU.Run(Thin, meadow.blades, Settings { far = 2, every = 1 });
+    GPU.Run(Count, int2(5, 6));
+    GPU.Run(Count, 7);
+    List<Corner> corners = [Corner { position = float3(0, 0, 0) }, Corner { position = float3(1, 0, 0) },
+                            Corner { position = float3(0, 1, 0) }];
+    Draw.Instanced(corners, [0, 1, 2], meadow.shown, Place, Paint);
+    Draw.Transform(float4x4.Translate(float3(5, 6, 7)))
+    {
+        Draw.Instanced(corners, [0, 1, 2], meadow.shown, Place, Paint);
+    }
+    Draw.Transform(float4x4.Scale(float3(-1, 1, 1)))
+    {
+        Draw.Instanced(corners, [0, 1, 2], meadow.shown, Place, Paint);
+    }
+    Draw.Mesh(meadow.points, meadow.order, float4x4.Translate(float3(1, 0, 0)), Flat);
+    Draw.Mesh(meadow.points, [0, 1, 2, 2, 1, 3, 4], float4x4.Translate(float3(2, 0, 0)), Flat);
+    Draw.Instanced(meadow.points, [0, 1, 2], [float4x4.Translate(float3(3, 0, 0)), float4x4.Translate(float3(4, 0, 0))], Flat);
+    if (meadow.frames == 3) meadow.counts.Dispose();
+}

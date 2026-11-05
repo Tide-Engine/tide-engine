@@ -462,6 +462,7 @@ tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate
 tide_e2e_test(measure_text) # Draw.MeasureText: on the screen, under a camera and in a render target
 tide_e2e_test(text) # Draw.Text at an anchor and in a weight, and measuring in one
 tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
+tide_e2e_test(compute) # GPU.Run, GPU lists' operations and indirect draws: what they record, in frame order
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(draw_values) # A draw's values: a struct after its vert and frag, sent once for the draw
 tide_e2e_test(draw_helpers) # Shaded helpers bind only explicit parameters, forwarding attached local fields
@@ -552,7 +553,7 @@ if(TIDE_PLATFORM)
         add_test(NAME tidec_e2e_fetch_web
             COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
                 "$<TARGET_FILE_DIR:tidec_e2e_fetch_web>/tidec_e2e_fetch_web.html"
-                "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser" "backend=webgl"
+                "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser"
                 --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
         # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
         set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
@@ -766,8 +767,8 @@ foreach(source IN LISTS TIDE_OUTLINE_TESTS)
 endforeach()
 
 # Shader tests: `tidec --shaders` on shaders/<name>.tide must print
-# shaders/<name>.txt exactly: the GLSL and WGSL of each shader its mesh draw
-# calls draw through.
+# shaders/<name>.txt exactly: the WGSL of each shader its mesh draw calls draw
+# through and its GPU runs run.
 file(GLOB TIDE_SHADER_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.tide")
 if(TIDE_NODE)
     add_test(NAME tidec_shader_names_all

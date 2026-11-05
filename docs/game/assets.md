@@ -140,7 +140,7 @@ For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and r
 
 `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels: color images and [`[Raw]` images of numbers](./shaders.md#textures-that-are-numbers) alike, such as normal, roughness and mask maps. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled values can differ slightly from the source, especially around sharp changes or faint transparency. A Raw image's channels are compressed as the file has them, never multiplied by its alpha.
 
-A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes every mip to RGBA as it uploads the image, preserving the prepared distant levels. That fallback uses the memory of a full RGBA mip chain.
+A full mip chain takes roughly one eighth of RGBA's bytes for BC1, or one quarter for BC3, and the pack keeps only the compressed image: a 4096 by 4096 picture is 11 or 22 MB rather than 64 MB of RGBA. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, and WebGPU uses its optional BC feature. A device without any of those (most phones) decodes every mip to RGBA as it uploads the image, preserving the prepared distant levels. That fallback uses the memory of a full RGBA mip chain.
 
 Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. Images that come out the same bytes are one image in the pack and on the GPU, whichever declarations name them: the same opaque file declared with and without `[Raw]`, or two copies of one picture.
 
@@ -172,7 +172,7 @@ The DDS must contain one tightly packed, uncompressed RGBA8 or BGRA8 2D image, w
 
 Supply straight RGBA color pixels. The importer premultiplies RGB by alpha separately at every mip; `[Raw]` retains all channels independently. It preserves the supplied mip pixels without recompressing them. The pack and GPU hold the full RGBA8 chain, roughly a third larger than the base image. `Grid2<Color>` and cubemap declarations read only the DDS base image. Runtime `grid.Decode` remains PNG-only.
 
-Native OpenGL/Vulkan, WebGL 2 and WebGPU preserve the chain. Unity's draw recorder currently retains only the base image and does not preserve authored mipmaps. Alpha coverage also becomes approximate at tiny mips because a handful of texels cannot represent every area fraction; atlas authors should preserve each view separately and supply suitable gutters.
+Vulkan and WebGPU preserve the chain. Unity's draw recorder currently retains only the base image and does not preserve authored mipmaps. Alpha coverage also becomes approximate at tiny mips because a handful of texels cannot represent every area fraction; atlas authors should preserve each view separately and supply suitable gutters.
 
 ### Image formats
 

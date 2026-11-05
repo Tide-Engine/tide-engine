@@ -1,4 +1,4 @@
-// `out` parameters in code the GPU runs: `inout` in GLSL and a pointer in
+// `out` parameters in code the GPU runs: a pointer in
 // WGSL, as `mut` ones are. A local an `out` argument declares is declared
 // before its statement, with its type's default, and `out _` is a variable
 // nothing else names.

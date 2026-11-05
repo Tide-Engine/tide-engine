@@ -1,0 +1,16 @@
+// expect: a kernel takes components, singletons and one struct of values, and 'int' is int
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow, int n) { meadow.counts[0] = n; }

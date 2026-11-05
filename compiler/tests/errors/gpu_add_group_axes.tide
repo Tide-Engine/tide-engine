@@ -1,0 +1,21 @@
+// expect: adds to a GPU list, so its group is along one axis, like '[Group(64)]'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+[Group(8, 8)]
+compute Keep(Meadow meadow)
+{
+    meadow.counts.Add(this.index);
+}
+view Show(Meadow meadow) { GPU.Run(Keep, int2(16, 16)); }

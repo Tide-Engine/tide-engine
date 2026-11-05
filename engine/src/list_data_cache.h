@@ -38,6 +38,17 @@ enum {
     TIDE_DRAW_LISTED_IDLE_FRAMES = 36000,
 };
 #define TIDE_DRAW_LISTED_IDLE_BYTES (UINT64_C(32) * 1024u * 1024u)
+
+// What a list's instances are, worked out as its numbers are written, for a draw the GPU culls
+// (tide_draw_shaded_culled): how many of their transforms mirror, the box their translations are in, and the least
+// and most each scales by the way it scales most (a column's length). `ok` where every number was finite.
+typedef struct tide_draw_listed_stats {
+    uint32_t mirrored;
+    bool ok, affine;
+    float low[3], high[3];
+    float least, most;
+} tide_draw_listed_stats;
+
 typedef struct tide_draw_listed_entry {
     tide_handle at; // 0: a free slot
     uint64_t version;
@@ -50,6 +61,7 @@ typedef struct tide_draw_listed_entry {
     // from pixel `start` (a whole number of its instances' packs, `packs`), `count` instances
     uint32_t page, made, start, count, packs;
     uint64_t written;
+    tide_draw_listed_stats stats; // Of its numbers at version `written`
 } tide_draw_listed_entry;
 
 typedef struct tide_draw_listed_page {
@@ -97,3 +109,13 @@ void tide_draw_mesh_relist(tide_draw_list *d, uint32_t slot, const tide_draw_mes
 
 // As the frame ends (tide_draw_reset, before textures go): the pages with regions that stay are held.
 void tide_draw_listed_hold(tide_draw_list *d);
+
+// A list's draw whose numbers are `count` instances of texture `slot` from instance `first` on, as
+// tide_draw_shaded_listed's, recorded for the GPU to cull and pick levels of (tide_draw_run.culled) where the list
+// asks for it (tide_draw_list.gpu_culling) and the draw can be: what the CPU path would have drawn (its picks, the
+// instances the frustum keeps, in their order, mirrored ones apart) is what the GPU draws, from runs a level. False,
+// recording nothing, where it can't be (another draw's settings, a list whose transforms mirror and don't, the
+// frame's GPU groups used up): the caller draws it as ever.
+bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, uint32_t slot,
+                             uint32_t first, uint32_t count, const tide_draw_listed_stats *stats, const void *uniforms,
+                             const uint32_t *textures, uint64_t sampling);

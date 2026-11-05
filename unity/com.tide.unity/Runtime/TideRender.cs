@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
@@ -23,6 +24,15 @@ namespace Tide
     // recorded into a camera's commands when it renders. An object written after
     // a draw of this frame read it is a new one from there (as a driver renames a
     // buffer), so the draws already kept read it as it was.
+    //
+    // Compute (gpu.h's storage buffers, kernels, copies and reads back) runs
+    // once a frame, however many cameras draw it: as the commands are read, in
+    // their order, through commands of its own that Unity runs then (Flush). A
+    // storage buffer a kernel or a copy writes after a kept draw read it is
+    // renamed as any written buffer is, so each draw reads the buffers as they
+    // were where it is in the frame, and an indirect call reads its numbers
+    // from a copy made where it is. A kernel samples a render target as the
+    // last frame's passes left it: this frame's run as the camera renders.
     [DisallowMultipleComponent]
     public sealed unsafe class TideRender : MonoBehaviour
     {
@@ -30,7 +40,8 @@ namespace Tide
         {
             Buffer = 1, BufferWrite, BufferFree, Texture, TextureWrite, Mipmaps, TextureFree, Cube, CubeFace, Pipeline,
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Sample, Vertices,
-            Indices, Draw, DrawIndexed,
+            Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
+            DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -38,9 +49,8 @@ namespace Tide
         sealed class BufferObject
         {
             public GraphicsBuffer raw;
-            public Texture2D words; // ...or OpenGL ES 3.0's and WebGL 2's: its words in a texture, each a pixel's bytes, 4,096 a row
-            public uint[] shadow;
             public bool indices;
+            public bool storage; // A storage buffer: kernels read and write it, indirect calls read their numbers there
             public byte[] bytes; // An index buffer's
             public int version;
             public readonly GraphicsBuffer[] views = new GraphicsBuffer[2]; // 16 and 32 bits
@@ -81,6 +91,11 @@ namespace Tide
             public Vector4[] slots = new Vector4[3];
             public int uniformSize, textureCount, blend, depth, cull, stencilTest, stencilOp;
             public bool alphaToCoverage; // A cut-out's into a target with samples: its alpha is the share it covers
+            public int storageCount;     // The storage buffers it binds (_TideStorage<i>), and which of them it writes
+            public uint storageWrites;
+            public bool compute;         // A kernel's: its .compute's tidehl_compute, not a shader's pass
+            public ComputeShader kernelShader;
+            public int kernel = -1;      // ...found once it's there; -2 for one this GPU can't run
             public int looked, made; // The frame its shader was last looked for, while it isn't there, and the pipeline's
             public readonly Dictionary<int, Material> materials = new Dictionary<int, Material>();
             // Its attributes and slots, which each draw takes with it: a material keeps no array of its shader's that
@@ -100,10 +115,11 @@ namespace Tide
             public Material material; // Draw
             public MaterialPropertyBlock properties; // ...and its pipeline's attributes and slots
             public GraphicsBuffer v0, v1, v2, index;
-            public Texture w0, w1, w2; // The vertices of OpenGL ES 3.0 and WebGL 2, in textures
             public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize;
             public uint first, sampling, samplingHigh;
             public RenderTexture mipmapped; // Mipmaps
+            public GraphicsBuffer[] storage; // Draw: the storage buffers it reads, or null
+            public GraphicsBuffer arguments; // ...and an indirect one's numbers, copied where it is in the frame
         }
 
         // A frame's commands for one camera, kept: its draws, the textures they read, and their uniforms.
@@ -140,13 +156,25 @@ namespace Tide
         uint[] words = new uint[0];
         ushort[] halves = new ushort[0];
         GraphicsBuffer none; // What an unused vertex slot reads
-        Texture2D noneWords;
         Texture2D white;
         Material resolveDepth;
         bool fresh = true; // Nothing made yet: Tide's renderer makes everything again first
-        bool ownSamplers;  // OpenGL's: each texture's own sampler, set as each draw asks (see hlsl.h)
-        bool textureBuffers; // OpenGL ES 3.0's and WebGL 2's: buffers as textures of words (hlsl.h)
+        bool ownSamplers;  // OpenGL Core's: each texture's own sampler, set as each draw asks (see hlsl.h)
         bool pipelineSaid; // A scriptable pipeline Tide doesn't draw in was said to be one
+
+        // Compute's: the work the commands ask for, which runs once, as they're read (Flush); the copy kernel
+        // (Resources/TideCompute.compute); and indirect calls' numbers, each copied where it's asked for into buffers
+        // of pools taken in turn each frame
+        CommandBuffer work;
+        bool working;
+        ComputeShader copier;
+        int copyKernel = -1;
+        readonly List<GraphicsBuffer> staged = new List<GraphicsBuffer>();    // Raw: the numbers, copied from storage...
+        readonly List<GraphicsBuffer> arguments = new List<GraphicsBuffer>(); // ...into IndirectArguments
+        readonly List<GraphicsBuffer> groups = new List<GraphicsBuffer>();    // ...or a dispatch's TideGroups
+        int stagedUsed, groupsUsed;
+        int readEpoch; // Reads begun before everything was let go of aren't answered: the embed forgot them
+        bool copySaid; // That the copy kernel isn't there, said once
 
         // The frame's commands being read
         Recording into;
@@ -160,7 +188,9 @@ namespace Tide
         readonly uint[] sampling = new uint[MaxTextures];
         int uniformAt, uniformSize;
         int stencil;
-        bool inPass, flipped;
+        bool inPass, flipped, inCompute;
+        const int MaxStorage = 7; // gpu.h's TIDE_GPU_MAX_STORAGE
+        readonly uint[] storageBound = new uint[MaxStorage];
 
         static readonly int SrcColor = Shader.PropertyToID("_TideSrcColor"), DstColor = Shader.PropertyToID("_TideDstColor");
         static readonly int SrcAlpha = Shader.PropertyToID("_TideSrcAlpha"), DstAlpha = Shader.PropertyToID("_TideDstAlpha");
@@ -176,6 +206,15 @@ namespace Tide
         static readonly int Uniforms = Shader.PropertyToID("TideUniforms"), DepthMS = Shader.PropertyToID("_TideDepthMS");
         static readonly int[] Offsets = { Shader.PropertyToID("_TideOffset0"), Shader.PropertyToID("_TideOffset1"), Shader.PropertyToID("_TideOffset2") };
         static readonly int[] Vertices = { Shader.PropertyToID("_TideVertices0"), Shader.PropertyToID("_TideVertices1"), Shader.PropertyToID("_TideVertices2") };
+        static readonly int[] Storage =
+        {
+            Shader.PropertyToID("_TideStorage0"), Shader.PropertyToID("_TideStorage1"), Shader.PropertyToID("_TideStorage2"),
+            Shader.PropertyToID("_TideStorage3"), Shader.PropertyToID("_TideStorage4"), Shader.PropertyToID("_TideStorage5"),
+            Shader.PropertyToID("_TideStorage6"),
+        };
+        static readonly int Groups = Shader.PropertyToID("TideGroups");
+        static readonly int CopyFrom = Shader.PropertyToID("_TideFrom"), CopyTo = Shader.PropertyToID("_TideTo");
+        static readonly int CopyWords = Shader.PropertyToID("_TideCopy");
         static readonly int[] Textures =
         {
             Shader.PropertyToID("_TideTexture0"), Shader.PropertyToID("_TideTexture1"), Shader.PropertyToID("_TideTexture2"),
@@ -185,12 +224,14 @@ namespace Tide
             Shader.PropertyToID("_TideTexture10"), Shader.PropertyToID("_TideTexture11"),
         };
 
-        // Whether this GPU replays Tide's drawing: its shaders read vertices from buffers, or on OpenGL ES 3.0 and
-        // WebGL 2 from textures.
+        // Whether this GPU replays Tide's drawing: it computes, as each of Tide's renderers does, and its shaders read
+        // raw buffers, three of vertices and seven of storage a stage. Unity's OpenGL Core (4.5) does; OpenGL ES 3.0 and
+        // WebGL 2 don't, as Tide has no backend that can't compute.
         public static bool Supported =>
-            SystemInfo.supportsSetConstantBuffer
-            && (SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3
-                || SystemInfo.supportsComputeShaders && SystemInfo.graphicsShaderLevel >= 45);
+            SystemInfo.supportsSetConstantBuffer && SystemInfo.supportsComputeShaders && SystemInfo.supportsIndirectArgumentsBuffer
+            && SystemInfo.graphicsShaderLevel >= 45 && SystemInfo.graphicsDeviceType != GraphicsDeviceType.OpenGLES3
+            && SystemInfo.maxComputeBufferInputsCompute >= MaxStorage && SystemInfo.maxComputeBufferInputsFragment >= MaxStorage
+            && SystemInfo.maxComputeBufferInputsVertex >= 3 + MaxStorage;
 
         // Whether a scriptable render pipeline draws the frame, whose pass records Tide's drawing (Record), rather
         // than the built-in pipeline's camera events.
@@ -206,25 +247,18 @@ namespace Tide
         void OnEnable()
         {
             commands = new CommandBuffer { name = "Tide" };
-            var api = SystemInfo.graphicsDeviceType;
-            textureBuffers = api == GraphicsDeviceType.OpenGLES3;
-            ownSamplers = api == GraphicsDeviceType.OpenGLCore || api == GraphicsDeviceType.OpenGLES3;
-            if (textureBuffers)
-            {
-                noneWords = new Texture2D(1, 1, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None) { hideFlags = HideFlags.HideAndDontSave };
-                noneWords.SetPixelData(new uint[1], 0);
-                noneWords.Apply(false, false);
-            }
-            else
-            {
-                none = new GraphicsBuffer(GraphicsBuffer.Target.Raw, 4, 4);
-                none.SetData(new uint[4]);
-            }
+            ownSamplers = SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLCore;
+            none = new GraphicsBuffer(GraphicsBuffer.Target.Raw, 4, 4);
+            none.SetData(new uint[4]);
             white = new Texture2D(1, 1, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None) { hideFlags = HideFlags.HideAndDontSave };
             white.SetPixelData(new byte[] { 255, 255, 255, 255 }, 0);
             white.Apply(false, false);
             var resolve = Resources.Load<Shader>("TideResolveDepth");
             if (resolve != null && resolve.isSupported) resolveDepth = new Material(resolve) { hideFlags = HideFlags.HideAndDontSave };
+            work = new CommandBuffer { name = "Tide compute" };
+            copier = Resources.Load<ComputeShader>("TideCompute");
+            copyKernel = copier != null && copier.HasKernel("TideCopy") ? copier.FindKernel("TideCopy") : -1;
+            if (copyKernel >= 0 && !copier.IsSupported(copyKernel)) copyKernel = -1;
             fresh = true;
             Camera.onPreCull += BeforeCamera;
             Current = this;
@@ -244,9 +278,16 @@ namespace Tide
             commands?.Release();
             commands = null;
             ForgetAll();
+            work?.Release();
+            work = null;
+            working = false;
+            foreach (var pool in new[] { staged, arguments, groups })
+            {
+                foreach (var b in pool) b.Release();
+                pool.Clear();
+            }
             none?.Release();
             none = null;
-            if (noneWords != null) DestroyImmediate(noneWords);
             if (white != null) DestroyImmediate(white);
             if (resolveDepth != null) DestroyImmediate(resolveDepth);
             Release(frame);
@@ -266,6 +307,7 @@ namespace Tide
         // Everything made, gone: the next frame's commands make it again.
         void ForgetAll()
         {
+            Flush(); // What the work reads goes now
             foreach (var b in buffers.Values) ReleaseBuffer(b);
             buffers.Clear();
             foreach (var i in images.Values)
@@ -278,13 +320,13 @@ namespace Tide
             foreach (var p in pipelines.Values) ForgetMaterials(p);
             pipelines.Clear();
             Collect(int.MaxValue);
+            readEpoch++;
             fresh = true;
         }
 
         static void ReleaseBuffer(BufferObject b)
         {
             b.raw?.Release();
-            if (b.words != null) DestroyImmediate(b.words);
             foreach (var v in b.views) v?.Release();
         }
 
@@ -360,8 +402,10 @@ namespace Tide
             Attach(camera);
             fresh = false;
             commands.Clear();
-            if (stream == null || camera == null) return;
-            Prepare(frame, stream, size);
+            stagedUsed = groupsUsed = 0; // Last frame's are drawn
+            if (stream == null) return;
+            Prepare(frame, stream, size); // With no camera too: its compute runs, and its reads begin
+            if (camera == null) return;
             if (!Scriptable) Record(frame, commands, camera, BuiltinRenderTextureType.CameraTarget, BuiltinRenderTextureType.CameraTarget);
             else if (!pipelineSaid && GraphicsSettings.currentRenderPipeline.GetType().Name != "UniversalRenderPipelineAsset")
             {
@@ -429,7 +473,7 @@ namespace Tide
             PrepareUniforms(r, stream, size);
             into = r;
             pipeline = null;
-            inPass = false;
+            inPass = inCompute = false;
             for (uint at = 0; at + 8 <= size;)
             {
                 var op = (Op)Word(stream, at);
@@ -440,6 +484,8 @@ namespace Tide
                 at += length;
             }
             if (inPass) r.commands.Add(new Command { kind = Kind.End });
+            inCompute = false;
+            Flush();
             if (r.uniformBuffer != null && r.uniformBytes.Length > 0) r.uniformBuffer.SetData(r.uniformBytes);
             into = null;
         }
@@ -474,7 +520,7 @@ namespace Tide
             uint W(int i) => *(uint*)(p + 4 * i);
             switch (op)
             {
-                case Op.Buffer: MakeBuffer(W(0), W(1) == 1, (int)W(2), W(3) != 0 ? p + 16 : null); break;
+                case Op.Buffer: MakeBuffer(W(0), (int)W(1), (int)W(2), W(3) != 0 ? p + 16 : null); break;
                 case Op.BufferWrite:
                     if (buffers.TryGetValue(W(0), out var written)) Write(written, (int)W(1), p + 12, (int)W(2));
                     break;
@@ -482,14 +528,19 @@ namespace Tide
                     if (buffers.TryGetValue(W(0), out var freed))
                     {
                         Doom(freed.raw);
-                        Doom(freed.words);
                         foreach (var v in freed.views) Doom(v);
                         buffers.Remove(W(0));
                     }
                     break;
                 case Op.Texture: MakeTexture(W(0), (int)W(1), (int)W(2), (int)W(3), W(4) != 0 ? p + 20 : null); break;
-                case Op.TextureWrite: WriteTexture(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), p + 20); break;
-                case Op.Mipmaps: Mipmaps(W(0)); break;
+                case Op.TextureWrite:
+                    Flush(); // After the work before it, which may sample it
+                    WriteTexture(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), p + 20);
+                    break;
+                case Op.Mipmaps:
+                    Flush();
+                    Mipmaps(W(0));
+                    break;
                 case Op.TextureFree:
                     if (images.TryGetValue(W(0), out var image))
                     {
@@ -559,66 +610,63 @@ namespace Tide
                     indexBuffer = W(0);
                     indexWide = W(1) != 0;
                     break;
-                case Op.Draw: Draw(W(0), (int)W(1), (int)W(2), false); break;
-                case Op.DrawIndexed: Draw(0, (int)W(0), (int)W(1), true); break;
+                case Op.Draw: Draw(W(0), (int)W(1), (int)W(2), false, null); break;
+                case Op.DrawIndexed: Draw(0, (int)W(0), (int)W(1), true, null); break;
+                case Op.PipelineStorage:
+                    if (pipelines.TryGetValue(W(0), out var storing))
+                    {
+                        storing.compute = W(1) != 0;
+                        storing.storageCount = (int)Math.Min(W(2), (uint)MaxStorage);
+                        storing.storageWrites = W(3);
+                        if (storing.compute)
+                        {
+                            storing.shader = null;
+                            storing.kernelShader = Loaded<ComputeShader>(storing.key);
+                        }
+                    }
+                    break;
+                case Op.Storage:
+                    if (W(0) < MaxStorage) storageBound[W(0)] = W(1);
+                    break;
+                case Op.ComputeBegin: inCompute = true; break;
+                case Op.ComputeEnd: inCompute = false; break;
+                case Op.Dispatch: Dispatch(W(0), W(1), W(2), 0, 0, false); break;
+                case Op.DispatchIndirect: Dispatch(0, 0, 0, W(0), W(1), true); break;
+                case Op.DrawIndirect: DrawIndirect(W(0), W(1), false); break;
+                case Op.DrawIndexedIndirect: DrawIndirect(W(0), W(1), true); break;
+                case Op.BufferCopy:
+                    if (buffers.TryGetValue(W(0), out var from) && buffers.TryGetValue(W(2), out var to) && from.raw != null && to.raw != null)
+                    {
+                        var source = from.raw; // Before `to` is renamed, should they be one
+                        Copy(source, W(1), Written(to), W(3), W(4) / 4);
+                    }
+                    break;
+                case Op.BufferRead: Read(W(0), W(1), W(2), W(3)); break;
             }
         }
 
-        void MakeBuffer(uint id, bool indices, int size, byte* data)
+        void MakeBuffer(uint id, int kind, int size, byte* data)
         {
+            var indices = kind == 1;
             if (buffers.TryGetValue(id, out var had))
             {
                 Doom(had.raw);
-                Doom(had.words);
                 foreach (var v in had.views) Doom(v);
             }
-            var b = new BufferObject { indices = indices };
-            if (textureBuffers)
-            {
-                var rows = Math.Max(1, ((size + 3) / 4 + 4095) / 4096);
-                b.shadow = new uint[4096 * rows];
-                b.words = WordTexture(rows);
-            }
-            else
-            {
-                b.raw = new GraphicsBuffer(GraphicsBuffer.Target.Raw | GraphicsBuffer.Target.CopySource | GraphicsBuffer.Target.CopyDestination,
-                    Math.Max(1, (size + 3) / 4), 4);
-            }
+            var b = new BufferObject { indices = indices, storage = kind == 2 };
+            b.raw = new GraphicsBuffer(GraphicsBuffer.Target.Raw | GraphicsBuffer.Target.CopySource | GraphicsBuffer.Target.CopyDestination,
+                Math.Max(1, (size + 3) / 4), 4);
             if (indices) b.bytes = new byte[Math.Max(4, (size + 3) / 4 * 4)];
             buffers[id] = b;
             if (data != null) Write(b, 0, data, size);
+            else if (b.storage && b.raw != null) b.raw.SetData(new uint[b.raw.count]); // A storage buffer starts as zeros
         }
 
         // Bytes into a buffer, now: the frame's writes come before the draws after them, and one a draw of this
         // frame already read is written in a new buffer, its bytes copied first, which the draws after read.
-        static Texture2D WordTexture(int rows) =>
-            new Texture2D(4096, rows, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None)
-            {
-                hideFlags = HideFlags.HideAndDontSave, filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp,
-            };
-
         void Write(BufferObject b, int offset, byte* data, int size)
         {
-            if (b.words != null)
-            {
-                if (b.used == Time.frameCount)
-                {
-                    Doom(b.words);
-                    b.words = WordTexture(b.shadow.Length / 4096);
-                    b.used = -1;
-                }
-                var room = Math.Max(0, Math.Min(size, b.shadow.Length * 4 - offset));
-                fixed (uint* to = b.shadow) Buffer.MemoryCopy(data, (byte*)to + offset, room, room);
-                b.words.SetPixelData(b.shadow, 0);
-                b.words.Apply(false, false);
-                if (b.indices)
-                {
-                    var kept = Math.Max(0, Math.Min(size, b.bytes.Length - offset));
-                    if (kept > 0) Marshal.Copy((IntPtr)data, b.bytes, offset, kept);
-                    b.version++;
-                }
-                return;
-            }
+            Flush(); // After the work before it, which may read or write it
             if (b.used == Time.frameCount)
             {
                 var renamed = new GraphicsBuffer(b.raw.target, b.raw.count, 4);
@@ -856,9 +904,12 @@ namespace Tide
         }
 
         // The shader tide unity wrote for a pipeline's key: its SPIR-V's, or on the web its WGSL's.
-        Shader ShaderOf(ulong key)
+        Shader ShaderOf(ulong key) => Loaded<Shader>(key);
+
+        // ...a shader's, or a kernel's ComputeShader (a .compute).
+        T Loaded<T>(ulong key) where T : UnityEngine.Object
         {
-            var shader = Resources.Load<Shader>("TideShaders/" + key.ToString("x16"));
+            var shader = Resources.Load<T>("TideShaders/" + key.ToString("x16"));
             if (shader != null) return shader;
             if (webKeys == null)
             {
@@ -871,7 +922,7 @@ namespace Tide
                         && ulong.TryParse(pair[1], System.Globalization.NumberStyles.HexNumber, null, out var file)) webKeys[web] = file;
                 }
             }
-            return webKeys.TryGetValue(key, out var named) ? Resources.Load<Shader>("TideShaders/" + named.ToString("x16")) : null;
+            return webKeys.TryGetValue(key, out var named) ? Resources.Load<T>("TideShaders/" + named.ToString("x16")) : null;
         }
 
         void Begin(uint target, bool clear)
@@ -934,20 +985,21 @@ namespace Tide
 
         GraphicsBuffer VertexBuffer(int slot)
         {
-            if (textureBuffers || !buffers.TryGetValue(vertexBuffer[slot], out var b)) return none;
+            if (!buffers.TryGetValue(vertexBuffer[slot], out var b)) return none;
             b.used = Time.frameCount;
             return b.raw;
         }
 
-        Texture VertexWords(int slot)
+        // A draw whose numbers a storage buffer has (gpu.h's draw_indirect, draw_indexed_indirect): four or five
+        // words at `offset`, copied as they are here in the frame.
+        void DrawIndirect(uint buffer, uint offset, bool indexed)
         {
-            if (!textureBuffers) return null;
-            if (!buffers.TryGetValue(vertexBuffer[slot], out var b) || b.words == null) return noneWords;
-            b.used = Time.frameCount;
-            return b.words;
+            if (!inPass || pipeline == null) return;
+            var numbers = Arguments(buffer, offset, indexed ? 5 : 4, null);
+            if (numbers != null) Draw(0, 1, 1, indexed, numbers);
         }
 
-        void Draw(uint first, int count, int instances, bool indexed)
+        void Draw(uint first, int count, int instances, bool indexed, GraphicsBuffer indirect)
         {
             if (!inPass || pipeline == null || count <= 0 || instances <= 0) return;
             if (pipeline.shader == null && pipeline.looked != Time.frameCount)
@@ -969,11 +1021,16 @@ namespace Tide
                 kind = Kind.Draw, material = MaterialFor(pipeline), properties = pipeline.properties, count = count,
                 instances = instances, first = indexed ? 0 : first,
                 v0 = VertexBuffer(0), v1 = VertexBuffer(1), v2 = VertexBuffer(2),
-                w0 = VertexWords(0), w1 = VertexWords(1), w2 = VertexWords(2),
                 o0 = (int)vertexOffset[0], o1 = (int)vertexOffset[1], o2 = (int)vertexOffset[2],
                 textures = into.textures.Count,
                 uniformAt = uniformAt, uniformSize = pipeline.uniformSize > 0 ? Math.Max(16, (pipeline.uniformSize + 15) / 16 * 16) : 0,
+                arguments = indirect,
             };
+            if (pipeline.storageCount > 0)
+            {
+                c.storage = new GraphicsBuffer[pipeline.storageCount];
+                for (var i = 0; i < c.storage.Length; i++) c.storage[i] = StorageBuffer(i, false);
+            }
             if (indexed)
             {
                 if (!buffers.TryGetValue(indexBuffer, out var ib) || !ib.indices) return;
@@ -1004,7 +1061,212 @@ namespace Tide
             into.commands.Add(c);
         }
 
-        // OpenGL's: the texture's own sampler, as the draw asks for it (the frame's last draw of it says, for all of
+        // Storage buffer `slot` as a draw (which reads it later, as the camera renders) or the work (now) binds it: a
+        // buffer a draw reads is marked so that the work's writes after it rename it, and one the work writes is
+        // renamed where a draw read it. What isn't there reads as nothing.
+        GraphicsBuffer StorageBuffer(int slot, bool written)
+        {
+            if (!buffers.TryGetValue(storageBound[slot], out var b) || b.raw == null) return none;
+            if (written) return Written(b);
+            if (into != null && !inCompute) b.used = Time.frameCount;
+            return b.raw;
+        }
+
+        // A buffer the work writes from here (a kernel, a copy): where a draw of this frame kept reads it, a new one,
+        // its bytes copied first in the work's order, so that draw reads it as it was.
+        GraphicsBuffer Written(BufferObject b)
+        {
+            if (b.raw == null) return none;
+            if (b.used == Time.frameCount)
+            {
+                var renamed = new GraphicsBuffer(b.raw.target, b.raw.count, 4);
+                Work().CopyBuffer(b.raw, renamed);
+                Doom(b.raw);
+                b.raw = renamed;
+                b.used = -1;
+            }
+            return b.raw;
+        }
+
+        CommandBuffer Work()
+        {
+            working = true;
+            return work;
+        }
+
+        // The work so far, run now: before what's done at once (a buffer or texture written) and at the commands' end.
+        // The kernels' values are in the recording's uniform buffer, which gets them first.
+        void Flush()
+        {
+            if (!working || work == null) return;
+            working = false;
+            if (into != null && into.uniformBuffer != null && into.uniformUsed > 0) into.uniformBuffer.SetData(into.uniformBytes);
+            Graphics.ExecuteCommandBuffer(work);
+            work.Clear();
+        }
+
+        // A pooled buffer: the frame's `used`-th, made where the pool hasn't one yet.
+        static GraphicsBuffer Pooled(List<GraphicsBuffer> pool, int used, GraphicsBuffer.Target target, int count, int stride)
+        {
+            if (used == pool.Count) pool.Add(new GraphicsBuffer(target, count, stride));
+            return pool[used];
+        }
+
+        // `words` (at most 8) of a storage buffer at `offset`, as the work has them here, copied into buffers an
+        // indirect call reads: its arguments, and a dispatch's TideGroups (`groupsBuffer`) too. Null where it can't.
+        GraphicsBuffer Arguments(uint id, uint offset, int words, GraphicsBuffer groupsBuffer)
+        {
+            if (!buffers.TryGetValue(id, out var b) || b.raw == null || !CanCopy()) return null;
+            var at = stagedUsed++;
+            var numbers = Pooled(staged, at, GraphicsBuffer.Target.Raw | GraphicsBuffer.Target.CopySource | GraphicsBuffer.Target.CopyDestination, 8, 4);
+            var given = Pooled(arguments, at, GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.CopyDestination, 8, 4);
+            Copy(b.raw, offset, numbers, 0, (uint)words);
+            Work().CopyBuffer(numbers, given);
+            if (groupsBuffer != null) work.CopyBuffer(numbers, groupsBuffer);
+            return given;
+        }
+
+        bool CanCopy()
+        {
+            if (copyKernel >= 0) return true;
+            if (!copySaid)
+            {
+                copySaid = true;
+                Debug.LogError("Tide: com.tide.unity's Resources/TideCompute.compute isn't there or doesn't run on this GPU: Tide's indirect draws, dispatches and copies are left out.");
+            }
+            return false;
+        }
+
+        // `words` words from `from` at byte `fromOffset` to `to` at `toOffset`, in the work's order: gpu.h's
+        // buffer_copy, which Unity's CopyBuffer (whole buffers alone) isn't.
+        void Copy(GraphicsBuffer from, uint fromOffset, GraphicsBuffer to, uint toOffset, uint words)
+        {
+            if (words == 0 || !CanCopy()) return;
+            if (from == to)
+            {
+                // Through a buffer of its own: one buffer isn't read and written by one dispatch
+                var between = new GraphicsBuffer(GraphicsBuffer.Target.Raw, (int)words, 4);
+                Copy(from, fromOffset, between, 0, words);
+                Copy(between, 0, to, toOffset, words);
+                Doom(between);
+                return;
+            }
+            var cb = Work();
+            var groupCount = (words + 63) / 64;
+            var x = Math.Min(groupCount, 65535u);
+            var y = (groupCount + x - 1) / x;
+            cb.SetComputeBufferParam(copier, copyKernel, CopyFrom, from);
+            cb.SetComputeBufferParam(copier, copyKernel, CopyTo, to);
+            cb.SetComputeIntParams(copier, CopyWords, (int)fromOffset, (int)toOffset, (int)words, (int)x);
+            cb.DispatchCompute(copier, copyKernel, (int)x, (int)y, 1);
+        }
+
+        // A kernel's ComputeShader and its kernel, looked for again each frame till Unity has imported it (a new
+        // build's), as a draw's shader is.
+        ComputeShader KernelOf(Pipeline p)
+        {
+            if (p.kernelShader == null && p.looked != Time.frameCount)
+            {
+                p.looked = Time.frameCount;
+                webKeys = null;
+                p.kernelShader = Loaded<ComputeShader>(p.key);
+                if (p.kernelShader == null && Time.frameCount - p.made > 120 && missing.Add(p.key))
+                {
+                    Debug.LogError($"Tide: the kernel of Tide's {p.name} pipeline isn't in com.tide.game (Resources/TideShaders/{p.key:x16}.compute): tide writes it as it builds the game for Unity, so build the game with this tide.");
+                }
+            }
+            if (p.kernelShader == null || p.kernel == -2) return null;
+            if (p.kernel < 0)
+            {
+                p.kernel = p.kernelShader.HasKernel("tidehl_compute") ? p.kernelShader.FindKernel("tidehl_compute") : -2;
+                if (p.kernel >= 0 && !p.kernelShader.IsSupported(p.kernel)) p.kernel = -2;
+                if (p.kernel == -2) Debug.LogError($"Tide: the kernel of Tide's {p.name} pipeline ({p.key:x16}.compute) doesn't run on this GPU: its runs are left out.");
+            }
+            return p.kernel >= 0 ? p.kernelShader : null;
+        }
+
+        // A compute pass's dispatch: x * y * z workgroups, or as many as three words of a storage buffer say there
+        // (`indirect`). Into the work, with the pipeline's storage, uniforms, textures and TideGroups.
+        void Dispatch(uint x, uint y, uint z, uint buffer, uint offset, bool indirect)
+        {
+            if (!inCompute || pipeline == null || !pipeline.compute) return;
+            if (!indirect && (x == 0 || y == 0 || z == 0)) return;
+            var cs = KernelOf(pipeline);
+            if (cs == null) return;
+            var kernel = pipeline.kernel;
+            var groupsBuffer = Pooled(groups, groupsUsed++, GraphicsBuffer.Target.Constant | GraphicsBuffer.Target.CopyDestination, 2, 16);
+            GraphicsBuffer numbers = null;
+            if (indirect)
+            {
+                numbers = Arguments(buffer, offset, 3, groupsBuffer);
+                if (numbers == null) return;
+            }
+            else groupsBuffer.SetData(new[] { x, y, z, 0u, 0u, 0u, 0u, 0u }); // Its own, so it's written now
+            var cb = Work();
+            for (var i = 0; i < pipeline.storageCount; i++) cb.SetComputeBufferParam(cs, kernel, Storage[i], StorageBuffer(i, (pipeline.storageWrites >> i & 1) != 0));
+            if (pipeline.uniformSize > 0 && into.uniformBuffer != null)
+                cb.SetComputeConstantBufferParam(cs, Uniforms, into.uniformBuffer, uniformAt, Math.Max(16, (pipeline.uniformSize + 15) / 16 * 16));
+            cb.SetComputeConstantBufferParam(cs, Groups, groupsBuffer, 0, 16);
+            uint modes = 0, modesHigh = 0;
+            for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
+            {
+                var mode = sampling[i];
+                Texture texture = white;
+                var element = RenderTextureSubElement.Default;
+                if (images.TryGetValue(sampled[i], out var image) && image.texture != null)
+                {
+                    if ((mode & 3) == 2 && !image.mips) mode = mode & ~3u | 1;
+                    texture = image.texture;
+                    element = image.element;
+                    if (ownSamplers && element == RenderTextureSubElement.Default) Sample(texture, mode);
+                }
+                if (element == RenderTextureSubElement.Depth)
+                    cb.SetComputeTextureParam(cs, kernel, Textures[i], new RenderTargetIdentifier(texture), 0, RenderTextureSubElement.Depth);
+                else cb.SetComputeTextureParam(cs, kernel, Textures[i], texture);
+                if (i < 8) modes |= (mode & 15) << (4 * i);
+                else modesHigh |= (mode & 15) << (4 * (i - 8));
+            }
+            cb.SetComputeIntParam(cs, Sampling, (int)modes);
+            cb.SetComputeIntParam(cs, SamplingHigh, (int)modesHigh);
+            if (indirect) cb.DispatchCompute(cs, kernel, numbers, 0);
+            else cb.DispatchCompute(cs, kernel, (int)x, (int)y, (int)z);
+        }
+
+        // A read back (gpu.h's buffer_read), in the work's order: its bytes go to the embed as Unity has them
+        // (tide_embed_render_read), or that it failed.
+        void Read(uint token, uint id, uint offset, uint size)
+        {
+            if (!buffers.TryGetValue(id, out var b) || b.raw == null || !SystemInfo.supportsAsyncGPUReadback || size == 0
+                || (ulong)offset + size > (ulong)b.raw.count * 4)
+            {
+                Answered(token, null, 0);
+                return;
+            }
+            var epoch = readEpoch;
+            Work().RequestAsyncReadback(b.raw, (int)size, (int)offset, request => Answer(epoch, token, size, request));
+        }
+
+        void Answer(int epoch, uint token, uint size, AsyncGPUReadbackRequest request)
+        {
+            if (epoch != readEpoch) return; // Let go of with everything else: the embed has forgotten it
+            var data = request.hasError ? default : request.GetData<byte>();
+            if (request.hasError || data.Length < size) Answered(token, null, 0);
+            else Answered(token, (byte*)NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(data), size);
+        }
+
+        // Where reads back (BUFFER_READ) go, for whoever replays commands it made itself rather than the runner's (a
+        // test): each read's token, then its bytes, valid during the call, and their size, or IntPtr.Zero and 0 for
+        // one that failed. Null, they go to the runner's embed.
+        public delegate void ReadAnswer(uint token, IntPtr data, uint size);
+        public ReadAnswer ReadsTo { get; set; }
+
+        void Answered(uint token, byte* data, uint size)
+        {
+            if (ReadsTo != null) ReadsTo(token, (IntPtr)data, size);
+            else if (Runner != null) Runner.RenderRead(token, data, size);
+        }
+
+        // OpenGL Core's: the texture's own sampler, as the draw asks for it (the frame's last draw of it says, for all of
         // them: OpenGL in Unity has no samplers apart from textures).
         static void Sample(Texture texture, uint mode)
         {
@@ -1066,18 +1328,9 @@ namespace Tide
                         cb.DrawProcedural(Matrix4x4.identity, resolveDepth, 0, MeshTopology.Triangles, 3, 1);
                         break;
                     case Kind.Draw:
-                        if (c.w0 != null)
-                        {
-                            cb.SetGlobalTexture(Vertices[0], c.w0);
-                            cb.SetGlobalTexture(Vertices[1], c.w1);
-                            cb.SetGlobalTexture(Vertices[2], c.w2);
-                        }
-                        else
-                        {
-                            cb.SetGlobalBuffer(Vertices[0], c.v0);
-                            cb.SetGlobalBuffer(Vertices[1], c.v1);
-                            cb.SetGlobalBuffer(Vertices[2], c.v2);
-                        }
+                        cb.SetGlobalBuffer(Vertices[0], c.v0);
+                        cb.SetGlobalBuffer(Vertices[1], c.v1);
+                        cb.SetGlobalBuffer(Vertices[2], c.v2);
                         cb.SetGlobalInteger(Offsets[0], c.o0);
                         cb.SetGlobalInteger(Offsets[1], c.o1);
                         cb.SetGlobalInteger(Offsets[2], c.o2);
@@ -1092,7 +1345,18 @@ namespace Tide
                         cb.SetGlobalInteger(Sampling, (int)c.sampling);
                         cb.SetGlobalInteger(SamplingHigh, (int)c.samplingHigh);
                         if (c.uniformSize > 0) cb.SetGlobalConstantBuffer(r.uniformBuffer, Uniforms, c.uniformAt, c.uniformSize);
-                        if (c.index != null)
+                        if (c.storage != null)
+                        {
+                            for (var i = 0; i < c.storage.Length; i++) cb.SetGlobalBuffer(Storage[i], c.storage[i]);
+                        }
+                        if (c.arguments != null)
+                        {
+                            // Its numbers on the GPU: the first vertex or index is theirs, not _TideFirst's
+                            if (c.index != null)
+                                cb.DrawProceduralIndirect(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.arguments, 0, c.properties);
+                            else cb.DrawProceduralIndirect(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.arguments, 0, c.properties);
+                        }
+                        else if (c.index != null)
                         {
                             cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances,
                                 c.properties);
