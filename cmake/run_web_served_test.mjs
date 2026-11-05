@@ -96,18 +96,25 @@ const server = createServer(async (request, response) => {
     }
 });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
-const words = [query, routes ? `port=${server.address().port}` : ''].filter(Boolean);
+// TIDE_WEB_GPU_NONE=1 (CI's Linux runners, whose browser gives no WebGPU adapter): pages draw with a GPU that
+// draws nothing (gpu=none), for the tests that read no pixels back, which are all a run there has
+const words = [query, routes ? `port=${server.address().port}` : '',
+    process.env.TIDE_WEB_GPU_NONE === '1' ? 'gpu=none' : ''].filter(Boolean);
 const address = `http://127.0.0.1:${server.address().port}/${words.length ? '?' + words.join('&') : ''}`;
 
 // WebGPU in software, and the browser's own drawing where it can take WebGPU's
 // images: on Windows through WARP (with SwiftShader's GL, Chrome has no
-// WebGPU at all), and on Linux through SwiftShader's Vulkan (with its GL,
-// WebGPU draws but the page's canvas never shows it, so pixels read back are
-// zeros). TIDE_WEBGPU_FLAGS has other flags tried in their place, like
-// "--enable-unsafe-webgpu" alone for this machine's GPU.
+// WebGPU at all). On Linux, SwiftShader's GL draws WebGPU but the page's
+// canvas never shows it, so pixels read back are zeros: CI's Linux runners
+// leave the `pixels` tests out. SwiftShader's Vulkan shows them under WSL, but
+// gives no WebGPU adapter at all on GitHub's runners, so it's asked for with
+// TIDE_WEB_LINUX_VULKAN=1. TIDE_WEBGPU_FLAGS has other flags tried in their
+// place, like "--enable-unsafe-webgpu" alone for this machine's GPU.
 const flags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
 if (process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
-if (process.platform === 'linux') flags.push('--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan');
+if (process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1') {
+    flags.push('--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan');
+}
 if (process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
 note(`browser: ${browser}`);
 note(`GPU flags: ${flags.join(' ')}`);

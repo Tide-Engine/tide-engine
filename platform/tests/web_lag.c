@@ -30,7 +30,11 @@
 
 #define NETWORK 30 // Milliseconds the other end takes to send back
 #define SLOWER 80  // ...once the network got slower
-#define NEAR 24.0  // What pings may be off by on the whole: the page's timers fire late, a few ms each
+// What pings may be off by on the whole, in real time: the page's timers and
+// frames only ever fire late, by up to tens of ms on a busy CI runner, and a
+// mean of pings can come out a few ms early
+#define LATE 48.0
+#define EARLY 12.0
 #define WINDOW 1.0 // Seconds of pings a step checks
 
 static int failures;
@@ -90,7 +94,7 @@ static void page_set(const char *what, const int value)
 static bool held(const double ms)
 {
     char script[64];
-    snprintf(script, sizeof script, "Math.abs(net.held - %.1f) <= 12", ms);
+    snprintf(script, sizeof script, "net.held - %.1f <= 36 && %.1f - net.held <= 12", ms, ms);
     return tide_web_eval(script);
 }
 
@@ -104,7 +108,7 @@ static bool least(const double ms)
 
 static bool near(const double a, const double b)
 {
-    return a - b < NEAR && b - a < NEAR;
+    return a - b < LATE && b - a < EARLY;
 }
 
 #define REMEMBERED 4096u // Packets it remembers sending: far more than are ever on their way

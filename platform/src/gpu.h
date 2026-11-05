@@ -524,6 +524,8 @@ extern uint32_t *(*tide_gpu_spirv_of)(const char *wgsl, size_t *count, char *err
 // the renderer makes it again (tide_embed_render_reset). Close frees what it
 // held.
 extern const tide_gpu tide_gpu_record;
+// A GPU that draws nothing, for a test's page that checks nothing drawn (gpu_none.c)
+extern const tide_gpu tide_gpu_none;
 void tide_gpu_record_begin(void);
 const uint8_t *tide_gpu_record_end(uint32_t *size);
 void tide_gpu_record_reset(void);

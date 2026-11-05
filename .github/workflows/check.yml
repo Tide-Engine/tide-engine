@@ -248,11 +248,11 @@ jobs:
           Write-Output "Windows process session: $((Get-Process -Id $PID).SessionId)"
           "TIDE_WEB_BROWSER=$($chromePath.Replace('\', '/'))" >> $env:GITHUB_ENV
 
-      # Every web test draws with the browser's software WebGPU, on every
-      # runner. On Linux the browser's own drawing goes through SwiftShader's
-      # Vulkan (cmake/run_web_served_test.mjs), without which its pages read
-      # WebGPU's pixels back as zeros; the tests that read pixels are labelled
-      # `pixels`, for leaving them out (-LE pixels) where a browser can't.
+      # Every web test draws with the browser's software WebGPU. On Linux's
+      # runners the page reads WebGPU's pixels back as zeros (and SwiftShader's
+      # Vulkan, which shows them under WSL, gives no adapter there:
+      # cmake/run_web_served_test.mjs), so they leave out the tests that read
+      # pixels (label `pixels`), which Windows and macOS run.
       - name: Test (web)
         if: inputs.preset == 'web-release'
         run: |
@@ -270,7 +270,12 @@ jobs:
           # Interleave CTest's test indices across independent runners; keep
           # each browser's whole-CPU reservation within its runner.
           shard=(-I '${{ inputs.shard }},,${{ inputs.shards }}')
-          ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}"
+          if [ "$RUNNER_OS" = Linux ]; then
+            # ...and with no WebGPU adapter there, pages draw with a GPU that draws nothing (gpu=none)
+            TIDE_WEB_GPU_NONE=1 ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}" -LE pixels
+          else
+            ctest --preset web-release --parallel "$web_test_jobs" "${shard[@]}"
+          fi
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
         if: inputs.preset == 'mingw-release'

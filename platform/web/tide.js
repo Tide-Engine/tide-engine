@@ -113,6 +113,10 @@
     // A page whose frames are stepped and compared, as a test's are, makes each pipeline before the frame that first
     // draws with it (`Tide.backgroundPipelines = false`, or `background-pipelines=off` in the address)
     if (address.get('background-pipelines') === 'off') config.backgroundPipelines = false;
+    // A test whose game draws but checks nothing drawn (networking, input, files) runs without WebGPU with
+    // `gpu=none` (`Tide.gpuNone`): the program draws through a GPU that draws nothing (platform/src/gpu_none.c),
+    // as on a machine whose browser gives no WebGPU adapter, like CI's Linux runners
+    if (address.get('gpu') === 'none') config.gpuNone = true;
     if (address.has('debug-views') && !words.includes('--debug-views')) {
         words.push('--debug-views');
     }
@@ -811,6 +815,7 @@
             size.height = height;
             size.fill = !!resizable;
             fit();
+            if (config.gpuNone === true) return true; // A test's: nothing is drawn (above)
             // WebGPU, with the device the page found (below). Without one the game can't draw: the page says
             // what it needs where the canvas was
             if (device) {

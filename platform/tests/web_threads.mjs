@@ -64,9 +64,11 @@ const child = spawn(browser, [
     '--enable-unsafe-webgpu',
     '--use-webgpu-adapter=swiftshader',
     ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
-    ...(process.platform === 'linux' ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : []),
+    ...(process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1'
+        ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : []),
     '--remote-debugging-pipe', // Close the entire browser before reusing its profile.
-    `http://127.0.0.1:${server.address().port}/`,
+    // A GPU that draws nothing where the browser gives none (TIDE_WEB_GPU_NONE=1: CI's Linux runners)
+    `http://127.0.0.1:${server.address().port}/${process.env.TIDE_WEB_GPU_NONE === '1' ? '?gpu=none' : ''}`,
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
 child.stdio[4].resume();
 child.stdio[3].on('error', error => {

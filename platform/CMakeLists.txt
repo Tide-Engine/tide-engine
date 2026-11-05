@@ -38,7 +38,7 @@ endif()
 # The window (src/window.h): the page's canvas, Android's activity, or GLFW's.
 # ...and the audio device (src/audio_out.h): the page's worklet, AAudio, or WASAPI, CoreAudio and ALSA.
 if(TIDE_WEB)
-    list(APPEND TIDE_PLATFORM_SOURCES web/canvas.c web/gpu_web.c web/audio.c)
+    list(APPEND TIDE_PLATFORM_SOURCES web/canvas.c web/gpu_web.c web/audio.c src/gpu_none.c)
 elseif(TIDE_ANDROID)
     list(APPEND TIDE_PLATFORM_SOURCES android/activity.c android/audio.c)
 else()
