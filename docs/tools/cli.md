@@ -41,7 +41,12 @@ In a terminal, builds use one progress display: the current compiler step above
 a bar, updated in place through preparation, package resolution, Tide and asset
 compilation, C/C++ compilation, linking and packaging. The bar shows file counts
 and a percentage during C/C++ batches, with active source filenames above it;
-other steps show moving activity because
+Tide compilation shows the current source filename while parsing and checking,
+and asset imports and packing show the current filename or asset declaration.
+Parsing, importing files (including glob matches) and packing assets fill the bar
+with completed/total item counts for that stage. These percentages count items,
+not elapsed time or the whole build.
+Other steps show moving activity because
 they have no reliable total. Elapsed time covers the build. The display clears
 before game launch or completion output, and diagnostics appear on clean lines.
 Redirected output uses plain stderr lines with file counts.

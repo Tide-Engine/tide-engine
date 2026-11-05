@@ -57,6 +57,15 @@ if(NOT WIN32)
 endif()
 add_test(NAME tide_cli_run_exit COMMAND tide_cli_run_exit_tests)
 
+add_executable(tide_cli_terminal_exit_tests tests/terminal_exit_test.c sys.c)
+target_include_directories(tide_cli_terminal_exit_tests PRIVATE .)
+target_link_libraries(tide_cli_terminal_exit_tests PRIVATE tidec_core)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_terminal_exit_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME tide_cli_terminal_exit COMMAND tide_cli_terminal_exit_tests)
+set_tests_properties(tide_cli_terminal_exit PROPERTIES TIMEOUT 10)
+
 # Apple SDK discovery must follow the selected linker even when a newer
 # standalone Command Line Tools package is installed. Stub discovery only.
 add_executable(tide_cli_toolchain_tests tests/toolchain_test.c sys.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
