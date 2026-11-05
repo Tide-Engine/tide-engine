@@ -229,6 +229,35 @@ typedef struct shot_tally {
     uint32_t pyramids, spans, measured, shots;
 } shot_tally;
 
+// Whether this device draws a frame into a 4-sample target the same each time it's drawn: asked once a 4-sample shot
+// differs from the CPU's path, on the CPU's path alone (no culling, nothing made since), 16 times with the camera inside
+// the field, where most boxes cross. Chrome's WebGPU on an RTX 4080 SUPER (D3D12) doesn't: its frames differ from
+// each other at a few pixels, so no frame can be the same as another there (notes/testing.md, A GPU whose 4-sample
+// frames differ from themselves). Vulkan and SwiftShader do, so a shot that differs fails there as ever.
+static bool reproduces_samples(const shot *at, const int width, const int height)
+{
+    static int known = -1;
+    static uint32_t first[PIXELS], again[PIXELS];
+    if (known >= 0) return known;
+    local.Shot.camera = 2, local.Shot.slide = 30;
+    draw_frame(width, height, false, first);
+    int differing = 0, most = 0;
+    for (int k = 0; k < 16; k++) {
+        draw_frame(width, height, false, again);
+        int d = 0;
+        for (int p = 0; p < width * height; p++) d += again[p] != first[p];
+        differing += d > 0;
+        most = d > most ? d : most;
+    }
+    local.Shot.camera = at->camera, local.Shot.slide = at->slide;
+    known = differing == 0;
+    if (!known) {
+        printf("note: drawn 17 times on the CPU's path, the same 4-sample frame came out differently %d times, at up to "
+               "%d pixels: this device doesn't draw its 4-sample frames the same twice\n", differing, most);
+    }
+    return known;
+}
+
 // A run of shots into `into`. False where the GPU's culling wasn't there yet (its pipelines still being made).
 static bool shots_drawn(const int into, const char *when, shot_tally *tally)
 {
@@ -300,6 +329,12 @@ static bool shots_drawn(const int into, const char *when, shot_tally *tally)
                  "pixels as the CPU's path (%u differ of %u drawn; %llu hidden of %llu tested)", names[into], i,
                  s->camera, (double)s->slide, width, height, differ, drawn, (unsigned long long)report.hidden,
                  (unsigned long long)report.tested);
+        if (differ && into == 2 && !reproduces_samples(s, width, height)) {
+            // Nothing to compare with: notes/testing.md, A GPU whose 4-sample frames differ from themselves
+            printf("note: %s, not checked: this device draws the same 4-sample frame differently from one time to the "
+                   "next\n", what);
+            continue;
+        }
         expect(differ == 0 && drawn > (uint32_t)(width * height / 20), what, when);
     }
     return true;

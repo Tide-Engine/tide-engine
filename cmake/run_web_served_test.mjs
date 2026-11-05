@@ -6,7 +6,9 @@
 //
 // The page is cross-origin isolated (the headers below), so the program runs
 // on threads, sharing its memory with them. WebGPU is the browser's software
-// one, so no GPU is needed: SwiftShader, which the flags below turn on.
+// one, so no GPU is needed: SwiftShader, which the flags below turn on, or with
+// TIDE_WEB_HARDWARE=1 the machine's own GPU, and a software adapter fails the
+// test (web_gpu.mjs). Which adapter it was is asked before the test's page.
 //
 //   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--seconds <n>] [--routes <module.mjs>]
 //
@@ -29,6 +31,8 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { adapterVerdict, gpuFlags, hardware, probeAddress, probeRoute } from './web_gpu.mjs';
 
 const [browser, pagePath, profile, ...rest] = process.argv.slice(2);
 let expected = null; // A line the program has to print
@@ -61,9 +65,21 @@ const body = request => new Promise(done => {
     request.on('end', () => done(text));
 });
 let seen = !expected;
+let adapter = null; // What the browser's WebGPU adapter is, once the probe said
 const server = createServer(async (request, response) => {
     const path = request.url.split('?')[0];
-    if (path === '/') {
+    if (probeRoute(request, response, info => {
+        const { line, failure } = adapterVerdict(info);
+        adapter = line;
+        note(line);
+        if (hardware) console.log(line);
+        if (failure) {
+            console.log(failure);
+            finish(failure);
+        }
+    })) {
+        // The adapter's probe, before the test's page
+    } else if (path === '/') {
         note(`the page was asked for: ${request.url}`);
         response.on('close', () => { if (!response.writableFinished) note(`${request.url} was cut short as it was sent`); });
         response.writeHead(200, {
@@ -100,23 +116,11 @@ await new Promise(done => server.listen(0, '127.0.0.1', done));
 // draws nothing (gpu=none), for the tests that read no pixels back, which are all a run there has
 const words = [query, routes ? `port=${server.address().port}` : '',
     process.env.TIDE_WEB_GPU_NONE === '1' ? 'gpu=none' : ''].filter(Boolean);
-const address = `http://127.0.0.1:${server.address().port}/${words.length ? '?' + words.join('&') : ''}`;
+const address = `http://127.0.0.1:${server.address().port}${probeAddress(`/${words.length ? '?' + words.join('&') : ''}`)}`;
 
-// WebGPU in software, and the browser's own drawing where it can take WebGPU's
-// images: on Windows through WARP (with SwiftShader's GL, Chrome has no
-// WebGPU at all). On Linux, SwiftShader's GL draws WebGPU but the page's
-// canvas never shows it, so pixels read back are zeros: CI's Linux runners
-// leave the `pixels` tests out. SwiftShader's Vulkan shows them under WSL, but
-// gives no WebGPU adapter at all on GitHub's runners, so it's asked for with
-// TIDE_WEB_LINUX_VULKAN=1. TIDE_WEBGPU_FLAGS has other flags tried in their
-// place, like "--enable-unsafe-webgpu" alone for this machine's GPU.
-// --disable-gpu-watchdog: software WebGPU's slow frames on a small runner otherwise get the GPU process killed
-const flags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--disable-gpu-watchdog'];
-if (process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
-if (process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1') {
-    flags.push('--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan');
-}
-if (process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
+// The browser's GPU flags (web_gpu.mjs): software WebGPU, or the machine's GPU with TIDE_WEB_HARDWARE=1;
+// TIDE_WEBGPU_FLAGS has other flags tried in their place
+const flags = gpuFlags();
 note(`browser: ${browser}`);
 note(`GPU flags: ${flags.join(' ')}`);
 
@@ -272,8 +276,10 @@ const timeout = setTimeout(async () => {
     finish(`no result within ${seconds} seconds`);
 }, seconds * 1000);
 
-const code = await result;
+let code = await result;
 clearTimeout(timeout);
+// The probe goes before the test's page, so its answer is in by now
+if (code === '0' && hardware && !adapter) code = 'TIDE_WEB_HARDWARE=1, but the page never said which WebGPU adapter it had';
 const passed = code === '0' && seen;
 if (code === '0' && !seen) console.log(`The page never printed "${expected}".`);
 else if (code !== '0') console.log(`The page ended with: ${code}.`);

@@ -141,7 +141,10 @@ Claude's, Provisional.
   by one in a color byte at a few pixels (1 to 12 a shot of `tide_platform_occlusion`, at walls 4 and 6 too), with
   occlusion off as well (fewer), never in one-sample destinations; Vulkan doesn't. A resolve of samples whose colors
   differ by rounding between the listed and ordinary vertex stages is the likely cause; unexamined. No test draws WebGPU
-  on hardware (the runner's default is SwiftShader).
+  on hardware (the runner's default is SwiftShader). (Since, the same day: not the vertex stages, and not ours. That
+  device draws the same 4-sample frame differently from one time to the next, the CPU path too, and a replay of the pass
+  with nothing of Tide's does as well. `tide_platform_occlusion` notes those shots there rather than failing them, and
+  the hardware lane runs it: `notes/testing.md`, A GPU whose 4-sample frames differ from themselves.)
 - **Not measured**: Mount & Rifle with occlusion on and off at this merge. `bench_occlusion --quick` passes (sanitize). (Since: Occlusion's measure made cheaper, above.)
 
 ## Culled runs drawn by a count, joined (2026-11-05)
