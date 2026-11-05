@@ -1390,6 +1390,7 @@ typedef struct resource_outer {
 static bool holds_render_resource_in(const type t, const resource_outer *outer, const bool fonts)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
+        || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY
         || t.kind == TY_CLIP || t.kind == TY_GPU_LIST || (fonts && t.kind == TY_FONT)) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
@@ -1937,7 +1938,14 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
     case TY_STRUCT:
-    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: case TY_DEPTH_TEXTURE_ARRAY:
+        return true;
+    case TY_TEXTURE_ARRAY:
+        if (asset) {
+            diag_error(at, "a TextureArray is many files already, which its glob matches: a list or a map of arrays isn't there");
+            diag_note("declare each array as an asset of its own: 'asset TextureArray ground = \"art/ground/*.png\";'");
+            return false;
+        }
         return true;
     case TY_MESH: // An asset's glob of mesh files
         if (asset) return true;
@@ -2571,7 +2579,8 @@ static bool array_element_ok(const type t, const loc at)
         }
         return true;
     case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET:
-    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT: return true;
+    case TY_TEXTURE: case TY_DEPTH_TEXTURE: case TY_CUBEMAP: case TY_RENDER_TARGET: case TY_CLIP: case TY_FONT:
+    case TY_TEXTURE_ARRAY: case TY_DEPTH_TEXTURE_ARRAY: return true;
     case TY_GRID:
         diag_error(at, "an array's elements can't be grids");
         diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
@@ -2750,19 +2759,32 @@ static bool fold_int(const expr *e, int64_t *out);
 // they are. Everything that draws a texture takes it for colors with how much
 // of each there is. Raw Texture fields retain a static role, while ordinary
 // Texture values carry none; GPU helpers substitute their original sources.
+// A type a [Raw] role goes with: a Texture, a TextureArray or a Cubemap, each of numbers
+static bool raw_kind(const type t)
+{
+    return t.kind == TY_TEXTURE || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_CUBEMAP;
+}
+
+static const char *raw_kind_name(const type t)
+{
+    return t.kind == TY_TEXTURE_ARRAY ? "TextureArray" : t.kind == TY_CUBEMAP ? "Cubemap" : "Texture";
+}
+
 static void raw_note(void)
 {
     diag_note("read it in a frag or a vert, by its name: 'color = masks.Sample(vertex.uv);' gives its numbers as they are. "
               "A texture that's drawn, or handed to a frag as its Texture, is a color and how much of it there is: "
               "declare that one without [Raw]");
-    diag_note("keep numeric images in '[Raw] Texture' fields; those fields also accept [Raw] grids and other [Raw] Texture fields");
+    diag_note("keep numeric images in '[Raw] Texture', '[Raw] TextureArray' or '[Raw] Cubemap' fields; they also accept [Raw] "
+              "grids of colors and other [Raw] fields of their type");
 }
 
 // A [Raw] grid where a Texture goes: false, and said.
 static bool refuse_raw_grid(const expr *e)
 {
     if (!e || e->type.kind != TY_GRID || !declared_raw(e)) return true;
-    diag_error(e->at, "this grid is [Raw], its cells numbers and not colors to draw: it's no Texture to draw with or hand on");
+    diag_error(e->at, "this grid is [Raw], its cells numbers and not colors to draw: it's no %s to draw with or hand on",
+               e->type.decl && e->type.decl->dims == 3 ? "TextureArray" : "Texture");
     raw_note();
     return false;
 }
@@ -2787,7 +2809,7 @@ static void check_raw_uses(const checker *c)
         for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
             const param *p = &site->to->params.items[k];
             expr *arg = site->call->args.items[k];
-            if (p->type.kind != TY_TEXTURE || !declared_raw(arg)) continue;
+            if (!raw_kind(p->type) || !declared_raw(arg)) continue;
             if (gpu && p->mode == PARAM_READ && !p->is_out) arg->raw_sampled = true;
             else refuse_raw_grid(arg);
         }
@@ -2795,8 +2817,8 @@ static void check_raw_uses(const checker *c)
     for (int i = 0; i < c->raw_uses.count; i++) {
         const expr *e = c->raw_uses.items[i];
         if (e->raw_sampled) continue;
-        diag_error(e->at, "'" STR_FMT "' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or "
-                   "hand on", STR_ARG(e->bind == BIND_ASSET ? e->constant->name : e->field->name));
+        diag_error(e->at, "'" STR_FMT "' is [Raw], its pixels numbers and not colors to draw: it's no %s to draw with or "
+                   "hand on", STR_ARG(e->bind == BIND_ASSET ? e->constant->name : e->field->name), raw_kind_name(e->type));
         raw_note();
     }
 }
@@ -2867,7 +2889,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         e->asset_reference = true;
         return e->type = inner;
     }
-    if (inner.kind == TY_TEXTURE && c->raw_value != e && c->texture_arg != e && !refuse_raw_grid(e)) return e->type = T_ERR;
+    if (raw_kind(inner) && c->raw_value != e && c->texture_arg != e && !refuse_raw_grid(e)) return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
     if (inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(e, &value) && value >= 0 && value <= 255) {
@@ -2904,8 +2926,9 @@ static type check_raw_field_value(expr *e, const type t)
 {
     if (t.kind == TY_ERROR || e->kind == E_DEFAULT) return t;
     if (!declared_raw(e)) {
-        diag_error(e->at, "a [Raw] Texture field takes a [Raw] Texture asset, field or grid, not a color texture");
-        diag_note("declare numeric sources with [Raw], or keep color images in a Texture field without [Raw]");
+        const char *kind = raw_kind_name(t);
+        diag_error(e->at, "a [Raw] %s field takes a [Raw] %s asset, field or grid, not a color texture", kind, kind);
+        diag_note("declare numeric sources with [Raw], or keep color images in a %s field without [Raw]", kind);
         return e->type = T_ERR;
     }
     e->raw_sampled = true;
@@ -2915,7 +2938,7 @@ static type check_raw_field_value(expr *e, const type t)
 static type check_field_value(checker *c, expr *e, const field *f)
 {
     const expr *saved = c->raw_value;
-    const bool raw = f && f->type.kind == TY_TEXTURE && field_is_raw(f);
+    const bool raw = f && raw_kind(f->type) && field_is_raw(f);
     c->raw_value = raw ? e : NULL;
     const type t = check_expr_want(c, e, f ? f->type : T_ERR);
     c->raw_value = saved;
@@ -3547,6 +3570,9 @@ static int target_formats(const checker *c, const expr *e, const int tail, const
 }
 
 static type check_cube_target(checker *c, expr *e);
+static type check_array_target(checker *c, expr *e);
+static type check_array_sample(const checker *c, expr *e);
+static type check_depth_array_read(const checker *c, expr *e);
 
 // Constructors of built-in types: float(x), int3(1), float4(v.xy, 0, 1),
 // quaternion(x, y, z, w), float3x3(c0, c1, c2) and friends.
@@ -3605,7 +3631,9 @@ static type check_construct(checker *c, expr *e, const type target)
     }
     // Cubemap(256), Cubemap(256, Format.Rgba16f): a cube that's drawn into, a face at a time
     if (target.kind == TY_CUBEMAP) return check_cube_target(c, e);
-    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
+    // TextureArray(1024, 1024, 4), TextureArray(2048, 2048, 3, 1, Format.Depth): layers drawn into one at a time
+    if (target.kind == TY_TEXTURE_ARRAY) return check_array_target(c, e);
+    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_DEPTH_TEXTURE_ARRAY) {
         diag_error(e->at, "%s has no constructor", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
         else diag_note("declare a Texture asset for an image file, or read a render target's color image: 'target.color'");
@@ -4021,7 +4049,8 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
 {
     const bool own = of->kind == E_NAME && of->bind == BIND_PARAM && of->param->function_param;
     if (!own && !(assets && of->bind == BIND_ASSET)) {
-        const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid" : "Texture";
+        const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid"
+                         : reads == TY_TEXTURE_ARRAY ? "TextureArray" : reads == TY_DEPTH_TEXTURE_ARRAY ? "DepthTextureArray" : "Texture";
         diag_error(of->at, "a function samples a %s it takes as a parameter of its own%s", what,
                    !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
                    ? ", or a Cubemap asset by its name" : ", or a Texture asset by its name");
@@ -8084,6 +8113,57 @@ static type check_cube_target(checker *c, expr *e)
     return (type){TY_CUBEMAP, NULL};
 }
 
+// TextureArray(width, height, layers[, pixelsPerUnit][, format]): layers of one size drawn into a layer at a time,
+// each a target of logical pixels as a RenderTarget's are, holding one color image or depth alone, with a depth array.
+static type check_array_target(checker *c, expr *e)
+{
+    if (gpu_refuses(c, e->at, "create a TextureArray", "the view creates it, and the frag reads it where it's a field")) return T_ERR;
+    if (!reading_code(c)) {
+        diag_error(e->at, "a TextureArray is created in local code, not a field default or constant");
+        diag_note("leave the field at default and create its array in a view or local handler");
+        return T_ERR;
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->name.len) {
+            diag_error(e->args.items[i]->at, "a TextureArray's arguments aren't named: 'TextureArray(width, height, layers)'");
+            if (str_eq_c(e->args.items[i]->name, "samples")) diag_note("an array's layers have one sample a pixel");
+            return T_ERR;
+        }
+    }
+    const int argc = e->args.count;
+    const type last = argc ? e->args.items[argc - 1]->type : T_ERR;
+    const bool formatted = last.kind == TY_ENUM && last.decl == c->prog->format;
+    const int sizes = argc - (formatted ? 1 : 0); // width, height, layers[, pixelsPerUnit]
+    bool numbers = sizes == 3 || sizes == 4;
+    for (int i = 0; numbers && i < sizes; i++) {
+        numbers = i == 2 ? type_assignable(T_INT_, e->args.items[i]->type) : type_assignable(T_FLOAT_, e->args.items[i]->type);
+    }
+    if (!numbers) {
+        diag_error(e->at, "TextureArray takes its layers' width and height in logical pixels, how many layers, an int, and "
+                          "its pixels per unit when it isn't the display's: 'TextureArray(width, height, layers)' or "
+                          "'TextureArray(width, height, layers, 1)'");
+        diag_note("what each layer holds comes last when that isn't Format.Rgba8: 'TextureArray(2048, 2048, 3, 1, Format.Depth)'");
+        return T_ERR;
+    }
+    const expr *layers = e->args.items[2];
+    if (layers->kind == E_INT && (layers->int_value < 1 || layers->int_value > 256)) {
+        diag_error(layers->at, "a TextureArray has 1 to 256 layers, and this asks for %lld", (long long)layers->int_value);
+        diag_note("256 is the most every GPU Tide draws with takes");
+        return T_ERR;
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = sizes == 4 ? (formatted ? "tide_texture_array_make_scaled_as" : "tide_texture_array_make_scaled")
+                             : (formatted ? "tide_texture_array_make_sized_as" : "tide_texture_array_make_sized");
+    e->resource_operation = true;
+    reading_code(c)->calls_c = true;
+    vec_push(e->arg_want, T_FLOAT_);
+    vec_push(e->arg_want, T_FLOAT_);
+    vec_push(e->arg_want, T_INT_);
+    if (sizes == 4) vec_push(e->arg_want, T_FLOAT_);
+    if (formatted) vec_push(e->arg_want, last);
+    return (type){TY_TEXTURE_ARRAY, NULL};
+}
+
 // RenderTarget.Window(), RenderTarget.Window(0.5): a target that's always the
 // window's size, or that part of it. Made where the constructor's are, and
 // like them, it says last what it holds when that isn't one color image:
@@ -8916,10 +8996,58 @@ static type check_method(checker *c, expr *e)
         suggest_note(&sg);
         return T_ERR;
     }
+    if (obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) return check_depth_array_read(c, e);
+        diag_error(e->at, "a DepthTextureArray has Sample(uv, layer) and Compare(uv, layer, value), not '" STR_FMT "'", STR_ARG(e->name));
+        return T_ERR;
+    }
+    if (obj.kind == TY_TEXTURE_ARRAY) {
+        const bool resize = str_eq_c(e->name, "Resize");
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "SampleGrad")) {
+            check_sample_args(c, e, false);
+            e->object->raw_sampled = true; // A [Raw] array is read here as its numbers (check_raw_uses)
+            return check_array_sample(c, e);
+        }
+        if (!resize && !str_eq_c(e->name, "Dispose")) {
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "a TextureArray has Sample(uv, layer[, filter[, wrap]]) and SampleGrad(uv, dx, dy, layer[, filter[, "
+                              "wrap]]), and one that's drawn into has Resize(width, height) and Dispose(), not '" STR_FMT "'",
+                       STR_ARG(e->name));
+            if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Clear") || str_eq_c(e->name, "Instanced")) {
+                diag_note("an array is drawn into a layer at a time: 'array.layers[0]." STR_FMT "(...)'", STR_ARG(e->name));
+            }
+            return T_ERR;
+        }
+        for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_FLOAT_);
+        if (gpu_refuses(c, e->at, resize ? "resize a TextureArray" : "dispose a TextureArray", "the view owns the array")) return T_ERR;
+        if (e->object->bind == BIND_ASSET) {
+            diag_error(e->at, "an asset's TextureArray is the pack's: it can't be resized or disposed");
+            return T_ERR;
+        }
+        if (e->args.count != (resize ? 2 : 0) || (resize && (!type_assignable(T_FLOAT_, e->args.items[0]->type)
+                                                             || !type_assignable(T_FLOAT_, e->args.items[1]->type)))) {
+            diag_error(e->at, resize ? "Resize takes the layers' width and height, as the array was made with: "
+                                       "'array.Resize(width, height)'"
+                                   : "Dispose takes no arguments: 'array.Dispose()'");
+            return T_ERR;
+        }
+        if (resize) {
+            vec_push(e->arg_want, T_FLOAT_);
+            vec_push(e->arg_want, T_FLOAT_);
+        }
+        e->call = CALL_BUILTIN;
+        e->c_callee = resize ? "tide_texture_array_resize" : "tide_texture_array_dispose";
+        e->resource_operation = true;
+        decl *code = reading_code(c);
+        if (code) code->calls_c = true;
+        return T_VOID_;
+    }
     if (obj.kind == TY_CUBEMAP) {
         const bool resize = str_eq_c(e->name, "Resize");
         if (str_eq_c(e->name, "Sample")) {
             check_sample_args(c, e, true);
+            e->object->raw_sampled = true; // A [Raw] cube is read here as its numbers (check_raw_uses)
             return check_cube_sample(c, e);
         }
         if (!resize && !str_eq_c(e->name, "Dispose")) {
@@ -10192,6 +10320,38 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
 
+    if (obj.kind == TY_TEXTURE_ARRAY || obj.kind == TY_DEPTH_TEXTURE_ARRAY) {
+        const bool depths = obj.kind == TY_DEPTH_TEXTURE_ARRAY;
+        const bool metadata = str_eq_c(e->member, "size") || str_eq_c(e->member, "count");
+        if (gpu_code(c) && !metadata) {
+            diag_error(e->at, "a %s reads a %s with '%s', and its 'size' and 'count': its layers%s are the view's",
+                       shader_word(gpu_code(c)), depths ? "DepthTextureArray" : "TextureArray",
+                       depths ? "Sample(uv, layer)' or 'Compare(uv, layer, value)" : "Sample(uv, layer)", depths ? "" : " and its depth");
+            return T_ERR;
+        }
+        if (metadata) e->object->raw_sampled = true; // Metadata does not read or expose Raw pixels
+        if (str_eq_c(e->member, "size")) return (type){TY_INT2, NULL}; // A layer's pixels
+        if (str_eq_c(e->member, "count")) return T_INT_;                 // ...and how many layers
+        if (!depths && str_eq_c(e->member, "depth")) {
+            if (e->object->bind == BIND_ASSET) {
+                diag_error(e->at, "an asset's TextureArray is the pack's images, which nothing draws into: it has no depth");
+                return T_ERR;
+            }
+            return (type){TY_DEPTH_TEXTURE_ARRAY, NULL};
+        }
+        if (!depths && str_eq_c(e->member, "layers")) {
+            if (c->colors_indexed != e) {
+                diag_error(e->at, "an array's layers are drawn into one at a time: 'layers[0]' is the first, as a RenderTarget");
+                return T_ERR;
+            }
+            e->target_colors = true;
+            return obj; // What check_index makes a RenderTarget of
+        }
+        diag_error(e->at, depths ? "a DepthTextureArray has 'size' and 'count', not '" STR_FMT "'"
+                                 : "a TextureArray has 'layers', its layers as targets to draw into, 'depth', 'size' and 'count', "
+                                   "not '" STR_FMT "'", STR_ARG(e->member));
+        return T_ERR;
+    }
     if (obj.kind == TY_CUBEMAP) {
         if (gpu_code(c)) {
             diag_error(e->at, "a %s reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into",
@@ -10867,6 +11027,25 @@ static type check_index(checker *c, expr *e)
             return T_ERR;
         }
         return (type){TY_TEXTURE, NULL};
+    }
+    if (obj.kind == TY_TEXTURE_ARRAY && e->object->kind == E_MEMBER && e->object->target_colors) {
+        // array.layers[2]: that layer, as a RenderTarget. One past its layers is no destination, which is found out as
+        // it's drawn into: those draws are passed by
+        const type index = check_expr(c, e->lhs);
+        if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
+            diag_error(e->lhs->at, "an array's layers are counted from 0, with an int, not %s", type_name(index));
+            return T_ERR;
+        }
+        if (e->lhs->kind == E_INT && (e->lhs->int_value < 0 || e->lhs->int_value >= 256)) {
+            diag_error(e->lhs->at, "an array's layers are counted from 0, and it has 256 at the most");
+            return T_ERR;
+        }
+        if (e->object->object->bind == BIND_ASSET) {
+            diag_error(e->at, "an asset's TextureArray is the pack's images, which nothing draws into: its layers are no targets");
+            diag_note("an array that's drawn into is made in a view: 'TextureArray(1024, 1024, 4)'");
+            return T_ERR;
+        }
+        return (type){TY_RENDER_TARGET, NULL};
     }
     if (obj.kind == TY_CUBEMAP && e->object->kind == E_MEMBER && e->object->target_colors) {
         // cube.faces[2]: that face, as a RenderTarget. One of a cube that isn't drawn into (an asset's) is no
@@ -11640,6 +11819,121 @@ static type check_depth_read(const checker *c, expr *e)
     return T_FLOAT_;
 }
 
+// ground.Sample(uv, layer), ground.Sample(uv, layer, Filter.Trilinear, Wrap.Repeat), and SampleGrad(uv, dx, dy, layer,
+// ...): a TextureArray read in a frag or a vert, at a uv of one of its layers, an int of any expression, which may
+// differ from pixel to pixel; one past its layers reads the nearest. The array is an asset by its name or a field of a
+// component or singleton the code takes, where a view put one; in a function they call, a parameter of its own. The
+// filter and the wrap are written there, as a Cubemap's filter is: an array carries no sampling of its own, and one
+// that says none is its declaration's (an asset's [Filter] and [Wrap]), or blended and clamped.
+static type check_array_sample(const checker *c, expr *e)
+{
+    const bool grad = str_eq_c(e->name, "SampleGrad");
+    const decl *shader = gpu_code(c);
+    decl *function = shader ? NULL : gpu_function(c);
+    if (!shader && !function) {
+        diag_error(e->at, "%s reads a TextureArray on the GPU: in a frag or a vert", grad ? "SampleGrad" : "Sample");
+        return T_ERR;
+    }
+    if (grad && shader && !shader->is_frag) {
+        diag_error(e->at, "SampleGrad reads with UV derivatives per destination pixel: use it in a frag or a function a frag calls");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    const bool asset = of->bind == BIND_ASSET;
+    if (function) {
+        if (!function_samples(function, e, of, TY_TEXTURE_ARRAY, true)) return T_ERR;
+    } else if (!asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+                   || of->object->param->function_param)) {
+        diag_error(of->at, "a %s samples a TextureArray that's an asset by its name, or a field of a component or singleton it "
+                           "takes, like 'ground.scans.Sample(uv, layer)'", shader_word(shader));
+        diag_note("a view puts an array there: 'ground.scans = TextureArray(1024, 1024, 4);'");
+        return T_ERR;
+    }
+    if (!function && !asset && of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
+                           "TextureArray in a component or singleton");
+        return T_ERR;
+    }
+    if (!order_named_args(e, grad ? "uv, dx, dy, layer, filter, wrap" : "uv, layer, filter, wrap", grad ? 4 : 2)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
+    }
+    const int at = grad ? 3 : 1; // Where the layer is
+    bool fits = e->args.count >= at + 1 && e->args.count <= at + 3;
+    for (int i = 0; fits && i < at; i++) fits = e->args.items[i]->type.kind == TY_FLOAT2;
+    if (fits) fits = type_assignable(T_INT_, e->args.items[at]->type);
+    if (fits && e->args.count > at + 1) {
+        const type how = e->args.items[at + 1]->type;
+        fits = how.kind == TY_ENUM && how.decl == c->prog->filter;
+    }
+    if (fits && e->args.count > at + 2) {
+        const type how = e->args.items[at + 2]->type;
+        fits = how.kind == TY_ENUM && how.decl == c->prog->wrap;
+    }
+    if (!fits) {
+        diag_error(e->at, grad ? "a TextureArray's SampleGrad takes where to read, a float2, how it changes a pixel across and down, "
+                                 "two float2s, which layer, an int, then how, a Filter and a Wrap: "
+                                 "'ground.SampleGrad(uv, dx, dy, layer)'"
+                               : "a TextureArray's Sample takes where to read, a float2 from (0, 0) to (1, 1), and which layer, an "
+                                 "int, then how, a Filter and a Wrap: 'ground.Sample(uv, layer)' or "
+                                 "'ground.Sample(uv, layer, Filter.Trilinear, Wrap.Repeat)'");
+        if (e->args.count > at && e->args.items[at]->type.kind == TY_FLOAT) {
+            diag_note("the layer is a whole number: 'int(layer)' makes one, to its nearest below");
+        }
+        return T_ERR;
+    }
+    for (int i = at + 1; i < e->args.count; i++) {
+        if (!e->args.items[i]->enum_member) {
+            diag_error(e->args.items[i]->at, "the %s is written here, a member of its enum: the GPU is told how a texture is read "
+                                             "before any pixel runs", i == at + 1 ? "filter" : "wrap");
+            return T_ERR;
+        }
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return (type){TY_COLOR, NULL};
+}
+
+// depths.Sample(uv, layer) and depths.Compare(uv, layer, value): a DepthTextureArray read in a frag or a vert, as a
+// DepthTexture is, at one of its layers.
+static type check_depth_array_read(const checker *c, expr *e)
+{
+    const bool compare = str_eq_c(e->name, "Compare");
+    const decl *shader = gpu_code(c);
+    decl *function = shader ? NULL : gpu_function(c);
+    if (!shader && !function) {
+        diag_error(e->at, "%s reads an array's depth on the GPU: in a frag or a vert", compare ? "Compare" : "Sample");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    if (function) {
+        if (!function_samples(function, e, of, TY_DEPTH_TEXTURE_ARRAY, false)) return T_ERR;
+    } else if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+               || of->object->param->function_param || of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a %s reads a DepthTextureArray that's a field of a component or singleton it takes, like "
+                           "'lamp.cascades.%s'", shader_word(shader), compare ? "Compare(uv, layer, value)" : "Sample(uv, layer)");
+        diag_note("a view puts an array's depth there: 'lamp.cascades = lamp.maps.depth;'");
+        return T_ERR;
+    }
+    if (!order_named_args(e, compare ? "uv, layer, value" : "uv, layer", 0)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+    }
+    const int wanted = compare ? 3 : 2;
+    if (e->args.count != wanted || e->args.items[0]->type.kind != TY_FLOAT2 || !type_assignable(T_INT_, e->args.items[1]->type)
+        || (compare && !type_assignable(T_FLOAT_, e->args.items[2]->type))) {
+        diag_error(e->at, compare ? "Compare takes where to read, a float2, which layer, an int, and the depth to compare what's "
+                                    "stored there with, a number from 0 to 1: 'cascades.Compare(uv, layer, depth)'"
+                                  : "Sample takes where to read, a float2 from (0, 0) to (1, 1), and which layer, an int: "
+                                    "'cascades.Sample(uv, layer)'");
+        if (!compare && e->args.count == 3) diag_note("a depth is read at its nearest pixel: it takes no Filter");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return T_FLOAT_;
+}
+
 // sky.Sample(direction) and sky.Sample(direction, Filter.Trilinear): a
 // Cubemap read in a frag or a vert, by the direction from its middle, of any
 // length. The cube is an asset by its name, or a field of a component or a
@@ -12294,7 +12588,7 @@ static type check_expr_any_raw(checker *c, expr *e)
     }
     e->type = t;
     // Text and lists, including a struct's owned fields, go in the scratch area.
-    if (t.kind == TY_TEXTURE && e->field && declared_raw(e) && builds(c->prog)) vec_push(c->raw_uses, e);
+    if (raw_kind(t) && e->field && declared_raw(e) && builds(c->prog)) vec_push(c->raw_uses, e);
     if (holds_heap(t) && (t.kind != TY_STRING || e->kind != E_STRING)) c->prog->uses_text = true;
     if (!whole_ok) note_device_value(c, e, t);
     return t;
@@ -12485,6 +12779,12 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         }
         // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
         const expr *of_target = part->kind == E_INDEX ? part->object : part;
+        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_TEXTURE_ARRAY
+            && (of_target->target_colors || part->type.kind == TY_DEPTH_TEXTURE_ARRAY || part->type.kind == TY_INT
+                || part->type.kind == TY_INT2)) {
+            diag_error(target->at, "an array's layers, its depth, its size and its count are its own: they can't be assigned");
+            return false;
+        }
         if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP && of_target->target_colors) {
             diag_error(target->at, "a cube's faces are its own images, which what's drawn into them changes: they can't be assigned");
             diag_note("draw into one, 'cube.faces[0].Mesh(...)'");
@@ -15279,7 +15579,7 @@ static type use_asset(checker *c, expr *e, decl *k)
                   "constant can", STR_ARG(k->return_type_name), STR_ARG(k->qualified));
         return T_ERR;
     }
-    if (k->sample_raw && k->return_type.kind == TY_TEXTURE && builds(c->prog)) vec_push(c->raw_uses, e);
+    if (k->sample_raw && raw_kind(k->return_type) && builds(c->prog)) vec_push(c->raw_uses, e);
     type t = k->return_type;
     if (t.kind == TY_MESH) return asset_reference_of(c, t, e->at, true);
     if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_MESH)
@@ -15340,6 +15640,14 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     }
     else if (inner.kind == TY_MESH) *kind = ASSET_MESH;
     else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH) *kind = ASSET_SKINNED;
+    else if (inner.kind == TY_TEXTURE_ARRAY) {
+        if (*many) {
+            diag_error(at, "a TextureArray is many files already, which its glob matches: a list or a map of arrays isn't there");
+            diag_note("declare each array as an asset of its own: 'asset TextureArray ground = \"art/ground/*.png\";'");
+            return false;
+        }
+        *kind = ASSET_TEXTURE_ARRAY;
+    }
     else if (inner.kind == TY_CUBEMAP) {
         if (*many) {
             diag_error(at, "a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet");
@@ -15385,15 +15693,17 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
 // shaders are planned from them.
 static void check_raw_attribute(decl *d, const attribute *attr)
 {
-    const char *usage = "it goes before an asset that's one Texture or one Grid2<Color>, like '[Raw] asset Texture masks = "
-                        "\"art/masks.png\";', or before a field that's a Texture or a Grid2<Color>";
+    const char *usage = "it goes before an asset that's one Texture, a TextureArray, a Cubemap or one Grid2<Color>, like '[Raw] "
+                        "asset Texture masks = \"art/masks.png\";', or before a field that's a Texture, a TextureArray, a "
+                        "Cubemap, a Grid2<Color> or a Grid3<Color>";
     if (d->kind != DECL_ASSET) {
         diag_error(attr->at, "Raw says a texture's pixels are numbers, and '" STR_FMT "' isn't a texture", STR_ARG(d->name));
         diag_note("%s", usage);
         return;
     }
     if (d->return_type.kind == TY_ERROR) return; // Its type said why
-    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID) {
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE_ARRAY
+        && d->asset_kind != ASSET_CUBEMAP) {
         diag_error(attr->at, "Raw says a texture's pixels are numbers, and '" STR_FMT "' is %s", STR_ARG(d->name),
                    type_name(d->return_type));
         diag_note("%s", usage);
@@ -15430,7 +15740,7 @@ static void check_lossless_attribute(decl *d, const attribute *attr)
         return;
     }
     if (d->return_type.kind == TY_ERROR) return; // Its type said why
-    if (d->asset_kind != ASSET_TEXTURE) {
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_TEXTURE_ARRAY) {
         diag_error(attr->at, "Lossless keeps a Texture asset's pixels exact, and '" STR_FMT "' is %s, which is never compressed",
                    STR_ARG(d->name), type_name(d->return_type));
         diag_note("%s", usage);
@@ -15470,7 +15780,7 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
                   "blended, Filter.Bilinear");
         return;
     }
-    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID) {
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE_ARRAY) {
         diag_error(attr->at, "%s says how a texture is sampled, and '" STR_FMT "' is %s", name, STR_ARG(d->name),
                    type_name(d->return_type));
         diag_note("an asset that's drawn with is a Texture or a Grid2<Color>");
@@ -15712,7 +16022,7 @@ static void check_asset_decl(checker *c, decl *k)
     // How its files are read: a Mesh with bones, as a skinned model is
     // a ClipData's, as a Clip's are, which codegen decodes
     const asset_kind read = typed && fills && kind == ASSET_MESH && mesh_wants_skin(asset_mesh_vertex(k->return_type))
-                          ? ASSET_SKINNED : kind == ASSET_CLIP_DATA ? ASSET_CLIP : kind;
+                          ? ASSET_SKINNED : kind == ASSET_CLIP_DATA ? ASSET_CLIP : kind == ASSET_TEXTURE_ARRAY ? ASSET_TEXTURE : kind;
     attribute *retarget = NULL;
     for (int a = 0; a < k->attributes.count; a++) {
         attribute *attr = &k->attributes.items[a];
@@ -15761,12 +16071,14 @@ static void check_asset_decl(checker *c, decl *k)
         }
     }
     const bool catalog = typed && kind == ASSET_ANIMATIONS && !many;
-    const bool paths = catalog && k->value && k->value->kind == E_LIST;
+    const bool layered = typed && kind == ASSET_TEXTURE_ARRAY; // A glob's images, or a list of paths, as its layers
+    const bool paths = (catalog || layered) && k->value && k->value->kind == E_LIST;
     // `asset Texture hero = Outlined(heroSource, Color.red);`: a value build code makes, not a file's path, which is a
     // constant: as for a constant, one that calls something (build_check.inc)
     const bool built = k->value && !paths && build_calls(k->value) && !is_constant(c, k->value);
     const int path_count = !k->value || built ? 0 : paths ? k->value->args.count : 1;
-    if (!path_count && paths) diag_error(k->value->at, "an AnimationCatalog file list can't be empty: name at least one file");
+    if (!path_count && paths) diag_error(k->value->at, "an %s file list can't be empty: name at least one file",
+                                         layered ? "TextureArray" : "AnimationCatalog");
     bool valid = path_count > 0;
     for (int i = 0; i < path_count; i++) {
         expr *value = paths ? k->value->args.items[i] : k->value;
@@ -15785,7 +16097,39 @@ static void check_asset_decl(checker *c, decl *k)
     compile_progress("Importing asset", str_to_cstr(k->qualified), 0, 0);
     const double import_began = build_report_current() ? build_report_clock_ms() : 0.0;
     if (typed && fills && valid) {
-        if (catalog) {
+        if (layered) { // Each path a file or a glob's, in the order they're written, each glob's in its paths' order
+            asset_value *combined = NEW(asset_value);
+            combined->kind = ASSET_TEXTURE_ARRAY;
+            combined->many = true;
+            combined->paths_only = c->prog->asset_metadata_only;
+            VEC(asset_match) matches = {0};
+            for (int i = 0; i < k->asset_paths.count; i++) {
+                const expr *path = k->asset_paths.items[i];
+                asset_value *v = c->prog->asset_metadata_only
+                    ? asset_resolve_paths(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder)
+                    : asset_resolve(k->unit->src->path, path->text, read, true, false, path->at, c->prog->game_folder);
+                if (!v) { valid = false; continue; }
+                for (int n = 0; n < v->count; n++) vec_push(matches, v->items[n]);
+            }
+            combined->items = matches.items;
+            combined->count = matches.count;
+            if (valid && matches.count > 256) {
+                diag_error(k->value->at, "a TextureArray has 256 layers at the most, and '" STR_FMT "' names %d images",
+                           STR_ARG(k->name), matches.count);
+                diag_note("256 is the most every GPU Tide draws with takes");
+                valid = false;
+            }
+            for (int n = 1; valid && !c->prog->asset_metadata_only && n < matches.count; n++) {
+                const asset_match *first = &matches.items[0], *at = &matches.items[n];
+                if (at->image.width == first->image.width && at->image.height == first->image.height) continue;
+                diag_error(k->value->at, "a TextureArray's images are one size, and '%s' is %ux%u where '%s' is %ux%u",
+                           at->key, (unsigned)at->image.width, (unsigned)at->image.height, first->key,
+                           (unsigned)first->image.width, (unsigned)first->image.height);
+                diag_note("make each the same size in the files: an array's layers are images of one size");
+                valid = false;
+            }
+            if (valid) k->asset = combined;
+        } else if (catalog) {
             asset_value *combined = NEW(asset_value);
             combined->kind = read;
             combined->paths_only = c->prog->asset_metadata_only;
@@ -15876,7 +16220,7 @@ static void check_default(checker *c, const field *f)
         return;
     }
     const expr *saved_raw = c->raw_value;
-    c->raw_value = f->type.kind == TY_TEXTURE && field_is_raw(f) ? value : NULL;
+    c->raw_value = raw_kind(f->type) && field_is_raw(f) ? value : NULL;
     type t = check_constant_expr(c, value, true, f->type);
     if (c->raw_value == value) t = check_raw_field_value(value, t);
     c->raw_value = saved_raw;
@@ -15987,13 +16331,14 @@ static void check_dont_predict_attribute(const decl *d, const field *f, const at
 static void check_field_raw(const field *f, const attribute *a)
 {
     if (f->type.kind == TY_ERROR) return;
-    const bool colors = f->type.kind == TY_TEXTURE || (type_is_texture_grid(f->type) && f->type.decl->fields.items[0].type.kind == TY_COLOR);
+    const bool grid = type_is_texture_grid(f->type) || type_is_array_grid(f->type);
+    const bool colors = raw_kind(f->type) || (grid && f->type.decl->fields.items[0].type.kind == TY_COLOR);
     if (!colors) {
         diag_error(a->at, "[Raw] says a texture's pixels are numbers with no alpha worked into them, and '" STR_FMT "' is %s",
                    STR_ARG(f->name), type_name(f->type));
-        diag_note(f->type.kind == TY_GRID && type_is_texture_grid(f->type)
-                      ? "a Grid2<float> has no alpha: its numbers are kept as they are already"
-                      : "it goes on a field that's a Texture or a Grid2<Color>, or before an asset that's a Texture or a Grid2<Color>");
+        diag_note(grid ? "a grid of floats has no alpha: its numbers are kept as they are already"
+                       : "it goes on a field that's a Texture, a TextureArray, a Cubemap, a Grid2<Color> or a Grid3<Color>, or "
+                         "before an asset that's a Texture, a TextureArray, a Cubemap or a Grid2<Color>");
         return;
     }
     for (const attribute *before = f->attributes.items; before < a; before++) {
@@ -16011,6 +16356,11 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
     const char *name = filter ? "Filter" : "Wrap";
     if (f->type.kind == TY_ERROR) return;
     const bool made_here = type_is_texture_grid(f->type) || f->type.kind == TY_RENDER_TARGET;
+    if (f->type.kind == TY_TEXTURE_ARRAY) {
+        diag_error(a->at, "a TextureArray field holds whichever array it's given: '" STR_FMT "' takes no [%s]", STR_ARG(f->name), name);
+        diag_note("say it at the Sample, 'layers.Sample(uv, layer, Filter.Point)', or on an asset's declaration");
+        return;
+    }
     if (f->type.kind == TY_CUBEMAP) {
         diag_error(a->at, "a Cubemap's filter is said where it's sampled, and it has no edge to wrap past: '" STR_FMT
                    "' takes no [%s]", STR_ARG(f->name), name);
@@ -17731,6 +18081,11 @@ static void check_shader_decl(const checker *c, decl *d)
                 // A vert's is an element of the list its Instanced draw is given, or the values its draw gives
                 // after its name. A frag's is either, or what the draw's vert writes for it. The draw says which
                 p->function_param = false; // Supplied by the draw: its instances, its values, or its vert
+            } else if (value.kind == TY_TEXTURE_ARRAY || value.kind == TY_DEPTH_TEXTURE_ARRAY) {
+                diag_error(at, "a %s reads a %s that's %sa field of a component or singleton it takes, not a parameter of its own",
+                           word, type_name(value), value.kind == TY_TEXTURE_ARRAY ? "an asset by its name, or " : "");
+                diag_note("keep it in local state, 'local singleton Ground { TextureArray scans; }', which a view sets, and "
+                          "read it there: 'ground.scans.Sample(uv, layer)'");
             } else if (value.kind == TY_CUBEMAP) {
                 diag_error(at, "a %s reads a Cubemap that's an asset by its name, or a field of a component or singleton it "
                                "takes, not a parameter of its own", word);
@@ -21902,7 +22257,8 @@ static void check_gpu_only_calls(const checker *c)
                          site->to->gpu_only_at.line);
             continue;
         }
-        if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP) {
+        if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP && reads != TY_TEXTURE_ARRAY
+            && reads != TY_DEPTH_TEXTURE_ARRAY) {
             diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which shader code and local workers can call",
                        STR_ARG(site->to->name));
             diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "

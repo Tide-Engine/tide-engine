@@ -115,6 +115,18 @@ static inline bool tide_texture_blocks_decode_level(const tide_texture_blocks bl
     return true;
 }
 
+// A chain of BC1 blocks (`bytes` of them, every level) as BC3's, into `out` (twice the bytes): each block's color as it
+// is, after an alpha block whole everywhere. The same pixels for BC1's four-color blocks, which the compiler's are
+// for opaque images, and for its three-color ones that use none of the third index's transparency.
+static inline void tide_texture_blocks_bc1_to_bc3(const uint8_t *bc1, const uint32_t bytes, uint8_t *out)
+{
+    static const uint8_t whole[8] = {255, 255, 0, 0, 0, 0, 0, 0};
+    for (uint32_t i = 0; i + 8u <= bytes; i += 8u) {
+        memcpy(out + 2u * i, whole, 8);
+        memcpy(out + 2u * i + 8u, bc1 + i, 8);
+    }
+}
+
 // The first (largest) level, for CPU readers and backends without mip upload.
 static inline bool tide_texture_blocks_decode(const tide_texture_blocks blocks, const int32_t width,
                                                const int32_t height, uint8_t *rgba)

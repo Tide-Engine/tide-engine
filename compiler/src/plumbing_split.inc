@@ -704,7 +704,7 @@ static void split_emit(const char *t, const size_t n, const split_item_list *ite
                 size_t head = it->brace;
                 while (head > it->start && (t[head - 1] == ' ' || t[head - 1] == '\t' || t[head - 1] == '\n')) head--;
                 split_put_external(other, t, it->start, head, it->name);
-                split_put(other, ";");
+                split_put(other, "\n;"); // A trailing // comment in the signature must end first.
             } else {
                 split_putn(own, t + it->start, it->end - it->start);
                 split_put_conditionals(other, t, it->start, it->brace);
@@ -712,9 +712,14 @@ static void split_emit(const char *t, const size_t n, const split_item_list *ite
         } else {
             const split_place place = split_place_of(e, it->is_static);
             if (place == SPLIT_IN_BOTH) {
+                // Dependency propagation is conservative: a shared initializer can move after it has
+                // already retained a constant here. Keep those harmless copies warning-clean.
+                split_put(code, "__attribute__((unused)) ");
+                split_put(plumbing, "__attribute__((unused)) ");
                 split_putn(code, t + it->start, it->end - it->start);
                 split_putn(plumbing, t + it->start, it->end - it->start);
             } else if (place == SPLIT_IN_CODE) {
+                if (e->shared) split_put(code, "__attribute__((unused)) ");
                 if (e->by_plumbing && it->is_static) split_put_external(code, t, it->start, it->end, it->name);
                 else split_putn(code, t + it->start, it->end - it->start);
                 if (e->by_plumbing && !e->declared) {
@@ -724,6 +729,7 @@ static void split_emit(const char *t, const size_t n, const split_item_list *ite
                     split_put_conditionals(plumbing, t, it->start, it->init);
                 }
             } else {
+                if (e->shared) split_put(plumbing, "__attribute__((unused)) ");
                 if (e->by_code && it->is_static) split_put_external(plumbing, t, it->start, it->end, it->name);
                 else split_putn(plumbing, t + it->start, it->end - it->start);
                 if (e->by_code && !e->declared) {
@@ -741,12 +747,19 @@ static void split_emit(const char *t, const size_t n, const split_item_list *ite
 
 // Splits `c` into `code` and `plumbing`, with the variables starting at the `code_count` offsets `code_at` the
 // code's. False, writing neither, where it can't.
-static bool split_plumbing(const sb *c, const size_t *code_at, const int code_count, sb *code, sb *plumbing)
+static bool split_plumbing(const sb *c, const size_t *code_at, const int code_count, sb *code, sb *plumbing, const int partition)
 {
     const char *t = c->data ? c->data : "";
     split_item_list items = {0};
     split_why = NULL;
     if (!split_items(t, c->len, &items)) return false;
+    if (partition >= 0) {
+        for (int i = 0; i < items.count; i++) {
+            split_item *it = &items.items[i];
+            if (it->kind == SPLIT_FUNCTION)
+                it->code = ((split_hash(t + it->name, it->name_len) >> partition) & 1) == 0;
+        }
+    }
     split_names names = {0};
     for (int i = 0; i < items.count; i++) {
         const split_item *it = &items.items[i];
@@ -767,6 +780,9 @@ static bool split_plumbing(const sb *c, const size_t *code_at, const int code_co
             e->variable = true;
             e->is_static = e->is_static || it->is_static;
             for (int k = 0; k < code_count; k++) e->code = e->code || code_at[k] == it->start;
+            if (partition >= 0 && !shared)
+                e->code = split_word_is(t + it->name, it->name_len, "tide_game_api")
+                       || ((split_hash(t + it->name, it->name_len) >> partition) & 1) == 0;
         }
     }
     // What each file names: a function's body is its file's, and a variable's initializer and a macro's body are
@@ -797,6 +813,13 @@ static bool split_plumbing(const sb *c, const size_t *code_at, const int code_co
     // The plumbing's static names the code's file names, which become external (split_emit)
     for (size_t k = 0; k < names.cap; k++) {
         split_name *e = &names.slots[k];
+        if (partition >= 0) {
+            if (!e->name || !e->is_static || e->field || (e->code ? !e->by_plumbing : !e->by_code)) continue;
+            if (e->variable && split_place_of(e, true) == SPLIT_IN_BOTH) continue;
+            e->renamed = true;
+            names.renames = true;
+            continue;
+        }
         if (!e->name || e->code || !e->is_static || !e->by_code || e->field) continue;
         if (e->variable) {
             // A small static const both files have stays each one's own

@@ -93,8 +93,16 @@ TIDE_TEST(compute_runs_and_gpu_lists_are_recorded_in_frame_order)
     TIDE_CHECK(k->group[0] == 32 && k->group[1] == 1 && k->group[2] == 1);
     TIDE_CHECK(cull->over == m->blades.id && k->storage_count == 2 && cull->storage);
     TIDE_CHECK(draw.storage[cull->storage - 1u] == m->blades.id && draw.storage[cull->storage] == m->shown.id);
-    TIDE_CHECK(k->storage_writes == 2u && k->add_count == 1 && k->adds[0].list == 1 && k->adds[0].scratch == 2
-               && k->adds[0].stride == 6 && tide_shader_compute_storage(k) == 4);
+    TIDE_CHECK(k->storage_writes == 2u && k->add_count == 1 && k->adds[0].list == 1 && k->adds[0].stride == 6
+               && tide_shader_compute_storage(k) == 3); // Its lists' two pools and its run's record
+    // Its table, after its values: two words a list and one for its Add, zeros till the renderer writes them
+    TIDE_CHECK(k->storage_ints == 0 && tide_shader_table_words(k) == 5
+               && k->storage_table + 4u * tide_shader_table_words(k) <= tide_shader_uniform_size(k));
+    for (uint32_t w = 0; w < tide_shader_table_words(k); w++) {
+        uint32_t word;
+        memcpy(&word, draw.uniforms + cull->uniforms + k->storage_table + 4u * w, sizeof word);
+        TIDE_CHECK(word == 0);
+    }
     TIDE_CHECK(uniform_float(cull, 0) == 2.0f && uniform_float(cull, 1) == 2.0f && uniform_int(cull, 0) == 1);
 
     // Count: over a size, twice, its list written with atomics
@@ -104,6 +112,9 @@ TIDE_TEST(compute_runs_and_gpu_lists_are_recorded_in_frame_order)
     TIDE_CHECK(grid->over == 0 && grid->size[0] == 5 && grid->size[1] == 6 && grid->size[2] == 1);
     TIDE_CHECK(line->size[0] == 7 && line->size[1] == 1 && line->size[2] == 1);
     TIDE_CHECK(grid->shader->storage_count == 1 && grid->shader->storage_writes == 1u && grid->shader->add_count == 0);
+    TIDE_CHECK(grid->shader->storage_ints == 1u); // A GPUList<int>: in the pool of ints, atomic in it
+    TIDE_CHECK(tide_shader_pool_written(grid->shader, TIDE_STORAGE_INTS)
+               && !tide_shader_pool_written(grid->shader, TIDE_STORAGE_WORDS));
     TIDE_CHECK(draw.storage[grid->storage - 1u] == m->counts.id);
 
     // The indirect draw: its instances are the shown list's, as many as it has on the GPU

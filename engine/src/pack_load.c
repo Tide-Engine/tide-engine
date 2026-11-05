@@ -72,6 +72,18 @@ typedef struct packed_cube {
     const uint8_t *faces[TIDE_CUBE_FACES];
 } packed_cube;
 
+// A texture array as a declaration names it: its layers' pixels, where the region has them.
+typedef struct packed_array {
+    uint64_t named;
+    uint64_t version; // What's in its layers
+    int32_t width, height;
+    uint32_t layers;
+    const uint8_t **pixels;      // Its own allocation: a pointer for each layer, NULL for one kept as blocks alone
+    tide_texture_blocks *blocks; // ...and each layer's blocks, none for one kept as RGBA alone
+} packed_array;
+
+static tide_texture_blocks blocks_at(const packed_texture *t);
+
 // Only canonical blobs that passed full skinned-record validation are here.
 // Ordinary packed byte lists do not establish this provenance.
 typedef struct packed_skinned {
@@ -102,6 +114,8 @@ static struct {
     uint32_t texture_count, texture_places;
     packed_cube *cubes; // Its cubes, of which a game has a few: looked through
     uint32_t cube_count;
+    packed_array *arrays; // ...and its texture arrays
+    uint32_t array_count;
     packed_skinned *skinned;
     uint32_t skinned_count, skinned_places;
     skinned_span *skinned_spans;
@@ -731,6 +745,52 @@ static void note_cubes(void)
     }
 }
 
+// Notes the texture arrays the entries name: each one's layers, where they're whole and of one size.
+static void note_arrays(void)
+{
+    uint32_t most = 0;
+    for (uint32_t i = 0; i < pack.entry_count; i++) most += pack.entries[i].kind == TIDE_PACK_TEXTURE_ARRAY;
+    if (!most) return;
+    pack.arrays = tide_alloc_zeroed(most, sizeof *pack.arrays);
+    for (uint32_t i = 0; i < pack.entry_count; i++) {
+        const tide_pack_entry *e = &pack.entries[i];
+        if (e->kind != TIDE_PACK_TEXTURE_ARRAY) continue;
+        const uint64_t count = count_at(pack.region, pack.size, e->offset, sizeof(tide_handle));
+        if (count == 0 || count > TIDE_TEXTURE_ARRAY_LAYERS) continue;
+        packed_array array = {.named = texture_name(e->name, ALONE, NULL, 0), .layers = (uint32_t)count};
+        array.pixels = tide_alloc_zeroed(count, sizeof *array.pixels);
+        array.blocks = tide_alloc_zeroed(count, sizeof *array.blocks);
+        tide_sha256 s;
+        tide_sha256_init(&s);
+        bool whole = true;
+        for (uint32_t layer = 0; layer < array.layers && whole; layer++) {
+            tide_handle handle;
+            memcpy(&handle, pack.region + e->offset + sizeof(tide_block) + (size_t)layer * sizeof handle, sizeof handle);
+            packed_texture t;
+            const uint64_t at = place_of(handle, pack.size);
+            whole = at != NOWHERE && texture_at(pack.region, pack.size, at, &t)
+                 && (layer == 0 || (t.width == array.width && t.height == array.height));
+            if (whole) array.blocks[layer] = blocks_at(&t);
+            whole = whole && (!t.blocks_only || array.blocks[layer].pixels); // Blocks alone are its image: whole ones
+            if (!whole) break;
+            array.width = t.width;
+            array.height = t.height;
+            array.pixels[layer] = t.blocks_only ? NULL : pack.region + at + sizeof(tide_block) + 2u * sizeof(int32_t);
+            tide_sha256_add(&s, &t.version, sizeof t.version);
+        }
+        if (!whole) {
+            free(array.pixels);
+            free(array.blocks);
+            continue;
+        }
+        uint8_t out[32];
+        tide_sha256_end(&s, out);
+        memcpy(&array.version, out, sizeof array.version);
+        if (!array.version) array.version = 1u;
+        pack.arrays[pack.array_count++] = array;
+    }
+}
+
 bool tide_pack_load(const uint8_t *bytes, const size_t size)
 {
     tide_pack_header h;
@@ -764,6 +824,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     check_skinned();
     index_skinned_spans();
     note_cubes(); // Once nothing more is laid out: the region is where it stays
+    note_arrays();
     pack.epoch++;
     __atomic_add_fetch(&generation, 1u, __ATOMIC_RELEASE);
     tide_pack_region_size = pack.size;
@@ -779,6 +840,13 @@ void tide_pack_unload(void)
     free(pack.entries);
     free(pack.textures);
     free(pack.cubes);
+    for (uint32_t i = 0; i < pack.array_count; i++) {
+        free(pack.arrays[i].pixels);
+        free(pack.arrays[i].blocks);
+    }
+    free(pack.arrays);
+    pack.arrays = NULL;
+    pack.array_count = 0;
     free(pack.skinned);
     free(pack.skinned_spans);
     pack.skinned = NULL;
@@ -1175,11 +1243,9 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
     return true;
 }
 
-tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
+// The blocks an image of the pack's keeps (its trailer's), or none.
+static tide_texture_blocks blocks_at(const packed_texture *t)
 {
-    if (!named || !pack.texture_places) return (tide_texture_blocks){0};
-    const packed_texture *t = texture_place(named);
-    if (t->named != named || t->clip) return (tide_texture_blocks){0};
     const uint64_t rgba_bytes = t->blocks_only ? 0u : (uint64_t)(uint32_t)t->width * (uint32_t)t->height * 4u;
     const uint64_t trailer_at = (uint64_t)t->offset + sizeof(tide_block) + 8u + rgba_bytes;
     tide_block block;
@@ -1195,10 +1261,47 @@ tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
     return (tide_texture_blocks){pack.region + (size_t)trailer_at + 16u, metadata[1], levels, bytes};
 }
 
+tide_texture_blocks tide_pack_texture_blocks_find(const uint64_t named)
+{
+    if (!named || !pack.texture_places) return (tide_texture_blocks){0};
+    const packed_texture *t = texture_place(named);
+    if (t->named != named || t->clip) return (tide_texture_blocks){0};
+    return blocks_at(t);
+}
+
+const tide_texture_blocks *tide_pack_texture_array_blocks(const uint64_t named)
+{
+    for (uint32_t i = 0; named && i < pack.array_count; i++) {
+        if (pack.arrays[i].named == named) return pack.arrays[i].blocks;
+    }
+    return NULL;
+}
+
 tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e)
 {
     if (!e || e->kind != TIDE_PACK_CUBEMAP) return (tide_cubemap_ref){0};
     return (tide_cubemap_ref){.named = texture_name(e->name, ALONE, NULL, 0)};
+}
+
+tide_texture_array_ref tide_pack_texture_array_of(const tide_pack_entry *e)
+{
+    if (!e || e->kind != TIDE_PACK_TEXTURE_ARRAY) return (tide_texture_array_ref){0};
+    return (tide_texture_array_ref){.named = texture_name(e->name, ALONE, NULL, 0)};
+}
+
+bool tide_pack_texture_array_find(const uint64_t named, int32_t *width, int32_t *height, uint32_t *layers, uint64_t *version,
+                                  const uint8_t *const **pixels)
+{
+    for (uint32_t i = 0; named && i < pack.array_count; i++) {
+        if (pack.arrays[i].named != named) continue;
+        *width = pack.arrays[i].width;
+        *height = pack.arrays[i].height;
+        *layers = pack.arrays[i].layers;
+        *version = pack.arrays[i].version;
+        *pixels = pack.arrays[i].pixels;
+        return true;
+    }
+    return false;
 }
 
 bool tide_pack_cubemap_find(const uint64_t named, int32_t *size, uint64_t *version, const uint8_t *const **faces)

@@ -218,6 +218,7 @@ namespace Tide
                 render = Ensure<TideRender>(gameObject);
                 render.Runner = this;
                 render.enabled = true;
+                library.RenderFormats(embed, TideRender.BlockFormats); // The pack's compressed images go as they are
             }
             else if (drawTide)
             {

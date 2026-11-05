@@ -1,0 +1,4 @@
+// expect: a TextureArray's images are one size, and '../e2e/cubes/mixed/m_nz.png' is 2x2 where '../e2e/cubes/mixed/m_nx.png' is 4x4
+// An array's images are one size
+asset TextureArray mixed = "../e2e/cubes/mixed/m_n?.png";
+scene Main { }

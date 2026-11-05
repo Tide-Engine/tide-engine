@@ -1,0 +1,100 @@
+{
+  "date": "2026-11-05",
+  "engine_base": "289a3e42a plus partition changes",
+  "compiler": "Clang/lld 23.1.2, optimized Windows MSVC ABI",
+  "protocol": "Three alternating whole/four-part ThinLTO pairs of the repository particles versus benchmark. One million particles, one thread, 20 warm-up and 300 measured ticks. Ordinary desktop load, no quiet-machine gate. Compare medians of process tick medians; this is a runtime sanity check, not a general speed guarantee.",
+  "whole_executable_sha256": "3dd413656f0b1722be45897cef7a7244c2805ab7872cab869c3c0549fe34384d",
+  "split_executable_sha256": "f8a2eb00f285e204beb53600e0616a8723ed3d4c5430db0430c710b55417a3fd",
+  "samples": [
+    {
+      "mode": "whole",
+      "trial": 1,
+      "arguments": [
+        "--ticks",
+        "300",
+        "--warmup",
+        "20",
+        "--threads-list",
+        "1",
+        "--count",
+        "1000000"
+      ],
+      "stdout": "versus_particles: particles fall and bounce off the floor and the walls\n  count 1000000; kept 0; 300 ticks timed after 20; optimized native build\n\n  ms a tick       1 thread            \n  Tide                1.093           \n  C                   0.757 1.44x     \n\n  medians; beside C, how many times as long Tide takes\n  every way ended the same: 0x927c09795885dac2\n"
+    },
+    {
+      "mode": "four-thin",
+      "trial": 1,
+      "arguments": [
+        "--ticks",
+        "300",
+        "--warmup",
+        "20",
+        "--threads-list",
+        "1",
+        "--count",
+        "1000000"
+      ],
+      "stdout": "versus_particles: particles fall and bounce off the floor and the walls\n  count 1000000; kept 0; 300 ticks timed after 20; optimized native build\n\n  ms a tick       1 thread            \n  Tide                1.101           \n  C                   0.724 1.52x     \n\n  medians; beside C, how many times as long Tide takes\n  every way ended the same: 0x927c09795885dac2\n"
+    },
+    {
+      "mode": "whole",
+      "trial": 2,
+      "arguments": [
+        "--ticks",
+        "300",
+        "--warmup",
+        "20",
+        "--threads-list",
+        "1",
+        "--count",
+        "1000000"
+      ],
+      "stdout": "versus_particles: particles fall and bounce off the floor and the walls\n  count 1000000; kept 0; 300 ticks timed after 20; optimized native build\n\n  ms a tick       1 thread            \n  Tide                1.090           \n  C                   0.718 1.52x     \n\n  medians; beside C, how many times as long Tide takes\n  every way ended the same: 0x927c09795885dac2\n"
+    },
+    {
+      "mode": "four-thin",
+      "trial": 2,
+      "arguments": [
+        "--ticks",
+        "300",
+        "--warmup",
+        "20",
+        "--threads-list",
+        "1",
+        "--count",
+        "1000000"
+      ],
+      "stdout": "versus_particles: particles fall and bounce off the floor and the walls\n  count 1000000; kept 0; 300 ticks timed after 20; optimized native build\n\n  ms a tick       1 thread            \n  Tide                1.039           \n  C                   0.861 1.21x     \n\n  medians; beside C, how many times as long Tide takes\n  every way ended the same: 0x927c09795885dac2\n"
+    },
+    {
+      "mode": "whole",
+      "trial": 3,
+      "arguments": [
+        "--ticks",
+        "300",
+        "--warmup",
+        "20",
+        "--threads-list",
+        "1",
+        "--count",
+        "1000000"
+      ],
+      "stdout": "versus_particles: particles fall and bounce off the floor and the walls\n  count 1000000; kept 0; 300 ticks timed after 20; optimized native build\n\n  ms a tick       1 thread            \n  Tide                1.153           \n  C                   0.817 1.41x     \n\n  medians; beside C, how many times as long Tide takes\n  every way ended the same: 0x927c09795885dac2\n"
+    },
+    {
+      "mode": "four-thin",
+      "trial": 3,
+      "arguments": [
+        "--ticks",
+        "300",
+        "--warmup",
+        "20",
+        "--threads-list",
+        "1",
+        "--count",
+        "1000000"
+      ],
+      "stdout": "versus_particles: particles fall and bounce off the floor and the walls\n  count 1000000; kept 0; 300 ticks timed after 20; optimized native build\n\n  ms a tick       1 thread            \n  Tide                1.306           \n  C                   0.736 1.78x     \n\n  medians; beside C, how many times as long Tide takes\n  every way ended the same: 0x927c09795885dac2\n"
+    }
+  ]
+}

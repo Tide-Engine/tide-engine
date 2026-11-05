@@ -197,6 +197,9 @@ All of it ran on the main thread after the window opened.
   reads back with the shell's background, a bar and text; the game begins in the
   frame the pack is in, once, with the pack kept, loaded off the main thread.
   A negative control that skips drawing the loader fails it.
+- 2026-11-05: after the pack, the loader stays up while the game's pipelines
+  are prewarmed (`Compiling shaders n / total`), and also shows for games with
+  no pack; see notes/rendering.md, Vulkan pipelines on the pool's threads.
 - Not built: an icon on the loader, a game's own loader, async loading of a pack
   that changes during a run. The SHA-256 that was most of a big pack's load is
   gone from it: the build writes the digest (pack format 4, the owner's pick,

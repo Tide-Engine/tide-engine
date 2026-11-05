@@ -1,5 +1,26 @@
 # Code the GPU runs: frags and verts
 
+## GPU lists in pools (2026-11-05)
+
+A shader's GPU lists are ranges of two pools, `tide_words` (binding 33, `SHADER_STORAGE_BINDING`) and `tide_ints`
+(34: `GPUList<int>`s, `array<atomic<i32>>` in a kernel that uses atomics on any of them), each slot's first word and
+capacity two words of the uniforms' ints from `shader.storage_at` (`put_table_word`); a kernel's run record is at 35.
+(The pools' branch had them at 25..27; merged after Sixteen textures, below, they follow its 16 textures' bindings,
+and after One image a texture they still do: `put_textures` ends at sampler 15's binding, 32.) Per slot,
+`tide_base<s>` reads the table, `tide_word<s>(k)` is `pool[tide_base<s>() + k]`, the count is min(header, table
+capacity) and the capacity min(header, table), so a write's guard still reads storage (FXC's X3694, Kernels on Dawn's
+Direct3D 11, below, keeps holding: every golden's HLSL compiles with fxc). An atomic's function is named by its slot
+(`tide_atomic<s>_<op>`) and names `&tide_ints[tide_at]` through a `let`, as the translators take it. An indirect
+draw's instance index is held to its capacity. Adds: four lists a scan (`tide_scan`, `tide_scan1`...), each scratch in
+its list's pool at the table's word for it. Limits: 64 lists a shader (`SHADER_STORAGE_MOST`), where it was 7 storage
+buffers. Goldens `kernels_add`, `kernels_helpers`, `kernels_shared`, `kernels_shared_races`, `gpu_meshes` changed in
+their pools and tables alone; `kernels_many` is new (20 lists, 6 Adds). Contracts: notes/compute.md, GPU lists in pools.
+
+## Texture arrays (2026-11-05)
+
+`READ_ARRAY`, `READ_DEPTH_ARRAY`, `READ_COMPARE_ARRAY`; `base_read`, `arrayed_read`, `put_layer`; the translators'
+`arrayed` image types. Details: notes/textures.md, Texture arrays: built.
+
 ## One image a texture, its samplers apart (2026-11-05)
 
 `shader.textures` are images now, one for each texture the code reads however it's read; `shader.ways` are each way

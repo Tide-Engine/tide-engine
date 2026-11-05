@@ -116,10 +116,25 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // binding nothing names. TIDE_GPU_READ_SAMPLES reads a multisampled target's
 // depth as its samples are (depth_now): `texture_depth_multisampled_2d`, each
 // sample loaded; only the renderer's own kernels read one.
+// TIDE_GPU_READ_ARRAY reads an array's layers (tide_gpu.array) by a uv and a
+// layer, as colors: `texture_2d_array<f32>`, through a sampler of a color's;
+// TIDE_GPU_READ_DEPTH_ARRAY its depth (array_depth), `texture_depth_2d_array`,
+// through a depth's sampler or a compared one's. Only a texture reads so: a
+// sampler's read (sampler_reads) is COLOR, DEPTH or COMPARE for them.
 typedef enum tide_gpu_read {
     TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA,
-    TIDE_GPU_READ_SAMPLES
+    TIDE_GPU_READ_SAMPLES, TIDE_GPU_READ_ARRAY, TIDE_GPU_READ_DEPTH_ARRAY
 } tide_gpu_read;
+
+// The most layers an array has (tide_gpu.array): WebGPU's default maxTextureArrayLayers, Vulkan's least.
+enum { TIDE_GPU_MAX_LAYERS = 256 };
+
+// How a sampler reads a texture that's read as `read`, where a pipeline's samplers are its textures' own.
+static inline uint8_t tide_gpu_sampler_read(const uint8_t read)
+{
+    return read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : read == TIDE_GPU_READ_ARRAY ? (uint8_t)TIDE_GPU_READ_COLOR
+         : read == TIDE_GPU_READ_DEPTH_ARRAY ? (uint8_t)TIDE_GPU_READ_DEPTH : read;
+}
 
 // A cube's six faces, in the order it has them: the one each axis points at,
 // +x, -x, +y, -y, +z, -z.
@@ -220,9 +235,12 @@ typedef enum tide_gpu_filter {
 enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 16 };
 
 // The most storage buffers a pipeline binds. Storage buffer i is at binding
-// TIDE_GPU_STORAGE_BINDING + i of group 0, after the textures' bindings:
-// within WebGPU's default 8 storage buffers a stage.
-enum { TIDE_GPU_MAX_STORAGE = 7, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX_TEXTURES };
+// TIDE_GPU_STORAGE_BINDING + i of group 0, after the textures' bindings. 4 is
+// Vulkan's least maxPerStageDescriptorStorageBuffers and within WebGPU's default
+// 8 a stage: every device binds them. The renderer's pipelines bind at most 3 (a
+// game's GPU lists are ranges of two pools, tide/draw.h's TIDE_STORAGE_WORDS and
+// TIDE_STORAGE_INTS, and a kernel's run).
+enum { TIDE_GPU_MAX_STORAGE = 4, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX_TEXTURES };
 
 
 // The most a pipeline's uniform block takes, in bytes.
@@ -322,17 +340,11 @@ static inline uint32_t tide_gpu_samplers(const tide_gpu_pipeline_desc *desc, uin
 {
     if (desc->sampler_count) {
         const uint32_t count = desc->sampler_count < TIDE_GPU_MAX_TEXTURES ? desc->sampler_count : TIDE_GPU_MAX_TEXTURES;
-        for (uint32_t j = 0; j < count; j++) {
-            const uint8_t read = desc->sampler_reads[j];
-            reads[j] = read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : read;
-        }
+        for (uint32_t j = 0; j < count; j++) reads[j] = tide_gpu_sampler_read(desc->sampler_reads[j]);
         return count;
     }
     const uint32_t count = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
-    for (uint32_t i = 0; i < count; i++) {
-        const uint8_t read = desc->reads[i];
-        reads[i] = read == TIDE_GPU_READ_SAMPLES ? (uint8_t)TIDE_GPU_READ_DATA : read;
-    }
+    for (uint32_t i = 0; i < count; i++) reads[i] = tide_gpu_sampler_read(desc->reads[i]);
     return count;
 }
 
@@ -377,6 +389,11 @@ typedef struct tide_gpu {
     // A buffer of `size` bytes, holding `data` if it's given. Sizes, and what's
     // written, are multiples of 4 bytes.
     tide_gpu_id (*buffer)(tide_gpu_buffer_kind kind, size_t size, const void *data);
+    // Optional: the most bytes a storage buffer that a pipeline binds whole can
+    // be on this device (Vulkan's maxStorageBufferRange, WebGPU's
+    // maxStorageBufferBindingSize, and either's most buffer), a multiple of 16
+    // and at least 128 MiB, every device's least. NULL for 128 MiB.
+    uint64_t (*storage_most)(void);
     void (*buffer_write)(tide_gpu_id buffer, size_t offset, const void *data, size_t size);
     void (*buffer_free)(tide_gpu_id buffer);
 
@@ -413,6 +430,32 @@ typedef struct tide_gpu {
     // across the edge. It's a texture to `sample` (whose wrap isn't read),
     // `mipmaps` and `texture_free`, and to nothing else.
     tide_gpu_id (*cube)(tide_gpu_color color, int size, const void *const *faces);
+    // An array: `layers` images of `width` by `height` pixels (1 to TIDE_GPU_MAX_LAYERS), read by a uv and a layer
+    // (TIDE_GPU_READ_ARRAY). With `layer_pixels` (each layer's, 4 bytes a pixel, rows from the top), it's an
+    // array of TIDE_GPU_RGBA8 images, and nothing draws into it. With NULL, it's drawn into a layer at a time
+    // (array_layer), its images as `format` says (tide_gpu_target_format: its colors' kind, one color at the most,
+    // or TIDE_GPU_TARGET_DEPTH for depth alone, whose color isn't read), starting black, with a depth array beside
+    // them (array_depth) that starts at the far limit. Its samples are 1. It's a texture to `image`, `mipmaps`
+    // (every layer's) and `texture_free` (with its depth array, after its layers' targets).
+    tide_gpu_id (*array)(tide_gpu_target_format format, int width, int height, uint32_t layers, const void *const *layer_pixels);
+    // Optional: an array of blocks, `layers` images of `width` by `height`, each a whole chain of `blocks`' format and
+    // levels, one after another from `blocks.pixels`, `blocks.bytes` each: compressed (BC1, BC3, where the device has
+    // them) or RGBA8 mip chains. Its smaller images are its own. 0 where the device can't, which the renderer then
+    // gives an array of pixels.
+    tide_gpu_id (*array_blocks)(int width, int height, uint32_t layers, tide_texture_blocks blocks);
+    // An array of `layers` images of `format` (TIDE_GPU_RGBA8 or TIDE_GPU_R16F), zeros until written, read as
+    // TIDE_GPU_READ_ARRAY, a texture to `mipmaps` (each layer's, made of what's written) and `texture_free`...
+    tide_gpu_id (*array_of)(tide_gpu_format format, int width, int height, uint32_t layers);
+    // ...whose layer `layer` gets the `width` by `height` of `pixels` from (x, y): the layer's whole image, rows the
+    // array's width apart, read where the part is.
+    void (*array_write)(tide_gpu_id array, uint32_t layer, const void *pixels, int x, int y, int width, int height);
+    // The depth array of one that's drawn into, read as TIDE_GPU_READ_DEPTH_ARRAY: 0 for one of pixels.
+    tide_gpu_id (*array_depth)(tide_gpu_id array);
+    // A target whose color image is layer `layer` of an array that's drawn into and whose depth and stencil are
+    // that layer of its depth array: drawn into as any target is, its kind the array's format. Neither is a
+    // texture by itself (target_texture and target_depth are 0: the array is what's sampled), and target_read
+    // reads the layer. target_free frees it, and leaves the array.
+    tide_gpu_id (*array_layer)(tide_gpu_id array, uint32_t layer);
     // A target whose one color image is the face `face` (0 to 5: +x, -x, +y,
     // -y, +z, -z) of a cube that was made with no pixels, with depth and
     // stencil of its own. What a camera
@@ -428,7 +471,7 @@ typedef struct tide_gpu {
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
     // Optional, for a backend that can make pipelines in the background
-    // (WebGPU's): while
+    // (WebGPU's, and Vulkan's on the job pool's threads): while
     // `background` is on, `pipeline` begins one and returns at once, and
     // `pipeline_ready` says once it's made. Till then nothing is drawn with
     // it: the renderer leaves its steps out (tide_platform_background_pipelines).
@@ -629,12 +672,16 @@ void tide_gpu_record_begin(void);
 const uint8_t *tide_gpu_record_end(uint32_t *size);
 void tide_gpu_record_reset(void);
 void tide_gpu_record_close(void);
+// The block formats the other program samples, 1 << format each (tide_embed_render_formats); RGBA8 chains always.
+void tide_gpu_record_block_formats(uint32_t formats);
 // What the other program read for a buffer_read's token (tide_embed_render_read): `size` bytes, or NULL for a read
 // that failed, which buffer_read_done then gives. False for a token it isn't waiting for, or another size.
 bool tide_gpu_record_read(uint32_t token, const void *data, uint32_t size);
 // A test's: how many pipelines of games' shaders the renderer has (platform.c),
 // so a test sees whether a draw made one.
 uint32_t tide_platform_shader_pipelines(void);
+// ...and how many of them are still being made in the background.
+uint32_t tide_platform_shader_pipelines_waiting(void);
 #ifdef __wasm__
 extern const tide_gpu tide_gpu_webgpu; // web/gpu_web.c
 #endif

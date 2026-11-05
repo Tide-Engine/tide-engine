@@ -1,0 +1,5 @@
+// expect: a [Raw] TextureArray field takes a [Raw] TextureArray asset, field or grid, not a color texture
+asset TextureArray sky = "../e2e/cubes/sky/sky_??.png";
+local singleton Art { [Raw] TextureArray numbers; }
+scene Main { }
+view V(mut Art art) { art.numbers = sky; }

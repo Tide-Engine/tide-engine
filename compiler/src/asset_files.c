@@ -606,6 +606,7 @@ static const char *kind_name(const asset_kind kind)
          : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
          : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : kind == ASSET_ANIMATIONS ? "AnimationCatalog"
          : kind == ASSET_ANIMATION ? "Animation" : kind == ASSET_HUMANOID ? "HumanoidRig" : kind == ASSET_FONT ? "Font"
+         : kind == ASSET_TEXTURE_ARRAY ? "TextureArray"
          : "Grid2<Color>";
 }
 

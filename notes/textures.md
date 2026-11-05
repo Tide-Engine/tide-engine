@@ -1,6 +1,119 @@
 # Textures and how they are sampled
 
-## Texture arrays: a proposal (2026-11-05, awaiting the owner)
+## Texture arrays: built (2026-11-05)
+
+What the owner agreed (below) is built; the rules are in `docs/spec.md` (Texture arrays), the users' page is
+`docs/game/shaders.md` (Texture arrays) and `docs/game/assets.md`. Everything here is Claude's, Provisional.
+
+- **Runtime values** (`tide/draw.h`): `tide_texture_array_ref` (40 bytes: a target, a pack name, its layers) is Tide's
+  `TextureArray`; `DepthTextureArray` is a `tide_depth_ref` of the array's target. A drawn array is a managed target's
+  state with `layers` (1 to `TIDE_TEXTURE_ARRAY_LAYERS`, 256); its id has `TIDE_RENDER_ARRAY` (bit 52), and a layer as a
+  destination `TIDE_RENDER_LAYER` (bits 53 to 61, 1 + the layer): `tide_render_target_arrayed`, `_layer`, `_array_of`,
+  as a cube's faces. `tide_texture_array_make` (and the `_sized`/`_scaled` wrappers generated C calls), `_layer`,
+  `_depth`, `_resize`, `_dispose`, `_recreate` (a web reload: the layers come in the value), `_size`, `_count`,
+  `tide_depth_array_count`. `tide_render_target_recreate` keeps a layer's bits. Resizing or disposing a layer alone says
+  so and does nothing; a layer's color and depth name no image, as a face's don't.
+- **The draw list:** `TIDE_PIXELS_TARGET_ARRAY` (by the array's id) and `TIDE_PIXELS_PACK_ARRAY` (the pack's pointer to
+  each layer's pixels, as a pack cube's), with `tide_draw_texture.layers`; an array's depth is `TIDE_PIXELS_TARGET_DEPTH`
+  of the array's id. `tide_draw_array_source`. A blit refuses an array a layer of which it draws into; `append` carries
+  both.
+- **The pack:** `TIDE_PACK_TEXTURE_ARRAY` (19), a list block of texture handles, uncompressed (`pack_item` with no
+  compression, `[Raw]` as the declaration says). The loader notes each array whose layers are whole and of one size
+  (`note_arrays`, `tide_pack_texture_array_find`, `tide_pack_texture_array_of`); its version is a hash of its layers'.
+- **tidec:** `TY_TEXTURE_ARRAY`, `TY_DEPTH_TEXTURE_ARRAY`; `ASSET_TEXTURE_ARRAY`, read as Textures (each path a file or a
+  glob, a list of paths as an AnimationCatalog's, no layers merged), with the size and count checked;
+  `check_array_target`, `check_array_sample`, `check_depth_array_read`, `layers[i]` through `colors_indexed` as a cube's
+  `faces`. Shader reads `READ_ARRAY`, `READ_DEPTH_ARRAY` and the compiler-only `READ_COMPARE_ARRAY` (a depth array's
+  texture read, a compared sampler); a way's sampler reads its `base_read`, so arrays share samplers with textures read
+  alike. WGSL: `texture_2d_array<f32>`, `texture_depth_2d_array`, the layer after the uv as
+  `clamp(i32(layer), 0, i32(textureNumLayers(t)) - 1)` (`put_layer`). The SPIR-V and HLSL translators take both
+  (`arrayed` types; vec3/float3 coordinates; `tidehl_layers`; fixtures `compiler/tests/wgsl/texture_arrays*.wgsl`,
+  through spirv-val and fxc). A reload remakes a drawn array from its value (`gen_resource_value`).
+- **gpu.h:** `array(format, width, height, layers, layer_pixels)`, `array_depth`, `array_layer`; reads
+  `TIDE_GPU_READ_ARRAY` (6) and `_DEPTH_ARRAY` (7), whose samplers read COLOR and DEPTH/COMPARE
+  (`tide_gpu_sampler_read`). Vulkan: `make_layers` (one image of `layers`, a `2D_ARRAY` view, a base view, a 2D view a
+  layer to draw into, cleared), color arrays with room for their smaller images from the start where the format blits,
+  a depth array beside (or as) it; a layer's target is a face-like target that attaches that layer of both. WebGPU: the
+  same in `tide.js` (`gpu_array`, `layered` views, which cubes now share, `depthLayers`), its layouts `'2d-array'`.
+  The renderer: `gpu_array`, `array_for` (layers' targets cleared black and far as made), texture reads, sources made
+  before they're read, a layer's pass counted for the array's smaller images, fallbacks (`blank`, a white array of one
+  pixel; `far_array`, a depth array at the far limit). Memory is held as the array's whole.
+- **Unity** (embed ABI 15, 16 for a grid's arrays): notes/unity.md, Texture arrays.
+- **Tests:** `tidec_e2e_texture_arrays` (an asset's glob and list, a list's repeated file one image, counts, layers as
+  destinations, the run's textures and samplers, a reload in other memory, Resize and Dispose, natively and under
+  Node); `compiler/tests/shaders/texture_arrays` (golden, through spirv-val and fxc); `tidec_error_texture_array_*`
+  (7); pass 25 of `platform/tests/shaders.tide` (`run_array_checks`: an asset's six layers, a painted array's four,
+  layers past the last and before the first, a layer that differs across a square, a layer read between its smaller
+  images, a never-made array and depth, a depth array's three layers read and compared), on Vulkan (with the
+  validation layer) and WebGPU, again after device loss on the web; `embed`'s packet reader takes the new ops; LSP
+  (`lsp_texture_arrays`).
+- **Gaps:** see the follow-up below.
+
+### The gaps closed (2026-11-05, the owner: "work on the gaps")
+
+- **Compressed layers.** The pack writes each layer as a `Texture` asset's (`compress = !lossless`), so a layer of 128
+  or more, a power of two a side, is BC1 or BC3 with its chain made in the build; `[Lossless]` is allowed on
+  `ASSET_TEXTURE_ARRAY` and keeps them all RGBA8. `note_arrays` takes layers that are blocks alone (their pixels NULL)
+  and `tide_pack_texture_array_blocks(named)` gives each layer's `tide_texture_blocks` (`blocks_at`, shared with
+  `tide_pack_texture_blocks_find`); the draw list hands them on as `tide_draw_texture.layer_blocks`. gpu.h's
+  `array_blocks(width, height, layers, blocks)` takes one format a call, each layer a whole chain `bytes` apart. The
+  renderer's `pack_array_texture` makes the GPU one: all BC1 stays BC1, a mix is BC3 throughout
+  (`tide_texture_blocks_bc1_to_bc3`, `tide/texture_blocks.h`, puts an opaque alpha block before each BC1 one: exact),
+  without BC every level decoded to an RGBA8 chain (the same mips a `Texture`'s fallback has, not regenerated), and an
+  array of RGBA8 layers as before. Vulkan `vk_array_blocks`, WebGPU `gpu_array_blocks`; the recorder decodes to pixels
+  (Unity's arrays aren't compressed).
+- **`size` and `count` on the GPU.** A shader texture's size words are three for an array (`shader_size_words`): its
+  width, height and layers, from `tide_texture_array_size`/`_count` (`gen_array_size`), read by `ex_texture_size`
+  as uniform words, as a texture's size already is.
+- **`Grid3` to `TextureArray`.** `type_is_array_grid` (`Grid3<Color>` or `Grid3<float>`) is assignable to
+  `TY_TEXTURE_ARRAY`; `gen_as` makes `tide_texture_array_of_grid(grid, &shape)`, a value naming the grid
+  (`reserved == TIDE_TEXTURE_ARRAY_GRID`, `named` the handle, `layers` the cell kind and the chunk shifts;
+  `tide_texture_array_grid` reads it back). The draw list's `TIDE_PIXELS_GRID_ARRAY` (`tide_draw_grid_array_texture`,
+  mesh.c) is `width` by `height * layers` pixels, the layers one under another, through `grid_cells` with a box of
+  three dimensions and `across` 1, so its changed areas follow the chunks as a grid texture's do; `layers` set. gpu.h
+  `array_of(format, width, height, layers)` (RGBA8 or R16F, zeros, room for smaller images) and
+  `array_write(array, layer, pixels, x, y, width, height)`; the renderer's `grid_array_texture` writes it whole when
+  made, else each changed area split by the layers it crosses. Vulkan `vk_array_of`/`vk_array_write`
+  (`write_pixels` with a layer), WebGPU `gpu_array_of`/`gpu_array_write` (`writeTexture` at `[x, y, layer]`, its
+  smaller images made again when next read), the recorder `ARRAY_OF`/`ARRAY_WRITE` (embed ABI 16, notes/unity.md).
+- **Tests:** `tidec_e2e_texture_arrays` (BC1 and BC3 layers with no pixels, a `[Lossless]` array's pixels and no
+  blocks, the blocks handed to the list, a `Grid3<float>`'s array: count, size, no destination, the list's halves
+  stacked by layer); `compiler/tests/shaders/texture_arrays` (`count` and `size` in a frag); pass 25 of
+  `platform/tests/shaders.tide`: a compressed array's opaque and alpha layers against the same files as `Texture`s,
+  its smaller images, a frag's `size`/`count`, a `Grid3<Color>`'s three layers and a `Grid3<float>`'s fourth, a cell
+  changed then changed back between frames (a partial write; a broken one leaves the old color, checked by breaking
+  it), on Vulkan and WebGPU, and `tide_platform_shaders_rgba_fallback` (WebGPU with `texture-compression=off`);
+  `embed_render_array_written_in_parts`.
+- **Then the rest** (the owner: "why are we stopping with things still open? the testing i understand and that can be
+  postponed"):
+  - **`[Raw]` arrays and cubes.** The checker's raw role is `raw_kind` (Texture, TextureArray, Cubemap) wherever it
+    was Texture's: `[Raw]` on `ASSET_TEXTURE_ARRAY`/`ASSET_CUBEMAP` assets and on TextureArray, Cubemap and
+    `Grid3<Color>` fields (`check_field_raw`); raw uses, field values and escapes as for textures (`check_raw_uses`,
+    `check_raw_field_value`, `refuse_raw_grid` naming the type); array and cube `Sample` and array `size`/`count`
+    mark the source read. `declared_raw` covers both field types, so their reads skip `tide_straight` (the cube's in
+    `ex_cube_sample` too). A raw array asset's layers pack raw (`pack_item` with `sample_raw`, compressed as raw
+    Textures are); a raw cube's faces too (never compressed). A `[Raw] Grid3<Color>`'s array is
+    `tide_texture_array_of_grid(grid, &shape, true)`: cell kind 3 in the ref (`tide_texture_array_grid_raw`), drawn by
+    `tide_draw_grid_array_texture(..., raw)` with `cells_writer.raw` and `KIND_ARRAY_RAW`. Hot-reload layout names
+    `[Raw] TextureArray`/`[Raw] Cubemap`. Tests: e2e (`numbers` asset, a raw Grid3's alpha-0 cell kept, the run has
+    no `tide_straight` on the web, a color array's does); goldens `shaders/texture_arrays`, `shaders/cubemaps`; errors
+    `raw_array_kept`, `raw_grid3_kept`, `raw_array_field_colors`, `raw_on_float_grid3`, `raw_cube_kept` (replacing
+    `cubemap_asset_raw`); pass 25's alpha-0 raw Grid3 pixel on Vulkan and WebGPU.
+  - **Compressed images in Unity**, textures and arrays alike: notes/unity.md, ABI 17.
+  - **Unity's OpenGL Core reading one texture two ways**: notes/unity.md, ABI 17.
+  - **The prototypes' `WEBGPU`**: already gone on tide-prototypes' dev (its foldline test says `PIXELS`); only a stale
+    local checkout had it.
+- **Still open:** none of the Unity side has run in Unity (no Unity here: C# compile checks, fxc for the HLSL, the
+  recorder's packets in `embed`); Linux, macOS and Android are CI's. The layer-before-array reload case above needed
+  nothing: recreating the array reconciles its layer count.
+
+## Texture arrays: the proposal, agreed (2026-11-05)
+
+The owner picked the recommended option of each of the four questions asked (2026-11-05): types of their own
+(`TextureArray`, `DepthTextureArray`); an asset of a glob or a list of paths; one drawn into made by
+`TextureArray(width, height, layers, ...)` with `layers[i]` as targets and `.depth` the depth array; and
+`Sample(uv, layer)` with an int layer, clamped. The rest of the proposal below came with them; its details stay
+Claude's picks, Provisional.
 
 Asked for by the owner ("just cause nothing needs [it] isn't an excuse"), from Mount & Rifle's ground frag (9 material
 scans, two or three shadow cascades and a canopy texture, notes/gaps.md there). The language design is the owner's:

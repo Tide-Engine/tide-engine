@@ -126,9 +126,9 @@ test('WebGPU preserves every read kind in high texture slots and builds matching
             const sandbox = {
                 low, high, string: () => '', stencilTests: ['always'], stencilOps: ['keep'],
                 colorFormats: () => [], samplesOf: () => 1, layouts: new Map(),
-                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 7,
+                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, STORAGE_BINDING: 33, MAX_STORAGE: 4,
                 readsDepth: read => read === 1 || read === 2,
-                ownSamplers: reads => reads.map(read => read === 5 ? 4 : read),
+                ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
                 GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
                 device: {
                     createBindGroupLayout: desc => { entries = desc.entries; return {}; },
@@ -167,9 +167,9 @@ test('WebGPU samplers apart from textures: one texture read two ways, textures r
     const made = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 7,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, STORAGE_BINDING: 33, MAX_STORAGE: 4,
         MAX_TEXTURES: 16, readsDepth: read => read === 1 || read === 2,
-        ownSamplers: reads => reads.map(read => read === 5 ? 4 : read),
+        ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
         device: {
             createBindGroupLayout: desc => { made.push(desc.entries); return {}; },
@@ -217,8 +217,8 @@ test('WebGPU storage buffers get explicit layouts at binding 33 on, read-only ou
     const layoutsMade = [];
     const sandbox = {
         string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
-        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, STORAGE_BINDING: 33, MAX_STORAGE: 7,
-        readsDepth: read => read === 1 || read === 2, ownSamplers: reads => reads.map(read => read === 5 ? 4 : read),
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7, STORAGE_BINDING: 33, MAX_STORAGE: 4,
+        readsDepth: read => read === 1 || read === 2, ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
         GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
         device: {
             createBindGroupLayout: desc => { layoutsMade.push(desc.entries); return {}; },
@@ -238,8 +238,9 @@ test('WebGPU storage buffers get explicit layouts at binding 33 on, read-only ou
         }
         return made;
     })()`, sandbox);
-    assert.deepEqual(Array.from(made, m => m.storage), ['', 'rrr', 'wrwrrrw', '']);
-    assert.deepEqual(Array.from(made, m => m.key), ['0/0', '0/0|rrr', '0/0|wrwrrrw|compute', '0/0||compute']);
+    // Past MAX_STORAGE (4: GPU lists are ranges of two pools) a pipeline binds the first 4
+    assert.deepEqual(Array.from(made, m => m.storage), ['', 'rrr', 'wrwr', '']);
+    assert.deepEqual(Array.from(made, m => m.key), ['0/0', '0/0|rrr', '0/0|wrwr|compute', '0/0||compute']);
     assert.equal(layoutsMade.length, 4);
     const [plain, render, compute, bare] = layoutsMade;
     assert.equal(plain.length, 3, 'a pipeline without storage is laid out as before');
@@ -248,8 +249,7 @@ test('WebGPU storage buffers get explicit layouts at binding 33 on, read-only ou
     assert.deepEqual(Array.from(render).filter(e => e.buffer && e.binding >= 33).map(e => [e.binding, e.buffer.type, e.visibility]),
         [[33, 'read-only-storage', 3], [34, 'read-only-storage', 3], [35, 'read-only-storage', 3]]);
     assert.deepEqual(Array.from(compute).filter(e => e.buffer && e.binding >= 33).map(e => [e.binding, e.buffer.type]),
-        [[33, 'storage'], [34, 'read-only-storage'], [35, 'storage'], [36, 'read-only-storage'],
-            [37, 'read-only-storage'], [38, 'read-only-storage'], [39, 'storage']]);
+        [[33, 'storage'], [34, 'read-only-storage'], [35, 'storage'], [36, 'read-only-storage']]);
     assert.ok(compute.every(e => e.visibility === 4), 'a compute pipeline binds everything to its compute stage');
     assert.equal(bare.length, 3);
     assert.ok(bare.every(e => e.visibility === 4));
@@ -317,4 +317,44 @@ test('page generation leaves debug payloads raw and compresses profitable releas
     } finally {
         await rm(work, { recursive: true, force: true });
     }
+});
+
+test('WebGPU arrays: a layout reads them as 2d-array textures, through a color\'s sampler or a depth\'s', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_pipeline_begin(');
+    const end = source.indexOf('\n        gpu_pipeline_slot:', begin);
+    const layoutBegin = source.indexOf('    function layoutFor(');
+    const layoutEnd = source.indexOf('\n    // A pass', layoutBegin);
+    assert.ok(begin >= 0 && end > begin && layoutBegin >= 0 && layoutEnd > layoutBegin);
+    const method = source.slice(begin, end);
+    const made = [];
+    const sandbox = {
+        string: () => '', stencilTests: ['always'], stencilOps: ['keep'], colorFormats: () => [], samplesOf: () => 1,
+        layouts: new Map(), READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, READ_SAMPLES: 5, READ_ARRAY: 6, READ_DEPTH_ARRAY: 7,
+        STORAGE_BINDING: 33, MAX_STORAGE: 7, MAX_TEXTURES: 16,
+        readsDepth: read => read === 1 || read === 2 || read === 5 || read === 7,
+        ownSamplers: reads => reads.map(read => read === 5 ? 4 : read === 6 ? 0 : read === 7 ? 1 : read),
+        GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
+        device: {
+            createBindGroupLayout: desc => { made.push(desc.entries); return {}; },
+            createPipelineLayout: () => ({}),
+        },
+    };
+    // A color array, then a depth array read as a number (its own sampler) and compared (sampler 2, apart)
+    const result = vm.runInNewContext(`(() => {
+        let building;
+        const backend = { ${method} };
+        ${source.slice(layoutBegin, layoutEnd)}
+        backend.gpu_pipeline_begin(0, 0, 0, 2, ${6 | 7 << 3}, 0, 0, 0, 0, 0, 1, 0, 0);
+        const own = Array.from(building.samplers);
+        backend.gpu_pipeline_samplers(3, ${0 | 1 << 3 | 2 << 6}, 0);
+        layoutFor(building.reads, building.samplers);
+        return own;
+    })()`, sandbox);
+    assert.deepEqual(Array.from(result), [0, 1], 'an array is read through a color\'s sampler, its depth a depth\'s');
+    const [entries] = made;
+    const textures = Array.from(entries.filter(e => e.texture), e => [e.binding, e.texture.sampleType, e.texture.viewDimension]);
+    assert.deepEqual(textures, [[1, 'float', '2d-array'], [3, 'depth', '2d-array']]);
+    assert.deepEqual(Array.from(entries.filter(e => e.sampler), e => [e.binding, e.sampler.type]),
+        [[2, 'filtering'], [4, 'non-filtering'], [6, 'comparison']]);
 });

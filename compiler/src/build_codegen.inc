@@ -51,7 +51,9 @@ static void gen_build_main(gen *g)
     sb_put(o, "\n// ---------------------------------------------------------------------------\n"
               "// Build code's program (tidec's build_code.c): each asset's and constant's code, and what it made\n\n"
               "#include <stdio.h>\n#include <stdlib.h>\n\n");
-    if (prog->names_bold) sb_put(o, "const unsigned char tide_font_bold_ttf[1];\n\n"); // Nothing here draws
+    // Bold is supplied by the platform's optional font object, not engine/src. Build code cannot draw,
+    // but the game's unused drawing routines are still emitted and must link without the platform.
+    if (prog->names_bold) sb_put(o, "const tide_font tide_font_bold = {0};\n\n");
     sb_put(o, "static FILE *tide_build_out;\n\n"
               "static void tide_build_put(const void *data, const uint64_t size)\n{\n"
               "    fwrite(&size, sizeof size, 1, tide_build_out);\n"

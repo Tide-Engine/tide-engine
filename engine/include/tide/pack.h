@@ -83,6 +83,9 @@ enum {
     // elements' kind too (`extra`)
     TIDE_PACK_FONT = 17,
     TIDE_PACK_FONTS = 18, // Map<string, Font> of a glob: as TIDE_PACK_MAP, its values' blocks fonts
+    // TextureArray: a block of handles, as a list's, each a texture's block (tide_pack_texture): its layers' images
+    // in order, all of one size and uncompressed, 1 to TIDE_TEXTURE_ARRAY_LAYERS of them
+    TIDE_PACK_TEXTURE_ARRAY = 19,
 };
 
 // The hidden portable model bytes followed by ordinary typed geometry lists.
@@ -305,6 +308,16 @@ tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e);
 // faces aren't six squares of one size. The pointers and the pixels stay
 // where they are until another pack is loaded, as an image's do.
 bool tide_pack_cubemap_find(uint64_t named, int32_t *size, uint64_t *version, const uint8_t *const **faces);
+// A texture array's entry as the value the game reads: a TextureArray of the pack's, by its declaration's name.
+tide_texture_array_ref tide_pack_texture_array_of(const tide_pack_entry *e);
+// The loaded pack's array that a TextureArray names: a layer's pixels, how many layers, a version that's what's
+// in them, and a pointer to each layer's pixels, 4 bytes each, rows from the top. False when the pack has none
+// under that name, or one whose layers aren't of one size. They stay where they are until another pack is loaded.
+bool tide_pack_texture_array_find(uint64_t named, int32_t *width, int32_t *height, uint32_t *layers, uint64_t *version,
+                                  const uint8_t *const **pixels);
+// ...and each layer's blocks (compressed, or authored mip chains), as long as its pixels stay: a layer kept as blocks
+// alone has NULL pixels above, and one kept as RGBA alone no blocks. NULL for no array under that name.
+const tide_texture_blocks *tide_pack_texture_array_blocks(uint64_t named);
 
 // A clip's entry as the value the game reads: a Clip that names its sound by
 // its declaration, as a Texture names its image (above). Lists and maps of

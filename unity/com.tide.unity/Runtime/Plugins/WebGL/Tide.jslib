@@ -120,6 +120,13 @@ var TideWebLibrary = {
         if (x) x.tide_unity_render_reset();
     },
 
+    // The block formats Unity's GPU samples (tide_embed_render_formats)
+    TideWebRenderFormats__deps: ['$TideWeb'],
+    TideWebRenderFormats: function (formats) {
+        var x = TideWeb.program();
+        if (x) x.tide_unity_render_formats(formats);
+    },
+
     // A read back of the replay's (TideRender): its bytes into Tide's memory, or none for one that failed
     TideWebRenderRead__deps: ['$TideWeb'],
     TideWebRenderRead: function (token, data, size) {

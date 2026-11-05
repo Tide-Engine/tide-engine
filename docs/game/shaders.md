@@ -747,7 +747,8 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 }
 ```
 
-- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a `Texture` or `Grid2<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A `Grid2<float>` needs none: it has no alpha.
+- It goes before an asset that's one `Texture`, a `TextureArray`, a `Cubemap` or one `Grid2<Color>`, and on a `Texture`, `TextureArray`, `Cubemap`, `Grid2<Color>` or `Grid3<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A grid of floats needs none: it has no alpha.
+- Arrays and cubes follow the same rules as `Texture`: a `[Raw] TextureArray` field takes a `[Raw]` array asset, another `[Raw] TextureArray` field or a `[Raw] Grid3<Color>`, and a `[Raw] Cubemap` field a `[Raw]` cube asset or another such field. Their `Sample` gives the numbers as they are.
 - A `[Raw] Texture` field accepts `default`, a singular `[Raw] Texture` asset, another `[Raw] Texture` field, or a `[Raw] Grid2<Color>` field or asset. A grid-backed texture still names the grid's cells, with the [same lifetime rules](./meshes-and-textures.md#a-texture-is-a-value). Assigning an ordinary color texture to a Raw field is an error.
 - A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
 - Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.
@@ -897,6 +898,68 @@ The scene below has both. The sky is the asset, drawn on a ball around the camer
 - **A reflection is `Math.Reflect`:** the way from the eye to the pixel, bounced off the pixel's normal, is the way the mirror reads.
 - **Six passes a frame is what a live reflection costs.** A cube that only holds what doesn't move is drawn once and kept: its images stay from frame to frame, like any target's.
 - **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. There's no choosing the level yet, so a rough surface's blurred reflection isn't there.
+
+## Texture arrays
+
+Images of one size in layers are a `TextureArray`, read by a uv and a layer. An asset's is a glob's files, in their paths' order, or a list of them in its own:
+
+```tide
+asset TextureArray ground = ["art/grass.png", "art/rock.png", "art/sand.png"];
+
+frag Ground(Vertex3 vertex, out Color color, Terrain terrain)
+{
+    int material = int(terrain.splat.Sample(vertex.uv).r * 2.99); // Any int, which can differ from pixel to pixel
+    color = ground.Sample(vertex.uv * 16, material, Filter.Trilinear, Wrap.Repeat);
+}
+```
+
+- The layer is an int. One past the layers reads the nearest one.
+- The filter and the wrap are written at the `Sample`, as a cube's filter is, or on the asset (`[Filter]`, `[Wrap]`). An array that says none is read blended and clamped. `SampleGrad(uv, dx, dy, layer)` takes its derivatives as a texture's does.
+- An array is one of a draw's [16 textures](#what-the-gpu-runs), however many layers it has.
+
+A view makes one to draw into, a layer at a time: `TextureArray(width, height, layers)`, sized as a [render target](./render-targets.md) is, with a `Format` last when a layer holds anything but `Format.Rgba8`. `array.layers[i]` is a `RenderTarget`, and `array.depth` is a `DepthTextureArray`, each layer's depth, which a frag reads as a [target's depth](#a-target-s-depth) with a layer: `Sample(uv, layer)` and `Compare(uv, layer, value)`. Shadow cascades are layers of depth alone:
+
+```tide
+local singleton Lamp { TextureArray maps; DepthTextureArray cascades; }
+
+view Shadows(mut Lamp lamp)
+{
+    if (lamp.maps.count == 0)
+    {
+        lamp.maps = TextureArray(2048, 2048, 3, 1, Format.Depth);
+        lamp.cascades = lamp.maps.depth;
+    }
+    for (int c = 0; c < 3; c++)
+    {
+        var into = lamp.maps.layers[c];
+        into.Clear(Color.white);
+        // ...each cascade's camera and casters
+    }
+}
+
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp, Sun sun)
+{
+    int cascade = Cascade(this.world, sun); // Your own choice of cascade, per pixel
+    float lit = lamp.cascades.Compare(ToLamp(this.world, sun, cascade), cascade, Depth(this.world, sun, cascade));
+    color = Color(lit, lit, lit);
+}
+```
+
+`array.size` and `array.count` say a layer's pixels and how many there are, in a view or a frag. `array.Resize(width, height)` and `array.Dispose()` are the whole array's.
+
+An asset's layers are compressed as a [`Texture` asset's](./assets.md) are, where they're big enough; `[Lossless]` before it keeps them exact.
+
+A `Grid3<Color>` or a `Grid3<float>` is an array wherever one goes, its z its layers, as a `Grid2` of them is a texture: the GPU gets the parts whose cells changed.
+
+```tide
+local singleton Terrain { Grid3<Color> paint = Grid3(256, 256, 4); TextureArray layers; }
+
+view Paint(mut Terrain terrain)
+{
+    terrain.paint[10, 20, 2] = Color.red; // Layer 2, sent as that part alone
+    terrain.layers = terrain.paint;
+}
+```
 
 ## Where the pixel is
 
@@ -1243,6 +1306,7 @@ view Setup(mut Meadow meadow)
 - Kernels write `list[i] = value` (past the capacity it goes nowhere, and the count stays as it was), `list.Add(value)` and, on a `GPUList<int>`, atomics.
 - Local code sends a list's elements with `list.Set(items)`, sets the count with `list.Clear()` and `list.SetCount(n)`, in frame order with the draws and runs around them; `list.Resize(capacity)` makes it empty at another capacity, and `list.Dispose()` lets it go.
 - `list.contentRevision` changes when the list was made again empty: a lost device, a `Resize`, or a hot reload that changed its element. A game that filled it once fills it again then.
+- A frag, vert or kernel can name up to 64 GPU lists, and a kernel can `Add` to as many as it names. Lists live side by side in the GPU's memory; one can never read or change another's elements.
 
 Functions the GPU runs take a GPU list as a parameter, `GPUList<T>`, as they take a `List<T>`: the call names one by its field, or passes on its own parameter. What a kernel can do to a list, a function it calls can do to the one it's given, and the kernel then does it to the list it passed: write elements, `Add` and atomics.
 

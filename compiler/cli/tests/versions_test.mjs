@@ -11,6 +11,7 @@ rmSync(work, { recursive: true, force: true });
 mkdirSync(game, { recursive: true });
 const pin = (version) => writeFileSync(join(game, 'tide.packages'), `tide = ${version}\n`);
 const env = { ...process.env, TIDE_VERSIONS: cache, TIDE_NO_UPDATE_CHECK: '1', TIDE_INTERACTIVE: '' };
+delete env.TIDE_NO_UPDATE_CHECK;
 const run = (input, interactive = true, folder = game, ...args) => {
     const p = spawnSync(driver, [folder, 'run', ...args], {
         cwd: work, env: { ...env, TIDE_INTERACTIVE: interactive ? '1' : '' }, input, encoding: 'utf8', timeout: 30000,
@@ -20,6 +21,7 @@ const run = (input, interactive = true, folder = game, ...args) => {
 };
 pin('1.0.0');
 assert.match(run('').said, /using invoking tide/);
+assert.match(run('').said, /update check: disabled/);
 pin('9.8.7');
 let p = run('', false);
 assert.equal(p.code, 1); assert.match(p.said, /terminal to approve/);
@@ -51,6 +53,7 @@ p = run('y\n'); assert.equal(p.code, 1); assert.match(p.said, /checksum doesn't 
 assert.ok(!readdirSync(cache).includes('9.8.7'));
 release('9.8.6'); p = run('y\n'); assert.equal(p.code, 1); assert.match(p.said, /package is not tide 9.8.7/);
 release(); p = run('y\n', true, game, '--frames', '2', '--capture', 'space and "quote".png');
+assert.match(p.said, /update check: disabled/);
 assert.equal(p.code, 23, p.said); assert.match(p.said, /arg: --frames\narg: 2/);
 assert.ok(p.said.includes('arg: space and "quote".png'));
 assert.equal(readFileSync(join(cache, '9.8.7', 'VERSION'), 'utf8'), '9.8.7\n');
@@ -96,6 +99,7 @@ pin('nightly'); release();
 p = run('n\n'); assert.equal(p.code, 1); assert.ok(!existsSync(join(cache, 'nightly', 'VERSION')));
 p = run('y\n'); assert.equal(p.code, 23, p.said);
 assert.match(p.said, /nightly uses tide 9.8.7/);
+assert.match(p.said, /update check: enabled/);
 release('9.8.8-nightly.1', '9.8.8-nightly.1', true);
 p = run('', false); assert.equal(p.code, 23, p.said);
 assert.equal(readFileSync(join(cache, 'nightly', 'VERSION'), 'utf8').trim(), '9.8.8-nightly.1');

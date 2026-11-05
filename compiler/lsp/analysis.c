@@ -989,7 +989,9 @@ static void walk_value(const expr *e)
             o.decl = e->type_alias ? e->type_alias : e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
+        } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || e->call == CALL_MESH_DECODE
+                   || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP
+                                                 || e->object->type.kind == TY_TEXTURE_ARRAY))) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->call == CALL_GUI
@@ -1773,6 +1775,8 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter. A function a frag or vert calls takes one as a parameter, and samples the texture its call names.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants. A function they call takes one as a parameter, `float Lit(DepthTexture shadow, float3 at)`, and reads the depth its call names, `Lit(lamp.shadow, at)`.";
     case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the cube its call names. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
+    case TY_TEXTURE_ARRAY: return "A local reference to layers of images of one size, which a frag or vert reads by a uv and a layer, `Sample(uv, layer)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the array its call names. The layer is an int of any expression, and one past the layers reads the nearest. An asset's is the files a glob matches, in path order, or a list of paths, in its order: `asset TextureArray ground = \"art/ground/*.png\";`. `TextureArray(width, height, layers)` is one a view draws into, a layer at a time: `array.layers[0]` is a RenderTarget, and `array.depth` each layer's depth. On the CPU, `array.size` is a layer's pixels and `array.count` how many layers it has.";
+    case TY_DEPTH_TEXTURE_ARRAY: return "A local reference to a TextureArray's depth, `array.depth`, each layer's, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv, layer)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, layer, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow's cascades want. A function they call takes one as a parameter, and reads the depths its call names. On the CPU, `size` is a layer's pixels and `count` how many layers it has.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF, FBX or OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. Fields, lists, arrays, maps, parameters and results keep its stable asset ID; geometry stays shared and resolves on access. `Mesh(vertices, indices)` makes one of the game's own lists, a copy nothing changes after, which goes everywhere an asset's does.";
@@ -2221,6 +2225,14 @@ static const method_form session_calls[] = {
     "A grid of that size, in cells, whose cell type comes from where it goes: 0 or nothing leaves an axis open."
 #define GRID_SIZE_FIELD_DOC "The grid's size, 0 on the axes where it's open."
 #define TEXTURE_SIZE_DOC "Base-level width and height in physical pixels, as int2. Reads metadata without copying or uploading pixels. Missing images give (0, 0); render targets use the current frame's display scale and device limit."
+#define TEXTURE_ARRAY_SIZE_DOC "A layer's width and height in physical pixels, as int2: every layer's is the same. Zeros for no array."
+#define TEXTURE_ARRAY_COUNT_DOC "How many layers it has, as int. Zero for no array."
+#define TEXTURE_ARRAY_DEPTH_DOC                                                                                        \
+    "Each layer's depth, as a DepthTextureArray, for a frag to read: kept in a field of a component or singleton "    \
+    "the frag takes, and read there with `Sample(uv, layer)` or `Compare(uv, layer, value)`. An asset's array has none."
+#define TEXTURE_ARRAY_LAYERS_DOC                                                                                       \
+    "The layers of an array made with `TextureArray(width, height, layers)`, each a target to draw into: "            \
+    "`layers[0]` is the first, as a RenderTarget, with its own camera, clip and settings. Only indexed."
 // The built-in struct Random (its methods' docs are in builtins.c).
 #define RANDOM_DOC                                                                                                     \
     "A random number generator's state, 8 bytes that live where the game puts them: a field of a component (a "       \
@@ -2387,6 +2399,37 @@ static const method_form cube_calls[] = {
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
      "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
+};
+
+static const method_form array_calls[] = {
+    {"Sample", "Sample(float2 uv, int layer, Filter filter = the array's, Wrap wrap = the array's) -> Color",
+     "Reads layer `layer` of this array in a frag or vert, at top-left UVs from (0, 0) to (1, 1), as a texture's "
+     "Sample reads it. The layer is an int of any expression, so it can differ from pixel to pixel; one past the "
+     "layers reads the nearest. A filter and a wrap are the whole array's for this read, never a layer's: left out, "
+     "they're what its declaration says (`[Filter]`, `[Wrap]`), or blended and clamped. The array is an asset by its "
+     "name, or a field of a component or singleton the frag or vert takes; in a function they call, a parameter of "
+     "its own, which is the array its call names."},
+    {"SampleGrad", "SampleGrad(float2 uv, float2 dx, float2 dy, int layer, Filter filter = the array's, Wrap wrap = the array's) -> Color",
+     "Reads layer `layer` of this array in a frag or a function it calls, using explicit UV changes per destination "
+     "pixel: `dx` toward the right and `dy` downward, as a texture's SampleGrad does. Verts and CPU code cannot call "
+     "SampleGrad."},
+    {"Resize", "Resize(float width, float height)",
+     "Another size for every layer of an array made with `TextureArray(width, height, layers)`, in logical pixels, "
+     "and empty images. It keeps its layers and its pixels per unit."},
+    {"Dispose", "Dispose()",
+     "Lets an array made with `TextureArray(width, height, layers)` go, its layers and depth with it. Every copy of "
+     "it then names no array."},
+};
+
+static const method_form depth_array_calls[] = {
+    {"Sample", "Sample(float2 uv, int layer) -> float",
+     "Reads layer `layer` of an array's depth in a frag or vert, as a DepthTexture's Sample reads one: how far the "
+     "nearest thing drawn at `uv` is, from 0 at the near plane to 1 at the far limit. One past the layers reads the "
+     "nearest."},
+    {"Compare", "Compare(float2 uv, int layer, float value) -> float",
+     "Compares layer `layer` of an array's depth with `value` in a frag or vert, as a DepthTexture's Compare does: "
+     "how much of what's stored around `uv` isn't nearer than `value`, from 0 to 1. For shadow cascades, the layer "
+     "is the cascade: `cascades.depth.Compare(uv, cascade, value)`."},
 };
 
 static const method_form target_calls[] = {
@@ -2776,6 +2819,8 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_TEXTURE: forms = texture_calls; *count = sizeof texture_calls / sizeof texture_calls[0]; break;
     case TY_DEPTH_TEXTURE: forms = depth_calls; *count = sizeof depth_calls / sizeof depth_calls[0]; break;
     case TY_CUBEMAP: forms = cube_calls; *count = sizeof cube_calls / sizeof cube_calls[0]; break;
+    case TY_TEXTURE_ARRAY: forms = array_calls; *count = sizeof array_calls / sizeof array_calls[0]; break;
+    case TY_DEPTH_TEXTURE_ARRAY: forms = depth_array_calls; *count = sizeof depth_array_calls / sizeof depth_array_calls[0]; break;
     case TY_RENDER_TARGET: forms = target_calls; *count = sizeof target_calls / sizeof target_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
@@ -2825,7 +2870,8 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
-                : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl->asset_ref_geometry || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
+                : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl->asset_ref_geometry || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP
+                  || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2877,6 +2923,8 @@ static void describe_default(const type t, sb *out)
     case TY_TEXTURE: case TY_RENDER_TARGET: sb_put(out, "An invalid image reference"); break;
     case TY_DEPTH_TEXTURE: sb_put(out, "No target's depth: it reads as the far limit, 1"); break;
     case TY_CUBEMAP: sb_put(out, "No cube: it reads as black"); break;
+    case TY_TEXTURE_ARRAY: sb_put(out, "No array: its size and count are zeros"); break;
+    case TY_DEPTH_TEXTURE_ARRAY: sb_put(out, "No array's depth: its size and count are zeros"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
         for (int i = 0; i < t.decl->members.count && !zero; i++) {
@@ -3500,6 +3548,11 @@ static void describe(const occurrence *o, sb *out)
                             "size, this machine's to draw with. A frag reads it by a direction, "
                             "`Sample(direction)`.");
             }
+            if (o->decl->asset_kind == ASSET_TEXTURE_ARRAY) {
+                sb_put(out, " A `TextureArray` is images of one size as its layers: the files its glob matches, in path "
+                            "order, or its list's, in its order. A frag reads it by a uv and a layer, `Sample(uv, layer)`; "
+                            "this machine's to draw with, and the match can't use it.");
+            }
             if (o->decl->asset_kind == ASSET_TEXTURE) {
                 sb_put(out, o->decl->sample_raw
                                 ? " A `Texture` is an image resource local to this machine; the match can't use it."
@@ -3999,6 +4052,12 @@ static void describe(const occurrence *o, sb *out)
         if (o->object_type.kind == TY_GRID && str_eq_c(o->name, "size")) sb_put(out, "\n\n" GRID_SIZE_FIELD_DOC);
         if ((o->object_type.kind == TY_TEXTURE || o->object_type.kind == TY_DEPTH_TEXTURE) && str_eq_c(o->name, "size"))
             sb_put(out, "\n\n" TEXTURE_SIZE_DOC);
+        if (o->object_type.kind == TY_TEXTURE_ARRAY || o->object_type.kind == TY_DEPTH_TEXTURE_ARRAY) {
+            if (str_eq_c(o->name, "size")) sb_put(out, "\n\n" TEXTURE_ARRAY_SIZE_DOC);
+            if (str_eq_c(o->name, "count")) sb_put(out, "\n\n" TEXTURE_ARRAY_COUNT_DOC);
+            if (str_eq_c(o->name, "depth")) sb_put(out, "\n\n" TEXTURE_ARRAY_DEPTH_DOC);
+            if (str_eq_c(o->name, "layers")) sb_put(out, "\n\n" TEXTURE_ARRAY_LAYERS_DOC);
+        }
         break;
     case OCC_ATTRIBUTE: {
         static const struct {
@@ -6983,6 +7042,10 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_GPU_LIST && (str_eq_c(member, "count") || str_eq_c(member, "capacity"))) return (type){TY_INT, NULL};
     if (t.kind == TY_GPU_LIST && str_eq_c(member, "contentRevision")) return (type){TY_LONG, NULL};
     if (t.kind == TY_CUBEMAP && str_eq_c(member, "faces")) return t; // Of which an index is a RenderTarget
+    if (t.kind == TY_TEXTURE_ARRAY && str_eq_c(member, "layers")) return t; // ...and of an array's layers
+    if (t.kind == TY_TEXTURE_ARRAY && str_eq_c(member, "depth")) return (type){TY_DEPTH_TEXTURE_ARRAY, NULL};
+    if ((t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY) && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
+    if ((t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
@@ -7328,6 +7391,35 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                  "`faces[5]`, in the order +x, -x, +y, -y, +z, -z. A face is what a camera at the cube's middle sees "
                  "along that axis with a field of view of 90: +y is up for the four around, and for the one above "
                  "and the one below, -z and +z.", "faces[$1]");
+        }
+        return;
+    }
+    if (t.kind == TY_TEXTURE_ARRAY) { // A frag reads it; a view draws into its layers, resizes it and lets it go
+        static const char *const snippets[] = {"Sample($1, $2)", "SampleGrad($1, $2, $3, $4)", "Resize($1, $2)", "Dispose()"};
+        for (size_t i = samples ? 0 : 2; i < (gpu ? 2 : sizeof array_calls / sizeof array_calls[0]); i++) {
+            if (i == 1 && is_shader(sc->decl) && !sc->decl->is_frag) continue; // SampleGrad: a frag's
+            sb detail = {0};
+            format_method(&array_calls[i], t, &detail);
+            item(c, array_calls[i].name, CK_METHOD, detail.data, array_calls[i].doc, snippets[i]);
+        }
+        if (!gpu) {
+            item(c, "layers", CK_PROPERTY, "RenderTarget, by its number", TEXTURE_ARRAY_LAYERS_DOC, "layers[$1]");
+            item(c, "depth", CK_PROPERTY, "DepthTextureArray", TEXTURE_ARRAY_DEPTH_DOC, NULL);
+            item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
+            item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
+        }
+        return;
+    }
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) { // A frag reads it; the CPU has its size and count
+        for (size_t i = 0; samples && i < sizeof depth_array_calls / sizeof depth_array_calls[0]; i++) {
+            sb detail = {0};
+            format_method(&depth_array_calls[i], t, &detail);
+            item(c, depth_array_calls[i].name, CK_METHOD, detail.data, depth_array_calls[i].doc,
+                 i == 0 ? "Sample($1, $2)" : "Compare($1, $2, $3)");
+        }
+        if (!gpu) {
+            item(c, "size", CK_PROPERTY, "int2", TEXTURE_ARRAY_SIZE_DOC, NULL);
+            item(c, "count", CK_PROPERTY, "int", TEXTURE_ARRAY_COUNT_DOC, NULL);
         }
         return;
     }
@@ -7949,7 +8041,7 @@ static void complete_assets(completion *c, const bool gpu)
         const decl *d = A.prog->decls.items[i];
         if (d->kind != DECL_ASSET) continue;
         if (gpu && (d->asset_many || (d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_BYTES
-                                     && d->asset_kind != ASSET_CUBEMAP))) continue;
+                                     && d->asset_kind != ASSET_CUBEMAP && d->asset_kind != ASSET_TEXTURE_ARRAY))) continue;
         sb detail = {0};
         sb_printf(&detail, "asset " STR_FMT, STR_ARG(d->return_type_name));
         item(c, name_for(d), CK_VARIABLE, detail.data, NULL, NULL);
@@ -8055,7 +8147,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 static const char *const value_types[] = {
     "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "double", "double2", "double3", "double4", "double2x2", "double3x3", "double4x4", "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
-    "Texture", "DepthTexture", "Cubemap", "RenderTarget", "Clip",
+    "Texture", "DepthTexture", "Cubemap", "TextureArray", "DepthTextureArray", "RenderTarget", "Clip",
 };
 
 // Which built-in types to offer: each place takes its own.
@@ -8089,8 +8181,9 @@ static void complete_value_types(completion *c, const unsigned which)
         if (!(which & kind)) continue;
         if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT
             || t.kind == TY_RENDER_TARGET || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_OPTIONAL
-            || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
-        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
+            || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
+        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
+             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         complete_alias(c, d);
     }
@@ -8103,8 +8196,10 @@ static void complete_value_types(completion *c, const unsigned which)
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
         if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
-                                 || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP)) continue; // A depth and a cube are read where they're a field, never a parameter
-        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
+                                 || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_TEXTURE_ARRAY
+                                 || t.kind == TY_DEPTH_TEXTURE_ARRAY)) continue; // A depth, a cube and an array are read where they're a field, never a parameter
+        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
+             || t.kind == TY_TEXTURE_ARRAY || t.kind == TY_DEPTH_TEXTURE_ARRAY)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
@@ -8171,6 +8266,7 @@ static void complete_asset_types(completion *c, const bool collection)
     if (!collection) {
         item(c, "HumanoidRig", CK_STRUCT, "Humanoid calibration profile asset", HUMANOID_ASSET_DOC, NULL);
         item(c, "Cubemap", CK_STRUCT, "Six image faces", builtin_type_doc(TY_CUBEMAP), NULL);
+        item(c, "TextureArray", CK_STRUCT, "Images of one size as layers", builtin_type_doc(TY_TEXTURE_ARRAY), NULL);
         item(c, "Animation", CK_STRUCT, "One animation clip asset",
              "Imports a file's only animation clip, or the exact original clip selected by [Name(\"source name\")].", NULL);
         item(c, "Map", CK_STRUCT, "Map<string, T>: assets keyed by path",
@@ -11781,6 +11877,16 @@ static const struct {
      "reads by a direction, `cube.Sample(direction)`. A face is what a camera at the cube's middle sees along "
      "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or `Format.Rgba16f`, floats that keep "
      "any number. It starts black; copies share it, and `Dispose()` lets it go."},
+    {"TextureArray", {"TextureArray(float width, float height, int layers)",
+                      "TextureArray(float width, float height, int layers, float pixelsPerUnit)",
+                      "TextureArray(float width, float height, int layers, Format format)",
+                      "TextureArray(float width, float height, int layers, float pixelsPerUnit, Format format)"},
+     "A TextureArray that's drawn into: `layers` images of one size, 1 to 256, in logical pixels like a "
+     "RenderTarget's, or `pixelsPerUnit` of them a unit. Each layer is a destination, `array.layers[0]` the first, "
+     "with depth of its own, `array.depth`, and all of them what a frag reads by a uv and a layer, "
+     "`array.Sample(uv, layer)`. Its layers hold `Format.Rgba8`, `Format.Rgba16f`, floats that keep any number, or "
+     "`Format.Depth`, depth alone, as shadow cascades want: `TextureArray(2048, 2048, 3, 1, Format.Depth)`. It "
+     "starts empty; copies share it, and `Dispose()` lets it go."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -12060,6 +12166,16 @@ static int call_param_names(const expr *call, str *names, const int max)
                 if (form) vec_push(list.labels, form->form);
             } else if (!call->object && call->type.kind == TY_CUBEMAP) { // Cubemap(size[, format])
                 vec_push(list.labels, call->args.count > 1 ? "Cubemap(float size, Format format)" : "Cubemap(float size)");
+            } else if (call->object && call->object->type.kind == TY_TEXTURE_ARRAY) { // array.Resize(width, height)
+                const method_form *form = find_form(array_calls, sizeof array_calls / sizeof array_calls[0], call->name);
+                if (form) vec_push(list.labels, form->form);
+            } else if (!call->object && call->type.kind == TY_TEXTURE_ARRAY) { // TextureArray(width, height, layers[, ppu][, format])
+                const bool formatted = call->arg_want.count > 0 && call->arg_want.items[call->arg_want.count - 1].kind == TY_ENUM;
+                const bool scaled = call->args.count - (formatted ? 1 : 0) > 3;
+                vec_push(list.labels, scaled ? formatted ? "TextureArray(float width, float height, int layers, float pixelsPerUnit, Format format)"
+                                                         : "TextureArray(float width, float height, int layers, float pixelsPerUnit)"
+                                             : formatted ? "TextureArray(float width, float height, int layers, Format format)"
+                                                         : "TextureArray(float width, float height, int layers)");
             } else if (call->object && !call->target_samples) { // RenderTarget.Window(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
             } else {
@@ -13157,8 +13273,10 @@ static void collect_assets(void)
             site.file = f;
             site.string = tok;
             site.path = A.files[f].toks[tok].text;
-            site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP || d->asset_kind == ASSET_ANIMATIONS;
-            if (d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP) {
+            site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP || d->asset_kind == ASSET_ANIMATIONS
+                     || d->asset_kind == ASSET_TEXTURE_ARRAY;
+            if (d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP
+                || d->asset_kind == ASSET_TEXTURE_ARRAY) {
                 site.formats = images;
                 site.format_count = (int)(sizeof images / sizeof images[0]);
             } else if (d->asset_kind == ASSET_CLIP) {

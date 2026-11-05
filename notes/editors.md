@@ -8,6 +8,16 @@ dependencies keep ordinary parameter editing, and scene bodies offer the prepare
 Load/Unload in completion/hover. The shared grammar scopes prepare as a function name. `lsp_scene_preparation` and
 the grammar fixture cover these paths; public usage/limits are in docs/game/scenes.md and spec Scenes.
 
+## Texture arrays (2026-11-05)
+
+`analysis.c` knows `TextureArray` and `DepthTextureArray` as it knows `Cubemap` and `DepthTexture`: type docs and
+zero-value hovers, method tables (`Sample`, `SampleGrad`, `Resize`, `Dispose`; a depth array's `Sample` and
+`Compare`) for hover, signature help and Filter/Wrap completion, members by where the code runs (`Sample`/`SampleGrad`
+on the GPU, `layers`, `depth`, `size`, `count`, `Resize`, `Dispose` in views), both type names offered for local
+fields only, `TextureArray` as an asset type with image and glob path completion, the four constructor forms' signature
+help, and its assets by name in a frag. `lsp_texture_arrays` (`compiler/lsp/tests/lsp_test.c`) covers them;
+`docs/tools/editors.md` names it among the asset types paths complete for.
+
 ## Meshes over GPU lists (2026-11-05)
 
 The mesh draws' hover (`MESH_SHADER_DOC`) says vertices can be a `GPUList` and indices a `GPUList<int>`; the

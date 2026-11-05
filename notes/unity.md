@@ -1,5 +1,14 @@
 # Unity as a front end
 
+## GPU lists in pools: Unity's replay (2026-11-05)
+
+No packet changed and the embed ABI stays 12 (`notes/compute.md`, GPU lists in pools): the recorder records the same
+calls, with fewer storage buffers a pipeline (the two pools and a kernel's run record). `TideRender.cs`'s `MaxStorage`
+is 4 (gpu.h's `TIDE_GPU_MAX_STORAGE`), and `Supported` asks for 4 storage buffers in compute and fragment stages and 7
+in vertex stages, where it asked for 7 and 10. The recorder has no `storage_most`, so its pools grow to 128 MiB each.
+Gap: a kernel writing a pool after a kept draw read it renames the whole pool (`Written`), where it renamed one list's
+buffer; the Sample's `ComputeReplayTests` weren't run (their commands are hand-made and unchanged).
+
 ## Occlusion culling in Unity (2026-11-05)
 
 `Draw.Occlusion` (drawing.md, Occlusion culling from a depth pyramid) culls only on the GPU, and the recorder never
@@ -34,6 +43,48 @@ texture's filter and wrap as the draw asks. The Sample's checked-in
 `tide_wgsl_translate --hlsl` (the shader's name set back to its key). Not run
 in Unity after the merge: the sampler path is the one the replay was checked
 with on OpenGL Core, now under one define instead of four.
+
+## Texture arrays: embed ABI 15 (2026-11-05)
+
+`TIDE_EMBED_RENDER_ARRAY` (id, format, width, height, layers, given, its depth array's id, then each layer's pixels)
+and `TIDE_EMBED_RENDER_ARRAY_LAYER` (target, array, layer), after SAMPLER. TideRender's `MakeArray` makes a
+`Texture2DArray` (mips made by `Apply(true)`) for an array of pixels, or a `RenderTexture` of `Tex2DArray` with
+`volumeDepth` and a depth one beside it (or as it, for depth alone), and `MakeArrayLayer` a target that draws into that
+layer of both (`RenderTargetIdentifier(rt, 0, CubemapFace.Unknown, layer)`); freeing the array frees its depth. The HLSL
+reads `Texture2DArray<float4>`/`<float>` with `float3(uv, layer)` (notes/shaders.md). `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 15. Not run in Unity.
+
+ABI 16 (the same day, a `Grid3` as an array): `TIDE_EMBED_RENDER_ARRAY_OF` (id, format, width, height, layers: zeros)
+and `TIDE_EMBED_RENDER_ARRAY_WRITE` (id, layer, x, y, width, height, then that part's rows packed, padded to 4 bytes).
+TideRender's `MakeArrayOf` makes a `Texture2DArray` of the format (RGBA32 or RHalf, `TextureFormat`) with a mip chain
+and keeps its pixels (`Image.layers`); `WriteArray` copies the part into them and sets that layer's
+(`SetPixelData(pixels, 0, layer, offset)`), or makes a new array when a draw of this frame already reads it, as
+`WriteTexture` does; `Mipmaps` applies a `Texture2DArray`'s. Compressed pack layers reach Unity decoded, through
+`ARRAY`. Compiled, not run in Unity.
+
+ABI 17 (the same day, the owner's "why are we stopping with things still open?"):
+- **Compressed images.** `tide_embed_render_formats(e, formats)` says which block formats the other program samples
+  (1 << 1 BC1, 1 << 3 BC3) and remakes everything (`tide_embed_render_reset`); the recorder
+  (`tide_gpu_record_block_formats`) then implements `texture_blocks` and `array_blocks`: `TIDE_EMBED_RENDER_TEXTURE_BLOCKS`
+  (id, width, height, format, levels, bytes, the chain) and `_ARRAY_BLOCKS` (id, width, height, layers, format,
+  levels, bytes a layer, the chains), for BC where said and for RGBA8 chains always, so a device without BC gets the
+  build's mips decoded rather than ones Unity makes. TideRunner says `TideRender.BlockFormats`
+  (`SystemInfo.SupportsTextureFormat` DXT1/DXT5) when it starts the renderer; WebGL through `TideWebRenderFormats`
+  and the page's `tide_unity_render_formats` (`compiler/cli/build.c`). TideRender's `MakeBlocks` makes a `Texture2D`
+  or `Texture2DArray` of `RGBA_DXT1_UNorm`/`RGBA_DXT5_UNorm`/`R8G8B8A8_UNorm` with those levels (`SetPixelData` per
+  level, `Apply(false, true)`: no CPU copy). Test: `embed_render_blocks_where_the_other_program_samples_them`.
+- **OpenGL Core reading a texture two ways.** Unity's GL keeps sampling on the texture and applies it when the frame
+  runs, so the last state set won for every draw. Now TideRender's `Own` sets a texture's filter and wrap at its
+  frame's first read only (`Image.own`, kept while `used` is this frame) and passes each texture's own mode in
+  `_TideOwn`/`_TideOwnHigh` (4 bits a texture, 15 unknown: white, depth); under `TIDEHL_OWN_SAMPLERS`, `tidehl_mode`
+  adds it (bits 4 to 7, bit 8), and `tidehl_sample_grad`/`_level` emulate a read whose mode differs
+  (`tidehl_emulates`; a cube compares filters only): texels fetched at their centers with the texture's own sampler,
+  which any filter gives exactly, wrapped (`tidehl_wrapped`, clamp/repeat/mirror without integer `%`, which fxc warns
+  about) and filtered (1, 4 or 8 taps; trilinear's level from the derivatives, `tidehl_lod_of`). A cube's taps stay on
+  the face the direction points at (`tidehl_cube_uv`/`_direction`), so its edges differ from a seamless cube's.
+  Reads of a texture a function was given carry no own mode and sample as before. `expect_hlsl.cmake` compiles every
+  shader for `SHADER_API_GLCORE` again (dropped with GL's removal), so fxc checks this path.
+- Compiled, not run in Unity.
 
 ## One image a texture: embed ABI 14 (2026-11-05)
 
@@ -139,7 +190,7 @@ stay deferred to the camera, so:
 - `Replay` with no camera still prepares, so compute and reads go on.
 - `Supported` now asks for compute shaders, indirect arguments, shader level 4.5,
   seven storage buffers in compute and fragment stages and ten (three vertex
-  buffers more) in vertex stages, and not OpenGL ES 3: **Unity's OpenGL ES 3.0
+  buffers more) in vertex stages (four and seven since GPU lists in pools, above), and not OpenGL ES 3: **Unity's OpenGL ES 3.0
   and WebGL 2 targets don't take Tide's renderer any more** (owner's rule:
   compute is on every render backend), and draw the views' 2D with the OnGUI
   path (`TideDraw.cs`) as GPUs without constant buffers did. WebGPU, Metal,

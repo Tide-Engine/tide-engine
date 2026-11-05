@@ -1,0 +1,217 @@
+{
+  "date": "2026-11-05",
+  "compiler": "Clang/lld 23.1.2",
+  "os": "Windows 11",
+  "cpu": "Ryzen 9 7900X (12 cores, 24 threads)",
+  "engine_base": "6413f4fb2",
+  "game_commit": "92ccdd38f670767bccb9450722eb02de5814d3e7",
+  "scope": "Generated C compilation and native DLL linking only. Excludes Tide generation, assets, engine/package compilation and packaging.",
+  "protocol": "Single exploratory pass per mode, at most five concurrent compilers; ordinary desktop load, no quiet-machine gate. Separate successful native DLL links retain tide_game_api as an exported root, use the checkout-built engine/platform/Box3D libraries, bridge, and game saves/perf C. No unresolved symbols allowed. Earlier failed incomplete link probes are excluded.",
+  "flags": [
+    "-std=c17",
+    "-O2",
+    "-g",
+    "-ffp-contract=off",
+    "-fno-fast-math"
+  ],
+  "whole_generated_c_sha256": "97d03ada83d5f7684ac7852c6ba094eafa7cfcced4c270d352f53dfb59098668",
+  "compile_samples": [
+    {
+      "mode": "whole",
+      "seconds": 49.46627350000199,
+      "files": [
+        {
+          "file": "game.c",
+          "seconds": 49.4432475999929,
+          "bytes": 102183928
+        }
+      ]
+    },
+    {
+      "mode": "split",
+      "seconds": 29.83790579997003,
+      "files": [
+        {
+          "file": "game.c",
+          "seconds": 19.802950599987525,
+          "bytes": 11266177
+        },
+        {
+          "file": "game_plumbing.c",
+          "seconds": 29.837207300006412,
+          "bytes": 91717859
+        }
+      ]
+    },
+    {
+      "mode": "data",
+      "seconds": 51.203684200008865,
+      "files": [
+        {
+          "file": "game.c",
+          "seconds": 51.20295500004431,
+          "bytes": 21045893
+        },
+        {
+          "file": "game_data0.c",
+          "seconds": 0.7696441999869421,
+          "bytes": 22736245
+        },
+        {
+          "file": "game_data1.c",
+          "seconds": 0.6970777999958955,
+          "bytes": 20213337
+        },
+        {
+          "file": "game_data2.c",
+          "seconds": 0.6758709999849088,
+          "bytes": 19669703
+        },
+        {
+          "file": "game_data3.c",
+          "seconds": 0.6900145999970846,
+          "bytes": 19510636
+        }
+      ]
+    },
+    {
+      "mode": "thin",
+      "seconds": 13.739566399948671,
+      "files": [
+        {
+          "file": "game.c",
+          "seconds": 7.709815300011542,
+          "bytes": 11266177
+        },
+        {
+          "file": "game_plumbing.c",
+          "seconds": 13.738559300021734,
+          "bytes": 91717859
+        }
+      ]
+    },
+    {
+      "mode": "four",
+      "seconds": 19.385899099987,
+      "files": [
+        {
+          "file": "game.c",
+          "seconds": 18.071381200046744,
+          "bytes": 27587385
+        },
+        {
+          "file": "game_part1.c",
+          "seconds": 19.379482900025323,
+          "bytes": 25541942
+        },
+        {
+          "file": "game_part2.c",
+          "seconds": 18.064419400005136,
+          "bytes": 29461475
+        },
+        {
+          "file": "game_part3.c",
+          "seconds": 18.924512500001583,
+          "bytes": 23327044
+        }
+      ]
+    },
+    {
+      "mode": "four-thin",
+      "seconds": 6.709837300004438,
+      "files": [
+        {
+          "file": "game.c",
+          "seconds": 6.70928000001004,
+          "bytes": 27587385
+        },
+        {
+          "file": "game_part1.c",
+          "seconds": 6.409733599983156,
+          "bytes": 25541942
+        },
+        {
+          "file": "game_part2.c",
+          "seconds": 6.700783499982208,
+          "bytes": 29461475
+        },
+        {
+          "file": "game_part3.c",
+          "seconds": 6.145234499999788,
+          "bytes": 23327044
+        }
+      ]
+    }
+  ],
+  "successful_link_samples": [
+    {
+      "mode": "whole",
+      "seconds": 0.3182359999627806,
+      "exit": 0,
+      "errors": ""
+    },
+    {
+      "mode": "two",
+      "seconds": 0.45206359995063394,
+      "exit": 0,
+      "errors": ""
+    },
+    {
+      "mode": "two-thin",
+      "seconds": 20.35046380001586,
+      "exit": 0,
+      "errors": ""
+    },
+    {
+      "mode": "four",
+      "seconds": 0.5646352000185288,
+      "exit": 0,
+      "errors": ""
+    },
+    {
+      "mode": "four-thin",
+      "seconds": 10.241870300029404,
+      "exit": 0,
+      "errors": ""
+    }
+  ],
+  "sumo_samples": [
+    {
+      "mode": "whole",
+      "compile": 5.5177628000383265,
+      "link": 0.13769679999677464,
+      "test": "over_a_bad_network (1529.570 ms)\n    a ball going 8.6 m/s threw one that stood still off at 9.7, without its grip for 21 ticks\nok   sumo_two_balls_that_meet_are_thrown_apart (10.033 ms)\n\n18/18 passed\n"
+    },
+    {
+      "mode": "two",
+      "compile": 3.4863261999562383,
+      "link": 0.1647384999669157,
+      "test": "_over_a_bad_network (1679.090 ms)\n    a ball going 8.6 m/s threw one that stood still off at 9.7, without its grip for 21 ticks\nok   sumo_two_balls_that_meet_are_thrown_apart (8.933 ms)\n\n18/18 passed\n"
+    },
+    {
+      "mode": "two-thin",
+      "compile": 1.543440199980978,
+      "link": 1.9767437999835238,
+      "test": "_over_a_bad_network (1608.539 ms)\n    a ball going 8.6 m/s threw one that stood still off at 9.7, without its grip for 21 ticks\nok   sumo_two_balls_that_meet_are_thrown_apart (9.047 ms)\n\n18/18 passed\n"
+    },
+    {
+      "mode": "four",
+      "compile": 1.2456798000494018,
+      "link": 0.13132569997105747,
+      "test": "_over_a_bad_network (1324.384 ms)\n    a ball going 8.6 m/s threw one that stood still off at 9.7, without its grip for 21 ticks\nok   sumo_two_balls_that_meet_are_thrown_apart (7.770 ms)\n\n18/18 passed\n"
+    },
+    {
+      "mode": "four-thin",
+      "compile": 0.5718286000192165,
+      "link": 0.9150559999980032,
+      "test": "_over_a_bad_network (1491.534 ms)\n    a ball going 8.6 m/s threw one that stood still off at 9.7, without its grip for 21 ticks\nok   sumo_two_balls_that_meet_are_thrown_apart (8.693 ms)\n\n18/18 passed\n"
+    }
+  ],
+  "limitations": [
+    "Exploratory measurements, not a statistical performance guarantee.",
+    "Four-part prototype used the initial partitioner; the final code adds stable API placement, cache integration, shader constant warning fixes and current dev integration.",
+    "Private game sources, generated C and asset packs are not committed.",
+    "The data-only partition experiment did not improve C compilation."
+  ],
+  "target": "x86_64-pc-windows-msvc (CLI packages normally target MinGW on Windows)"
+}

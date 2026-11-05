@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_SAMPLER + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_ARRAY_BLOCKS + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_SAMPLER) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_ARRAY_BLOCKS) {
             r.whole = false;
             break;
         }
@@ -560,6 +560,76 @@ TIDE_TEST(embed_render_pipeline_carries_samplers_apart)
     TIDE_CHECK(u32_at(packet, ops + 16u) == TIDE_EMBED_RENDER_SAMPLER && u32_at(packet, ops + 20u) == 12u);
     TIDE_CHECK(u32_at(packet, ops + 24u) == 2u && u32_at(packet, ops + 28u) == TIDE_GPU_FILTER_MIPMAPS
                && u32_at(packet, ops + 32u) == TIDE_GPU_WRAP_MIRROR);
+}
+
+// An array written a part at a time (a Grid3's): made of its format and layers, then a part of a layer, its rows
+// one after another, read out of the layer's whole image.
+TIDE_TEST(embed_render_array_written_in_parts)
+{
+    tide_gpu_record_begin();
+    const tide_gpu_id array = tide_gpu_record.array_of(TIDE_GPU_R16F, 4, 3, 2);
+    uint16_t layer[3][4];
+    for (uint16_t y = 0; y < 3; y++) {
+        for (uint16_t x = 0; x < 4; x++) layer[y][x] = (uint16_t)(y * 10u + x);
+    }
+    tide_gpu_record.array_write(array, 1, layer, 1, 1, 3, 2);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(size == 8u + 20u + 8u + 24u + 12u);
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_ARRAY_OF && u32_at(packet, 4) == 20u);
+    TIDE_CHECK(u32_at(packet, 8) == array && u32_at(packet, 12) == TIDE_GPU_R16F && u32_at(packet, 16) == 4u
+               && u32_at(packet, 20) == 3u && u32_at(packet, 24) == 2u);
+    TIDE_CHECK(u32_at(packet, 28) == TIDE_EMBED_RENDER_ARRAY_WRITE && u32_at(packet, 32) == 36u);
+    TIDE_CHECK(u32_at(packet, 36) == array && u32_at(packet, 40) == 1u && u32_at(packet, 44) == 1u && u32_at(packet, 48) == 1u
+               && u32_at(packet, 52) == 3u && u32_at(packet, 56) == 2u);
+    uint16_t part[6];
+    memcpy(part, packet + 60, sizeof part);
+    TIDE_CHECK(part[0] == 11 && part[2] == 13 && part[3] == 21 && part[5] == 23);
+}
+
+// A pack's blocks go to the other program as they are where it said it samples their format, else not (the renderer
+// then sends them decoded, as RGBA8 chains, which it always takes), a texture's and an array's alike.
+TIDE_TEST(embed_render_blocks_where_the_other_program_samples_them)
+{
+    uint8_t bc1[32 + 8 + 8 + 8]; // 8 by 8: a level of four blocks, then one block for each of 4, 2 and 1
+    for (size_t i = 0; i < sizeof bc1; i++) bc1[i] = (uint8_t)i;
+    const tide_texture_blocks blocks = {bc1, TIDE_BLOCKS_BC1, 4, 56};
+    uint32_t levels, bytes;
+    TIDE_REQUIRE(tide_texture_blocks_size(8, 8, TIDE_BLOCKS_BC1, &levels, &bytes) && levels == 4 && bytes == 56);
+    uint8_t chains[2 * 56] = {0};
+    memcpy(chains + 56, bc1, sizeof bc1);
+    tide_gpu_record_block_formats(0);
+    tide_gpu_record_begin();
+    TIDE_CHECK(tide_gpu_record.texture_blocks(8, 8, blocks) == 0);
+    TIDE_CHECK(tide_gpu_record.array_blocks(8, 8, 2, (tide_texture_blocks){chains, TIDE_BLOCKS_BC1, 4, 56}) == 0);
+    uint32_t size;
+    (void)tide_gpu_record_end(&size);
+    TIDE_CHECK(size == 0);
+
+    tide_gpu_record_block_formats(1u << TIDE_BLOCKS_BC1 | 1u << TIDE_BLOCKS_BC3);
+    tide_gpu_record_begin();
+    const tide_gpu_id texture = tide_gpu_record.texture_blocks(8, 8, blocks);
+    const tide_gpu_id array = tide_gpu_record.array_blocks(8, 8, 2, (tide_texture_blocks){chains, TIDE_BLOCKS_BC1, 4, 56});
+    TIDE_CHECK(tide_gpu_record.texture_blocks(8, 8, (tide_texture_blocks){bc1, TIDE_BLOCKS_BC1, 3, 56}) == 0); // Not whole
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    TIDE_REQUIRE(texture && array && size == (8u + 24u + 56u) + (8u + 28u + 112u));
+    TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_TEXTURE_BLOCKS && u32_at(packet, 4) == 80u);
+    TIDE_CHECK(u32_at(packet, 8) == texture && u32_at(packet, 12) == 8u && u32_at(packet, 16) == 8u
+               && u32_at(packet, 20) == TIDE_BLOCKS_BC1 && u32_at(packet, 24) == 4u && u32_at(packet, 28) == 56u);
+    TIDE_CHECK(memcmp(packet + 32, bc1, sizeof bc1) == 0);
+    const uint32_t at = 88u;
+    TIDE_CHECK(u32_at(packet, at) == TIDE_EMBED_RENDER_ARRAY_BLOCKS && u32_at(packet, at + 4u) == 140u);
+    TIDE_CHECK(u32_at(packet, at + 8u) == array && u32_at(packet, at + 20u) == 2u && u32_at(packet, at + 24u) == TIDE_BLOCKS_BC1
+               && u32_at(packet, at + 28u) == 4u && u32_at(packet, at + 32u) == 56u);
+    TIDE_CHECK(memcmp(packet + at + 36u + 56u, bc1, sizeof bc1) == 0); // The second layer's
+
+    // RGBA8 chains whatever it said
+    tide_gpu_record_block_formats(0);
+    uint8_t rgba[8 * 8 * 4 + 4 * 4 * 4 + 2 * 2 * 4 + 4] = {0};
+    tide_gpu_record_begin();
+    TIDE_CHECK(tide_gpu_record.texture_blocks(8, 8, (tide_texture_blocks){rgba, TIDE_BLOCKS_RGBA8, 4, sizeof rgba}) != 0);
+    (void)tide_gpu_record_end(&size);
+    tide_gpu_record_reset();
 }
 
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds

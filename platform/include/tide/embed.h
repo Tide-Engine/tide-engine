@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 14u
+#define TIDE_EMBED_ABI 17u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -234,9 +234,31 @@ typedef enum tide_embed_render_op {
     // draw_indexed_indirect_count)
     TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT,
     TIDE_EMBED_RENDER_SAMPLER, // slot, filter (tide_gpu_filter), wrap (tide_gpu_wrap): how the pipeline's sampler `slot` samples
+    // id, format (tide_gpu_target_format; TIDE_GPU_TARGET_COLOR for one of pixels), width, height, layers, given, its
+    // depth array's id (0 for one of pixels), then if given each layer's pixels, 4 bytes each, rows from the top: a
+    // texture array, read by a uv and a layer (TIDE_GPU_READ_ARRAY), its depth TIDE_GPU_READ_DEPTH_ARRAY
+    TIDE_EMBED_RENDER_ARRAY,
+    TIDE_EMBED_RENDER_ARRAY_LAYER, // target id, array id, layer: a target whose color and depth are that layer of the array's
+    // id, format (tide_gpu_format: 0 RGBA8, 2 R16F), width, height, layers: an array of zeros, written a part at a time
+    TIDE_EMBED_RENDER_ARRAY_OF,
+    // id, layer, x, y, width, height, then that part's pixels, its rows one after another, padded to 4 bytes
+    TIDE_EMBED_RENDER_ARRAY_WRITE,
+    // id, width, height, format (tide/texture_blocks.h's: 1 BC1, 3 BC3, 4 RGBA8), levels, bytes, then those bytes: a
+    // texture of every level, its largest first, each as the format has it (BC rows of 4 by 4 blocks), never written
+    // again. BC1 and BC3 only where tide_embed_render_formats said so.
+    TIDE_EMBED_RENDER_TEXTURE_BLOCKS,
+    // id, width, height, layers, format, levels, bytes (each layer's), then each layer's levels as TEXTURE_BLOCKS has
+    // them, one layer after another: an array read as ARRAY's, its smaller images these
+    TIDE_EMBED_RENDER_ARRAY_BLOCKS,
 } tide_embed_render_op;
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
+
+// The block formats the other program's GPU samples, a bit each, 1 << format (tide/texture_blocks.h's: 1 << 1 for
+// BC1, 1 << 3 for BC3): images the game's pack has compressed go to it as they are (TEXTURE_BLOCKS, ARRAY_BLOCKS),
+// where they'd otherwise go as RGBA8 chains decoded from them. Every object is made again (tide_embed_render_reset),
+// so it's said before the first render. None until it's said.
+void tide_embed_render_formats(tide_embed *e, uint32_t formats);
 
 // What a BUFFER_READ command read: its `size` bytes, or NULL (and 0) for a read
 // the other program couldn't make, which the game's read fails with. Once for

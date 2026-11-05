@@ -60,6 +60,57 @@ The full web run passed 3015/3016 with the same existing Render3D expectation as
 suites also pass after the session changes. Final merged validation is recorded below. Other OSes/Android are CI's;
 no CI was dispatched and no private prototype was changed.
 
+## Build-code constants in workers (2026-11-05)
+
+Build-code list constants are hidden packed assets even when their producer reads
+no source asset. Generated local worker entry points did not call tide_pack_use,
+leaving tide_pack_memory NULL on fresh pool threads. List indexing then read a
+small pack offset as an address. The worker_values regression reproduces that
+access violation under Windows ASan in tide_list_at via a helper reading constants.
+
+Worker entry points and their parallel list/grid callbacks now bind the pack with
+the existing tide_pack_use, as tick/frame entry points do. This supports the intended
+constant value reads without changing language semantics, capture ownership,
+runtime APIs, match state or pack format. Built constants affect program identity
+and changes rebuild code rather than performing a live asset-only replacement.
+Live asset reads in workers remain subject to their existing checker restrictions.
+
+worker_values checks a 4 KB source decoded into integer constants, an integer list
+made without an asset, and a list of structs containing float2s, a float and an int.
+Reads pass through an ordinary helper, directly in a worker and inside a parallel
+loop. The host loads its embedded pack and checks completion and exact results
+both with synchronous execution and with the actual native pool; the visualizer
+variant covers typed list wrappers too.
+
+Validation: built the four affected Windows sanitize targets and passed
+local_workers, worker_values, worker_values_visualizers and worker_grids (4 CTests).
+Built the three ordinary targets in web-release and passed their WASI CTests
+under Node 24.22.1 (3 CTests). No browser, other native OS, or mount-and-rifle run;
+mount-and-rifle was not edited. No docs change is needed for this implementation
+repair of existing constant semantics.
+
+## Stable generated C partitions (2026-11-05)
+
+`codegen_options.split_code` / `tidec --split-code` cut generated C into four translation units using two binary
+passes of the existing plumbing splitter. `partition == -1` retains the debug code/plumbing policy; 0 and 1 choose
+by bits of the symbol-name hash. Function bodies stay intact. Types/macros/prototypes are repeated; cross-part
+references promote internal linkage and rename private symbols to avoid host/pack collisions. Small immutable
+constants retain the existing sharing policy. Conservative dependency propagation can leave a retained copy unused,
+so shared constants carry `unused` explicitly. Prototype emission ends any trailing line comment before its semicolon.
+
+`tide_game_api` always lands in part zero: only that object's header stamp needs the changing simulation identity.
+`write_code_parts` writes `<name>.c` and `<name>_part1.c` through `_part3.c`; `<name>_parts.txt` lists each generated
+source as `plumbing thin filename` (two 0/1 flags and a basename). A nonpartitioned group has one record. Debug's
+own game code remains whole/unoptimized; its plumbing can partition. `split_code_min_bytes` is zero for explicit
+tidec use and 4 MiB in the CLI. Without `split_code`, the ordinary one-file output remains supported.
+
+No Tide semantics, generated runtime calls, layouts, ordering, snapshots or hashes change. ThinLTO preserves
+cross-part optimization opportunities, not an identical machine-code layout. Stable-part regression changes one
+function's numeric body and checks that exactly one C part changes and repeated generation is identical. Real
+native/web links and execution cover pinned cross-platform math, nested container ownership, tasks, compute/shader
+arrays and a debug-code/optimized-plumbing combination. CLI/cache/CMake contracts and measurements are recorded in
+cli-and-packages.md and tide-programs.md.
+
 ## Tide compilation progress labels (2026-11-05)
 
 The terminal build display now receives synchronous compiler progress through
@@ -4710,3 +4761,7 @@ normal source metadata and stripped identities without locations. Runtime copyin
 same-prefix name changes, source relocation and count changes are covered by
 `tests/test_profile.c`. Validation is recorded with the coordinated profiler work
 in `notes/standard-host.md`.
+
+Worker-constant fix integration: merged origin/dev bda29c5c9 cleanly. Rebuilt
+the affected targets after incoming compiler/runtime changes; the same four
+Windows ASan and three WASI checks pass again.

@@ -1050,14 +1050,14 @@ static inline tide_session *tide_run_new_session(void)
     });
 }
 
-// Bind local files before startup handlers or restored tasks can use them.
-static inline void tide_run_bind_io(const tide_host_game *game, void *local)
+// Names the game to the platform: its folders, its log, and how its pipelines are made. Again for the same game,
+// nothing changes. Its ID, written in `fallback` where the game has none of its own.
+static inline const char *tide_run_name_game(const tide_host_game *game, char *fallback, const size_t size)
 {
-    char fallback[512];
     const char *id = game->game->app_id;
     if (!id) {
         const char *name = tide_run_settings.game_name ? tide_run_settings.game_name : "game";
-        snprintf(fallback, sizeof fallback, "dev.tide.%s", name);
+        snprintf(fallback, size, "dev.tide.%s", name);
         for (char *p = fallback; *p; ++p)
             if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '.'))
                 *p = '_';
@@ -1070,6 +1070,14 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
     // A game's frames don't wait for a GPU pipeline to be made: what's drawn with one shows once it's made. Not in
     // a run with no window, whose frames are read back and go the same every time
     tide_platform_background_pipelines(!tide_run_headless);
+    return id;
+}
+
+// Bind local files before startup handlers or restored tasks can use them.
+static inline void tide_run_bind_io(const tide_host_game *game, void *local)
+{
+    char fallback[512];
+    const char *id = tide_run_name_game(game, fallback, sizeof fallback);
     if (!game->set_io) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;
@@ -1149,7 +1157,10 @@ typedef struct tide_run_loader {
     uint8_t *bytes;       // What was read, and whether the game loaded it: the thread's until the job's done
     size_t size;
     bool loaded;
+    bool read;      // A pack is read on the pool: none, where the game has no pack or it was read in place
     bool on;        // Frames show where it is, until it's in and the game has begun
+    bool warming;   // It's in, and the game's pipelines are being made (tide_run_prewarm)...
+    uint32_t warm_total; // ...this many, the most that were left at once
     double seconds; // How long they've shown it, for the bar that moves while nothing can say how far
     tide_draw_list list;
 } tide_run_loader;
@@ -1178,7 +1189,7 @@ static inline bool tide_run_load_shown(const char *path)
     const tide_jobs *pool = tide_platform_jobs();
     if (!tide_run_game->assets || tide_run_headless || tide_run_embedded || !pool || !pool->background) return false;
     tide_run_loader *l = &tide_run_loading;
-    *l = (tide_run_loader){.job = {.work = tide_run_load_work, .context = l}, .on = true};
+    *l = (tide_run_loader){.job = {.work = tide_run_load_work, .context = l}, .read = true, .on = true};
     if (path) {
         const size_t n = strlen(path) + 1u;
         l->path = malloc(n);
@@ -1190,16 +1201,28 @@ static inline bool tide_run_load_shown(const char *path)
 #endif
 }
 
-// Starts the game once its pack is in: now, unless it's loading on the pool.
+// Starts the game once its pack is in, unless it's loading on the pool, and its pipelines are made: the loading
+// frames wait for them in a window, as they do once a pack is read (tide_run_loading_frame).
 static inline void tide_run_begin_loaded(void)
 {
-    if (!tide_run_loading.on) tide_run_begin();
+    tide_run_loader *l = &tide_run_loading;
+    if (l->on) return;
+    if (tide_run_headless || tide_run_embedded || !tide_run_game->shaders) {
+        tide_run_begin();
+        return;
+    }
+    *l = (tide_run_loader){.loaded = true, .on = true};
+    l->job.done = 1u; // Nothing to read: the first frame makes the pipelines
 }
 
 // A frame while the pack loads: the loading screen, as the web's shell has it
 // (platform/web/shell.html), with how much of the pack is read, then a bar
-// that moves while the game checks what it read. Once it's in, the game
-// begins, and this frame is its first.
+// that moves while the game checks what it read. Once it's in, the game's
+// pipelines are made (tide_run_prewarm), which takes a minute or more where
+// the driver has none of them yet: where the backend makes them in the
+// background, the frames go on saying how many are made, and the game begins
+// once all are, so its first frames draw everything. This frame is then the
+// game's first.
 static inline int tide_run_frame(void *user, float seconds);
 static inline int tide_run_loading_frame(void *user, const float seconds)
 {
@@ -1207,24 +1230,34 @@ static inline int tide_run_loading_frame(void *user, const float seconds)
     // What's pressed meanwhile isn't the game's: it starts from what's held
     tide_platform_poll(&tide_run_devices);
     tide_devices_consume(&tide_run_devices);
-    if (__atomic_load_n(&l->job.done, __ATOMIC_ACQUIRE)) {
-        l->on = false;
-        if (!l->bytes && !l->path) {
+    if (!l->warming && __atomic_load_n(&l->job.done, __ATOMIC_ACQUIRE)) {
+        if (l->read && !l->bytes && !l->path) {
             fprintf(stderr, "tide: the game's pack of assets isn't with the program (<program>.pack beside it): they read as empty\n");
         }
         free(l->path);
         l->path = NULL;
-        tide_draw_free(&l->list);
         if (l->bytes) tide_run_assets_kept(l->bytes, l->size, l->loaded);
+        char fallback[512];
+        (void)tide_run_name_game(tide_run_game, fallback, sizeof fallback); // How its shaders drew before, read first
+        tide_run_prewarm();
+        l->warming = true;
+    }
+    const uint32_t waiting = l->warming ? tide_platform_prewarm_waiting() : 0u;
+    if (l->warming && !waiting) {
+        l->on = false;
+        tide_draw_free(&l->list);
         tide_run_begin();
         return tide_run_frame(user, seconds);
     }
+    if (waiting > l->warm_total) l->warm_total = waiting;
     l->seconds += tide_is_finite_d((double)seconds) && seconds > 0.0f ? (double)seconds : 0.0;
-    const uint64_t read = __atomic_load_n(&l->progress[0], __ATOMIC_RELAXED);
-    const uint64_t total = __atomic_load_n(&l->progress[1], __ATOMIC_RELAXED);
-    const bool known = !__atomic_load_n(&l->checking, __ATOMIC_RELAXED) && total;
+    const uint64_t read = l->warming ? l->warm_total - waiting : __atomic_load_n(&l->progress[0], __ATOMIC_RELAXED);
+    const uint64_t total = l->warming ? l->warm_total : __atomic_load_n(&l->progress[1], __ATOMIC_RELAXED);
+    const bool known = l->warming || (!__atomic_load_n(&l->checking, __ATOMIC_RELAXED) && total);
     char text[64];
-    if (known) {
+    if (l->warming) {
+        snprintf(text, sizeof text, "Compiling shaders %u / %u", (unsigned)read, (unsigned)total);
+    } else if (known) {
         const double mb = 1048576.0;
         const int places = total < 10u * 1048576u ? 1 : 0;
         snprintf(text, sizeof text, "Loading %.*f / %.*f MB", places, (double)read / mb, places, (double)total / mb);

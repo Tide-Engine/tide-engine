@@ -1,0 +1,8 @@
+// expect: a TextureArray has 1 to 256 layers, and this asks for 300
+// expect: 256 is the most every GPU Tide draws with takes
+scene Main { }
+local singleton Field { TextureArray layers; }
+view Make(mut Field field)
+{
+    field.layers = TextureArray(16, 16, 300);
+}

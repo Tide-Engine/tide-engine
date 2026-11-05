@@ -41,6 +41,8 @@ static const struct {
     {"Texture", TY_TEXTURE, "texture", "tide_texture_ref"},
     {"DepthTexture", TY_DEPTH_TEXTURE, "depth", "tide_depth_ref"},
     {"Cubemap", TY_CUBEMAP, "cubemap", "tide_cubemap_ref"},
+    {"TextureArray", TY_TEXTURE_ARRAY, "array", "tide_texture_array_ref"},
+    {"DepthTextureArray", TY_DEPTH_TEXTURE_ARRAY, "depths", "tide_depth_ref"},
     {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
     {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
     {"Font", TY_FONT, "font", "tide_font_ref"},
@@ -184,6 +186,8 @@ layout type_layout(const type t)
     if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
     if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
     if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
+    if (t.kind == TY_TEXTURE_ARRAY) return (layout){40, 8}; // tide_texture_array_ref: a target, a name, its layers
+    if (t.kind == TY_DEPTH_TEXTURE_ARRAY) return (layout){24, 8}; // tide_depth_ref: the array's target
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_FONT) return (layout){8, 8};           // tide_font_ref: a number of the registry's
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
@@ -315,6 +319,14 @@ bool type_is_texture_grid(const type t)
     return cell == TY_COLOR || cell == TY_FLOAT;
 }
 
+// A Grid3 of colors or of floats: what's a TextureArray where one is wanted, its layers its z.
+bool type_is_array_grid(const type t)
+{
+    if (t.kind != TY_GRID || !t.decl || t.decl->dims != 3 || t.decl->fields.count < 1) return false;
+    const type_kind cell = t.decl->fields.items[0].type.kind;
+    return cell == TY_COLOR || cell == TY_FLOAT;
+}
+
 static bool skin_catalog_guarantees(const decl *wanted, const decl *known)
 {
     if (known->skin_metadata_status != 1) return false;
@@ -404,6 +416,7 @@ bool type_assignable(const type to, const type from)
     // A char goes where an int does, as its code point; an int becomes a char only with char(n)
     if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
+    if (to.kind == TY_TEXTURE_ARRAY) return type_is_array_grid(from); // ...and one of three dimensions an array
     if (type_is_double_based(to)) {
         if (matrix_dim(to)) return matrix_dim(to) == matrix_dim(from) && !type_is_double_based(from);
         return (type_dim(to) == type_dim(from) && (type_is_int_based(from) || type_is_float_based(from)))

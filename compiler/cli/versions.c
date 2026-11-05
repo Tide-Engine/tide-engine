@@ -1,3 +1,7 @@
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE
+#endif
+
 #include "versions.h"
 
 #include <stdio.h>
@@ -170,6 +174,15 @@ int tide_use_pinned(const char *folder, const int argc, char **argv, const char 
         return 1;
     }
     const bool channel = packages_channel(game.pinned);
+    // Exact pins are intentional. Older downloaded compilers must inherit this
+    // opt-out too, before performing their own automatic update check.
+    if (!channel) {
+#ifdef _WIN32
+        _putenv_s("TIDE_NO_UPDATE_CHECK", "1");
+#else
+        setenv("TIDE_NO_UPDATE_CHECK", "1", 1);
+#endif
+    }
     char *root = path_join(cache, game.pinned);
     char *program = path_join(root, TIDE_PROGRAM);
     char *usage = cache_file(cache, game.pinned, "use");

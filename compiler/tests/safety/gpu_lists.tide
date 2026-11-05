@@ -1,0 +1,101 @@
+// expect: gpu lists ran 13 frames
+// expect: a read of a list let go of failed
+// draws
+
+// GPU lists of capacities nothing can be (none, less than none, the ints' limit, more than a GPU binds), sent more
+// than they hold, counted past both ends, resized and let go of while kernels run over them and draws read them,
+// and read back after they're gone. Every list is a range of one of the renderer's pools: lists of ints and of
+// structs, side by side, made again in ranges others had. Kernels index them at the ints' limits, past their ends
+// and under 0, with atomics and Adds too.
+
+struct Item
+{
+    float a;
+    int b;
+    float2 p;
+}
+
+struct Corner
+{
+    float2 position;
+}
+
+local singleton Lists
+{
+    GPUList<int> none;
+    GPUList<int> under;
+    GPUList<int> huge;
+    GPUList<Item> items;
+    GPUList<Item> bigItems;
+    GPUList<int> gone;
+    GPUList<int> counts;
+    int frames;
+    bool failed;
+}
+
+[Group(64)]
+compute Poke(Lists l)
+{
+    int i = this.index;
+    int far = i * 1000003 - 2147483647;
+    l.huge[far] = i;
+    l.huge[i] = l.huge[far] + l.huge[i - 64];
+    l.under[i] = i;
+    l.none.AtomicAdd(i, 1);
+    l.none.AtomicMin(-i, i);
+    l.counts.AtomicAdd(i % 7 - 3, 1);
+    l.items[i - 32] = Item { a = float(i), b = l.items[far].b + l.items[i + 2147483600].b, p = float2(1, 2) };
+    l.gone.Add(i);
+    if (i % 2 == 0) l.items.Add(Item { a = 2.0, b = i, p = float2(0, 0) });
+    if (i % 3 == 0) l.counts.Add(l.counts.count + l.counts.capacity);
+    foreach (Item item in l.bigItems) l.counts[item.b] = item.b;
+}
+
+frag Show(Corner corner, Lists l, out Color color)
+{
+    color = Color(float(l.huge[2147483647] + l.items[-5].b + l.none.count + l.gone[0]), float(l.under.capacity), 0, 1);
+}
+
+view Pokes(mut Lists lists)
+{
+    lists.frames += 1;
+    int f = lists.frames;
+    if (f == 1)
+    {
+        lists.none = GPUList<int>(0);
+        lists.under = GPUList<int>(-5);
+        lists.huge = GPUList<int>(2147483647);
+        lists.items = GPUList<Item>(4);
+        lists.bigItems = GPUList<Item>(2147483647);
+        lists.gone = GPUList<int>(8);
+        lists.counts = GPUList<int>(16);
+    }
+    mut List<Item> many = [];
+    for (var k = 0; k < 100; k++) many.Add(Item { a = float(k), b = k * 7 - 300, p = float2(float(k), 0) });
+    lists.items.Set(many); // More than it holds: as many as it does
+    lists.bigItems.Set(many);
+    lists.huge.SetCount(-3);
+    lists.huge.SetCount(2147483647);
+    lists.counts.SetCount(f * 5 - 30);
+    if (f % 4 == 0) lists.items.Resize(f * 3 - 20);
+    if (f % 5 == 0) lists.counts.Resize(-1);
+    if (f == 7) lists.counts.Resize(16);
+    if (f == 3) lists.gone.Dispose();
+    if (f == 9) lists.gone = GPUList<int>(3); // In a range another list let go of, maybe
+    GPU.Run(Poke, 200);
+    GPU.Run(Poke, lists.items);
+    GPU.Run(Poke, lists.gone);
+    GPU.Run(Poke, int3(3, 0, 2));
+    Draw.Mesh([Corner { position = float2(-1, -1) }, Corner { position = float2(1, -1) }, Corner { position = float2(0, 1) }],
+              [0, 1, 2], Show);
+    if (f == 4) ReadGone(lists);
+    if (f == 13) Debug.Log($"gpu lists ran {lists.frames} frames");
+}
+
+async void ReadGone(mut Lists lists)
+{
+    if (await lists.gone.Read() is List<int> read) Debug.Log($"read {read.count} of a list let go of");
+    else Debug.Log("a read of a list let go of failed");
+}
+
+scene Main { }

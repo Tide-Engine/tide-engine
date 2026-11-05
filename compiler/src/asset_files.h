@@ -37,6 +37,9 @@ typedef enum asset_kind {
     ASSET_VALUES,   // A constant List<T> build code made: plain elements side by side (build_code.h)
     ASSET_CLIP_DATA, // ClipData: an audio file's samples, decoded, as code reads and edits them (build code's source)
     ASSET_FONT,     // Font: a TrueType font file, read into font data (tide/font.h), which `data` then is
+    // TextureArray: images of one size, a glob's matches or a list of paths, as Textures are read: its items are its
+    // layers in order
+    ASSET_TEXTURE_ARRAY,
 } asset_kind;
 
 typedef struct asset_match {
