@@ -119,7 +119,7 @@ static void build_step(const char *step)
     fflush(stderr);
 }
 
-static void tide_progress(const char *stage, const char *detail)
+static void tide_progress(const char *stage, const char *detail, const int completed, const int total)
 {
     if (!build_activity) return;
     // Keep the filename visible even when the source is an absolute path.
@@ -130,7 +130,8 @@ static void tide_progress(const char *stage, const char *detail)
     }
     lock_feedback();
     snprintf(feedback.label, sizeof feedback.label, "%s%s%s", stage, detail && *detail ? ": " : "", detail ? detail : "");
-    feedback.completed = feedback.total = 0;
+    feedback.completed = completed;
+    feedback.total = total;
     unlock_feedback();
 }
 

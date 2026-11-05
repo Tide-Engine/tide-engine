@@ -188,9 +188,9 @@ void compile_set_progress(compile_progress_sink receiver)
     progress_sink = receiver;
 }
 
-void compile_progress(const char *stage, const char *detail)
+void compile_progress(const char *stage, const char *detail, const int completed, const int total)
 {
-    if (progress_sink) progress_sink(stage, detail);
+    if (progress_sink) progress_sink(stage, detail, completed, total);
 }
 
 void diag_phase(const char *what)

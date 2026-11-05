@@ -18,6 +18,16 @@ Docs production build passes with the usual unstaged example-page 404s.
 Other OS terminals remain CI/manual coverage; no web runtime code changed.
 
 
+Progress counts follow-up (2026-11-05): the compiler callback now includes
+completed/total item counts (zero total means indeterminate). Parsing counts input
+files, importing counts each resolved set of files (glob matches included), and
+packing counts asset declarations. The existing terminal bar shows those stage
+counts and percentages; checking and C generation retain activity animation.
+Counts describe work items, not time estimates or whole-build completion.
+Redirected output is unchanged. ASan CLI unit/help and compiler recompile checks
+pass, including notification count bounds and parsing/import completion. Docs
+production build passes; other host terminals remain CI/manual coverage.
+
 ## Optimized plumbing in debug builds (2026-11-04)
 
 Asked for by the owner: a plain debug `tide run` of a large game (Mount & Rifle) was unplayable, while
