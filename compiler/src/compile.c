@@ -105,6 +105,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
     size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
     for (int i = 0; i < count; i++) {
+        compile_progress("Parsing Tide", inputs[i].path);
         source *src = NEW(source);
         src->path = inputs[i].path;
         src->package = inputs[i].package;
@@ -181,6 +182,7 @@ static bool compile_inputs_impl(const compile_input *inputs, const int count, co
     if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;
+    compile_progress("Checking Tide", NULL);
     if (!check(prog)) return false;
     // What build code makes (build_code.h): found, or made by running it and then found as the game compiles again
     if (!schedule && !opts->declarations_only && !opts->build_program && prog->build_roots.count) {

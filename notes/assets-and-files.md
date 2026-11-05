@@ -1,5 +1,23 @@
 # Assets and local files
 
+## Tide compilation progress labels (2026-11-05)
+
+The terminal build display now receives synchronous compiler progress through
+`compile_set_progress`/`compile_progress` in common.h. The CLI installs the receiver
+only around source generation and copies labels under its existing feedback lock.
+Parsing and method checking name the Tide source; imports name each resolved file
+(including individual glob matches); packing names the qualified asset declaration.
+Generating C has its own label. The terminal uses basenames so absolute directory
+prefixes cannot hide the filename. Redirected output and build-report stages stay
+unchanged. This is host-tool feedback only; no generated code/runtime contract changes.
+
+Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
+CLI unit/help and recompile CTests pass. The recompile regression checks actual
+parsing, checking, file import, asset packing and C-generation notifications.
+Docs production build passes with the usual unstaged example-page 404s.
+Other OS terminals remain CI/manual coverage; no web runtime code changed.
+
+
 ## Font assets (2026-11-03)
 
 `asset Font`, `List<Font>` and `Map<string, Font>` (`ASSET_FONT`): tidec reads the file with the engine's checked reader (`tide_font_data_make`, `tide/font.h`) in `asset_resolve` (`compiler/src/asset_files.c`, kept per file as `font_data`), an error at the declaration with the reader's reason; the pack keeps the font data, not the file, in a clip-shaped block (`tide_pack_font`, `TIDE_PACK_FONT`/`TIDE_PACK_FONTS`, fingerprinted as a clip's block in `pack_fingerprint.inc`), and loading adds each to the font registry (`note_font` in `engine/src/pack_load.c`), whose number the asset's `tide_font_ref` holds. Details, `Font.Decode` and tests: `notes/rendering.md`, Fonts of a game's own.

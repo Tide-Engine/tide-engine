@@ -857,6 +857,7 @@ static void say_missing(const char *written, const char *abs, const char *folder
 // can't be read as one.
 static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at, const char *game_folder)
 {
+    compile_progress("Importing asset", path);
     read_file *f = read_at(path);
     if (!f) {
         diag_error(at, "'%s' can't be read (%s)", written, path);
