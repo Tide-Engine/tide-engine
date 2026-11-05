@@ -98,6 +98,7 @@ typedef struct data_alias {
 typedef struct given {
     data_ref data;       // A list, a grid, a map or a set: which of the shader's textures of numbers it is
     const expr *sampled; // A texture that's sampled: where the frag or vert names the one it was given (texture_of)
+    int slot;            // A GPU list: which of the shader's storage buffers it is (gpu_list_slot), -1 while checking
 } given;
 
 // A local that holds an element of a list the code was given, or a part of
@@ -155,6 +156,7 @@ typedef struct emit {
     const stmt *held_by;         // ...and the local
     bool storage_done[7];        // The GPU lists whose functions are written (need_storage)
     VEC(const char *) atomic_fns; // ...and the atomics' and shared memory's (need_atomic)
+    bool guards_shared;           // A kernel's write to shared memory is under tide_zero (writes_shared)
 } emit;
 
 static void ex(emit *em, const expr *e);
@@ -171,6 +173,8 @@ static bool ex_gpu(emit *em, const expr *e);
 static bool st_gpu(emit *em, const stmt *s);
 static void ex_invocation(emit *em, const expr *e);
 static void put_assigned(emit *em, const stmt *s);
+static bool writes_shared(const stmt *s);
+static int gpu_list_slot(emit *em, const expr *list);
 
 static const char *shader_word(const decl *d)
 {
@@ -457,10 +461,10 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_CUBEMAP: why = "a cube is read with 'cube.Sample(direction)', not kept as a GPU value"; break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
     case TY_GPU_LIST:
-        refuse(em, at, "a GPU list in code the GPU runs is a field of what it takes, by its name: it can't be kept in a local, "
-                       "passed on alone, returned or picked there");
-        diag_note("read it where it's named, 'meadow.blades[i]', or pass the struct, component or singleton that holds it to a "
-                  "function");
+        refuse(em, at, "a GPU list in code the GPU runs is named where it's used: it can't be kept in a local, returned or "
+                       "picked there");
+        diag_note("read it by its field, 'meadow.blades[i]', or pass it by that name to a function that takes a GPUList, or "
+                  "the struct, component or singleton that holds it");
         return false;
     case TY_RESIDENT: why = "resident state belongs to the CPU: the C of the package that keeps it reads it"; break;
     case TY_ENTITY:
@@ -4039,10 +4043,10 @@ static bool takes_data(const param *p)
     return is_data(p->type);
 }
 
-// ...or that, or a texture it samples: neither is an argument.
+// ...or that, or a texture it samples, or a GPU list: none is an argument.
 static bool is_given(const param *p)
 {
-    return takes_data(p) || is_sampled(p->type) || holds_data(p->type);
+    return takes_data(p) || is_sampled(p->type) || holds_data(p->type) || p->type.kind == TY_GPU_LIST;
 }
 
 // A struct that holds a list, where a function is given one: it has to be
@@ -4075,6 +4079,10 @@ static void ex_user_call(emit *em, const expr *e)
         if (holds_data(p->type) && arg && !names_given(em, arg)) {
             refuse_given(em, arg, p->type);
             named = false;
+        }
+        if (p->type.kind == TY_GPU_LIST) { // Written for the storage buffer the call names (gpu_list_slot)
+            spec[i].slot = arg ? gpu_list_slot(em, arg) : -1;
+            number = spec[i].slot;
         }
         if (takes_data(p)) {
             spec[i].data = data_unknown(p->type);
@@ -5358,6 +5366,17 @@ static void st_one(emit *em, const stmt *s, bool outs_ready)
         sb_put(em->o, ";\n");
         break;
     case S_ASSIGN:
+        if (writes_shared(s)) { // Under a condition always true that fxc can't see through (writes_shared)
+            sb_put(em->o, "if (tide_zero == 0u) {\n");
+            em->indent++;
+            line(em);
+            st_assign(em, s, true);
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+            em->guards_shared = true;
+            break;
+        }
         st_assign(em, s, true);
         break;
     case S_EXPR:
@@ -5525,7 +5544,10 @@ static void need_function(emit *em, decl *fn, const loc at, const given *spec, c
         const param *p = &fn->params.items[i];
         if (shader && !p->function_param && !handed_to(em->sh, p)) continue; // The engine supplies it
         if (spec && is_given(p)) { // Which of the shader's lists, grids or textures it is, this is written for
-            if (p->mode == PARAM_MUT) {
+            if (p->mode == PARAM_MUT && p->type.kind == TY_GPU_LIST) {
+                refuse(em, p->at, "a GPU list is a handle, written without 'mut': '" STR_FMT "' can't be '%s'", STR_ARG(p->name),
+                       p->is_out ? "out" : "mut");
+            } else if (p->mode == PARAM_MUT) {
                 refuse(em, p->at, "a %s a function takes in code the GPU runs is read there, never changed: '" STR_FMT "' can't be "
                                   "'%s'", takes_data(p) ? data_word(p->type) : type_name(p->type), STR_ARG(p->name),
                        p->is_out ? "out" : "mut");
@@ -6171,6 +6193,15 @@ static void put_instance_loads(emit *em, sb *o)
         const shader_value *value = &sh->values.items[v];
         if (!value->per_instance || value->source || value->float_at % 4) continue;
         const int n = value->float_at / 4, u = sh->through_at / 4;
+        if (sh->sides_at >= 0) { // A run of those whose own transform mirrors (2) or doesn't (1): the others' corners
+            // are all one point, so their triangles cover nothing. As draw.c's mirrors(), term by term
+            const int k = sh->sides_at / 4;
+            sb_printf(o, "    let tide_keep = tide_block.tide_u%d.x;\n", k);
+            sb_printf(o, "    let tide_own = tide_n%d.x * (tide_n%d.y * tide_n%d.z - tide_n%d.z * tide_n%d.y) + tide_n%d.y * "
+                         "(tide_n%d.z * tide_n%d.x - tide_n%d.x * tide_n%d.z) + tide_n%d.z * (tide_n%d.x * tide_n%d.y - tide_n%d.y * "
+                         "tide_n%d.x);\n", n, n + 1, n + 2, n + 1, n + 2, n, n + 1, n + 2, n + 1, n + 2, n, n + 1, n + 2, n + 1, n + 2);
+            sb_put(o, "    if (tide_keep != 0.0 && (tide_own < 0.0) != (tide_keep > 1.5)) {\n        return tide_corner();\n    }\n");
+        }
         sb_printf(o, "    let tide_moved = mat4x4f(tide_block.tide_u%d, tide_block.tide_u%d, tide_block.tide_u%d, tide_block.tide_u%d)"
                      " * mat4x4f(tide_n%d, tide_n%d, tide_n%d, tide_n%d);\n", u, u + 1, u + 2, u + 3, n, n + 1, n + 2, n + 3);
         for (int c = 0; c < 4; c++) sb_printf(o, "    tide_n%d = tide_moved[%d];\n", n + c, c);
@@ -6468,7 +6499,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->gpu_instances = call->gpu_instances;
     sh->gpu_vertices = call->gpu_vertices;
     sh->gpu_indices = call->gpu_indices;
-    sh->instance_storage = sh->vertex_storage = sh->index_storage = sh->through_at = -1;
+    sh->instance_storage = sh->vertex_storage = sh->index_storage = sh->through_at = sh->sides_at = -1;
     // The lists the draw gives are its first storage buffers: its instances', its vertices', then its indices'
     if (sh->gpu_instances) {
         const shader_storage instances = {.role = STORAGE_INSTANCES};
@@ -6538,6 +6569,12 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         sh->uniform_floats = packs(sh->uniform_floats) * 4;
         sh->through_at = sh->uniform_floats;
         sh->uniform_floats += 16;
+        // Instances that have transforms of their own: which of them a run keeps, those that mirror the mesh or those
+        // that don't, as the CPU splits a list's into runs wound each way (tide_draw_shaded_indirect)
+        if (!sh->instance_type || sh->instance_transform) {
+            sh->sides_at = sh->uniform_floats;
+            sh->uniform_floats += 4;
+        }
     }
     // How many elements each list it reads has: a word of the draw's ints
     for (int i = 0; i < sh->textures.count; i++) {

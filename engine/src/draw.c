@@ -4001,6 +4001,11 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
                                      .first = first, .count = count, .packs = size / 16u, .low = (uint8_t)low,
                                      .high = (uint8_t)high, .bounds = bounds};
     d->cull_count++;
+    if (d->diagnostics) { // The geometry rows what the GPU draws of each of its levels counts in, once it says
+        tide_draw_cull *made = &d->culls[job];
+        made->rows_revision = d->diagnostics->revision;
+        for (uint32_t level = low; level <= high; level++) made->rows[level] = tide_draw_geometry_row_of(d, meshes[level]);
+    }
     const uint8_t depth = (uint32_t)p->depth <= TIDE_DEPTH_NONE ? (uint8_t)p->depth : 0;
     const uint8_t cull = sides(p->cull | (p->cull != TIDE_CULL_NONE && stats->mirrored ? TIDE_DRAW_MIRRORED : 0u));
     const uint32_t uniform_size = tide_shader_uniform_size(shader);
@@ -4325,8 +4330,26 @@ void tide_draw_shaded_indirect(tide_draw_list *d, const tide_shader *shader, con
         memcpy(moved + at, &through, sizeof through);
         uniforms = moved;
     }
-    // As the GPU has them: no culling or level picking, which is the kernel's that filled the list
-    shaded_visible(d, shader, mesh, NULL, 1, uniforms, textures, sampling, NULL);
+    // Instances whose own transforms mirror the mesh are wound the other way, which a draw that culls tells apart
+    // as the CPU splits a list's (shaded_visible), with nothing to read back: two runs, each of the instances of one
+    // side, wound each way (tide_shader.instance_sides). Their corners the other run's are one point on the GPU.
+    const tide_draw_place *p = &d->place;
+    const uint64_t side_at = (uint64_t)(shader->instance_sides - 1u) * sizeof(float);
+    if (shader->instance_sides && uniforms == moved && side_at + sizeof(float) <= size && p->cull != TIDE_CULL_NONE) {
+        const tide_draw_run with = {.tint = tide_draw_tint(d)};
+        const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
+        const bool turned = through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
+        for (int side = 1; side <= 2; side++) {
+            const float keep = (float)side;
+            memcpy(moved + side_at, &keep, sizeof keep);
+            const bool mirrored = (side == 2) != turned;
+            shaded_instances(d, shader, mesh, NULL, 1, moved, textures, sampling, TIDE_DRAW_SHADED, (tide_blend)p->blend,
+                             (tide_depth)p->depth, p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through, NULL);
+        }
+    } else {
+        // As the GPU has them: no culling or level picking, which is the kernel's that filled the list
+        shaded_visible(d, shader, mesh, NULL, 1, uniforms, textures, sampling, NULL);
+    }
     d->storage_next = 0;
     d->indirect_next = 0;
 }

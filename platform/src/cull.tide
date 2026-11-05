@@ -7,8 +7,10 @@
 // candidates each, in order, each part a whole number of groups of 64. CullListed keeps a group's candidates the
 // bucket's level picks and the frustum doesn't cull, in order, in its room of `scratch`, with how many in `groups`;
 // CullOffsets gives each group of a bucket where its kept ones go, after those of the groups before it, and the
-// bucket's count to its indirect draw; CullScatter puts them there. So a bucket's places are in the candidates'
-// order, whatever order the GPU ran them in.
+// bucket's count to `counts`; CullScatter puts them there. So a bucket's places are in the candidates' order, whatever
+// order the GPU ran them in. Then CullDraws writes each join's draws (buckets one after another that one call draws:
+// cull.inc, cull_joins): an indirect draw record for each of its buckets that kept any, in order, records of none up
+// to its buckets' count, and how many it wrote to `draws`, the count its draw_indexed_indirect_count reads.
 //
 // Every number is as the engine wrote it (platform/src/compute.inc, cull_*): an element's floats, then its ints.
 
@@ -45,8 +47,17 @@ struct CullPart
     int4 a;
 }
 
-// A bucket: x its first group, y how many, z where its places start in `places`.
+// A bucket: a.x its first group, a.y how many, a.z where its places start in `places`; b.x its mesh's index count,
+// b.y where its indices start in its join's index buffer.
 struct CullBucket
+{
+    int4 a;
+    int4 b;
+}
+
+// A join: x its first bucket, y how many, z 1 where its records' first instances are where their places start (the
+// call's places bound from the first), 0 where they're 0 (a join of one bucket, its places bound from its own).
+struct CullJoin
 {
     int4 a;
 }
@@ -60,7 +71,10 @@ struct Culling
     GPUList<int2> groups;        // Each group's: how many it kept, and where they go in `places`
     GPUList<int> scratch;        // 64 a group: the places it kept, in order
     GPUList<int> places;         // Each bucket's, from where it starts
-    GPUList<int> args;           // Each bucket's indirect draw, five words: the second is its count
+    GPUList<int> counts;         // Each bucket's: how many it kept
+    GPUList<CullJoin> joins;
+    GPUList<int> args;           // Indirect draw records, five words, as many as buckets: each join's from its first's
+    GPUList<int> draws;          // Each join's: how many of its records draw
     List<int4> page0;            // The pages of listed numbers (tide_draw_listed), 1024 pixels a row
     List<int4> page1;
     List<int4> page2;
@@ -280,7 +294,7 @@ compute CullOffsets(Culling c)
         c.groups[bucket.a.x + k] = int2(count, at);
         at += count;
     }
-    if (t == 63) c.args[b * 5 + 1] = sums[63];
+    if (t == 63) c.counts[b] = sums[63];
 }
 
 [Group(64)]
@@ -292,10 +306,48 @@ compute CullScatter(Culling c)
     if (t < info.x) c.places[info.y + t] = c.scratch[g * 64 + t];
 }
 
+// An invocation a join: its records, those of the buckets that kept any first, in order (index count, instances,
+// first index, base vertex 0, first instance), then records of none, so a GPU that draws every one of them (gpu.h's
+// draw-a-record fallback) draws nothing more.
+[Group(64)]
+compute CullDraws(Culling c)
+{
+    CullJoin join = c.joins[this.index];
+    int first = join.a.x;
+    int n = join.a.y;
+    mut int drawn = 0;
+    for (int k = 0; k < n; k++)
+    {
+        int kept = c.counts[first + k];
+        if (kept > 0)
+        {
+            CullBucket bucket = c.buckets[first + k];
+            int at = (first + drawn) * 5;
+            c.args[at] = bucket.b.x;
+            c.args[at + 1] = kept;
+            c.args[at + 2] = bucket.b.y;
+            c.args[at + 3] = 0;
+            c.args[at + 4] = join.a.z > 0 ? bucket.a.z : 0;
+            drawn += 1;
+        }
+    }
+    for (int k = drawn; k < n; k++)
+    {
+        int at = (first + k) * 5;
+        c.args[at] = 0;
+        c.args[at + 1] = 0;
+        c.args[at + 2] = 0;
+        c.args[at + 3] = 0;
+        c.args[at + 4] = 0;
+    }
+    c.draws[this.index] = drawn;
+}
+
 view RunCulling()
 {
     Culling c = Culling { };
     GPU.Run(CullListed, 64, c);
     GPU.Run(CullOffsets, 64, c);
     GPU.Run(CullScatter, 64, c);
+    GPU.Run(CullDraws, 64, c);
 }

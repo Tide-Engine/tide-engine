@@ -74,7 +74,7 @@
     X(vkMergePipelineCaches) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool)          \
     X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCmdBindDescriptorSets) X(vkGetFenceStatus)        \
     X(vkCmdFillBuffer) X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkCmdDispatchIndirect) X(vkCmdDrawIndirect)   \
-    X(vkCmdDrawIndexedIndirect)
+    X(vkCmdDrawIndexedIndirect) X(vkCmdDrawIndexedIndirectCount)
 
 #define VK_DEVICE_OPTIONAL(X) X(vkCmdPushDescriptorSetKHR)
 
@@ -124,6 +124,7 @@ typedef struct vk_buffer {
     vk_alloc memory;
     VkDeviceSize size;
     bool storage; // TIDE_GPU_STORAGE: bound as storage, read as indirect numbers, copied and read back
+    bool indices; // TIDE_GPU_INDICES: copied from too (buffer_copy)
 } vk_buffer;
 
 typedef struct vk_texture {
@@ -233,6 +234,8 @@ static struct {
     VkPhysicalDeviceMemoryProperties memory;
     bool compression;   // BC1 and BC3
     bool alpha_to_one;  // Coverage alpha becomes opaque after selecting samples
+    uint32_t indirect;  // What indirect draws can do (gpu.h, TIDE_GPU_INDIRECT_*)
+    bool multi_draw;    // ...and vkCmdDrawIndexedIndirect draws many records at once (multiDrawIndirect)
     bool depth_linear;  // A depth is compared blended between its pixels
     VkFormat window_format; // The window's, which every color image of 4 bytes a pixel has too
     VkFormat depth_format;
@@ -1367,7 +1370,8 @@ static tide_gpu_id vk_buffer_make(const tide_gpu_buffer_kind kind, const size_t 
     const VkBufferUsageFlags usage = storage ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
                                                    | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT
                                                    | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                   : (kind == TIDE_GPU_VERTICES ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
+                                   : (kind == TIDE_GPU_VERTICES ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+                                                                : VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT)
                                          | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     if (!make_buffer(size ? size : 4u, usage, USE_GPU, &b->buffer, &b->memory)) {
         fprintf(stderr, "tide: Vulkan: no memory for a buffer of %llu bytes\n", (unsigned long long)size);
@@ -1375,6 +1379,7 @@ static tide_gpu_id vk_buffer_make(const tide_gpu_buffer_kind kind, const size_t 
     }
     b->size = size;
     b->storage = storage;
+    b->indices = kind == TIDE_GPU_INDICES;
     if (data) {
         vk_buffer_write(id, 0, data, size);
     } else if (storage) { // Zeros, as WebGPU's are: what a shader reads of it before anything wrote it
@@ -2479,6 +2484,28 @@ static void vk_draw_indexed_indirect(const tide_gpu_id buffer, const size_t offs
     vkCmdDrawIndexedIndirect(vk.pass, b->buffer, offset, 1, 20);
 }
 
+static void vk_draw_indexed_indirect_count(const tide_gpu_id buffer, const size_t offset, const uint32_t most,
+                                           const tide_gpu_id counts, const size_t count_offset)
+{
+    const vk_buffer *b = storage_of(buffer), *c = storage_of(counts);
+    if (vk.skip_pass || vk.in_compute || !vk.current || !b || !c || !most || offset % 4u || offset > b->size
+        || (b->size - offset) / 20u < most || count_offset % 4u || count_offset > c->size || c->size - count_offset < 4u
+        || !bind()) return;
+    if (vk.indirect & TIDE_GPU_INDIRECT_COUNT) { // One call, as many as the GPU counted
+        const uint32_t limit = vk.properties.limits.maxDrawIndirectCount;
+        vkCmdDrawIndexedIndirectCount(vk.pass, b->buffer, offset, c->buffer, count_offset, most < limit ? most : limit, 20);
+    } else if (vk.multi_draw && most <= vk.properties.limits.maxDrawIndirectCount) { // ...or all of them, those
+        vkCmdDrawIndexedIndirect(vk.pass, b->buffer, offset, most, 20);                // past the count of none
+    } else {
+        for (uint32_t i = 0; i < most; i++) vkCmdDrawIndexedIndirect(vk.pass, b->buffer, offset + (size_t)i * 20u, 1, 20);
+    }
+}
+
+static uint32_t vk_indirect(void)
+{
+    return vk.indirect;
+}
+
 // Copies and writes in one command buffer have no order of their own: one
 // that reads or writes what one before wrote goes after it.
 static void barrier_copies(const VkCommandBuffer cb)
@@ -2497,6 +2524,9 @@ static void vk_buffer_copy(const tide_gpu_id from, const size_t from_offset, con
                            const size_t size)
 {
     const vk_buffer *a = storage_of(from), *b = storage_of(to);
+    if (!a && from && from <= vk.buffer_count && vk.buffers[from - 1u].buffer && vk.buffers[from - 1u].indices) {
+        a = &vk.buffers[from - 1u]; // An index buffer is copied from too
+    }
     if (vk.lost || !size || !a || !b || !inside(a->size, from_offset, size) || !inside(b->size, to_offset, size)) return;
     // Bytes copied onto themselves are no copy Vulkan (or WebGPU) makes
     if (from == to && from_offset < to_offset + size && to_offset < from_offset + size) return;
@@ -3064,13 +3094,26 @@ static bool create_device(const bool say)
     }
     if (vk.push) enabled[enabled_count++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
     if (listed(extensions, extension_count, "VK_KHR_portability_subset")) enabled[enabled_count++] = "VK_KHR_portability_subset";
-    VkPhysicalDeviceVulkan13Features has13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    VkPhysicalDeviceVulkan12Features has12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan13Features has13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &has12};
     VkPhysicalDeviceFeatures2 has = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &has13};
     vkGetPhysicalDeviceFeatures2(vk.physical, &has);
+    // Many indirect draws in one call, as many as the GPU counted (drawIndirectCount, core in 1.2 but optional), or
+    // as many as asked for (multiDrawIndirect); TIDE_VULKAN_INDIRECT_COUNT=0 turns both off, for tests of the
+    // draw-a-record fallback (gpu.h, draw_indexed_indirect_count)
+    const char *counted = getenv("TIDE_VULKAN_INDIRECT_COUNT");
+    const bool many = !(counted && strcmp(counted, "0") == 0);
+    VkPhysicalDeviceVulkan12Features want12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+                                               .drawIndirectCount = many ? has12.drawIndirectCount : VK_FALSE};
     // What's read past a buffer's or an image's end is nothing, as on WebGPU
     VkPhysicalDeviceVulkan13Features want13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-                                               .dynamicRendering = VK_TRUE, .robustImageAccess = has13.robustImageAccess};
+                                               .pNext = &want12, .dynamicRendering = VK_TRUE,
+                                               .robustImageAccess = has13.robustImageAccess};
     VkPhysicalDeviceFeatures2 want = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &want13};
+    want.features.multiDrawIndirect = many ? has.features.multiDrawIndirect : VK_FALSE;
+    vk.multi_draw = want.features.multiDrawIndirect;
+    vk.indirect = (want12.drawIndirectCount ? (uint32_t)TIDE_GPU_INDIRECT_COUNT : 0u)
+                | (has.features.drawIndirectFirstInstance ? (uint32_t)TIDE_GPU_INDIRECT_FIRST_INSTANCE : 0u);
     want.features.independentBlend = VK_TRUE;
     want.features.robustBufferAccess = has.features.robustBufferAccess;
     want.features.textureCompressionBC = has.features.textureCompressionBC;
@@ -3394,6 +3437,8 @@ const tide_gpu tide_gpu_vulkan = {
     .dispatch_indirect = vk_dispatch_indirect,
     .draw_indirect = vk_draw_indirect,
     .draw_indexed_indirect = vk_draw_indexed_indirect,
+    .draw_indexed_indirect_count = vk_draw_indexed_indirect_count,
+    .indirect = vk_indirect,
     .buffer_copy = vk_buffer_copy,
     .buffer_read = vk_buffer_read,
     .buffer_read_done = vk_buffer_read_done,

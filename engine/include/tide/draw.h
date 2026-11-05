@@ -1523,9 +1523,13 @@ typedef struct tide_shader {
     // An Instanced draw over a GPU list's: 1 + the storage slot its instances are read from, each by its place,
     // and the draw is indirect (tide_draw_run.indirect). 0 for another. In 3D, 1 + the float word of its uniforms
     // where Draw.Transform's matrix goes, which its instances' transforms go through on the GPU: written as the
-    // draw is recorded (the identity where nothing moves it), 0 for none.
+    // draw is recorded (the identity where nothing moves it), 0 for none. Where its instances have transforms of their
+    // own, 1 + the float word that says which of them a run draws: 0.0 all, 1.0 those whose own transform doesn't
+    // mirror the mesh, 2.0 those whose does (the others' corners go to one point), so a draw that culls records a run
+    // wound each way, as the CPU splits a list's; 0 for none.
     uint32_t instance_storage;
     uint32_t instance_through;
+    uint32_t instance_sides;
     // A mesh draw over a GPU list of vertices: 1 + the storage slot they're read from, each by its index, and the
     // shader has no attributes (`attribute_count` 0, and the renderer's vertex buffer of stride 0). Its mesh is the
     // CPU's indices alone (tide_draw_mesh_fill_pulled), unless its indices are a GPU list too: 1 + the slot they're
@@ -1613,10 +1617,14 @@ typedef struct tide_draw_cull_camera {
 // to `first + count` of the page that's texture `page` (`packs` pixels each), tested with `bounds` (where its set
 // is 1) through camera `camera` of tide_draw_list.cull_cameras, at the levels of mesh `mesh` (the full one). Its
 // candidates are at levels `low` to `high` at most: its set's runs of the others leave it out.
+// With geometry diagnostics (tide/draw_profile.h), `rows` are 1 + the geometry row of each of its levels that
+// what the GPU draws of it counts in (tide_draw_geometry_add), as of the diagnostics' revision `rows_revision`.
 typedef struct tide_draw_cull {
     uint32_t camera, mesh, page, first, count, packs;
     uint8_t low, high, pad[2];
     tide_draw_bounds bounds;
+    uint32_t rows[TIDE_MESH_LEVELS + 1];
+    uint64_t rows_revision;
 } tide_draw_cull;
 
 // Whether draw `job` of the list is among culled run `run`'s.

@@ -20,15 +20,20 @@ static int element_words(const type t, int *floats)
 }
 
 // The storage slot of the GPU list `list` names, a field of what the engine supplies or of a struct a function is
-// given: -1 while checking, which notes the field as read. Refuses anything else.
+// given, or a function's own GPUList parameter, which its call names (the function is written for that slot, as for
+// a list's texture): -1 while checking, which notes the field as read. Refuses anything else.
 static int gpu_list_slot(emit *em, const expr *list)
 {
+    if (list && list->kind == E_NAME && list->bind == BIND_PARAM && list->param->function_param
+        && list->param->type.kind == TY_GPU_LIST && em->code != em->root) { // Its caller's, noted where the call names it
+        return em->checking || !em->sh || !em->spec ? -1 : em->spec[param_index(em->code, list->param)].slot;
+    }
     const expr *obj = list && list->kind == E_MEMBER ? list->object : NULL;
     if (!obj || !list->field || obj->kind != E_NAME || obj->bind != BIND_PARAM
         || !(is_bound(em, obj->param) || names_given(em, obj))) {
-        refuse(em, list ? list->at : (loc){0}, "a GPU list in code the GPU runs is a field of what it takes, by its name: it "
-                                               "can't be kept in a local, passed on alone or returned there");
-        diag_note("pass the struct, component or singleton that holds it to a function instead, which reads it by its field");
+        refuse(em, list ? list->at : (loc){0}, "a GPU list in code the GPU runs is named where it's used, a field of what it "
+                                               "takes or a function's parameter: it can't be kept in a local or returned there");
+        diag_note("pass it on by that name, 'Keep(meadow.shown, blade)', to a function that takes a GPUList");
         return -1;
     }
     const param *p = obj->param;
@@ -218,6 +223,22 @@ static const char *need_atomic(emit *em, const int slot, const str name, const c
     else sb_printf(&text, "    return %s(%s, tide_v);\n}\n\n", op, place);
     sb_put(&em->functions, text.data);
     return fn.data;
+}
+
+// A write to a kernel's shared memory, not through atomics: under `if (tide_zero == 0u)`, a word of the group's
+// that nothing writes, so always 0 (workgroup memory starts zeroed) and the write happens for every invocation as
+// written. Unity's Direct3D 11 compiler (fxc) refuses a write every invocation makes to one place with values that
+// differ (X3695, no pragma turns it off; a condition on the run's values or the group doesn't help), and a condition
+// on what shared memory holds is one it can't see through. Measured with fxc 10.0.22621, cs_5_0 /WX: notes/compute.md.
+static bool shared_atomic(const expr *e);
+
+static bool writes_shared(const stmt *s)
+{
+    if (s->kind != S_ASSIGN) return false;
+    const expr *root = s->target;
+    while (root && (root->kind == E_INDEX || root->kind == E_MEMBER)) root = root->object;
+    return root && root->kind == E_NAME && root->bind == BIND_LOCAL && root->local && root->local->is_shared
+        && !shared_atomic(root);
 }
 
 // A kernel's `shared int[N]` that atomics are used on: its reads and writes are atomic too.

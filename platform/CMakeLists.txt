@@ -144,8 +144,9 @@ function(tide_android_app target)
         set(pack "--pack-if-any" "${ARG_PACK}")
     endif()
     # The activity's way in is in the platform layer, which nothing in the
-    # program calls.
-    target_link_options(${target} PRIVATE -Wl,-u,ANativeActivity_onCreate)
+    # program calls; and an app's exit() is the activity's, which ends it the
+    # way Android's processes end (__wrap_exit in android/activity.c).
+    target_link_options(${target} PRIVATE -Wl,-u,ANativeActivity_onCreate -Wl,--wrap=exit)
     string(REPLACE "-" "_" id "${target}")
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND "${TIDE_APK_PATH}" "$<TARGET_FILE_DIR:${target}>/${target}.apk" --package "dev.tide.${id}"
@@ -155,6 +156,35 @@ function(tide_android_app target)
         COMMENT "Android app ${target}.apk"
         VERBATIM)
     add_dependencies(${target} tide_android_key)
+endfunction()
+
+# tide_android_app_test(<target> [BACK] [GPU])
+#
+# Android builds: a test of the app <target> (tide_android_app) on the device
+# (cmake/run_android.mjs --app), which passes when the app ends with 0 and
+# nothing in its process crashed, Android's own threads too. BACK presses the
+# back button once it drew. GPU: it draws, so it needs Vulkan 1.3 (the
+# emulator booted with -gpu lavapipe or -gpu host, or a phone), and is
+# labelled gpu. Apps take the screen, so they run one at a time.
+function(tide_android_app_test target)
+    if(NOT TIDE_ANDROID OR NOT TIDE_NODE)
+        return()
+    endif()
+    cmake_parse_arguments(ARG "BACK;GPU" "" "" ${ARGN})
+    string(REPLACE "-" "_" id "${target}")
+    set(options "")
+    if(ARG_BACK)
+        list(APPEND options --back)
+    endif()
+    if(ARG_GPU)
+        list(APPEND options --vulkan)
+    endif()
+    add_test(NAME ${target} COMMAND "${TIDE_NODE}" --no-warnings "${PROJECT_SOURCE_DIR}/cmake/run_android.mjs"
+        --app "dev.tide.${id}" ${options} "$<TARGET_FILE_DIR:${target}>/${target}.apk")
+    set_tests_properties(${target} PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+    if(ARG_GPU)
+        set_property(TEST ${target} APPEND PROPERTY LABELS gpu)
+    endif()
 endfunction()
 
 # In the package, the platform layer is prebuilt: tide links games with it,
@@ -507,15 +537,23 @@ elseif(NOT TIDE_ANDROID)
     tide_gpu_test(tide_platform_draw_vulkan_sets)
     set_property(TEST tide_platform_draw_vulkan_sets APPEND PROPERTY ENVIRONMENT TIDE_VULKAN_DESCRIPTOR_SETS=1)
 else()
-    # On Android a renderer needs an app's window: install
-    # tide_platform_draw_app.apk, start it, and read what it prints
-    # (`adb logcat -s tide`).
+    # On Android a renderer needs an app's window: the test installs
+    # tide_platform_draw_app.apk, starts it, and prints what it logs.
     add_library(tide_platform_draw_app SHARED tests/draw.c)
     target_link_libraries(tide_platform_draw_app PRIVATE tide_platform)
     target_include_directories(tide_platform_draw_app PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
     tide_platform_spirv_of(tide_platform_draw_app)
     target_compile_definitions(tide_platform_draw_app PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
+    tide_android_app_test(tide_platform_draw_app GPU)
+
+    # An app's end, on any device: with Vulkan 1.3 at once, and without it
+    # after the screen saying so, which the back button leaves.
+    add_library(tide_platform_app_exit SHARED tests/app_exit.c)
+    target_include_directories(tide_platform_app_exit PRIVATE src)
+    target_link_libraries(tide_platform_app_exit PRIVATE tide_platform)
+    tide_android_app(tide_platform_app_exit LABEL "Tide exit")
+    tide_android_app_test(tide_platform_app_exit BACK)
 endif()
 
 # Targets are sampleable images: multiple passes preserve their color/depth,
@@ -533,13 +571,13 @@ if(NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_targets)
     endif()
 else()
-    # As the draw checks, an app: install tide_platform_targets_app.apk, start
-    # it, and read what it prints (`adb logcat -s tide`).
+    # As the draw checks, an app.
     add_library(tide_platform_targets_app SHARED tests/targets.c)
     target_include_directories(tide_platform_targets_app PRIVATE src)
     target_link_libraries(tide_platform_targets_app PRIVATE tide_platform)
     tide_platform_spirv_of(tide_platform_targets_app)
     tide_android_app(tide_platform_targets_app LABEL "Tide targets")
+    tide_android_app_test(tide_platform_targets_app GPU)
 endif()
 
 # Compute at gpu.h: storage buffers, compute passes, shared memory, atomics,
@@ -634,11 +672,12 @@ if(NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_prewarm)
     endif()
 else()
-    # An app there too, to install and start by hand: the device's Vulkan has
-    # to take what tidec writes as the others do (`adb logcat -s tide`).
+    # An app there too: the device's Vulkan has to take what tidec writes as
+    # the others do.
     tide_add_game(tide_platform_shaders_app SOURCES tests/shaders.tide NAME game HOST tests/shaders.c WINDOW
                   WARNINGS "'source' may say Filter.Trilinear, which this Sample can't read")
     target_include_directories(tide_platform_shaders_app PRIVATE src)
+    tide_android_app_test(tide_platform_shaders_app GPU)
 endif()
 
 if(NOT TIDE_ANDROID)

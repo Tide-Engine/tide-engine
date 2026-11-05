@@ -4,7 +4,10 @@
 // list's count chained after the run that filled it, a list sent and changed
 // and read back, an indirect draw of a list a kernel filled, meshes whose
 // vertices and indices kernels made, Draw.Transform around indirect draws,
-// and a run a draw before it reads what it writes.
+// a run a draw before it reads what it writes, GPU lists passed on alone to
+// functions that read, write, add to and use atomics on them, a kernel adding
+// to two lists, and a 3D indirect draw whose instances' own transforms mirror
+// its mesh and don't, culled as the CPU culls a list's.
 
 struct Item
 {
@@ -68,6 +71,12 @@ local singleton Lists
     GPUList<Dot> dots;
     GPUList<int> dotIndices;
     GPUList<Box> boxes;
+    GPUList<Box> turned;
+    GPUList<float> shades;
+    GPUList<int> helped;
+    GPUList<int> helpCount;
+    GPUList<int> evens;
+    GPUList<int> fives;
     List<Item> sent;
     float scale;
     int frame;
@@ -84,6 +93,10 @@ local singleton Results
     List<int> sums;
     List<int> groups;
     List<Item> items;
+    List<int> helped;
+    List<int> helpCount;
+    List<int> evens;
+    List<int> fives;
     List<float> expected; // Curve on the CPU, for what Shapes works out on the GPU
     int keptCount;
     int reads;
@@ -206,6 +219,60 @@ compute PlaceBoxes(Lists lists)
     lists.boxes.Add(Box { transform = float4x4.Translate(float3(96.5, 3.5, 10.0)), color = Color(1, 1, 0, 1) });
 }
 
+// Functions given GPU lists alone: each written for the list its call names
+void Store(GPUList<int> into, int at, int value)
+{
+    into[at] = value;
+}
+
+void CountOne(GPUList<int> counts)
+{
+    counts.AtomicAdd(0, 1);
+}
+
+void Keep(GPUList<int> into, int value)
+{
+    into.Add(value);
+}
+
+void KeepBox(GPUList<Box> into, float3 at, float mirror, Color color)
+{
+    into.Add(Box { transform = float4x4.TRS(at, quaternion.identity, float3(mirror, 1, 1)), color = color });
+}
+
+void KeepTurned(GPUList<Box> into, int i)
+{
+    if (i == 0) KeepBox(into, float3(3.5, 3.5, 10.0), 1.0, Color(0, 1, 1, 1));
+    else KeepBox(into, float3(1.5, 3.5, 10.0), -1.0, Color(1, 0, 1, 1));
+}
+
+float Shade(GPUList<float> shades)
+{
+    return shades.count > 0 ? shades[0] : 0.0;
+}
+
+// Through those functions, and Adds to two lists, which share their scan
+[Group(64)]
+compute Help(Lists lists)
+{
+    Store(lists.helped, this.index, this.index * 3);
+    CountOne(lists.helpCount);
+    if (this.index % 2 == 0) Keep(lists.evens, this.index);
+    if (this.index % 5 == 0) lists.fives.Add(this.index);
+}
+
+// Two boxes, the second's own transform mirrored
+[Group(2)]
+compute PlaceTurned(Lists lists)
+{
+    KeepTurned(lists.turned, this.index);
+}
+
+frag ShowTurned(Corner3 corner, Box box, Lists lists, out Color color)
+{
+    color = box.color * Shade(lists.shades);
+}
+
 // Every corner white, after the draws before it read them
 [Group(16)]
 compute Whiten(Lists lists)
@@ -250,6 +317,12 @@ view Compute(mut Lists lists, mut Results results)
         lists.dots = GPUList<Dot>(16);
         lists.dotIndices = GPUList<int>(32);
         lists.boxes = GPUList<Box>(2);
+        lists.turned = GPUList<Box>(2);
+        lists.shades = GPUList<float>(1);
+        lists.helped = GPUList<int>(160);
+        lists.helpCount = GPUList<int>(1);
+        lists.evens = GPUList<int>(160);
+        lists.fives = GPUList<int>(160);
         lists.scale = 1.5;
         results.revision = lists.shapes.contentRevision;
         for (var i = 0; i < 200; i++) results.expected.Add(Curve(float(i) * 0.37 - 5.0, lists.scale));
@@ -282,6 +355,14 @@ view Compute(mut Lists lists, mut Results results)
     GPU.Run(MakeIndices, 18);
     lists.boxes.Clear();
     GPU.Run(PlaceBoxes, 1);
+    lists.helped.SetCount(150);
+    lists.helpCount.Set([0]);
+    lists.evens.Clear();
+    lists.fives.Clear();
+    GPU.Run(Help, 150);
+    lists.turned.Clear();
+    GPU.Run(PlaceTurned, 2);
+    lists.shades.Set([1.0]);
     // Every run and list operation above goes before the clear's pass, which none of them is drawn in
     List<Corner> square = [Corner { position = float2(-4, -4) }, Corner { position = float2(4, -4) },
                            Corner { position = float2(4, 4) }, Corner { position = float2(-4, 4) }];
@@ -303,6 +384,10 @@ view Compute(mut Lists lists, mut Results results)
             Draw.Instanced(face, [0, 1, 2, 0, 2, 3], lists.boxes, ShowBox);
         }
     }
+    // Culled as the CPU culls a list's: each box's front by its own transform, the mirrored one's the other way.
+    // Wound to face the camera (the face above faces away), so the box whose transform mirrors it is wound away on
+    // the screen, and is drawn by the run wound the other way
+    Draw.Instanced(face, [0, 2, 1, 0, 3, 2], lists.turned, ShowTurned);
     // A run whose list the draws before it read: after them, and the draw after it sees what it wrote
     GPU.Run(Whiten, lists.dots);
     Draw.Mesh(lists.dots, [0, 1, 2, 0, 2, 3], Moved, Shift { by = float2(20, 12) });
@@ -326,6 +411,10 @@ async void ReadBack(Lists lists, mut Results results)
     if (await lists.sums.Read() is List<int> sums) results.sums = sums;
     if (await lists.groups.Read() is List<int> groups) results.groups = groups;
     if (await lists.items.Read() is List<Item> items) results.items = items;
+    if (await lists.helped.Read() is List<int> helped) results.helped = helped;
+    if (await lists.helpCount.Read() is List<int> helpCount) results.helpCount = helpCount;
+    if (await lists.evens.Read() is List<int> evens) results.evens = evens;
+    if (await lists.fives.Read() is List<int> fives) results.fives = fives;
     results.reads += 1;
 }
 

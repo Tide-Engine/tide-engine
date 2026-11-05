@@ -110,6 +110,12 @@ static void none_draw_indexed(const uint32_t count, const uint32_t instances) { 
 static void none_storage(const uint32_t slot, const tide_gpu_id buffer) { (void)slot, (void)buffer; }
 static void none_dispatch(const uint32_t x, const uint32_t y, const uint32_t z) { (void)x, (void)y, (void)z; }
 static void none_indirect(const tide_gpu_id buffer, const size_t offset) { (void)buffer, (void)offset; }
+static void none_indirect_count(const tide_gpu_id buffer, const size_t offset, const uint32_t most, const tide_gpu_id counts,
+                                const size_t count_offset)
+{
+    (void)buffer, (void)offset, (void)most, (void)counts, (void)count_offset;
+}
+static uint32_t none_indirect_can(void) { return 0; }
 
 static void none_buffer_copy(const tide_gpu_id from, const size_t from_offset, const tide_gpu_id to, const size_t to_offset,
                              const size_t size)
@@ -179,6 +185,8 @@ const tide_gpu tide_gpu_none = {
     .dispatch_indirect = none_indirect,
     .draw_indirect = none_indirect,
     .draw_indexed_indirect = none_indirect,
+    .draw_indexed_indirect_count = none_indirect_count,
+    .indirect = none_indirect_can,
     .buffer_copy = none_buffer_copy,
     .buffer_read = none_buffer_read,
     .buffer_read_done = none_buffer_read_done,

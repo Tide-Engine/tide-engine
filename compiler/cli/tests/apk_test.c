@@ -291,7 +291,8 @@ TIDE_TEST(apk_has_its_icon)
 }
 
 // The manifest: binary XML with its string pool, its resource map and the
-// app's ID and library in it, and the back button kept for the game.
+// app's ID and library in it, the back button kept for the game, and Vulkan
+// 1.3 required, for Google Play's filtering.
 TIDE_TEST(apk_manifest_is_binary_xml)
 {
     const apk_desc desc = {.package = "dev.tide.sand", .label = "Tide sand", .lib_name = "sand", .version_code = 1,
@@ -304,10 +305,18 @@ TIDE_TEST(apk_manifest_is_binary_xml)
     const uint32_t pool_size = get32(xml + 12);
     const uint8_t *map = xml + 8 + pool_size;
     TIDE_CHECK(get16(map) == 0x0180); // Then the resource map
-    bool back = false;
-    for (uint32_t i = 8; i < get32(map + 4); i += 4) back = back || get32(map + i) == 0x0101066c;
-    TIDE_CHECK(back); // enableOnBackInvokedCallback
+    bool back = false, version = false;
+    for (uint32_t i = 8; i < get32(map + 4); i += 4) {
+        back = back || get32(map + i) == 0x0101066c;
+        version = version || get32(map + i) == 0x01010519;
+    }
+    TIDE_CHECK(back);    // enableOnBackInvokedCallback
+    TIDE_CHECK(version); // uses-feature's version
     TIDE_CHECK(contains(xml, size, "dev.tide.sand", 13) && contains(xml, size, "sand\0", 5));
+    TIDE_CHECK(contains(xml, size, "android.hardware.vulkan.version", 31));
+    // Its version: a hex integer (a Res_value of type 0x11) of 0x403000
+    static const uint8_t vulkan_1_3[] = {8, 0, 0, 0x11, 0x00, 0x30, 0x40, 0x00};
+    TIDE_CHECK(contains(xml, size, vulkan_1_3, sizeof vulkan_1_3));
     free(xml);
 }
 
@@ -399,6 +408,7 @@ TIDE_TEST(apk_bundle_is_signed_as_a_jar)
                                      0x12, 0x06, 0x12, 0x04, 0x08, 0x01, 0x10, 0x02};
     TIDE_CHECK(sizes[3] == sizeof config && memcmp(data[3], config, sizeof config) == 0);
     TIDE_CHECK(data[4][0] == 0x0a && contains(data[4], sizes[4], "dev.tide.test", 13));
+    TIDE_CHECK(contains(data[4], sizes[4], "android.hardware.vulkan.version", 31));
     TIDE_CHECK(contains(data[5], sizes[5], "res/mipmap/icon.png", 19));
     TIDE_CHECK(sizes[6] == sizeof png && memcmp(data[6], png, sizeof png) == 0);
 

@@ -1,4 +1,4 @@
-// expect: a kernel's own body writes GPU lists, so a function can't add to a GPU list
+// expect: 'Keep' writes a GPU list, which kernels do: a frag reads them
 scene Main { }
 
 struct Blade
@@ -13,7 +13,12 @@ local singleton Meadow
     GPUList<int> counts;
     List<Blade> sent;
 }
-void Keep(Meadow meadow, Blade b)
+void Keep(GPUList<int> counts, int i)
 {
-    meadow.blades.Add(b);
+    counts[i] = 1;
+}
+frag Shade(Vertex vertex, out Color color, Meadow meadow)
+{
+    Keep(meadow.counts, 0);
+    color = Color.white;
 }

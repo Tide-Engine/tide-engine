@@ -1,0 +1,30 @@
+// expect: 'Thin' can add to 'shown' twice: an invocation adds to a GPU list once at the most, on any path
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<Blade> shown;
+}
+void Keep(GPUList<Blade> into, Blade b)
+{
+    into.Add(b);
+}
+void KeepBoth(Meadow meadow, Blade b)
+{
+    Keep(meadow.shown, b);
+}
+[Group(64)]
+compute Thin(Meadow meadow)
+{
+    Blade b = meadow.blades[this.index];
+    if (b.height > 1.0) Keep(meadow.shown, b);
+    KeepBoth(meadow, b);
+}
+view Show(Meadow meadow) { GPU.Run(Thin, meadow.blades); }

@@ -4367,10 +4367,12 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
         arg(&a, "-Xlinker");
         arg(&a, exports);
     }
-    // The activity's way in, which nothing in the game calls; a C function
-    // nothing defines fails here, not when the app starts; pages of 16 KiB,
-    // as Android 15's devices can have.
-    static const char *const flags[] = {"-fuse-ld=lld", "-Wl,-u,ANativeActivity_onCreate", "-Wl,--no-undefined",
+    // The activity's way in, which nothing in the game calls; exit() as the
+    // activity ends an app (__wrap_exit in platform/android/activity.c); a C
+    // function nothing defines fails here, not when the app starts; pages of
+    // 16 KiB, as Android 15's devices can have.
+    static const char *const flags[] = {"-fuse-ld=lld", "-Wl,-u,ANativeActivity_onCreate", "-Wl,--wrap=exit",
+                                        "-Wl,--no-undefined",
                                         "-Wl,-z,max-page-size=16384", "-nodefaultlibs", "-lc", "-lm", "-ldl",
                                         "-landroid", "-llog", "-laaudio", NULL};
     arg_list(&a, flags);

@@ -1,5 +1,17 @@
 # Language features, as tidec builds them
 
+## GPU lists written through functions (2026-11-05)
+
+A function the GPU runs takes a `GPUList<T>` and writes, adds to or uses atomics on it (or on a field of a struct
+it's given): the checker notes it on the parameter (`param.gpu_written`, `gpu_adds`, `gpu_atomic`) or the function's
+field lists (`decl.adds`, `atomics`, `gpu_writes`, now any GPU code's), and `settle_gpu_list_writes`
+(compute_check.inc, after `settle_grid_functions`) hands them to callers over `c->calls` to a fixed point, then
+checks Add's rules through calls. `call_site` gained `statement` (the call is a statement of its own) and `looped`
+(in a loop's body, condition or step), set where calls are noted (`check_method_args`, overloads, property sets).
+Add's once-a-path check and a kernel's one-axis group moved there from `check_kernel_flow`. The shared-race warning
+(`shared_races`, `group_uniform`) is gone: the writes are guarded instead. Details: notes/compute.md, Closing the
+gaps.
+
 ## Unread results of calls that keep their order (2026-11-04)
 
 Fix, found building Mount & Rifle with dev: a statement that is a call with a result, whose arguments

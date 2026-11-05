@@ -320,7 +320,7 @@ The GPU culls a `Draw.Instanced` of a list that stays as it was and picks its in
 
 On a Mac, Vulkan is MoltenVK, Vulkan on Metal: `tide build` puts `libMoltenVK.dylib` beside the game, which uses it where the Mac has no Vulkan loader of its own. Ship it with the game; its license is in the tide package's `licenses/moltenvk`.
 
-An Android game draws with Vulkan 1.3. A device without it shows a screen saying what the game needs until the player leaves it.
+An Android game draws with Vulkan 1.3, and its manifest says so, so Google Play offers it only to devices that have it. A device without it that has the game anyway (installed from its APK) shows a screen saying what the game needs until the player leaves it.
 
 ### Stats
 
@@ -349,8 +349,8 @@ The list is two columns, a label on the left and its value on the right, in four
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu` | What a frame's work takes on its thread, all of it: the ticks it runs, the views and the drawing, without the wait for the display |
 | `render` | Listed under `cpu` as the part of it that prepares and submits the frame's draw list, including its render targets |
-| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android) and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the device has no GPU timer, the draw calls have a line of their own, `draw calls` |
-| `vertices` | Vertices submitted this frame across all render-target passes, counting each index for each instance at its selected LOD. Includes shapes, text, meshes, blits and clear triangles; excludes the host's overlays. A quad counts as six, even with four shared corners. Clipped or culled geometry still counts; this measures submitted geometry, not how many pixels were visible or how often the GPU ran the vertex shader after caching |
+| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android) and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one, and so is a draw the GPU decides (instances culled on the GPU, one call for runs one after another that draw alike, or an indirect draw over a `GPUList`). Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the device has no GPU timer, the draw calls have a line of their own, `draw calls` |
+| `vertices` | Vertices submitted this frame across all render-target passes, counting each index for each instance at its selected LOD. Includes shapes, text, meshes, blits and clear triangles; excludes the host's overlays. A quad counts as six, even with four shared corners. Clipped or culled geometry still counts; this measures submitted geometry, not how many pixels were visible or how often the GPU ran the vertex shader after caching. What the GPU decides (instances culled on the GPU, indirect draws over a `GPUList`) is counted from the GPU's own numbers, read back without waiting: they're a frame or two late |
 | `ping (delay 3 ticks)` | The network's round trip to the machine running the match, in the list when it's this machine, and in its label the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `network` | What goes over the network each second, up and down: `↑2.0  ↓0.5 KB/s` |
 | `entities` | How many entities the match has |
@@ -408,7 +408,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 3. Upload `.build/<name>.aab` to a release: internal testing is the quickest way to try it on your own phone. Play signs the APKs it makes with a key of its own, which it keeps (Play App Signing); `~/.android/tide.pem` is then your upload key, and Play only takes uploads signed with it.
 4. For an update, build again and upload the new `.aab`: its version code is higher than the last one's.
 
-Play's other requirements, like the version of Android an app is made for (Android 16) and support for phones with 16 KiB memory pages, `tide` meets itself. A library the game brings has to be linked for those pages too, and `tide` warns when one isn't (see [Calling C](../c/functions.md#android)). If you lose your upload key, Play can take a new one (the app's **App integrity** page asks for its certificate: the part of the key's file from `-----BEGIN CERTIFICATE-----` on).
+Play leaves out devices without Vulkan 1.3, which the game needs to draw. Play's other requirements, like the version of Android an app is made for (Android 16) and support for phones with 16 KiB memory pages, `tide` meets itself. A library the game brings has to be linked for those pages too, and `tide` warns when one isn't (see [Calling C](../c/functions.md#android)). If you lose your upload key, Play can take a new one (the app's **App integrity** page asks for its certificate: the part of the key's file from `-----BEGIN CERTIFICATE-----` on).
 
 ## Hot reload
 

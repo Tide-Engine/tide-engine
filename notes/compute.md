@@ -28,6 +28,12 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [x] Engine GPU culling of listed runs, 2026-11-05: notes/drawing.md, Listed runs culled on the GPU (Hi-Z
       occlusion not built)
 - [x] Docs: `docs/game/shaders.md`, spec, editors
+- [x] GPU lists passed on alone, writes/Add/atomics in functions, mirrored instances of indirect draws, shared writes
+      guarded for fxc, Adds sharing one scan, Draw.Bounds pinned for GPU vertices, 2026-11-05 ("Closing the gaps" below)
+- [x] `draw_indexed_indirect_count` (Vulkan's DrawIndexedIndirectCount, WebGPU's multi-draw-indirect or a loop, the
+      recorder's op, embed ABI 12), used by the GPU culling: empty level buckets draw nothing, runs one after another
+      that draw alike are one call, stats from the GPU's counts, 2026-11-05: notes/drawing.md, Culled runs drawn by a
+      count, joined
 
 ## Built: the language, the engine and the renderer (2026-11-05)
 
@@ -161,13 +167,19 @@ has no draw list). (A 2D or 3D `Draw.Instanced` over a GPU list wasn't moved by
 
 ### Not built
 
-- `DrawIndirectCount` (Vulkan's many indirect draws in one call): each indirect draw is a call.
-- A frag or vert reading a GPU list through a function given a struct works by
-  field; one passed on alone is refused (a GPU list is a storage slot by its source and field, not a value).
-- Instances of an indirect draw whose own transforms mirror aren't drawn apart from the others (the CPU has none to
-  tell apart); a list of them is drawn inside `Draw.Cull(Cull.None)` or as two lists.
-- fxc's race on shared memory is warned, not guarded (below).
+- (Built 2026-11-05: `draw_indexed_indirect_count`, below and notes/drawing.md.) A game's `Draw.Instanced` over a
+  GPU list is still one indirect draw a call: nothing in the language asks for many records.
 - Hi-Z occlusion in the engine's culling (drawing.md).
+- (Built since, "Closing the gaps" below: GPU lists passed on alone, mirrored instances of indirect draws, fxc's race
+  guarded.)
+- Stats: an indirect draw counts its mesh's indices once (its instance count is the GPU's), and a draw of GPU indices
+  counts 0 vertices (`draw_shaded` in platform.c: the corner count is the GPU's). What the CPU knows is counted: CPU
+  indices times CPU instances. The same gap as GPU-culled runs' (drawing.md, Listed runs culled on the GPU), which
+  asynchronous GPU-side counts would close for both; nothing here reads them back.
+- The engine's Add offsets and scatter (`add_offsets`, `add_scatter`) are still one dispatch each a list a kernel adds
+  to; only the kernel's own scan is shared.
+- `++`/`--` inside an expression on a shared scalar (`int a = last++;`) isn't under the shared-write guard (only
+  assignment statements are, `writes_shared`): fxc would refuse it where every invocation does it.
 
 ## Meshes over GPU lists, Draw.Transform on indirect draws, runs out of passes (2026-11-05)
 
@@ -213,7 +225,7 @@ Task: finish what "Not built" listed. Every pick is Claude's, Provisional, and i
   samples a render target (`TIDE_PIXELS_TARGET*`) not over any step into a target. Indirect arguments come after each
   run as before (`prepare_storage_draws` from the moved step). `tide_platform_render_passes()` (platform.h) says how
   many passes the last list drawn began, as `tide_platform_draw_calls` does its calls.
-- **fxc's races** (`shared_races`, compute_check.inc). Measured with fxc 10.0.22621 (cs_5_0, `/WX`, Unity's
+- **fxc's races** (`shared_races`, compute_check.inc; replaced by a guard, "Closing the gaps" below). Measured with fxc 10.0.22621 (cs_5_0, `/WX`, Unity's
   `TideWarnings.hlsl`): user writes to a GPU list never trip X3694 (`tide_put`'s capacity check reads the buffer, which
   fxc can't see through); shared memory does, X3695, for a write of differing values at a place uniform to the group
   (a constant, a values field, `this.group`), under a uniform `if` too, a field of a shared struct, and `+=`; not for
@@ -236,6 +248,71 @@ Task: finish what "Not built" listed. Every pick is Claude's, Provisional, and i
     the vertices (the draws before it keep the old colors), and 2 render passes (3 with the move turned off, checked
     by hand). Vulkan with the validation layer, and WebGPU with a lost device.
 
+## Closing the gaps (2026-11-05)
+
+Task: the language/codegen gaps "Not built" listed, beside two agents' GPU-culling work (cull.tide, the renderer's
+culling and indirect emission), which this leaves alone. Every pick is Claude's, Provisional, and in the spec's Built list.
+
+- **GPU lists passed on alone.** A function's `GPUList<T>` parameter is `is_given` (shader.c): no argument, and the
+  function is written for the storage slot its call names (`given.slot`, in the suffix as a list's texture number is),
+  which `gpu_list_slot` resolves (a field of what's bound or given, or the caller's own such parameter through
+  `em->spec`). Reads of the root's field are noted at the call (`gpu_list_slot` on the argument), so a function checked
+  once still has every caller send its lists. `type_fits` still refuses one as a value (a local, a result, `?:`).
+  - Writes in functions (checker, compute_check.inc): `gpu_list_write_ok` takes a function's own GPUList parameter or a
+    field, in a function (then `gpu_only`, `TY_GPU_LIST`), and `note_gpu_write` notes it on the code being checked:
+    a field on its `adds`/`atomics`/`gpu_writes`, a parameter by `param.gpu_written`/`gpu_adds`/`gpu_atomic`.
+  - `settle_gpu_list_writes` (after every body, before `check_gpu_only_calls`): over `c->calls`, to a fixed point,
+    a callee's field lists and its parameters' writes by what each call passes (`hand_on_writes`: a field, or the
+    caller's parameter) go to the caller, so a kernel's lists say everything it reaches writes before `plan_kernel`.
+    Then a frag or vert calling a writer is an error, an adder's call must be a statement (`call_site.statement`) and in
+    no loop (`call_site.looped`: a loop's body, condition or step), each kernel and function adds once a path
+    (`adds_through` over a `gpu_target`, a field or a parameter: a call of what adds to it counts one), and a kernel
+    that adds has a group of one axis. Those last two moved here from `check_kernel_flow`, which runs before callees'
+    bodies are checked.
+  - Add in a function sets the kernel's `tide_adding<k>`/`tide_added<k>`, which are `var<private>`.
+  - The CPU calling a function that writes a GPU list: `check_gpu_only_calls`' error, now "reads or writes".
+- **Mirrored instances of indirect draws** (Provisional): a 3D `gpu_instances` shader whose element has a transform (or
+  is one) has 4 more uniform floats after the through matrix (`shader.sides_at`, `tide_shader.instance_sides` = 1 +
+  its float word). Its instance loads, before the through multiply, work out the instance's own determinant as
+  draw.c's `mirrors()` does, term by term, and return a zeroed `tide_corner` (every corner one point: no triangle)
+  where `tide_keep` (0 all, 1 those that don't mirror, 2 those that do) says the instance isn't the run's.
+  `tide_draw_shaded_indirect` records two runs where the place culls (keep 1 with the place's mirror, keep 2 with the
+  other), one with keep 0 under `Cull.None`. Two runs, not one with both sides and a frag's discard: back faces cost
+  no fragments and early depth tests stay, for the second run's instance load and determinant per vertex. The
+  renderer needs nothing: two indirect runs, each with its own arguments (`prepare_storage_draws`).
+- **fxc's race, guarded exactly.** Measured with fxc 10.0.22621 (cs_5_0, /WX, `TideWarnings.hlsl`'s pragmas): a
+  write by every invocation to one place of shared memory with differing values is X3695 bare, and under a condition
+  on a read-only storage buffer's word too; under a condition on a groupshared word nothing writes (`tide_zero == 0`)
+  it compiles, also for `+=`, a struct field, inside a uniform `if`, and a place held in a local that changes (so
+  does one on a read-write storage word, which not every kernel has). The groupshared word is exact: workgroup memory
+  starts zeroed (WGSL, and the translators' polyfill, notes/shaders.md) and nothing writes it, so every write happens
+  for every invocation as written, on every backend. `writes_shared` (shader_compute.inc) puts every non-atomic
+  assignment to a shared local under `if (tide_zero == 0u)`, and `write_kernel` declares `var<workgroup> tide_zero:
+  u32` where one is. The warning (`shared_races`, `group_uniform`) is gone; its fixture is the golden
+  `kernels_shared_races`, whose HLSL fxc compiles (tidec_hlsl_kernels_shared_races). Cost: a shared load and a branch
+  a write.
+- **Adds share one scan** in the kernel: `tide_scan` is `array<vec2u>` or `array<vec4u>` for 2 or 3 lists (a lane
+  each; at most 3, as 7 storage buffers bind a list and a scratch each and the run's record), one Hillis-Steele loop
+  for all of them, then each list's survivors and count by its lane. One list's WGSL is unchanged. The group's shared
+  bytes now count the scan and `tide_zero` against 16 KiB (`plan_kernel`, an error at the run), which they didn't.
+- **Draw.Bounds for GPU vertices over CPU instances:** already worked (`draw_bounds` takes the place's bounds where
+  set, whatever the mesh); pinned by `tidec_e2e_compute` and documented.
+- **Tests.**
+  - Goldens: `kernels_helpers` (new: a helper written for two slots, reads, writes, atomics and Adds through helpers
+    two deep, a helper given the struct, a frag reading through a helper), `kernels_shared_races` (new, the warning's
+    forms, guarded), `kernels_shared` (its writes guarded), `kernels_add` (its two Adds' scan shared), `gpu_meshes`
+    (its transformed GPU instances' sides). Each through spirv-val and fxc.
+  - Errors: `gpu_list_param_add_loop`, `_add_twice`, `_add_value`, `_helper_twice` (new); `gpu_list_write_function`
+    (now a frag calling a writer), `gpu_list_local_on_gpu` (now a local keeping one), `gpu_list_cpu_calls_gpu_function`'s
+    text. Warnings: `kernel_shared_race` gone.
+  - `tidec_e2e_compute`: a culled indirect draw of transformed instances is two runs (keep 1 and 2, the second
+    mirrored) and one under Cull.None (keep 0); Blades (no transform) have no sides; GPU vertices over CPU instances
+    culled by Draw.Bounds (the test now sets a screen size, which a frustum needs).
+  - `tide_platform_kernels`: helpers writing by index, atomics and Adds (across 3 groups), a kernel's Add beside a
+    helper's to another list in one scan, read back; two boxes of a GPU list drawn culled, one's own transform
+    mirrored, both drawn, and a frag reading a GPU list through a helper (with the split turned off the mirrored one
+    is black, checked by hand). Vulkan with the validation layer, and WebGPU with a lost device.
+
 ## gpu.h contract (2026-11-05)
 
 - `TIDE_GPU_STORAGE` buffers: storage, vertices, indices, indirect arguments,
@@ -257,6 +334,17 @@ Task: finish what "Not built" listed. Every pick is Claude's, Provisional, and i
   one compute pass, between dispatches, compute -> compute).
 - `draw_indirect` (4 u32s), `draw_indexed_indirect` (5 u32s), first instance
   always 0. `dispatch_indirect` (3 u32s).
+- `draw_indexed_indirect_count(buffer, offset, most, counts, count_offset)`:
+  records of 5 u32s 20 bytes apart, as many as the u32 at `count_offset` of
+  storage buffer `counts`, at most `most`; records past the count must be of no
+  instances (a backend without `TIDE_GPU_INDIRECT_COUNT` draws all `most`).
+  `indirect()` gives `TIDE_GPU_INDIRECT_COUNT` (Vulkan `drawIndirectCount`,
+  WebGPU multi-draw-indirect) and `TIDE_GPU_INDIRECT_FIRST_INSTANCE` (Vulkan
+  `drawIndirectFirstInstance`, WebGPU `indirect-first-instance`; else records'
+  first instances must be 0); the recorder says neither. Test:
+  `tide_platform_compute` (two records counted of three, the second's first
+  index and first instance, a count of none).
+- `buffer_copy` copies from an index buffer too, to a storage buffer.
 - `buffer_copy` outside passes, ordered with the passes around it.
 - `buffer_read` begins an asynchronous read (token), `buffer_read_done` polls
   (1 done, 0 not yet, -1 lost), `buffer_read_wait` waits for every pending
@@ -316,7 +404,8 @@ the spec is updated with the pick.
   `AtomicMax`, `AtomicAnd`, `AtomicOr`, `AtomicXor`, `AtomicExchange`,
   `AtomicCompareExchange(i, compare, value)`, each returning the old value).
 - GPU code reaches a GPUList through a field of a component, singleton or
-  values struct it takes (local fields included). Each distinct list a
+  values struct it takes (local fields included), or a function's GPUList
+  parameter (since "Closing the gaps"). Each distinct list a
   shader names is one storage slot (at most 7 with the engine's own, below);
   the slot is written (`read_write`) only in a kernel that writes it, and
   declared `array<atomic<i32>>` in a kernel that uses atomics on it.

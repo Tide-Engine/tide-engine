@@ -169,7 +169,7 @@ var<private> tide_adding0: bool;
 var<private> tide_added0: tt_Blade;
 var<private> tide_adding1: bool;
 var<private> tide_added1: i32;
-var<workgroup> tide_scan: array<u32, 64>;
+var<workgroup> tide_scan: array<vec2u, 64>;
 struct tt_Blade {
     m_root: vec3f,
     m_height: f32,
@@ -271,10 +271,10 @@ fn ts_CullBlades() {
     if (all(tide_gid < tide_size)) {
         ts_CullBlades();
     }
-    tide_scan[tide_lix] = select(0u, 1u, tide_adding0);
+    tide_scan[tide_lix] = vec2u(select(0u, 1u, tide_adding0), select(0u, 1u, tide_adding1));
     workgroupBarrier();
     for (var tide_d = 1u; tide_d < 64u; tide_d = tide_d * 2u) {
-        var tide_v = 0u;
+        var tide_v = vec2u(0u);
         if (tide_lix >= tide_d) {
             tide_v = tide_scan[tide_lix - tide_d];
         }
@@ -284,7 +284,7 @@ fn ts_CullBlades() {
     }
     let tide_region0 = (tide_wid.x + tide_groups.x * (tide_wid.y + tide_groups.y * tide_wid.z)) * 386u;
     if (tide_adding0) {
-        let tide_o0 = tide_region0 + 2u + (tide_scan[tide_lix] - 1u) * 6u;
+        let tide_o0 = tide_region0 + 2u + (tide_scan[tide_lix].x - 1u) * 6u;
         tide_scratch0[tide_o0 + 0u] = bitcast<u32>(((tide_added0).m_root).x);
         tide_scratch0[tide_o0 + 1u] = bitcast<u32>(((tide_added0).m_root).y);
         tide_scratch0[tide_o0 + 2u] = bitcast<u32>(((tide_added0).m_root).z);
@@ -293,27 +293,16 @@ fn ts_CullBlades() {
         tide_scratch0[tide_o0 + 5u] = select(0u, 1u, (tide_added0).m_lit);
     }
     if (tide_lix == 63u) {
-        tide_scratch0[tide_region0] = tide_scan[tide_lix];
+        tide_scratch0[tide_region0] = tide_scan[tide_lix].x;
     }
     workgroupBarrier();
-    tide_scan[tide_lix] = select(0u, 1u, tide_adding1);
-    workgroupBarrier();
-    for (var tide_d = 1u; tide_d < 64u; tide_d = tide_d * 2u) {
-        var tide_v = 0u;
-        if (tide_lix >= tide_d) {
-            tide_v = tide_scan[tide_lix - tide_d];
-        }
-        workgroupBarrier();
-        tide_scan[tide_lix] = tide_scan[tide_lix] + tide_v;
-        workgroupBarrier();
-    }
     let tide_region1 = (tide_wid.x + tide_groups.x * (tide_wid.y + tide_groups.y * tide_wid.z)) * 66u;
     if (tide_adding1) {
-        let tide_o1 = tide_region1 + 2u + (tide_scan[tide_lix] - 1u) * 1u;
+        let tide_o1 = tide_region1 + 2u + (tide_scan[tide_lix].y - 1u) * 1u;
         tide_scratch1[tide_o1 + 0u] = bitcast<u32>(tide_added1);
     }
     if (tide_lix == 63u) {
-        tide_scratch1[tide_region1] = tide_scan[tide_lix];
+        tide_scratch1[tide_region1] = tide_scan[tide_lix].y;
     }
     workgroupBarrier();
 }

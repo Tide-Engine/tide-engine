@@ -11,6 +11,7 @@ static tide_gui gui;
 static void frame(void)
 {
     tide_draw_reset(&draw);
+    tide_draw_screen_size(&draw, tide_f2(400, 400)); // A frustum to cull by
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
 }
 
@@ -151,6 +152,26 @@ TIDE_TEST(compute_runs_and_gpu_lists_are_recorded_in_frame_order)
     // ...instanced over a CPU list: its instances as any list's
     const tide_draw_run *many = &draw.runs[command(TIDE_DRAW_SHADED, 5)->shaded.run];
     TIDE_CHECK(many->shader->vertex_storage == 1 && many->count == 2 && many->indirect == 0);
+    // Instances with transforms of their own: a run that keeps those that don't mirror the mesh, then one wound the
+    // other way that keeps those that do, which the GPU tells apart (instance_sides); one run where nothing is culled
+    const tide_draw_run *kept = &draw.runs[command(TIDE_DRAW_SHADED, 6)->shaded.run];
+    const tide_draw_run *other = &draw.runs[command(TIDE_DRAW_SHADED, 7)->shaded.run];
+    const tide_draw_run *all = &draw.runs[command(TIDE_DRAW_SHADED, 8)->shaded.run];
+    TIDE_REQUIRE(kept->shader == other->shader && kept->shader == all->shader && kept->shader->instance_sides
+                 && kept->shader->instance_sides == kept->shader->instance_through + 16u);
+    TIDE_CHECK(kept->indirect == m->turned.id && other->indirect == m->turned.id && all->indirect == m->turned.id);
+    TIDE_CHECK(placed->instance_sides == 0); // Blades have no transform
+    float sides[3];
+    const tide_draw_run *by_side[3] = {kept, other, all};
+    for (int i = 0; i < 3; i++)
+        memcpy(&sides[i], draw.uniforms + by_side[i]->uniforms + (kept->shader->instance_sides - 1u) * 4u, sizeof sides[i]);
+    TIDE_CHECK(sides[0] == 1.0f && sides[1] == 2.0f && sides[2] == 0.0f);
+    TIDE_CHECK(!(command(TIDE_DRAW_SHADED, 6)->cull & TIDE_DRAW_MIRRORED) && (command(TIDE_DRAW_SHADED, 7)->cull & TIDE_DRAW_MIRRORED)
+               && (command(TIDE_DRAW_SHADED, 6)->cull & 3u) == TIDE_CULL_BACK && (command(TIDE_DRAW_SHADED, 8)->cull & 3u) == TIDE_CULL_NONE);
+    // A GPU list's vertices over CPU instances: frustum culled by Draw.Bounds, as the CPU knows no bounds of its own
+    // (the far one of the first draw's two), and not without them (both of the second's), in one run
+    const tide_draw_run *bounded = &draw.runs[command(TIDE_DRAW_SHADED, 9)->shaded.run];
+    TIDE_CHECK(bounded->shader->vertex_storage == 1 && bounded->count == 3 && command(TIDE_DRAW_SHADED, 10) == NULL);
 
     // A frame later the same, with the lists kept; a disposed list records nothing more
     frame();
