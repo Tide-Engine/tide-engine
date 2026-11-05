@@ -14,6 +14,15 @@ level was past the set's top plus one (a far block after a near one of the same 
 levels between a run with an unset mesh. The renderer drew it with whatever that was, and the next draw joining read
 it as an index. No reload was involved (`loaded-1` is a watching run's first library).
 
+Seen in the game: its 45c7cff built with this checkout (sanitize, a scratch `TIDE_EXTERNAL_DIRS` folder) and a print
+where a join would have crossed a gap (not committed). Its performance route (title menu only: its first click misses
+the menu), the route with clicks on Start new and Begin (5,000 frames on foot), and the look-around route hit none. A
+random 14,000-frame walk (seed 7: turns, steep pitches, sprints, the scope, the map) hit it on frames 4780 to 4782,
+right after Tab opened the map while the view was pitched steeply: a one-instance draw at level 6 after a set ending
+at level 4 (set low 0). That matches the game's `KeepVegetationMaps`, which draws one-instance lists at `LOD(16)`
+right after `DrawFlora` while the view is pitched steeply on foot. Every run passed under ASan and Vulkan validation
+with the fix.
+
 Fix: such a draw doesn't join (`low <= top + 1u`), so it's a set of its own: one more call where it happens, no
 level mesh made for nothing. The check's loop also bounds each run's mesh. Test:
 `draw_culled_join_leaves_no_level_without_a_mesh` (`tests/test_draw_culled.c`): Draw.LOD 1, 3, 3, 1 of one list,
