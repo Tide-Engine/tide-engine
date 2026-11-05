@@ -38,6 +38,8 @@ unchanged. This is host-tool feedback only; no generated code/runtime contract c
 Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
 CLI unit/help and recompile CTests pass. The recompile regression checks actual
 parsing, checking, file import, asset packing and C-generation notifications.
+Correction (2026-11-06): after parsing, imports and packing share one count for the whole step
+(cli-and-packages.md, One count for the Tide step).
 Docs production build passes with the usual unstaged example-page 404s.
 Other OS terminals remain CI/manual coverage; no web runtime code changed.
 

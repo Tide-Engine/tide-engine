@@ -23744,8 +23744,15 @@ bool check(program *prog)
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);
     }
-    for (int i = 0; i < prog->decls.count; i++) {
-        if (prog->decls.items[i]->kind == DECL_ASSET) check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
+    // From here, one count for the rest of the compilation (compile_progress_whole): each asset imported, then each
+    // packed (build_pack)
+    int asset_decls = 0;
+    for (int i = 0; i < prog->decls.count; i++) asset_decls += prog->decls.items[i]->kind == DECL_ASSET;
+    compile_progress_whole(2 * asset_decls);
+    for (int i = 0, imported = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->kind != DECL_ASSET) continue;
+        check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
+        compile_progress_reach(++imported);
     }
     if (prog->game_folder && prog->assets.count > 0) {
         // The hashes of the named files, in the game's .tide/, so one that moves is found by its bytes

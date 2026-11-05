@@ -78,6 +78,7 @@ TIDE_TEST(recompile_keeps_lane_analysis_inside_each_program)
 }
 
 static unsigned progress_seen;
+static int progress_last; // The whole compilation's count so far: it never goes back
 
 static void progress(const char *stage, const char *detail, const int completed, const int total)
 {
@@ -86,19 +87,26 @@ static void progress(const char *stage, const char *detail, const int completed,
         progress_seen |= 1;
         TIDE_CHECK(total == 1);
         if (completed == 1) progress_seen |= 32;
+        return;
+    }
+    // After parsing, one count: each of the two assets imported, then each packed
+    TIDE_CHECK(total == 4 || (total == 0 && strcmp(stage, "Checking Tide") == 0 && progress_last == 0));
+    if (total == 4) {
+        TIDE_CHECK(completed >= progress_last);
+        progress_last = completed;
     }
     if (strcmp(stage, "Checking Tide") == 0) progress_seen |= 2;
     if (strcmp(stage, "Importing asset") == 0 && detail && strstr(detail, "progress.txt")) {
         progress_seen |= 4;
-        TIDE_CHECK(total == 1 || total == 2);
-        if (completed == total) progress_seen |= 64;
+        TIDE_CHECK(completed < 2);
     }
-    if (strcmp(stage, "Importing asset") == 0 && total == 2 && completed == 2) progress_seen |= 128;
+    if (strcmp(stage, "Generating C") == 0 && completed == 2) progress_seen |= 64; // Both imported, none packed
     if (strcmp(stage, "Packing asset") == 0 && detail && strcmp(detail, "rules") == 0) {
         progress_seen |= 8;
-        TIDE_CHECK(total == 2);
+        TIDE_CHECK(completed >= 2);
+        if (completed == 2) progress_seen |= 128;
     }
-    if (strcmp(stage, "Packing assets") == 0 && total == 2 && completed == 2) progress_seen |= 256;
+    if (strcmp(stage, "Packing assets") == 0 && completed == 4) progress_seen |= 256;
     if (strcmp(stage, "Generating C") == 0) progress_seen |= 16;
 }
 
@@ -117,6 +125,7 @@ TIDE_TEST(compile_progress_identifies_sources_and_assets)
     const codegen_options options = {.name = "game", .out_dir = RECOMPILE_WORK,
         .pack = RECOMPILE_WORK "/progress.pack"};
     progress_seen = 0;
+    progress_last = 0;
     compile_set_progress(progress);
     const bool ok = compile_inputs(&input, 1, &options, NULL);
     compile_set_progress(NULL);

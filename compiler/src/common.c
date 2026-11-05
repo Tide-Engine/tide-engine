@@ -188,9 +188,30 @@ void compile_set_progress(compile_progress_sink receiver)
     progress_sink = receiver;
 }
 
+static int progress_total, progress_done; // compile_progress_whole's
+
 void compile_progress(const char *stage, const char *detail, const int completed, const int total)
 {
-    if (progress_sink) progress_sink(stage, detail, completed, total);
+    if (!progress_sink) return;
+    if (progress_total > 0) progress_sink(stage, detail, progress_done, progress_total);
+    else progress_sink(stage, detail, completed, total);
+}
+
+void compile_progress_whole(const int total)
+{
+    progress_total = total > 0 ? total : 0;
+    progress_done = 0;
+}
+
+void compile_progress_reach(const int done)
+{
+    const int at = done < progress_total ? done : progress_total;
+    if (at > progress_done) progress_done = at;
+}
+
+int compile_progress_total(void)
+{
+    return progress_total;
 }
 
 void diag_phase(const char *what)

@@ -2639,6 +2639,8 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .split_plumbing = splits_plumbing(b),
                                      .split_code = true, .split_code_min_bytes = 4u * 1024u * 1024u,
+                                     .split_code_parts = 16,
+                                     .split_code_part_bytes = 512u * 1024u,
                                      .build_cc = build_cc, .build_flags = native_flags, .build_libs = build_libs,
                                      .build_include = b->include, .build_engine = engine_src,
                                      .visualizers = b->views != NULL,
@@ -2793,17 +2795,46 @@ static bool place_debug_views(const build *b, const char *output, const char *st
     return ok;
 }
 
+// What <from>.placed says of the last copy: where it went, and both files' stamps after it.
+static char *placed_record(const char *from, const char *to)
+{
+    char stamps[64];
+    snprintf(stamps, sizeof stamps, "\n%016llx %016llx\n", (unsigned long long)sys_file_stamp(from),
+             (unsigned long long)sys_file_stamp(to));
+    return format("%s%s", to, stamps);
+}
+
 static bool place_pack(const char *from, const char *to)
 {
+    // A big game's pack is hundreds of megabytes, which tidec leaves alone when it comes out the same: copied again
+    // only when it or the copy changed since the last copy
+    char *marker = format("%s.placed", from, NULL);
+    char *record = placed_record(from, to);
+    char *last = sys_read_file(marker, NULL);
+    const bool same = last && strcmp(last, record) == 0 && sys_exists(to);
+    free(last);
+    free(record);
+    if (same) {
+        free(marker);
+        return true;
+    }
+    sys_remove(marker);
     size_t size = 0;
     char *bytes = sys_read_file(from, &size);
     if (!bytes) {
+        free(marker);
         sys_remove(to);
         return true;
     }
     const bool ok = sys_write_file(to, bytes, size);
     if (!ok) fprintf(stderr, "tide: can't write %s\n", to);
     free(bytes);
+    if (ok) {
+        record = placed_record(from, to);
+        sys_write_text(marker, record);
+        free(record);
+    }
+    free(marker);
     return ok;
 }
 

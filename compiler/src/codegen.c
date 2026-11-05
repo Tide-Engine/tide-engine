@@ -21899,10 +21899,15 @@ static void build_pack(gen *g)
     const decl *sized = NULL; // The declaration whose bytes are being counted, from sized_from
     uint64_t sized_from = 0;
     uint32_t stored[4] = {0}; // How its first images are kept, for its size's line
+    // The second half of the compilation's count, after the imports (check.c): as many as were declared, whatever a
+    // release leaves out
+    const int imported = opts->build_program ? 0 : compile_progress_total() / 2;
     for (int i = 0; i <= prog->assets.count; i++) {
         if (sized) asset_size(g, sized, b.size - sized_from, stored);
         sized = NULL;
+        if (imported) compile_progress_reach(imported + (int)((int64_t)imported * i / (prog->assets.count ? prog->assets.count : 1)));
         if (i == prog->assets.count) {
+            if (imported) compile_progress_reach(compile_progress_total());
             compile_progress("Packing assets", NULL, i, prog->assets.count);
             break;
         }
@@ -22084,6 +22089,28 @@ static void build_pack(gen *g)
     if (!opts->build_program) diag_phase("packing assets");
 }
 
+// Whether the file at `path` holds `size` bytes, `bytes`: a big game's pack is hundreds of megabytes, which
+// reading takes less time than writing.
+static bool pack_file_is(const char *path, const uint8_t *bytes, const size_t size)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    enum { CHUNK = 1 << 20 };
+    uint8_t *chunk = malloc(CHUNK);
+    bool same = chunk != NULL;
+    size_t at = 0;
+    while (same) {
+        const size_t got = fread(chunk, 1, CHUNK, f);
+        if (got == 0) break;
+        same = at + got <= size && memcmp(chunk, bytes + at, got) == 0;
+        at += got;
+    }
+    same = same && at == size && !ferror(f);
+    free(chunk);
+    fclose(f);
+    return same;
+}
+
 static bool write_pack(gen *g)
 {
     const program *prog = g->prog;
@@ -22092,7 +22119,9 @@ static bool write_pack(gen *g)
     const uint8_t *bytes = g->pack_bytes;
     const size_t size = g->pack_size;
     bool ok = true;
-    if (opts->pack && prog->assets.count) {
+    if (opts->pack && prog->assets.count && pack_file_is(opts->pack, bytes, size)) {
+        // As it was: left alone, so what copies it can tell it hasn't changed (tide's place_pack)
+    } else if (opts->pack && prog->assets.count) {
         FILE *f = fopen(opts->pack, "wb");
         ok = f && fwrite(bytes, 1, size, f) == size;
         if (f) ok = fclose(f) == 0 && ok;
@@ -25069,7 +25098,25 @@ static void setting_text(char *out, const size_t size, const expr *setting)
 static void gen_shader_text(sb *o, const char *name, const char *text)
 {
     sb_printf(o, "static const char %s[] = {", name);
-    for (size_t i = 0; text[i]; i++) sb_printf(o, "%s%d,", i % 40 == 0 ? "\n    " : "", text[i]);
+    // A big game's shaders are megabytes of these: written without a printf each. The same text as "%s%d,", a line
+    // of 40 each
+    char line[5 + 40 * 5];
+    for (size_t i = 0; text[i];) {
+        memcpy(line, "\n    ", 5);
+        size_t at = 5;
+        for (const size_t end = i + 40; i < end && text[i]; i++) {
+            int value = text[i];
+            if (value < 0) {
+                line[at++] = '-';
+                value = -value;
+            }
+            if (value >= 100) line[at++] = (char)('0' + value / 100);
+            if (value >= 10) line[at++] = (char)('0' + value / 10 % 10);
+            line[at++] = (char)('0' + value % 10);
+            line[at++] = ',';
+        }
+        sb_putn(o, line, at);
+    }
     sb_put(o, "0};\n");
 }
 
@@ -25087,7 +25134,20 @@ static size_t gen_shader_spirv(sb *o, const char *name, const shader *sh, const 
         return 0;
     }
     sb_printf(o, "static const uint32_t %s[%d] = {", name, (int)count);
-    for (size_t i = 0; i < count; i++) sb_printf(o, "%s0x%08x,", i % 10 == 0 ? "\n    " : "", words[i]);
+    // Without a printf each, as gen_shader_text: the same text as "%s0x%08x,", a line of 10 each
+    static const char hex[] = "0123456789abcdef";
+    char line[5 + 10 * 11];
+    for (size_t i = 0; i < count;) {
+        memcpy(line, "\n    ", 5);
+        size_t at = 5;
+        for (const size_t end = i + 10; i < end && i < count; i++) {
+            line[at++] = '0';
+            line[at++] = 'x';
+            for (int shift = 28; shift >= 0; shift -= 4) line[at++] = hex[(words[i] >> shift) & 15u];
+            line[at++] = ',';
+        }
+        sb_putn(o, line, at);
+    }
     sb_put(o, "\n};\n");
     free(words);
     return count;
@@ -25957,23 +26017,43 @@ static void order_arrays(program *prog)
 
 #include "editor_codegen.inc"
 
-// Partition names depend on symbols, so a body edit leaves the other parts unchanged.
+// Partition names depend on symbols, so a body edit leaves the other parts unchanged. Split, the text is the code's
+// parts, <name>.c and <name>_part1.c on, and last <name>_data.c, its large constants (SPLIT_DATA): most of a big
+// game's C, which an edit of its code leaves as it was, and which the code's parts are then cut without.
 static bool write_code_parts(const codegen_options *opts, const sb *text, const char *path,
                              const char *original, const bool plumbing, sb *manifest)
 {
     const bool split = opts->split_code && (plumbing || !opts->split_plumbing) && text->len >= opts->split_code_min_bytes;
-    sb halves[2] = {0}, parts[4] = {0};
-    if (split) {
-        if (!split_plumbing(text, NULL, 0, &halves[0], &halves[1], 0)
-            || !split_plumbing(&halves[0], NULL, 0, &parts[0], &parts[1], 1)
-            || !split_plumbing(&halves[1], NULL, 0, &parts[2], &parts[3], 1)) {
-            diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
-            return false;
+    sb parts[SPLIT_MOST_PARTS + 1] = {0};
+    int count = 1;
+    parts[0] = *text;
+    sb data = {0};
+    if (split && !split_plumbing(text, NULL, 0, &parts[0], &data, SPLIT_DATA)) {
+        diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
+        return false;
+    }
+    // The code in halves by bits of its names' hashes, as long as each part keeps split_code_part_bytes
+    const int most = opts->split_code_parts ? opts->split_code_parts : 4;
+    const size_t code_bytes = parts[0].len;
+    for (int level = 0; split && count * 2 <= most && count * 2 <= SPLIT_MOST_PARTS
+                        && code_bytes / (size_t)(count * 2) >= opts->split_code_part_bytes;
+         level++) {
+        for (int i = count - 1; i >= 0; i--) {
+            sb a = {0}, b = {0};
+            if (!split_plumbing(&parts[i], NULL, 0, &a, &b, level)) {
+                diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
+                return false;
+            }
+            parts[2 * i] = a;
+            parts[2 * i + 1] = b;
         }
-    } else parts[0] = *text;
-    for (int i = 0; i < (split ? 4 : 1); i++) {
+        count *= 2;
+    }
+    if (split) parts[count++] = data;
+    for (int i = 0; i < count; i++) {
         sb out = {0};
-        if (i) sb_printf(&out, "%.*s_part%d.c", (int)strlen(path) - 2, path, i);
+        if (split && i == count - 1) sb_printf(&out, "%.*s_data.c", (int)strlen(path) - 2, path);
+        else if (i) sb_printf(&out, "%.*s_part%d.c", (int)strlen(path) - 2, path, i);
         else sb_put(&out, path);
         if (!(opts->line_directives ? write_pinned(out.data, &parts[i], original, forward_slashes(out.data))
                                     : write_file(out.data, &parts[i]))) return false;

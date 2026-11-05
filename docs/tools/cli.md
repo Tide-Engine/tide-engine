@@ -305,8 +305,9 @@ Each line has the bytes and share, the declaration's name, its type, an image's 
 Release and distribution builds leave out assets no Tide code, default or shader names. A game or package with C/C++ sources or prebuilt libraries keeps every asset instead, since C can find a pack entry by name. When the game's C reads no asset that way, `--strip-assets` says so, and its build is pruned like any other. An asset the C does read by name and nothing in Tide names is then missing at run time: its lookup finds nothing.
 
 Custom C build pipelines can request `tidec --split-code`: it writes
-`<name>.c`, `<name>_part1.c` through `<name>_part3.c`, and a `<name>_parts.txt`
-manifest. Compile and link those parts with `-flto=thin`. CMake callers can use
+`<name>.c`, `<name>_part1.c` through `<name>_part3.c`, `<name>_data.c` with the
+large constants (mostly shaders' code), and a `<name>_parts.txt` manifest.
+Compile and link those parts with `-flto=thin`. CMake callers can use
 `tide_add_game(... SPLIT_CODE)` to handle generation, compilation and linking.
 With `SPLIT_PLUMBING` too, only the optimized plumbing is partitioned.
 

@@ -44,6 +44,12 @@ source as `plumbing thin filename` (two 0/1 flags and a basename). A nonpartitio
 own game code remains whole/unoptimized; its plumbing can partition. `split_code_min_bytes` is zero for explicit
 tidec use and 4 MiB in the CLI. Without `split_code`, the ordinary one-file output remains supported.
 
+Correction (2026-11-06): a split now first moves the large constants (const variables over `SPLIT_SHARED_CONST`,
+mostly shaders' code) into `<name>_data.c`, listed last, written even when it only declares (`partition ==
+SPLIT_DATA`, `split_name.data`). The code is then halved by hash bits into `split_code_parts` parts (default 4, up to
+16) while each keeps `split_code_part_bytes` of code: tidec keeps four, the CLI asks for up to 16 of 512 KiB.
+Measurements are in cli-and-packages.md, Faster edit builds of big games.
+
 No Tide semantics, generated runtime calls, layouts, ordering, snapshots or hashes change. ThinLTO preserves
 cross-part optimization opportunities, not an identical machine-code layout. Stable-part regression changes one
 function's numeric body and checks that exactly one C part changes and repeated generation is identical. Real
