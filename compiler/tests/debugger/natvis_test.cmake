@@ -43,9 +43,9 @@ dx -r1 recent
 bc *
 bp `fixture.tide:${at_gained}`
 g
+bc *
 p
 k 1
-bc *
 bp `fixture.tide:${at_sum}`
 g
 k 2
