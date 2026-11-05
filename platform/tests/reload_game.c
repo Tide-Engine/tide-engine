@@ -3,11 +3,23 @@
 #include "tide/host.h"
 
 typedef struct world { uint32_t ticks; } world;
-typedef struct local { uint32_t frames; } local;
 static uint32_t starts;
 static bool packed; // The host handed this build the run's pack
 #ifndef RELOAD_GAME_HASH
 #define RELOAD_GAME_HASH 4242 // Another for a build of another layout
+#endif
+#ifdef RELOAD_GAME_READS
+// A GPU list of the build's own capacity, set and read back through the host's renderer: the library's engine copy
+// asks, and the host's finishes (tide_gpu_reads_share). The next build's list is bigger, and is made after the last
+// one's state was freed, as after a full reload or a swap that doesn't adopt it: likely at its address.
+#if RELOAD_GAME_HASH == 4242
+#define READ_CAPACITY 4u
+#else
+#define READ_CAPACITY 64u
+#endif
+typedef struct local { uint32_t frames; tide_gpu_list list; uint32_t ticket; bool said; } local;
+#else
+typedef struct local { uint32_t frames; } local;
 #endif
 #ifdef _WIN32
 #define NUMBERED_LIBRARY "game-1.dll"
@@ -102,6 +114,26 @@ static void frame(const void *w, const void *previous, float alpha, const void *
     (void)verified_previous;
     (void)verified_alpha;
     (void)draw;
+#ifdef RELOAD_GAME_READS
+    local *mine = l;
+    if (mine->frames == 0) {
+        mine->list = tide_gpu_list_make((int32_t)READ_CAPACITY, 1u);
+        uint32_t words[READ_CAPACITY];
+        for (uint32_t i = 0; i < READ_CAPACITY; i++) words[i] = RELOAD_GAME_HASH * 1000u + i;
+        tide_draw_gpu_list_set(draw, mine->list, words, READ_CAPACITY);
+    }
+    if (mine->frames == 1) mine->ticket = tide_gpu_list_read_begin(mine->list, false);
+    tide_gpu_read_result got;
+    if (mine->ticket && !mine->said && tide_gpu_list_read_poll(mine->ticket, &got)) {
+        const uint32_t first = RELOAD_GAME_HASH * 1000u;
+        const bool right = got.ok && got.count == (int32_t)READ_CAPACITY && got.stride == 1u && got.words[0] == first
+                        && got.words[READ_CAPACITY - 1u] == first + READ_CAPACITY - 1u;
+        printf("reload-test: read build=%u ok=%d count=%d right=%d\n", (unsigned)RELOAD_GAME_HASH, (int)got.ok,
+               (int)got.count, (int)right);
+        tide_gpu_list_read_forget(mine->ticket);
+        mine->said = true;
+    }
+#endif
     printf("reload-test: frame=%u tick=%u r=%u\n", (unsigned)++((local *)l)->frames,
            w ? (unsigned)((const world *)w)->ticks : 0u, (unsigned)gui->devices.keyboard.r.pressed);
     // The watcher retires numbered builds. The host must keep its own loaded
@@ -121,7 +153,13 @@ static void session(void *l, uint32_t state, tide_player_id id, uint32_t ping, b
 static void connected(void *l) { (void)l; }
 static void disconnected(void *l, uint32_t reason, const char *message) { (void)l; (void)reason; (void)message; }
 static int32_t current_tick(const void *w) { return (int32_t)((const world *)w)->ticks; }
-static void unload(void) { printf("reload-test: unloaded static=%u\n", (unsigned)starts); }
+static void unload(void)
+{
+#ifdef RELOAD_GAME_READS
+    tide_gpu_lists_free();
+#endif
+    printf("reload-test: unloaded static=%u\n", (unsigned)starts);
+}
 
 static const tide_game game = {
     .hash = RELOAD_GAME_HASH,
@@ -153,6 +191,9 @@ TIDE_HOST_EXPORT const tide_host_game *tide_host_library(void)
         .tick = current_tick,
         .assets = assets,
         .unload = unload,
+#ifdef RELOAD_GAME_READS
+        .gpu_reads_share = tide_gpu_reads_share,
+#endif
     };
     return &host;
 }
