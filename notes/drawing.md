@@ -2,6 +2,16 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Occlusion's two pixels on Chrome's D3D12 (2026-11-05)
+
+`tide_platform_occlusion`'s two differing pixels in the hardware web lane (RTX 4080 SUPER, Dawn on D3D12) aren't
+occlusion's: no box it hid is at them, and its culled set, the pyramid's reads of every sample and the measure point
+are as they should be. The measure ends the destination's pass, and that device draws a 4-sample frame a little
+differently when a box is drawn in a pass that loaded an earlier one's (or after another pipeline), with nothing of
+Tide's (`notes/repro/msaa_pass_split.html`). The test now compares such a shot with the CPU's path drawn with its
+passes ended at the same places, byte for byte (`Shot.split`). No renderer change: a measure has to end the pass,
+since WebGPU can't read depth a pass is drawing into. `notes/testing.md`, A 4-sample pass ended and begun again.
+
 ## Occlusion's measure made cheaper, listed runs in culled runs' calls (2026-11-05)
 
 Task (owner, through a parent agent): make the depth pyramid cheaper without changing results, and let ordinary

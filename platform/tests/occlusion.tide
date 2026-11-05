@@ -6,7 +6,8 @@
 // destination's pass there. Into the window, a target of its own and a target of 4 samples. The host
 // draws a run of frames (walls that move, a camera cut, a camera inside the field, a window of another size) with
 // the GPU's culling and occlusion, and each frame again on the CPU's path, which knows nothing of occlusion: the
-// same pixels, byte for byte.
+// same pixels, byte for byte. Where a device's frame changes where a pass ends, the CPU's path is drawn again with
+// its passes ended where occlusion's measures end them (Shot.split).
 //
 // Probes: where occlusion.tide's HiZFind says a box falls in a pyramid, worked out on the CPU (this, as C) and on
 // the GPU (Probe), for the host to check against its own reckoning in doubles.
@@ -46,6 +47,7 @@ local singleton Shot
     int into;      // 0: the window; 1: a target; 2: a target of 4 samples
     bool occlusion;
     bool aside;    // Something drawn into another target after the walls: the destination's pass ends there anyway
+    bool split;    // Something drawn into another target before each run testing occlusion, as its measures end passes
 }
 
 frag Paint(Corner corner, out Color color, Box box)
@@ -114,12 +116,13 @@ void Picture(mut Field field, Shot shot, RenderTarget into, bool window)
         // tested against
         Draw.Instanced(field.corners, field.faces, walls, Paint);
         Draw.Instanced(field.corners, field.faces, glass, Paint);
-        if (shot.aside) Aside(field);
+        if (shot.aside || shot.split) Aside(field);
         Draw.SetOcclusion(shot.occlusion);
         foreach (List<Box> patch in field.patches) Draw.Instanced(field.corners, field.faces, patch, Paint);
         Draw.SetOcclusion();
         // A draw that doesn't test it, more that do (measured again), and more after the depth is cleared
         Draw.Instanced(field.corners, field.faces, field.patches[3], Paint);
+        if (shot.split) Aside(field);
         Draw.Occlusion(shot.occlusion)
         {
             Draw.Instanced(field.corners, field.faces, field.patches[5], Paint);
@@ -137,11 +140,12 @@ void Picture(mut Field field, Shot shot, RenderTarget into, bool window)
     into.Clear(Color(0.15, 0.1, 0.1));
     into.Instanced(field.corners, field.faces, walls, Paint);
     into.Instanced(field.corners, field.faces, glass, Paint);
-    if (shot.aside) Aside(field);
+    if (shot.aside || shot.split) Aside(field);
     into.SetOcclusion(shot.occlusion);
     foreach (List<Box> patch in field.patches) into.Instanced(field.corners, field.faces, patch, Paint);
     into.SetOcclusion();
     into.Instanced(field.corners, field.faces, field.patches[3], Paint);
+    if (shot.split) Aside(field);
     into.Occlusion(shot.occlusion)
     {
         into.Instanced(field.corners, field.faces, field.patches[5], Paint);
@@ -150,7 +154,8 @@ void Picture(mut Field field, Shot shot, RenderTarget into, bool window)
     }
 }
 
-// Something drawn into a target of its own, between the walls and the field
+// Something drawn into a target of its own, between the walls and the field (and before the second run testing
+// occlusion, for Shot.split): the destination's pass ends there
 void Aside(mut Field field)
 {
     if (!field.aside.valid) field.aside = RenderTarget(8, 8, 1);
