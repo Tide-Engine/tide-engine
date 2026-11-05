@@ -546,6 +546,22 @@ else()
     tide_android_app(tide_platform_targets_app LABEL "Tide targets")
 endif()
 
+# Compute at gpu.h: storage buffers, compute passes, shared memory, atomics,
+# indirect dispatches and draws, copies and reads back, on Vulkan and WebGPU.
+if(NOT TIDE_ANDROID)
+    add_executable(tide_platform_compute tests/compute.c)
+    target_include_directories(tide_platform_compute PRIVATE src)
+    target_link_libraries(tide_platform_compute PRIVATE tide_platform)
+    tide_platform_spirv_of(tide_platform_compute)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_compute SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_compute TARGET tide_platform_compute WEBGPU EXPECT "compute passed")
+    else()
+        add_test(NAME tide_platform_compute COMMAND tide_platform_compute)
+        tide_gpu_test(tide_platform_compute)
+    endif()
+endif()
+
 # frag and vert, written in Tide: every shader tidec writes for
 # tests/shaders.tide has to compile on the backend that draws, without a
 # warning, and give the pixels tests/shaders.c expects.
