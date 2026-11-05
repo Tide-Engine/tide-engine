@@ -1362,9 +1362,14 @@
                 return;
             }
             let found;
-            const requiredFeatures = [];
-            if (config.textureCompression !== false && adapter.features.has('texture-compression-bc'))
-                requiredFeatures.push('texture-compression-bc');
+            // What the adapter has of what the renderer takes where it's there: compressed textures, indirect draws'
+            // first instances, and many indirect draws in one call as the GPU counts them (gpu.h,
+            // draw_indexed_indirect_count; Chrome's multi-draw-indirect)
+            const optional = adapter => [
+                ...(config.textureCompression !== false && adapter.features.has('texture-compression-bc') ? ['texture-compression-bc'] : []),
+                ...['indirect-first-instance', 'chromium-experimental-multi-draw-indirect', 'multi-draw-indirect']
+                    .filter(name => adapter.features.has(name))];
+            const requiredFeatures = optional(adapter);
             if (adapter.features.has('timestamp-query')) {
                 try {
                     found = await adapter.requestDevice({ requiredFeatures: [...requiredFeatures, 'timestamp-query'] });
@@ -1375,8 +1380,7 @@
                         noDevice = 'the browser gave no GPU adapter';
                         return;
                     }
-                    const features = config.textureCompression !== false
-                        && adapter.features.has('texture-compression-bc') ? ['texture-compression-bc'] : [];
+                    const features = optional(adapter);
                     found = await adapter.requestDevice(features.length ? { requiredFeatures: features } : undefined);
                 }
             } else found = await adapter.requestDevice(requiredFeatures.length ? { requiredFeatures } : undefined);
@@ -1450,6 +1454,14 @@
     config.loseDevice = () => { if (device) device.destroy(); };
     config.gpuDevices = () => devices;
     config.gpuTimingSupported = () => !!device && device.features.has('timestamp-query');
+    // gpu.h's TIDE_GPU_INDIRECT_COUNT (1) and TIDE_GPU_INDIRECT_FIRST_INSTANCE (2), as the device has them
+    function gpuIndirect() {
+        if (!device) return 0;
+        const many = (device.features.has('chromium-experimental-multi-draw-indirect') || device.features.has('multi-draw-indirect'))
+            && typeof GPURenderPassEncoder !== 'undefined' && typeof GPURenderPassEncoder.prototype.multiDrawIndexedIndirect === 'function';
+        return (many ? 1 : 0) | (device.features.has('indirect-first-instance') ? 2 : 0);
+    }
+    config.gpuIndirect = gpuIndirect;
 
     // Whether the device takes bytes straight from memory shared with workers,
     // which the program's is when it runs on threads. Copied out first if not.
@@ -1873,7 +1885,7 @@
             size >>>= 0;
             // tide_gpu_buffer_kind: vertices, indices, or storage, which is every one of those and what compute
             // writes, indirect arguments and either side of a copy or a read. WebGPU zeroes what it makes
-            const usage = kind === 0 ? GPUBufferUsage.VERTEX : kind === 1 ? GPUBufferUsage.INDEX
+            const usage = kind === 0 ? GPUBufferUsage.VERTEX : kind === 1 ? GPUBufferUsage.INDEX | GPUBufferUsage.COPY_SRC
                 : GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.INDIRECT
                     | GPUBufferUsage.COPY_SRC;
             const buffer = device.createBuffer({ size, usage: usage | GPUBufferUsage.COPY_DST });
@@ -2328,6 +2340,18 @@
             beforeDraw();
             pass.drawIndexedIndirect(gpuTables.buffer[id], offset >>> 0);
         },
+        // As many records as the GPU counted, in one call where the device draws many (multi-draw-indirect); else
+        // each of `most`, those past the count of no instances (gpu.h)
+        gpu_draw_indexed_indirect_count(id, offset, most, counts, countOffset) {
+            beforeDraw();
+            const buffer = gpuTables.buffer[id];
+            if (gpuIndirect() & 1) {
+                pass.multiDrawIndexedIndirect(buffer, offset >>> 0, most >>> 0, gpuTables.buffer[counts], countOffset >>> 0);
+            } else {
+                for (let i = 0; i < most >>> 0; i++) pass.drawIndexedIndirect(buffer, (offset >>> 0) + i * 20);
+            }
+        },
+        gpu_indirect: () => gpuIndirect(),
         // Outside passes, handed over by itself, so it's in order with the passes around it
         gpu_buffer_copy(from, fromOffset, to, toOffset, size) {
             size >>>= 0;

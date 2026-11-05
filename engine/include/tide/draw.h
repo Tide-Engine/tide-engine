@@ -1617,10 +1617,14 @@ typedef struct tide_draw_cull_camera {
 // to `first + count` of the page that's texture `page` (`packs` pixels each), tested with `bounds` (where its set
 // is 1) through camera `camera` of tide_draw_list.cull_cameras, at the levels of mesh `mesh` (the full one). Its
 // candidates are at levels `low` to `high` at most: its set's runs of the others leave it out.
+// With geometry diagnostics (tide/draw_profile.h), `rows` are 1 + the geometry row of each of its levels that
+// what the GPU draws of it counts in (tide_draw_geometry_add), as of the diagnostics' revision `rows_revision`.
 typedef struct tide_draw_cull {
     uint32_t camera, mesh, page, first, count, packs;
     uint8_t low, high, pad[2];
     tide_draw_bounds bounds;
+    uint32_t rows[TIDE_MESH_LEVELS + 1];
+    uint64_t rows_revision;
 } tide_draw_cull;
 
 // Whether draw `job` of the list is among culled run `run`'s.

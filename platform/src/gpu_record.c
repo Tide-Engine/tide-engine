@@ -499,6 +499,23 @@ static void record_draw_indexed_indirect(const tide_gpu_id buffer, const size_t 
     record_indirect(TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT, buffer, offset);
 }
 
+static void record_draw_indexed_indirect_count(const tide_gpu_id buffer, const size_t offset, const uint32_t most,
+                                               const tide_gpu_id counts, const size_t count_offset)
+{
+    op(TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT, 20u);
+    u32(buffer);
+    u32((uint32_t)offset);
+    u32(most);
+    u32(counts);
+    u32((uint32_t)count_offset);
+}
+
+// The other program draws each record as it is, but for its first instance: its draws' instances count from 0
+static uint32_t record_indirect_can(void)
+{
+    return 0;
+}
+
 static void record_buffer_copy(const tide_gpu_id from, const size_t from_offset, const tide_gpu_id to, const size_t to_offset,
                                const size_t size)
 {
@@ -633,6 +650,8 @@ const tide_gpu tide_gpu_record = {
     .dispatch_indirect = record_dispatch_indirect,
     .draw_indirect = record_draw_indirect,
     .draw_indexed_indirect = record_draw_indexed_indirect,
+    .draw_indexed_indirect_count = record_draw_indexed_indirect_count,
+    .indirect = record_indirect_can,
     .buffer_copy = record_buffer_copy,
     .buffer_read = record_buffer_read,
     .buffer_read_done = record_buffer_read_done,

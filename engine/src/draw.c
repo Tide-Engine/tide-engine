@@ -4001,6 +4001,11 @@ bool tide_draw_shaded_culled(tide_draw_list *d, const tide_shader *shader, const
                                      .first = first, .count = count, .packs = size / 16u, .low = (uint8_t)low,
                                      .high = (uint8_t)high, .bounds = bounds};
     d->cull_count++;
+    if (d->diagnostics) { // The geometry rows what the GPU draws of each of its levels counts in, once it says
+        tide_draw_cull *made = &d->culls[job];
+        made->rows_revision = d->diagnostics->revision;
+        for (uint32_t level = low; level <= high; level++) made->rows[level] = tide_draw_geometry_row_of(d, meshes[level]);
+    }
     const uint8_t depth = (uint32_t)p->depth <= TIDE_DEPTH_NONE ? (uint8_t)p->depth : 0;
     const uint8_t cull = sides(p->cull | (p->cull != TIDE_CULL_NONE && stats->mirrored ? TIDE_DRAW_MIRRORED : 0u));
     const uint32_t uniform_size = tide_shader_uniform_size(shader);

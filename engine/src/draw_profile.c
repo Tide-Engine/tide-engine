@@ -254,9 +254,9 @@ static void geometry_link(tide_draw_list *d, tide_draw_command *c, const tide_dr
     c->profile_geometry = d->profile_link_count;
 }
 
-void tide_draw_geometry_record(tide_draw_list *d, tide_draw_command *c, const uint32_t mesh, const uint32_t count)
+// The key of a row for draws of the list's mesh `mesh` recorded now.
+static tide_draw_geometry geometry_key(tide_draw_list *d, const uint32_t mesh)
 {
-    if (!d->diagnostics || d->profile_copying || !count || !mesh || mesh > d->mesh_count) return;
     const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
     tide_draw_mesh_data *base = m->base && m->base <= d->mesh_count ? &d->meshes[m->base - 1u] : &d->meshes[mesh - 1u];
     // The generated name search goes through every mesh asset: asked once for each mesh, not for each draw
@@ -276,7 +276,30 @@ void tide_draw_geometry_record(tide_draw_list *d, tide_draw_command *c, const ui
         .target = d->target && d->target <= d->target_count ? d->targets[d->target - 1u].id : 0,
         .lod = m->level, .mesh_vertices = m->vertex_count, .mesh_indices = m->index_count,
     };
+    return key;
+}
+
+void tide_draw_geometry_record(tide_draw_list *d, tide_draw_command *c, const uint32_t mesh, const uint32_t count)
+{
+    if (!d->diagnostics || d->profile_copying || !count || !mesh || mesh > d->mesh_count) return;
+    const tide_draw_geometry key = geometry_key(d, mesh);
     geometry_link(d, c, &key, count);
+}
+
+uint32_t tide_draw_geometry_row_of(tide_draw_list *d, const uint32_t mesh)
+{
+    if (!d->diagnostics || d->profile_copying || !mesh || mesh > d->mesh_count) return 0;
+    const tide_draw_geometry key = geometry_key(d, mesh);
+    return geometry_row(d->diagnostics, &key);
+}
+
+void tide_draw_geometry_add(tide_draw_diagnostics *p, const uint64_t revision, const uint32_t row, const uint64_t instances)
+{
+    if (!p || p->revision != revision || !row || row > p->geometry_count || !instances) return;
+    tide_draw_geometry *r = &p->geometry[row - 1u];
+    r->instances += instances;
+    r->vertices += (uint64_t)r->mesh_indices * instances;
+    r->triangles += (uint64_t)(r->mesh_indices / 3u) * instances;
 }
 
 void tide_draw_geometry_submit(const tide_draw_list *d, uint32_t chain)

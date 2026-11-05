@@ -71,7 +71,7 @@ The `semantics` object repeats the measurement definitions in the file itself.
 | `gpu` | `available` means at least one timing sample arrived. Inspect `timing.samples`; `frame_aligned` is false. Pending or unsupported results are absent, and CPU and GPU intervals overlap. |
 | `gpu_passes` | GPU pass timing rows, target/order/pixel size, shader membership and submitted work for completed samples. Check `pending`, `unmeasured` and `dropped_observations` for missing coverage; see below. |
 | `geometry` | Submitted cached mesh work by asset, originating view, target and selected LOD; see below. |
-| `render_work` | Total renderer draw calls and vertices across the measured frames. These are separate from instances retained in draw commands. |
+| `render_work` | Total renderer draw calls and vertices across the measured frames. These are separate from instances retained in draw commands. A draw the GPU decides is one call; its vertices are the GPU's numbers, read back a frame or two late. |
 | `draw_diagnostics` | Mesh recording time and work counts, grouped by source, destination `target` and `camera_slot`; see below. |
 | `limits` | Dropped timing observations, draw calls and draw candidates. Nonzero values mean the affected source tables are incomplete. |
 
@@ -180,6 +180,9 @@ when many objects share one GPU draw. Each row contains:
   measured frames. `vertices` counts submitted indices, including repeats;
   `triangles` counts index triples. Repeated draws, shadow passes and instancing
   count again. Frustum-rejected instances and renderer-skipped draws do not count.
+  Instances culled on the GPU count as the GPU kept them, read back a frame or
+  two later without waiting, so the last frames of a capture may be missing
+  and a capture's first may count a frame from just before it.
 
 Rank by submitted triangles to find the largest geometry workload, then compare
 stored vertex counts to distinguish a dense asset from many small instances:

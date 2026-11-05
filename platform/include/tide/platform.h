@@ -346,7 +346,14 @@ uint32_t tide_platform_prewarm_waiting(void);
 // from what was drawn over it (tide_platform_draw_overlay,
 // tide_platform_draw_over): a run of shapes, of text, or of one mesh's
 // instances is one.
+// A culled listed run the GPU decides (notes/drawing.md, Listed runs culled on the GPU) is one call with the runs
+// one after another that draw alike, however many it draws, and an indirect draw over a GPU list is one.
 uint32_t tide_platform_draw_calls(void);
+
+// How many draws the GPU made of those calls: one a call, but for the calls the GPU decides, whose draws that drew
+// any instance are counted as the GPU says, read back a frame or two later (the newest frame read back's, or none
+// where this frame had no such call).
+uint32_t tide_platform_draws(void);
 
 // How many render passes the last list drawn began, with the same scope as
 // draw calls: one for each destination drawn into in a row, and another
@@ -359,6 +366,9 @@ uint32_t tide_platform_render_passes(void);
 // index counts once per instance, including repeated indices; this isn't a
 // count of unique vertices or of GPU vertex-shader invocations after caching.
 // Includes shapes, text, blits and clear triangles, even if clipped or culled.
+// What the GPU decides (culled listed runs, indirect draws over GPU lists) is
+// counted as the GPU's numbers say, read back a frame or two later, as
+// tide_platform_draws has it.
 uint64_t tide_platform_draw_vertices(void);
 
 // How much memory the program has, in bytes, as the system counts it: what it
@@ -447,6 +457,10 @@ typedef struct tide_platform_cull_report {
     uint64_t gpu, cpu;  // The instances each drew
     uint64_t missing;   // The CPU's that the GPU's leave out, or have out of order: none where the decisions agree
     uint64_t extra;     // The GPU's that the CPU's leave out: its slack at the frustum's edges, picks at a threshold
+    uint32_t calls;     // The calls that drew them: runs one after another that draw alike are one
+    uint32_t joined;    // The runs drawn by calls of more than one
+    uint32_t draws;     // The draws those calls made: runs that kept any instance
+    uint32_t misdrawn;  // Draw records that aren't each such run's, in order, then none, with how many
 } tide_platform_cull_report;
 bool tide_platform_cull_compare(const tide_draw_list *list, tide_platform_cull_report *report);
 

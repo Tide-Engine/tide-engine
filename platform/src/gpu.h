@@ -223,6 +223,12 @@ enum { TIDE_GPU_MAX_STORAGE = 7, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX
 // The most a pipeline's uniform block takes, in bytes.
 #define TIDE_GPU_MAX_UNIFORMS 4096u
 
+// What a device's indirect draws can do (tide_gpu.indirect). TIDE_GPU_INDIRECT_COUNT: draw_indexed_indirect_count
+// is one call whose count the GPU reads (Vulkan's vkCmdDrawIndexedIndirectCount, WebGPU's multi-draw-indirect),
+// rather than a draw a record. TIDE_GPU_INDIRECT_FIRST_INSTANCE: its records' first instances are taken as they are
+// (Vulkan's drawIndirectFirstInstance, WebGPU's indirect-first-instance).
+enum { TIDE_GPU_INDIRECT_COUNT = 1, TIDE_GPU_INDIRECT_FIRST_INSTANCE = 2 };
+
 typedef struct tide_gpu_pipeline_desc {
     const char *name; // For what the backend says when its shaders are wrong
     // Its shaders: WGSL, both stages in one, `vertex` and `fragment`, their
@@ -495,8 +501,23 @@ typedef struct tide_gpu {
     // instance is always 0: WebGPU takes no other without a feature.
     void (*draw_indirect)(tide_gpu_id buffer, size_t offset);
     void (*draw_indexed_indirect)(tide_gpu_id buffer, size_t offset);
-    // Outside passes: `size` bytes copied between storage buffers (all
-    // multiples of 4), in order with the passes and compute passes around it.
+    // In a pass: draw_indexed_indirect of each of the records from `offset` of
+    // `buffer`, five uint32s each, 20 bytes apart, in order: as many as the
+    // uint32 at `count_offset` of the storage buffer `counts` says (a compute
+    // pass before wrote it), and never more than `most`. The records from that
+    // count on up to `most` must draw nothing (0 instances): a backend without
+    // TIDE_GPU_INDIRECT_COUNT (indirect, below) draws every one of `most`, a
+    // call each. Each record's first index and base vertex are taken as they
+    // are, and its first instance where indirect has
+    // TIDE_GPU_INDIRECT_FIRST_INSTANCE; elsewhere it's 0, as above. A shader's
+    // instance index counts from the first instance.
+    void (*draw_indexed_indirect_count)(tide_gpu_id buffer, size_t offset, uint32_t most, tide_gpu_id counts,
+                                        size_t count_offset);
+    // What indirect draws can do on this device, TIDE_GPU_INDIRECT_* bits.
+    uint32_t (*indirect)(void);
+    // Outside passes: `size` bytes copied from a storage or index buffer to a
+    // storage buffer (all multiples of 4), in order with the passes and
+    // compute passes around it.
     void (*buffer_copy)(tide_gpu_id from, size_t from_offset, tide_gpu_id to, size_t to_offset, size_t size);
     // Outside passes: begins reading `size` bytes at `offset` of a storage
     // buffer back (multiples of 4), as they are once everything recorded

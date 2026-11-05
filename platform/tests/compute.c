@@ -2,7 +2,10 @@
 // passes and read back, a workgroup's shared memory and its barrier, atomics,
 // a dispatch whose size a dispatch before wrote, copies between buffers,
 // and draws whose numbers, indices and vertices compute wrote, whose shaders
-// read storage too. Shaders are WGSL alone: Vulkan's SPIR-V is made of it.
+// read storage too, and draws of records as many as a count on the GPU says
+// (draw_indexed_indirect_count), with their first indices and, where the
+// device takes them, first instances. Shaders are WGSL alone: Vulkan's
+// SPIR-V is made of it.
 #include <stdio.h>
 #include <string.h>
 
@@ -121,6 +124,22 @@ static const char vertex_draw_wgsl[] =
     "}\n"
     "@fragment fn fragment() -> @location(0) vec4<f32> { return u; }\n";
 
+// The same triangle, colored by its instance's number: a per-instance attribute, read from where its draw's first
+// instance is.
+static const char count_draw_wgsl[] =
+    "@group(0) @binding(0) var<uniform> u: vec4<f32>;\n"
+    "struct Corner { @builtin(position) at: vec4<f32>, @location(0) @interpolate(flat) color: u32 }\n"
+    "@vertex fn vertex(@location(0) at: vec2<f32>, @location(1) color: i32) -> Corner {\n"
+    "    var out: Corner;\n"
+    "    out.at = vec4<f32>(at, 0.5, 1.0);\n"
+    "    out.color = bitcast<u32>(color);\n"
+    "    return out;\n"
+    "}\n"
+    "@fragment fn fragment(in: Corner) -> @location(0) vec4<f32> {\n"
+    "    let c = in.color;\n"
+    "    return vec4<f32>(f32(c & 255u), f32((c >> 8u) & 255u), f32((c >> 16u) & 255u), 255.0) / 255.0;\n"
+    "}\n";
+
 static tide_gpu_id compute_pipeline(const tide_gpu *gpu, const char *name, const char *wgsl, const uint32_t uniforms,
                                     const uint32_t storage, const bool *writes)
 {
@@ -179,12 +198,14 @@ static bool reads_landed(const tide_gpu *gpu)
 static uint32_t given[COUNT], squared[COUNT], reversed[COUNT], tally[8], copied[COUNT];
 static int32_t signed_tally[2];
 static uint32_t marks[65];
-static uint8_t pixels[3][SIDE * SIDE * 4];
+static uint8_t pixels[5][SIDE * SIDE * 4];
 
 static tide_gpu_id given_buffer, squared_buffer, reversed_buffer, tally_buffer, signed_buffer, copy_buffer;
 static tide_gpu_id sizes_buffer, corners_buffer, colors_buffer, marks_buffer;
-static tide_gpu_id targets[3];
-static tide_gpu_id square, shared, setup, marking, storage_draw, vertex_draw;
+static tide_gpu_id records_buffer, counts_buffer, indices_buffer;
+static tide_gpu_id targets[5];
+static tide_gpu_id square, shared, setup, marking, storage_draw, vertex_draw, count_draw;
+static uint32_t indirect_can; // gpu.h's TIDE_GPU_INDIRECT_* bits, as the device has them
 
 // The buffers and pipelines, which a backend that makes pipelines in the background may not have made yet.
 static void make(const tide_gpu *gpu)
@@ -203,6 +224,21 @@ static void make(const tide_gpu *gpu)
     const uint32_t colors[4] = {0x0000FFu, 0x00FF00u, 0xFF0000u, 0x804020u};
     colors_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof colors, colors);
     marks_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof marks, NULL);
+    // Records of the count draws: two of the triangle (the second's indices from the fourth on), each of one
+    // instance from its own first where the device takes that; then one past the count of two, which only a device
+    // that doesn't count on the GPU draws, so there it's of none (as gpu.h has records past the count)
+    indirect_can = gpu->indirect ? gpu->indirect() : 0u;
+    const bool first = (indirect_can & TIDE_GPU_INDIRECT_FIRST_INSTANCE) != 0;
+    const bool counted = (indirect_can & TIDE_GPU_INDIRECT_COUNT) != 0;
+    printf("indirect draws: %s, first instances %s\n", counted ? "counted on the GPU in one call" : "a call a record",
+           first ? "taken" : "0");
+    const uint32_t records[15] = {3, 1, 0, 0, first ? 1u : 0u, 3, 1, 3, 0, first ? 2u : 0u,
+                                  counted ? 3u : 0u, counted ? 1u : 0u, 0, 0, counted && first ? 3u : 0u};
+    records_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof records, records);
+    const uint32_t counts[4] = {2, 0, 0, 0}; // ...and a count of none, the second word
+    counts_buffer = gpu->buffer(TIDE_GPU_STORAGE, sizeof counts, counts);
+    const uint32_t indices[8] = {0, 1, 2, 2, 1, 0, 0, 0};
+    indices_buffer = gpu->buffer(TIDE_GPU_INDICES, sizeof indices, indices);
 
     square = compute_pipeline(gpu, "square", square_wgsl, 16, 2, (const bool[]){false, true});
     shared = compute_pipeline(gpu, "shared", shared_wgsl, 16, 4, (const bool[]){false, true, true, true});
@@ -217,7 +253,12 @@ static void make(const tide_gpu *gpu)
         .into = TIDE_GPU_TARGET_COLOR, .slots = {{8, false}}, .slot_count = 1,
         .attributes = {{0, TIDE_GPU_FLOAT2, 0}}, .attribute_count = 1,
     });
-    if (!square || !shared || !setup || !marking || !storage_draw || !vertex_draw) {
+    count_draw = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "count draw", .wgsl = count_draw_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
+        .cull = TIDE_GPU_CULL_NONE, .into = TIDE_GPU_TARGET_COLOR, .slots = {{8, false}, {4, true}}, .slot_count = 2,
+        .attributes = {{0, TIDE_GPU_FLOAT2, 0}, {1, TIDE_GPU_INT, 0}}, .attribute_count = 2,
+    });
+    if (!square || !shared || !setup || !marking || !storage_draw || !vertex_draw || !count_draw) {
         fprintf(stderr, "a pipeline wasn't made\n");
         failures++;
     }
@@ -226,7 +267,7 @@ static void make(const tide_gpu *gpu)
 static bool made(const tide_gpu *gpu)
 {
     if (!gpu->pipeline_ready) return true;
-    const tide_gpu_id all[] = {square, shared, setup, marking, storage_draw, vertex_draw};
+    const tide_gpu_id all[] = {square, shared, setup, marking, storage_draw, vertex_draw, count_draw};
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
         if (!gpu->pipeline_ready(all[i])) return false;
     }
@@ -267,7 +308,7 @@ static void record(const tide_gpu *gpu)
 
     gpu->buffer_copy(reversed_buffer, 4 * 10, copy_buffer, 4 * 20, 4 * 100);
 
-    for (int i = 0; i < 3; i++) targets[i] = gpu->target(TIDE_GPU_TARGET_COLOR, SIDE, SIDE);
+    for (int i = 0; i < 5; i++) targets[i] = gpu->target(TIDE_GPU_TARGET_COLOR, SIDE, SIDE);
 
     gpu->begin(targets[0], true);
     gpu->use(storage_draw);
@@ -293,19 +334,34 @@ static void record(const tide_gpu *gpu)
     gpu->draw(0, 3, 1);
     gpu->end();
 
+    // The count draws, of two records (the last one drawn's color shows) and of none. The colors' list is their
+    // instances' numbers, a storage buffer bound as vertices
+    for (int k = 0; k < 2; k++) {
+        gpu->begin(targets[3 + k], true);
+        gpu->use(count_draw);
+        gpu->uniforms((const float[4]){0, 0, 0, 0}, 16);
+        gpu->vertices(0, corners_buffer, 0);
+        gpu->vertices(1, colors_buffer, 0);
+        gpu->indices(indices_buffer, true);
+        // The count of none is of the third record alone, which past a count is of no instances where it's drawn
+        gpu->draw_indexed_indirect_count(records_buffer, k ? 40u : 0u, k ? 1u : 3u, counts_buffer, 4u * (uint32_t)k);
+        gpu->end();
+    }
+
     read_back(gpu, squared_buffer, sizeof squared, squared, "squared");
     read_back(gpu, reversed_buffer, sizeof reversed, reversed, "reversed");
     read_back(gpu, tally_buffer, sizeof tally, tally, "tally");
     read_back(gpu, signed_buffer, sizeof signed_tally, signed_tally, "signed tally");
     read_back(gpu, copy_buffer, sizeof copied, copied, "copied");
     read_back(gpu, marks_buffer, sizeof marks, marks, "marks");
-    for (int i = 0; i < 3; i++) gpu->target_read(targets[i], pixels[i]);
+    for (int i = 0; i < 5; i++) gpu->target_read(targets[i], pixels[i]);
     gpu->pipeline_free(square);
     gpu->pipeline_free(shared);
     gpu->pipeline_free(setup);
     gpu->pipeline_free(marking);
     gpu->pipeline_free(storage_draw);
     gpu->pipeline_free(vertex_draw);
+    gpu->pipeline_free(count_draw);
 }
 
 static void expect_pixels(const int which, const uint8_t r, const uint8_t g, const uint8_t b, const char *what)
@@ -352,6 +408,11 @@ static void check(void)
     expect_pixels(0, 0, 255, 0, "draw_indirect, colored from storage");
     expect_pixels(1, 0x20, 0x40, 0x80, "draw_indexed_indirect, indices from storage");
     expect_pixels(2, 51, 153, 204, "storage as vertices");
+    // The second record's instance's color: the third (blue) where its first instance (2) is taken, else the first
+    // (red); a third record past the count would be the fourth
+    if (indirect_can & TIDE_GPU_INDIRECT_FIRST_INSTANCE) expect_pixels(3, 0, 0, 0xFF, "draw_indexed_indirect_count, first instances");
+    else expect_pixels(3, 0xFF, 0, 0, "draw_indexed_indirect_count");
+    expect_pixels(4, 0, 0, 0, "draw_indexed_indirect_count of none");
 }
 
 static int stage;

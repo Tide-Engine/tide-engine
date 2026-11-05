@@ -1026,6 +1026,9 @@ typedef struct draw_step {
     // or 0 where the CPU decided its instances (`decided`): `count` of them, from `instances_at`
     uint32_t culled;
     bool decided;
+    // ...and for one culled on the GPU, 1 + its join where it's the join's first step, which draws all of the join's
+    // (cull_draw), or 0 for the join's others, which draw nothing of their own
+    uint32_t join;
     tide_gpu_id indirect; // STEP_SHADED over a GPU list: its arguments, the mesh's index count and the list's count
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
     tide_gpu_id pipeline; // What draws it, once it's found: its shader's, for a STEP_SHADED
@@ -1052,6 +1055,7 @@ static uint32_t draw_target;
 static uint32_t draw_blend; // How the command being turned into steps blends: tide_blend
 static uint32_t draw_stencil; // What the selected destination's commands do with its stencil, by now: a tide_stencil, packed
 static uint32_t draw_calls; // What the last list drawn took, the overlay's aside (tide_platform_draw_calls)
+static uint32_t draw_draws; // ...and the draws the GPU made of them, as far as it said (tide_platform_draws)
 static uint32_t render_passes; // ...and the passes it began (tide_platform_render_passes)
 static uint64_t draw_vertices; // Submitted vertices, including every index and instance
 
@@ -2457,6 +2461,7 @@ typedef struct gpu_mesh {
     uint32_t frame;                // The frame that last drew it
     uint32_t wanted;               // 1 + the frame whose list draws it
     uint32_t base;                 // A level of detail's: 1 + the place of the mesh whose `vertices` it draws with, having none
+    uint32_t family;               // 1 + the place of its levels' indices in one buffer, where it has one (cull.inc)
 } gpu_mesh;
 
 static gpu_mesh *gpu_meshes;
@@ -3777,6 +3782,7 @@ static bool run_draws(const tide_draw_list *list, const uint32_t place)
 static void cull_plan(const tide_draw_list *list);
 static bool cull_takes(const tide_draw_list *list, const tide_draw_run *run);
 static uint32_t cull_decide(const tide_draw_list *list, const tide_draw_run *run);
+static void cull_decided_rows(const tide_draw_list *list, const tide_draw_run *run);
 static uint32_t *cull_cpu;
 static void cull_run(const tide_draw_list *list);
 static tide_gpu_id cull_places(void);
@@ -3991,6 +3997,7 @@ static bool upload_shaded(const tide_draw_list *list)
                     steps[i].pipeline = listed;
                     steps[i].listed = 1;
                 }
+                cull_decided_rows(list, run); // ...counted in its draws' geometry rows, each its own
             }
         } else if (run->listed) {
             // Through its listed pipeline where there's one, made: the recorder for another program has none, and
@@ -4752,21 +4759,20 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
     }
     if (shader->storage_count) bind_storage(list, run);
     gpu->vertices(0, corners_of(g), 0);
-    if (s->culled) { // Its places as the GPU found them, as many as it found: their count isn't the CPU's to know
-        gpu->vertices(1, cull_places(), cull_places_at(s->culled - 1u));
-        gpu->indices(g->indices, g->wide);
-        gpu->draw_indexed_indirect(cull_args(), cull_args_at(s->culled - 1u));
-        return g->index_count;
+    // How many the GPU draws of those below isn't the CPU's to know: it's read back (counted_*, cull.inc)
+    if (s->culled) { // Its join's places as the GPU found them, as many as it found
+        cull_draw(s);
+        return 0;
     }
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, s->instances_at);
     if (shader->index_storage) { // Corners as many as its list of indices has on the GPU, each vertex read by its index
         gpu->draw_indirect(s->indirect, 0);
-        return 0; // How many isn't the CPU's to know
+        return 0;
     }
     gpu->indices(g->indices, g->wide);
-    if (run->indirect) { // As many as its list has on the GPU: their count isn't the CPU's to know
+    if (run->indirect) { // As many as its list has on the GPU
         gpu->draw_indexed_indirect(s->indirect, 0);
-        return g->index_count;
+        return 0;
     }
     const uint32_t instances = s->decided ? s->count : run->count;
     gpu->draw_indexed(g->index_count, instances);
@@ -4942,6 +4948,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     }
     tide_draw_prepare(list, tide_platform_jobs());
     if (!over) compute_frame_start(list);
+    if (!over) counted_poll();
     const tide_gpu_id target = to.gpu;
     root = to;
     if (!over && target_epoch != list->epoch) {
@@ -5163,6 +5170,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     bool pass_active = false;
     bool cleared = over;
     uint32_t calls = 0; // The steps that draw, a draw call each
+    uint32_t gpu_calls = 0; // ...those whose draws and vertices the GPU decides (counted_*, cull.inc)
     uint32_t passes = 0;
     uint64_t vertices = 0;
     for (uint32_t i = 0; i < step_count; i++) {
@@ -5276,8 +5284,11 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case STEP_SHADED:
             if (!pipeline_made(s) || !mesh_drawable(list, list->runs[s->first].mesh)) break;
             if (step_indirect(list, s) && !s->indirect) break; // Its list isn't there
+            if (s->culled && !s->join) break; // Drawn by its join's first step
             vertices += draw_shaded(list, s);
             calls++;
+            if (s->culled || step_indirect(list, s)) gpu_calls++;
+            if (!s->culled && step_indirect(list, s) && !over) counted_step(i);
             break;
         case STEP_BLIT:
             if (!pipeline_made(s) || !mesh_drawable(list, list->runs[s->first].mesh)) break;
@@ -5318,10 +5329,13 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     scaled = false;
     draw_target = 0;
     if (!over) {
+        counted_frame_end(list); // What the GPU decided its draws drew, read back
         compute_frame_end(); // Reads of the frame's lists begin, as it leaves them
         free_spare_data_textures();
         draw_calls = calls;
-        draw_vertices = vertices;
+        // ...and what its GPU-decided draws drew, as the newest frame read back says (this one's where it had none)
+        draw_vertices = vertices + counted_vertices;
+        draw_draws = calls - gpu_calls + counted_draws;
         render_passes = passes;
         // The first frame through shaders after the list forgot (a hot reload): what's left of the last build's goes
         if (shaded && list->epoch != shader_epoch) {
@@ -5523,6 +5537,11 @@ const char *tide_platform_renderer(void)
 uint32_t tide_platform_draw_calls(void)
 {
     return draw_calls;
+}
+
+uint32_t tide_platform_draws(void)
+{
+    return draw_draws;
 }
 
 uint32_t tide_platform_render_passes(void)

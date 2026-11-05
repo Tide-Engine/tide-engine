@@ -84,5 +84,10 @@ struct tide_draw_command;
 void tide_draw_geometry_record(struct tide_draw_list *d, struct tide_draw_command *c, uint32_t mesh, uint32_t count);
 void tide_draw_geometry_submit(const struct tide_draw_list *d, uint32_t chain);
 uint32_t tide_draw_geometry_join(const struct tide_draw_list *d, uint32_t a, uint32_t b);
+// Where the GPU decides how many instances are drawn (culled runs: tide_draw_cull.rows): the row that draws of
+// `mesh` recorded now count in, 1 + its place, or 0 where none can be; and `instances` of them counted in row `row`
+// of the diagnostics as of `revision`, once the GPU says (a frame or more later), nothing where they were cleared.
+uint32_t tide_draw_geometry_row_of(struct tide_draw_list *d, uint32_t mesh);
+void tide_draw_geometry_add(tide_draw_diagnostics *p, uint64_t revision, uint32_t row, uint64_t instances);
 void tide_draw_geometry_copy(struct tide_draw_list *d, struct tide_draw_command *to,
                              const struct tide_draw_list *from, uint32_t chain);

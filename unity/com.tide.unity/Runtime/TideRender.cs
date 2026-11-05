@@ -41,7 +41,7 @@ namespace Tide
             Buffer = 1, BufferWrite, BufferFree, Texture, TextureWrite, Mipmaps, TextureFree, Cube, CubeFace, Pipeline,
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Sample, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
-            DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead,
+            DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -642,6 +642,9 @@ namespace Tide
                     }
                     break;
                 case Op.BufferRead: Read(W(0), W(1), W(2), W(3)); break;
+                case Op.DrawIndexedIndirectCount: // Each of the records, a draw each: those past the count draw nothing
+                    for (uint k = 0; k < W(2) && k < 65536u; k++) DrawIndirect(W(0), W(1) + k * 20u, true);
+                    break;
             }
         }
 

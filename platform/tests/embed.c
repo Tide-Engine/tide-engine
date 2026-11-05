@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_BUFFER_READ + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_BUFFER_READ) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT) {
             r.whole = false;
             break;
         }
@@ -523,8 +523,9 @@ TIDE_TEST(embed_render_pipeline_carries_actual_texture_reads)
 }
 
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds
-// of storage, a compute pass, direct and indirect dispatches and draws, a copy, and a read back the other program
-// answers (tide_embed_render_read) for buffer_read_done to give, once.
+// of storage, a compute pass, direct and indirect dispatches and draws, a draw of records as many as a count says, a
+// copy, and a read back the other program answers (tide_embed_render_read) for buffer_read_done to give, once. The
+// other program draws records' first instances as 0.
 TIDE_TEST(embed_render_compute)
 {
     char *argv[] = {program};
@@ -542,6 +543,8 @@ TIDE_TEST(embed_render_compute)
     tide.dispatch(2, 3, 4);
     tide.dispatch_indirect(storage, 16);
     tide.compute_end();
+    tide.draw_indexed_indirect_count(storage, 20, 3, storage, 8);
+    TIDE_CHECK(tide.indirect() == 0u);
     tide.buffer_copy(storage, 4, storage, 32, 8);
     const uint32_t token = tide.buffer_read(storage, 8, 12);
     TIDE_REQUIRE(token != 0);
@@ -558,6 +561,7 @@ TIDE_TEST(embed_render_compute)
         {TIDE_EMBED_RENDER_DISPATCH, 3, 2, 3, 4},
         {TIDE_EMBED_RENDER_DISPATCH_INDIRECT, 2, storage, 16},
         {TIDE_EMBED_RENDER_COMPUTE_END, 0},
+        {TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT, 5, storage, 20, 3, storage, 8},
         {TIDE_EMBED_RENDER_BUFFER_COPY, 5, storage, 4, storage, 32, 8},
         {TIDE_EMBED_RENDER_BUFFER_READ, 4, token, storage, 8, 12},
     };

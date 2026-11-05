@@ -72,6 +72,10 @@ TIDE_WEB_IMPORT(gpu_dispatch) void tide_web_gpu_dispatch(uint32_t x, uint32_t y,
 TIDE_WEB_IMPORT(gpu_dispatch_indirect) void tide_web_gpu_dispatch_indirect(tide_gpu_id buffer, size_t offset);
 TIDE_WEB_IMPORT(gpu_draw_indirect) void tide_web_gpu_draw_indirect(tide_gpu_id buffer, size_t offset);
 TIDE_WEB_IMPORT(gpu_draw_indexed_indirect) void tide_web_gpu_draw_indexed_indirect(tide_gpu_id buffer, size_t offset);
+TIDE_WEB_IMPORT(gpu_draw_indexed_indirect_count)
+void tide_web_gpu_draw_indexed_indirect_count(tide_gpu_id buffer, size_t offset, uint32_t most, tide_gpu_id counts,
+                                              size_t count_offset);
+TIDE_WEB_IMPORT(gpu_indirect) uint32_t tide_web_gpu_indirect(void);
 TIDE_WEB_IMPORT(gpu_buffer_copy)
 void tide_web_gpu_buffer_copy(tide_gpu_id from, size_t from_offset, tide_gpu_id to, size_t to_offset, size_t size);
 TIDE_WEB_IMPORT(gpu_buffer_read) uint32_t tide_web_gpu_buffer_read(tide_gpu_id buffer, size_t offset, size_t size);
@@ -164,6 +168,8 @@ const tide_gpu tide_gpu_webgpu = {
     .dispatch_indirect = tide_web_gpu_dispatch_indirect,
     .draw_indirect = tide_web_gpu_draw_indirect,
     .draw_indexed_indirect = tide_web_gpu_draw_indexed_indirect,
+    .draw_indexed_indirect_count = tide_web_gpu_draw_indexed_indirect_count,
+    .indirect = tide_web_gpu_indirect,
     .buffer_copy = tide_web_gpu_buffer_copy,
     .buffer_read = tide_web_gpu_buffer_read,
     .buffer_read_done = tide_web_gpu_buffer_read_done,
