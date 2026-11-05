@@ -12,7 +12,8 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [ ] `gpu.h` compute API (storage buffers, compute passes, dispatch and
       indirect dispatch, indirect draws, copies, asynchronous reads)
 - [ ] Vulkan backend (`gpu_vk.c`)
-- [ ] WebGPU backend (`web/gpu_web.c`, `web/tide.js`)
+- [x] WebGPU backend (`web/gpu_web.c`, `web/tide.js`), 2026-11-05: notes/web.md,
+      WebGPU compute
 - [ ] Recorder for Unity (`gpu_record.c`) and its replay (`TideRender.cs`)
 - [ ] WGSL compute and storage in the translators (`wgsl_read.inc`, `spirv.c`, `hlsl.c`)
 - [ ] tidec: `compute`, `GPUList<T>`, `GPU.Run`, ordered `Add`, atomics,
@@ -50,7 +51,11 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
   read (NULL on the web).
 - `tide_gpu_gl` leaves all of these NULL.
 - Test: `platform/tests/compute.c` (`tide_platform_compute`, native Vulkan with
-  label `gpu`, and a WebGPU page), WGSL written by hand.
+  label `gpu`, and a WebGPU page), WGSL written by hand. Pipelines are made
+  first and recorded once `pipeline_ready` says they're made. On WebGPU it
+  also loses the device with a read pending (which must give -1) and repeats
+  everything on the next device with background pipelines. The page's WebGL
+  test prints `SKIPPED:`; natively a backend that can't compute fails it.
 
 ## The WGSL tidec writes for kernels and storage
 

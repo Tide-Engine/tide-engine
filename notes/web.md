@@ -1,5 +1,83 @@
 # Web builds
 
+## WebGPU compute (2026-11-05)
+
+All of `gpu.h`'s compute (notes/compute.md) on WebGPU: `gpu_web.c` hands each
+function to a `tide.js` import of the same name (`gpu_storage`,
+`gpu_compute_begin`/`end`, `gpu_dispatch`, `gpu_dispatch_indirect`,
+`gpu_draw_indirect`, `gpu_draw_indexed_indirect`, `gpu_buffer_copy`,
+`gpu_buffer_read`, `gpu_buffer_read_done`); `buffer_read_wait` is NULL.
+
+- **Buffers.** `TIDE_GPU_STORAGE` (kind 2) is made with STORAGE | VERTEX | INDEX
+  | INDIRECT | COPY_SRC | COPY_DST; WebGPU zeroes a buffer made without data.
+  Vertex and index buffers keep their old usages.
+- **Layouts.** A pipeline's storage reaches the page through one more import
+  between `gpu_pipeline_begin` and `gpu_pipeline_end`,
+  `gpu_pipeline_storage(count, writes, compute)`, called only for a pipeline
+  with storage or a compute one, so `gpu_pipeline_begin` kept its arguments.
+  `layoutFor(reads, storage, compute)` adds buffer entries at 25 + i
+  (`STORAGE_BINDING`), `storage` for one written and `read-only-storage`
+  otherwise. Only compute pipelines write: the C side sends no write bits for
+  a render pipeline and the page ignores any it gets (WebGPU has no written
+  storage in a vertex stage). A compute pipeline's entries, its uniforms and
+  textures too, are visible to COMPUTE; a render pipeline's to VERTEX |
+  FRAGMENT, as before. A pipeline without storage has the same layout key and
+  entries as before. Layouts were already explicit (never `'auto'`), so
+  bindings a shader leaves unused still bind.
+- **Bind groups** add each storage buffer (all of it) to their key, `s<id>`.
+  `storageGroups` maps a buffer's number to the keys of the groups it's in,
+  which `gpu_buffer_free` deletes, as `gpu_texture_free` does for textures;
+  it's cleared with the groups when the uniform buffer grows and on device
+  loss.
+- **Compute pipelines** (`desc.compute`): `createComputePipeline` with entry
+  point `compute`, or `createComputePipelineAsync` while background pipelines
+  are on; `addPipeline` is now shared by render and compute pipelines, and
+  `gpu_pipeline_ready` is unchanged.
+- **Passes and order.** A compute pass is its own encoder and `submit`, as a
+  render pass already was; `buffer_copy` and `buffer_read`'s copy are their
+  own submits too. Uniforms go into the shared uniform buffer with
+  `queue.writeBuffer` as they do in a render pass (`uniformsUsed` restarts at
+  each pass's begin). Queue order is then gpu.h's order: everything recorded
+  before a compute pass was submitted or written before it, and WebGPU places
+  the barriers between passes and between dispatches in a pass. Retired
+  uniform buffers are freed at `compute_end` as at `end`. Compute passes are
+  not timed (`gpu_time_*` and pass tokens are render passes').
+- **Draws and dispatches** bind as draws did (`bind()`, which `beforeDraw`
+  now calls). `draw_indirect`/`draw_indexed_indirect` use `drawIndirect` and
+  `drawIndexedIndirect`; `dispatch` `dispatchWorkgroups` (a count of 0 runs
+  nothing, which WebGPU allows).
+- **Reads.** `gpu_buffer_read` copies into a new MAP_READ buffer, submits and
+  calls `mapAsync`; its token counts from 1, skipping 0 and tokens still held.
+  The mapped bytes are copied out and the buffer destroyed as the promise
+  settles, so `gpu_buffer_read_done` only copies them into the program's
+  memory (1), says 0 before that, and -1 for a read whose map failed, an
+  unknown token, or a read pending when the device was lost (`deviceLost`
+  marks those). A read that landed before the loss still gives its bytes.
+  Nothing waits; a page's frames see a read land a frame or more later. A
+  read nobody polls is kept until the page goes.
+- **Device loss.** Pipelines, buffers, bind groups and `storageGroups` go with
+  the tables as before; the renderer makes them again on the next epoch.
+
+Tests: `tide_platform_compute_webgpu` (`platform/tests/compute.c`, WGSL by
+hand) passes on Chrome 156's software WebGPU: two compute passes with four
+pipelines (storage read and written in one pass, workgroup memory and its
+barrier, every atomic on storage and workgroup memory, 3D workgroups and
+`num_workgroups`), an indirect dispatch whose size a dispatch wrote, a zero
+dispatch, `buffer_copy` at offsets, `draw_indirect` and
+`draw_indexed_indirect` whose numbers, indices (a storage buffer as indices)
+and corners compute wrote, storage read in vertex and fragment stages, a
+storage buffer as vertices, and six asynchronous reads. On WebGPU it then
+begins a read, loses the device (`Tide.loseDevice()`), checks that read gives
+-1, waits for the next epoch and does everything again with background
+pipelines on (`createComputePipelineAsync`, waiting on `pipeline_ready`),
+with every result zeroed between. Its WebGL test prints `SKIPPED:` (WebGL 2
+can't compute and goes once compute lands). `cmake/web_runtime.test.mjs`
+gained a layout check (storage bindings, their types and stages, compute
+visibility, unchanged layouts without storage). The release runtime was
+regenerated (76,179 bytes). The other platform WebGPU tests (draw, targets,
+shaders, prewarm, gpu_time, texture capacity, GPU functions, fills, float
+bits, camera precision, skinned, baked, web stats) pass unchanged.
+
 ## Memory grown in big steps (2026-11-04)
 
 Mount & Rifle's web build froze for ~25 s going on foot: wasi-libc's dlmalloc
