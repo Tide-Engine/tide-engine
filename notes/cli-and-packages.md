@@ -19,6 +19,24 @@ focused CTests pass: unit, run_exit, terminal_exit, help, hidden and build_overl
 building that target, it passes. No visible game was launched. Console close
 interaction and Linux/macOS remain manual/CI coverage; no WASM code changed.
 
+## Tide compilation progress labels (2026-11-05)
+
+The terminal build display now receives synchronous compiler progress through
+`compile_set_progress`/`compile_progress` in common.h. The CLI installs the receiver
+only around source generation and copies labels under its existing feedback lock.
+Parsing and method checking name the Tide source; imports name each resolved file
+(including individual glob matches); packing names the qualified asset declaration.
+Generating C has its own label. The terminal uses basenames so absolute directory
+prefixes cannot hide the filename. Redirected output and build-report stages stay
+unchanged. This is host-tool feedback only; no generated code/runtime contract changes.
+
+Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
+CLI unit/help and recompile CTests pass. The recompile regression checks actual
+parsing, checking, file import, asset packing and C-generation notifications.
+Docs production build passes with the usual unstaged example-page 404s.
+Other OS terminals remain CI/manual coverage; no web runtime code changed.
+
+
 ## Optimized plumbing in debug builds (2026-11-04)
 
 Asked for by the owner: a plain debug `tide run` of a large game (Mount & Rifle) was unplayable, while

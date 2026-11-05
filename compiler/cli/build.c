@@ -119,6 +119,21 @@ static void build_step(const char *step)
     fflush(stderr);
 }
 
+static void tide_progress(const char *stage, const char *detail)
+{
+    if (!build_activity) return;
+    // Keep the filename visible even when the source is an absolute path.
+    if (detail) {
+        for (const char *p = detail; *p; p++) {
+            if (*p == '/' || *p == '\\') detail = p + 1;
+        }
+    }
+    lock_feedback();
+    snprintf(feedback.label, sizeof feedback.label, "%s%s%s", stage, detail && *detail ? ": " : "", detail ? detail : "");
+    feedback.completed = feedback.total = 0;
+    unlock_feedback();
+}
+
 static void build_progress(const int completed, const int total, const char *files)
 {
     lock_feedback();
@@ -2567,7 +2582,9 @@ static bool generate_sources(build *b, const char *gen, const bool layout)
                                      .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
                                      .editor_source = b->opts->editor_source, .editor_text = editor_text,
                                      .declarations_only = b->opts->declarations};
+    compile_set_progress(tide_progress);
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
+    compile_set_progress(NULL);
     if (!ok) telemetry_fail(TELEMETRY_ERROR_COMPILE);
     free(editor_text);
     free(engine_src);

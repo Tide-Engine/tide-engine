@@ -21863,6 +21863,7 @@ static void build_pack(gen *g)
         const decl *d = prog->assets.items[i];
         const asset_value *v = d->asset;
         if (!v) continue; // Its error was reported
+        compile_progress("Packing asset", str_to_cstr(d->qualified));
         sized = d, sized_from = b.size;
         memset(stored, 0, sizeof stored);
         const type t = d->return_type;
@@ -22021,6 +22022,7 @@ static void build_pack(gen *g)
     }
     g->pack_bytes = tide_pack_end(&b, &g->pack_size);
     if (reported) build_report_current()->pack_size = prog->assets.count ? g->pack_size : 0; // write_pack writes none for none
+    compile_progress("Generating C", NULL);
     if (!opts->build_program) diag_phase("packing assets");
 }
 
@@ -25853,6 +25855,7 @@ static void order_arrays(program *prog)
 
 bool codegen(program *prog, const codegen_options *opts)
 {
+    compile_progress("Generating C", NULL);
     // Both memo tables borrow this compilation's arena, including their backing
     // arrays. A watcher resets that arena before compiling the next program.
     memset(&lane_memo, 0, sizeof lane_memo);
