@@ -517,3 +517,61 @@ TIDE_TEST(draw_culled_carry_occlusion)
     tide_text_use(NULL, NULL);
     tide_heap_free(&heap);
 }
+
+// Draws of one list joining a set whose levels end below theirs (Draw.LOD 1, then 3): the levels between would have
+// no mesh made, so the second is a set of its own. Joining left level 2's run with an unset mesh, which the next
+// draw's join read as an index (Mount & Rifle's crash in tide_draw_shaded_culled). Every culled run's mesh is one of
+// the list's levels, a set's runs a level each, and what's drawn is the CPU's.
+TIDE_TEST(draw_culled_join_leaves_no_level_without_a_mesh)
+{
+    const uint64_t mark = tide_scratch_mark();
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    tide_list plain = scattered(200, 9u, NONE_MIRRORED, 20.0f);
+    in_view(plain, 3u);
+    tide_draw_list gpu = {0}, cpu = {0};
+    for (int round = 0; round < 2; round++) {
+        frame(&gpu, true);
+        frame(&cpu, false);
+        for (int pass = 0; pass < 2; pass++) {
+            tide_draw_list *d = pass ? &cpu : &gpu;
+            tide_draw_set_lod(d, 1);
+            TIDE_CHECK(draw(d, plain));
+            tide_draw_set_lod(d, 3);
+            TIDE_CHECK(draw(d, plain));
+            TIDE_CHECK(draw(d, plain)); // Joins the one before, after the set that didn't take it
+            tide_draw_set_lod(d, 1);
+            TIDE_CHECK(draw(d, plain));
+            if (round == 0) give_levels(d);
+        }
+        if (!round) continue;
+        TIDE_REQUIRE(gpu.cull_count == 4);
+        uint32_t sets = 0;
+        for (uint32_t i = 0; i < gpu.run_count; i++) {
+            const tide_draw_run *r = &gpu.runs[i];
+            if (!r->culled) continue;
+            TIDE_REQUIRE(r->mesh && r->mesh <= gpu.mesh_count);
+            const tide_draw_mesh_data *m = &gpu.meshes[r->mesh - 1u];
+            const uint32_t family = m->base ? m->base : r->mesh;
+            TIDE_CHECK(family == gpu.culls[r->culled - 1u].mesh);
+            bool first = true;
+            for (uint32_t k = 0; k < i; k++) {
+                if (gpu.runs[k].culled != r->culled) continue;
+                first = false;
+                TIDE_CHECK(gpu.meshes[gpu.runs[k].mesh - 1u].level != m->level);
+            }
+            sets += first;
+        }
+        TIDE_CHECK(sets == 3); // Level 1; level 3 twice; level 1
+        tide_draw_prepare(&gpu, NULL);
+        tide_draw_prepare(&cpu, NULL);
+        tide_draw_uncull(&gpu);
+        same_drawn(&gpu, &cpu);
+    }
+    tide_draw_free(&gpu);
+    tide_draw_free(&cpu);
+    tide_list_release(&plain, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}

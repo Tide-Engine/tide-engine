@@ -2,6 +2,24 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## A culled set's join past its top level (2026-11-05)
+
+The owner's "random" Mount & Rifle crash (`tide run`, release, 2026-11-05 15:20 local, nightly.67: the app just
+closed) was in `tide_draw_shaded_culled`, symbolized from WER's dump (`%LOCALAPPDATA%\CrashDumps\game.exe.39104.dmp`)
+by the instruction bytes around the fault found once in a `tide build --release` of the game at its commit then
+(45c7cff) with nightly.67, whose PDB names draw.c:4034: the join's check read `d->meshes[run.mesh - 1u]` for a run
+whose `mesh` was 0x45400000 (3072.0f, stack garbage). Cause: a listed draw joining the set recorded just before it
+made runs for levels `top + 1` to `high` from `meshes[level]`, which holds only `low` to `high`; a draw whose lowest
+level was past the set's top plus one (a far block after a near one of the same list, or Draw.LOD 1 then 3) gave the
+levels between a run with an unset mesh. The renderer drew it with whatever that was, and the next draw joining read
+it as an index. No reload was involved (`loaded-1` is a watching run's first library).
+
+Fix: such a draw doesn't join (`low <= top + 1u`), so it's a set of its own: one more call where it happens, no
+level mesh made for nothing. The check's loop also bounds each run's mesh. Test:
+`draw_culled_join_leaves_no_level_without_a_mesh` (`tests/test_draw_culled.c`): Draw.LOD 1, 3, 3, 1 of one list,
+every culled run's mesh one of its levels, a set's runs a level each, three sets, and the CPU's pictures; it fails
+without the fix (a run's mesh past the list's meshes).
+
 ## Occlusion's two pixels on Chrome's D3D12 (2026-11-05)
 
 `tide_platform_occlusion`'s two differing pixels in the hardware web lane (RTX 4080 SUPER, Dawn on D3D12) aren't
