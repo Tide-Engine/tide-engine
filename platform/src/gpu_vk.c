@@ -154,18 +154,19 @@ typedef struct vk_pipeline {
     VkPipeline pipeline; // VK_NULL_HANDLE: a free place
     uint32_t texture_count;
     uint8_t reads[TIDE_GPU_MAX_TEXTURES];
-    uint8_t samplers[TIDE_GPU_MAX_TEXTURES]; // tide_gpu_pipeline_desc's
+    uint32_t sampler_count;                       // The bindings its samplers span (tide_gpu_samplers)...
+    uint8_t sampler_reads[TIDE_GPU_MAX_TEXTURES]; // ...and how each reads: TIDE_GPU_READ_DATA for none
     tide_gpu_target_format into;
     bool compute;           // Used in compute passes, and never in a pass
     uint32_t storage_count; // The storage buffers it binds
     uint32_t layout;        // Its place in vk.layouts
 } vk_pipeline;
 
-// A pipeline's layout: binding 0, its textures' at 1 + 2i, the samplers of their own at 2 + 2i, and its storage
-// buffers', each pipeline with the same bindings sharing one. Pushed with each draw and dispatch where the
+// A pipeline's layout: binding 0, its textures' at 1 + 2i, its samplers' at 2 + 2j, and its storage buffers', each
+// pipeline with the same bindings sharing one. Pushed with each draw and dispatch where the
 // device pushes that many descriptors (maxPushDescriptors, 32 at the least), and otherwise a set of the frame's.
 typedef struct vk_layout {
-    uint32_t textures, own, storage; // own: bit i for texture i's sampler
+    uint32_t textures, own, storage; // own: bit j for sampler j
     bool push;
     VkDescriptorSetLayout set;
     VkPipelineLayout layout;
@@ -2070,8 +2071,10 @@ static uint32_t layout_for(const tide_gpu_pipeline_desc *desc)
 {
     const uint32_t textures = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
     const uint32_t storage = desc->storage_count < TIDE_GPU_MAX_STORAGE ? desc->storage_count : TIDE_GPU_MAX_STORAGE;
+    uint8_t sampler_reads[TIDE_GPU_MAX_TEXTURES];
+    const uint32_t samplers = tide_gpu_samplers(desc, sampler_reads);
     uint32_t own = 0;
-    for (uint32_t i = 0; i < textures; i++) own |= tide_gpu_own_sampler(desc->reads[i], desc->samplers[i]) ? 1u << i : 0u;
+    for (uint32_t j = 0; j < samplers; j++) own |= sampler_reads[j] != TIDE_GPU_READ_DATA ? 1u << j : 0u;
     for (uint32_t i = 0; i < vk.layout_count; i++) {
         const vk_layout *l = &vk.layouts[i];
         if (l->textures == textures && l->own == own && l->storage == storage) return i;
@@ -2081,8 +2084,8 @@ static uint32_t layout_for(const tide_gpu_pipeline_desc *desc)
     const VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     uint32_t count = 0;
     bindings[count++] = (VkDescriptorSetLayoutBinding){0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stages, NULL};
-    for (uint32_t i = 0; i < textures; i++) {
-        bindings[count++] = (VkDescriptorSetLayoutBinding){1 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, stages, NULL};
+    for (uint32_t i = 0; i < TIDE_GPU_MAX_TEXTURES; i++) {
+        if (i < textures) bindings[count++] = (VkDescriptorSetLayoutBinding){1 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, stages, NULL};
         if (own >> i & 1u) bindings[count++] = (VkDescriptorSetLayoutBinding){2 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLER, 1, stages, NULL};
     }
     for (uint32_t i = 0; i < storage; i++) {
@@ -2128,7 +2131,7 @@ static tide_gpu_id compute_pipeline(const tide_gpu_pipeline_desc *desc, const Vk
                        .storage_count = desc->storage_count < TIDE_GPU_MAX_STORAGE ? desc->storage_count : TIDE_GPU_MAX_STORAGE,
                        .layout = layout};
     memcpy(p->reads, desc->reads, sizeof p->reads);
-    memcpy(p->samplers, desc->samplers, sizeof p->samplers);
+    p->sampler_count = tide_gpu_samplers(desc, p->sampler_reads);
     return id;
 }
 
@@ -2267,7 +2270,7 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
                        .storage_count = desc->storage_count < TIDE_GPU_MAX_STORAGE ? desc->storage_count : TIDE_GPU_MAX_STORAGE,
                        .layout = layout};
     memcpy(p->reads, desc->reads, sizeof p->reads);
-    memcpy(p->samplers, desc->samplers, sizeof p->samplers);
+    p->sampler_count = tide_gpu_samplers(desc, p->sampler_reads);
     return id;
 }
 
@@ -2474,10 +2477,16 @@ static void vk_uniforms(const void *data, const size_t size)
     vk.bound = false;
 }
 
-static void vk_sample(const uint32_t slot, const tide_gpu_id texture, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+static void vk_image(const uint32_t slot, const tide_gpu_id texture)
 {
     if (vk.skip_pass || slot >= TIDE_GPU_MAX_TEXTURES) return;
     vk.textures_bound[slot] = texture;
+    vk.bound = false;
+}
+
+static void vk_sampler(const uint32_t slot, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+{
+    if (vk.skip_pass || slot >= TIDE_GPU_MAX_TEXTURES) return;
     vk.sampled[slot] = (uint8_t)(((uint32_t)wrap < WRAPS ? (uint32_t)wrap : 0u) * FILTERS
                                  + ((uint32_t)filter < FILTERS ? (uint32_t)filter : (uint32_t)TIDE_GPU_FILTER_LINEAR));
     vk.bound = false;
@@ -2496,8 +2505,8 @@ static void vk_indices(const tide_gpu_id buffer, const bool wide)
     vkCmdBindIndexBuffer(vk.pass, vk.buffers[buffer - 1u].buffer, 0, wide ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
 }
 
-// What a draw reads: the uniforms where they were written, and each texture
-// through the sampler for how the pipeline reads it. False for a draw with
+// What a draw reads: the uniforms where they were written, each texture, and
+// each sampler of the kind the pipeline reads it as. False for a draw with
 // no uniforms written in its pass, which draws nothing.
 static bool bind(void)
 {
@@ -2517,24 +2526,26 @@ static bool bind(void)
     for (uint32_t i = 0; i < p->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
         const vk_texture *t = texture_of(vk.textures_bound[i]);
         if (!t) continue;
-        const uint8_t read = p->reads[i];
         // Until its smaller images are made only its first is bound, so what's read between them is its own
-        // pixels, as a texture with none is, through whichever sampler it shares
+        // pixels, as a texture with none is, through whichever of the pipeline's samplers reads it
         const VkImageView first = t->cube ? t->base : t->attach;
         const VkImageView view = t->mipped || t->levels < 2 || t->depth || !first ? t->view : first;
         images[i] = (VkDescriptorImageInfo){VK_NULL_HANDLE, view, t->rest};
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 1u + 2u * i, 0, 1,
                                                  VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[i], NULL, NULL};
-        if (!tide_gpu_own_sampler(read, p->samplers[i])) continue; // Loaded, or through another texture's
-        const uint32_t filter = vk.sampled[i] % FILTERS, wrap = vk.sampled[i] / FILTERS;
+    }
+    for (uint32_t j = 0; j < p->sampler_count && j < TIDE_GPU_MAX_TEXTURES; j++) {
+        const uint8_t read = p->sampler_reads[j];
+        if (read == TIDE_GPU_READ_DATA) continue; // A binding it hasn't
+        const uint32_t filter = vk.sampled[j] % FILTERS, wrap = vk.sampled[j] / FILTERS;
         uint32_t sampler;
         if (read == TIDE_GPU_READ_COMPARE) sampler = SAMPLER_COMPARE;
         else if (read == TIDE_GPU_READ_DEPTH) sampler = TIDE_GPU_FILTER_NEAREST; // Clamped
         else if (read == TIDE_GPU_READ_CUBE) sampler = filter; // A cube has no edge to read past
         else sampler = wrap * FILTERS + filter;
-        samplers[i] = (VkDescriptorImageInfo){vk.samplers[sampler], VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
-        writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 2u + 2u * i, 0, 1,
-                                                 VK_DESCRIPTOR_TYPE_SAMPLER, &samplers[i], NULL, NULL};
+        samplers[j] = (VkDescriptorImageInfo){vk.samplers[sampler], VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+        writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 2u + 2u * j, 0, 1,
+                                                 VK_DESCRIPTOR_TYPE_SAMPLER, &samplers[j], NULL, NULL};
     }
     // Each storage buffer whole, at its binding after the textures'
     for (uint32_t i = 0; i < p->storage_count; i++) {
@@ -3609,7 +3620,8 @@ const tide_gpu tide_gpu_vulkan = {
     .use = vk_use,
     .stencil = vk_stencil,
     .uniforms = vk_uniforms,
-    .sample = vk_sample,
+    .image = vk_image,
+    .sampler = vk_sampler,
     .vertices = vk_vertices,
     .indices = vk_indices,
     .draw = vk_draw,

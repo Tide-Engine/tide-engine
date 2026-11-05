@@ -471,8 +471,8 @@ enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 16 };
 // The most storage buffers a shader binds (gpu.h's TIDE_GPU_MAX_STORAGE): GPU lists, and a kernel's own.
 enum { TIDE_SHADER_STORAGE = 7 };
 
-// How a shader's textures are sampled, two eight-texture banks (a
-// tide_draw_run's `sampling`): bit i is set for texture i read blended with
+// How a shader's samplers sample, two banks of eight (a tide_draw_run's
+// `sampling`, by tide_shader's samplers): bit i is set for sampler i read blended with
 // its neighbors, and clear for the nearest pixel, and the two bits from
 // TIDE_SAMPLING_WRAP + 2 * i are its tide_wrap. So a word with only its low
 // bits set clamps every texture. Bit TIDE_SAMPLING_MIPS + i is set, with bit
@@ -1466,9 +1466,10 @@ typedef enum tide_shader_read {
 //   After them, `uniform_floats` float4s and `uniform_ints` int4s of the
 //   game's.
 // - `texture_count` textures: `pixels0`, `pixels1`... each read as
-//   `texture_reads` says, a color where it says nothing. One read as depth is
-//   a `texture_depth_2d` with a `sampler`; one that's compared is a
-//   `texture_depth_2d` with a `sampler_comparison`.
+//   `texture_reads` says, a color where it says nothing, and its samplers
+//   (`sampler0`, `sampler1`...: see `sampler_count`). A depth is a
+//   `texture_depth_2d`, read as a number through a `sampler` and compared
+//   through a `sampler_comparison`.
 //
 // Its fragment stage writes `outputs` colors, at locations 0 on (one, for 0):
 // the first is the pixel's in the window and in a target's first color image,
@@ -1477,8 +1478,8 @@ typedef enum tide_shader_read {
 // nowhere, and the images past them are left as they were.
 //
 // WGSL has both stages, `vertex` and `fragment`, its uniforms at
-// binding 0 of group 0, and texture i and its sampler at bindings 1 + 2i and
-// 2 + 2i; it's NULL off the web. SPIR-V, for Vulkan, is the WGSL's (tidec
+// binding 0 of group 0, and texture i at binding 1 + 2i and sampler j at
+// 2 + 2j; it's NULL off the web. SPIR-V, for Vulkan, is the WGSL's (tidec
 // translates it): its entry points `vertex` and `fragment`, its bindings
 // those of descriptor set 0; it's NULL where no build draws with Vulkan
 // (where TIDE_SPIRV isn't defined).
@@ -1502,9 +1503,15 @@ typedef struct tide_shader {
     uint32_t uniform_floats, uniform_ints;
     uint32_t texture_count;
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
-    // Through which sampler each is read: 0 for its own, or 1 + the texture j before it whose sampler it shares,
-    // which the compiler gives only one sampled the same way as j in every draw (its filter, wrap and read)
-    uint8_t texture_samplers[TIDE_SHADER_TEXTURES];
+    // Its samplers, apart from its textures: `sampler_count` of them, sampler j at binding 2 + 2j, read as
+    // `sampler_reads[j]` says (a color, a cube, a depth as a number or compared), and `texture_samplers[i]` the
+    // samplers texture i is read through (bit j for sampler j). So one texture read several ways is one image and
+    // several samplers, and textures every draw reads the same way share one. A run's `sampling` is by sampler.
+    // With `sampler_count` 0 a texture that's sampled has one of its own, sampler i for texture i, read as the
+    // texture is, and a list's (TIDE_SHADER_READ_DATA) none (tide_shader_samplers).
+    uint8_t sampler_count;
+    uint8_t sampler_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
+    uint16_t texture_samplers[TIDE_SHADER_TEXTURES];
     uint8_t outputs; // The colors its fragment stage writes: 1 for 0, TIDE_TARGET_COLORS at the most
     bool blit;       // Drawn by blits (tide_draw_blit) over a whole destination, rather than as a mesh
     // A cut-out ([Cutout]): its fragment stage writes how much of a pixel it covers as its first color's alpha,
@@ -1558,6 +1565,42 @@ typedef struct tide_shader {
     } adds[TIDE_SHADER_STORAGE];
 } tide_shader;
 
+// A shader's samplers (tide_shader.sampler_count): how many slots they span, and in `reads` how sampler j reads,
+// TIDE_SHADER_READ_DATA for a slot with none. With none said, sampler i is texture i's, where that's sampled.
+static inline uint32_t tide_shader_samplers(const tide_shader *s, uint8_t reads[TIDE_SHADER_TEXTURES])
+{
+    if (s->sampler_count) {
+        const uint32_t count = s->sampler_count < TIDE_SHADER_TEXTURES ? s->sampler_count : TIDE_SHADER_TEXTURES;
+        for (uint32_t j = 0; j < count; j++) reads[j] = s->sampler_reads[j];
+        return count;
+    }
+    const uint32_t count = s->texture_count < TIDE_SHADER_TEXTURES ? s->texture_count : TIDE_SHADER_TEXTURES;
+    for (uint32_t i = 0; i < count; i++) reads[i] = s->texture_reads[i];
+    return count;
+}
+
+// The samplers texture `i` of a shader is read through: bit j for sampler j.
+static inline uint32_t tide_shader_texture_samplers(const tide_shader *s, const uint32_t i)
+{
+    if (i >= TIDE_SHADER_TEXTURES || i >= s->texture_count) return 0;
+    if (s->sampler_count) return s->texture_samplers[i];
+    return s->texture_reads[i] == TIDE_SHADER_READ_DATA ? 0u : 1u << i;
+}
+
+// The most a run reads texture `i` of its shader between (by its samplers' filters in `sampling`): what its
+// smaller images are made for.
+static inline tide_filter tide_shader_texture_filter(const tide_shader *s, const uint64_t sampling, const uint32_t i)
+{
+    tide_filter most = TIDE_FILTER_POINT;
+    const uint32_t samplers = tide_shader_texture_samplers(s, i);
+    for (uint32_t j = 0; j < TIDE_SHADER_TEXTURES; j++) {
+        if (!(samplers >> j & 1u)) continue;
+        const tide_filter filter = tide_sampling_filter(sampling, j);
+        if (filter == TIDE_FILTER_TRILINEAR || (filter == TIDE_FILTER_BILINEAR && most == TIDE_FILTER_POINT)) most = filter;
+    }
+    return most;
+}
+
 // The storage slots a kernel binds: its lists, its Adds' scratch, then its run record.
 static inline uint32_t tide_shader_compute_storage(const tide_shader *s)
 {
@@ -1587,7 +1630,7 @@ typedef struct tide_draw_run {
     uint32_t first;    // Its instances: where they start in tide_draw_list.instances, in bytes...
     uint32_t count;    // ...and how many, tide_shader_instance_size each
     uint32_t uniforms; // Its uniforms of the game's: where they start in tide_draw_list.uniforms, in bytes
-    uint64_t sampling; // Two eight-texture sampling banks (see TIDE_SAMPLING_WRAP).
+    uint64_t sampling; // How each of its shader's samplers samples, two banks of eight (see TIDE_SAMPLING_WRAP).
     uint32_t textures[TIDE_SHADER_TEXTURES]; // 1 + each one's place in tide_draw_list.textures, or 0 for none: white
     tide_color tint;   // What its pixels' colors are multiplied by
     uint32_t moved;    // Whether a 2D shader's mesh goes through `transform` before the camera

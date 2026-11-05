@@ -9,11 +9,8 @@ struct tide_uniforms {
 @group(0) @binding(2) var sampler0: sampler;
 @group(0) @binding(3) var pixels1: texture_2d<f32>;
 @group(0) @binding(4) var sampler1: sampler;
-@group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
-@group(0) @binding(7) var pixels3: texture_2d<f32>;
 @group(0) @binding(8) var sampler3: sampler;
-@group(0) @binding(9) var pixels4: texture_2d<f32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -33,7 +30,7 @@ fn ts_Lift(t_vertex: ptr<function, tt_Corner>) {
 }
 
 fn ts_Tile(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
-    (*t_color) = (((((tide_straight(textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0)) * tide_straight(textureSampleLevel(pixels0, sampler0, (t_vertex.m_uv * 2.0), 0.0))) * tide_straight(textureSampleLevel(pixels2, sampler2, (t_vertex.m_uv * 3.0), 0.0))) * tide_straight(textureSampleLevel(pixels0, sampler0, (t_vertex.m_uv * 4.0), 0.0))) * tide_straight(textureSampleLevel(pixels3, sampler3, t_vertex.m_uv, 0.0))) * tide_straight(textureSampleLevel(pixels4, sampler1, t_vertex.m_uv, 0.0)));
+    (*t_color) = (((((tide_straight(textureSampleLevel(pixels0, sampler1, t_vertex.m_uv, 0.0)) * tide_straight(textureSampleLevel(pixels0, sampler0, (t_vertex.m_uv * 2.0), 0.0))) * tide_straight(textureSampleLevel(pixels0, sampler2, (t_vertex.m_uv * 3.0), 0.0))) * tide_straight(textureSampleLevel(pixels0, sampler0, (t_vertex.m_uv * 4.0), 0.0))) * tide_straight(textureSampleLevel(pixels1, sampler3, t_vertex.m_uv, 0.0))) * tide_straight(textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {

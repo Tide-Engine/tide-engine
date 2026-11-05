@@ -494,8 +494,8 @@ static bool storage_place(translation *x, const expr *e, const gdecl **g, int *s
     return true;
 }
 
-// The slot of a texture or a sampler, by its binding: texture i at 1 + 2i, its sampler at 2 + 2i, 16 of them. A
-// texture read through another's sampler is sampled as that one's slot says, which the two share (gpu.h, samplers).
+// The slot of a texture or a sampler, by its binding: texture i at 1 + 2i, sampler j at 2 + 2j, 16 of each. A
+// sampler's slot is where its bits are in _TideSampling and _TideSamplingHigh (gpu.h, samplers).
 static int handle_slot(translation *x, const gdecl *g, const bool sampler)
 {
     const int b = g->at.binding;
@@ -1076,14 +1076,14 @@ static int texture_call(translation *x, const expr *e, hs *o)
     char own[64];
     if (strncmp(a.text[0], "_TideTexture", 12) == 0) snprintf(own, sizeof own, "sampler%s", a.text[0]);
     else snprintf(own, sizeof own, "tidehl_linear_clamp_sampler");
-    // How it's sampled: as its own slot says, for a module's texture, where it may be read through another's sampler
-    // (gpu.h, samplers). The two are sampled the same way, but for one whose smaller images aren't made yet, which
-    // TideRender.cs has blended, as the other backends do
-    char mode[64];
+    // How it's sampled: as its sampler's bits say, and for a module's texture whose smaller images aren't made yet,
+    // blended, as TideRender.cs says (_TideUnmipped) and the other backends do
+    char mode[256];
     const char *how = a.n > 1 ? a.text[1] : "";
     int slot = -1, end = 0;
-    if (sscanf(a.text[0], "_TideTexture%d%n", &slot, &end) == 1 && a.text[0][end] == '\0' && slot >= 0 && slot < 16) {
-        snprintf(mode, sizeof mode, "((%s >> %du) & 15u)", slot < 8 ? "_TideSampling" : "_TideSamplingHigh", 4 * (slot % 8));
+    if (a.n > 1 && sscanf(a.text[0], "_TideTexture%d%n", &slot, &end) == 1 && a.text[0][end] == '\0' && slot >= 0 && slot < 16
+        && strlen(a.text[1]) < sizeof mode - 32) {
+        snprintf(mode, sizeof mode, "tidehl_mode(%s, %du)", a.text[1], slot);
         how = mode;
     }
     if (same(n, len, "textureSample") || same(n, len, "textureSampleLevel") || same(n, len, "textureSampleBias")
@@ -2463,12 +2463,14 @@ static const char *const prelude[] = {
     "float _TideFlip, _TideHeight, _TideLinear;\n"
     "float4 _TideAttributes[16];\n"
     "float4 _TideSlots[3];\n"
-    "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh;\n"
+    "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh, _TideUnmipped;\n"
     "ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2;\n"
     "SamplerState tidehl_point_clamp_sampler, tidehl_point_repeat_sampler, tidehl_point_mirror_sampler;\n"
     "SamplerState tidehl_linear_clamp_sampler, tidehl_linear_repeat_sampler, tidehl_linear_mirror_sampler;\n"
     "SamplerState tidehl_trilinear_clamp_sampler, tidehl_trilinear_repeat_sampler, tidehl_trilinear_mirror_sampler;\n"
     "\n",
+    "// How sampler bits `mode` read texture `t`: blended, not between smaller images, while it has none made\n"
+    "uint tidehl_mode(uint mode, uint t) { return (mode & 3u) == 2u && ((_TideUnmipped >> t) & 1u) != 0u ? (mode & ~3u) | 1u : mode; }\n"
     "// Which way up the target is: -1 where Unity keeps its rows from the bottom\n"
     "float tidehl_flip() { return _TideFlip != 0.0 ? sign(_TideFlip) : _ProjectionParams.x; }\n"
     "float4 tidehl_clip(float4 p) {\n"

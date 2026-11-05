@@ -128,12 +128,12 @@ TIDE_TEST(wrap_a_shader_samples_each_texture_as_its_draw_or_its_frag_says)
     TIDE_REQUIRE(shifted);
     TIDE_CHECK(shifted->shader != plain->shader && is_target(shifted->textures[0]));
 
-    // A frag: one grid read four ways is four textures, each with its own filter and wrap. The same way again,
-    // and the default said outright, are no more
-    const tide_draw_run *tiled = shaded(22, 4, 0xa405u);
+    // A frag: one grid read four ways is one texture through four samplers, each with its own filter and wrap. The
+    // same way again, and the default said outright, are no more
+    const tide_draw_run *tiled = shaded(22, 1, 0xa405u);
     TIDE_REQUIRE(tiled);
-    TIDE_CHECK(tiled->textures[0] == plain->textures[0] && tiled->textures[1] == tiled->textures[0]
-               && tiled->textures[2] == tiled->textures[0] && tiled->textures[3] == tiled->textures[0]);
+    TIDE_CHECK(tiled->textures[0] == plain->textures[0] && tiled->shader->sampler_count == 4);
+    TIDE_CHECK(tide_shader_texture_samplers(tiled->shader, 0) == 15u);
     static const struct {
         bool blended;
         tide_wrap wrap;
@@ -143,9 +143,9 @@ TIDE_TEST(wrap_a_shader_samples_each_texture_as_its_draw_or_its_frag_says)
         TIDE_CHECK(tide_sampling_wrap(tiled->sampling, i) == ways[i].wrap);
     }
     // The Texture its draw gives it, the nearest mirrored and blended at the edge
-    const tide_draw_run *framed = shaded(23, 2, 0x202u);
+    const tide_draw_run *framed = shaded(23, 1, 0x202u);
     TIDE_REQUIRE(framed);
-    TIDE_CHECK(is_target(framed->textures[0]) && framed->textures[1] == framed->textures[0]);
+    TIDE_CHECK(is_target(framed->textures[0]) && framed->shader->sampler_count == 2); // One texture, two samplers
     // A vert that samples
     TIDE_CHECK(shaded(24, 1, tide_sampling_wrapped(0, TIDE_WRAP_REPEAT)) != NULL);
 }

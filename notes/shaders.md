@@ -1,5 +1,18 @@
 # Code the GPU runs: frags and verts
 
+## One image a texture, its samplers apart (2026-11-05)
+
+`shader.textures` are images now, one for each texture the code reads however it's read; `shader.ways` are each way
+it's read (a `Sample`'s filter and wrap, a depth read or compared, a cube's filter, with whether the Texture carries
+them) and `shader.samplers` the samplers those ways go through (`plan_samplers`: shared by ways read alike in every
+draw, a carried one its texture's alone). `sample_slot` gives a way, which `way_texture`/`way_sampler` turn into
+`pixels<i>`/`sampler<j>`; `put_textures` declares texture i at 1 + 2i and sampler j at 2 + 2j in binding order; a
+depth's two reads are one `texture_depth_2d`. `shader_put_texture_reads` writes `.sampler_count`, `.sampler_reads` and
+`.texture_samplers` only where the samplers aren't each sampled texture's own (`samplers_own`). Two limits, 16 each.
+`hlsl.c` reads a sampler's bits by its slot, through `tidehl_mode(bits, texture)` for a module texture, which reads
+`_TideUnmipped` (a texture whose smaller images aren't made yet is read blended). Why and the backends:
+notes/rendering.md, One image a texture.
+
 ## Sixteen textures, shared samplers (2026-11-05)
 
 A draw or a kernel samples 16 textures (`SHADER_TEXTURES`), and its storage starts at binding 33

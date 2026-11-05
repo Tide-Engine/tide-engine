@@ -74,6 +74,7 @@ public sealed unsafe class ComputeReplayTests
             for (var i = 0; i < 16; i++) w.AddRange(new uint[] { 0, 0, 0 });
             w.Add(uniforms);
             w.Add(0); // Textures
+            w.Add(0); // Samplers
             w.AddRange(new uint[] { blend, 0, 0, 0, 0, 0, 1, 0 }); // Blend, depth (none), cull, stencil, into, outputs, alpha_to_coverage
             w.Add(4);
             w.Add(0x74736574); // "test"

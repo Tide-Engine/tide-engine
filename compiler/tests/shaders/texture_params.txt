@@ -22,8 +22,6 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
 @group(0) @binding(2) var sampler0: sampler_comparison;
 @group(0) @binding(3) var pixels1: texture_depth_2d;
 @group(0) @binding(4) var sampler1: sampler;
-@group(0) @binding(5) var pixels2: texture_depth_2d;
-@group(0) @binding(7) var pixels3: texture_depth_2d;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -51,7 +49,7 @@ fn tf_Soft_40(t_seen: vec3f) -> f32 {
     if ((t_lit < 1.0)) {
         t_lit = ((t_lit + textureSampleCompareLevel(pixels0, sampler0, (t_seen.xy + vec2f(0.01, 0.0)), clamp((t_seen.z - 0.01), 0.0, 1.0))) * 0.5);
     }
-    return select(1.0, t_lit, (textureSampleLevel(pixels1, sampler1, t_seen.xy, 0) < 1.0));
+    return select(1.0, t_lit, (textureSampleLevel(pixels0, sampler1, t_seen.xy, 0) < 1.0));
 }
 
 fn tf_FromLamp(t_world: vec3f, t_toLamp: mat4x4f) -> vec3f {
@@ -63,31 +61,31 @@ fn tf_Sunlight_40(t_world: vec3f, t_toLamp: mat4x4f) -> f32 {
     return tf_Soft_40(tf_FromLamp(t_world, t_toLamp));
 }
 
-fn tf_Soft_42(t_seen: vec3f) -> f32 {
-    var t_lit: f32 = textureSampleCompareLevel(pixels2, sampler0, t_seen.xy, clamp((t_seen.z - 0.01), 0.0, 1.0));
+fn tf_Soft_41(t_seen: vec3f) -> f32 {
+    var t_lit: f32 = textureSampleCompareLevel(pixels1, sampler0, t_seen.xy, clamp((t_seen.z - 0.01), 0.0, 1.0));
     if ((t_lit < 1.0)) {
-        t_lit = ((t_lit + textureSampleCompareLevel(pixels2, sampler0, (t_seen.xy + vec2f(0.01, 0.0)), clamp((t_seen.z - 0.01), 0.0, 1.0))) * 0.5);
+        t_lit = ((t_lit + textureSampleCompareLevel(pixels1, sampler0, (t_seen.xy + vec2f(0.01, 0.0)), clamp((t_seen.z - 0.01), 0.0, 1.0))) * 0.5);
     }
-    return select(1.0, t_lit, (textureSampleLevel(pixels3, sampler1, t_seen.xy, 0) < 1.0));
+    return select(1.0, t_lit, (textureSampleLevel(pixels1, sampler1, t_seen.xy, 0) < 1.0));
 }
 
-fn tf_Sunlight_42(t_world: vec3f, t_toLamp: mat4x4f) -> f32 {
-    return tf_Soft_42(tf_FromLamp(t_world, t_toLamp));
+fn tf_Sunlight_41(t_world: vec3f, t_toLamp: mat4x4f) -> f32 {
+    return tf_Soft_41(tf_FromLamp(t_world, t_toLamp));
 }
 
 fn tf_Ambient_40(t_lit: f32) -> f32 {
     return (0.25 + (0.75 * t_lit));
 }
 
-fn tf_Fog_2m0_42(tide_self: tt_Fog, t_uv: vec2f) -> f32 {
-    return (textureSampleLevel(pixels3, sampler1, t_uv, 0) * tide_self.m_thick);
+fn tf_Fog_2m0_41(tide_self: tt_Fog, t_uv: vec2f) -> f32 {
+    return (textureSampleLevel(pixels1, sampler1, t_uv, 0) * tide_self.m_thick);
 }
 
 fn ts_Lit(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {
     var t_near: f32 = tf_Sunlight_40(tide_world, mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3));
-    var t_far: f32 = tf_Sunlight_42(tide_world, mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3));
+    var t_far: f32 = tf_Sunlight_41(tide_world, mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3));
     var t_fog: tt_Fog = tt_Fog(0.5);
-    (*t_color) = ((vec4f(1.0, 1.0, 1.0, 1.0) * tf_Ambient_40((t_near * t_far))) * (1.0 - tf_Fog_2m0_42(t_fog, t_vertex.m_uv)));
+    (*t_color) = ((vec4f(1.0, 1.0, 1.0, 1.0) * tf_Ambient_40((t_near * t_far))) * (1.0 - tf_Fog_2m0_41(t_fog, t_vertex.m_uv)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f) -> tide_corner {
@@ -142,8 +140,6 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
 @group(0) @binding(2) var sampler0: sampler_comparison;
 @group(0) @binding(3) var pixels1: texture_depth_2d;
 @group(0) @binding(4) var sampler1: sampler;
-@group(0) @binding(5) var pixels2: texture_depth_2d;
-@group(0) @binding(7) var pixels3: texture_depth_2d;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -171,7 +167,7 @@ fn tf_Soft_40(t_seen: vec3f) -> f32 {
     if ((t_lit < 1.0)) {
         t_lit = ((t_lit + textureSampleCompareLevel(pixels0, sampler0, (t_seen.xy + vec2f(0.01, 0.0)), clamp((t_seen.z - 0.01), 0.0, 1.0))) * 0.5);
     }
-    return select(1.0, t_lit, (textureSampleLevel(pixels1, sampler1, t_seen.xy, 0) < 1.0));
+    return select(1.0, t_lit, (textureSampleLevel(pixels0, sampler1, t_seen.xy, 0) < 1.0));
 }
 
 fn ts_Sink(t_vertex: ptr<function, tt_Vertex3>) {
@@ -187,31 +183,31 @@ fn tf_Sunlight_40(t_world: vec3f, t_toLamp: mat4x4f) -> f32 {
     return tf_Soft_40(tf_FromLamp(t_world, t_toLamp));
 }
 
-fn tf_Soft_42(t_seen: vec3f) -> f32 {
-    var t_lit: f32 = textureSampleCompareLevel(pixels2, sampler0, t_seen.xy, clamp((t_seen.z - 0.01), 0.0, 1.0));
+fn tf_Soft_41(t_seen: vec3f) -> f32 {
+    var t_lit: f32 = textureSampleCompareLevel(pixels1, sampler0, t_seen.xy, clamp((t_seen.z - 0.01), 0.0, 1.0));
     if ((t_lit < 1.0)) {
-        t_lit = ((t_lit + textureSampleCompareLevel(pixels2, sampler0, (t_seen.xy + vec2f(0.01, 0.0)), clamp((t_seen.z - 0.01), 0.0, 1.0))) * 0.5);
+        t_lit = ((t_lit + textureSampleCompareLevel(pixels1, sampler0, (t_seen.xy + vec2f(0.01, 0.0)), clamp((t_seen.z - 0.01), 0.0, 1.0))) * 0.5);
     }
-    return select(1.0, t_lit, (textureSampleLevel(pixels3, sampler1, t_seen.xy, 0) < 1.0));
+    return select(1.0, t_lit, (textureSampleLevel(pixels1, sampler1, t_seen.xy, 0) < 1.0));
 }
 
-fn tf_Sunlight_42(t_world: vec3f, t_toLamp: mat4x4f) -> f32 {
-    return tf_Soft_42(tf_FromLamp(t_world, t_toLamp));
+fn tf_Sunlight_41(t_world: vec3f, t_toLamp: mat4x4f) -> f32 {
+    return tf_Soft_41(tf_FromLamp(t_world, t_toLamp));
 }
 
 fn tf_Ambient_40(t_lit: f32) -> f32 {
     return (0.25 + (0.75 * t_lit));
 }
 
-fn tf_Fog_2m0_42(tide_self: tt_Fog, t_uv: vec2f) -> f32 {
-    return (textureSampleLevel(pixels3, sampler1, t_uv, 0) * tide_self.m_thick);
+fn tf_Fog_2m0_41(tide_self: tt_Fog, t_uv: vec2f) -> f32 {
+    return (textureSampleLevel(pixels1, sampler1, t_uv, 0) * tide_self.m_thick);
 }
 
 fn ts_Lit(t_vertex: tt_Vertex3, t_color: ptr<function, vec4f>) {
     var t_near: f32 = tf_Sunlight_40(tide_world, mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3));
-    var t_far: f32 = tf_Sunlight_42(tide_world, mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3));
+    var t_far: f32 = tf_Sunlight_41(tide_world, mat4x4f(tide_block.tide_u0, tide_block.tide_u1, tide_block.tide_u2, tide_block.tide_u3));
     var t_fog: tt_Fog = tt_Fog(0.5);
-    (*t_color) = ((vec4f(1.0, 1.0, 1.0, 1.0) * tf_Ambient_40((t_near * t_far))) * (1.0 - tf_Fog_2m0_42(t_fog, t_vertex.m_uv)));
+    (*t_color) = ((vec4f(1.0, 1.0, 1.0, 1.0) * tf_Ambient_40((t_near * t_far))) * (1.0 - tf_Fog_2m0_41(t_fog, t_vertex.m_uv)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f) -> tide_corner {
@@ -258,8 +254,6 @@ struct tide_uniforms {
 @group(0) @binding(6) var sampler2: sampler;
 @group(0) @binding(7) var pixels3: texture_2d<f32>;
 @group(0) @binding(9) var pixels4: texture_2d<f32>;
-@group(0) @binding(11) var pixels5: texture_2d<f32>;
-@group(0) @binding(13) var pixels6: texture_2d<f32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -276,23 +270,23 @@ fn tide_straight(c: vec4f) -> vec4f {
     return vec4f(c.rgb / c.a, c.a);
 }
 fn tf_Tile_40(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels0, sampler0, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels1, sampler1, t_uv, 0.0)));
+    return (tide_straight(textureSampleLevel(pixels0, sampler0, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels0, sampler1, t_uv, 0.0)));
 }
 
-fn tf_Tile_42(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels2, sampler2, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels3, sampler1, t_uv, 0.0)));
+fn tf_Tile_41(t_uv: vec2f) -> vec4f {
+    return (tide_straight(textureSampleLevel(pixels1, sampler2, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels1, sampler1, t_uv, 0.0)));
 }
 
-fn tf_Tile_46(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels6, sampler1, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels6, sampler1, t_uv, 0.0)));
+fn tf_Tile_44(t_uv: vec2f) -> vec4f {
+    return (tide_straight(textureSampleLevel(pixels4, sampler1, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels4, sampler1, t_uv, 0.0)));
 }
 
 fn tf_Decal(t_uv: vec2f) -> vec4f {
-    return ((tide_straight(textureSampleLevel(pixels4, sampler2, t_uv, 0.0)) * textureSampleLevel(pixels5, sampler2, t_uv, 0.0).r) + tf_Tile_46(t_uv));
+    return ((tide_straight(textureSampleLevel(pixels2, sampler2, t_uv, 0.0)) * textureSampleLevel(pixels3, sampler2, t_uv, 0.0).r) + tf_Tile_44(t_uv));
 }
 
 fn ts_Paint(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
-    (*t_color) = ((tf_Tile_40(t_vertex.m_uv) + tf_Tile_42(t_vertex.m_uv)) + tf_Decal(t_vertex.m_uv));
+    (*t_color) = ((tf_Tile_40(t_vertex.m_uv) + tf_Tile_41(t_vertex.m_uv)) + tf_Decal(t_vertex.m_uv));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
@@ -328,13 +322,13 @@ struct tide_uniforms {
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
 @group(0) @binding(2) var sampler0: sampler;
-@group(0) @binding(3) var pixels1: texture_2d<f32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
 @group(0) @binding(4) var sampler1: sampler;
-@group(0) @binding(5) var pixels2: texture_2d<i32>;
-@group(0) @binding(7) var pixels3: texture_2d<f32>;
+@group(0) @binding(5) var pixels2: texture_2d<f32>;
+@group(0) @binding(6) var sampler2: sampler;
+@group(0) @binding(7) var pixels3: texture_2d<i32>;
 @group(0) @binding(8) var sampler3: sampler;
-@group(0) @binding(9) var pixels4: texture_2d<i32>;
-@group(0) @binding(11) var pixels5: texture_2d<f32>;
+@group(0) @binding(9) var pixels4: texture_2d<f32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -351,14 +345,14 @@ fn tide_straight(c: vec4f) -> vec4f {
     return vec4f(c.rgb / c.a, c.a);
 }
 fn tf_Tile_40(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels0, sampler0, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels1, sampler1, t_uv, 0.0)));
+    return (tide_straight(textureSampleLevel(pixels0, sampler0, t_uv, 0.0)) + tide_straight(textureSampleLevel(pixels0, sampler1, t_uv, 0.0)));
 }
 
-fn tf_Height_42(t_uv: vec2f) -> f32 {
-    return textureSampleLevel(pixels3, sampler3, t_uv, 0.0).r;
+fn tf_Height_41(t_uv: vec2f) -> f32 {
+    return textureSampleLevel(pixels2, sampler3, t_uv, 0.0).r;
 }
 
-fn tide_list4(tide_i: vec2i) -> vec4f {
+fn tide_list3(tide_i: vec2i) -> vec4f {
     let tide_o = tide_block.tide_v2.xy;
     let tide_e = tide_block.tide_v2.zw;
     let tide_x = u32(tide_i.x) - u32(tide_o.x);
@@ -369,17 +363,17 @@ fn tide_list4(tide_i: vec2i) -> vec4f {
     let tide_word = i32(tide_x) * 4;
     let tide_first = tide_word >> 2u;
     let tide_row = i32(tide_y);
-    let tide_q0 = textureLoad(pixels4, vec2i(tide_first + 0, tide_row), 0);
+    let tide_q0 = textureLoad(pixels3, vec2i(tide_first + 0, tide_row), 0);
     let tide_p0 = bitcast<vec4f>(tide_q0);
     return tide_p0;
 }
 
-fn tf_Plank_44(t_uv: vec2f) -> vec4f {
-    return (tide_straight(textureSampleLevel(pixels5, sampler3, t_uv, 0.0)) + tide_list4(vec2i(0, 0)));
+fn tf_Plank_43(t_uv: vec2f) -> vec4f {
+    return (tide_straight(textureSampleLevel(pixels4, sampler3, t_uv, 0.0)) + tide_list3(vec2i(0, 0)));
 }
 
 fn ts_Copy(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
-    (*t_color) = ((tf_Tile_40(t_vertex.m_uv) * tf_Height_42(t_vertex.m_uv)) + tf_Plank_44(t_vertex.m_uv));
+    (*t_color) = ((tf_Tile_40(t_vertex.m_uv) * tf_Height_41(t_vertex.m_uv)) + tf_Plank_43(t_vertex.m_uv));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
@@ -414,8 +408,6 @@ struct tide_uniforms {
 @group(0) @binding(2) var sampler0: sampler;
 @group(0) @binding(3) var pixels1: texture_cube<f32>;
 @group(0) @binding(4) var sampler1: sampler;
-@group(0) @binding(5) var pixels2: texture_cube<f32>;
-@group(0) @binding(7) var pixels3: texture_cube<f32>;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
 struct tide_corner {
@@ -432,15 +424,15 @@ fn tide_straight(c: vec4f) -> vec4f {
     return vec4f(c.rgb / c.a, c.a);
 }
 fn tf_Mirror_40(t_way: vec3f) -> vec4f {
-    return ((tide_straight(textureSampleLevel(pixels0, sampler0, t_way, 0.0)) + tide_straight(textureSampleLevel(pixels1, sampler1, t_way, 0.0))) + tide_straight(textureSampleLevel(pixels2, sampler0, t_way, 0.0)));
+    return ((tide_straight(textureSampleLevel(pixels0, sampler0, t_way, 0.0)) + tide_straight(textureSampleLevel(pixels0, sampler1, t_way, 0.0))) + tide_straight(textureSampleLevel(pixels1, sampler0, t_way, 0.0)));
 }
 
-fn tf_Mirror_42(t_way: vec3f) -> vec4f {
-    return ((tide_straight(textureSampleLevel(pixels2, sampler0, t_way, 0.0)) + tide_straight(textureSampleLevel(pixels3, sampler1, t_way, 0.0))) + tide_straight(textureSampleLevel(pixels2, sampler0, t_way, 0.0)));
+fn tf_Mirror_41(t_way: vec3f) -> vec4f {
+    return ((tide_straight(textureSampleLevel(pixels1, sampler0, t_way, 0.0)) + tide_straight(textureSampleLevel(pixels1, sampler1, t_way, 0.0))) + tide_straight(textureSampleLevel(pixels1, sampler0, t_way, 0.0)));
 }
 
 fn ts_Shine(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
-    (*t_color) = (tf_Mirror_40(vec3f(t_vertex.m_uv, 1.0)) + tf_Mirror_42(vec3f(t_vertex.m_uv, f32((-1)))));
+    (*t_color) = (tf_Mirror_40(vec3f(t_vertex.m_uv, 1.0)) + tf_Mirror_41(vec3f(t_vertex.m_uv, f32((-1)))));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {

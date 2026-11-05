@@ -1,5 +1,60 @@
 # The platform layer and the renderer
 
+## One image a texture, its samplers apart (2026-11-05)
+
+The owner's direction for the follow-up to Sixteen textures (below): a texture read several ways is one image binding
+and several samplers ("just cause nothing needs [it] isn't an excuse"). The counting rule this changes is
+language-visible and **awaits the owner's confirmation** (`docs/spec.md`, Wrap: "A draw reads 16 textures and has 16
+samplers"); everything below is Claude's, Provisional.
+
+- **The model.** A shader has textures (images: one for each texture its code reads, however it's read) and samplers
+  apart: texture i at binding 1 + 2i, sampler j at 2 + 2j, 16 of each (WebGPU's default per-stage limits, Vulkan's
+  least, Metal's samplers). A depth read and compared is one `texture_depth_2d` through a `sampler` and a
+  `sampler_comparison`; a texture sampled Point and Trilinear is one image through two samplers. Samplers are shared
+  as before by textures every draw reads alike; one whose filter or wrap a `Texture` value carries is that texture's
+  alone. Lists and grids read as data are images with no sampler, as before.
+- **`tide_shader`** (`tide/draw.h`): `texture_samplers` (1 + another texture) is gone. `sampler_count`, `sampler_reads`
+  (`tide_shader_read`, COMPARE among them) and `texture_samplers` (`uint16_t`, bit j for sampler j a texture is read
+  through). With `sampler_count` 0 each sampled texture has sampler i of its own, read as it is, and a list none: what
+  every hand-written shader and most games' generated C say, so they're unchanged (`samplers_own` in `shader.c` decides
+  when tidec writes the fields). Helpers: `tide_shader_samplers`, `tide_shader_texture_samplers`,
+  `tide_shader_texture_filter` (the most a run reads a texture between: what `prepare_mipmaps` makes images for).
+  A texture's read is its first way's: DEPTH or COMPARE are both "a depth" to the renderer (`texture_to_read`).
+- **The sampling word is by sampler** (`tide_draw_run.sampling`, the same 4 bits a slot, two banks of eight).
+  `gen_shader_textures` writes a fixed sampler's bits as constants and a carried one's from its texture
+  (`tide_sampling_filter_of(j, texture)`).
+- **`gpu.h`:** `sample(slot, texture, filter, wrap)` became `image(slot, texture)` and `sampler(slot, filter, wrap)`;
+  `tide_gpu_sample(gpu, ...)` calls both for a pipeline whose samplers are its textures' own (the renderer's own
+  pipelines, tests). `tide_gpu_pipeline_desc.samplers` became `sampler_count`, `sampler_reads` (TIDE_GPU_READ_DATA a
+  binding it hasn't) and `texture_samplers` (only the recorder reads it); `tide_gpu_samplers(desc, reads)` gives the
+  bindings either way. `tide_gpu_own_sampler` is gone. The renderer's `shader_pipeline_textures` fills the description
+  and `bind_shader_textures` binds a run's (draws and kernel runs alike).
+- **Vulkan** (`gpu_vk.c`): a pipeline keeps `sampler_count`/`sampler_reads`; `layout_for` keys `own` by sampler
+  binding; `bind()` writes each texture, then each sampler by its kind (`vk.sampled` is by sampler). A texture without
+  its smaller images is still bound as its first alone, so any sampler that reads it reads its own pixels.
+- **WebGPU** (`tide.js`, `gpu_web.c`): imports `gpu_image` and `gpu_sampler` replace `gpu_sample`;
+  `gpu_pipeline_samplers(count, low, high)` gives 3 bits a sampler's read (only for a pipeline that says samplers
+  apart; otherwise `ownSamplers(reads)`); `layoutFor(reads, through, ...)` keys by both; `bindGroup` binds textures,
+  then samplers. The old cube-only "Trilinear before its mips is Linear" in `gpu_sample` went: a cube's base view is
+  bound until its images are made, as before. `tide.release.js` regenerated.
+- **Unity** (embed ABI 14): notes/unity.md, One image a texture.
+- **Limits and messages:** "this draw reads N textures, and a draw takes 16" (images); "this draw reads its textures N
+  ways, and a draw has 16 samplers" (`plan_samplers`), and the same two for a kernel.
+- **Tests:** `texture_capacity` (fifteen textures through five samplers; `CapacityWays`: three textures, seven
+  samplers, by bits; the depth of `CapacityKinds` one texture through two; fixed samplers shared); `render_depth`,
+  `wrap`, `mipmaps`, `raw_texture_fields`, `textures`, `asset_textures` (their helpers count a texture-sampler pair as
+  a way); `gpu_limit_samplers` (new) and `gpu_limit_textures`; 17 shader goldens (bindings and which sampler each
+  read names); `platform/tests/draw.c`'s `two_ways_shader` (one quarters texture through a nearest and a blended
+  sampler, the same pixels as `halves_shader`'s two bindings; prewarmed too) and `shared_shader` in the new form;
+  `embed_render_pipeline_carries_samplers_apart` and the reads test's sampler words; `web_runtime.test.mjs`
+  (layouts of samplers apart). Native ASan: the compiler suite (2,921), all 67 `gpu` tests on Vulkan, embed and
+  `tide_tests`. `tests/test_draw.c`'s bank test still checked slot 12 out of range since the 16-texture change, which
+  `tide_tests` failed on; fixed to `TIDE_SHADER_TEXTURES`.
+- **Gaps:** Unity's OpenGL Core samples a texture as its own state, so one texture read two ways there reads both as
+  its first sampler does (it was "as the frame's last draw of it says" before; no Unity run was made). The renderer
+  still binds an image per texture where two textures of one draw are the same image (two fields holding one target):
+  they're two bindings, which is what the language counts.
+
 ## Sixteen textures a draw, samplers shared (2026-11-05)
 
 The owner, asked whether the 12-texture limit could go (mount-and-rifle's ground and road frags hit it adding a third

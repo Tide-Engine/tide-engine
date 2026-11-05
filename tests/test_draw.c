@@ -36,9 +36,9 @@ TIDE_TEST(draw_sampling_banks_keep_every_slot_independent)
         TIDE_CHECK(tide_sampling_filtered(slot, TIDE_FILTER_TRILINEAR) == ((UINT64_C(1) << slot) | (UINT64_C(1) << (24u + slot))));
         TIDE_CHECK(tide_sampling_wrapped(slot, TIDE_WRAP_MIRROR) == UINT64_C(2) << (8u + 2u * slot));
     }
-    TIDE_CHECK(tide_sampling_filtered(UINT32_MAX, 2) == 0 && tide_sampling_wrapped(12, 2) == 0);
+    TIDE_CHECK(tide_sampling_filtered(UINT32_MAX, 2) == 0 && tide_sampling_wrapped(TIDE_SHADER_TEXTURES, 2) == 0);
     TIDE_CHECK(tide_sampling_filter(UINT64_MAX, UINT32_MAX) == TIDE_FILTER_POINT);
-    TIDE_CHECK(tide_sampling_wrap(UINT64_MAX, 12) == TIDE_WRAP_CLAMP);
+    TIDE_CHECK(tide_sampling_wrap(UINT64_MAX, TIDE_SHADER_TEXTURES) == TIDE_WRAP_CLAMP);
 }
 
 TIDE_TEST(draw_rect_areas_have_aa_and_bounded_independent_corners)

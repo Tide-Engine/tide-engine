@@ -72,11 +72,13 @@ TIDE_TEST(mipmaps_a_shader_run_says_how_each_texture_is_read)
     const tide_draw_run *kept = shaded(6), *plain = shaded(7), *said = shaded(8);
     TIDE_REQUIRE(kept && plain && said && kept->shader == plain->shader && plain->shader == said->shader);
     const tide_shader *shader = kept->shader;
-    TIDE_REQUIRE(shader->texture_count == 5);
+    uint8_t sampler_reads[TIDE_SHADER_TEXTURES];
+    const uint32_t samplers = tide_shader_samplers(shader, sampler_reads);
+    TIDE_REQUIRE(samplers == 5);
     int trilinear[3] = {0}, bilinear[3] = {0}, point[3] = {0};
     const tide_draw_run *runs[3] = {kept, plain, said};
     for (int r = 0; r < 3; r++) {
-        for (uint32_t t = 0; t < shader->texture_count; t++) {
+        for (uint32_t t = 0; t < samplers; t++) {
             const tide_filter filter = tide_sampling_filter(runs[r]->sampling, t);
             trilinear[r] += filter == TIDE_FILTER_TRILINEAR;
             bilinear[r] += filter == TIDE_FILTER_BILINEAR;
@@ -89,7 +91,7 @@ TIDE_TEST(mipmaps_a_shader_run_says_how_each_texture_is_read)
     TIDE_CHECK(trilinear[1] == 2 && bilinear[1] == 2 && point[1] == 1);
     TIDE_CHECK(trilinear[2] == 3 && bilinear[2] == 1 && point[2] == 1);
     // A texture read between its smaller images is read blended, for whoever only asks that
-    for (uint32_t t = 0; t < shader->texture_count; t++) {
+    for (uint32_t t = 0; t < samplers; t++) {
         TIDE_CHECK(tide_sampling_filter(kept->sampling, t) != TIDE_FILTER_TRILINEAR || tide_sampling_blended(kept->sampling, t));
     }
     // The frag asks how fast its uvs change as it starts, and reads with the answer; the vert reads the texture's own

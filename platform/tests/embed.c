@@ -453,7 +453,7 @@ TIDE_TEST(embed_camera)
 #if !defined(__wasm__)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
-    uint32_t ops[TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT + 1];
+    uint32_t ops[TIDE_EMBED_RENDER_SAMPLER + 1];
     uint32_t used[16]; // The pipelines USE named, the first 16
     uint32_t used_count;
     uint32_t pipelines[32]; // ...and those made, by `keys`' places
@@ -477,7 +477,7 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         }
         memcpy(head, p + at, 8u);
         at += 8u;
-        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DRAW_INDEXED_INDIRECT_COUNT) {
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_SAMPLER) {
             r.whole = false;
             break;
         }
@@ -507,19 +507,59 @@ TIDE_TEST(embed_render_pipeline_carries_actual_texture_reads)
         const tide_gpu_id pipeline = tide_gpu_record.pipeline(&desc);
         uint32_t size;
         const uint8_t *packet = tide_gpu_record_end(&size);
-        // Independent ABI 6 offsets: id/key (3), slots (7), attributes (49), uniform size/count (2).
+        // Independent offsets: id/key (3), slots (7), attributes (49), uniform size/count (2).
         const uint32_t reads_at = 61;
-        TIDE_REQUIRE(size >= 8u + (reads_at + textures + 9u) * 4u);
+        // Samplers said with none apart: texture i's own, a list's none (TIDE_GPU_READ_DATA), and each texture's mask
+        const uint32_t samplers_at = reads_at + textures, after = samplers_at + 1u + 2u * textures;
+        TIDE_REQUIRE(size >= 8u + (after + 9u) * 4u);
         TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_PIPELINE);
         TIDE_CHECK(u32_at(packet, 4) + 8u == size && u32_at(packet, 8) == pipeline);
         TIDE_CHECK(u32_at(packet, 8u + (reads_at - 1u) * 4u) == textures);
         for (uint32_t i = 0; i < textures; i++)
             TIDE_CHECK(u32_at(packet, 8u + (reads_at + i) * 4u) == i % 5u);
-        TIDE_CHECK(u32_at(packet, 8u + (reads_at + textures) * 4u) == TIDE_GPU_BLEND_ALPHA);
-        TIDE_CHECK(u32_at(packet, 8u + (reads_at + textures + 7u) * 4u) == 0u); // alpha_to_coverage
-        const uint32_t name_at = 8u + (reads_at + textures + 9u) * 4u;
+        TIDE_CHECK(u32_at(packet, 8u + samplers_at * 4u) == textures);
+        for (uint32_t i = 0; i < textures; i++) {
+            TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 1u + i) * 4u) == i % 5u);
+            TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 1u + textures + i) * 4u) == (i % 5u == TIDE_GPU_READ_DATA ? 0u : 1u << i));
+        }
+        TIDE_CHECK(u32_at(packet, 8u + after * 4u) == TIDE_GPU_BLEND_ALPHA);
+        TIDE_CHECK(u32_at(packet, 8u + (after + 7u) * 4u) == 0u); // alpha_to_coverage
+        const uint32_t name_at = 8u + (after + 9u) * 4u;
         TIDE_CHECK(u32_at(packet, name_at - 4u) == 8 && memcmp(packet + name_at, "capacity", 8) == 0);
     }
+}
+
+// A texture read two ways and another read alike: two textures, three samplers apart from them, each texture's
+// samplers by bits, and the draw's texture and sampler binds as ops of their own (IMAGE, SAMPLER).
+TIDE_TEST(embed_render_pipeline_carries_samplers_apart)
+{
+    tide_gpu_pipeline_desc desc = {.name = "ways", .texture_count = 2, .sampler_count = 3,
+        .blend = TIDE_GPU_BLEND_ALPHA, .depth = TIDE_GPU_DEPTH_NONE};
+    desc.reads[0] = TIDE_GPU_READ_DEPTH, desc.reads[1] = TIDE_GPU_READ_COLOR;
+    desc.sampler_reads[0] = TIDE_GPU_READ_DEPTH, desc.sampler_reads[1] = TIDE_GPU_READ_COMPARE;
+    desc.sampler_reads[2] = TIDE_GPU_READ_COLOR;
+    desc.texture_samplers[0] = 3, desc.texture_samplers[1] = 4;
+    tide_gpu_record_begin();
+    const tide_gpu_id pipeline = tide_gpu_record.pipeline(&desc);
+    tide_gpu_record.image(1, 7);
+    tide_gpu_record.sampler(2, TIDE_GPU_FILTER_MIPMAPS, TIDE_GPU_WRAP_MIRROR);
+    uint32_t size;
+    const uint8_t *packet = tide_gpu_record_end(&size);
+    const uint32_t samplers_at = 61u + 2u;
+    TIDE_REQUIRE(size > 8u + (samplers_at + 6u) * 4u);
+    TIDE_CHECK(u32_at(packet, 8) == pipeline);
+    TIDE_CHECK(u32_at(packet, 8u + samplers_at * 4u) == 3u);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 1u) * 4u) == TIDE_GPU_READ_DEPTH);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 2u) * 4u) == TIDE_GPU_READ_COMPARE);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 3u) * 4u) == TIDE_GPU_READ_COLOR);
+    TIDE_CHECK(u32_at(packet, 8u + (samplers_at + 4u) * 4u) == 3u && u32_at(packet, 8u + (samplers_at + 5u) * 4u) == 4u);
+    const uint32_t ops = 8u + u32_at(packet, 4);
+    TIDE_REQUIRE(size == ops + 8u + 8u + 8u + 12u);
+    TIDE_CHECK(u32_at(packet, ops) == TIDE_EMBED_RENDER_IMAGE && u32_at(packet, ops + 4u) == 8u);
+    TIDE_CHECK(u32_at(packet, ops + 8u) == 1u && u32_at(packet, ops + 12u) == 7u);
+    TIDE_CHECK(u32_at(packet, ops + 16u) == TIDE_EMBED_RENDER_SAMPLER && u32_at(packet, ops + 20u) == 12u);
+    TIDE_CHECK(u32_at(packet, ops + 24u) == 2u && u32_at(packet, ops + 28u) == TIDE_GPU_FILTER_MIPMAPS
+               && u32_at(packet, ops + 32u) == TIDE_GPU_WRAP_MIRROR);
 }
 
 // gpu.h's compute calls, written down as the replay reads them (TideRender.cs): a kernel's pipeline and what it binds

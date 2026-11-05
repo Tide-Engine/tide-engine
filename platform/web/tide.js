@@ -1506,9 +1506,9 @@
     const MAX_STORAGE = 7;      // TIDE_GPU_MAX_STORAGE
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
     const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES;
-    // Whether a pipeline's texture is read through a sampler of its own (gpu.h's tide_gpu_own_sampler): one that's
-    // loaded has none, and one read through another texture's sampler (`samplers[i]`, 1 + that texture) hasn't
-    const ownSampler = (read, sampler) => !sampler && read !== READ_DATA && read !== READ_SAMPLES;
+    // A pipeline's samplers where it says none apart (gpu.h's tide_gpu_samplers): texture i that's sampled has sampler i,
+    // read as it is, and one that's loaded none (READ_DATA, a binding it hasn't)
+    const ownSamplers = reads => reads.map(read => read === READ_SAMPLES ? READ_DATA : read);
     // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
     let layouts = null, samplers = null, mipPipelines = null, depthResolver = null;
@@ -1535,11 +1535,10 @@
     // `storage`: a letter for each of its storage buffers (tide_gpu_pipeline_desc.storage_count), at
     // STORAGE_BINDING on, 'w' for one it writes and 'r' for one it reads. A compute pipeline's are its compute
     // stage's, where a render pipeline's are both of its stages', which only read storage. Explicit, so a
-    // binding its shader leaves unused is still bound. `through`: tide_gpu_pipeline_desc's samplers, by which a texture
-    // has a sampler of its own at 2 + 2i.
+    // binding its shader leaves unused is still bound. `through`: how each of its samplers reads (tide_gpu_samplers),
+    // sampler j at 2 + 2j, READ_DATA for a binding it hasn't.
     function layoutFor(reads, through, storage = '', compute = false) {
-        const own = reads.map((read, i) => ownSampler(read, through[i]) ? 1 : 0).join('');
-        const key = reads.join('') + '/' + own + (storage || compute ? `|${storage}${compute ? '|compute' : ''}` : '');
+        const key = reads.join('') + '/' + through.join('') + (storage || compute ? `|${storage}${compute ? '|compute' : ''}` : '');
         let layout = layouts.get(key);
         if (!layout) {
             const stages = compute ? GPUShaderStage.COMPUTE : GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
@@ -1553,9 +1552,10 @@
                     ? { sampleType: 'float', viewDimension: 'cube' }
                     : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float',
                         multisampled: read === READ_SAMPLES } });
-                // A depth is whole only at its nearest pixel, which a sampler that blends none reads. Ints are
-                // loaded, through no sampler; one read through another texture's sampler has none of its own
-                if (own[i] === '1') entries.push({ binding: 2 + 2 * i, visibility: stages, sampler: { type: read === READ_COMPARE
+            });
+            // A depth is whole only at its nearest pixel, which a sampler that blends none reads
+            through.forEach((read, j) => {
+                if (read !== READ_DATA) entries.push({ binding: 2 + 2 * j, visibility: stages, sampler: { type: read === READ_COMPARE
                     ? 'comparison' : readsDepth(read) ? 'non-filtering' : 'filtering' } });
             });
             const group = device.createBindGroupLayout({ entries });
@@ -1572,7 +1572,7 @@
     // bound, so that's inside it wherever the uniforms start.
     let uniformBuffer = null, uniformSlots = 0, uniformsUsed = 0, uniformsAt = 0;
     const retired = [];           // Uniform buffers a pass outgrew, which it still draws from
-    const bindGroups = new Map(); // By a pipeline's layout, then each texture and how it's sampled: for the uniform buffer as it is
+    const bindGroups = new Map(); // By a pipeline's layout, then each texture and how each sampler samples: for the uniform buffer as it is
     function growUniforms() {
         if (uniformBuffer) retired.push(uniformBuffer);
         uniformSlots = uniformSlots ? uniformSlots * 2 : 64;
@@ -1586,7 +1586,8 @@
     const storageGroups = new Map(); // By a buffer's number: the keys of the bind groups it's in, which go when it does
     function bindGroup(p, textures, sampled, storage) {
         let key = p.layout.key + ';';
-        for (let i = 0; i < p.textures; i++) key += textures[i] + ':' + (readsDepth(p.reads[i]) ? 0 : sampled[i]) + ',';
+        for (let i = 0; i < p.textures; i++) key += textures[i] + ',';
+        for (let j = 0; j < p.samplers.length; j++) key += (readsDepth(p.samplers[j]) ? 0 : sampled[j]) + ',';
         for (let i = 0; i < p.storage; i++) key += 's' + storage[i] + ',';
         let group = bindGroups.get(key);
         if (!group) {
@@ -1599,15 +1600,16 @@
             }
             for (let i = 0; i < p.textures; i++) {
                 const t = gpuTables.texture[textures[i]];
-                const read = p.reads[i];
                 // A cube has room for its smaller images from the start: until they're made, only its first are
-                // bound, so what's read between them is its own pixels, through whichever sampler it shares
+                // bound, so what's read between them is its own pixels, through whichever sampler reads it
                 entries.push({ binding: 1 + 2 * i, resource: t.cube && !t.mipped ? t.base : t.view });
-                // A cube has no edge to be read past: its sampler is the one that clamps, by its filter alone
-                if (ownSampler(read, p.samplers[i])) entries.push({ binding: 2 + 2 * i, resource: samplers[read === READ_COMPARE
-                    ? COMPARED : read === READ_CUBE ? sampled[i] % 3 : read ? NEAREST : sampled[i]] });
                 t.groups.add(key); // Which go when it does
             }
+            p.samplers.forEach((read, j) => {
+                // A cube has no edge to be read past: its sampler is the one that clamps, by its filter alone
+                if (read !== READ_DATA) entries.push({ binding: 2 + 2 * j, resource: samplers[read === READ_COMPARE
+                    ? COMPARED : read === READ_CUBE ? sampled[j] % 3 : read ? NEAREST : sampled[j]] });
+            });
             group = device.createBindGroup({ layout: p.layout.group, entries });
             bindGroups.set(key, group);
         }
@@ -2097,14 +2099,15 @@
             building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [], attributes: [],
                 stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
                 reads: Array.from({ length: textures }, (unused, i) => (i < 8 ? reads >>> 3 * i : readsHigh >>> 3 * (i - 8)) & 7), // Two banks of 3-bit tide_gpu_read values
-                samplers: new Array(textures).fill(0), // Each its own, unless gpu_pipeline_samplers says
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
                 into: colorFormats(into), outputs, samples: samplesOf(into), coverage: !!alphaToCoverage,
                 storage: '', compute: false };
+            building.samplers = ownSamplers(building.reads); // How each sampler reads, unless gpu_pipeline_samplers says
         },
-        // Through which sampler each texture is read (tide_gpu_pipeline_desc.samplers): 4 bits each, 8 a word
-        gpu_pipeline_samplers(low, high) {
-            for (let i = 0; i < building.textures; i++) building.samplers[i] = (i < 8 ? low >>> 4 * i : high >>> 4 * (i - 8)) & 15;
+        // Its samplers, apart from its textures (tide_gpu_pipeline_desc.sampler_count): how each reads, 3 bits each
+        gpu_pipeline_samplers(count, low, high) {
+            building.samplers = Array.from({ length: Math.min(count, MAX_TEXTURES) },
+                (unused, j) => (j < 8 ? low >>> 3 * j : high >>> 3 * (j - 8)) & 7);
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
@@ -2358,12 +2361,11 @@
             uniformsUsed += slots;
             drawing.bound = false;
         },
-        gpu_sample(slot, id, filter, wrap) {
+        gpu_image(slot, id) {
             drawing.textures[slot] = id;
-            // A cube has room for its smaller images from the start, with nothing in them until they're made:
-            // read between them before that, it's its own pixels, as a texture with none is
-            const t = gpuTables.texture[id];
-            if (filter === MIPMAPS && t && t.cube && !t.mipped) filter = LINEAR;
+            drawing.bound = false;
+        },
+        gpu_sampler(slot, filter, wrap) {
             // Its place in `samplers`
             drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 3 * wrap : 0) + (filter === NEAREST || filter === MIPMAPS ? filter : LINEAR);
             drawing.bound = false;

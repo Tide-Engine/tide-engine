@@ -25135,35 +25135,38 @@ static void gen_shader_skin_bindings(sb *o, const shader *sh)
     }
 }
 
-// What a shader's textures are, for its draw or run: each one's slot of the list's (tide_textures), and how
-// it's sampled, the bits of `blended` and the expressions `carried` adds for what the Texture given says.
+// What a shader's textures are, for its draw or run: each one's slot of the list's (tide_textures), and how each
+// of its samplers samples, the bits of `blended` and the expressions `carried` adds for what a Texture given says.
 static void gen_shader_textures(gen *g, sb *o, const shader *sh, const int s, uint64_t *blended, sb *carried)
 {
     (void)g;
     (void)s;
-    for (int t = 0; t < sh->textures.count; t++) {
-        const shader_texture *texture = &sh->textures.items[t];
-        if (texture->skin) continue; // Bound after this item's pose is captured
+    for (int j = 0; j < sh->samplers.count; j++) {
+        const shader_sampler *sampler = &sh->samplers.items[j];
+        const shader_texture *texture = &sh->textures.items[sampler->texture];
         const bool own = sh->textured && !texture->source && !texture->asset && !texture->direct; // The draw's own
-        const bool given = own || (texture->read == READ_COLOR && !texture->asset
-                                   && (texture->direct || (texture->field && texture->field->type.kind == TY_TEXTURE)));
-        const bool filter_carried = own || (given && !texture->filter_said), wrap_carried = own || (given && !texture->wrap_said);
+        const bool filter_carried = sampler->carried && (own || !sampler->filter_said);
+        const bool wrap_carried = sampler->carried && (own || !sampler->wrap_said);
         sb from = {0}; // The Texture it's given: the draw's, or the field's
-        if (given && !texture->source) sb_put(&from, "tide_texture");
-        else if (given) {
+        if (sampler->carried && !texture->source) sb_put(&from, "tide_texture");
+        else if (sampler->carried) {
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
             sb_printf(&from, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
         }
-        if (filter_carried) sb_printf(carried, " | tide_sampling_filter_of(%du, %s)", (unsigned)t, from.data);
-        if (wrap_carried) sb_printf(carried, " | tide_sampling_wrap_of(%du, %s)", (unsigned)t, from.data);
-        else *blended |= (uint64_t)texture->wrap << (32 * (t / 8) + 8 + 2 * (t % 8)); // TIDE_SAMPLING_WRAP
+        if (filter_carried) sb_printf(carried, " | tide_sampling_filter_of(%du, %s)", (unsigned)j, from.data);
+        if (wrap_carried) sb_printf(carried, " | tide_sampling_wrap_of(%du, %s)", (unsigned)j, from.data);
+        else *blended |= (uint64_t)sampler->wrap << (32 * (j / 8) + 8 + 2 * (j % 8)); // TIDE_SAMPLING_WRAP
         if (filter_carried) {
             // Its bit comes with the texture
-        } else if (texture->filter) {
-            *blended |= UINT64_C(1) << (32 * (t / 8) + t % 8);
-            if (texture->filter == 2) *blended |= UINT64_C(1) << (32 * (t / 8) + 24 + t % 8); // TIDE_SAMPLING_MIPS
+        } else if (sampler->filter) {
+            *blended |= UINT64_C(1) << (32 * (j / 8) + j % 8);
+            if (sampler->filter == 2) *blended |= UINT64_C(1) << (32 * (j / 8) + 24 + j % 8); // TIDE_SAMPLING_MIPS
         }
+    }
+    for (int t = 0; t < sh->textures.count; t++) {
+        const shader_texture *texture = &sh->textures.items[t];
+        if (texture->skin) continue; // Bound after this item's pose is captured
         if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
             const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
             const bool map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET);

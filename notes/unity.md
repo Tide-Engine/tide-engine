@@ -35,6 +35,18 @@ texture's filter and wrap as the draw asks. The Sample's checked-in
 in Unity after the merge: the sampler path is the one the replay was checked
 with on OpenGL Core, now under one define instead of four.
 
+## One image a texture: embed ABI 14 (2026-11-05)
+
+Textures and samplers are counted apart (notes/rendering.md, One image a texture). The recording's PIPELINE packet
+carries, after its texture reads, `sampler_count`, each sampler's read and each texture's sampler bits; SAMPLE became
+IMAGE (slot, texture: the same op number) and SAMPLER (slot, filter, wrap: a new op after
+DRAW_INDEXED_INDIRECT_COUNT). TideRender keeps `sampled` by texture and `sampling` by sampler, packs
+`_TideSampling`/`_TideSamplingHigh` by sampler (`Modes`), and sets `_TideUnmipped`, bit i for texture i without its
+smaller images, which `tidehl_mode` reads (the blended fallback was TideRender's per slot). OpenGL Core, whose
+textures carry their sampling, samples a texture as its first sampler says (`OwnMode`). `TIDE_EMBED_ABI` and
+`TideLibrary.Abi` are 14; `ComputeReplayTests`' hand-made pipeline gained its sampler count. Not run in Unity (no
+Unity run was made; the Sample's checked-in shaders weren't written again).
+
 ## Sixteen textures: embed ABI 13 (2026-11-05)
 
 A pipeline samples 16 textures (notes/rendering.md, Sixteen textures a draw), so TideRender's `MaxTextures` is 16,

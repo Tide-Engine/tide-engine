@@ -16,7 +16,6 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
 }
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
 @group(0) @binding(2) var sampler0: sampler;
-@group(0) @binding(3) var pixels1: texture_2d<f32>;
 @group(0) @binding(4) var sampler1: sampler;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
@@ -82,7 +81,7 @@ fn ts_Surface(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     if ((t_vertex.m_uv.x > 0.5)) {
         (*t_color) = tide_straight(textureSampleGrad(pixels0, sampler0, t_uv, tide_dx0, tide_dy0));
     } else {
-        (*t_color) = tide_straight(textureSampleGrad(pixels1, sampler1, tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_vertex.m_normal)).xy, tide_dx1, tide_dy1));
+        (*t_color) = tide_straight(textureSampleGrad(pixels0, sampler1, tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_vertex.m_normal)).xy, tide_dx1, tide_dy1));
     }
 }
 

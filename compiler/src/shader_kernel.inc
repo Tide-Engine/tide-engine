@@ -52,7 +52,7 @@ static void write_kernel(program *prog, shader *sh)
     const int group = kernel_group(k);
     sb o = {0};
     put_kernel_uniforms(sh, &o);
-    for (int i = 0; i < sh->textures.count; i++) put_texture(&o, sh, i); // As put_uniforms writes a frag's
+    put_textures(&o, sh); // As put_uniforms writes a frag's
     int binding = SHADER_STORAGE_BINDING, adds = 0;
     for (int i = 0; i < sh->storage.count; i++, binding++) {
         const shader_storage *s = &sh->storage.items[i];
@@ -238,11 +238,15 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
         return NULL;
     }
     if (sh->textures.count > SHADER_TEXTURES) {
-        diag_error(call->at, "kernel '" STR_FMT "' samples %d textures, and a run takes %d", STR_ARG(k->name), sh->textures.count,
+        diag_error(call->at, "kernel '" STR_FMT "' reads %d textures, and a run takes %d", STR_ARG(k->name), sh->textures.count,
                    SHADER_TEXTURES);
         return NULL;
     }
-    share_samplers(sh);
+    if (plan_samplers(sh) > SHADER_TEXTURES) {
+        diag_error(call->at, "kernel '" STR_FMT "' reads its textures %d ways, and a run has %d samplers", STR_ARG(k->name),
+                   sh->samplers.count, SHADER_TEXTURES);
+        return NULL;
+    }
     write_kernel(prog, sh);
     vec_push(prog->shaders, sh);
     return sh;

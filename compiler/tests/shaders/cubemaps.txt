@@ -18,11 +18,9 @@ fn tide_project(model: mat4x4f, vertex: vec4f) -> vec4f {
 @group(0) @binding(2) var sampler0: sampler;
 @group(0) @binding(3) var pixels1: texture_cube<f32>;
 @group(0) @binding(4) var sampler1: sampler;
-@group(0) @binding(5) var pixels2: texture_cube<f32>;
+@group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
-@group(0) @binding(7) var pixels3: texture_2d<f32>;
 @group(0) @binding(8) var sampler3: sampler;
-@group(0) @binding(9) var pixels4: texture_cube<f32>;
 var<private> tide_n0: vec4f;
 var<private> tide_n1: vec4f;
 var<private> tide_n2: vec4f;
@@ -53,13 +51,13 @@ fn ts_Shine(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     var t_away: vec3f = tide_normalize3(t_corner.m_normal);
     var t_near: vec4f = tide_straight(textureSampleLevel(pixels0, sampler0, t_away, 0.0));
     if ((t_near.a < 1.0)) {
-        t_near = tide_straight(textureSampleLevel(pixels1, sampler1, (-t_away), 0.0));
+        t_near = tide_straight(textureSampleLevel(pixels0, sampler1, (-t_away), 0.0));
     }
     var t_far: vec4f = vec4f(0.0, 0.0, 0.0, 1.0);
     if ((t_corner.m_normal.y > 0.0)) {
-        t_far = tide_straight(textureSampleGrad(pixels2, sampler2, t_away, tide_dx0, tide_dy0));
+        t_far = tide_straight(textureSampleGrad(pixels1, sampler2, t_away, tide_dx0, tide_dy0));
     }
-    (*t_color) = (((tide_straight(textureSampleLevel(pixels3, sampler3, t_corner.m_normal.xy, 0.0)) * t_near) + t_far) + tide_straight(textureSampleLevel(pixels4, sampler0, vec3f(0.0, 1.0, 0.0), 0.0)));
+    (*t_color) = (((tide_straight(textureSampleLevel(pixels2, sampler3, t_corner.m_normal.xy, 0.0)) * t_near) + t_far) + tide_straight(textureSampleLevel(pixels1, sampler0, vec3f(0.0, 1.0, 0.0), 0.0)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_in0: vec4f, @location(3) tide_in1: vec4f, @location(4) tide_in2: vec4f, @location(5) tide_in3: vec4f) -> tide_corner {

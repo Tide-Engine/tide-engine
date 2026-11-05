@@ -107,24 +107,32 @@ static bool reads(const int i, const tide_draw_kind kind, const way *ways, const
     const tide_draw_command *c = draws[i].c;
     if (c->kind != kind) return false;
     const tide_draw_run *r = &draw.runs[c->shaded.run];
-    if (!r->shader || r->shader->texture_count != count || count > 8) return false;
+    if (!r->shader || count > 8) return false;
+    // Each way a texture is read: the texture, once, and one of the samplers it's read through
     bool used[8] = {false};
-    for (uint32_t t = 0; t < count; t++) {
-        bool found = false;
-        for (uint32_t k = 0; k < count && !found; k++) {
-            if (used[k] || r->textures[t] != ways[k].texture || tide_sampling_blended(r->sampling, t) != ways[k].blended
-                || tide_sampling_wrap(r->sampling, t) != ways[k].wrap) {
-                continue;
+    uint32_t pairs = 0;
+    for (uint32_t t = 0; t < r->shader->texture_count; t++) {
+        const uint32_t through = tide_shader_texture_samplers(r->shader, t);
+        for (uint32_t s = 0; s < TIDE_SHADER_TEXTURES; s++) {
+            if (!(through >> s & 1u)) continue;
+            pairs++;
+            bool found = false;
+            for (uint32_t k = 0; k < count && !found; k++) {
+                if (used[k] || r->textures[t] != ways[k].texture || tide_sampling_blended(r->sampling, s) != ways[k].blended
+                    || tide_sampling_wrap(r->sampling, s) != ways[k].wrap) {
+                    continue;
+                }
+                used[k] = found = true;
             }
-            used[k] = found = true;
-        }
-        if (!found) {
-            printf("draw %d: texture %u is the list's %u, %s, wrap %d\n", i, (unsigned)t, (unsigned)r->textures[t],
-                   tide_sampling_blended(r->sampling, t) ? "blended" : "nearest", (int)tide_sampling_wrap(r->sampling, t));
-            return false;
+            if (!found) {
+                printf("draw %d: texture %u is the list's %u, through sampler %u, %s, wrap %d\n", i, (unsigned)t,
+                       (unsigned)r->textures[t], (unsigned)s, tide_sampling_blended(r->sampling, s) ? "blended" : "nearest",
+                       (int)tide_sampling_wrap(r->sampling, s));
+                return false;
+            }
         }
     }
-    return true;
+    return pairs == count;
 }
 
 // A grid where a Texture goes is the texture it is: drawn, kept, passed and returned.

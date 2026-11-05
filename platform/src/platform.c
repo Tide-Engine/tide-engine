@@ -2552,22 +2552,31 @@ typedef struct gpu_target {
 static gpu_target *gpu_targets;
 static uint32_t gpu_target_count, gpu_target_capacity;
 
-// Through which sampler a pipeline reads a shader's texture `i` (tide_gpu_pipeline_desc.samplers): its own, or an
-// earlier texture's.
-static uint8_t gpu_sampler(const tide_shader *shader, const uint32_t i)
+// A shader's read (tide_shader_read) as a pipeline's: a color, unless it says otherwise.
+static tide_gpu_read gpu_read_of(const uint8_t read)
 {
-    const uint8_t sampler = i < TIDE_SHADER_TEXTURES ? shader->texture_samplers[i] : 0u;
-    return sampler <= i ? sampler : 0u;
-}
-
-// How a pipeline reads a shader's texture `i`: a color, unless the shader says it's a depth.
-static tide_gpu_read gpu_read(const tide_shader *shader, const uint32_t i)
-{
-    const uint8_t read = i < TIDE_SHADER_TEXTURES ? shader->texture_reads[i] : TIDE_SHADER_READ_COLOR;
     return read == TIDE_SHADER_READ_DEPTH ? TIDE_GPU_READ_DEPTH :
            read == TIDE_SHADER_READ_COMPARE ? TIDE_GPU_READ_COMPARE :
            read == TIDE_SHADER_READ_CUBE ? TIDE_GPU_READ_CUBE :
            read == TIDE_SHADER_READ_DATA ? TIDE_GPU_READ_DATA : TIDE_GPU_READ_COLOR;
+}
+
+// How a pipeline reads a shader's texture `i`.
+static tide_gpu_read gpu_read(const tide_shader *shader, const uint32_t i)
+{
+    return gpu_read_of(i < TIDE_SHADER_TEXTURES ? shader->texture_reads[i] : TIDE_SHADER_READ_COLOR);
+}
+
+// A pipeline's textures and samplers, as a shader has them: one image a texture, and its samplers apart
+// (tide_shader.sampler_count).
+static void shader_pipeline_textures(tide_gpu_pipeline_desc *desc, const tide_shader *shader)
+{
+    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc->reads[i] = gpu_read(shader, i);
+    desc->sampler_count = shader->sampler_count < TIDE_GPU_MAX_TEXTURES ? shader->sampler_count : TIDE_GPU_MAX_TEXTURES;
+    for (uint32_t j = 0; j < desc->sampler_count; j++) desc->sampler_reads[j] = (uint8_t)gpu_read_of(shader->sampler_reads[j]);
+    for (uint32_t i = 0; desc->sampler_count && i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
+        desc->texture_samplers[i] = (uint16_t)tide_shader_texture_samplers(shader, i);
+    }
 }
 static uint32_t target_epoch; // A hot reload discards the old build's target identities
 
@@ -3679,10 +3688,7 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
         if (desc.blend == TIDE_GPU_BLEND_ALPHA) desc.blend = TIDE_GPU_BLEND_REPLACE;
         desc.alpha_to_coverage = covers_by_samples(into);
     }
-    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
-        desc.reads[i] = gpu_read(shader, i);
-        desc.samplers[i] = gpu_sampler(shader, i);
-    }
+    shader_pipeline_textures(&desc, shader);
     for (uint32_t i = 0; i < shader->attribute_count; i++) {
         desc.attributes[i].slot = 0;
         desc.attributes[i].format = formats[shader->attributes[i].format];
@@ -4652,7 +4658,7 @@ static bool prepare_step_mipmaps(const tide_draw_list *list, const draw_step *s,
         const tide_draw_run *run = &list->runs[s->first];
         for (uint32_t i = 0; i < run->shader->texture_count; i++) {
             if (gpu_read(run->shader, i) != TIDE_GPU_READ_COLOR && gpu_read(run->shader, i) != TIDE_GPU_READ_CUBE) continue;
-            needed |= prepare_mipmaps(list, run->textures[i], tide_sampling_filter(run->sampling, i), check);
+            needed |= prepare_mipmaps(list, run->textures[i], tide_shader_texture_filter(run->shader, run->sampling, i), check);
         }
     } else if (s->kind == STEP_MESH || s->kind == STEP_MESH_3D) {
         needed = prepare_mipmaps(list, s->texture, tide_filter_of((int32_t)s->filter), check);
@@ -4676,10 +4682,25 @@ static tide_gpu_wrap gpu_wrap(const uint32_t wrap)
     return wrap == TIDE_WRAP_REPEAT || wrap == TIDE_WRAP_MIRROR ? (tide_gpu_wrap)wrap : TIDE_GPU_WRAP_CLAMP;
 }
 
+// A shader's textures, each once, and its samplers, each as `sampling` says (tide_shader.sampler_count).
+static void bind_shader_textures(const tide_draw_list *list, const tide_shader *shader, const uint32_t *textures,
+                                 const uint64_t sampling)
+{
+    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) {
+        gpu->image(i, texture_to_read(list, textures[i], gpu_read(shader, i)));
+    }
+    uint8_t reads[TIDE_SHADER_TEXTURES];
+    const uint32_t samplers = tide_shader_samplers(shader, reads);
+    for (uint32_t j = 0; j < samplers; j++) {
+        if (reads[j] == TIDE_SHADER_READ_DATA) continue;
+        gpu->sampler(j, gpu_filter(tide_sampling_filter(sampling, j)), gpu_wrap(tide_sampling_wrap(sampling, j)));
+    }
+}
+
 // The texture a mesh step samples, sampled as the step says.
 static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 {
-    gpu->sample(0, texture_to_read(list, s->texture, TIDE_GPU_READ_COLOR), gpu_filter((tide_filter)s->filter), gpu_wrap(s->wrap));
+    tide_gpu_sample(gpu, 0, texture_to_read(list, s->texture, TIDE_GPU_READ_COLOR), gpu_filter((tide_filter)s->filter), gpu_wrap(s->wrap));
 }
 
 // A step's 3D camera, from the world to clip space, fitted to the screen's
@@ -4765,14 +4786,10 @@ static uint64_t draw_shaded(const tide_draw_list *list, const draw_step *s)
     if (own) memcpy(block.bytes + header, list->uniforms + run->uniforms, own);
     use_pipeline(s);
     gpu->uniforms(&block, header + own);
-    for (uint32_t i = 0; i < shader->texture_count; i++) {
-        gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)),
-                    gpu_filter(tide_sampling_filter(run->sampling, i)), gpu_wrap(tide_sampling_wrap(run->sampling, i)));
-    }
+    bind_shader_textures(list, shader, run->textures, run->sampling);
     if (s->listed) { // Its list's numbers, which its places are places in
         const uint32_t t = shader->texture_count;
-        gpu->sample(t, texture_to_read(list, run->textures[t], TIDE_GPU_READ_DATA), gpu_filter(TIDE_FILTER_POINT),
-                    gpu_wrap(TIDE_WRAP_CLAMP));
+        gpu->image(t, texture_to_read(list, run->textures[t], TIDE_GPU_READ_DATA));
     }
     if (shader->storage_count) bind_storage(list, run);
     gpu->vertices(0, corners_of(g), 0);
@@ -5331,7 +5348,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             // Stretched glyphs blend; the others land on the target's pixels
-            gpu->sample(0, gpu_state.atlas, TIDE_GPU_FILTER_LINEAR, TIDE_GPU_WRAP_CLAMP);
+            tide_gpu_sample(gpu, 0, gpu_state.atlas, TIDE_GPU_FILTER_LINEAR, TIDE_GPU_WRAP_CLAMP);
             vertices += draw_triangles(s);
             calls++;
             break;

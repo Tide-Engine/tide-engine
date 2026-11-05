@@ -66,9 +66,12 @@ static uint32_t texture(const uint32_t space, const int32_t width)
 static uint32_t samples(const tide_draw_run *run, const uint32_t source, const tide_filter filter, const tide_wrap wrap)
 {
     uint32_t count = 0;
-    for (uint32_t i = 0; i < run->shader->texture_count; i++) {
-        count += run->textures[i] == source && tide_sampling_filter(run->sampling, i) == filter
-              && tide_sampling_wrap(run->sampling, i) == wrap;
+    for (uint32_t i = 0; i < run->shader->texture_count; i++) { // Each texture, through each of its samplers
+        const uint32_t through = tide_shader_texture_samplers(run->shader, i);
+        for (uint32_t s = 0; s < TIDE_SHADER_TEXTURES; s++) {
+            count += (through >> s & 1u) && run->textures[i] == source && tide_sampling_filter(run->sampling, s) == filter
+                  && tide_sampling_wrap(run->sampling, s) == wrap;
+        }
     }
     return count;
 }
@@ -111,7 +114,8 @@ static void check_capture(void)
     TIDE_CHECK(memcmp(numeric->pixels, values, sizeof values) == 0);
     for (uint32_t i = 0; i < 3; i++) {
         const tide_shader *shader = runs[i]->shader;
-        TIDE_REQUIRE(shader && shader->texture_count == 3);
+        // Three ways: two textures (the forwarded field and the other), or one grid field read all three ways
+        TIDE_REQUIRE(shader && shader->texture_count == (i == 1 ? 1u : 2u) && shader->sampler_count == 3);
 #ifdef __wasm__ // A shader's text is its WGSL, which a build keeps on the web
         TIDE_REQUIRE(shader->wgsl != NULL);
         TIDE_CHECK(strstr(shader->wgsl, "tf_SamplePair") != NULL);

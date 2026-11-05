@@ -1,5 +1,11 @@
 # Web builds
 
+## Textures and samplers apart (2026-11-05)
+
+`gpu_image(slot, id)` and `gpu_sampler(slot, filter, wrap)` replace `gpu_sample`; `gpu_pipeline_samplers(count, low,
+high)` gives each sampler's read, 3 bits each, where a pipeline's samplers aren't its textures' own (`ownSamplers`).
+Layout keys are `reads/samplerReads`. Details: notes/rendering.md, One image a texture.
+
 ## Pipelines the browser can't make, and Dawn's Direct3D 11 (2026-11-05)
 
 `tide.js`: a pipeline made at once is made inside `validation` and `internal` error scopes, and one whose scopes

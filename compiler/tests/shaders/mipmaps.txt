@@ -12,13 +12,9 @@ struct tide_uniforms {
 @group(0) @binding(4) var sampler1: sampler;
 @group(0) @binding(5) var pixels2: texture_2d<f32>;
 @group(0) @binding(6) var sampler2: sampler;
-@group(0) @binding(7) var pixels3: texture_2d<f32>;
 @group(0) @binding(8) var sampler3: sampler;
-@group(0) @binding(9) var pixels4: texture_2d<f32>;
 @group(0) @binding(10) var sampler4: sampler;
-@group(0) @binding(11) var pixels5: texture_2d<f32>;
 @group(0) @binding(12) var sampler5: sampler;
-@group(0) @binding(13) var pixels6: texture_2d<f32>;
 @group(0) @binding(14) var sampler6: sampler;
 var<private> tide_at: vec4f;
 var<private> tide_world: vec3f;
@@ -52,7 +48,7 @@ fn ts_Tile(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     let tide_uv2: vec2f = t_vertex.m_uv;
     let tide_dx2: vec2f = dpdx(tide_uv2);
     let tide_dy2: vec2f = dpdy(tide_uv2);
-    let tide_uv3: vec2f = (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels5, sampler5, (tf_Tiled(t_vertex.m_uv, tide_block.tide_u0.x)), 0.0)).r);
+    let tide_uv3: vec2f = (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels2, sampler5, (tf_Tiled(t_vertex.m_uv, tide_block.tide_u0.x)), 0.0)).r);
     let tide_dx3: vec2f = dpdx(tide_uv3);
     let tide_dy3: vec2f = dpdy(tide_uv3);
     (*t_color) = vec4f(1.0, 1.0, 1.0, 1.0);
@@ -66,12 +62,12 @@ fn ts_Tile(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
         }
         (*t_color) = ((*t_color) * tide_straight(textureSampleGrad(pixels2, sampler2, t_vertex.m_uv.yx, tide_dx1, tide_dy1)));
     } else {
-        (*t_color) = (tide_straight(textureSampleGrad(pixels3, sampler3, t_vertex.m_uv, tide_dx2, tide_dy2)) * tide_straight(textureSampleGrad(pixels4, sampler4, (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels5, sampler5, t_twice, 0.0)).r), tide_dx3, tide_dy3)));
+        (*t_color) = (tide_straight(textureSampleGrad(pixels2, sampler3, t_vertex.m_uv, tide_dx2, tide_dy2)) * tide_straight(textureSampleGrad(pixels1, sampler4, (t_vertex.m_uv * tide_straight(textureSampleLevel(pixels2, sampler5, t_twice, 0.0)).r), tide_dx3, tide_dy3)));
     }
     var t_step: vec2f = t_vertex.m_uv;
     for (var t_i: i32 = 0; (t_i < 3); t_i = (t_i + 1)) {
         t_step = (t_step + vec2f(0.1, 0.0));
-        (*t_color) = ((*t_color) + (tide_straight(textureSampleLevel(pixels3, sampler3, t_step, 0.0)) * tide_straight(textureSampleLevel(pixels6, sampler6, t_vertex.m_uv, 0.0))));
+        (*t_color) = ((*t_color) + (tide_straight(textureSampleLevel(pixels2, sampler3, t_step, 0.0)) * tide_straight(textureSampleLevel(pixels0, sampler6, t_vertex.m_uv, 0.0))));
     }
 }
 

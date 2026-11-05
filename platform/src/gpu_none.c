@@ -98,9 +98,11 @@ static void none_scissor(const int x, const int y, const int width, const int he
 static void none_stencil(const uint32_t value) { (void)value; }
 static void none_uniforms(const void *data, const size_t size) { (void)data, (void)size; }
 
-static void none_sample(const uint32_t slot, const tide_gpu_id texture, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
+static void none_image(const uint32_t slot, const tide_gpu_id texture) { (void)slot, (void)texture; }
+
+static void none_sampler(const uint32_t slot, const tide_gpu_filter filter, const tide_gpu_wrap wrap)
 {
-    (void)slot, (void)texture, (void)filter, (void)wrap;
+    (void)slot, (void)filter, (void)wrap;
 }
 
 static void none_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset) { (void)slot, (void)buffer, (void)offset; }
@@ -173,7 +175,8 @@ const tide_gpu tide_gpu_none = {
     .use = none_free,
     .stencil = none_stencil,
     .uniforms = none_uniforms,
-    .sample = none_sample,
+    .image = none_image,
+    .sampler = none_sampler,
     .vertices = none_vertices,
     .indices = none_indices,
     .draw = none_draw,
