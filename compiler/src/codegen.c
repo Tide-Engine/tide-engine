@@ -15208,6 +15208,7 @@ static void gen_par_steps(gen *g, const decl *sys)
         }
         const bool list = s->value->type.kind == TY_LIST;
         sb_printf(o, "static void %s(void *tide_ctx, uint32_t tide_task)\n{\n", name);
+        if (sys->is_worker && g->prog->assets.count) sb_put(o, "    tide_pack_use();\n");
         sb_printf(o, "    const %s_ctx *tide_cx = tide_ctx;\n    %s *const tide_pl = tide_cx->loop;\n", name,
                   list ? "tide_par_list" : "tide_par_loop");
         for (int k = 0; k < caps.count; k++) {

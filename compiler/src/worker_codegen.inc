@@ -162,6 +162,8 @@ static void gen_workers(gen *g)
         sb_put(o, "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                   "    const uint64_t mark = tide_scratch_mark();\n    tide_text_use(&v->input_heap, &v->output_heap);\n"
                   "    const tide_jobs *previous = tide_worker_enter(v->jobs);\n");
+        // Built constant lists use packed handles, including in workers with no inputs.
+        if (g->prog->assets.count) sb_put(o, "    tide_pack_use();\n");
         if (fn->result.kind == TY_STRING) sb_put(o, "    v->result = tide_text_temp(");
         else if (fn->result.kind != TY_VOID) sb_put(o, "    v->result = ");
         else sb_put(o, "    ");

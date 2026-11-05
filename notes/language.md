@@ -1,5 +1,34 @@
 # Language features, as tidec builds them
 
+## Build-code constants in workers (2026-11-05)
+
+Build-code list constants are hidden packed assets even when their producer reads
+no source asset. Generated local worker entry points did not call tide_pack_use,
+leaving tide_pack_memory NULL on fresh pool threads. List indexing then read a
+small pack offset as an address. The worker_values regression reproduces that
+access violation under Windows ASan in tide_list_at via a helper reading constants.
+
+Worker entry points and their parallel list/grid callbacks now bind the pack with
+the existing tide_pack_use, as tick/frame entry points do. This supports the intended
+constant value reads without changing language semantics, capture ownership,
+runtime APIs, match state or pack format. Built constants affect program identity
+and changes rebuild code rather than performing a live asset-only replacement.
+Live asset reads in workers remain subject to their existing checker restrictions.
+
+worker_values checks a 4 KB source decoded into integer constants, an integer list
+made without an asset, and a list of structs containing float2s, a float and an int.
+Reads pass through an ordinary helper, directly in a worker and inside a parallel
+loop. The host loads its embedded pack and checks completion and exact results
+both with synchronous execution and with the actual native pool; the visualizer
+variant covers typed list wrappers too.
+
+Validation: built the four affected Windows sanitize targets and passed
+local_workers, worker_values, worker_values_visualizers and worker_grids (4 CTests).
+Built the three ordinary targets in web-release and passed their WASI CTests
+under Node 24.22.1 (3 CTests). No browser, other native OS, or mount-and-rifle run;
+mount-and-rifle was not edited. No docs change is needed for this implementation
+repair of existing constant semantics.
+
 ## Stable generated C partitions (2026-11-05)
 
 `codegen_options.split_code` / `tidec --split-code` cut generated C into four translation units using two binary
