@@ -106,6 +106,8 @@ uint32_t tide_draw_listed_put(tide_draw_list *d, uint32_t slot, const uint8_t *b
 // The copy of mesh `m` (of another list, its own copy gone: tide_draw_mesh_data.hollow) into place `slot`, read
 // from its lists again where they're as they were when it was copied: nothing where they aren't.
 void tide_draw_mesh_relist(tide_draw_list *d, uint32_t slot, const tide_draw_mesh_data *m);
+// Whether mesh `m`'s lists are still at the versions it was copied from (read safely, whatever became of them).
+bool tide_draw_mesh_lists_kept(const tide_draw_mesh_data *m);
 
 // As the frame ends (tide_draw_reset, before textures go): the pages with regions that stay are held.
 void tide_draw_listed_hold(tide_draw_list *d);

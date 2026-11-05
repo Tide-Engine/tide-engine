@@ -335,6 +335,26 @@ TIDE_TEST(draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy)
     TIDE_REQUIRE(again);
     TIDE_CHECK(!d.meshes[again - 1u].hollow && d.meshes[again - 1u].vertices != NULL
                && d.meshes[again - 1u].vertices[1].position.x == idle_corners[1].position.x + 5.0f);
+    // Outside the budgets: kept till its lists are drawn at another version, or for TIDE_MESH_IDLE_FRAMES unused
+    d.mesh_gpu[again - 1u] = TIDE_MESH_GPU_HAS;
+    tide_draw_reset(&d);
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[again - 1u].hollow);
+    ((tide_vertex3 *)tide_list_at_mut(others, 0, sizeof(tide_vertex3)))->position.y += 1.0f;
+    tide_draw_set_frustum_culling(&d, false);
+    tide_draw_mesh3_lists(&d, others, triangles, hollow_at(0, 0));
+    const uint32_t newer = d.commands[d.count - 1u].mesh3.mesh;
+    TIDE_CHECK(newer && newer != again);
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[again - 1u].space == TIDE_MESH_NONE); // Drawn at another version: it goes
+    d.mesh_gpu[newer - 1u] = TIDE_MESH_GPU_HAS;
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[newer - 1u].hollow);
+    for (uint32_t i = 0; i + 1u < TIDE_MESH_IDLE_FRAMES; i++) tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[newer - 1u].space != TIDE_MESH_NONE);
+    tide_draw_reset(&d);
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.meshes[newer - 1u].space == TIDE_MESH_NONE);
     // Lists made along the way keep their copies, whatever the renderer has
     const tide_list made = tide_list_from(idle_corners, 3, sizeof(tide_vertex3));
     const tide_list made_faces = tide_list_from(idle_triangle, 3, sizeof(uint32_t));

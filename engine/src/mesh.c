@@ -959,14 +959,42 @@ static void note_relisted(tide_draw_list *d, const uint32_t mesh, const tide_lis
     m->relisted = true;
 }
 
+// Whether a handle a mesh kept is a block of its world's heap as it is now, and its chunks' too where it's a
+// list in chunks, so that it can be read: a list that went may have left the place to another, or past the heap's
+// end. What's read there is then only weighed against the versions kept.
+static bool list_readable(const tide_list l)
+{
+    if (!l.at || tide_handle_where(l.at) == TIDE_IN_SCRATCH) return false;
+    const tide_heap *heap = tide_heap_read(tide_handle_where(l.at));
+    if (!heap) return false;
+    const uint64_t block = tide_handle_offset(l.at);
+    if (block > heap->used || heap->used - block < sizeof(tide_block)) return false;
+    const tide_block *b = tide_heap_block(heap, block);
+    if (!(b->b & TIDE_LIST_CHUNKED)) return true;
+    const uint64_t chunks = b->b & ~TIDE_LIST_CHUNKED;
+    if ((heap->used - block - sizeof *b) / sizeof(uint64_t) < chunks) return false;
+    const uint64_t *at = (const uint64_t *)(const void *)(b + 1);
+    for (uint64_t i = 0; i < chunks; i++) {
+        if (at[i] > heap->used || heap->used - at[i] < sizeof(tide_block)) return false;
+    }
+    return true;
+}
+
+bool tide_draw_mesh_lists_kept(const tide_draw_mesh_data *m)
+{
+    const tide_list vertices = {m->id}, indices = {m->other};
+    const uint32_t size = m->space == TIDE_MESH_BYTES ? m->vertex_size : (uint32_t)sizeof(tide_vertex3);
+    return m->relisted && size && list_readable(vertices) && list_readable(indices)
+        && tide_list_count(vertices) == (int32_t)m->vertex_count && list_version(vertices, size) == m->vertices_version
+        && list_version(indices, sizeof(uint32_t)) == m->indices_version;
+}
+
 void tide_draw_mesh_relist(tide_draw_list *d, const uint32_t slot, const tide_draw_mesh_data *m)
 {
     const tide_list vertices = {m->id}, indices = {m->other};
     const uint32_t size = m->space == TIDE_MESH_BYTES ? m->vertex_size : (uint32_t)sizeof(tide_vertex3);
     // Still at the versions it was copied at (they were, as the frame drew it), or it draws nothing
-    if (!m->relisted || !size || !tide_heap_read(tide_handle_where(vertices.at)) || !tide_heap_read(tide_handle_where(indices.at))
-        || tide_list_count(vertices) != (int32_t)m->vertex_count || list_version(vertices, size) != m->vertices_version
-        || list_version(indices, sizeof(uint32_t)) != m->indices_version) return;
+    if (!tide_draw_mesh_lists_kept(m)) return;
     const int32_t index_count = tide_list_count(indices);
     if (index_count < 3) return;
     bool vertices_copied, indices_copied;

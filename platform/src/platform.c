@@ -2462,8 +2462,10 @@ typedef struct gpu_mesh {
 static gpu_mesh *gpu_meshes;
 static uint32_t gpu_mesh_count; // Places, as the list's
 static tide_texture_idle *idle_meshes; // Those a list didn't draw, as the idle textures are weighed (texture_residency.h)
+static tide_texture_idle *held_meshes; // ...of those, the ones of a world's lists (mesh_held_bytes)
 static uint32_t idle_mesh_capacity;
 uint32_t tide_mesh_idle_frames = TIDE_MESH_IDLE_FRAMES;
+uint64_t tide_mesh_held_most = UINT64_MAX;
 uint64_t tide_mesh_uploads;
 static void *mesh_3d_upload;    // A mesh's corners or indices, on their way to the GPU
 static size_t mesh_3d_upload_capacity;
@@ -3436,12 +3438,17 @@ static void spare_mesh(gpu_mesh *g)
     *g = (gpu_mesh){0};
 }
 
-// The GPU bytes unused meshes are kept within: TIDE_MESH_IDLE_BYTES, or a sixteenth of a device's own memory where
-// that's more (tide_gpu.device_memory, as idle images are weighed).
-static uint64_t mesh_idle_bytes(void)
+// The GPU bytes the unused meshes of a world's lists (tide_draw_mesh_data.hollow) are kept within, besides what the
+// renderer has drawn with: while all it has is within three quarters of a device's own memory, or where a device
+// doesn't say (tide_gpu.device_memory: integrated GPUs, phones, the web), TIDE_MESH_HELD_BYTES of them.
+#define TIDE_MESH_HELD_BYTES (UINT64_C(256) * 1024u * 1024u)
+static uint64_t mesh_held_bytes(const uint64_t held)
 {
-    const uint64_t own = tide_texture_device_memory() / 16u;
-    return own > TIDE_MESH_IDLE_BYTES ? own : TIDE_MESH_IDLE_BYTES;
+    if (tide_mesh_held_most != UINT64_MAX) return tide_mesh_held_most;
+    const uint64_t own = tide_texture_device_memory();
+    if (!own) return TIDE_MESH_HELD_BYTES;
+    const uint64_t most = own / 4u * 3u, rest = gpu_memory > held ? gpu_memory - held : 0u;
+    return most > rest ? most - rest : 0u;
 }
 
 // The buffers of the places of meshes the list doesn't draw are spares for
@@ -3459,10 +3466,14 @@ static void spare_unused_meshes(const tide_draw_list *list)
     if (gpu_mesh_count > idle_mesh_capacity) {
         idle_meshes = tide_realloc(idle_meshes, (size_t)idle_mesh_capacity * sizeof *idle_meshes,
                                    (size_t)gpu_mesh_count * sizeof *idle_meshes);
+        held_meshes = tide_realloc(held_meshes, (size_t)idle_mesh_capacity * sizeof *held_meshes,
+                                   (size_t)gpu_mesh_count * sizeof *held_meshes);
         idle_mesh_capacity = gpu_mesh_count;
     }
-    // Those drawn in more than one frame from the first, those one frame alone drew from the last
-    uint32_t idle_count = 0, once_count = 0;
+    // Those drawn in more than one frame from the first, those one frame alone drew from the last, and those of a
+    // world's lists apart
+    uint32_t idle_count = 0, once_count = 0, held_count = 0;
+    uint64_t held = 0;
     for (uint32_t i = 0; i < gpu_mesh_count; i++) {
         gpu_mesh *g = &gpu_meshes[i];
         if (g->wanted == gpu_frame + 1u || (!g->vertices && !g->indices)) continue;
@@ -3471,7 +3482,9 @@ static void spare_unused_meshes(const tide_draw_list *list)
             continue;
         }
         const tide_draw_mesh_data *m = &list->meshes[i];
-        const bool once = m->made == m->frame;
+        // A world's lists' mesh: the list gives its copy up as the frame ends (tide_draw_mesh_data.relisted)
+        const bool world = m->hollow || m->relisted;
+        const bool once = m->made == m->frame && !world;
         float far = 0.0f; // As the list weighs them (tide/draw.h): the farthest from its camera first
         if (list->idle_eye_set) {
             const float x = m->where[0] - list->idle_eye[0], y = m->where[1] - list->idle_eye[1],
@@ -3479,13 +3492,25 @@ static void spare_unused_meshes(const tide_draw_list *list)
             far = m->placed ? x * x + y * y + z * z : FLT_MAX;
             if (!(far < FLT_MAX)) far = FLT_MAX;
         }
-        idle_meshes[once ? gpu_mesh_count - ++once_count : idle_count++] = (tide_texture_idle){
-            .bytes = (uint64_t)g->vertex_capacity + g->index_capacity, .far = far, .age = gpu_frame - g->frame,
-            .place = i};
+        const tide_texture_idle idle = {.bytes = (uint64_t)g->vertex_capacity + g->index_capacity, .far = far,
+                                        .age = gpu_frame - g->frame, .place = i};
+        if (world) {
+            held_meshes[held_count++] = idle;
+            held += idle.bytes;
+        } else {
+            idle_meshes[once ? gpu_mesh_count - ++once_count : idle_count++] = idle;
+        }
     }
     tide_texture_idle *once = idle_meshes + gpu_mesh_count - once_count;
     if (idle_count) {
-        tide_texture_idle_trim(idle_meshes, idle_count, mesh_idle_bytes(), TIDE_MESH_IDLE_COUNT, tide_mesh_idle_frames);
+        tide_texture_idle_trim(idle_meshes, idle_count, TIDE_MESH_IDLE_BYTES, TIDE_MESH_IDLE_COUNT, tide_mesh_idle_frames);
+    }
+    // A world's: kept while its list keeps it, under pressure the farthest going first (no frames, no count)
+    if (held_count) tide_texture_idle_trim(held_meshes, held_count, mesh_held_bytes(held), UINT32_MAX, UINT32_MAX);
+    for (uint32_t i = 0; i < held_count; i++) {
+        if (held_meshes[i].keep) continue;
+        spare_mesh(&gpu_meshes[held_meshes[i].place]);
+        if (list->mesh_gpu) list->mesh_gpu[held_meshes[i].place] = TIDE_MESH_GPU_DROPPED;
     }
     if (once_count) tide_texture_idle_trim(once, once_count, TIDE_MESH_ONCE_BYTES, TIDE_MESH_ONCE_COUNT, TIDE_MESH_ONCE_FRAMES);
     // What goes and the list still has: the list lets a place go whose copy went (TIDE_MESH_GPU_DROPPED)

@@ -597,7 +597,7 @@ static void forget_idle_meshes(tide_draw_list *d)
         }
     }
     // What's past its frames goes first, with nothing to make: the rest are weighed below
-    uint32_t idle = 0, drawn = 0;
+    uint32_t idle = 0, drawn = 0, held = 0;
     bool freed = false;
     for (uint32_t i = 0; i < d->mesh_count; i++) {
         const tide_draw_mesh_data *m = &d->meshes[i];
@@ -609,6 +609,13 @@ static void forget_idle_meshes(tide_draw_list *d)
             freed = true;
         } else if (m->frame == d->frame) {
             if (!m->base && !mesh_of_scratch(m)) drawn++;
+        } else if (m->hollow) { // No budget but the renderer's: kept till its lists are drawn at another version
+            if (d->frame - m->frame > (uint32_t)TIDE_MESH_IDLE_FRAMES) {
+                free_mesh_place(d, i);
+                freed = true;
+            } else {
+                held++;
+            }
         } else if (d->frame - m->frame > (m->made == m->frame ? (uint32_t)TIDE_MESH_ONCE_FRAMES : (uint32_t)TIDE_MESH_IDLE_FRAMES)) {
             free_mesh_place(d, i);
             freed = true;
@@ -616,7 +623,7 @@ static void forget_idle_meshes(tide_draw_list *d)
             idle++;
         }
     }
-    if (!idle) {
+    if (!idle && !held) {
         if (freed) forget_unplaced_levels(d);
         return;
     }
@@ -635,7 +642,7 @@ static void forget_idle_meshes(tide_draw_list *d)
             seen[at] = i + 1u;
         }
     }
-    idle_mesh *kept = tide_alloc(idle * sizeof(idle_mesh));
+    idle_mesh *kept = tide_alloc((idle ? idle : 1u) * sizeof(idle_mesh));
     uint32_t count = 0;
     for (uint32_t i = 0; i < d->mesh_count; i++) {
         tide_draw_mesh_data *m = &d->meshes[i];
@@ -649,6 +656,7 @@ static void forget_idle_meshes(tide_draw_list *d)
                 }
             }
         }
+        if (keep && m->hollow) continue; // Outside the budget
         if (keep) {
             kept[count++] = (idle_mesh){.bytes = mesh_bytes(m), .far = idle_far(d, m), .age = d->frame - m->frame,
                                         .place = i, .once = m->made == m->frame};
