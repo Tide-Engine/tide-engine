@@ -20,6 +20,13 @@ static int kernel_group(const decl *k)
     return k->group[0] * k->group[1] * k->group[2];
 }
 
+// The scan of a kernel's Adds' flags, a lane a list, where there are several (at most 3: a kernel binds 7 storage
+// buffers, a list and its scratch for each, and its run's record).
+static const char *kernel_scan(const int adds)
+{
+    return adds == 2 ? "vec2u" : "vec4u";
+}
+
 static void write_kernel(program *prog, shader *sh)
 {
     emit em = emitter(prog, sh);
@@ -53,7 +60,8 @@ static void write_kernel(program *prog, shader *sh)
         sb_printf(&o, "var<private> tide_adding%d: bool;\nvar<private> tide_added%d: %s;\n", a, a, ty(&em, slot_element(&em, i)));
         a++;
     }
-    if (adds) sb_printf(&o, "var<workgroup> tide_scan: array<u32, %d>;\n", group);
+    if (adds) sb_printf(&o, "var<workgroup> tide_scan: array<%s, %d>;\n", adds > 1 ? kernel_scan(adds) : "u32", group);
+    if (em.guards_shared) sb_put(&o, "var<workgroup> tide_zero: u32;\n"); // Never written: its shared writes are under it
     for (int i = 0; k->body && i < k->body->stmts.count; i++) { // Its shared locals, the group's
         const stmt *s = k->body->stmts.items[i];
         if (s->kind != S_VAR || !s->is_shared) continue;
@@ -85,19 +93,28 @@ static void write_kernel(program *prog, shader *sh)
     // A barrier needs every invocation of a group: the kernel checks where it is itself then
     if (k->barrier) sb_printf(&o, "    %s();\n", function_name(k));
     else sb_printf(&o, "    if (all(tide_gid < tide_size)) {\n        %s();\n    }\n", function_name(k));
-    // Ordered Adds: each group's survivors in its order, by a scan of their flags, to its region of the scratch
+    // Ordered Adds: each group's survivors in its order, by a scan of their flags, to its region of the scratch. One
+    // scan for all of them, a lane a list (tide_scan's type, kernel_scan), so its barriers are once whatever the count
+    if (adds) {
+        sb_put(&o, "    tide_scan[tide_lix] = ");
+        if (adds > 1) sb_printf(&o, "%s(", kernel_scan(adds));
+        for (int a = 0; a < adds; a++) sb_printf(&o, "%sselect(0u, 1u, tide_adding%d)", a ? ", " : "", a);
+        for (int a = adds; adds > 1 && a < (adds == 2 ? 2 : 4); a++) sb_put(&o, ", 0u");
+        sb_printf(&o, "%s;\n    workgroupBarrier();\n", adds > 1 ? ")" : "");
+        sb_printf(&o, "    for (var tide_d = 1u; tide_d < %du; tide_d = tide_d * 2u) {\n        var tide_v = %s%s0u%s;\n"
+                      "        if (tide_lix >= tide_d) {\n            tide_v = tide_scan[tide_lix - tide_d];\n        }\n"
+                      "        workgroupBarrier();\n        tide_scan[tide_lix] = tide_scan[tide_lix] + tide_v;\n"
+                      "        workgroupBarrier();\n    }\n", group, adds > 1 ? kernel_scan(adds) : "", adds > 1 ? "(" : "",
+                  adds > 1 ? ")" : "");
+    }
     for (int i = 0, a = 0; i < sh->storage.count; i++) {
         if (!sh->storage.items[i].add) continue;
         const int stride = element_words(slot_element(&em, i), NULL);
-        sb_printf(&o, "    tide_scan[tide_lix] = select(0u, 1u, tide_adding%d);\n    workgroupBarrier();\n", a);
-        sb_printf(&o, "    for (var tide_d = 1u; tide_d < %du; tide_d = tide_d * 2u) {\n        var tide_v = 0u;\n"
-                      "        if (tide_lix >= tide_d) {\n            tide_v = tide_scan[tide_lix - tide_d];\n        }\n"
-                      "        workgroupBarrier();\n        tide_scan[tide_lix] = tide_scan[tide_lix] + tide_v;\n"
-                      "        workgroupBarrier();\n    }\n", group);
+        const char *lane = adds == 1 ? "" : a == 0 ? ".x" : a == 1 ? ".y" : ".z";
         sb_printf(&o, "    let tide_region%d = (tide_wid.x + tide_groups.x * (tide_wid.y + tide_groups.y * tide_wid.z)) * %uu;\n", a,
                   (unsigned)(2 + group * stride));
-        sb_printf(&o, "    if (tide_adding%d) {\n        let tide_o%d = tide_region%d + 2u + (tide_scan[tide_lix] - 1u) * %du;\n", a, a, a,
-                  stride);
+        sb_printf(&o, "    if (tide_adding%d) {\n        let tide_o%d = tide_region%d + 2u + (tide_scan[tide_lix]%s - 1u) * %du;\n", a, a, a,
+                  lane, stride);
         em.o = &o;
         em.indent = 1;
         char array[32], base[32];
@@ -115,8 +132,8 @@ static void write_kernel(program *prog, shader *sh)
             if (c == store.data || c[-1] == '\n') sb_put(&o, "    ");
             sb_putn(&o, c, 1);
         }
-        sb_printf(&o, "    }\n    if (tide_lix == %du) {\n        tide_scratch%d[tide_region%d] = tide_scan[tide_lix];\n    }\n"
-                      "    workgroupBarrier();\n", group - 1, a, a);
+        sb_printf(&o, "    }\n    if (tide_lix == %du) {\n        tide_scratch%d[tide_region%d] = tide_scan[tide_lix]%s;\n    }\n"
+                      "    workgroupBarrier();\n", group - 1, a, a, lane);
         a++;
     }
     sb_put(&o, "}\n");
@@ -175,6 +192,22 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
         for (int j = 0; j < k->gpu_writes.count; j++) s->write |= k->gpu_writes.items[j] == s->field;
         s->write |= s->add || s->atomic;
         adds += s->add;
+    }
+    // What the group shares: its shared locals (within 16 KiB, check_kernel_flow), and its Adds' scan, a lane each
+    int shared_bytes = adds ? kernel_group(k) * 4 * (adds == 1 ? 1 : adds == 2 ? 2 : 4) : 0;
+    bool shares = false;
+    for (int i = 0; k->body && i < k->body->stmts.count; i++) {
+        const stmt *s = k->body->stmts.items[i];
+        if (s->kind != S_VAR || !s->is_shared || s->type.kind == TY_ERROR) continue;
+        shared_bytes += type_layout(s->type).size;
+        shares = true;
+    }
+    shared_bytes += shares ? 4 : 0; // ...and the word its writes to them are under (writes_shared)
+    if (shared_bytes > 16384) {
+        diag_error(call->at, "kernel '" STR_FMT "' shares %d bytes within a group with its Adds' scan (%d bytes a list), and a "
+                   "group has 16384 (16 KiB) on every GPU", STR_ARG(k->name), shared_bytes, kernel_group(k) * 4);
+        diag_note("share less in it, or give it a smaller group");
+        return NULL;
     }
     const int bound = sh->storage.count + adds + 1;
     if (bound > 7) {

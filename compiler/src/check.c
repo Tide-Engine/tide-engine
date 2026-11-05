@@ -115,6 +115,8 @@ typedef struct call_site {
     bool comparing;
     bool sanitizing; // In the input's Sanitize
     bool predicting;
+    bool statement; // The call is a statement of its own
+    bool looped;    // ...in a loop of the code that makes it
 } call_site;
 
 static const type T_ERR = {TY_ERROR, NULL};
@@ -1239,7 +1241,7 @@ static void note_operator_call(checker *c, decl *op, const expr *e)
 {
     decl *from = reading_code(c);
     if (!op) return;
-    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict, false, false};
     if (!from) {
         vec_push(c->bare, site);
         return;
@@ -5055,7 +5057,8 @@ static void check_method_args(checker *c, expr *e, decl *m)
     e->names_taken = true;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict,
+                                c->statement_call == e, c->loop_depth > 0 || c->loop_header > 0};
         vec_push(c->calls, site);
     }
     int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
@@ -5720,7 +5723,8 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     e->method = m;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict,
+                                c->statement_call == e, c->loop_depth > 0 || c->loop_header > 0};
         vec_push(c->calls, site);
     }
     for (int i = 0; i < written; i++) {
@@ -13356,7 +13360,8 @@ static void check_assign(checker *c, const stmt *s)
         vec_push(set->arg_want, target);
         decl *from = reading_code(c);
         if (from) {
-            const call_site site = {from, method, set, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+            const call_site site = {from, method, set, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict,
+                                    true, c->loop_depth > 0 || c->loop_header > 0};
             vec_push(c->calls, site);
         }
         ((stmt *)s)->property_set = set;
@@ -21706,8 +21711,8 @@ static void check_gpu_only_calls(const checker *c)
         if (!site->to->gpu_only || site->from->gpu_only || site->from->kind == DECL_SHADER) continue;
         const type_kind reads = site->to->gpu_only_reads;
         if (reads == TY_GPU_LIST) {
-            diag_error(site->call->at, "'" STR_FMT "' reads a GPU list's elements or its count, which only code the GPU runs "
-                       "does: a kernel, a frag, a vert and the functions they call", STR_ARG(site->to->name));
+            diag_error(site->call->at, "'" STR_FMT "' reads or writes a GPU list's elements or its count, which only code the GPU "
+                       "runs does: a kernel, a frag, a vert and the functions they call", STR_ARG(site->to->name));
             diag_note_at(site->to->gpu_only_at, "it does on line %d; the CPU reads a GPU list back with 'await list.Read()'",
                          site->to->gpu_only_at.line);
             continue;
@@ -23494,6 +23499,7 @@ bool check(program *prog)
     check_io_calls(&c);
     check_frame_time_calls(&c);
     settle_grid_functions(&c);
+    settle_gpu_list_writes(&c);
     check_gpu_only_calls(&c);
     check_audio_calls(&c);
     check_audio_bodies(&c);

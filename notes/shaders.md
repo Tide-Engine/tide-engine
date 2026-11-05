@@ -79,9 +79,20 @@ A shader whose vertices are a GPU list's (`shader.gpu_vertices`) reads its verte
 `tide_vertex_index` (no `@location` vertex inputs; instance attributes start at 0); one whose indices are too reads
 each corner's index first (`tide_corner_at` is the built-in then). A 3D `gpu_instances` shader multiplies its loaded
 transform by Draw.Transform's matrix, four uniform float4s after its values (`through_at`). Kernels' shared-memory
-writes fxc refuses (X3695) are a tidec warning (`shared_races`), and X3584 (one value for all) is off in
+writes fxc refuses (X3695) were a tidec warning (`shared_races`, since guarded: below), and X3584 (one value for all) is off in
 `TideWarnings.hlsl`. Contracts, measurements and tests: notes/compute.md, Meshes over GPU lists. Goldens:
 `gpu_meshes` (new), `kernels_add` (its indirect draw's matrix); every other golden is unchanged.
+
+## GPU lists passed alone, mirrored GPU instances, guarded shared writes (2026-11-05)
+
+A function's `GPUList<T>` parameter is written for the storage slot its call names (`given.slot`, `gpu_list_slot`
+through `em->spec`), as a `List<T>`'s is for its texture. A 3D `gpu_instances` shader whose instances have transforms
+reads `tide_keep` (`sides_at`, 4 uniform floats after the through matrix) and returns a zeroed `tide_corner` for an
+instance of the other side, by its own determinant. Every non-atomic write to a kernel's shared memory is under `if
+(tide_zero == 0u)`, a workgroup word nothing writes, which fxc can't see through (`writes_shared`); a kernel's Adds
+share one `tide_scan`, a lane a list. Goldens: `kernels_helpers` and `kernels_shared_races` (new), `kernels_shared`,
+`kernels_add`, `gpu_meshes`; every other golden is unchanged. Contracts, measurements and tests: notes/compute.md,
+Closing the gaps.
 
 ## Camera-relative 3D projection (2026-11-02)
 

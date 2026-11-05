@@ -25237,6 +25237,7 @@ static void gen_shaders(gen *g)
         if (sh->storage.count) sb_printf(o, "    .storage_count = %d,\n", sh->storage.count); // The GPU lists it reads
         if (sh->gpu_instances) sb_printf(o, "    .instance_storage = %d,\n", sh->instance_storage + 1);
         if (sh->through_at >= 0) sb_printf(o, "    .instance_through = %d,\n", sh->through_at + 1);
+        if (sh->sides_at >= 0) sb_printf(o, "    .instance_sides = %d,\n", sh->sides_at + 1);
         if (sh->gpu_vertices) sb_printf(o, "    .vertex_storage = %d,\n", sh->vertex_storage + 1);
         if (sh->gpu_indices) sb_printf(o, "    .index_storage = %d,\n", sh->index_storage + 1);
         if (sh->listed) {

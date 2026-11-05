@@ -1,4 +1,4 @@
-// expect: 'Height' reads a GPU list's elements or its count, which only code the GPU runs does
+// expect: 'Height' reads or writes a GPU list's elements or its count, which only code the GPU runs does
 scene Main { }
 
 struct Blade
