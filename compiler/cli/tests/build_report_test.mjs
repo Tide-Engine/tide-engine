@@ -142,6 +142,28 @@ try {
     assert(serverReport.outputs.some(output => resolve(output.path) === join(game, ".build", "reported-server.pack")),
         `${serverReport.outputs.map(output => output.path)}`);
 
+    // Large generated code uses all four parts, with ThinLTO compilation and a cached link.
+    const large = join(root, "large");
+    const largeSource = amount => "scene Main { }\nsingleton State { int value; }\nsystem Tick(mut State state) {\n"
+        + "state.value += 1;\n".repeat(80000) + `state.value += ${amount};\n}\n`;
+    put(join(large, "game.tide"), largeSource(1));
+    env.TIDE_TEST_BUILD_REQUIRE_THIN = "1";
+    const largeReport = join(root, "reports", "large.json");
+    const largeBuild = await run(["build", large, "--release", "--report", largeReport]);
+    assert.equal(largeBuild.code, 0, largeBuild.said);
+    const partNames = ["game.c", "game_part1.c", "game_part2.c", "game_part3.c"];
+    const compiledLarge = () => JSON.parse(readFileSync(largeReport, "utf8")).compiles.files.map(file => basename(file.source));
+    assert.deepEqual(compiledLarge().filter(name => partNames.includes(name)).sort(), partNames);
+    const largeWarm = await run(["build", large, "--release", "--report", largeReport]);
+    assert.equal(largeWarm.code, 0, largeWarm.said);
+    assert.deepEqual(compiledLarge(), []);
+    put(join(large, "game.tide"), largeSource(2));
+    const largeEdit = await run(["build", large, "--release", "--report", largeReport]);
+    assert.equal(largeEdit.code, 0, largeEdit.said);
+    assert(compiledLarge().length >= 1 && compiledLarge().length <= 2, `only the body and identity parts rebuild: ${compiledLarge()}`);
+    assert(compiledLarge().every(name => partNames.includes(name)), `${compiledLarge()}`);
+    delete env.TIDE_TEST_BUILD_REQUIRE_THIN;
+
     // A failed build still says where its time went
     put(join(game, "game.tide"), "system Broken() { Missing(); }\n");
     const failedPath = join(root, "reports", "failed.json");

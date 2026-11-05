@@ -1,5 +1,44 @@
 # `tide`, packages and the package
 
+## Parallel generated C with ThinLTO (2026-11-05)
+
+Generated C groups at least 4 MiB now compile in four stable parts with `-flto=thin`. Small files stay whole.
+Ordinary debug keeps game code at O0 in one file, splitting only sufficiently large O2 plumbing; release and explicit
+optimization modes split the complete generated file. `generate` requests a part manifest; `queue_game` queues exactly
+those objects, including native reloads, web, Unity, servers and Android. Old extra files are ignored. Existing
+`game.o`/`game_plumbing.o` names remain; extra parts use `_part1.o` etc. Source/flags/header stamps include ThinLTO;
+only the main part keeps simulation-identity header invalidation. Shared type/header changes still invalidate every
+part. ThinLTO parts participate in size-prioritized scheduling; ordinary launchers retain their existing priority. Counts/progress are completed translation units,
+not optimization-pass percentages. Linking retains activity feedback.
+
+Native/web/Android link paths share ThinLTO flags, use `<configuration-cache>/thinlto`, and cap backend jobs at the
+same TIDE_JOBS budget as C compilation. Mach-O uses its cache/thread options; ELF/MinGW/WebAssembly use their lld
+options. A debug link uses O2 for its optimized plumbing's LTO backend; game code is a separate O0 native object.
+Explicit optimization overrides remain effective. The managed reactor's identity-bearing launcher retains its
+existing stronger header invalidation. Neither engine/package objects nor the game's handwritten C are switched to LTO.
+
+Measurements (Windows, clang/lld 23.1.2, Ryzen 9 7900X; exploratory single passes, ordinary desktop load): Mount &
+Rifle's 102,183,928-byte C took 49.47 s to compile as one file, 29.84 s with the prior two-file split, 19.39 s in four
+parts, and 6.71 s in four ThinLTO parts. Successful DLL links retaining the game API took 0.32 / 0.45 / 0.56 / 10.24 s
+respectively: about 49.8 to 17.0 s for that C-and-link work. These are MSVC-ABI experiments, not timings of the
+packaged MinGW CLI or total game builds; asset import/Tide generation and engine/package compilation are excluded.
+Separating shader arrays alone took 51.20 s and was rejected. The initial full-file time trace put 23.3 s in LLVM
+optimization and 28.7 s in backend code generation, against 5.9 s in the frontend. Raw data and identities:
+`bench/results/generated-c-partitions-2026-11-05.json`.
+
+Runtime sanity check: three alternating release particles runs, 1M particles, one thread, 300 timed ticks after 20
+warm-up ticks. Medians of process tick medians are 1.093 ms whole and 1.101 ms four-part ThinLTO (within 1%);
+every run and its C comparison ends at `0x927c09795885dac2`. One split run was 1.306 ms and desktop load was not
+guarded, so no general runtime-speed claim is made. All five Sumo variants (whole, two/four parts, with/without
+ThinLTO) pass their 18 tests. Raw runtime output: `bench/results/generated-c-runtime-2026-11-05.json`.
+
+Validation: complete Windows ASan (3,184 tests) and web-debug (3,008 tests) builds and suites, each initially
+failing only the incoming sampler-index assertion in Render3D post tests; its corrected test passes on both. The large CLI report regression checks actual automatic four-part
+selection, ThinLTO/cache/job flags, zero warm recompiles and at most the body/identity parts recompiling after a
+body edit. Focused CLI unit/help/overlap/report tests pass. Docs production build passes (the usual example-page
+404s). Linux/macOS/MinGW package and Android runtime coverage remain CI's; no emulator was run. No runtime or wire
+contract changes. The compiler identity changes normally because compiler sources changed.
+
 ## Windows watched-run shutdown (2026-11-05)
 
 Closing a game's window could leave `tide run` blocked during CRT exit: its

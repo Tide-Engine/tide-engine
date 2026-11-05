@@ -15,6 +15,16 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "-o") == 0) output = argv[i + 1];
         if (strcmp(argv[i], "-c") == 0) source = argv[i + 1];
     }
+    if (sys_env("TIDE_TEST_BUILD_REQUIRE_THIN")) {
+        bool thin = false, cache = false, jobs = false;
+        for (int i = 1; i < argc; i++) {
+            thin = thin || strcmp(argv[i], "-flto=thin") == 0;
+            cache = cache || strncmp(argv[i], "--thinlto-cache-dir=", 20) == 0 || strcmp(argv[i], "-cache_path_lto") == 0;
+            jobs = jobs || strncmp(argv[i], "--thinlto-jobs=", 15) == 0 || strncmp(argv[i], "-threads=", 9) == 0;
+        }
+        if (source && (strcmp(path_base(source), "game.c") == 0 || strstr(path_base(source), "_part")) && !thin) return 8;
+        if (!source && output && (!thin || !cache || !jobs)) return 9;
+    }
     if (!output) return 0; // The fake host, or a compiler discovery probe
     const char *events = sys_env("TIDE_TEST_BUILD_EVENTS");
     if (!events) return 2;

@@ -25908,6 +25908,32 @@ static void order_arrays(program *prog)
 
 #include "editor_codegen.inc"
 
+// Partition names depend on symbols, so a body edit leaves the other parts unchanged.
+static bool write_code_parts(const codegen_options *opts, const sb *text, const char *path,
+                             const char *original, const bool plumbing, sb *manifest)
+{
+    const bool split = opts->split_code && (plumbing || !opts->split_plumbing) && text->len >= opts->split_code_min_bytes;
+    sb halves[2] = {0}, parts[4] = {0};
+    if (split) {
+        if (!split_plumbing(text, NULL, 0, &halves[0], &halves[1], 0)
+            || !split_plumbing(&halves[0], NULL, 0, &parts[0], &parts[1], 1)
+            || !split_plumbing(&halves[1], NULL, 0, &parts[2], &parts[3], 1)) {
+            diag_error((loc){0}, "couldn't partition generated C: %s", split_why ? split_why : "unknown declaration");
+            return false;
+        }
+    } else parts[0] = *text;
+    for (int i = 0; i < (split ? 4 : 1); i++) {
+        sb out = {0};
+        if (i) sb_printf(&out, "%.*s_part%d.c", (int)strlen(path) - 2, path, i);
+        else sb_put(&out, path);
+        if (!(opts->line_directives ? write_pinned(out.data, &parts[i], original, forward_slashes(out.data))
+                                    : write_file(out.data, &parts[i]))) return false;
+        const char *name = strrchr(forward_slashes(out.data), '/');
+        sb_printf(manifest, "%d %d %s\n", plumbing, split, name ? name + 1 : out.data);
+    }
+    return true;
+}
+
 bool codegen(program *prog, const codegen_options *opts)
 {
     compile_progress("Generating C", NULL, 0, 0);
@@ -26233,6 +26259,7 @@ bool codegen(program *prog, const codegen_options *opts)
         report_asset(d, type_name(d->return_type), 0, server_cut ? "the server's code never reads it" : "nothing in the game's code, defaults or shaders names it");
     }
     if (diag_error_count()) { free(g.pack_bytes); return false; }
+    sb parts_manifest = {0};
     bool ok = write_file(h_path.data, &g.h), whole = true;
     if (ok && opts->split_plumbing) {
         // A debug build compiles the plumbing optimized, and the game's code as written. Generated C this can't cut
@@ -26241,9 +26268,9 @@ bool codegen(program *prog, const codegen_options *opts)
         sb_printf(&plumbing_path, "%s/%s_plumbing.c", opts->out_dir, opts->name);
         const char *plumbing_c = forward_slashes(plumbing_path.data);
         sb code = {0}, plumbing = {0};
-        if (opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing)) {
-            ok = write_pinned(path.data, &code, g.c_path, g.c_path)
-                 && write_pinned(plumbing_path.data, &plumbing, g.c_path, plumbing_c);
+        if (opts->line_directives && split_plumbing(&g.c, g.code_at.items, g.code_at.count, &code, &plumbing, -1)) {
+            ok = write_code_parts(opts, &code, path.data, g.c_path, false, &parts_manifest)
+                 && write_code_parts(opts, &plumbing, plumbing_path.data, plumbing_c, true, &parts_manifest);
             whole = false;
         } else {
             // What it couldn't cut, for whoever reads this
@@ -26257,7 +26284,12 @@ bool codegen(program *prog, const codegen_options *opts)
             ok = write_file(plumbing_path.data, &whole);
         }
     }
-    if (ok && whole) ok = opts->line_directives ? write_pinned(path.data, &g.c, g.c_path, g.c_path) : write_file(path.data, &g.c);
+    if (ok && whole) ok = write_code_parts(opts, &g.c, path.data, g.c_path, false, &parts_manifest);
+    if (ok && opts->split_code) {
+        sb manifest_path = {0};
+        sb_printf(&manifest_path, "%s/%s_parts.txt", opts->out_dir, opts->name);
+        ok = write_file(manifest_path.data, &parts_manifest);
+    }
     ok = ok && write_pack(&g) && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
     free(g.pack_bytes);
     return ok;
