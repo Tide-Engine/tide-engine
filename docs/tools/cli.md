@@ -35,7 +35,7 @@ tide <command> [folder] [options]
 
 Project build and package commands automatically use the version pinned with
 `tide pin`, asking before downloading a missing release into the shared
-version cache. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
+version cache. Exact project pins suppress automatic upgrade notices. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
 
 In a terminal, builds use one progress display: the current compiler step above
 a bar, updated in place through preparation, package resolution, Tide and asset
