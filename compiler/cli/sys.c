@@ -294,6 +294,16 @@ char *sys_read_file(const char *path, size_t *len)
     return text;
 }
 
+bool sys_make_executable(const char *path)
+{
+#ifdef _WIN32
+    (void)path;
+    return true;
+#else
+    return chmod(path, 0755) == 0;
+#endif
+}
+
 bool sys_write_file(const char *path, const char *data, const size_t len)
 {
     FILE *f = fopen(path, "wb");

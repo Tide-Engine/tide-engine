@@ -31,15 +31,21 @@
 #ifdef __wasm__
 
 // The browser's console has the output, and a page has no folder to keep it in.
-void tide_platform_log_begin(const char *app_id, const char *directory)
+void tide_platform_log_begin(const char *app_id, const char *title, const char *directory)
 {
     (void)app_id;
+    (void)title;
     (void)directory;
 }
 
 const char *tide_platform_log_path(void)
 {
     return NULL;
+}
+
+void tide_platform_log_note(const char *text)
+{
+    (void)text;
 }
 
 #else
@@ -61,6 +67,9 @@ const char *tide_platform_log_path(void)
 #include <unistd.h>
 #if !defined(__ANDROID__)
 #include <execinfo.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h> // _NSGetExecutablePath
+#endif
 #define CRASHES 1 // Android's own crash reports (tombstones) have what a crash leaves
 #endif
 #endif
@@ -355,7 +364,7 @@ static void prune_crashes(void)
         }
     }
     for (int i = 0; i + (CRASHES_KEPT - 1) < count; i++) {
-        static const wchar_t *const files[] = {L"crash.dmp", L"crash.txt", L"Player.log"};
+        static const wchar_t *const files[] = {L"crash.dmp", L"crash.txt", L"Player.log", L"system.txt"};
         wchar_t path[PATH_MOST + 96];
         for (size_t f = 0; f < sizeof files / sizeof files[0]; f++) {
             _snwprintf(path, PATH_MOST + 96, L"%ls\\%ls\\%ls", wide_crashes, names[i], files[f]);
@@ -363,6 +372,8 @@ static void prune_crashes(void)
         }
         _snwprintf(path, PATH_MOST + 96, L"%ls\\%ls", wide_crashes, names[i]);
         RemoveDirectoryW(path);
+        _snwprintf(path, PATH_MOST + 96, L"%ls\\%ls.zip", wide_crashes, names[i]); // tide-crash's
+        DeleteFileW(path);
     }
 }
 
@@ -476,6 +487,43 @@ static void copy_file(const wchar_t *from, const wchar_t *to)
     CloseHandle(source);
 }
 
+// tide-crash, beside the program, where it is, and the game's title for it:
+// found at the start
+static wchar_t reporter[PATH_MOST], reporter_title[256];
+
+static void find_reporter(const char *title)
+{
+    wchar_t program[PATH_MOST];
+    const DWORD length = GetModuleFileNameW(NULL, program, PATH_MOST);
+    if (!length || length >= PATH_MOST) return;
+    wchar_t *slash = wcsrchr(program, L'\\');
+    if (!slash) return;
+    slash[1] = L'\0';
+    _snwprintf(reporter, PATH_MOST, L"%lstide-crash.exe", program);
+    reporter[PATH_MOST - 1] = L'\0';
+    if (GetFileAttributesW(reporter) == INVALID_FILE_ATTRIBUTES) {
+        reporter[0] = L'\0';
+        return;
+    }
+    if (!MultiByteToWideChar(CP_UTF8, 0, title, -1, reporter_title, 256)) reporter_title[0] = L'\0';
+    for (wchar_t *c = reporter_title; *c; c++) if (*c == L'"') *c = L'\''; // It's quoted on the command line
+}
+
+static void start_reporter(const wchar_t *folder)
+{
+    if (!reporter[0]) return;
+    static wchar_t command[PATH_MOST * 2 + 300];
+    _snwprintf(command, sizeof command / sizeof command[0], L"\"%ls\" \"%ls\" \"%ls\"", reporter, folder,
+               reporter_title);
+    command[sizeof command / sizeof command[0] - 1] = L'\0';
+    STARTUPINFOW startup = {.cb = sizeof startup};
+    PROCESS_INFORMATION process;
+    if (CreateProcessW(reporter, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process)) {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+}
+
 static volatile LONG crashing;
 
 static void record_crash(EXCEPTION_POINTERS *pointers)
@@ -528,6 +576,7 @@ static void record_crash(EXCEPTION_POINTERS *pointers)
         write_original(said.bytes, said.used);
         _snwprintf(path, PATH_MOST + 32, L"%ls\\Player.log", wide_folder);
         copy_file(wide_log, path);
+        start_reporter(wide_folder);
     }
 }
 
@@ -683,7 +732,7 @@ static void prune_crashes(void)
         }
     }
     for (int i = 0; i + (CRASHES_KEPT - 1) < count; i++) {
-        static const char *const files[] = {"crash.txt", "Player.log"};
+        static const char *const files[] = {"crash.txt", "Player.log", "system.txt"};
         char path[PATH_MOST + 96];
         for (size_t f = 0; f < sizeof files / sizeof files[0]; f++) {
             snprintf(path, sizeof path, "%s/%s/%s", crashes_path, names[i], files[f]);
@@ -691,6 +740,8 @@ static void prune_crashes(void)
         }
         snprintf(path, sizeof path, "%s/%s", crashes_path, names[i]);
         rmdir(path);
+        snprintf(path, sizeof path, "%s/%s.zip", crashes_path, names[i]); // tide-crash's
+        unlink(path);
     }
 }
 
@@ -728,6 +779,43 @@ static void copy_file(const char *from, const char *to)
     close(source);
 }
 
+// tide-crash, beside the program, where it is, and the game's title for it:
+// found at the start
+static char reporter[PATH_MOST], reporter_title[256];
+
+static void find_reporter(const char *title)
+{
+    char program[PATH_MOST];
+#if defined(__APPLE__)
+    uint32_t size = sizeof program;
+    if (_NSGetExecutablePath(program, &size) != 0) return;
+#else
+    const ssize_t length = readlink("/proc/self/exe", program, sizeof program - 1u);
+    if (length <= 0) return;
+    program[length] = '\0';
+#endif
+    char *slash = strrchr(program, '/');
+    if (!slash) return;
+    slash[1] = '\0';
+    const int fits = snprintf(reporter, sizeof reporter, "%stide-crash", program);
+    if (fits <= 0 || (size_t)fits >= sizeof reporter || access(reporter, X_OK) != 0) {
+        reporter[0] = '\0';
+        return;
+    }
+    snprintf(reporter_title, sizeof reporter_title, "%s", title);
+}
+
+// In a signal: fork and exec are safe there, and the child does nothing else
+static void start_reporter(const char *folder)
+{
+    if (!reporter[0]) return;
+    const pid_t child = fork();
+    if (child != 0) return;
+    char *const arguments[] = {reporter, (char *)folder, reporter_title, NULL};
+    execv(reporter, arguments);
+    _exit(127);
+}
+
 static volatile sig_atomic_t crashing;
 static const int caught[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT, SIGTRAP};
 static char alternate_stack[65536]; // The main thread's handler runs here when its own stack is what overflowed
@@ -763,12 +851,12 @@ static void crashed(const int signal, siginfo_t *info, void *context)
     put(&line, "\n");
     write_fd(report, line.bytes, line.used);
     write_fd(log_fd, line.bytes, line.used);
-    write_original(line.bytes, line.used);
+    write_fd(STDERR_FILENO, line.bytes, line.used); // The original stderr again (end_tee): the thread closes its own copy
     void *frames[64];
     const int count = backtrace(frames, 64);
     if (report >= 0) backtrace_symbols_fd(frames, count, report);
     if (log_fd >= 0) backtrace_symbols_fd(frames, count, log_fd);
-    if (original >= 0) backtrace_symbols_fd(frames, count, original);
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
     if (report >= 0) close(report);
     if (made) {
         text said = {0};
@@ -776,10 +864,11 @@ static void crashed(const int signal, siginfo_t *info, void *context)
         put(&said, folder.bytes);
         put(&said, "\n");
         write_fd(log_fd, said.bytes, said.used);
-        write_original(said.bytes, said.used);
+        write_fd(STDERR_FILENO, said.bytes, said.used);
         text path = folder;
         put(&path, "/Player.log");
         copy_file(log_path, path.bytes);
+        start_reporter(folder.bytes);
     }
     // On to the system's, which ends the program as it would have (a core
     // file, macOS's crash report)
@@ -863,7 +952,7 @@ static void log_end(void)
 #endif
 }
 
-void tide_platform_log_begin(const char *app_id, const char *directory)
+void tide_platform_log_begin(const char *app_id, const char *title, const char *directory)
 {
     if (started) return;
     started = true;
@@ -914,6 +1003,7 @@ void tide_platform_log_begin(const char *app_id, const char *directory)
     if (make_folder(crashes_path)) {
         prune_crashes();
         prepare_crashes();
+        find_reporter(title && *title ? title : app_id && *app_id ? app_id : "The game");
         catch_crashes();
     }
 #endif
@@ -922,6 +1012,15 @@ void tide_platform_log_begin(const char *app_id, const char *directory)
 const char *tide_platform_log_path(void)
 {
     return log_path[0] ? log_path : NULL;
+}
+
+void tide_platform_log_note(const char *text)
+{
+    if (!log_path[0] || !text) return;
+    struct text line = {0};
+    put(&line, text);
+    put(&line, "\n");
+    write_log(line.bytes, line.used);
 }
 
 #endif

@@ -24,6 +24,7 @@
 
 #include "gpu_vk.h"
 #include "tide/gpu_profile.h"
+#include "tide/platform.h" // tide_platform_log_note
 
 #include "files.h"
 
@@ -3191,6 +3192,15 @@ static bool create_device(const bool say)
     vk.family = best_family;
     vkGetPhysicalDeviceProperties(vk.physical, &vk.properties);
     vkGetPhysicalDeviceMemoryProperties(vk.physical, &vk.memory);
+    { // For a player's problem: which GPU, and its driver (tide_platform_log_note)
+        char note[512];
+        snprintf(note, sizeof note, "GPU: %s, Vulkan %u.%u.%u, driver %u (0x%08x), vendor 0x%04x, device 0x%04x",
+                 vk.properties.deviceName, VK_API_VERSION_MAJOR(vk.properties.apiVersion),
+                 VK_API_VERSION_MINOR(vk.properties.apiVersion), VK_API_VERSION_PATCH(vk.properties.apiVersion),
+                 vk.properties.driverVersion, vk.properties.driverVersion, vk.properties.vendorID,
+                 vk.properties.deviceID);
+        tide_platform_log_note(note);
+    }
     vk.window_format = pick_window_format();
     if (vk.window_format == VK_FORMAT_UNDEFINED) {
         if (say) fprintf(stderr, "tide: Vulkan: the window has no format of 4 bytes a pixel\n");
