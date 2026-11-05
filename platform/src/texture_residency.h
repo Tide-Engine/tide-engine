@@ -36,6 +36,7 @@ extern bool tide_texture_force_rgba;
 
 typedef struct tide_texture_idle {
     uint64_t bytes;
+    float far; // What goes first, the farthest (meshes: squared, from the camera; images: 0)
     uint32_t age, place;
     bool keep;
 } tide_texture_idle;
@@ -43,6 +44,7 @@ typedef struct tide_texture_idle {
 static inline int tide_texture_idle_order(const void *left, const void *right)
 {
     const tide_texture_idle *a = left, *b = right;
+    if (a->far != b->far) return a->far < b->far ? -1 : 1;
     if (a->age != b->age) return a->age < b->age ? -1 : 1;
     return a->place < b->place ? -1 : a->place != b->place;
 }

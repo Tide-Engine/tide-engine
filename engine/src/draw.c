@@ -422,15 +422,104 @@ static void free_pixels(const tide_draw_texture *t)
     }
 }
 
-// A mesh's place goes free.
+// Copies of meshes that went, for meshes made later to take (tide_draw_list.spare_copies): freeing hundreds of
+// them as a frame ends (a turn leaves them all behind) took a frame of its own, and a new copy's memory is
+// touched for the first time as it's written. At most COPIES_MOST bytes are kept, and what's past that is freed
+// COPIES_FREED_A_FRAME at a time.
+typedef struct tide_draw_copy {
+    void *at;
+    uint64_t bytes;
+} tide_draw_copy;
+struct tide_draw_copies {
+    tide_draw_copy *copies;
+    uint32_t count, capacity;
+    uint64_t bytes;
+};
+#define COPIES_MOST (UINT64_C(64) * 1024u * 1024u)
+#define COPIES_FREED_A_FRAME (UINT64_C(8) * 1024u * 1024u)
+
+static void copy_put(tide_draw_list *d, void *at, const uint64_t bytes)
+{
+    if (!at) return;
+    if (!bytes) {
+        free(at);
+        return;
+    }
+    if (!d->spare_copies) d->spare_copies = tide_alloc_zeroed(1, sizeof *d->spare_copies);
+    struct tide_draw_copies *c = d->spare_copies;
+    if (c->count == c->capacity) {
+        const uint32_t room = c->capacity ? c->capacity * 2u : 64u;
+        c->copies = tide_realloc(c->copies, (size_t)c->capacity * sizeof *c->copies, (size_t)room * sizeof *c->copies);
+        c->capacity = room;
+    }
+    c->copies[c->count++] = (tide_draw_copy){at, bytes};
+    c->bytes += bytes;
+}
+
+// A kept copy of at least `bytes`, and not much more (twice, and 64 KiB), with how big it is: NULL for none.
+static void *copy_take(tide_draw_list *d, const uint64_t bytes, uint64_t *got)
+{
+    struct tide_draw_copies *c = d->spare_copies;
+    if (!c || !bytes) return NULL;
+    uint32_t best = UINT32_MAX;
+    for (uint32_t i = 0; i < c->count; i++) {
+        const uint64_t size = c->copies[i].bytes;
+        if (size < bytes || size > bytes * 2u + 65536u) continue;
+        if (best == UINT32_MAX || size < c->copies[best].bytes) best = i;
+    }
+    if (best == UINT32_MAX) return NULL;
+    void *at = c->copies[best].at;
+    *got = c->copies[best].bytes;
+    c->bytes -= *got;
+    c->copies[best] = c->copies[--c->count];
+    return at;
+}
+
+// As a frame ends: what's past the budget goes, a frame's share of it.
+static void copies_trim(tide_draw_list *d)
+{
+    struct tide_draw_copies *c = d->spare_copies;
+    if (!c) return;
+    uint64_t freed = 0;
+    while (c->count && c->bytes > COPIES_MOST && freed < COPIES_FREED_A_FRAME) {
+        const tide_draw_copy last = c->copies[--c->count];
+        free(last.at);
+        c->bytes -= last.bytes;
+        freed += last.bytes;
+    }
+}
+
+static void copies_free(tide_draw_list *d)
+{
+    struct tide_draw_copies *c = d->spare_copies;
+    if (!c) return;
+    for (uint32_t i = 0; i < c->count; i++) free(c->copies[i].at);
+    free(c->copies);
+    free(c);
+    d->spare_copies = NULL;
+}
+
+// A mesh's place goes free, its copy kept for another.
 static void free_mesh_place(tide_draw_list *d, const uint32_t place)
 {
     tide_draw_mesh_data *m = &d->meshes[place];
-    free(m->vertices);
-    free(m->indices);
+    copy_put(d, m->vertices, m->vertex_capacity);
+    copy_put(d, m->indices, (uint64_t)m->index_capacity * sizeof(uint32_t));
     free(m->level_indices);
     *m = (tide_draw_mesh_data){.next_free = d->mesh_free};
     d->mesh_free = place + 1u;
+    if (d->mesh_gpu) d->mesh_gpu[place] = TIDE_MESH_GPU_NONE;
+}
+
+// An idle mesh the renderer has, of lists that have it: its copy goes, and its counts stay (tide/draw.h).
+static void hollow_mesh(tide_draw_list *d, tide_draw_mesh_data *m)
+{
+    copy_put(d, m->bytes, m->vertex_capacity);
+    copy_put(d, m->indices, (uint64_t)m->index_capacity * sizeof(uint32_t));
+    m->bytes = NULL;
+    m->indices = NULL;
+    m->vertex_capacity = m->index_capacity = 0;
+    m->hollow = true;
 }
 
 // The bytes a mesh's copy takes, for the idle budget.
@@ -455,6 +544,7 @@ static bool same_lists(const tide_draw_mesh_data *a, const tide_draw_mesh_data *
 
 typedef struct idle_mesh {
     uint64_t bytes;
+    float far; // Squared, from where the camera was (tide_draw_list.idle_eye): FLT_MAX where it isn't known
     uint32_t age, place;
     bool once; // Only one frame drew it: TIDE_MESH_ONCE_*'s
 } idle_mesh;
@@ -462,8 +552,20 @@ typedef struct idle_mesh {
 static int idle_mesh_order(const void *left, const void *right)
 {
     const idle_mesh *a = left, *b = right;
+    if (a->far != b->far) return a->far < b->far ? -1 : 1;
     if (a->age != b->age) return a->age < b->age ? -1 : 1;
     return a->place < b->place ? -1 : a->place != b->place;
+}
+
+// How far a mesh was drawn from where the frame's camera was, squared, for the idle budget: 0 for every mesh
+// where the frame had no camera, so they go by age alone.
+static float idle_far(const tide_draw_list *d, const tide_draw_mesh_data *m)
+{
+    if (!d->idle_eye_set) return 0.0f;
+    if (!m->placed) return FLT_MAX;
+    const float x = m->where[0] - d->idle_eye[0], y = m->where[1] - d->idle_eye[1], z = m->where[2] - d->idle_eye[2];
+    const float far = x * x + y * y + z * z;
+    return far == far && far < FLT_MAX ? far : FLT_MAX;
 }
 
 // After places went: a level whose mesh went goes too, its corners having been that mesh's, and the table of
@@ -484,13 +586,28 @@ static void forget_unplaced_levels(tide_draw_list *d)
 // Each level of detail goes with the mesh it's of. Which go is the list's alone, so it's the same each run.
 static void forget_idle_meshes(tide_draw_list *d)
 {
+    // What the frame didn't draw, and that the renderer has, of lists that have it, gives its copy up first, so
+    // that what's weighed below is what's kept
+    if (d->mesh_gpu) {
+        for (uint32_t i = 0; i < d->mesh_count; i++) {
+            tide_draw_mesh_data *m = &d->meshes[i];
+            if (m->space == TIDE_MESH_NONE || m->frame == d->frame || m->base || !m->relisted || m->hollow
+                || d->mesh_gpu[i] != TIDE_MESH_GPU_HAS) continue;
+            hollow_mesh(d, m);
+        }
+    }
     // What's past its frames goes first, with nothing to make: the rest are weighed below
     uint32_t idle = 0, drawn = 0;
     bool freed = false;
     for (uint32_t i = 0; i < d->mesh_count; i++) {
         const tide_draw_mesh_data *m = &d->meshes[i];
         if (m->space == TIDE_MESH_NONE) continue;
-        if (m->frame == d->frame) {
+        const bool dropped = d->mesh_gpu && d->mesh_gpu[i] == TIDE_MESH_GPU_DROPPED;
+        if (dropped && !m->hollow) d->mesh_gpu[i] = TIDE_MESH_GPU_NONE; // Its copy is sent again when it's drawn
+        if (dropped && m->hollow) { // The renderer let it go, and nothing else has it: a draw copies it again
+            free_mesh_place(d, i);
+            freed = true;
+        } else if (m->frame == d->frame) {
             if (!m->base && !mesh_of_scratch(m)) drawn++;
         } else if (d->frame - m->frame > (m->made == m->frame ? (uint32_t)TIDE_MESH_ONCE_FRAMES : (uint32_t)TIDE_MESH_IDLE_FRAMES)) {
             free_mesh_place(d, i);
@@ -533,8 +650,8 @@ static void forget_idle_meshes(tide_draw_list *d)
             }
         }
         if (keep) {
-            kept[count++] = (idle_mesh){.bytes = mesh_bytes(m), .age = d->frame - m->frame, .place = i,
-                                        .once = m->made == m->frame};
+            kept[count++] = (idle_mesh){.bytes = mesh_bytes(m), .far = idle_far(d, m), .age = d->frame - m->frame,
+                                        .place = i, .once = m->made == m->frame};
         } else {
             free_mesh_place(d, i);
             freed = true;
@@ -568,6 +685,52 @@ static void forget_idle_meshes(tide_draw_list *d)
     if (freed) forget_unplaced_levels(d);
 }
 
+// As a frame ends, before the idle meshes are weighed: where its camera was (the window's, or where the window
+// has none, the first that sees in perspective: a game drawing its scene into a target), and where each mesh it
+// drew was put (its first instance's place).
+static void note_mesh_places(tide_draw_list *d)
+{
+    const tide_draw_place *window = d->target ? &d->window : &d->place;
+    uint32_t camera = window->camera_3d <= d->camera_3d_count ? window->camera_3d : 0u;
+    for (uint32_t i = 0; !camera && i < d->camera_3d_count; i++) {
+        const tide_float4x4 *p = &d->cameras_3d[i].projection;
+        if (p->c3.w == 0.0f && p->c2.w != 0.0f) camera = i + 1u;
+    }
+    if (camera) {
+        const tide_float4 eye = d->cameras_3d[camera - 1u].transform.c3;
+        if (tide_is_finite_f(eye.x) && tide_is_finite_f(eye.y) && tide_is_finite_f(eye.z)) {
+            d->idle_eye[0] = eye.x;
+            d->idle_eye[1] = eye.y;
+            d->idle_eye[2] = eye.z;
+            d->idle_eye_set = true;
+        }
+    }
+    for (uint32_t i = 0; i < d->count; i++) {
+        const tide_draw_command *c = &d->commands[i];
+        uint32_t mesh = 0;
+        float at[16];
+        if (c->kind == TIDE_DRAW_MESH_3D && c->mesh3.count && c->mesh3.first < d->matrix_count) {
+            mesh = c->mesh3.mesh;
+            memcpy(at, &d->matrices[c->mesh3.first], sizeof at);
+        } else if (c->kind == TIDE_DRAW_SHADED && c->shaded.run < d->run_count) {
+            const tide_draw_run *run = &d->runs[c->shaded.run];
+            const void *first = run->shader && run->shader->dims == 3 && run->shader->instance_floats >= 4u && run->count
+                ? tide_draw_run_instance(d, run, 0) : NULL; // Its transform starts it
+            if (first) {
+                mesh = run->mesh;
+                memcpy(at, first, sizeof at);
+            }
+        }
+        if (!mesh || mesh > d->mesh_count) continue;
+        if (d->meshes[mesh - 1u].base && d->meshes[mesh - 1u].base <= d->mesh_count) mesh = d->meshes[mesh - 1u].base;
+        tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+        m->placed = tide_is_finite_f(at[12]) && tide_is_finite_f(at[13]) && tide_is_finite_f(at[14]);
+        m->where[0] = at[12];
+        m->where[1] = at[13];
+        m->where[2] = at[14];
+    }
+}
+
 void tide_draw_reset(tide_draw_list *d)
 {
     d->profile_mesh_name = NULL;
@@ -597,6 +760,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->frustum_ready = false;
     d->mesh_key = d->mesh_key_vertices = d->mesh_key_indices = 0;
     d->unsettled = d->altered = 0;
+    note_mesh_places(d); // Before the cameras and settings go
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
     d->font_count = 0;
     // The textures the frame drew with stay, for the next to find its pixels
@@ -617,6 +781,7 @@ void tide_draw_reset(tide_draw_list *d)
     }
     // ...and so do its 3D meshes, each in its place, and for a while those it didn't draw
     forget_idle_meshes(d);
+    copies_trim(d);
     d->leveled = 0;
     d->lod_want = 0.0f;
     d->lod_model = 0;
@@ -633,6 +798,8 @@ static void free_meshes(tide_draw_list *d)
     }
     free(d->meshes);
     free(d->mesh_index);
+    free(d->mesh_gpu);
+    d->mesh_gpu = NULL;
     d->meshes = NULL;
     d->mesh_count = d->mesh_capacity = d->mesh_free = 0;
     d->mesh_index = NULL;
@@ -647,6 +814,7 @@ void tide_draw_free(tide_draw_list *d)
     if (d->listed) tide_draw_listed_clear(d, true);
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     free_meshes(d);
+    copies_free(d);
     free(d->profile_links);
     free(d->culls);
     free(d->cull_cameras);
@@ -2758,9 +2926,15 @@ static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, con
         place = d->mesh_free - 1u;
         d->mesh_free = d->meshes[place].next_free;
     } else {
+        const uint32_t had = d->mesh_capacity;
         d->meshes = grow(d->meshes, d->mesh_count, &d->mesh_capacity, 1, sizeof(tide_draw_mesh_data), 16u);
+        if (d->mesh_capacity != had) {
+            d->mesh_gpu = tide_realloc(d->mesh_gpu, had, d->mesh_capacity);
+            memset(d->mesh_gpu + had, 0, d->mesh_capacity - had);
+        }
         place = d->mesh_count++;
     }
+    d->mesh_gpu[place] = TIDE_MESH_GPU_NONE;
     d->meshes[place] = (tide_draw_mesh_data){.id = id, .other = other, .version = version, .space = space,
                                              .frame = d->frame, .made = d->frame, .epoch = d->epoch};
     if (d->mesh_count >= d->mesh_index_capacity / 2u) reindex_meshes(d);
@@ -2795,11 +2969,20 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, const uint32_t mesh, const voi
     m->vertex_size = vertex_size;
     m->bounds = (tide_draw_bounds){0};
     m->bounds_position = 0;
+    m->hollow = m->relisted = false; // The caller says where it's from (mesh.c)
     if (vertex_count == 0 || vertex_size == 0 || index_count < 3u) return;
-    m->bytes = grow(m->bytes, 0, &m->vertex_capacity, (uint64_t)vertex_count * vertex_size, 1, 64u * vertex_size);
+    uint64_t got;
+    const uint64_t vertex_bytes = (uint64_t)vertex_count * vertex_size;
+    if (!m->bytes && vertex_bytes <= UINT32_MAX && (m->bytes = copy_take(d, vertex_bytes, &got))) {
+        m->vertex_capacity = got < UINT32_MAX ? (uint32_t)got : UINT32_MAX;
+    }
+    m->bytes = grow(m->bytes, 0, &m->vertex_capacity, vertex_bytes, 1, 64u * vertex_size);
     memcpy(m->bytes, vertices, (size_t)vertex_count * vertex_size);
     m->vertex_count = vertex_count;
     // A triangle with an index past the vertices is left out
+    if (!m->indices && (m->indices = copy_take(d, (uint64_t)index_count * sizeof(uint32_t), &got))) {
+        m->index_capacity = got / sizeof(uint32_t) < UINT32_MAX ? (uint32_t)(got / sizeof(uint32_t)) : UINT32_MAX;
+    }
     m->indices = grow(m->indices, 0, &m->index_capacity, index_count, sizeof(uint32_t), 192u);
     for (uint32_t i = 0; i + 3u <= index_count; i += 3u) {
         const uint32_t a = indices[i], b = indices[i + 1u], c = indices[i + 2u];
@@ -4557,7 +4740,8 @@ static uint32_t append_mesh(tide_draw_list *d, const tide_draw_list *from, const
     bool fill;
     const uint32_t slot = tide_draw_mesh_slot(d, m->space, m->id, m->other, m->version, &fill);
     if (!base) {
-        if (fill) tide_draw_mesh_fill_bytes(d, slot, m->bytes, m->vertex_size, m->vertex_count, m->indices, m->index_count);
+        if (fill && m->hollow) tide_draw_mesh_relist(d, slot, m); // Read from its lists again
+        else if (fill) tide_draw_mesh_fill_bytes(d, slot, m->bytes, m->vertex_size, m->vertex_count, m->indices, m->index_count);
         return slot;
     }
     tide_draw_mesh_data *level = &d->meshes[slot - 1u];

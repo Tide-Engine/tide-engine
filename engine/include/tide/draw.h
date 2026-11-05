@@ -1325,7 +1325,14 @@ typedef struct tide_mesh_levels {
 // again each frame of lists that are told apart by version alone) has a budget
 // of its own: TIDE_MESH_ONCE_FRAMES frames, TIDE_MESH_ONCE_COUNT meshes and
 // TIDE_MESH_ONCE_BYTES, the same way. Found again, it's in the first.
-enum { TIDE_MESH_IDLE_FRAMES = 36000, TIDE_MESH_IDLE_COUNT = 4096 };
+//
+// Past either budget, what's farthest from where the frame's camera was goes first (tide_draw_mesh_data.where;
+// then the longest unused, then by place), so turning round keeps what's around. A mesh of a world's lists that
+// a frame didn't draw, and that the renderer has, keeps no copy of its own (`hollow`): the lists have it. It
+// stays while the renderer keeps it on the GPU, under the renderer's budget of the device's memory; where the
+// renderer lets it go (TIDE_MESH_GPU_DROPPED) its place goes at the next reset, and a draw of it copies it again.
+enum { TIDE_MESH_GPU_NONE, TIDE_MESH_GPU_HAS, TIDE_MESH_GPU_DROPPED };
+enum { TIDE_MESH_IDLE_FRAMES = 36000, TIDE_MESH_IDLE_COUNT = 16384 };
 #define TIDE_MESH_IDLE_BYTES (UINT64_C(64) * 1024u * 1024u)
 enum { TIDE_MESH_ONCE_FRAMES = 8, TIDE_MESH_ONCE_COUNT = 1024 };
 #define TIDE_MESH_ONCE_BYTES (UINT64_C(16) * 1024u * 1024u)
@@ -1373,6 +1380,14 @@ typedef struct tide_draw_mesh_data {
     uint64_t profile_named_vertices, profile_named_indices, profile_named_version;
     uint64_t lod_key;
     float lod_want;
+    // Where the frame that last drew it put its first instance, in the world: what's weighed against the camera's
+    // place when idle meshes are over their budget (`placed` where it's known)
+    float where[3];
+    bool placed;
+    // A copy of a world's lists, which a later draw of them can read again: their versions, as copied
+    bool relisted;
+    bool hollow; // Its copy went (the renderer has it): `vertices` and `indices` are NULL, their counts as they were
+    uint64_t vertices_version, indices_version;
 } tide_draw_mesh_data;
 
 // TIDE_MESH_BYTES: Tide's lists, their vertices as their struct has them (see
@@ -1833,6 +1848,15 @@ typedef struct tide_draw_list {
     uint32_t mesh_count;         // Places, free ones too
     uint32_t mesh_capacity;
     uint32_t mesh_free;           // 1 + the first free place, or 0
+    // What the renderer has of each place, by place (TIDE_MESH_GPU_*): a renderer writes it as it draws, though
+    // the list it draws is const, and the list reads it as a frame ends
+    uint8_t *mesh_gpu;
+    // Where the meshes a frame drew are weighed from when the idle ones are over their budget: its first camera's
+    // place, as the frame ended (`idle_eye_set` where it had one)
+    float idle_eye[3];
+    bool idle_eye_set;
+    // The copies of meshes that went, kept for those made next (tide_draw_mesh_fill), within a budget
+    struct tide_draw_copies *spare_copies;
     uint32_t *mesh_index;         // The meshes by whose they are: 1 + a place, or 0 for none
     uint32_t mesh_index_capacity; // A power of two, or 0
     // 1 + the place tide_draw_mesh_slot found last, or 0: a view drawing a mesh for each of its entities asks for

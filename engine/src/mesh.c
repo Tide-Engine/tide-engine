@@ -897,6 +897,8 @@ static uint64_t take_mesh_key(tide_draw_list *d, const tide_list vertices, const
 // A mesh the game made, by its key: one mesh wherever its copies are, as nothing writes their lists. No list's
 // place is this (a handle's offset is under 2^62)
 #define MESH_KEYED UINT64_MAX
+static void note_relisted(tide_draw_list *d, uint32_t mesh, tide_list vertices, tide_list indices, uint32_t size, uint64_t id,
+                          uint64_t other);
 
 static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const tide_list indices)
 {
@@ -929,6 +931,7 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
         tide_list_unflatten(vertices, v, sizeof(tide_vertex3), false, vertices_copied);
         mesh_levels(d, mesh, indices);
         tide_draw_lod_request(d, mesh);
+        note_relisted(d, mesh, vertices, indices, d->meshes[mesh - 1u].vertex_size, id, other);
     }
     if (d->diagnostics) {
         d->meshes[mesh - 1u].profile_vertices = vertices.at;
@@ -941,6 +944,41 @@ void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, const t
                            const void *instance, const void *uniforms, const uint32_t *textures, const uint64_t sampling)
 {
     tide_draw_mesh_shaded_instances(d, shader, vertices, indices, instance, 1, uniforms, textures, sampling);
+}
+
+// A mesh just copied from a world's two lists (not lists made along the way, nor a made mesh's key): what a
+// later read of them again checks (tide_draw_mesh_relist), and that its copy may go while the renderer has it.
+static void note_relisted(tide_draw_list *d, const uint32_t mesh, const tide_list vertices, const tide_list indices,
+                          const uint32_t size, const uint64_t id, const uint64_t other)
+{
+    const uint64_t scratch = tide_handle_of(TIDE_IN_SCRATCH, 0);
+    tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+    if (id == MESH_KEYED || other == MESH_KEYED || id == scratch || other == scratch || !m->vertex_count) return;
+    m->vertices_version = list_version(vertices, size);
+    m->indices_version = list_version(indices, sizeof(uint32_t));
+    m->relisted = true;
+}
+
+void tide_draw_mesh_relist(tide_draw_list *d, const uint32_t slot, const tide_draw_mesh_data *m)
+{
+    const tide_list vertices = {m->id}, indices = {m->other};
+    const uint32_t size = m->space == TIDE_MESH_BYTES ? m->vertex_size : (uint32_t)sizeof(tide_vertex3);
+    // Still at the versions it was copied at (they were, as the frame drew it), or it draws nothing
+    if (!m->relisted || !size || !tide_heap_read(tide_handle_where(vertices.at)) || !tide_heap_read(tide_handle_where(indices.at))
+        || tide_list_count(vertices) != (int32_t)m->vertex_count || list_version(vertices, size) != m->vertices_version
+        || list_version(indices, sizeof(uint32_t)) != m->indices_version) return;
+    const int32_t index_count = tide_list_count(indices);
+    if (index_count < 3) return;
+    bool vertices_copied, indices_copied;
+    void *v = tide_list_flatten(vertices, size, false, &vertices_copied);
+    uint32_t *i = tide_list_flatten(indices, sizeof(uint32_t), false, &indices_copied);
+    tide_draw_mesh_fill_bytes(d, slot, v, size, m->vertex_count, i, (uint32_t)index_count);
+    tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
+    tide_list_unflatten(vertices, v, size, false, vertices_copied);
+    tide_draw_mesh_data *to = &d->meshes[slot - 1u];
+    to->relisted = true;
+    to->vertices_version = m->vertices_version;
+    to->indices_version = m->indices_version;
 }
 
 // Where a shader reads its vertices from a GPU list (tide_shader.vertex_storage), its mesh is the CPU's indices alone,
@@ -1013,6 +1051,7 @@ static uint32_t shaded_mesh(tide_draw_list *d, const tide_shader *shader, const 
         tide_list_unflatten(vertices, v, size, false, vertices_copied);
         mesh_levels(d, mesh, indices);
         tide_draw_lod_request(d, mesh);
+        note_relisted(d, mesh, vertices, indices, d->meshes[mesh - 1u].vertex_size, id, other);
     }
     if (d->diagnostics) {
         d->meshes[mesh - 1u].profile_vertices = vertices.at;

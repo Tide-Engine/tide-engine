@@ -142,6 +142,67 @@ another, and runs with different lists don't join. `tide_draw_reset` empties the
 new arrays, `tide_draw_forget` forgets runs' shaders. Tests: `tidec_e2e_compute`.
 `notes/compute.md`, Built.
 
+## Turning round: idle meshes without copies, farthest first, kept copies (2026-11-05)
+
+The owner, after the section below: the 180° stutter happens every time, not only the first ("maybe it's
+something else"). A route turning back and forth ten times showed it: each turn back copied about 750 meshes
+again (55-65 ms of the views) and sent them (16 ms), every one of them let go by the 64 MiB idle mesh budget
+the frame after the turn before (about 760 at once, a 17-22 ms frame). The first look the other way is the only
+real first sight. A test build with a 1 GiB budget turned in 7-10 ms. The owner chose, from Claude's options,
+not to hold a fixed larger budget but to be smarter about what's kept: the three below. Internal; no Tide or C
+API change.
+
+- **No second copy of a world's lists** (`tide_draw_mesh_data.hollow`, `relisted`). A mesh copied from two
+  lists that aren't made along the way and aren't a made mesh's key notes their versions (`note_relisted` in
+  `engine/src/mesh.c`). As a frame ends, one the frame didn't draw and the renderer has gives its copy up
+  (`hollow_mesh`): its counts, bounds, levels and versions stay, `vertices` and `indices` are NULL. Found
+  again, it's drawn from the GPU's buffers. Its bytes count for nothing in the list's budget, only its count.
+  Copies go before the budget is weighed: a first version weighed first, so the ~750 meshes a turn left idle in
+  one frame still counted their copies and went, and each turn back copied 250-840 again.
+- **The renderer says what it has** (`tide_draw_list.mesh_gpu`, a byte a place: `TIDE_MESH_GPU_NONE`, `_HAS`,
+  `_DROPPED`). The renderer writes it through the const list as it draws: `_HAS` where it uploaded a place or
+  found it current, `_DROPPED` where its budget let one go that the list still has, or where it met a hollow
+  place it hasn't got (a lost device, a new epoch, the Unity recorder reset). That place isn't drawn that frame
+  (`mesh_drawable`); at the reset the list lets a dropped hollow place go, so the next draw copies it again from
+  its lists, and a dropped full one is sent again. A new or freed place is `_NONE`.
+- **The renderer's budget is the device's** (`mesh_idle_bytes`): `TIDE_MESH_IDLE_BYTES`, or a sixteenth of
+  `tide_gpu.device_memory` where that's more (1 GiB on the RTX 4080 SUPER; 64 MiB on integrated GPUs, phones
+  and the web). `TIDE_MESH_IDLE_COUNT` went from 4,096 to 16,384 (a hollow place is about 400 bytes).
+- **Farthest first** (`tide_draw_mesh_data.where`, `placed`, `tide_draw_list.idle_eye`). As a frame ends,
+  `note_mesh_places` reads where each mesh it drew put its first instance (a 3D mesh command's first matrix, a
+  3D shader run's first instance's transform, through `tide_draw_run_instance`) and where the window's 3D camera
+  was, or where the window has none, the first camera that sees in perspective (Mount & Rifle draws its scene
+  into a target, and its sun images' cameras are orthographic, set first). Past a budget, the list and the renderer let go of the idle meshes farthest from it first, then the
+  longest unused, then by place (`idle_mesh_order`, and `tide_texture_idle.far`, 0 for images, which stay by
+  age). Without a camera every distance is 0, as before. Turning in place lets nothing near go.
+- **Copies kept for the next** (`tide_draw_list.spare_copies`, `struct tide_draw_copies` in draw.c). A place
+  that goes, and a copy a place gives up, keeps its two blocks for meshes made later (`copy_take`: the
+  smallest of at least the size, at most twice it and 64 KiB more), within 64 MiB; past that, 8 MiB is freed a
+  frame. Freeing hundreds of copies as one frame ended was the 17-22 ms frame after a turn, and a new copy's
+  memory was touched for the first time as it was written.
+- **Appending** a hollow mesh to another list reads its lists again (`tide_draw_mesh_relist`) where they're at
+  the versions copied (they were, as the frame drew it); otherwise the copy is empty and draws nothing.
+- Hollow places' bounds are those cached when they were drawn; one drawn by a shader whose position field is
+  another's has none, and isn't culled (drawn, as unknown bounds are).
+- **Layout**: `tide_draw_list` gained `mesh_gpu`, `idle_eye`, `idle_eye_set`, `spare_copies`;
+  `tide_draw_mesh_data` `where`, `placed`, `relisted`, `hollow`, `vertices_version`, `indices_version`;
+  `tide_texture_idle` `far`. Hosts, libraries and games rebuild together.
+- **Tests**: `draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy` (hollow when idle and had, found
+  uncopied, appended read again, dropped and copied again, lists made along the way keep copies);
+  `draw_idle_meshes_past_the_budget_go_farthest_first` (the far one goes though drawn last). Platform:
+  `hollow_meshes_kept` (Vulkan with its device-loss pass, and WebGPU: drawn again from the GPU after
+  a skipped frame, nothing sent, no copy in the list; let go by the GPU, copied and sent again).
+- **Measured** (mount-and-rifle 2330682, a scratch route turning 180° back and forth ten times from frame 1440,
+  1920x1080, release, hidden, Vulkan, RTX 4080 SUPER, pinned; game PERF wall ms, two runs each, the previous
+  commit against this): each turn after the first 76-88 -> 5.4-7.0 ms; the frame after each turn 17-30 ->
+  5.4-7.0 ms; the first turn 131-138 -> 124-134 ms (first sight, unchanged). The performance route, two
+  alternating pairs then three more runs: section means within noise (yaw turns 8.3/8.4 -> 7.8-9.2 ms, pitch
+  5.0/5.7 -> 4.8-6.0); one run had a 265 ms pitch frame that four others didn't.
+- **Not done**: the first look at much new scenery is still a long frame (about 850 meshes copied and sent at
+  once); spreading uploads over frames would change what's drawn (pop-in) and is the owner's call. Overlay
+  lists share the renderer's mesh places by number with the frame's list, as before. Other GPUs, web timings
+  and Android unmeasured.
+
 ## Idle listed regions, held pages and one-frame meshes (2026-11-05)
 
 Task (owner, from Mount & Rifle's gap "What's drawn every other frame is packed and sent again each time"):
@@ -158,7 +219,8 @@ idle budget like meshes'. Internal; no Tide or C API change. The budgets' number
   and sent), and the 64 MiB idle mesh budget letting 270-900 meshes go right after a turn, whose frees took up to
   19 ms in one reset (frame 1521). Frame 1456 (25-40 ms) does no drawing work: it's outside the draw list. So
   the owner's hypothesis is refuted for the worst frames; first-time mesh copies and uploads are what's left
-  (Not done, below).
+  (Not done, below). Corrected the same day: that route turns round once; turning round again and again, each
+  turn back was the mesh idle budget's (Turning round, above).
 - **One-frame meshes** (`forget_idle_meshes`, `spare_unused_meshes`). A mesh only one frame drew (`made ==
   frame`) is kept `TIDE_MESH_ONCE_FRAMES` (8) frames, within its own budget, `TIDE_MESH_ONCE_COUNT` (1,024) and
   `TIDE_MESH_ONCE_BYTES` (16 MiB), the longest unused first, then by place; found again, it's in the ordinary
