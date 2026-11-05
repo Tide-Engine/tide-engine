@@ -1,5 +1,27 @@
 # Runtime written by Claude for now
 
+## Compute: GPU lists, runs and reads back (2026-11-05)
+
+The owner pre-approved compute's boundary ("anything you decide should be
+provisional"). New generated-C/runtime functions, agent-maintained with
+`engine/src/gpu_list.c` and the draw.c/mesh.c additions:
+
+- `tide_gpu_list_make`, `_resize`, `_dispose`, `_capacity`,
+  `_content_revision`, `_adopt`, `_recreate`, `tide_gpu_lists_recreated`,
+  `tide_gpu_lists_free`; the renderer's `tide_gpu_list_made`;
+  `tide_render_revision_next` (draw.c, the revisions targets and lists share).
+- `tide_draw_compute_run`, `tide_draw_gpu_list_set`, `_clear`, `_count`,
+  `tide_draw_storage`, `tide_draw_set_storage`, `tide_draw_shaded_indirect`,
+  `tide_draw_mesh_shaded_indirect`, `tide_gpu_size`.
+- Reads: `tide_gpu_list_read_begin`, `_poll`, `_forget` (generated awaits), and
+  the renderer's `tide_gpu_read_requests`, `tide_gpu_read_finished`,
+  `tide_gpu_reads_frame`.
+- Generated per GPU list type: `tide_gpu_words_<n>`, `tide_gpu_set_<n>`,
+  `tide_gpu_list_of_<n>`; per kernel: `tide_run_<n>` and
+  `tide_shader_<n>_words_<t>`.
+
+Contracts are in `tide/draw.h` and `notes/compute.md`, Built.
+
 ## Cheaper draw diagnostics (2026-11-05)
 
 Within the drawing maintenance exception: `tide_draw_mesh_data` gains `profile_name`, `profile_named_by`

@@ -1,5 +1,18 @@
 # Code the GPU runs: frags and verts
 
+## Kernels and GPU lists (2026-11-05)
+
+`compute` declarations write WGSL alone (`shader_compute.inc`: GPU lists as
+storage slots, atomics, shared memory, barriers, `this` as `tide_inv_*`;
+`shader_kernel.inc`: `plan_kernel` and `write_kernel`, with ordered Add's
+compaction after the body). Frags and verts read GPU lists through the same
+per-slot functions (zeros in GLSL, which the renderer never runs for them), and
+an indirect draw's shader (`gpu_instances`) reads its instances from storage
+slot 0 into the instance packs. Kernels check in WGSL; `shader_word` says
+"kernel". The goldens `kernels_add` and `kernels_shared` pin both; every other
+golden is unchanged. `expect_hlsl.cmake` compiles a kernel's HLSL as cs_5_0.
+Contracts, layout and tests: `notes/compute.md`, Built.
+
 ## Camera-relative 3D projection (2026-11-02)
 
 Generated 3D shaders add tide_origin after the existing camera/screen/tint

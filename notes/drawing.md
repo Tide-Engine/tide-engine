@@ -1,5 +1,21 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Runs, GPU lists and indirect draws in the draw list (2026-11-05)
+
+`TIDE_DRAW_COMPUTE` (a kernel's run, `tide_draw_list.computes`) and
+`TIDE_DRAW_GPU_LIST` (Set, Clear or SetCount of a GPU list, `gpu_ops`, with Set's
+words in `gpu_words`) are appended command kinds, recorded in order with draws
+(`tide_draw_compute_run`, `tide_draw_gpu_list_set/_clear/_count`). A run's GPU
+lists are ids in `tide_draw_list.storage` (`tide_draw_storage`), as are a
+shaded run's (`tide_draw_run.storage`, set for the next draw by
+`tide_draw_set_storage`). `Draw.Instanced` over a GPU list is one run with
+`tide_draw_run.indirect` its list (`tide_draw_shaded_indirect`,
+`tide_draw_mesh_shaded_indirect`), through `shaded_visible` with no instances,
+so no culling, level picking or mirroring split applies; such a run never joins
+another, and runs with different lists don't join. `tide_draw_reset` empties the
+new arrays, `tide_draw_forget` forgets runs' shaders. Tests: `tidec_e2e_compute`.
+`notes/compute.md`, Built.
+
 ## Geometry attribution (2026-11-03)
 
 Capture-only geometry rows retain mesh/version, view source, destination and

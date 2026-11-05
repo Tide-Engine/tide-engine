@@ -1,5 +1,14 @@
 # Hot reloading
 
+## GPU lists across a reload (2026-11-05)
+
+`gen_resource_value` rebinds `GPUList` fields as targets are: native reloads
+adopt the state (`tide_gpu_list_adopt`, which makes a list of another element
+stride again, empty, with a new contentRevision), web reloads recreate it at the
+capacity its reference carries (`tide_gpu_list_recreate`). The renderer keeps a
+list's buffer only where the new build's first frame names it, and reads no old
+state before. `notes/compute.md`, Built.
+
 ## Repeated compiler generations keep no arena-backed lane cache (2026-11-02)
 
 The mount-and-rifle web-watch corruption report reproduced in the native

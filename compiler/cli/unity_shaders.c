@@ -51,8 +51,10 @@ static bool write_one(const char *dir, written *w, const char *name, const char 
                 key ? error : "");
         return false;
     }
+    // A kernel's (tidec's `compute`, and the renderer's own) is a compute shader, a .compute of its one kernel
+    const bool compute = strstr(wgsl, "@compute") != NULL;
     char file[32];
-    snprintf(file, sizeof file, "%016llx.shader", (unsigned long long)key);
+    snprintf(file, sizeof file, compute ? "%016llx.compute" : "%016llx.shader", (unsigned long long)key);
     for (int i = 0; i < w->count; i++) {
         if (strcmp(w->names[i], file) == 0) { // Two of the same shaders
             free(hlsl);
@@ -75,7 +77,7 @@ static bool write_one(const char *dir, written *w, const char *name, const char 
     w->keys_size += (size_t)line_size;
     char title[64];
     snprintf(title, sizeof title, "Hidden/Tide/%016llx", (unsigned long long)key);
-    char *shader = tide_hlsl_unity_shader(hlsl, title);
+    char *shader = compute ? tide_hlsl_unity_compute(hlsl) : tide_hlsl_unity_shader(hlsl, title);
     free(hlsl);
     // Which shader it is, for whoever opens it
     const size_t length = strlen(shader) + strlen(name) + 64;
@@ -107,7 +109,9 @@ static void remove_stale(void *user, const char *name, const bool is_dir)
     const stale *s = user;
     if (is_dir) return;
     const char *shader = strstr(name, ".shader");
-    if (!shader || (shader[7] != '\0' && strcmp(shader + 7, ".meta") != 0)) return;
+    const char *compute = strstr(name, ".compute");
+    if ((!shader || (shader[7] != '\0' && strcmp(shader + 7, ".meta") != 0))
+        && (!compute || (compute[8] != '\0' && strcmp(compute + 8, ".meta") != 0))) return;
     for (int i = 0; i < s->kept->count; i++) {
         if (strncmp(name, s->kept->names[i], strlen(s->kept->names[i])) == 0) return;
     }

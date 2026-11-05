@@ -3622,7 +3622,7 @@ view DrawHud(Arena arena)
 
 ## Compute on the GPU
 
-### Decided and provisional (2026-11-05), not built
+### Decided and provisional (2026-11-05), built the same day
 
 Claude proposed this after the Mount & Rifle performance pass, and the owner answered it the same day.
 
@@ -3637,6 +3637,23 @@ Claude proposed this after the Mount & Rifle performance pass, and the owner ans
 - **Provisional** (Claude's picks): the name `GPUList<T>` (Questions settled, below), ordered `Add` and atomics (the owner: "i trust you here"), and every other rule here.
 
 **Why.** Measured on Mount & Rifle (Vulkan, RTX 4080 SUPER, 1080p), the target is 144 Hz (6.9 ms a frame). Recording meshes takes about 21% of the main thread on foot. DrawFlora makes 665 draws and 159k instances a frame, 47k of them frustum-tested one by one, though their instance data already lives on the GPU in listed pages. The vegetation pass takes about 2 ms of GPU time at any resolution: 17.9M indices a frame, mostly sub-pixel grass. Culling, picking levels of detail and compacting on the GPU replace that CPU work, and only a GPU-side count can then feed a draw.
+
+#### Built (2026-11-05), and the picks made building it (Provisional)
+
+Kernels, GPU lists, `GPU.Run`, ordered `Add`, atomics, `shared`, `GPU.Barrier`, reads back and indirect instanced draws are built, on Vulkan and WebGPU (`notes/compute.md`). Every pick below is Claude's, Provisional:
+
+- **`this` is the invocation record `Invocation`:** `index` (an `int`), and `at`, `local`, `group` and `count` (each an `int3`, the run's size for `count`). `this.at` is an `int3` whatever the run's size; a run over an `int2` reads `this.at.xy`.
+- **A kernel's parameters** are components and singletons, as a frag's, and at most one struct, its run's values, which `GPU.Run` must then be given (and must not be where there's none). No `mut`, `out`, `with`, `World`, plain values, `Instance` or vertex.
+- **Group sizes** are constants from 1 to 256 along each axis, at most 256 in all and 64 along z; a run is at most 65,535 groups along an axis (a run past that is passed by, said once).
+- **Ordered `Add` needs a group of one axis** (`[Group(64)]`): this.index's order is then the groups' order whatever the run's size, which a group of two or three axes doesn't run in. `Add` is a statement of the kernel's own body, not of a function it calls; once at the most on any path; never in a loop. Each list a kernel adds to has its own scan (the spec's "share the scan" is not built: the engine's offsets and scatter dispatches are per list).
+- **Writes to a GPU list** are the kernel's own body's, of a list a field of what it takes names, and of a whole element (`list[i].height = 2` is an error that says to read, change and write back). Functions read GPU lists (through a struct, singleton or component they're given), which makes them code the GPU runs alone.
+- **The count:** only `Add`, `Set`, `Clear` and `SetCount(n)` change it; a write by index past the count leaves it, so a list a kernel fills by index takes `SetCount` from the CPU. `SetCount` is a pick of its own, in local code beside `Set` and `Clear`.
+- **`capacity`** is readable on both sides; `contentRevision` on the CPU.
+- **Reads back** are of the list as the frame drawn after the read was asked for leaves it (the renderer begins them once that frame's work is recorded). On the web they arrive when the browser has them; without a window (`--capture`, `--frames`, `--script`) at the next frame's start. A read nobody polls for 600 frames (its task was cancelled) is let go. 64 are pending at most; past that the await waits.
+- **Atomics on `shared` memory** are on a `shared int[N]`'s elements; such an array's reads and writes are atomic too, and it can't be read whole.
+- **Shared locals** take no initializer, are changeable without `mut`, and are a kernel's own body's top level.
+- **`Draw.Instanced` over a GPU list** takes no `lod:`, no skinned mesh, and isn't moved by `Draw.Transform` (its transforms are the kernel's).
+- **OpenGL and WebGL** pass runs and draws that read GPU lists by, saying so once, and fail reads back: the staging the decided Backends rule describes.
 
 #### Kernels
 
@@ -3667,7 +3684,7 @@ compute Scatter(Meadow meadow)
 }
 
 [Group(64)]
-compute Cull(Meadow meadow, Eye eye)     // Eye: a local singleton of the game's
+compute CullBlades(Meadow meadow, Eye eye)     // Eye: a local singleton of the game's
 {
     Blade blade = meadow.blades[this.index];
     if (Math.Distance(blade.root, eye.position) < eye.reach)
@@ -3677,8 +3694,8 @@ compute Cull(Meadow meadow, Eye eye)     // Eye: a local singleton of the game's
 view DrawMeadow(Meadow meadow, Models models)
 {
     meadow.shown.Clear();                // In frame order, before Cull adds
-    GPU.Run(Cull, meadow.blades);        // Once for each blade the GPU has
-    Draw.Instanced(models.blade, meadow.shown, Sway, Grass);   // Indirect: draws as many as Cull kept
+    GPU.Run(CullBlades, meadow.blades);  // Once for each blade the GPU has
+    Draw.Instanced(models.blade, meadow.shown, Sway, Grass);   // Indirect: draws as many as CullBlades kept
 }
 ```
 
@@ -3695,7 +3712,7 @@ view DrawMeadow(Meadow meadow, Models models)
 #### Adding in order, and atomics
 
 - **`list.Add(v)` in a kernel keeps invocation order:** what invocation 3 adds comes before what invocation 7 adds, and the count is how many were added. The result is the same whatever order the GPU ran them in, so captures stay bit-stable. A culling kernel needs nothing else.
-  - An invocation adds at most once to a given list on any path. The check works like definite assignment: "'Cull' can add to 'shown' twice". `Add` in a loop is an error that names atomics.
+  - An invocation adds at most once to a given list on any path. The check works like definite assignment: "'CullBlades' can add to 'shown' twice". `Add` in a loop is an error that names atomics.
   - Lowering (Claude's pick): the kernel writes a flag and the value for each invocation, then the engine's own reduce, scan and scatter dispatches compact them. That needs no subgroup operations or forward-progress guarantees, so it is portable. A kernel's `Add`s to several lists share the scan.
 - **Atomics** are methods on an `int` element of a GPU list or of a `shared` array: `counts.AtomicAdd(i, 1)` gives the old value, with `AtomicMin`, `AtomicMax`, `AtomicAnd`, `AtomicOr`, `AtomicXor`, `AtomicExchange` and `AtomicCompareExchange`. Only `int`: no backend has portable float atomics.
   - What atomics return depends on timing, so results that depend on it differ between runs. GPU results are visual only, so atomics are allowed, and the docs say that a capture can then differ between runs.
@@ -3756,7 +3773,7 @@ This is the first use, step 1 of the agreed plan. It is internal: no language su
 
 - **WGSL first, as now:**
   - `@compute @workgroup_size(...)` entry points, `var<storage, read>` and `read_write` runtime-sized arrays, `var<workgroup>`, `workgroupBarrier`, `atomicAdd` and the rest.
-  - Elements keep the word layout lists use now (float packs, then int packs, only the parts read), as `array<vec4<u32>>` with bitcasts. The CPU writer, the GPU readers and Unity then share one layout, not WGSL's storage alignment rules.
+  - Elements keep the word layout values have everywhere in shaders (each leaf's floats, then its ints), whole, as `array<u32>` with bitcasts (built so: every part, since kernels write them), after a header of four words (the count, the capacity). The CPU writer, the GPU readers and Unity then share one layout, not WGSL's storage alignment rules.
   - tidec bounds-checks reads and writes itself, rather than relying on robust buffer access for writes.
 - **SPIR-V** (`spirv.c`) gains:
   - the GLCompute execution model with LocalSize, and the invocation built-ins;

@@ -9,21 +9,160 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 
 ## Progress
 
-- [ ] `gpu.h` compute API (storage buffers, compute passes, dispatch and
+- [x] `gpu.h` compute API (storage buffers, compute passes, dispatch and
       indirect dispatch, indirect draws, copies, asynchronous reads)
 - [x] Vulkan backend (`gpu_vk.c`; `notes/rendering.md`, Vulkan compute)
 - [x] WebGPU backend (`web/gpu_web.c`, `web/tide.js`), 2026-11-05: notes/web.md,
       WebGPU compute
-- [ ] Recorder for Unity (`gpu_record.c`) and its replay (`TideRender.cs`)
+- [x] Recorder for Unity (`gpu_record.c`), 2026-11-05; its replay (`TideRender.cs`) not built
 - [x] WGSL compute and storage in the translators (`wgsl_read.inc`, `spirv.c`, `hlsl.c`), 2026-11-05:
       see "The translators" below and `notes/shaders.md`
-- [ ] tidec: `compute`, `GPUList<T>`, `GPU.Run`, ordered `Add`, atomics,
-      `shared`, `GPU.Barrier`, `await list.Read()`
-- [ ] Engine/renderer: GPU lists in the draw list, compute commands, ordering
-- [ ] Indirect draws over a `GPUList`
+- [x] tidec: `compute`, `GPUList<T>`, `GPU.Run`, ordered `Add`, atomics,
+      `shared`, `GPU.Barrier`, `await list.Read()`, 2026-11-05 ("Built" below)
+- [x] Engine/renderer: GPU lists in the draw list, compute commands, ordering
+- [x] Indirect draws over a `GPUList` (`Draw.Instanced`; `Draw.Mesh` over GPU lists not built)
 - [ ] GL backends removed
 - [ ] Engine GPU culling of listed runs
-- [ ] Docs: `docs/game/shaders.md`, spec, editors
+- [x] Docs: `docs/game/shaders.md`, spec, editors
+
+## Built: the language, the engine and the renderer (2026-11-05)
+
+Everything between the language and gpu.h, as "Language and runtime design"
+above has it, with these deviations (each also in the spec's "Built" list):
+`this.at` is always an `int3`; ordered `Add` needs a group of one axis (a 2D
+group's local order isn't this.index's, which the first GPU run found);
+each list a kernel adds to has its own scan; `GPUList` is 16 bytes (`id`,
+then the capacity it was made or recreated with and its stride, for a web
+reload, which can't read another address space's state); reads back begin as
+the next drawn frame's work ends (not a draw-list command: the awaiting task
+has no draw list); a 2D or 3D `Draw.Instanced` over a GPU list is not moved by
+`Draw.Transform`.
+
+### tidec
+
+- **Parsing:** `compute` is a contextual declaration word (`parse_shader`
+  with `is_compute`), `[Group(...)]` takes values as LOD's do, and `shared T
+  name;` is a local (`stmt.is_shared`), given `default`, `mut`.
+- **Types:** `TY_GPU_LIST` and `DECL_GPU_LIST` (appended), one decl a
+  element type in `program.gpu_lists` (`gpu_list_of`); elements are
+  `gpu_element_refusal`'s GPU values. Machine-local through
+  `holds_render_resource_in`, so match state, constants and match code refuse it
+  as they refuse a RenderTarget. C type `tide_gpu_list`, layout 16/8.
+- **Checker** (`compute_check.inc`): members, index, methods, writes (an
+  assignment's target, `check_gpu_list_write`), `GPUList<T>(capacity)`,
+  `GPU.Run`/`GPU.Barrier` (`check_gpu_static`, before `names_builtin_owner`),
+  the kernel's signature (`check_kernel_decl`), `[Group]` (`check_group`, after
+  the body, which it needs a checker for), and `check_kernel_flow`: shared
+  placement and size (16 KiB), Add once a path (`adds_through`, a definite
+  assignment-like walk where `return` ends a path), Add's one-axis group, and
+  barriers' uniformity (`barriers_uniform`). `expr.gpu` (`gpu_op`) says what an
+  expression does; `decl.adds`, `atomics`, `gpu_writes` are a kernel's lists by
+  field, `decl.barrier` whether it waits; `decl.uses_gpu_read` gives a task's
+  frame `tide_gpu_ticket`. `this` in a kernel is `program.invocation`. A function
+  that reads a GPU list's elements or count is GPU-only (`gpu_only_reads ==
+  TY_GPU_LIST`, said at a CPU call). Kernels are "kernel" in messages.
+- **Shaders** (`shader_compute.inc`, `shader_kernel.inc`): a GPU list a shader
+  names is a storage slot (`shader.storage`, by source decl and field, from
+  `plan_reads`), read through per-slot functions (`need_storage`: `tide_word`,
+  `tide_count`, `tide_capacity`, `tide_get`, and `tide_put` where a kernel
+  writes it; zeros in GLSL); atomics through `need_atomic` (each `&array[i]`
+  inline, as the HLSL translator takes them; capacity-guarded); shared atomic
+  arrays through `need_shared_access`. `plan_kernel` plans one shader a kernel
+  (`shader.compute`, `.kernel`): its values all uniforms, no engine header,
+  storage slots [lists][Add scratch][run record], at most 7, and `write_kernel`
+  writes its WGSL: the entry point sets `tide_inv_*`, calls the body (guarded by
+  the run's size unless it waits), then each Add's scan of the group's flags
+  (`tide_scan`, Hillis-Steele with barriers in uniform control flow) and its
+  survivors to the group's region of the scratch, the count by the group's last
+  invocation (fxc refuses unguarded writes to one place). An indirect draw's
+  shader (`shader.gpu_instances`) reads its instance words from storage slot 0
+  into the instance packs (`put_instance_loads`) in place of attributes. Kernels
+  check in WGSL (`check_shader`).
+- **Codegen:** `gen_kernel` writes a kernel's WGSL, SPIR-V and `tide_shader`
+  (`.compute`, `.group`, `.storage_count`, `.storage_writes`, `.adds`), its
+  lists' `_words` writers and `tide_run_<n>(draw, size[3], over, [values],
+  bound...)`, which fills uniforms, textures (`gen_shader_textures`, the draw
+  wrappers' loop, extracted) and storage ids and calls `tide_draw_compute_run`.
+  Draw wrappers of shaders that read GPU lists record them
+  (`tide_draw_set_storage` before, `storage_next = 0` after); indirect ones call
+  `tide_draw_mesh_shaded_indirect`. `gen_gpu_lists` writes, for each GPU list
+  type, `tide_gpu_words_<n>`, `tide_gpu_set_<n>` and `tide_gpu_list_of_<n>`;
+  `gen_gpu` the expressions; `gen_await` the reads (the fetch pattern, with the
+  frame's `tide_gpu_ticket`). Hot reload: `tide_gpu_list_adopt` /
+  `tide_gpu_list_recreate` in `gen_resource_value`, `tide_gpu_lists_recreated`.
+
+### Engine (`tide/draw.h`, `engine/src/gpu_list.c`, `draw.c`, `mesh.c`)
+
+- `tide_gpu_list_state` (capacity, stride, version, content_revision, made,
+  alive), made by `tide_gpu_list_make`, `_resize`, `_dispose`, `_capacity`,
+  `_content_revision`; `tide_gpu_list_made` (the renderer's: a buffer made again
+  bumps the revision); `_adopt`/`_recreate`/`_recreated`/`tide_gpu_lists_free`
+  mirror render targets'. Revisions share `tide_render_revision_next`.
+- Draw list: `TIDE_DRAW_COMPUTE` (`tide_draw_compute`: shader, uniforms,
+  textures, storage ids, size or the list it's over) and `TIDE_DRAW_GPU_LIST`
+  (`tide_draw_gpu_op`: Set with its words in `gpu_words`, Clear, SetCount),
+  appended kinds; `storage` holds runs' list ids; `tide_draw_run.storage` and
+  `.indirect` (runs with different lists or an indirect one never join).
+- Reads: 64 requests (`tide_gpu_read_requests`), tickets of a place and a
+  serial; `tide_gpu_reads_frame` lets go of one done and not polled for 600
+  frames; a forgotten begun read is finished by the renderer before it goes.
+
+### Renderer (`platform/src/compute.inc`, `platform.c`, `shaders.h`)
+
+- Lists' buffers by id (`list_buffer`: made empty with their header where
+  missing or of another version, which `tide_gpu_list_made` hears); after a hot
+  reload a record is kept only where the new build's first frame names it,
+  before which its state isn't read; dead lists' buffers go as frames end.
+- `STEP_COMPUTE` and `STEP_GPU_OP` steps, done outside passes in order: a run
+  writes its record (`TIDE_GPU_RUN_WORDS`; an indirect one's by `run_size` in a
+  compute pass of its own, so `dispatch_indirect` reads it), takes Add scratch
+  (`most groups * tide_gpu_add_group_words`), and in one compute pass
+  dispatches the kernel, then for each Add `add_offsets` (one group of 256)
+  and `add_scatter` (a group a kernel group, indirect for an indirect run).
+  Set/Clear/SetCount are `buffer_write`s. Indirect draws' arguments (index
+  count, then the list's count by `buffer_copy`) are made at the frame's start
+  and after each run or list operation for the draws up to the next one
+  (`prepare_storage_draws`), so no pass is split for them. A list a run or draw
+  names that isn't there is an empty one of no capacity.
+- Pipelines: kernels' by shader id (`kernel_pipeline_for`, kept across a reload
+  like draws'), prewarmed from the shader table; the engine's three kernels
+  (WGSL in `shaders.h`, SPIR-V at build, HLSL checked by fxc).
+- Reads begin at `compute_frame_end` of each drawn frame, poll at the next
+  frame's start (`buffer_read_wait` first in headless runs); a device that's
+  another fails the begun ones (`forget_compute`).
+- No compute (`gpu->dispatch` NULL: OpenGL, WebGL, and a draw reading storage
+  there): passed by, said once, reads fail.
+- The recorder writes the new ops after the existing ones (`notes/unity.md`).
+
+### Tests
+
+- `compiler/tests/shaders/kernels_add` and `kernels_shared` (goldens; their
+  SPIR-V through spirv-val, their HLSL through fxc as cs_5_0); every existing
+  golden unchanged.
+- 72 error tests, one a diagnostic: `compiler/tests/errors/gpu_*`, `kernel_*`,
+  `group_*`, `shared_*`.
+- `tidec_e2e_compute`: what runs, list operations and an indirect draw record,
+  in frame order, and their words, uniforms, sizes and lists.
+- `tide_platform_kernels` (`platform/tests/kernels.tide`, `kernels.c`): a Tide
+  function on the GPU against the CPU, ordered Add at three group sizes and a
+  2D run, a chained indirect run, atomics, shared memory with barriers and an
+  atomic on shared memory, a struct list sent, changed and read back, Read and
+  ReadCount, an indirect draw's pixels, contentRevision; Vulkan with the
+  validation layer (gpu label), OpenGL's refusal, WebGPU with a lost device,
+  and WebGL's refusal.
+- `lsp_compute_complete`; the grammars' `compute` case and probe line.
+
+### Not built
+
+- GL backends' removal, and the engine's GPU culling of listed runs (the next
+  steps of the plan).
+- `Draw.Mesh` over GPU-list vertices and indices; `DrawIndirectCount`.
+- A frag or vert reading a GPU list through a function given a struct works by
+  field; one passed on alone is refused.
+- `tide unity`'s `.compute` file per kernel, and the C# replay of the recorder's
+  new ops (the Unity task; `TIDE_EMBED_ABI` stays 10 until it's built).
+- A run moved out of the render pass it fell in: runs end any open pass.
+- `Draw.Transform` on indirect draws.
 
 ## gpu.h contract (2026-11-05)
 

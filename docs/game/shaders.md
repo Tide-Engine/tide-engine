@@ -1,5 +1,5 @@
 ---
-description: "Write Tide frag and vert shaders for the GPU, with textures, per-draw values, instancing, shadow maps and multiple render outputs."
+description: "Write Tide frag and vert shaders and compute kernels for the GPU, with textures, per-draw values, instancing, GPU lists, shadow maps and multiple render outputs."
 ---
 
 # Frags and verts
@@ -1166,8 +1166,154 @@ Every mote below is an item of a list, and none is an entity. A vert places the 
 
 A struct parameter that's meant as an instance's is supplied by `Draw.Instanced` and a list of that type. With `Mesh`, or a list of another type, the draw is an error, unless it gives a struct of that type as [its values](#values-for-one-draw), which every instance then shares.
 
+## Compute
+
+A `compute` declaration is code the GPU runs that isn't tied to a draw: a kernel. `GPU.Run` runs it over a count or a size, from a view or a function it calls, and what it writes goes to GPU lists, which draws after it read. Culling, scattering, simulating particles and counting all fit.
+
+```csharp
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades; // Every blade, filled once
+    GPUList<Blade> shown;  // This frame's, in order
+    float reach;
+}
+
+[Group(64)]
+compute CullBlades(Meadow meadow, Eye eye)
+{
+    Blade blade = meadow.blades[this.index];
+    if (Math.Distance(blade.root, eye.position) < meadow.reach)
+        meadow.shown.Add(blade);
+}
+
+view DrawMeadow(Meadow meadow, Models models)
+{
+    meadow.shown.Clear();                  // In frame order: before the run adds to it
+    GPU.Run(CullBlades, meadow.blades);    // Once for each blade the GPU has
+    Draw.Instanced(models.blade, models.faces, meadow.shown, Sway, Grass); // As many as it kept
+}
+```
+
+A kernel takes what a frag does: components of the entity the calling view runs for, singletons, and one struct of values, which `GPU.Run` gives after what it runs over. It returns nothing, changes nothing it takes, and writes GPU lists. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, and `Sample` at a texture's own level.
+
+### Which invocation
+
+A kernel's `this` is the invocation it runs as:
+
+| | |
+| --- | --- |
+| `this.index` | Its place in the whole run, an `int`: `x + y * count.x + z * count.x * count.y` |
+| `this.at` | Where it is in the run's size, an `int3` |
+| `this.local` | Where it is in its group, an `int3` |
+| `this.group` | Which group it's in, an `int3` |
+| `this.count` | The run's size, an `int3` |
+
+`GPU.Run(kernel, over[, values])` runs it over:
+
+- an `int`, `int2` or `int3`: that many invocations along each axis;
+- a `List<T>`: its count;
+- a `GPUList<T>`: its count on the GPU, as the GPU has it when the run happens. Nothing is read back, so kernels chain: one fills a list and the next runs over it.
+
+Invocations run in groups, 64 when the kernel says nothing: `[Group(64)]`, `[Group(8, 8)]` or `[Group(4, 4, 4)]` before it says how many along each axis, at most 256 in all and 64 along z, what every GPU runs. Invocations past the run's size don't run its body: a kernel over 200 needs no `if (this.index >= 200) return;`.
+
+### GPU lists
+
+A `GPUList<T>` is a list that lives on the GPU. It's this machine's, as a `RenderTarget` is, never the match's: a local field or a local singleton keeps it, and local code makes it with its capacity, the most elements it holds.
+
+```csharp
+view Setup(mut Meadow meadow)
+{
+    if (meadow.blades.capacity == 0)
+    {
+        meadow.blades = GPUList<Blade>(100000);
+        meadow.shown = GPUList<Blade>(100000);
+    }
+}
+```
+
+- Its elements are GPU values: numbers, vectors, colors, quaternions, float matrices, bools, enums, and fixed arrays and structs of those.
+- Its contents and count stay from frame to frame until something writes them. Copies share the list, and writing it needs no `mut`: it's a handle.
+- Kernels, frags and verts read `list[i]`, `list.count`, `list.capacity` and `foreach`. Past the count, an element is zeros.
+- Kernels write `list[i] = value` (past the capacity it goes nowhere, and the count stays as it was), `list.Add(value)` and, on a `GPUList<int>`, atomics.
+- Local code sends a list's elements with `list.Set(items)`, sets the count with `list.Clear()` and `list.SetCount(n)`, in frame order with the draws and runs around them; `list.Resize(capacity)` makes it empty at another capacity, and `list.Dispose()` lets it go.
+- `list.contentRevision` changes when the list was made again empty: a lost device, a `Resize`, or a hot reload that changed its element. A game that filled it once fills it again then.
+
+The CPU can't read a GPU list as it draws: `count` there is an error. Local async code reads one back, a copy, once the frame drawn next is done on the GPU:
+
+```csharp
+local singleton Census { int shown; }
+
+async void Count(Meadow meadow, mut Census census)
+{
+    if (await meadow.shown.ReadCount() is int count) census.shown = count;
+}
+```
+
+`await list.Read()` gives a `List<T>` of its elements, and `await list.ReadCount()` its count, each failing with `IOError` where the device was lost before the read was done. A run without a window (`--capture`, `--frames`, `--script`) has each read done at the next frame's start, so its frames repeat exactly.
+
+### Adding in order
+
+`list.Add(value)` in a kernel keeps invocation order: what invocation 3 adds comes before what invocation 7 adds, whatever order the GPU ran them in, and the count goes up by how many were added. Captures stay the same from run to run. Past the capacity, nothing more is added.
+
+- An invocation adds to a list once at the most, on any path, and never in a loop: "'CullBlades' can add to 'shown' twice". To add several, run over more invocations, or count places with an atomic and write them by index.
+- A kernel that adds has a group of one axis, `[Group(64)]`: this.index's order is then the groups' order, even over a size of two or three axes.
+
+### Atomics
+
+On a `GPUList<int>`, `AtomicAdd(i, value)`, `AtomicSub`, `AtomicMin`, `AtomicMax`, `AtomicAnd`, `AtomicOr`, `AtomicXor` and `AtomicExchange` change element `i` at once for every invocation, and give what it was; `AtomicCompareExchange(i, compare, value)` puts `value` there where it's `compare`. Only ints: no GPU has portable float atomics. What an atomic gives depends on which invocation came first, so results that depend on it can differ from one run to the next (GPU results are visual only).
+
+```csharp
+compute Histogram(Meadow meadow, Bins bins)
+{
+    int bin = int(meadow.blades[this.index].height * 10);
+    bins.counts.AtomicAdd(bin, 1);
+}
+```
+
+### Within a group
+
+`shared int[64] sums;` at the top of a kernel's body is a local its whole group shares: one copy a group, zeroed as the group starts, any GPU value or fixed array of them, 16 KiB at most. `GPU.Barrier()` waits until every invocation of the group reaches it, with what they wrote to shared memory and to GPU lists seen.
+
+```csharp
+[Group(64)]
+compute Sum(Values values)
+{
+    shared float[64] partial;
+    int i = this.local.x;
+    partial[i] = values.items[this.index];
+    GPU.Barrier();
+    for (var step = 32; step > 0; step /= 2)
+    {
+        if (i < step) partial[i] += partial[i + step];
+        GPU.Barrier();
+    }
+    if (i == 0) values.sums[this.group.x] = partial[0];
+}
+```
+
+- Every invocation reaches a barrier: it's in no `if`, `switch` or `while`, in `for` loops only from a constant to a constant that nothing leaves early, and after no `return`. A kernel with a barrier runs its body for every invocation of its groups, those past the run's size too, so it checks `this.index` itself.
+- Atomics work on a `shared int[N]`'s elements too: `seen.AtomicAdd(0, 1)`.
+
+### Drawing what a kernel made
+
+`Draw.Instanced(vertices, indices, list, vert, frag)` over a GPU list draws as many instances as the list has on the GPU, each read there: one indirect draw, with nothing read back. Its element is the instance struct, as a list's is, its `float4x4 transform` too where it has one. No culling or level picking happens on the CPU, which has no instances to test: the kernel that filled the list does that. A game draws one list a level, each filled by the kernel that picks them.
+
+### Order in a frame
+
+A frame's GPU work happens as if in the order it was recorded: a draw after a run sees what it wrote, and one before it doesn't, as do runs after runs, and `Set`, `Clear` and `SetCount` among them.
+
+### Where kernels run
+
+Kernels run on Vulkan (desktop and Android) and WebGPU. OpenGL and WebGL can't, and are going: a game that runs a kernel there passes its runs by and says so once, and its reads back fail. [`tide shaders`](#looking-at-what-s-generated) prints each kernel's WGSL.
+
 ## Looking at what's generated
 
-`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, instance data, vert and frag a mesh draw uses.
+`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, instance data, vert and frag a mesh draw uses, and each kernel's WGSL.
 
 [Shipping builds](../tools/cli.md#run-and-build) shorten identifiers derived from your function, type, field, parameter and local names. Shader entry points and renderer bindings retain their names; expressions and layouts are unchanged. The private `game.names` build map records the shortened identifiers by stage. With a custom compiler pipeline, `tidec --shaders --strip-names` shows the shortened form; `--spirv` and `--hlsl` also accept `--strip-names`.

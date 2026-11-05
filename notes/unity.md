@@ -1,5 +1,20 @@
 # Unity as a front end
 
+## Compute in the recording (2026-11-05)
+
+The recorder (`gpu_record.c`) writes gpu.h's compute calls as new
+`tide_embed_render` ops after the existing ones, whose packets are unchanged:
+`PIPELINE_STORAGE` (id, compute, storage_count, storage_writes bits), right
+after the `PIPELINE` it's of; `STORAGE` (slot, buffer); `COMPUTE_BEGIN`,
+`COMPUTE_END`; `DISPATCH` (x, y, z); `DISPATCH_INDIRECT`, `DRAW_INDIRECT`,
+`DRAW_INDEXED_INDIRECT` (buffer, offset); `BUFFER_COPY` (from, from_offset, to,
+to_offset, size). A `BUFFER` of kind 2 is a storage buffer, zeroed when given
+nothing. Reads back return no token there, so a game's `await list.Read()`
+fails in Unity. Not built: `TideRender.cs`'s replay of these ops, `tide unity`
+writing each kernel's `.compute` (`tide_hlsl_unity_compute`), and the
+`TIDE_EMBED_ABI` bump that goes with them (it stays 10 until the replay takes
+the new ops). `notes/compute.md` has the translators' Unity contract.
+
 ## Embed ABI 10: the game asks to quit (2026-11-04)
 
 `tide_embed_status.quit` (a former pad byte; size 376 unchanged) is set once
