@@ -52,7 +52,7 @@ TIDE_TEST(gui_scroll_compiles_mut_offsets_and_unwinds_early_returns)
 TIDE_TEST(gui_scroll_offset_writeback_rechecks_grown_or_removed_list_elements)
 {
     start();
-    local.Menu.indexed = true;
+    local.Menu.byIndex = true;
     local.Menu.leave = true;
     frame();
     TIDE_CHECK(local.Menu.indexCalls == 1);

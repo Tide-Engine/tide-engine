@@ -181,7 +181,7 @@ TIDE_TEST(evaluation_order_lists_maps_and_grids)
     TIDE_CHECK(b.listCopy == 9);    // (1 + 2) * 3: the list as it was
     TIDE_CHECK(b.listElement == 7); // The element Push added
     TIDE_CHECK(b.listRemove == 12);
-    TIDE_CHECK(b.indexed == 15 && b.indexedCount == 2); // 0, 1, 5: each index ran once
+    TIDE_CHECK(b.byIndex == 15 && b.indexedCount == 2); // 0, 1, 5: each index ran once
     TIDE_CHECK(b.listCompound == 4);                    // 1 + 3
     TIDE_CHECK(b.ownList == 15);                        // The 1 it was given, then the 5 it wrote
     TIDE_CHECK(b.setAdd == 10);

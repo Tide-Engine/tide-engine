@@ -1,0 +1,14 @@
+// expect: this loop can't be indexed: this system changes Body.position of its own entity as it goes, which the loop finds rows by: change it in a system of its own
+component Body { float3 position; float3 velocity; }
+event Hit { float amount; }
+scene Main { }
+system Move(mut Body body, query (Body other) others)
+{
+    indexed foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, body.position) > 2.0) continue;
+        o.entity.Send(Hit { amount = 1 });
+    }
+    body.position += body.velocity;
+}
+event(Hit hit) Heard() { }

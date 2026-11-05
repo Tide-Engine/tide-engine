@@ -52,5 +52,10 @@ void plan_loop_indexes(program *prog);
 // but a query or a list.
 const char *loop_index_summary(const stmt *loop);
 
+// Calls `fn` for each loop over a query or a list that starts by skipping
+// rows, or is written `indexed`, with the code it's in.
+typedef void (*loop_visitor)(void *user, const decl *code, const stmt *loop);
+void each_guarded_loop(const program *prog, loop_visitor fn, void *user);
+
 // The schedule's section on loops that skip rows (tidec --schedule).
 void print_loop_indexes(const program *prog, sb *out);

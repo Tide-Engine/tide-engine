@@ -1,0 +1,165 @@
+component Body
+{
+    float3 position;
+    float3 velocity;
+    float radius;
+}
+
+component Unit
+{
+    int team;
+    float health;
+    bool alive;
+}
+
+component Sight
+{
+    float range;
+}
+
+singleton Field
+{
+    List<float3> points;
+    float reach;
+}
+
+struct Spot
+{
+    float2 at;
+    int kind;
+}
+
+singleton Spots
+{
+    List<Spot> spots;
+}
+
+event Hit
+{
+    float amount;
+}
+
+bool InRange(float3 a, float3 b, float r)
+{
+    return Math.DistanceSq(a, b) <= r * r;
+}
+
+system Separate(mut Body body, Sight sight, query (Body other) others)
+{
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, body.position) > sight.range)
+            continue;
+        body.velocity += o.other.position - body.position;
+    }
+}
+
+system SquaredLocal(Body body, query (Body other) others)
+{
+    indexed foreach (var o in others)
+    {
+        var d = o.other.position - body.position;
+        if (Math.LengthSq(d) > 4.0)
+            continue;
+        o.entity.Send(Hit { amount = 1 });
+    }
+}
+
+system Helper(Body body, Sight sight, query (Body other) others)
+{
+    foreach (var o in others)
+    {
+        if (!InRange(o.other.position, body.position, sight.range)) continue;
+        o.entity.Send(Hit { amount = 2 });
+    }
+}
+
+system Wrapped(Body body, query (Body other, Unit unit) others)
+{
+    foreach (var o in others)
+    {
+        if (o.unit.team == 3 && o.unit.alive)
+        {
+            o.entity.Send(Hit { amount = 3 });
+        }
+    }
+}
+
+system Boxy(Body body, query (Body other) others)
+{
+    foreach (var o in others)
+    {
+        var dx = o.other.position.x - body.position.x;
+        var dy = o.other.position.y - body.position.y;
+        if (dx * dx + dy * dy > 9.0) continue;
+        if (Math.Abs(o.other.position.z - body.position.z) > 1.0) continue;
+        o.entity.Send(Hit { amount = 4 });
+    }
+}
+
+system Changes(mut Body body, query (Body other) others)
+{
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, body.position) > 1.0) continue;
+        o.entity.Send(Hit { amount = 5 });
+    }
+    body.position += body.velocity;
+}
+
+system Varying(Body body, query (Body other) others)
+{
+    mut var r = 1.0;
+    foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, body.position) > r) continue;
+        r += 1.0;
+    }
+}
+
+system NoGuard(Body body, query (Body other) others)
+{
+    foreach (var o in others)
+    {
+        o.entity.Send(Hit { amount = 6 });
+        if (o.other.radius > 2.0) continue;
+    }
+}
+
+system ListLoop(Body body, Field field)
+{
+    foreach (var p in field.points)
+    {
+        if (Math.Distance(p, body.position) > field.reach) continue;
+        Send(Hit { amount = 7 });
+    }
+}
+
+system Spots2(Body body, Spots spots)
+{
+    foreach (var s in spots.spots)
+    {
+        if (s.kind != 2 || Math.Distance(s.at, body.position.xy) > 3.0) continue;
+        Send(Hit { amount = 8 });
+    }
+}
+
+system Either(Body body, query (Body other) others)
+{
+    foreach (var o in others)
+    {
+        if (o.other.position.x < 0.0 || o.other.position.x > 10.0) continue;
+        o.entity.Send(Hit { amount = 9 });
+    }
+}
+
+system OneSided(Body body, query (Unit unit) units)
+{
+    foreach (var u in units)
+    {
+        if (u.unit.health >= 10.0) continue;
+        u.entity.Send(Hit { amount = 10 });
+    }
+}
+
+scene Main { }

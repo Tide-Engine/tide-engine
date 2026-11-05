@@ -1,0 +1,11 @@
+// expect: this loop can't be indexed: the loop sets Body through its World, which changes rows as it goes
+component Body { float3 position; }
+scene Main { }
+system Push(Body body, query (Body other) others, mut World world)
+{
+    indexed foreach (var o in others)
+    {
+        if (Math.Distance(o.other.position, body.position) > 2.0) continue;
+        world.Set<Body>(o.entity, Body { position = body.position });
+    }
+}

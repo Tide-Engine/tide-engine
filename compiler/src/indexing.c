@@ -1373,50 +1373,64 @@ const char *loop_index_summary(const stmt *loop)
     return out.data;
 }
 
-static void print_stmt(const decl *code, const stmt *s, sb *out);
-static void print_expr(const decl *code, const expr *e, sb *out)
+typedef struct loop_visit {
+    loop_visitor fn;
+    void *user;
+} loop_visit;
+
+static void visit_stmt(const loop_visit *v, const decl *code, const stmt *s);
+static void visit_expr(const loop_visit *v, const decl *code, const expr *e)
 {
     if (!e) return;
-    print_expr(code, e->object, out);
-    print_expr(code, e->lhs, out);
-    print_expr(code, e->rhs, out);
-    print_expr(code, e->cond, out);
-    for (int i = 0; i < e->args.count; i++) print_expr(code, e->args.items[i], out);
-    print_stmt(code, e->block, out);
+    visit_expr(v, code, e->object);
+    visit_expr(v, code, e->lhs);
+    visit_expr(v, code, e->rhs);
+    visit_expr(v, code, e->cond);
+    for (int i = 0; i < e->args.count; i++) visit_expr(v, code, e->args.items[i]);
+    visit_stmt(v, code, e->block);
 }
 
-static void print_stmt(const decl *code, const stmt *s, sb *out)
+static void visit_stmt(const loop_visit *v, const decl *code, const stmt *s)
 {
     if (!s) return;
-    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && (s->index_guarded || s->indexed)) {
-        const char *summary = loop_index_summary(s);
-        if (summary) {
-            sb_printf(out, "         " STR_FMT ", line %d: %s\n", STR_ARG(code->qualified.len ? code->qualified : code->name),
-                      s->at.line, summary);
+    if ((s->kind == S_FOREACH || s->kind == S_PARALLEL) && (s->index_guarded || s->indexed) && loop_index_summary(s)) {
+        v->fn(v->user, code, s);
+    }
+    visit_expr(v, code, s->cond);
+    visit_expr(v, code, s->value);
+    visit_stmt(v, code, s->init);
+    visit_stmt(v, code, s->step);
+    visit_stmt(v, code, s->then_stmt);
+    visit_stmt(v, code, s->else_stmt);
+    for (int i = 0; i < s->stmts.count; i++) visit_stmt(v, code, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) visit_stmt(v, code, s->cases.items[i].body.items[k]);
+    }
+}
+
+void each_guarded_loop(const program *prog, const loop_visitor fn, void *user)
+{
+    const loop_visit v = {fn, user};
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) && d->body) visit_stmt(&v, d, d->body);
+        for (int k = 0; k < d->methods.count; k++) {
+            if (d->methods.items[k]->body) visit_stmt(&v, d->methods.items[k], d->methods.items[k]->body);
         }
     }
-    print_expr(code, s->cond, out);
-    print_expr(code, s->value, out);
-    print_stmt(code, s->init, out);
-    print_stmt(code, s->step, out);
-    print_stmt(code, s->then_stmt, out);
-    print_stmt(code, s->else_stmt, out);
-    for (int i = 0; i < s->stmts.count; i++) print_stmt(code, s->stmts.items[i], out);
-    for (int i = 0; i < s->cases.count; i++) {
-        for (int k = 0; k < s->cases.items[i].body.count; k++) print_stmt(code, s->cases.items[i].body.items[k], out);
-    }
+}
+
+static void print_loop(void *user, const decl *code, const stmt *s)
+{
+    sb *out = user;
+    sb_printf(out, "         " STR_FMT ", line %d: %s\n", STR_ARG(code->qualified.len ? code->qualified : code->name),
+              s->at.line, loop_index_summary(s));
 }
 
 void print_loop_indexes(const program *prog, sb *out)
 {
     sb lines = {0};
-    for (int i = 0; i < prog->decls.count; i++) {
-        const decl *d = prog->decls.items[i];
-        if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) && d->body) print_stmt(d, d->body, &lines);
-        for (int k = 0; k < d->methods.count; k++) {
-            if (d->methods.items[k]->body) print_stmt(d->methods.items[k], d->methods.items[k]->body, &lines);
-        }
-    }
+    each_guarded_loop(prog, print_loop, &lines);
     if (!lines.len) return;
     sb_put(out, "\nLoops that skip rows, and whether an index finds the rest:\n");
     sb_put(out, lines.data);

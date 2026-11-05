@@ -1325,8 +1325,36 @@ system Advance(mut Match match)
 - `break` ends the innermost loop or switch; `continue` goes on to the innermost loop's next round, from inside a switch too. In a block after a call, both are the caller's: they end or continue the caller's loop, even if the function runs the block inside a loop of its own.
 - `Spawn`, `Scene.Load` and widgets can't be in a loop's condition or a for's step, which run again and again; they go in its body.
 - `while (true)` and `for (;;)` with no `break` of their own never end, so nothing needs to follow them: a function can end with one, and so can a switch's section.
-- `in` is only a keyword in a foreach or a parallel loop, and `by` and `offset` only in a parallel loop; `while`, `for`, `foreach`, `parallel` and `continue` are keywords everywhere.
+- `in` is only a keyword in a foreach or a parallel loop, and `by` and `offset` only in a parallel loop; `while`, `for`, `foreach`, `parallel`, `indexed` and `continue` are keywords everywhere.
 - There's no `do ... while` yet.
+
+### Indexed loops
+
+Decided (the owner, 2026-11-05):
+
+- A loop over a query's rows or a list's elements visits only the rows that can pass its own guard, whenever the compiler can prove which ones those are. Nothing is declared: the compiler reads the guard. The game's check still runs on every row the index gives, and the rows are visited in the loop's normal order, so the results are the plain loop's, bit for bit.
+- `indexed` written before a loop promises it: `indexed foreach (var o in others) { ... }` and `indexed parallel (...)`. `indexed` always comes first. It changes nothing about what the loop does: a loop that can't be indexed is an error that says why, where a plain loop would quietly visit every row. `indexed` alone, `indexed (...)`, is an error that says to add `foreach` or `parallel`.
+- Lists are indexed as queries are.
+
+```csharp
+system Separate(mut Body body, Sight sight, query (Body other, with Boid) boids)
+{
+    indexed foreach (var b in boids)
+    {
+        if (Math.Distance(b.other.position, body.position) > sight.range) continue;
+        body.velocity += Push(body, b.other);
+    }
+}
+```
+
+Provisional (Claude's picks, 2026-11-05):
+
+- **The guard** is what the body starts with: read-only locals of pure values, then `if (condition) continue;` statements, or one last `if (condition) { ... }` holding the rest of the body with no `else`. A call that does something, a `break`, a `return` or anything else ends it: a guard after them doesn't count, since rows that fail it have already done something. Pure means arithmetic, comparisons, `?:`, fields, elements, `Math` functions, constructors, `World.Get`/`Has`/`TryGet`, and calls of functions whose body is read-only locals and a `return` of the same.
+- **What a guard can bound**: a number of the row (a float, a double, an integer, an enum, a bool, or a vector's component) compared with a value the loop doesn't change; for floats and doubles, the number plus or minus such a value, and `Math.Abs` of their difference; the row's vector's `Math.Distance`, `DistanceSq`, `Length` or `LengthSq` of a difference, or `Dot` of a difference with itself, to such a place, and sums of squared differences (`dx * dx + dy * dy`); an equality of a vector the row has. `&&`, `||` and `!` combine them. A function whose body is a `return` is seen through, its arguments in place of its parameters.
+- **A value the loop doesn't change** is a constant, or a parameter, local or field that nothing in the loop's body assigns, passes to be changed or sets through a World. It's worked out once before the loop.
+- **Why not**: a loop that isn't indexed says why in `tidec --schedule`, under "Loops that skip rows": no guard, a bound that changes inside the loop, a bound the index can't work out before the loop (a call that does something, a property's getter), the loop setting the query's component through its World, or changing its own list. A query is also not indexed when the code it's in changes the key's field of its own entity as it goes, as `body.position += body.velocity` beside a loop over `Body` positions does: rows the index was made from would change between one run of the loop and the next. Changing it in a system of its own fixes that.
+- **Which keys**: two or three components of one vector bounded both ways (a grid), else an equality, else one number bounded both ways, else one bounded one way.
+- An index of a world's rows lasts while the rows it was made from are unchanged, across ticks too: an index of walls that never move is made once.
 
 ## Text
 

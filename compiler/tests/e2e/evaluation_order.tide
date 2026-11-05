@@ -593,7 +593,7 @@ singleton Bags
     int listCopy;
     int listElement;
     int listRemove;
-    int indexed;
+    int byIndex;
     int indexedCount;
     int listCompound;
     int ownList;
@@ -629,7 +629,7 @@ system BagsInOrder(mut Bags b, mut Named named, mut Board board)
     b.t = Tally { };
     b.items[Next(b.t)] = b.t.n;
     b.items[Next(b.t)] += 5;
-    b.indexed = Pack3(b.items[0], b.items[1], b.items[2]);
+    b.byIndex = Pack3(b.items[0], b.items[1], b.items[2]);
     b.indexedCount = b.t.n;
     b.items = [1, 2];
     b.items[0] += Push(b.items, 9);

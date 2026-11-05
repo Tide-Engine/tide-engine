@@ -99,6 +99,39 @@ system Hits(query (Body body, with Fighter) fighters, Arena arena)
 
 The row is a foreach's: `f.entity` and the bindings, read-only. Steps follow a [parallel loop's rules](../language/grids.md#going-through-every-cell): they change only the variables they declare, and can't spawn, add, remove, destroy or draw. Unlike a list's or a grid's steps, they can send the match's events, to the world or to an entity, and those arrive in the order the `foreach` would have sent them, so the results are the same on any number of threads. An event that holds text or lists can't be sent from a step. A query with a `mut` binding, and reading a row's local fields, need a `foreach` for now. This is provisional.
 
+## Only the rows that can pass
+
+A loop that starts by skipping rows is read by the compiler. When the condition bounds a number of the row by values the loop doesn't change, the loop visits only the rows within those bounds, found through an index, instead of every row:
+
+```csharp
+system Separate(mut Body body, Sight sight, query (Body other, with Boid) boids)
+{
+    foreach (var b in boids)
+    {
+        if (Math.Distance(b.other.position, body.position) > sight.range) continue;
+        body.velocity += Push(body, b.other);
+    }
+}
+```
+
+Each boid looks at the boids near it, not at all of them. Nothing changes about what the loop does: the condition still runs for every row the index gives, and the rows come in the loop's normal order.
+
+The condition can be a distance (`Math.Distance`, `DistanceSq`, `Length` or `LengthSq` of a difference, or `dx * dx + dy * dy`), a box written axis by axis, a comparison of one of the row's numbers (`b.unit.health < 10`), or an equality (`b.unit.team == myTeam`), combined with `&&`, `||` and `!`, written in the loop or in a function that returns it. Read-only locals can come first. The same goes for lists: `foreach (var wall in level.walls)`.
+
+Write `indexed` before a loop that has to be indexed:
+
+```csharp
+indexed foreach (var b in boids) { ... }
+```
+
+`indexed` changes nothing about the loop. It turns a loop that can't be indexed into an error that says why, instead of a loop that quietly looks at every row. Common reasons:
+
+- Something happens before the condition, such as a `Send`. Move the condition first.
+- The value compared with changes inside the loop.
+- The system changes the same field of its own entity, such as `body.position += body.velocity` in a system whose loop finds boids by `position`. The index is kept while the rows it was made from don't change, so move that change into a system of its own.
+
+`tidec --schedule` lists every loop that skips rows, and whether an index finds the rest or why not. An index of rows that don't change, like walls, is made once and kept across ticks.
+
 ## Other entities: the World
 
 A system often needs another entity's component in the same tick: the target it attacks, the leader it follows. A `World` parameter gives it, by the entity's handle:

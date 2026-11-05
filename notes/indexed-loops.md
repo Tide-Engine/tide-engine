@@ -83,6 +83,21 @@ The hashed grid first built searched 2 and 3 keys in 260 to 1,270 ns; a run per 
 
 Gaps: nothing uses it yet (compiler, `tide_index_cache`). Cells are sized from the bounding box, so a dense cluster inside a wide box puts many entries in a cell (correct, slower). `add` doesn't check that ordinals ascend; a caller that breaks it gets misordered hits, never a memory error.
 
+## Analysis status (2026-11-05)
+
+Built: `indexed` is a keyword (`T_INDEXED`, `parser.c`): it takes the `foreach` or `parallel` after it and sets `stmt.indexed`; anything else after it is a parse error with the fix. `plan_loop_indexes` (`compiler/src/indexing.c`) runs once the program is checked (after `warn_dropped_values` in `check.c`) over every system, view, handler, function and method body, and sets `stmt.index` or `stmt.index_why` on each `foreach`/`parallel` over a query or a list. `indexed` on a loop over anything else, or on one it can't plan, is an error at the `indexed` with the reason, a note at the place the reason is about, and a note on what an indexed loop looks like.
+
+How it decides, beyond the design above:
+- **Seeing through names.** `look` follows the guard's read-only locals and inlines calls of functions made of read-only locals and a `return` (at most 4 deep, never recursively), their arguments copied in where the parameters were (`subst`, which copies only the nodes that change, and only of kinds it knows: names, fields, unary and binary operators, elements, `?:`, `Math` calls and constructors). An argument must have its parameter's exact type: an implicit conversion stops the inlining.
+- **What the loop changes** is recorded as places (`b.velocity`, `items[_]`), not variables, so a loop that adds to `body.velocity` can still bound by `body.position`. A component parameter of the loop's code is changing when the loop sets that component through a World, directly or through a function that's handed the World (its `world_uses`).
+- **A query's key must keep its value between runs of the loop.** The world's index is reused while the pages it was made from are unchanged, and a system writes its own entity's lanes in place once it has begun them, so the analysis refuses a query loop whose code writes the key's field of its own entity anywhere in its body (an assignment under it, `++`, a `mut` argument, a `mut` method, `World.Set` of the component). Writing other fields is fine: their write-back leaves the key's values as they were. A loop over a borrowed query checks every system that can call the helper.
+- **Choosing keys** prefers two or three components of one vector bounded both ways, then an equality, then one key bounded both ways, then one bounded one way.
+- **Tooling.** `tidec --schedule` ends with "Loops that skip rows, and whether an index finds the rest", one line per loop that starts with a guard or is written `indexed` (`print_loop_indexes`, through `each_guarded_loop`). The language server shows the same as a code lens above the loop (`write_loop_lens`).
+
+Tests: `compiler/tests/errors/indexed_*.tide` (a bare `indexed`, no guard, an effect before the guard, a bound the loop changes, the system writing its own key field, `World.Set` of the query's component, a grid); `compiler/tests/schedule/indexed_loops.tide` pins the plans and reasons of the shapes above.
+
+Gaps: methods (`body.InRange(o)`) aren't inlined, only functions; `||` of bounds on different keys gives no bound; integer keys take no arithmetic on the row's side (it wraps); a bound from a property getter or a call to C isn't worked out.
+
 ## Code generation (2026-11-05)
 
 Built: `compiler/src/index_codegen.inc` (included by `codegen.c` before `gen_query_foreach`). Every loop the analysis gives a plan (`stmt.index`) is generated through an index, unless the game is built with `tidec --no-loop-indexes` (hidden; `tide_add_game(... NO_LOOP_INDEXES)`), which generates every loop plainly for differential tests and benchmarks. Results are the plain loop's: the candidates come in the loop's order (ordinals ascend with it), each row is read as the plain loop reads it, and the unchanged body (guard included) runs for each.

@@ -1,0 +1,13 @@
+// expect: this loop can't be indexed: its body doesn't start by skipping rows
+// expect: an indexed loop starts by skipping the rows that can't pass
+component Body { float3 position; }
+event Hit { float amount; }
+scene Main { }
+system Hits(Body body, query (Body other) others)
+{
+    indexed foreach (var o in others)
+    {
+        o.entity.Send(Hit { amount = 1 });
+    }
+}
+event(Hit hit) Heard() { }

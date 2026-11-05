@@ -9,6 +9,7 @@
 #include "assets.h"
 #include "ast.h"
 #include "builtins.h"
+#include "indexing.h"
 #include "cdefs.h"
 #include "csharp.h"
 #include "unity_names.h"
@@ -4398,6 +4399,21 @@ static bool put_world_lens(sb *title, const decl *d, const char *before)
     return true;
 }
 
+typedef struct loop_lenses {
+    jbuf *out;
+    int *written;
+} loop_lenses;
+
+// "indexed by b.other.position.x, ..." or "not indexed: <why>" above a loop that skips rows.
+static void write_loop_lens(void *user, const decl *code, const stmt *loop)
+{
+    (void)code;
+    const loop_lenses *lenses = user;
+    if (loop->at.file != A.doc) return;
+    open_lens(lenses->out, lenses->written, loop->at, loop->kind == S_PARALLEL ? 8 : 7, loop_index_summary(loop));
+    jb_put(lenses->out, ",\"command\":\"\"}}");
+}
+
 void analysis_code_lenses(jbuf *out)
 {
     // Lens builders only read the analysis. Their strings are copied into
@@ -4436,6 +4452,8 @@ void analysis_code_lenses(jbuf *out)
             write_lens_to(out, &written, d, alongside.data, d->alongside.items, d->alongside.count);
         }
     }
+    loop_lenses lenses = {out, &written};
+    each_guarded_loop(A.prog, write_loop_lens, &lenses);
     // A view's access to every entity's, which its signature doesn't say either
     for (int i = 0; i < A.prog->views.count; i++) {
         const decl *d = A.prog->views.items[i];
