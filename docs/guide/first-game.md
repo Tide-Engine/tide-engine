@@ -195,7 +195,7 @@ Here are two machines in one match, each running [the whole game](#the-whole-gam
 tide run --web --stats
 ```
 
-This builds the game as a web page, which draws with WebGPU (or WebGL 2 where the browser has none), and opens it in your browser. `tide` serves the page on your machine and keeps running until you stop it with Ctrl+C. Saving a file reloads the game in the page. For a page to put online:
+This builds the game as a web page, which draws with WebGPU, and opens it in your browser. `tide` serves the page on your machine and keeps running until you stop it with Ctrl+C. Saving a file reloads the game in the page. For a page to put online:
 
 ```sh
 tide build --release --web

@@ -2,19 +2,18 @@
 // wasi-libc (cmake/wasi-toolchain.cmake) in a page, and gives it:
 //
 // - what platform/web/tide_web.h declares: the canvas, input and the frame loop;
-// - what its renderer draws with (platform/src/gpu.h): WebGPU where the browser
-//   has it on a GPU, or else the OpenGL ES 3 functions it calls
-//   (platform/src/gl.h), on WebGL 2;
+// - what its renderer draws with (platform/src/gpu.h): WebGPU, which a game
+//   needs (a browser without it gets a note, in the canvas's place, saying so);
 // - the few WASI functions wasi-libc needs: output, the clock, arguments, exit.
 //
 // The page defines `var Tide = { canvas, print, printErr, arguments, onExit,
-// onAbort, onProgress, checkGL, backend }` (all optional) before this script.
+// onAbort, onProgress, checkGL }` (all optional) before this script.
 // TIDE_PROGRAM holds the program as base64, in a page that has it inside
 // (cmake/web_page.mjs, or tide build --single-file), or TIDE_FILES says where
 // the program and its pack are beside the page, and how big, for a page that
 // downloads them (tide build --web). `onProgress` hears what the page is
-// doing until the game first draws (below). `backend` is 'webgpu' or 'webgl', to draw with that one only; so
-// is `backend=` in the page's address. For a page with rooms (below), `relay`
+// doing until the game first draws (below). `checkGL` (test pages) stops the program at a WebGPU validation
+// error or a shader warning. For a page with rooms (below), `relay`
 // is another relay's address and `lag` the round trip its player is to have,
 // and the page reads `Tide.room`, the code of the room the program is in. For
 // a game shown in a frame of another page, `wait` holds the program until that
@@ -36,12 +35,9 @@
 
     let memory = null;
     let exports = null;
-    let gl = null;        // The canvas's WebGL 2 context, when the program draws with it...
-    let parallelCompile = false; // ...and whether it compiles shaders in parallel (KHR_parallel_shader_compile)
-    const COMPLETION_STATUS_KHR = 0x91B1;
-    let device = null;    // ...or the WebGPU device it draws with instead (see WebGPU, below)
-    let gpuFormat = null; // ...and what the canvas's pixels are then
-    const wantedBackend = config.backend || new URLSearchParams(location.search).get('backend') || '';
+    let device = null;    // The WebGPU device the program draws with (see WebGPU, below)...
+    let gpuFormat = null; // ...and what the canvas's pixels are
+    let noDevice = '';    // Why there's none, where the browser gave none
 
     const u8 = () => new Uint8Array(memory.buffer);
     const i32 = () => new Int32Array(memory.buffer);
@@ -815,29 +811,21 @@
             size.height = height;
             size.fill = !!resizable;
             fit();
-            // WebGPU where the page found a device (below), else WebGL 2. A
-            // canvas only ever has the one it first gave.
+            // WebGPU, with the device the page found (below). Without one the game can't draw: the page says
+            // what it needs where the canvas was
             if (device) {
                 windowTarget.context = windowTarget.context || canvas.getContext('webgpu');
                 if (windowTarget.context) {
                     windowTarget.context.configure({ device, format: gpuFormat, alphaMode: 'opaque' });
                     if (!layouts) gpuStart();
                     devices = devices || 1;
-                    return 2;
+                    return true;
                 }
                 device = null;
+                noDevice = noDevice || 'the canvas has no WebGPU context';
             }
-            if (wantedBackend === 'webgpu') return 0; // Asked for, and not to be had
-            gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: true, stencil: true });
-            // The one thing asked of WebGL beyond what every WebGL 2 has: drawing into float images (a render
-            // target's Format.Rgba16f), which it only does once it's asked for. It adds no function, and the
-            // program finds out whether it's there by making one (gl_float_targets in gpu_gl.c)
-            if (gl && !gl.getExtension('EXT_color_buffer_float')) gl.getExtension('EXT_color_buffer_half_float');
-            // And compiling shaders in parallel, where the browser can: a pipeline made in the background is asked
-            // whether it's done (GL_COMPLETION_STATUS_KHR) without waiting for it. Where it can't, it says done, and
-            // the pipeline's checked then
-            parallelCompile = !!(gl && gl.getExtension('KHR_parallel_shader_compile'));
-            return gl ? 1 : 0;
+            sayNeedsWebGPU(noDevice || (navigator.gpu ? 'the browser gave no GPU adapter' : 'no navigator.gpu'));
+            return false;
         },
         canvas_width: () => size.width,
         canvas_height: () => size.height,
@@ -1333,256 +1321,15 @@
     });
 
     // -----------------------------------------------------------------------
-    // OpenGL ES 3 on WebGL 2: the functions the platform layer's renderer
-    // calls (platform/src/gl.h), each by its C name. GL names objects with
-    // numbers, WebGL with objects, so each kind has a table from number to
-    // object.
-
-    const tables = { buffer: [null], texture: [null], framebuffer: [null], renderbuffer: [null], vertexArray: [null],
-        program: [null], shader: [null], uniform: [null], sampler: [null] };
-    function add(kind, object) {
-        tables[kind].push(object);
-        return tables[kind].length - 1;
-    }
-    const get = (kind, id) => tables[kind][id] || null;
-    function generate(kind, create, count, ptr) {
-        for (let i = 0; i < count; i++) i32()[(ptr >> 2) + i] = add(kind, create());
-    }
-    function remove(kind, destroy, count, ptr) {
-        for (let i = 0; i < count; i++) {
-            const id = i32()[(ptr >> 2) + i];
-            if (tables[kind][id]) destroy(tables[kind][id]);
-            tables[kind][id] = null;
-        }
-    }
-
-    // Uniform locations are numbers per program and name.
-    const uniformIds = new Map();
-    function uniformId(program, name) {
-        const key = program + ':' + name;
-        if (!uniformIds.has(key)) {
-            const location = gl.getUniformLocation(get('program', program), name);
-            uniformIds.set(key, location ? add('uniform', location) : -1);
-        }
-        return uniformIds.get(key);
-    }
-
-    // The typed view and element offset for pixel data of `type` at `ptr`.
-    function pixels(type, ptr) {
-        switch (type) {
-        case 0x1406: return [f32(), ptr >> 2]; // FLOAT
-        case 0x1403: // UNSIGNED_SHORT
-        case 0x140B: return [new Uint16Array(memory.buffer), ptr >> 1]; // HALF_FLOAT
-        case 0x1404: return [new Int32Array(memory.buffer), ptr >> 2]; // INT
-        case 0x1405: return [new Uint32Array(memory.buffer), ptr >> 2]; // UNSIGNED_INT
-        default: return [u8(), ptr];
-        }
-    }
-
-    function writeLog(log, max, lengthPtr, ptr) {
-        const bytes = encoder.encode(log || '');
-        const n = Math.max(0, Math.min(bytes.length, max - 1));
-        if (max > 0) {
-            u8().set(bytes.subarray(0, n), ptr);
-            u8()[ptr + n] = 0;
-        }
-        if (lengthPtr) i32()[lengthPtr >> 2] = n;
-    }
-
-    // A shader's or program's parameter: a number, or whether, as 1 or 0.
-    const writeParameter = (value, ptr) => { i32()[ptr >> 2] = Number(value) || 0; };
-
-    // What the browser has to say about a shader that compiled, or shaders
-    // that linked: a warning. Test pages stop at one, as at a GL error, with
-    // the shader it's about; the others print it.
-    function shaderWarning(what, log, source) {
-        if (!log || !log.trim()) return;
-        if (config.checkGL) throw new Error(`${what}:\n${log}${source ? '\n' + source : ''}`);
-        printErr(`tide: ${what}:\n${log}`);
-    }
-
-    const glFunctions = {
-        glActiveTexture: t => gl.activeTexture(t),
-        glAttachShader: (p, s) => gl.attachShader(get('program', p), get('shader', s)),
-        glBindBuffer: (target, b) => gl.bindBuffer(target, get('buffer', b)),
-        glBindBufferBase: (target, index, b) => gl.bindBufferBase(target, index, get('buffer', b)),
-        glBindFramebuffer: (target, f) => gl.bindFramebuffer(target, get('framebuffer', f)),
-        glBindRenderbuffer: (target, r) => gl.bindRenderbuffer(target, get('renderbuffer', r)),
-        glBindSampler: (unit, s) => gl.bindSampler(unit, get('sampler', s)),
-        glBindTexture: (target, t) => gl.bindTexture(target, get('texture', t)),
-        glBindVertexArray: v => gl.bindVertexArray(get('vertexArray', v)),
-        glBlendFunc: (s, d) => gl.blendFunc(s, d),
-        glBlendFuncSeparate: (s, d, sa, da) => gl.blendFuncSeparate(s, d, sa, da),
-        glBlitFramebuffer: (x0, y0, x1, y1, toX0, toY0, toX1, toY1, mask, filter) =>
-            gl.blitFramebuffer(x0, y0, x1, y1, toX0, toY0, toX1, toY1, mask, filter),
-        glBufferData(target, size, ptr, usage) {
-            if (ptr) gl.bufferData(target, u8(), usage, ptr, size);
-            else gl.bufferData(target, size, usage);
-        },
-        glBufferSubData: (target, offset, size, ptr) => gl.bufferSubData(target, offset, u8(), ptr, size),
-        glCheckFramebufferStatus: target => gl.checkFramebufferStatus(target),
-        glClear: mask => gl.clear(mask),
-        glClearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
-        // (Nothing's asked of a shader or a program as it's compiled or linked, which would wait for the browser to
-        // finish: its warnings are looked for when the program asks how it went, in glGetShaderiv and glGetProgramiv)
-        glCompileShader: s => gl.compileShader(get('shader', s)),
-        glCreateProgram: () => add('program', gl.createProgram()),
-        glCreateShader: type => add('shader', gl.createShader(type)),
-        glCullFace: side => gl.cullFace(side),
-        glDeleteBuffers: (n, ptr) => remove('buffer', o => gl.deleteBuffer(o), n, ptr),
-        glDeleteFramebuffers: (n, ptr) => remove('framebuffer', o => gl.deleteFramebuffer(o), n, ptr),
-        glDeleteProgram(p) {
-            gl.deleteProgram(get('program', p));
-            tables.program[p] = null;
-            for (const [key, id] of uniformIds) { // Its uniforms' locations go with it
-                if (!key.startsWith(p + ':')) continue;
-                if (id > 0) tables.uniform[id] = null;
-                uniformIds.delete(key);
-            }
-        },
-        glDeleteRenderbuffers: (n, ptr) => remove('renderbuffer', o => gl.deleteRenderbuffer(o), n, ptr),
-        glDeleteShader(s) {
-            gl.deleteShader(get('shader', s));
-            tables.shader[s] = null;
-        },
-        glDeleteTextures: (n, ptr) => remove('texture', o => gl.deleteTexture(o), n, ptr),
-        glDeleteVertexArrays: (n, ptr) => remove('vertexArray', o => gl.deleteVertexArray(o), n, ptr),
-        glDepthFunc: f => gl.depthFunc(f),
-        glDepthMask: write => gl.depthMask(!!write),
-        glDisable: cap => gl.disable(cap),
-        glDrawArrays(mode, first, count) {
-            drew = true;
-            gl.drawArrays(mode, first, count);
-        },
-        glDrawArraysInstanced(mode, first, count, instances) {
-            drew = true;
-            gl.drawArraysInstanced(mode, first, count, instances);
-        },
-        glDrawBuffers: (n, ptr) => gl.drawBuffers(Array.from({ length: n }, (unused, i) => i32()[(ptr >> 2) + i] >>> 0)),
-        glDrawElementsInstanced(mode, count, type, offset, instances) {
-            drew = true;
-            gl.drawElementsInstanced(mode, count, type, offset, instances);
-        },
-        glEnable: cap => gl.enable(cap),
-        glEnableVertexAttribArray: i => gl.enableVertexAttribArray(i),
-        glFramebufferRenderbuffer: (target, attachment, renderbufferTarget, r) =>
-            gl.framebufferRenderbuffer(target, attachment, renderbufferTarget, get('renderbuffer', r)),
-        glFramebufferTexture2D: (target, attachment, textureTarget, t, level) =>
-            gl.framebufferTexture2D(target, attachment, textureTarget, get('texture', t), level),
-        glFrontFace: winding => gl.frontFace(winding),
-        glGenBuffers: (n, ptr) => generate('buffer', () => gl.createBuffer(), n, ptr),
-        glGenerateMipmap: target => gl.generateMipmap(target),
-        glGenFramebuffers: (n, ptr) => generate('framebuffer', () => gl.createFramebuffer(), n, ptr),
-        glGenRenderbuffers: (n, ptr) => generate('renderbuffer', () => gl.createRenderbuffer(), n, ptr),
-        glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
-        glGenTextures: (n, ptr) => generate('texture', () => gl.createTexture(), n, ptr),
-        glGenVertexArrays: (n, ptr) => generate('vertexArray', () => gl.createVertexArray(), n, ptr),
-        glGetIntegerv(pname, ptr) {
-            if (pname === 0x86A2 || pname === 0x86A3) {
-                if (config.textureCompression !== false) gl.getExtension('WEBGL_compressed_texture_s3tc');
-                const formats = config.textureCompression === false ? [] : gl.getParameter(gl.COMPRESSED_TEXTURE_FORMATS);
-                if (pname === 0x86A2) writeParameter(formats.length, ptr);
-                else i32().set(formats, ptr >> 2);
-            } else writeParameter(gl.getParameter(pname), ptr);
-        },
-        // A format's sample counts (GL_SAMPLES), the most first: as many as there's room for, and none written
-        // where the format has none
-        glGetInternalformativ(target, format, pname, count, ptr) {
-            const values = gl.getInternalformatParameter(target, format, pname) || [];
-            for (let i = 0; i < count && i < values.length; i++) i32()[(ptr >> 2) + i] = values[i];
-        },
-        glGetProgramInfoLog: (p, max, lengthPtr, ptr) => writeLog(gl.getProgramInfoLog(get('program', p)), max, lengthPtr, ptr),
-        glGetProgramiv(p, pname, ptr) {
-            if (pname === COMPLETION_STATUS_KHR && (!parallelCompile || config.backgroundPipelines === false))
-                return writeParameter(true, ptr);
-            const program = get('program', p), value = gl.getProgramParameter(program, pname);
-            if (pname === gl.LINK_STATUS && value) shaderWarning('shaders linked with warnings', gl.getProgramInfoLog(program));
-            writeParameter(value, ptr);
-        },
-        glGetShaderInfoLog: (s, max, lengthPtr, ptr) => writeLog(gl.getShaderInfoLog(get('shader', s)), max, lengthPtr, ptr),
-        glGetShaderiv(s, pname, ptr) {
-            const shader = get('shader', s), value = gl.getShaderParameter(shader, pname);
-            if (pname === gl.COMPILE_STATUS && value) { // The program asks about one that didn't
-                shaderWarning('a shader compiled with warnings', gl.getShaderInfoLog(shader), gl.getShaderSource(shader));
-            }
-            writeParameter(value, ptr);
-        },
-        glGetUniformBlockIndex: (p, name) => gl.getUniformBlockIndex(get('program', p), string(name)),
-        glGetUniformLocation: (p, name) => uniformId(p, string(name)),
-        glLinkProgram: p => gl.linkProgram(get('program', p)),
-        glPixelStorei: (pname, param) => gl.pixelStorei(pname, param),
-        glReadPixels(x, y, w, h, format, type, ptr) {
-            const [array, offset] = pixels(type, ptr);
-            gl.readPixels(x, y, w, h, format, type, array, offset);
-        },
-        glReadBuffer: source => gl.readBuffer(source),
-        glRenderbufferStorageMultisample: (target, samples, format, width, height) =>
-            gl.renderbufferStorageMultisample(target, samples, format, width, height),
-        glSamplerParameteri: (s, pname, param) => gl.samplerParameteri(get('sampler', s), pname, param),
-        glScissor: (x, y, w, h) => gl.scissor(x, y, w, h),
-        glShaderSource(s, count, stringsPtr, lengthsPtr) {
-            let source = '';
-            for (let i = 0; i < count; i++) {
-                const ptr = i32()[(stringsPtr >> 2) + i];
-                const len = lengthsPtr ? i32()[(lengthsPtr >> 2) + i] : -1;
-                source += len < 0 ? string(ptr) : decoder.decode(u8().slice(ptr, ptr + len));
-            }
-            gl.shaderSource(get('shader', s), source);
-        },
-        glStencilFunc: (func, reference, mask) => gl.stencilFunc(func, reference, mask),
-        glStencilOp: (failed, hidden, drawn) => gl.stencilOp(failed, hidden, drawn),
-        glTexImage2D(target, level, internal, w, h, border, format, type, ptr) {
-            if (!ptr) {
-                gl.texImage2D(target, level, internal, w, h, border, format, type, null);
-                return;
-            }
-            const [array, offset] = pixels(type, ptr);
-            gl.texImage2D(target, level, internal, w, h, border, format, type, array, offset);
-        },
-        glCompressedTexImage2D: (target, level, format, w, h, border, size, ptr) =>
-            gl.compressedTexImage2D(target, level, format, w, h, border, u8(), ptr, size),
-        glTexParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
-        glTexSubImage2D(target, level, x, y, w, h, format, type, ptr) {
-            const [array, offset] = pixels(type, ptr);
-            gl.texSubImage2D(target, level, x, y, w, h, format, type, array, offset);
-        },
-        glUniform1i: (l, x) => gl.uniform1i(get('uniform', l), x),
-        glUniformBlockBinding: (p, block, binding) => gl.uniformBlockBinding(get('program', p), block, binding),
-        glUseProgram: p => gl.useProgram(get('program', p)),
-        glVertexAttribDivisor: (i, divisor) => gl.vertexAttribDivisor(i, divisor),
-        glVertexAttribIPointer: (i, size, type, stride, offset) => gl.vertexAttribIPointer(i, size, type, stride, offset),
-        glVertexAttribPointer: (i, size, type, normalized, stride, offset) =>
-            gl.vertexAttribPointer(i, size, type, !!normalized, stride, offset),
-        glViewport: (x, y, w, h) => gl.viewport(x, y, w, h),
-    };
-
-    // With `checkGL` (test pages), a GL error stops the program, naming the
-    // call: WebGL only warns about one in the console, where no test sees it.
-    // Each call waits for glGetError, which is too slow for pages that ship.
-    if (config.checkGL) {
-        const errors = { 0x0500: 'INVALID_ENUM', 0x0501: 'INVALID_VALUE', 0x0502: 'INVALID_OPERATION',
-            0x0505: 'OUT_OF_MEMORY', 0x0506: 'INVALID_FRAMEBUFFER_OPERATION', 0x9242: 'CONTEXT_LOST_WEBGL' };
-        for (const [name, call] of Object.entries(glFunctions)) {
-            glFunctions[name] = (...args) => {
-                const result = call(...args);
-                const error = gl.getError();
-                if (error) throw new Error(`${name}(${args.join(', ')}): GL_${errors[error] || error}`);
-                return result;
-            };
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // WebGPU: what the program draws with where the browser has it on a GPU,
-    // instead of WebGL 2 above. These are the functions of the platform
-    // layer's GPU interface (platform/src/gpu.h), which platform/web/gpu_web.c
-    // hands it. Buffers, textures, pipelines and targets are numbers to the
-    // program, each kind with a table from number to object.
+    // WebGPU: what the program draws with. These are the functions of the
+    // platform layer's GPU interface (platform/src/gpu.h), which
+    // platform/web/gpu_web.c hands it. Buffers, textures, pipelines and
+    // targets are numbers to the program, each kind with a table from number
+    // to object.
     //
     // The page asks for the device before the program starts: asking takes a
-    // while, and the program can't wait for an answer. `Tide.backend`, or
-    // `backend=` in the page's address, picks what draws: 'webgl', or
-    // 'webgpu', which also takes the browser's software device.
+    // while, and the program can't wait for an answer. Any adapter the browser
+    // gives will do, its software one too (slower, but the game runs).
 
     const gpuTables = { buffer: [null], texture: [null], pipeline: [null], target: [null] };
     // Whether pipelines are made in the background (tide_gpu.background): one is drawn with once it's made
@@ -1598,16 +1345,17 @@
         gpuFree[kind].push(id);
     }
 
-    // `again`: for a canvas that already draws with WebGPU, which it keeps to.
-    async function findDevice(again) {
-        if (wantedBackend === 'webgl' || !navigator.gpu) return;
+    async function findDevice() {
+        if (!navigator.gpu) {
+            noDevice = 'no navigator.gpu';
+            return;
+        }
         try {
             let adapter = await navigator.gpu.requestAdapter();
-            if (!adapter) return;
-            // The browser's software device is slower than WebGL on a GPU
-            const software = adapter.info && 'isFallbackAdapter' in adapter.info ? adapter.info.isFallbackAdapter
-                : adapter.isFallbackAdapter;
-            if (software && wantedBackend !== 'webgpu' && !again) return;
+            if (!adapter) {
+                noDevice = 'the browser gave no GPU adapter';
+                return;
+            }
             let found;
             const requiredFeatures = [];
             if (config.textureCompression !== false && adapter.features.has('texture-compression-bc'))
@@ -1618,16 +1366,16 @@
                 } catch {
                     // Timing is optional. Ask anew: a request can consume its adapter.
                     adapter = await navigator.gpu.requestAdapter();
-                    if (!adapter) return;
-                    const fallback = adapter.info && 'isFallbackAdapter' in adapter.info ? adapter.info.isFallbackAdapter
-                        : adapter.isFallbackAdapter;
-                    if (fallback && wantedBackend !== 'webgpu' && !again) return;
+                    if (!adapter) {
+                        noDevice = 'the browser gave no GPU adapter';
+                        return;
+                    }
                     const features = config.textureCompression !== false
                         && adapter.features.has('texture-compression-bc') ? ['texture-compression-bc'] : [];
                     found = await adapter.requestDevice(features.length ? { requiredFeatures: features } : undefined);
                 }
             } else found = await adapter.requestDevice(requiredFeatures.length ? { requiredFeatures } : undefined);
-            // A mistake in how the program uses it: test pages stop at one, as for GL's
+            // A mistake in how the program uses it: test pages stop at one
             found.onuncapturederror = event => {
                 if (config.checkGL) fail(new Error('WebGPU: ' + event.error.message));
                 else printErr('tide: WebGPU: ' + event.error.message);
@@ -1636,16 +1384,35 @@
             gpuFormat = navigator.gpu.getPreferredCanvasFormat();
             device = found;
         } catch (error) {
+            noDevice = String(error && error.message || error);
             printErr('tide: no WebGPU: ' + error);
         }
     }
-    const deviceAsked = findDevice(false);
+    const deviceAsked = findDevice();
+
+    // A browser without WebGPU, or one that gave no device, can't draw the game: the page says what it needs in
+    // the canvas's place (#tide-needs-webgpu), and the shell's loader, where there is one, says so too.
+    function sayNeedsWebGPU(why) {
+        const text = 'This game needs WebGPU to draw, which this browser doesn\'t have or has turned off ('
+            + why + '). A current Chrome, Edge or Safari has it, and so does Firefox where WebGPU is on.';
+        printErr('tide: ' + text);
+        progress('error', 0, 0, new Error(text));
+        if (!canvas || !canvas.parentNode || document.getElementById('tide-needs-webgpu')) return;
+        const note = document.createElement('div');
+        note.id = 'tide-needs-webgpu';
+        note.setAttribute('role', 'alert');
+        note.textContent = text;
+        note.style.cssText = 'box-sizing:border-box;max-width:40em;margin:2em auto;padding:1.25em 1.5em;'
+            + 'font:16px/1.5 system-ui,sans-serif;color:#eee;background:#222;border-radius:8px;';
+        canvas.style.display = 'none';
+        canvas.parentNode.insertBefore(note, canvas);
+    }
 
     // A device that goes away (its driver started over, or the browser took
     // the GPU back) takes what the program made on it. The page asks for
     // another, and the program, which sees their count change (gpu_epoch),
     // makes everything again from what it keeps (platform/src/platform.c).
-    // Meanwhile it draws nothing. The canvas can't go to WebGL: with no device
+    // Meanwhile it draws nothing. With no device
     // to be had again, it stays as it is.
     let devices = 0; // How many the program has drawn with, this one included
     async function deviceLost(info) {
@@ -1665,7 +1432,7 @@
         windowTarget.depth = null;
         windowTarget.width = windowTarget.height = 0;
         sharedWrites = null;
-        await findDevice(true);
+        await findDevice();
         if (!device) {
             printErr('tide: no GPU to draw with any more: reload the page');
             return;
@@ -2009,7 +1776,7 @@
     }
 
     // What the browser has to say about a shader comes after it's made: a
-    // warning or an error stops a test page, as GL's do (shaderWarning), and
+    // warning or an error stops a test page, and
     // the others print it. A test page waits for it before it says the
     // program ended (finish).
     function checkShader(module, name) {
@@ -2686,7 +2453,7 @@
 
     // What each thread's worker runs: the program on the page's memory, from
     // wasi_thread_start, with WASI's output, clock and random numbers. What
-    // only the page has (WebGL, the canvas, input) fails on a thread.
+    // only the page has (WebGPU, the canvas, input) fails on a thread.
     function threadMain() {
         onmessage = ({ data: { module, memory, tid, startArg, origin } }) => {
             const decoder = new TextDecoder();
@@ -3157,7 +2924,7 @@
         wasi_snapshot_preview1: lenient('WASI', wasi, () => ENOSYS),
         wasi: { 'thread-spawn': spawnThread },
         tide: platform,
-        env: lenient('env', glFunctions, (module, name) => { throw new Error(`tide.js has no ${name}`); }),
+        env: lenient('env', {}, (module, name) => { throw new Error(`tide.js has no ${name}`); }),
     };
 
     // A program and its memory: shared where the page can share it, or else its own, with the
@@ -3183,7 +2950,7 @@
             }
             made = made || new WebAssembly.Memory(limits);
         }
-        const env = lenient('env', { ...glFunctions, memory: made }, (from, name) => { throw new Error(`tide.js has no ${name}`); });
+        const env = lenient('env', { memory: made }, (from, name) => { throw new Error(`tide.js has no ${name}`); });
         const all = { ...imports, env };
         let compiled;
         try {
@@ -3318,22 +3085,7 @@
     platform.resume_size = () => resumeWith ? resumeWith.length : 0;
     platform.resume_copy = ptr => u8().set(resumeWith, ptr);
 
-    // What the running program made in WebGL goes with it.
-    function forgetGL() {
-        const destroy = {
-            buffer: o => gl.deleteBuffer(o), texture: o => gl.deleteTexture(o),
-            framebuffer: o => gl.deleteFramebuffer(o), renderbuffer: o => gl.deleteRenderbuffer(o),
-            vertexArray: o => gl.deleteVertexArray(o), program: o => gl.deleteProgram(o),
-            shader: o => gl.deleteShader(o), uniform: () => {}, sampler: o => gl.deleteSampler(o),
-        };
-        for (const kind in tables) {
-            for (const object of tables[kind]) if (object) destroy[kind](object);
-            tables[kind] = [null];
-        }
-        uniformIds.clear();
-    }
-
-    // ...and what it made in WebGPU.
+    // What the running program made in WebGPU goes with it.
     function forgetGPU() {
         gpuTimeReset();
         for (const buffer of gpuTables.buffer) if (buffer) buffer.destroy();
@@ -3371,7 +3123,6 @@
                 printErr('tide: the running build could not hand over its state: ' + error);
             }
         }
-        if (gl) forgetGL();
         if (device) forgetGPU();
         closeRoom(); // The new build plays on alone, like any web game for now
         if (nextPack !== undefined) packBytes = nextPack;

@@ -15,9 +15,13 @@
 // least a lag can be (`Tide.minLag`): the ping while it added nothing.
 //
 // Each step sets what it's about, lets the pings settle, then checks what they
-// are on the whole over the second after. The page's time is made up
-// (cmake/WebTest.cmake), and a step's starts at its first answer, so none of
-// it rests on how fast the machine is.
+// are on the whole over the second after. A step's starts at its first answer.
+// The page runs in real time (every web test does since WebGL went, 2026-11-05,
+// and with it the virtual time file pages ran in), so the page's timers fire
+// when its thread is free: a step that holds packets back through two or three
+// of them measures up to 20 ms over its arithmetic on the browser's software
+// WebGPU, where it measured within 4 in virtual time. The steps are 20 ms or
+// more apart, so the checks still tell each from the others.
 
 #include <stdio.h>
 
@@ -26,7 +30,7 @@
 
 #define NETWORK 30 // Milliseconds the other end takes to send back
 #define SLOWER 80  // ...once the network got slower
-#define NEAR 4.0   // What pings may be off by on the whole: the page's timers fire a little late
+#define NEAR 24.0  // What pings may be off by on the whole: the page's timers fire late, a few ms each
 #define WINDOW 1.0 // Seconds of pings a step checks
 
 static int failures;
@@ -86,7 +90,7 @@ static void page_set(const char *what, const int value)
 static bool held(const double ms)
 {
     char script[64];
-    snprintf(script, sizeof script, "Math.abs(net.held - %.1f) <= 4", ms);
+    snprintf(script, sizeof script, "Math.abs(net.held - %.1f) <= 12", ms);
     return tide_web_eval(script);
 }
 
@@ -94,7 +98,7 @@ static bool held(const double ms)
 static bool least(const double ms)
 {
     char script[64];
-    snprintf(script, sizeof script, "Math.abs(Tide.minLag - %.1f) <= 4", ms);
+    snprintf(script, sizeof script, "Math.abs(Tide.minLag - %.1f) <= 24", ms);
     return tide_web_eval(script);
 }
 

@@ -31,8 +31,8 @@ typedef struct tide_vk_window {
 
 // Finds a device to draw in the window with: Vulkan 1.3, with push
 // descriptors, and a queue that draws and shows in the window. False, having
-// said why when `say` is set, where there's none: the window draws with
-// OpenGL then. TIDE_VULKAN_VALIDATION in the environment, set to anything but
+// said why when `say` is set, where there's none: there's no window to draw
+// in then. TIDE_VULKAN_VALIDATION in the environment, set to anything but
 // 0, has the Khronos validation layer check every call, and stops the program
 // at the first thing it finds wrong.
 bool tide_gpu_vk_open(const tide_vk_window *window, bool say);

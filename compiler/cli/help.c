@@ -195,7 +195,7 @@ static const argument_help arguments[] = {
      "generated plumbing -O2; release/distribution all -O2.\n"
      "Explicit levels use separate caches. Example: tide run --release -O3 --stats.", COMPILE},
     {"--web", "--web", "Build a web page",
-     "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
+     "Uses Clang's WebAssembly target. Pages draw with WebGPU.\n"
      "build makes a folder to put online, .build/web: index.html, which shows\n"
      "its download and caches the index.wasm and index.pack it loads.\n"
      "--single-file makes one HTML file instead. run serves the page and opens\n"

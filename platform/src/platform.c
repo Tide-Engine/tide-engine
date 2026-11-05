@@ -2315,7 +2315,7 @@ static void free_buffer(const tide_gpu_id id)
 
 // Mesh buffers the frame's list has no use for: those of meshes it doesn't
 // draw, and those too small for what's in their place now, for the meshes it
-// draws that need some. Making a buffer is slow on OpenGL (and WebGL), and a
+// draws that need some. Making a buffer costs a backend, and a
 // game that fills a list in a view each frame has its meshes made again each
 // frame. What's left as the frame ends goes, so none is counted after it.
 typedef struct spare_buffer {
@@ -3044,8 +3044,6 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
     case PIPELINE_SHAPES:
         desc = (tide_gpu_pipeline_desc){
             .name = "shapes",
-            .glsl_vertex = shape_glsl_vertex,
-            .glsl_fragment = shape_glsl_fragment,
             .wgsl = shape_wgsl,
             .spirv = SPIRV_OF(shape),
             .spirv_words = SPIRV_WORDS(shape),
@@ -3062,8 +3060,6 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
     case PIPELINE_SMOOTH_SHAPES:
         desc = (tide_gpu_pipeline_desc){
             .name = "smooth shapes",
-            .glsl_vertex = smooth_shape_glsl_vertex,
-            .glsl_fragment = smooth_shape_glsl_fragment,
             .wgsl = joined(&smooth_wgsl, smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
             .spirv = SPIRV_OF(smooth_shape),
             .spirv_words = SPIRV_WORDS(smooth_shape),
@@ -3085,8 +3081,6 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
     case PIPELINE_SOLID_SHAPES: // The smooth shapes' again, with a radius for each shape in place of its extra
         desc = (tide_gpu_pipeline_desc){
             .name = "solid shapes",
-            .glsl_vertex = solid_shape_glsl_vertex,
-            .glsl_fragment = smooth_shape_glsl_fragment,
             .wgsl = joined(&solid_wgsl, solid_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
             .spirv = SPIRV_OF(solid_shape),
             .spirv_words = SPIRV_WORDS(solid_shape),
@@ -3105,8 +3099,6 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
     case PIPELINE_TEXT: // A mesh's corners, with pixels of its own
         desc = (tide_gpu_pipeline_desc){
             .name = kind == PIPELINE_TEXT ? "text" : "meshes",
-            .glsl_vertex = mesh_glsl_vertex,
-            .glsl_fragment = kind == PIPELINE_TEXT ? text_glsl_fragment : mesh_glsl_fragment,
             .wgsl = kind == PIPELINE_TEXT ? text_wgsl : mesh_wgsl,
             .spirv = kind == PIPELINE_TEXT ? SPIRV_OF(text) : SPIRV_OF(mesh),
             .spirv_words = kind == PIPELINE_TEXT ? SPIRV_WORDS(text) : SPIRV_WORDS(mesh),
@@ -3124,8 +3116,6 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
     case PIPELINE_TEXT_QUADS: // The meshes' and the text's again, each corner of a quad picked from its instance
         desc = (tide_gpu_pipeline_desc){
             .name = kind == PIPELINE_TEXT_QUADS ? "text quads" : "quads",
-            .glsl_vertex = quad_glsl_vertex,
-            .glsl_fragment = kind == PIPELINE_TEXT_QUADS ? text_glsl_fragment : mesh_glsl_fragment,
             .wgsl = kind == PIPELINE_TEXT_QUADS ? text_quad_wgsl : quad_wgsl,
             .spirv = kind == PIPELINE_TEXT_QUADS ? SPIRV_OF(text_quad) : SPIRV_OF(quad),
             .spirv_words = kind == PIPELINE_TEXT_QUADS ? SPIRV_WORDS(text_quad) : SPIRV_WORDS(quad),
@@ -3143,8 +3133,6 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
     default:
         desc = (tide_gpu_pipeline_desc){
             .name = "3D meshes",
-            .glsl_vertex = mesh_3d_glsl_vertex,
-            .glsl_fragment = mesh_glsl_fragment,
             .wgsl = mesh_3d_wgsl,
             .spirv = SPIRV_OF(mesh_3d),
             .spirv_words = SPIRV_WORDS(mesh_3d),
@@ -3184,8 +3172,6 @@ static tide_gpu_id clear_pipeline(const tide_gpu_target_format into)
     const bool several = tide_gpu_target_colors(into) > 1;
     return *made = gpu->pipeline(&(tide_gpu_pipeline_desc){
         .name = into == TIDE_GPU_TARGET_DEPTH ? "clears of depth alone" : several ? "clears of several colors" : "clears",
-        .glsl_vertex = clear_glsl_vertex,
-        .glsl_fragment = several ? clear_all_glsl_fragment : clear_glsl_fragment,
         .wgsl = several ? clear_all_wgsl : clear_wgsl,
         .spirv = several ? SPIRV_OF(clear_all) : SPIRV_OF(clear),
         .spirv_words = several ? SPIRV_WORDS(clear_all) : SPIRV_WORDS(clear),
@@ -3207,8 +3193,6 @@ static tide_gpu_id depth_clear_pipeline(const tide_gpu_target_format into)
     const bool several = tide_gpu_target_colors(into) > 1;
     return *made = gpu->pipeline(&(tide_gpu_pipeline_desc){
         .name = "clears of depth",
-        .glsl_vertex = clear_glsl_vertex,
-        .glsl_fragment = several ? clear_all_glsl_fragment : clear_glsl_fragment,
         .wgsl = several ? clear_all_wgsl : clear_wgsl,
         .spirv = several ? SPIRV_OF(clear_all) : SPIRV_OF(clear),
         .spirv_words = several ? SPIRV_WORDS(clear_all) : SPIRV_WORDS(clear),
@@ -3583,8 +3567,6 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
     const uint32_t instance_size = tide_shader_instance_size(shader);
     tide_gpu_pipeline_desc desc = {
         .name = shader->name ? shader->name : "a shader",
-        .glsl_vertex = shader->glsl_vertex,
-        .glsl_fragment = shader->glsl_fragment,
         .wgsl = shader->wgsl,
         .spirv = shader->spirv,
         .spirv_words = shader->spirv_words,
@@ -3614,7 +3596,6 @@ static tide_gpu_id shader_pipeline_of(const tide_shader *shader, const bool list
     desc.attribute_count = shader->attribute_count;
     if (listed) { // Its place in its list, and its list's numbers
         desc.name = shader->name ? shader->name : "a listed shader";
-        desc.glsl_vertex = shader->glsl_listed_vertex;
         desc.wgsl = shader->wgsl_listed;
         desc.spirv = shader->spirv_listed;
         desc.spirv_words = shader->spirv_listed_words;
@@ -3818,7 +3799,7 @@ void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
         for (uint32_t i = 0; i < count; i++) {
             const tide_shader *shader = shaders[i];
             if (shader && shader->compute) { // A kernel: its one pipeline
-                if (gpu->dispatch) warm_ask(kernel_pipeline_for(shader));
+                warm_ask(kernel_pipeline_for(shader));
                 warm_done[i] = true;
                 continue;
             }
@@ -5145,7 +5126,6 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case STEP_SHADED:
             if (!pipeline_made(s)) break;
-            if (list->runs[s->first].shader->storage_count && !can_compute()) break; // It reads GPU lists
             if (list->runs[s->first].indirect && !s->indirect) break; // Its list isn't there
             vertices += draw_shaded(list, s);
             calls++;

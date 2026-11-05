@@ -1,5 +1,13 @@
 # Releases, installing and CI
 
+## CI after the GL backends' removal (2026-11-05)
+
+`.github/workflows/check.yml` (Claude's, Provisional; arrangement in `notes/testing.md`, GL backends removed):
+
+- **Web:** every web test draws with the browser's software WebGPU, on every runner: Linux's three web shards no longer leave anything out (they ran `-LE webgpu`), as the runner gives Chrome there SwiftShader's Vulkan for its own drawing, with which a page reads WebGPU's pixels back (checked under WSL, not yet on a hosted runner: `notes/testing.md`). If a hosted Linux runner still reads zeros, `-LE pixels` leaves out the tests that read pixels. There are no WebGL or ANGLE D3D11 (`_d3d11`) runs any more. Native jobs still run `-LE gpu`: no runner has a GPU with Vulkan 1.3.
+- **Android:** the emulator keeps `-gpu swiftshader_indirect` (Vulkan 1.2, short of the 1.3 Tide draws with). Its CTest suite needs no GPU; the package job's Google Play check starts the bundle's app, which shows the screen saying it needs Vulkan 1.3 (a posted frame, so `am start -W` reports ok, and the activity stays resumed).
+- **Docs:** `npm run test:examples` (Linux) runs the examples on software WebGPU only; `TIDE_EXAMPLE_BACKEND` is gone. It launches Chrome with the same Linux flags, so its screenshot comparisons should see the canvases; that's unconfirmed until the next Docs run.
+
 ## Every dev push claims a version (2026-11-04)
 
 The owner, iterating on dev: runs "take long... commits keep blocking each
@@ -345,7 +353,7 @@ concurrency and does not gate publication.
 Each platform's web suite now runs on three independent runners using CTest's
 interleaved test indices (-I 1,,3, 2,,3 and 3,,3). Browser CPU reservations remain
 in force within each runner. Every registered test belongs to exactly one shard;
-Linux retains its WebGPU exclusion. All fourteen test matrix entries and all
+Linux retained its WebGPU exclusion (removed 2026-11-05, above). All fourteen test matrix entries and all
 three package entries must succeed through the existing aggregate Build gates.
 The extra runners repeat configuration/build work in exchange for running the
 long software-rendered pages in parallel across machines.

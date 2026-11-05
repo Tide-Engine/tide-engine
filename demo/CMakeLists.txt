@@ -5,9 +5,9 @@ target_link_libraries(demo PRIVATE tide_platform)
 tide_web_page(demo SHELL shell.html)
 
 if(TIDE_WEB)
-    tide_add_web_test(demo_smoke_web TARGET demo QUERY smoke WEBGPU)
+    tide_add_web_test(demo_smoke_web TARGET demo QUERY smoke PIXELS)
 elseif(NOT TIDE_ANDROID)
-    # Opens a hidden window, so it needs a desktop session with working OpenGL.
+    # Opens a hidden window, so it needs a desktop session with Vulkan.
     add_test(NAME demo_smoke COMMAND demo --smoke)
     tide_gpu_test(demo_smoke)
 endif()

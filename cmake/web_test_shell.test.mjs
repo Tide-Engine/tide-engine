@@ -17,7 +17,7 @@ function page(protocol = 'http:') {
         addEventListener() {},
     };
     const context = vm.createContext({
-        document, location: {protocol, search: '?backend=webgl'}, performance, queueMicrotask, URLSearchParams,
+        document, location: {protocol, search: ''}, performance, queueMicrotask, URLSearchParams,
         console: {log: text => printed.push(text)},
         fetch(path, options) {
             assert.equal(options.method, 'POST');

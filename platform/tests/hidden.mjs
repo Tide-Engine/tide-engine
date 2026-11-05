@@ -9,7 +9,7 @@
 // Without `runs`, what needs no window: the game the standard host runs
 // (capture.tide) and a host of its own (hidden.c) end before they open
 // anything, and the variable changes nothing where it isn't set. With it, what
-// opens one, which needs a desktop session with OpenGL, though nothing shows:
+// opens one, which needs a desktop session with Vulkan, though nothing shows:
 // a run with no window and a test's hidden window go as they do without the
 // variable, but that the window opens no audio device, and a window asked to
 // show doesn't.
@@ -69,10 +69,8 @@ if (mode === 'runs') {
               'audio: the microphone closes', plays, 'audio: the output device closes'].join('; '),
           `and without it, it opens the output, and the microphone while frames name it: ${heard.status === 0 ? asked(heard) : how(heard)}`);
 
-    // And a window that asks to show, past the platform's refusal, doesn't. The host finds the window by
-    // its OpenGL context, so this one draws with OpenGL: whether a window shows is the window's own,
-    // whatever draws in it (make_window in desktop/glfw.c)
-    const shown = run(host, ['window'], '1', { TIDE_BACKEND: 'opengl' });
+    // And a window that asks to show, past the platform's refusal, doesn't (make_window in desktop/glfw.c)
+    const shown = run(host, ['window'], '1');
     check(shown.status === 0 && shown.out.includes("ok: a window asked to show doesn't"), `a window asked to show stays hidden${shown.status === 0 ? '' : `: ${how(shown)}`}`);
     process.exit(failures ? 1 : 0);
 }
@@ -108,7 +106,7 @@ const refused = (what, program, args, ...says) => {
 };
 const flags = ['TIDE_HIDDEN is set', '--frames <n>', '--capture <file.png>', '--script <file>'];
 const plain = refused('a hidden game with nothing to end its run', game, [], ...flags);
-check(!/GLFW|no desktop|OpenGL/.test(plain.err), 'before it asks the system for a window');
+check(!/GLFW|no desktop|Vulkan/.test(plain.err), 'before it asks the system for a window');
 refused('one that hosts a match', game, ['--host'], ...flags);
 refused('one given only a size', game, ['--size', '320', '200'], ...flags);
 refused('one given only --debug-views', game, ['--debug-views'], ...flags);

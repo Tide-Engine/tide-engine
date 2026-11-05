@@ -78,11 +78,11 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(bench_skinned SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(bench_skinned TARGET bench_skinned
-            QUERY "counts=1,10&frames=2&warmup=1&repeat=1" WEBGPU EXPECT "renderer: WebGPU")
+            QUERY "counts=1,10&frames=2&warmup=1&repeat=1" PIXELS EXPECT "renderer: WebGPU")
         tide_add_web_test(bench_skinned_gpu_clip TARGET bench_skinned
-            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=gpu&verify-gpu&subframe=0.5" WEBGPU EXPECT "GPU clip reference:")
+            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=gpu&verify-gpu&subframe=0.5" PIXELS EXPECT "GPU clip reference:")
         tide_add_web_test(bench_skinned_baked TARGET bench_skinned
-            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=baked" WEBGPU EXPECT "baked_clip")
+            QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=baked" PIXELS EXPECT "baked_clip")
     else()
         add_test(NAME bench_skinned COMMAND bench_skinned --counts 1,10 --frames 2 --warmup 1 --repeat 1)
         tide_gpu_test(bench_skinned)
@@ -123,13 +123,11 @@ if(NOT TIDE_ANDROID)
         tide_web_page(bench_render3d SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         # Its four light setups take CI's software WebGPU about a minute, and
         # twice that beside other tests
-        tide_add_web_test(bench_render3d TARGET bench_render3d QUERY "quick" WEBGPU EXPECT "Render3D benchmark correctness passed"
+        tide_add_web_test(bench_render3d TARGET bench_render3d QUERY "quick" PIXELS EXPECT "Render3D benchmark correctness passed"
             SECONDS 240)
     else()
         add_test(NAME bench_render3d COMMAND bench_render3d --quick)
-        add_test(NAME bench_render3d_opengl COMMAND bench_render3d --quick)
         tide_gpu_test(bench_render3d)
-        tide_gpu_test(bench_render3d_opengl OPENGL)
     endif()
 endif()
 
@@ -149,22 +147,18 @@ if(NOT TIDE_ANDROID)
     if(TIDE_WEB)
         tide_web_page(bench_forest SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
         tide_add_web_test(bench_forest TARGET bench_forest QUERY "quick"
-            SERVED WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11_SERVED)
+            PIXELS EXPECT "Forest stress correctness passed" SECONDS 240)
         tide_add_web_test(bench_forest_motion TARGET bench_forest QUERY "motion-smoke"
-            SERVED WEBGPU EXPECT "Forest stress correctness passed" SECONDS 240 D3D11_SERVED)
+            PIXELS EXPECT "Forest stress correctness passed" SECONDS 240)
     else()
         add_test(NAME bench_forest COMMAND bench_forest --quick)
-        add_test(NAME bench_forest_opengl COMMAND bench_forest --quick)
         tide_gpu_test(bench_forest)
-        tide_gpu_test(bench_forest_opengl OPENGL)
         add_test(NAME bench_forest_motion COMMAND bench_forest --motion-smoke)
-        add_test(NAME bench_forest_motion_opengl COMMAND bench_forest --motion-smoke)
         tide_gpu_test(bench_forest_motion)
-        tide_gpu_test(bench_forest_motion_opengl OPENGL)
     endif()
 endif()
 
-# Tide's drawing benchmark's workloads by hand in OpenGL and Vulkan, timed the same way
+# Tide's drawing benchmark's workloads by hand in Vulkan, timed the same way
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(draw)
 endif()

@@ -1,8 +1,8 @@
 // frag and vert, written in Tide (shaders.tide), through the whole path:
-// tidec's GLSL and WGSL, the draw list, the renderer and the GPU, read back
-// from an offscreen render. Every backend compiles every shader the game
-// uses, and has to give the same pixels: OpenGL 3.3 natively, and in a
-// browser WebGL 2 and WebGPU, whose device is then lost and found again.
+// tidec's WGSL (and its SPIR-V), the draw list, the renderer and the GPU, read
+// back from an offscreen render. Every backend compiles every shader the game
+// uses, and has to give the same pixels: Vulkan natively, and in a browser
+// WebGPU, whose device is then lost and found again.
 //
 // The game draws a 24 pixel square in the middle of 32 pixel cells, each
 // through another frag or vert: `cell` is a pixel in one. Its frames are a
@@ -608,7 +608,7 @@ static void run_stencil_checks(const char *when)
 // floats, those images are bytes, and what was drawn is kept from 0 to 1.
 static void run_output_checks(const char *when)
 {
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     static const struct {
         int panel_x, panel_y; // The panel's corner in the window
         float x, y;           // In the panel
@@ -804,7 +804,7 @@ static void run_height_checks(const char *when)
 static void run_mipmap_checks(const float lit, const char *when)
 {
     // A float texture's smaller images are drawn, so made where the device draws into floats
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     const int drawn = (int)(lit * 255.0f / 8.0f + 0.5f);
     const struct {
         float left;
@@ -976,8 +976,8 @@ static void run_cut_checks(const char *when)
         if (!fine) failures++;
     }
 #if !defined(__wasm__) && !defined(__ANDROID__)
-    const bool opaque_samples = strcmp(tide_platform_renderer(), "OpenGL 3.3") == 0 || tide_gpu_vk_alpha_to_one();
-    if (opaque_samples && tide_window_gpu()->float_targets()) {
+    const bool opaque_samples = tide_gpu_vk_alpha_to_one();
+    if (opaque_samples) {
         const uint32_t opaque = got[COUNT + 4], clear = got[COUNT + 5], other = got[COUNT + 6];
         const int coverage = (int)(clear >> 16 & 255u);
         const int opaque_red = (int)(opaque >> 24), opaque_blue = (int)(opaque >> 8 & 255u);
@@ -1046,7 +1046,7 @@ static void run_cube_checks(const float lit, const char *when)
 {
     static const int colors[6][3] = {{255, 0, 0}, {0, 255, 255}, {0, 255, 0}, {255, 0, 255}, {0, 0, 255}, {255, 255, 0}};
     static const char *const sides[6] = {"+x", "-x", "+y", "-y", "+z", "-z"};
-    const bool floats = tide_window_gpu()->float_targets();
+    const bool floats = true; // Every backend draws into floats
     struct {
         float x, y;
         int want[3];

@@ -1,4 +1,4 @@
-# GLFW: desktop windows, their OpenGL contexts and input, for the platform
+# GLFW: desktop windows (with no OpenGL: Vulkan draws in them) and input, for the platform
 # layer. Downloaded at configure time, pinned to a release. Web and Android builds have windows of their own
 # (platform/web/canvas.c, platform/android/activity.c) and download nothing.
 include(FetchContent)

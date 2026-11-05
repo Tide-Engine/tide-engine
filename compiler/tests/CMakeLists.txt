@@ -553,7 +553,7 @@ if(TIDE_PLATFORM)
         add_test(NAME tidec_e2e_fetch_web
             COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
                 "$<TARGET_FILE_DIR:tidec_e2e_fetch_web>/tidec_e2e_fetch_web.html"
-                "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser" "backend=webgl"
+                "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser"
                 --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
         # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
         set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)

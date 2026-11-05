@@ -586,9 +586,8 @@ static inline bool tide_target_size_same(const tide_target_size a, const tide_ta
 typedef enum tide_target_format {
     TIDE_TARGET_RGBA8, // 4 bytes: red, green, blue and alpha, each from 0 to 1
     TIDE_TARGET_DEPTH, // No color image at all
-    // Four floats of 16 bits: any number, to 3 digits or so. Where a GPU can't
-    // draw into those (an OpenGL ES 3 or a WebGL 2 without them), it's 4
-    // bytes, and the renderer says so once
+    // Four floats of 16 bits: any number, to 3 digits or so. Every GPU Tide
+    // draws with draws into, blends and samples them.
     TIDE_TARGET_RGBA16F,
 } tide_target_format;
 
@@ -1417,8 +1416,8 @@ typedef enum tide_shader_read {
 } tide_shader_read;
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's
-// own: with those, 255 float4s, as OpenGL ES drivers that count a block's
-// members among a shader's uniform vectors take 256 at most.
+// own: with those, 255 float4s (a limit OpenGL ES drivers set, which counted a
+// block's members among a shader's uniform vectors, kept since).
 #define TIDE_SHADER_UNIFORM_BYTES 3984u
 // 3D shaders also carry a float4 camera origin, leaving the same portable total.
 #define TIDE_SHADER_UNIFORM_3D_BYTES 3968u

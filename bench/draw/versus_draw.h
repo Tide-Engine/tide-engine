@@ -6,8 +6,7 @@
 // boundaries (record; render, then one pixel read back; total). What an
 // expert writes for each: one static mesh, one instance buffer the CPU writes
 // straight into, one instanced draw, as little state as the draw needs.
-// versus_draw.c runs the workloads and times them; draw_gl.c and draw_vk.c
-// are the two APIs.
+// versus_draw.c runs the workloads and times them; draw_vk.c draws them.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -56,7 +55,7 @@ size_t vd_instance_size(vd_kind kind);
 // says they're there, and `render` draws the frame into the target, cleared
 // to black, and reads its pixel (1, 1) back, waiting for it.
 typedef struct vd_api {
-    const char *name; // As Tide's renderer is named: "OpenGL 3.3", "Vulkan"
+    const char *name; // As Tide's renderer is named: "Vulkan"
     const char *api;  // What it's written against
     // `camera` is the cubes' world to clip space, column by column, as
     // tide_draw_camera_fit gives it (OpenGL's clip space, depth -1 to 1).
@@ -71,5 +70,4 @@ typedef struct vd_api {
     void (*close)(void);
 } vd_api;
 
-extern const vd_api vd_gl;     // draw_gl.c
 extern const vd_api vd_vulkan; // draw_vk.c

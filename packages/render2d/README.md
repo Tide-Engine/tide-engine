@@ -47,4 +47,4 @@ Floating-point render targets are required for the material/position buffers.
 Disable `Renderer.enabled` before Prepare to release retained resources.
 `GlobalIllumination.enabled` and `Renderer.bloom.enabled` control the optional
 passes separately. GI and all GPU state remain outside simulation, networking
-and hashes. Desktop OpenGL/Vulkan and WebGL2/WebGPU use the same package shaders.
+and hashes. Vulkan and WebGPU use the same package shaders.

@@ -166,8 +166,7 @@ static int frame(void *user, const float seconds)
     static check_round r;
     static int64_t before;
     if (stage == 0) printf("renderer: %s\n", tide_platform_renderer());
-    const bool computes = !strstr(tide_platform_renderer(), "GL"); // OpenGL's and WebGL's have none
-    if (stage == 0) stage = computes ? 1 : 10;
+    if (stage == 0) stage = 1;
     switch (stage) {
     case 1:
         if (!round_over(&r, "", true)) return TIDE_KEEP_RUNNING;
@@ -200,10 +199,6 @@ static int frame(void *user, const float seconds)
                "a GPU list made again on another device has another contentRevision", "");
         return failures;
 #endif
-    case 10: // No compute: kernels are passed by, and said so
-        if (!round_over(&r, "", false)) return TIDE_KEEP_RUNNING;
-        expect(local.Results.failed, "OpenGL and WebGL run no kernels, and a GPU list's read back fails there", "");
-        return failures;
     default:
         (void)before;
         return failures + 1;

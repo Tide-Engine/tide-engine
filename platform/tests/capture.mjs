@@ -6,7 +6,7 @@
 //   node capture.mjs <tide_platform_capture> <scratch folder> [refused]
 //
 // Without `refused`, it runs the game, which needs a desktop session with
-// OpenGL, though nothing shows on it. With it, only what a run refuses before
+// Vulkan, though nothing shows on it. With it, only what a run refuses before
 // it opens anything: flags and script lines that are wrong, each with a
 // message that names what to fix. That needs no GPU.
 

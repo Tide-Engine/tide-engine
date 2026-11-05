@@ -1,5 +1,5 @@
 // The output device on desktop (src/audio_out.h): WASAPI on Windows, CoreAudio
-// on macOS, ALSA on Linux, loaded at run time as OpenGL and X11 are, so games
+// on macOS, ALSA on Linux, loaded at run time as Vulkan and X11 are, so games
 // link nothing. Each renders from the mixer on a thread of the system's or
 // of its own, through tide_audio_out_fill, at the device's rate and channels.
 

@@ -1,18 +1,18 @@
 // versus_draw: tide_platform_draw --bench's workloads, drawn by hand against
-// OpenGL 3.3 core (draw_gl.c) or Vulkan 1.3 (draw_vk.c), and timed at the same
+// Vulkan 1.3 (draw_vk.c), and timed at the same
 // boundaries, so Tide's renderer has a baseline: what an expert's C costs for
 // the same pixels on the same machine.
 //
 // Each workload has 20 warmup frames and 100 measured ones, in a 256 by 352
 // target. A frame is timed in two parts, as Tide's are:
 // - record: the CPU writes the frame's instances where the GPU reads them
-//   (OpenGL: a buffer it maps; Vulkan: host-visible memory kept mapped). Tide's
+//   (host-visible memory kept mapped). Tide's
 //   record is its draw list; its upload is in its render part instead, so the
 //   two parts split the work differently, and the totals compare.
 // - render + readback: the frame is drawn, cleared to black first, and its pixel
 //   (1, 1) read back, waiting for the GPU (Tide reads the whole target back).
-// TIDE_BACKEND says which API (vulkan or opengl); without it, Vulkan where the
-// machine has 1.3, as Tide's renderer picks.
+// (Its OpenGL 3.3 half, draw_gl.c, went with Tide's OpenGL backend on
+// 2026-11-05; its rows stay in bench/results/draw.jsonl.)
 
 #include "versus_draw.h"
 
@@ -321,8 +321,7 @@ static void on_glfw_error(const int code, const char *text)
 static int usage(void)
 {
     printf("usage: versus_draw [--save <label>] [--quick] [--dump <prefix>] [--compare <prefix>]\n"
-           "  Draws tide_platform_draw --bench's workloads by hand, with the API TIDE_BACKEND says\n"
-           "  (vulkan or opengl; Vulkan where there is one, without it), and times them the same way.\n"
+           "  Draws tide_platform_draw --bench's workloads by hand in Vulkan 1.3, and times them the same way.\n"
            "  --save <label>     append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
            "  --quick            a few frames of each, checking the pixels read back (a test)\n"
            "  --dump <prefix>    write each workload's last frame to <prefix>-<n>.ppm, n as tide_platform_draw numbers it\n"
@@ -351,12 +350,6 @@ int main(const int argc, char **argv)
         return 2;
     }
     (void)tide_hidden(); // Its program start turns stop dialogs off, in a run nobody watches
-    const char *backend = getenv("TIDE_BACKEND");
-    const bool asks_vulkan = backend && strcmp(backend, "vulkan") == 0, asks_gl = backend && strcmp(backend, "opengl") == 0;
-    if (backend && *backend && !asks_vulkan && !asks_gl) {
-        fprintf(stderr, "versus_draw: TIDE_BACKEND is \"%s\", where it's vulkan or opengl\n", backend);
-        return 2;
-    }
     glfwSetErrorCallback(on_glfw_error);
     if (!glfwInit()) {
         fprintf(stderr, "versus_draw: no desktop to draw on\n");
@@ -370,14 +363,11 @@ int main(const int argc, char **argv)
     float matrix[16];
     memcpy(matrix, &camera, sizeof matrix);
     char device[256] = "";
-    const vd_api *api = asks_gl ? &vd_gl : &vd_vulkan;
+    const vd_api *api = &vd_vulkan;
     if (!api->open(matrix, texture, device, sizeof device)) {
-        if (asks_vulkan || asks_gl || !vd_gl.open(matrix, texture, device, sizeof device)) {
-            fprintf(stderr, "versus_draw: no %s to draw with\n", asks_gl ? "OpenGL 3.3" : asks_vulkan ? "Vulkan 1.3" : "GPU API");
-            glfwTerminate();
-            return 1;
-        }
-        api = &vd_gl;
+        fprintf(stderr, "versus_draw: no Vulkan 1.3 to draw with\n");
+        glfwTerminate();
+        return 1;
     }
     const int warmup = quick ? QUICK_WARMUP : WARMUP, frames = quick ? QUICK_FRAMES : FRAMES;
     printf("versus_draw: %d warmup and %d measured frames per workload, by hand in %s on %s\n", warmup, frames, api->api, device);

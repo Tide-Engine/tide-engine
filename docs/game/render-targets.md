@@ -125,10 +125,6 @@ glow.light  = RenderTarget.Window(Format.Rgba16f);              // A color image
 
 A `Format.Rgba16f` image is read as it was written: `Sample` gives the numbers back, blended between its pixels like any texture's, and what's drawn into it is blended and added as into any other, without stopping at 1. It takes twice the memory of a `Format.Rgba8` one. A clear's color is a color, each channel from 0 to 1, whatever the image holds.
 
-::: warning Where a GPU can't draw into floats
-Nearly every machine does. An old phone, or an old browser on WebGL, may not: there a `Format.Rgba16f` image is made as a `Format.Rgba8` one, and the engine says so once, in the game's output. The game runs, with what it draws there kept from 0 to 1: light stops at white, and what's under 0 is 0.
-:::
-
 A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth, or [stencil](./draw-settings.md#stencil), which it has too:
 
 - **A clear** sets its depth back to the far limit, and its stencil to 0. It takes a color like any clear, which goes nowhere.
