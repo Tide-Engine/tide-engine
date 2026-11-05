@@ -471,7 +471,7 @@ typedef struct tide_gpu {
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
     // Optional, for a backend that can make pipelines in the background
-    // (WebGPU's): while
+    // (WebGPU's, and Vulkan's on the job pool's threads): while
     // `background` is on, `pipeline` begins one and returns at once, and
     // `pipeline_ready` says once it's made. Till then nothing is drawn with
     // it: the renderer leaves its steps out (tide_platform_background_pipelines).
@@ -680,6 +680,8 @@ bool tide_gpu_record_read(uint32_t token, const void *data, uint32_t size);
 // A test's: how many pipelines of games' shaders the renderer has (platform.c),
 // so a test sees whether a draw made one.
 uint32_t tide_platform_shader_pipelines(void);
+// ...and how many of them are still being made in the background.
+uint32_t tide_platform_shader_pipelines_waiting(void);
 #ifdef __wasm__
 extern const tide_gpu tide_gpu_webgpu; // web/gpu_web.c
 #endif

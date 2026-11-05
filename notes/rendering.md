@@ -1,5 +1,65 @@
 # The platform layer and the renderer
 
+## Vulkan pipelines on the pool's threads; the loader waits for them (2026-11-05)
+
+The owner's report: Rogue State (Mount & Rifle, a `tide run` debug build) sat on
+the loader's "Preparing" and the window stopped answering for minutes. The pack
+was in; the main thread was in `tide_run_begin`'s `tide_run_prewarm`, where
+Vulkan compiled the game's 265 remembered keys (`pipelines.keys`) and the
+guesses for shaders not drawn yet, one `vkCreateGraphicsPipelines` at a time,
+with no frames between. That day's shader changes had left the driver's cache
+cold for most of them. The process used ~3.5 cores (the driver's own threads) and
+2.8 GB. A hidden run never shows it: an unseen window doesn't prewarm.
+
+- `gpu_vk.c` implements `background` and `pipeline_ready`. Everything that
+  touches `vk` (SPIR-V, the shader module, `layout_for`, the place in
+  `vk.pipelines`) stays on the frame's thread. What `vkCreate*Pipelines` reads
+  is built into a heap `vk_making` record that its create info points into, and
+  with background on a `tide_jobs.background` job runs the call (and destroys
+  the module) on whichever pool threads are free, several at once. A place has
+  `used` (it isn't free) apart from `pipeline` (made yet), and `making` until
+  it's settled: `pipeline_ready` settles a finished one; `use`, `pipeline_free`
+  and `finish_all_making` wait for one, helping the pool meanwhile. All are
+  finished before the pipeline cache is written, merged or switched, and before
+  the device is destroyed, so the threads never see those change. A failure
+  stops the program as one made at once does; a lost device loses the device.
+- With background off (headless runs, custom hosts that don't ask) nothing
+  changed: made before `pipeline` returns.
+- The standard host already turns background on for windowed games
+  (`tide_run_bind_io`, the policy that a game's frames don't wait for a
+  pipeline). On desktop and Android that now applies to Vulkan too: a shader's
+  first draw in a running game shows a frame or a few late instead of the frame
+  hitching, as on WebGPU. Hot reloads with changed shaders no longer freeze the
+  window while they compile.
+- The loader waits: once the pack is in, `tide_run_loading_frame` names the
+  game (`tide_run_name_game`, split out of `tide_run_bind_io`, so the keys file
+  and `pipelines.vulkan` are read first), prewarms, and keeps drawing
+  `Compiling shaders n / total` with a known bar until
+  `tide_platform_prewarm_waiting()` is 0; then `tide_run_begin` (whose prewarm
+  is then a no-op) and the game's first frame. A game with no pack, or whose
+  pack was read in place, gets the same frames (`tide_run_begin_loaded` turns the
+  loader on with nothing to read); if nothing is waiting the game begins in the
+  first frame, with no loader drawn. Not headless, embedded, or a game with no
+  shader table. On the web the page's frames do the same over WebGPU.
+- Tests: `tide_platform_prewarm` starts through `tide_run_begin_loaded` and
+  checks the game begins only once every prewarmed pipeline is made (native
+  Vulkan: frame 245 of the cold first run, frame 2 with the keys file; WebGPU
+  page too). `tide_platform_draw`'s background phase now waits for a frame that
+  began and ended with no shader pipeline being made
+  (`tide_platform_shader_pipelines_waiting`, a test's, `gpu.h`), since pool
+  threads finish in any order; checking at the first orange pixel failed.
+  Passing: native sanitize `tide_platform_draw`, `_shaders`, `_prewarm`,
+  `_loading`, `_compute`, `_compute_vulkan_sets`; web-debug `tide_platform_draw`
+  and `_prewarm`.
+- Not verified: Rogue State itself in a visible window (agents don't open
+  windows; hidden runs skip the prewarm). The owner's next `tide run` should
+  show the shader count instead of a frozen window, and finish faster for the
+  parallel compile.
+- Noticed, not changed: Rogue State's `pipelines.vulkan` is 217 MB. The driver's
+  cache data only grows (old shaders' pipelines stay), and over `CACHE_MOST`
+  (256 MB) `write_pipeline_cache` writes nothing, so every run would compile cold.
+  Pruning or a larger cap is a separate decision.
+
 ## GPU lists in pools, on Vulkan (2026-11-05)
 
 `TIDE_GPU_MAX_STORAGE` is 4 (it was 7): a shader's GPU lists are ranges of two pools (`notes/compute.md`, GPU lists in
@@ -742,11 +802,10 @@ design below is Claude's, Provisional.
     for each kind of target its kind drew into, some of which it never draws
     into (BANKED: 7 of 14 unused); with the driver's cache warm that's a
     fraction of a millisecond each.
-  - Vulkan makes them one at a time on the render thread: a cold start of
-    BANKED's 31 takes 1.5 s. Making them on the job pool's threads
-    (`vkCreateGraphicsPipelines` may be called from several), or
-    `VK_EXT_graphics_pipeline_library` to compile shaders apart from state,
-    would cut that; not built.
+  - Vulkan made them one at a time on the render thread: built 2026-11-05,
+    below (Vulkan pipelines on the pool's threads).
+    `VK_EXT_graphics_pipeline_library`, to compile shaders apart from state,
+    is still not built.
   - A page keeps no keys between visits (`localStorage` through `tide.js`
     would; a new import, not built). Its prewarming is the guess alone.
   - Nothing lets a game wait for prewarming (a loading screen reading
@@ -964,7 +1023,8 @@ time it returned (see `notes/textures.md`).
 
 - `tide_gpu` gained optional `background(bool)` and `pipeline_ready(id)`. With
   background on, `pipeline` starts one and returns at once; `pipeline_ready`
-  polls. NULL on backends that only make them synchronously (Vulkan, desktop GL).
+  polls. NULL on backends that only make them synchronously (desktop GL; Vulkan
+  has them since 2026-11-05, Vulkan pipelines on the pool's threads below).
   The renderer's `pipeline_made` leaves out steps (shapes, clear, mesh, mesh 3D,
   shaded, blit, text) whose pipeline isn't made yet. The step is simply not
   drawn that frame; nothing waits.
