@@ -28,7 +28,9 @@ Closing their gaps (the owner: "work on the gaps"): generated code also calls `t
 (`tide/mesh.h`), and the draw list `tide_pack_texture_array_blocks` (`tide/pack.h`), `tide_draw_grid_array_texture`
 and `tide_grid_array_extent`; `tide_draw_texture` gains `layer_blocks` and the space `TIDE_PIXELS_GRID_ARRAY`;
 `tide/texture_blocks.h` `tide_texture_blocks_bc1_to_bc3`. gpu.h: `array_blocks`, `array_of`, `array_write`. Embed ABI
-16. Details: notes/textures.md, The gaps closed.
+16. Details: notes/textures.md, The gaps closed. Then `tide_embed_render_formats` (`tide/embed.h`, embed ABI 17) and
+the recorder's `tide_gpu_record_block_formats`; `tide_texture_array_of_grid` takes `raw`, and
+`tide_draw_grid_array_texture` too, with `tide_texture_array_grid_raw` (notes/unity.md, ABI 17).
 
 ## Sixteen textures, shared samplers (2026-11-05)
 

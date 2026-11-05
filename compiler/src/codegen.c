@@ -2314,7 +2314,7 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
     if (want.kind == TY_TEXTURE_ARRAY && have.kind == TY_GRID) { // A Grid3 where an array goes: its layers, its z
         sb_put(o, "tide_texture_array_of_grid(");
         gen_expr(g, o, e);
-        sb_printf(o, ", &%s)", grid_shape_name(have.decl));
+        sb_printf(o, ", &%s, %s)", grid_shape_name(have.decl), declared_raw(e) ? "true" : "false");
         return;
     }
     if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
@@ -9166,7 +9166,10 @@ static void gen_fields(const gen *g, sb *o, const decl *d)
         if (i == d->fields.count) break;
         const field *f = &d->fields.items[i];
         sb_printf(o, "    %s %s;%s\n", f->type.kind == TY_STRING ? "tide_text" : c_type(f->type), field_cname(f),
-                  o == &g->h && f->type.kind == TY_TEXTURE && field_is_raw(f) ? " // [Raw] Texture" : "");
+                  o == &g->h && f->type.kind == TY_TEXTURE && field_is_raw(f)             ? " // [Raw] Texture"
+                  : o == &g->h && f->type.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? " // [Raw] TextureArray"
+                  : o == &g->h && f->type.kind == TY_CUBEMAP && field_is_raw(f)       ? " // [Raw] Cubemap"
+                                                                                        : "");
     }
     (void)g;
 }
@@ -22001,7 +22004,9 @@ static void build_pack(gen *g)
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
             uint64_t faces[6];
             uint32_t extra;
-            for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, false, &extra, prog->game_folder, NULL);
+            for (int k = 0; k < 6; k++) {
+                faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, d->sample_raw, false, &extra, prog->game_folder, NULL);
+            }
             tide_pack_name(&b, qualified, kind, tide_pack_list(&b, faces, 6), 6, (uint32_t)v->items[0].image.width);
             continue;
         }
@@ -24927,7 +24932,9 @@ static void gen_layout(gen *g)
                                                 : -1;
             const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
             sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s)},\n",
-                      STR_ARG(f->name), t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture" : layout_field_name(t),
+                      STR_ARG(f->name), t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture"
+                      : t.kind == TY_TEXTURE_ARRAY && field_is_raw(f) ? "[Raw] TextureArray"
+                      : t.kind == TY_CUBEMAP && field_is_raw(f) ? "[Raw] Cubemap" : layout_field_name(t),
                       layout_kind(t), dim, ref, name, field_cname(f), name,
                       field_cname(f));
         }

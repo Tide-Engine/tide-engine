@@ -60,7 +60,7 @@ static inline tide_texture_ref tide_texture_of_grid(const tide_grid grid, const 
 
 // A Grid3 of colors or of floats as a TextureArray: its layers (z) as the array's, as it is whenever it's drawn. A
 // name, as a grid's Texture is: nothing is copied here. None for a grid that isn't one of those.
-static inline tide_texture_array_ref tide_texture_array_of_grid(const tide_grid grid, const tide_grid_shape *shape)
+static inline tide_texture_array_ref tide_texture_array_of_grid(const tide_grid grid, const tide_grid_shape *shape, const bool raw)
 {
     const bool colors = shape->cell == sizeof(tide_color);
     if (shape->dims != 3u || (!colors && shape->cell != sizeof(float)) || shape->shift[0] > 15u || shape->shift[1] > 15u
@@ -68,24 +68,31 @@ static inline tide_texture_array_ref tide_texture_array_of_grid(const tide_grid 
         return (tide_texture_array_ref){0};
     }
     return (tide_texture_array_ref){.named = (uint64_t)grid.at, .reserved = TIDE_TEXTURE_ARRAY_GRID,
-                                    .layers = (colors ? 1u : 2u) | (uint32_t)shape->shift[0] << 8 | (uint32_t)shape->shift[1] << 16
+                                    .layers = (colors ? (raw ? 3u : 1u) : 2u) | (uint32_t)shape->shift[0] << 8 | (uint32_t)shape->shift[1] << 16
                                             | (uint32_t)shape->shift[2] << 24};
 }
 
-// The grid an array names, with its cells' shape: false for an array that's no grid's.
+// The grid an array names, with its cells' shape: false for an array that's no grid's. A [Raw] grid's colors are
+// numbers (tide_texture_array_grid_raw).
 static inline bool tide_texture_array_grid(const tide_texture_array_ref array, tide_grid *grid, tide_grid_shape *shape)
 {
     const uint32_t cells = array.layers & 255u;
-    if (array.target.id || array.reserved != TIDE_TEXTURE_ARRAY_GRID || (cells != 1u && cells != 2u)) return false;
+    if (array.target.id || array.reserved != TIDE_TEXTURE_ARRAY_GRID || cells < 1u || cells > 3u) return false;
     *grid = (tide_grid){(tide_handle)array.named};
-    *shape = (tide_grid_shape){.dims = 3u, .cell = cells == 1u ? (uint32_t)sizeof(tide_color) : (uint32_t)sizeof(float),
+    *shape = (tide_grid_shape){.dims = 3u, .cell = cells == 2u ? (uint32_t)sizeof(float) : (uint32_t)sizeof(tide_color),
                                .shift = {(uint8_t)(array.layers >> 8), (uint8_t)(array.layers >> 16), (uint8_t)(array.layers >> 24)}};
     return true;
 }
 
+static inline bool tide_texture_array_grid_raw(const tide_texture_array_ref array)
+{
+    return array.reserved == TIDE_TEXTURE_ARRAY_GRID && (array.layers & 255u) == 3u;
+}
+
 // A Grid3's texture of the list's, for an array read by a shader (TIDE_PIXELS_GRID_ARRAY): 0 for a grid that's no
 // array (no size on an axis, more than TIDE_TEXTURE_ARRAY_LAYERS layers, or a side past TIDE_GRID_TEXTURE_MOST).
-uint32_t tide_draw_grid_array_texture(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape);
+// `raw`: colors as they are, with no alpha worked into them.
+uint32_t tide_draw_grid_array_texture(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, bool raw);
 // Its size, and its layers: zeros for one that's none.
 tide_int3 tide_grid_array_extent(tide_grid grid, const tide_grid_shape *shape);
 

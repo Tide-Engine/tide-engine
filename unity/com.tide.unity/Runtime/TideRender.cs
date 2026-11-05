@@ -42,7 +42,7 @@ namespace Tide
             PipelineFree, Target, TargetFree, ResolveDepth, Begin, End, Scissor, Use, Stencil, Uniforms, Image, Vertices,
             Indices, Draw, DrawIndexed, PipelineStorage, Storage, ComputeBegin, ComputeEnd, Dispatch, DispatchIndirect,
             DrawIndirect, DrawIndexedIndirect, BufferCopy, BufferRead, DrawIndexedIndirectCount, Sampler, Array, ArrayLayer,
-            ArrayOf, ArrayWrite,
+            ArrayOf, ArrayWrite, TextureBlocks, ArrayBlocks,
         }
 
         // A buffer: vertices, read by the shaders as bytes, or indices, which Unity draws through as an index buffer
@@ -72,6 +72,7 @@ namespace Tide
             public RenderTexture arrayDepth; // An array drawn into: its depth array, freed with it...
             public uint arrayDepthId;        // ...which is read as this image
             public int used = -1;
+            public uint own = 15; // OpenGL Core's: how it samples itself this frame (Own), 15 for not yet
         }
 
         sealed class Target
@@ -123,7 +124,7 @@ namespace Tide
             public MaterialPropertyBlock properties; // ...and its pipeline's attributes and slots
             public GraphicsBuffer v0, v1, v2, index;
             public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize;
-            public uint first, sampling, samplingHigh, unmipped;
+            public uint first, sampling, samplingHigh, unmipped, own, ownHigh;
             public RenderTexture mipmapped; // Mipmaps
             public GraphicsBuffer[] storage; // Draw: the storage buffers it reads, or null
             public GraphicsBuffer arguments; // ...and an indirect one's numbers, copied where it is in the frame
@@ -211,6 +212,7 @@ namespace Tide
         static readonly int First = Shader.PropertyToID("_TideFirst"), Sampling = Shader.PropertyToID("_TideSampling");
         static readonly int SamplingHigh = Shader.PropertyToID("_TideSamplingHigh");
         static readonly int Unmipped = Shader.PropertyToID("_TideUnmipped");
+        static readonly int OwnLow = Shader.PropertyToID("_TideOwn"), OwnHigh = Shader.PropertyToID("_TideOwnHigh");
         static readonly int Uniforms = Shader.PropertyToID("TideUniforms"), DepthMS = Shader.PropertyToID("_TideDepthMS");
         static readonly int[] Offsets = { Shader.PropertyToID("_TideOffset0"), Shader.PropertyToID("_TideOffset1"), Shader.PropertyToID("_TideOffset2") };
         static readonly int[] Vertices = { Shader.PropertyToID("_TideVertices0"), Shader.PropertyToID("_TideVertices1"), Shader.PropertyToID("_TideVertices2") };
@@ -236,6 +238,11 @@ namespace Tide
         // Whether this GPU replays Tide's drawing: it computes, as each of Tide's renderers does, and its shaders read
         // raw buffers, three of vertices and four of storage a stage. Unity's OpenGL Core (4.5) does; OpenGL ES 3.0 and
         // WebGL 2 don't, as Tide has no backend that can't compute.
+        // The block formats this GPU samples, as tide_embed_render_formats takes them: 1 << 1 for BC1, 1 << 3 for BC3
+        public static uint BlockFormats =>
+            (SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.DXT1) ? 1u << 1 : 0u)
+            | (SystemInfo.SupportsTextureFormat(UnityEngine.TextureFormat.DXT5) ? 1u << 3 : 0u);
+
         public static bool Supported =>
             SystemInfo.supportsSetConstantBuffer && SystemInfo.supportsComputeShaders && SystemInfo.supportsIndirectArgumentsBuffer
             && SystemInfo.graphicsShaderLevel >= 45 && SystemInfo.graphicsDeviceType != GraphicsDeviceType.OpenGLES3
@@ -562,6 +569,8 @@ namespace Tide
                 case Op.Array: MakeArray(W(0), W(1), (int)W(2), (int)W(3), (int)W(4), W(5) != 0 ? p + 28 : null, W(6)); break;
                 case Op.ArrayLayer: MakeArrayLayer(W(0), W(1), (int)W(2)); break;
                 case Op.ArrayOf: MakeArrayOf(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4)); break;
+                case Op.TextureBlocks: MakeBlocks(W(0), (int)W(1), (int)W(2), 0, W(3), (int)W(4), (int)W(5), p + 24); break;
+                case Op.ArrayBlocks: MakeBlocks(W(0), (int)W(1), (int)W(2), (int)W(3), W(4), (int)W(5), (int)W(6), p + 28); break;
                 case Op.ArrayWrite:
                     Flush(); // After the work before it, which may sample it
                     WriteArray(W(0), (int)W(1), (int)W(2), (int)W(3), (int)W(4), (int)W(5), p + 24);
@@ -875,6 +884,56 @@ namespace Tide
             images[depthId] = new Image { texture = depth, element = RenderTextureSubElement.Depth, width = width, height = height };
         }
 
+        // A pack's image of blocks, every level given (TEXTURE_BLOCKS), or an array of them, `layers` chains `bytes` apart
+        // (ARRAY_BLOCKS, `layers` 0 for a texture): BC1, BC3 or RGBA8, as tide/texture_blocks.h lays them out. Never written
+        // again, so Unity keeps no copy of them.
+        void MakeBlocks(uint id, int width, int height, int layers, uint format, int levels, int bytes, byte* blocks)
+        {
+            var graphics = format == 1 ? GraphicsFormat.RGBA_DXT1_UNorm : format == 3 ? GraphicsFormat.RGBA_DXT5_UNorm
+                         : GraphicsFormat.R8G8B8A8_UNorm;
+            width = Math.Max(1, width);
+            height = Math.Max(1, height);
+            levels = Math.Max(1, levels);
+            var flags = levels > 1 ? TextureCreationFlags.MipChain : TextureCreationFlags.None;
+            var data = new byte[Math.Max(1, bytes)];
+            Texture made;
+            if (layers == 0)
+            {
+                var texture = new Texture2D(width, height, graphics, levels, flags) { hideFlags = HideFlags.HideAndDontSave };
+                Marshal.Copy((IntPtr)blocks, data, 0, bytes);
+                Levels(width, height, format, levels, (level, offset) => texture.SetPixelData(data, level, offset));
+                texture.Apply(false, true);
+                made = texture;
+            }
+            else
+            {
+                var array = new Texture2DArray(width, height, layers, graphics, flags, levels) { hideFlags = HideFlags.HideAndDontSave };
+                for (var layer = 0; layer < layers; layer++)
+                {
+                    Marshal.Copy((IntPtr)(blocks + (long)layer * bytes), data, 0, bytes);
+                    var each = layer;
+                    Levels(width, height, format, levels, (level, offset) => array.SetPixelData(data, level, each, offset));
+                }
+                array.Apply(false, true);
+                made = array;
+            }
+            if (images.TryGetValue(id, out var had) && had.owned) Doom(had.texture);
+            images[id] = new Image { texture = made, width = width, height = height, owned = true, mips = levels > 1 };
+        }
+
+        // Each level's place in a chain of tide/texture_blocks.h's: its bytes from the chain's start
+        static void Levels(int width, int height, uint format, int levels, Action<int, int> level)
+        {
+            var offset = 0;
+            for (var i = 0; i < levels; i++)
+            {
+                level(i, offset);
+                offset += format == 4 ? width * height * 4 : (width + 3) / 4 * ((height + 3) / 4) * (format == 1 ? 8 : 16);
+                width = Math.Max(1, width / 2);
+                height = Math.Max(1, height / 2);
+            }
+        }
+
         // An array of a format, zeros until written a part at a time (a Grid3's): its pixels kept here, each write a layer's
         static Texture2DArray NewArray(int format, int width, int height, int layers) =>
             new Texture2DArray(Math.Max(1, width), Math.Max(1, height), Math.Max(1, layers), TextureFormat(format), TextureCreationFlags.MipChain)
@@ -1168,6 +1227,7 @@ namespace Tide
             }
             Modes(pipeline, out var modes, out var modesHigh);
             uint unmipped = 0;
+            ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
                 Texture texture = white;
@@ -1177,8 +1237,8 @@ namespace Tide
                     if (!image.mips) unmipped |= 1u << i; // No smaller images yet: blended, as gpu.h has it (tidehl_mode)
                     texture = image.texture;
                     element = image.element;
+                    if (ownSamplers && element == RenderTextureSubElement.Default) owns = OwnBits(owns, i, Own(image, OwnMode(pipeline, i, image.mips)));
                     image.used = Time.frameCount;
-                    if (ownSamplers && element == RenderTextureSubElement.Default) Sample(texture, OwnMode(pipeline, i, image.mips));
                 }
                 into.textures.Add(texture);
                 into.elements.Add(element);
@@ -1187,6 +1247,8 @@ namespace Tide
             c.sampling = modes;
             c.samplingHigh = modesHigh;
             c.unmipped = unmipped;
+            c.own = (uint)owns;
+            c.ownHigh = (uint)(owns >> 32);
             into.commands.Add(c);
         }
 
@@ -1338,6 +1400,7 @@ namespace Tide
             cb.SetComputeConstantBufferParam(cs, Groups, groupsBuffer, 0, 16);
             Modes(pipeline, out var modes, out var modesHigh);
             uint unmipped = 0;
+            ulong owns = AllUnknown;
             for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
                 Texture texture = white;
@@ -1347,7 +1410,8 @@ namespace Tide
                     if (!image.mips) unmipped |= 1u << i;
                     texture = image.texture;
                     element = image.element;
-                    if (ownSamplers && element == RenderTextureSubElement.Default) Sample(texture, OwnMode(pipeline, i, image.mips));
+                    if (ownSamplers && element == RenderTextureSubElement.Default) owns = OwnBits(owns, i, Own(image, OwnMode(pipeline, i, image.mips)));
+                    image.used = Time.frameCount;
                 }
                 if (element == RenderTextureSubElement.Depth)
                     cb.SetComputeTextureParam(cs, kernel, Textures[i], new RenderTargetIdentifier(texture), 0, RenderTextureSubElement.Depth);
@@ -1356,6 +1420,8 @@ namespace Tide
             cb.SetComputeIntParam(cs, Sampling, (int)modes);
             cb.SetComputeIntParam(cs, SamplingHigh, (int)modesHigh);
             cb.SetComputeIntParam(cs, Unmipped, (int)unmipped);
+            cb.SetComputeIntParam(cs, OwnLow, (int)(uint)owns);
+            cb.SetComputeIntParam(cs, OwnHigh, (int)(uint)(owns >> 32));
             if (indirect) cb.DispatchCompute(cs, kernel, numbers, 0);
             else cb.DispatchCompute(cs, kernel, (int)x, (int)y, (int)z);
         }
@@ -1418,8 +1484,24 @@ namespace Tide
             return (mode & 3) == 2 && !mips ? mode & ~3u | 1 : mode;
         }
 
-        // OpenGL Core's: the texture's own sampler, as the draw asks for it (the frame's last draw of it says, for all of
-        // them: OpenGL in Unity has no samplers apart from textures).
+        // OpenGL Core's: how a texture samples itself this frame. Unity's OpenGL has no samplers apart from textures, and a
+        // texture's filter and wrap are what every draw of the frame reads it with, as they run after it's all recorded:
+        // so they're set by the frame's first draw that reads it, and a draw that reads it another way has its shader
+        // emulate that way from its pixels (hlsl.c, tidehl_emulated). 15 a texture, as _TideOwn says, for none known.
+        const ulong AllUnknown = ulong.MaxValue;
+
+        static ulong OwnBits(ulong owns, int i, uint own) => owns & ~(15ul << (4 * i)) | (ulong)(own & 15u) << (4 * i);
+
+        static uint Own(Image image, uint wanted)
+        {
+            if (image.used != Time.frameCount || image.own == 15u)
+            {
+                Sample(image.texture, wanted);
+                image.own = wanted & 15u;
+            }
+            return image.own;
+        }
+
         static void Sample(Texture texture, uint mode)
         {
             var filter = mode & 3;
@@ -1501,6 +1583,8 @@ namespace Tide
                         cb.SetGlobalInteger(Sampling, (int)c.sampling);
                         cb.SetGlobalInteger(SamplingHigh, (int)c.samplingHigh);
                         cb.SetGlobalInteger(Unmipped, (int)c.unmipped);
+                        cb.SetGlobalInteger(OwnLow, (int)c.own);
+                        cb.SetGlobalInteger(OwnHigh, (int)c.ownHigh);
                         if (c.uniformSize > 0) cb.SetGlobalConstantBuffer(r.uniformBuffer, Uniforms, c.uniformAt, c.uniformSize);
                         if (c.storage != null)
                         {

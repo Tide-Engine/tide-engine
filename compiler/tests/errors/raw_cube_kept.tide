@@ -1,0 +1,17 @@
+// expect: 'numbers' is [Raw], its pixels numbers and not colors to draw: it's no Cubemap to draw with or hand on
+[Raw]
+asset Cubemap numbers = "../e2e/cubes/sky/*.png";
+
+local singleton Art
+{
+    Cubemap kept;
+}
+
+view Show(mut Art art)
+{
+    art.kept = numbers;
+}
+
+scene Main
+{
+}
