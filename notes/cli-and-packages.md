@@ -1,5 +1,24 @@
 # `tide`, packages and the package
 
+## Windows watched-run shutdown (2026-11-05)
+
+Closing a game's window could leave `tide run` blocked during CRT exit: its
+detached terminal reader held stdin's FILE lock in `fgets`. The Windows reader
+now uses `ReadFile` on the CRT stdin descriptor's OS handle, so it holds no
+stdio lock while waiting. This also respects redirected stdin. Restart-line
+handoff, CR/newline trimming, EOF and final partial lines remain in place;
+Windows now chunks raw bytes like POSIX (255 bytes, including CR in CRLF).
+No host/runtime boundary or watch policy changed.
+
+`tide_cli_terminal_exit` keeps an input pipe open after sending a restart line
+and returns while the reader waits again; CTest bounds shutdown to 10 seconds.
+The old Windows implementation times out in the same probe; the fixed ASan
+executable exits in 0.16 seconds. Windows Clang 23.1.2 ASan CLI build and six
+focused CTests pass: unit, run_exit, terminal_exit, help, hidden and build_overlap
+(Node 24.22.1). The overlap fixture first lacked its compiler helper; after
+building that target, it passes. No visible game was launched. Console close
+interaction and Linux/macOS remain manual/CI coverage; no WASM code changed.
+
 ## Optimized plumbing in debug builds (2026-11-04)
 
 Asked for by the owner: a plain debug `tide run` of a large game (Mount & Rifle) was unplayable, while
