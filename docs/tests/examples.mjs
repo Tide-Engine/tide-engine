@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { handler } from '../build/handler.js';
 import { headers } from '../headers.js';
 import { createRelay } from '../../relay/relay.mjs';
+import { adapterExpression, adapterVerdict, gpuFlags as webGpuFlags } from '../../cmake/web_gpu.mjs';
 
 const docs = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const browser = [process.env.TIDE_BROWSER, '/usr/bin/google-chrome', '/usr/bin/chromium',
@@ -62,16 +63,10 @@ const server = createServer((req, res) => {
 });
 await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
-// The browser's software WebGPU, which games draw with, and its own drawing where it can show WebGPU's images
-// (as cmake/run_web_served_test.mjs runs it): WARP on Windows, SwiftShader's Vulkan on Linux
-// --disable-gpu-watchdog: a software GPU's slow frames on a small CI runner otherwise get its GPU process killed
-// ("A valid external Instance reference no longer exists"), and the next examples find no adapter
-const gpuFlags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--disable-gpu-watchdog',
-    ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
-    // SwiftShader's Vulkan shows WebGPU's pixels under WSL but gives no adapter on GitHub's Linux runners, where
-    // the default draws them unseen: enough here, which counts frames drawn (cmake/run_web_served_test.mjs)
-    ...(process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1'
-        ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : [])];
+// The browser's WebGPU as cmake/run_web_served_test.mjs has it (cmake/web_gpu.mjs): software (SwiftShader, its
+// own drawing through WARP on Windows), enough here, which counts frames drawn; or the machine's GPU with
+// TIDE_WEB_HARDWARE=1, where a software adapter fails the run
+const gpuFlags = webGpuFlags();
 // --mute-audio: headless, it still plays through the machine's device once a page's AudioContext runs
 const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--mute-audio', '--remote-debugging-port=0', `--user-data-dir=${profile}`, ...gpuFlags,
@@ -347,8 +342,15 @@ try {
         await shoot(`${id}-collapsed`);
     }
     const visited = new Set();
+    let adapterKnown = false;
     for (const page of pages) {
         await command('Page.navigate', { url: `${origin}${page}` });
+        if (!adapterKnown) { // The browser's WebGPU adapter, asked in its first page (cmake/web_gpu.mjs)
+            adapterKnown = true;
+            const { line, failure } = adapterVerdict(await evaluate(adapterExpression));
+            console.log(line);
+            if (failure) throw new Error(failure);
+        }
         // The whole page, not what of it has arrived: its examples are listed
         // next, and the last of a long page's comes after the first.
         await until(`location.pathname === '${page}' && document.readyState !== 'loading' && document.querySelector('.tide-example')`, `${page} page`);

@@ -1,5 +1,13 @@
 # Web builds
 
+## Occlusion culling's depth on WebGPU, its samples read (2026-11-05)
+
+`gpu_depth_far` became `gpu_depth_now` with `gpu_depth_samples` (`depth_now` in gpu_web.c): a multisampled target's
+depth is its samples' own texture, wrapped once as a texture of the program's (`t.samples`, let go with its bind
+groups when the target goes), which occlusion's pyramid kernel loads sample by sample (`READ_SAMPLES`, a
+`multisampled` depth binding in `layoutFor`); `depthFarthest` and `t.far` are gone. The release runtime was
+regenerated. drawing.md, Occlusion's measure made cheaper.
+
 ## Occlusion culling's depth on WebGPU (2026-11-05)
 
 `gpu_depth_far` (tide.js, `depth_far` in gpu_web.c): a target's depth texture; a multisampled target's every sample's

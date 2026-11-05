@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define TIDE_BUILTIN_SPIRV(X) X(shape) X(smooth_shape) X(solid_shape) X(mesh) X(text) X(quad) X(text_quad) X(mesh_3d) X(clear) X(clear_all) \
-    X(run_size) X(add_offsets) X(add_scatter)
+    X(run_size) X(add_offsets) X(add_scatter) X(hiz_one) X(hiz_samples)
 
 #define TIDE_DECLARE_SPIRV(name)                                                                                       \
     extern const uint32_t tide_spirv_##name[];                                                                         \

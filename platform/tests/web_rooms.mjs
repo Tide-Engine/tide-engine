@@ -27,6 +27,8 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 
+import { adapterVerdict, gpuFlags, hardware, probeAddress, probeRoute } from '../../cmake/web_gpu.mjs';
+
 import { createRelay } from '../../relay/relay.mjs';
 
 const [browser, gamePage, profile, mode] = process.argv.slice(2);
@@ -130,8 +132,17 @@ const page = `<!doctype html>
 const said = []; // Every line, as it came
 let finish;
 const result = new Promise(resolve => { finish = resolve; });
+let adapter = null; // The browser's WebGPU adapter, once the probe said (cmake/web_gpu.mjs)
 const server = createServer((request, response) => {
-    if (request.url.split('?')[0] === '/') { // The page, with its query (gpu=none)
+    if (probeRoute(request, response, info => {
+        const { line, failure } = adapterVerdict(info);
+        adapter = line;
+        said.push(line);
+        if (hardware) console.log(line);
+        if (failure) finish({ passed: false, log: [...said, failure] });
+    })) {
+        // Asked before the page
+    } else if (request.url.split('?')[0] === '/') { // The page, with its query (gpu=none)
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end(page);
     } else if (request.url.startsWith('/game.html')) {
@@ -181,19 +192,16 @@ const child = spawn(browser, [
     '--disable-extensions',
     '--mute-audio', // Headless, it still plays through the machine's device
     `--user-data-dir=${profileDir}`,
-    // WebGPU in software, as cmake/run_web_served_test.mjs runs it: the browser's own drawing through WARP on
-    // Windows, without which Chrome has no WebGPU there, and SwiftShader's Vulkan on Linux
-    '--enable-unsafe-webgpu',
-    '--use-webgpu-adapter=swiftshader',
-    ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : []),
-    ...(process.platform === 'linux' && process.env.TIDE_WEB_LINUX_VULKAN === '1'
-        ? ['--use-angle=vulkan', '--use-vulkan=swiftshader', '--enable-features=Vulkan'] : []),
+    // WebGPU as cmake/run_web_served_test.mjs has it (cmake/web_gpu.mjs): software, or the machine's GPU with
+    // TIDE_WEB_HARDWARE=1
+    ...gpuFlags(),
     '--remote-debugging-pipe', // Ask Chrome to close its children and release the profile.
     // Both players are on this machine: let WebRTC use its real addresses
     '--disable-features=WebRtcHideLocalIpsWithMdns',
     '--allow-loopback-in-peer-connection',
     // A GPU that draws nothing where the browser gives none (TIDE_WEB_GPU_NONE=1: CI's Linux runners)
-    `http://127.0.0.1:${server.address().port}/${process.env.TIDE_WEB_GPU_NONE === '1' ? '?gpu=none' : ''}`,
+    // Through the probe of its WebGPU adapter (cmake/web_gpu.mjs)
+    `http://127.0.0.1:${server.address().port}${probeAddress(`/${process.env.TIDE_WEB_GPU_NONE === '1' ? '?gpu=none' : ''}`)}`,
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
 child.stdio[4].resume();
 child.stdio[3].on('error', error => finish({ passed: false, log: [`browser control: ${error.message}`] }));
@@ -208,6 +216,10 @@ const timeout = setTimeout(() => finish({ passed: false, log: [...said, 'the pag
 
 let { passed, log } = await result;
 clearTimeout(timeout);
+if (passed && hardware && !adapter) {
+    passed = false;
+    log.push('TIDE_WEB_HARDWARE=1, but the page never said which WebGPU adapter it had');
+}
 if (!exited) {
     let guard;
     const deadline = new Promise(resolve => { guard = setTimeout(() => resolve(false), 30000); });

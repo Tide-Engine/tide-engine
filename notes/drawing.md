@@ -2,6 +2,101 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Occlusion's measure made cheaper, listed runs in culled runs' calls (2026-11-05)
+
+Task (owner, through a parent agent): make the depth pyramid cheaper without changing results, and let ordinary
+listed runs go through the culled runs' count-drawn calls. Internal: no Tide or generated-C change; every pick is
+Claude's, Provisional.
+
+- **One dispatch a pyramid** (`hiz_one_wgsl` / `hiz_samples_wgsl` + `hiz_wgsl`, shaders.h; SPIR-V at build as the
+  renderer's other shaders, HLSL through `tide unity` as theirs). AMD's single-pass downsampler's shape: a group of 256
+  makes 16 by 16 texels of level 0 (one an invocation, from the 2 by 2 pixels it covers) and, in workgroup memory,
+  levels 1 to 4 (one texel a group at 4); the last group done (an `atomicAdd` on element 2 of `depths`, `HIZ_DONE`,
+  which that group sets back to 0) makes levels 5 on from every group's level 4. A first version made 64 by 64 a
+  group (4 by 4 an invocation, levels to 6): 135 groups at 1080p, 256 loads in a row each, and Mount & Rifle's GPU
+  0.06 ms slower than the per-level dispatches it replaced; a texel an invocation is about 2,000 groups. The levels are exactly
+  HiZFirst/HiZDown's (both gone from cull.tide, with HiZSource and their uniforms): a texel is the farthest of the
+  texels below it that exist, the second of each way read where the level before has it, so odd edges and -0 come
+  out alike. Every element is an `atomic<i32>` (stores and loads device-scoped relaxed atomics, `storageBarrier`
+  before the count), as texels one group writes another reads: WGSL promises no more across groups, and SPD on
+  WebGPU relies on the same. Written in WGSL by hand rather than Tide: Tide's kernels have no multisampled depth.
+- **Samples read where they are** (`gpu.h depth_now(target, &samples)`, replacing `depth_far`;
+  `TIDE_GPU_READ_SAMPLES`, `texture_depth_multisampled_2d`): a multisampled target's depth is no longer resolved by
+  its farthest sample into a texture of its own first; the kernel loads every sample of the 2 by 2 pixels. Vulkan: a
+  4-sample target's depth image is made `SAMPLED` where `sampledImageDepthSampleCounts` has its count
+  (`vk_target.samples_read`), seen through a depth-only view as a texture of its own (`samples_texture`, freed with the
+  target), turned to `DEPTH_STENCIL_READ_ONLY_OPTIMAL` by `depth_now` and back by the next pass, `resolve_depth` or
+  `depth_now`'s MAX resolve (`samples_back`); a device that can't sample so many keeps the MAX resolve, and samples 1.
+  WebGPU: the samples' texture as a texture of the program's (`t.samples`, its bind groups let go with the target);
+  `depthFarthest` is gone. The window keeps its copy (Vulkan) or its canvas texture (WebGPU), one sample.
+- **Measured where the pass has ended anyway** (`hiz_plan`, `cull_spans_at`, `cull_spans_start`). Each span gets an
+  `at`: the last step no later than its first at which no pass is going on whatever happens at run time (a kernel's
+  run or GPU list operation came just before, or the step before went into another destination, and nothing since
+  draws), if that's after something wrote depth into the destination since its last clear; else its first, as
+  before. At `at` with no pass going on (and the destination begun this frame), or at its first in any case, the span
+  is measured; past its first unmeasured, never. Depth only gets nearer from `at` to the span's draws (no clear
+  between), so what the earlier depth hides is hidden later too: the same pixels; what's drawn between hides nothing
+  more. `tide_platform_occlusion_report.breaks` counts the passes ended for a measure.
+- **One pyramid a destination while nothing's drawn into it** (`hiz_room`): each destination a span measures has its
+  own room in `depths` (rooms laid one after another; at most `HIZ_MOST_WORDS`); a span whose room's pyramid was made
+  since the destination's last pass began (`frame_target.passes`) uses it. Spans measured at the same step share one,
+  and all of a step's are one compute pass. `report.measured` (spans culled again) and `report.pyramids` (made).
+- **Spans that can hide nothing aren't**: where nothing has written depth into the destination since its last clear
+  (or this frame, for a target the frame doesn't clear), a span is no span: no measure, no pass ended, its draws keep
+  the frame's culling. Not built: a test of the run's whole bounds against a pyramid's top level before measuring
+  (Mount & Rifle's field and the benchmark's town span the screen, so it would skip nothing there).
+- **Ordinary listed runs in culled runs' calls** (cull_run, `cull_listed_takes`, `cull_fixed`). A listed step drawn
+  through its listed pipeline (a 3D shader's own mesh, not decided by the CPU for a culled run, not indirect or pulled)
+  that draws alike beside culled steps (cull_joins_with, now also comparing the GPU lists a shader reads) is a bucket
+  of their join: no groups, `CullBucket.a.w` its count of places, which the CPU writes into its region of `places`
+  from the list's instances; CullOffsets counts them in (`sums + a.w`) and CullDraws writes its record as any other's.
+  First a pass over the steps finds runs of steps that draw alike; only those with a culled step take their listed
+  ones in (a call gained), the rest draw as before. A run's culled steps all test occlusion or none does, a listed one
+  taking the side of the run's first (so no join begins before a span it reaches into); listed buckets inside a span
+  are counted again unchanged. Stats count them by the GPU's records; an absorbed step's geometry rows are its own
+  instances; `tide_platform_cull_report.listed`, and `runs` the culled alone.
+- **Not built, and why**: levels of different meshes in one call (their vertices are other buffers: a family of
+  several meshes' vertices too, copied on the GPU, with records' base vertices) and a draw whose levels start lower
+  than its set's joining that set at recording. In Mount & Rifle's menu field 11 neighbouring culled runs a frame
+  fail to join only for another mesh, of 719 calls; levels starting lower are records within one call already, not
+  calls; and the scene has no ordinary listed runs. (Counted with temporary counters in cull_run, not committed.) What keeps neighbours apart there: another pipeline (175 a
+  frame), other textures (156), other values (39), another mesh (27).
+- **Layout**: `tide_platform_occlusion_report` `measured`, `breaks`; `tide_platform_cull_report.listed`;
+  `frame_target.passes`; `gpu.h depth_now` (was `depth_far`), `TIDE_GPU_READ_SAMPLES`; cull.tide's `Culling` lost
+  `from`..`toHeight`. Hosts, libraries and games rebuild together; the recorder's packet and the embed ABI are
+  unchanged (the recorder never culls on the GPU).
+- **Tests**: `tide_platform_occlusion` gains shots with something drawn into another target between the walls and the
+  field (`Shot.aside`): both runs testing it measured there, one pyramid, no pass ended for them; every shot checks its
+  spans (two, none for the camera inside the field, whose walls are out of view, and none after `ClearDepth`),
+  measured, pyramids and breaks (two each without `aside`); whether the GPU culled is now `cull_report.runs`. Vulkan
+  with validation 282 checks, also with `TIDE_VULKAN_DESCRIPTOR_SETS=1`, `TIDE_VULKAN_INDIRECT_COUNT=0`, and once by
+  hand with `samples_read` forced off (the MAX resolve's path: 282); WebGPU 194. `tide_platform_cull`: setting 5's
+  camera 2 sees no wall, so it measures nothing; the half-mirrored patch's ordinary listed runs (CPU-culled) are
+  drawn by the culled runs' calls beside them (5 over the shots), records read back as written (`misdrawn` 0), the
+  same pixels: Vulkan 168 checks in each of the three modes, WebGPU 94. `tide_platform_kernels` 45 in each mode;
+  `_compute`, `_compute_vulkan_sets`, `_draw`, `_draw_vulkan_sets`, `_targets`, `_cull_decided`, `tide_spirv_shaders_valid`,
+  `tide_hlsl_shaders_valid` (the pyramid's HLSL through fxc), `tide_platform_embed`, `_embed_shards`,
+  `tide_editor_embed`, `bench_occlusion --quick`, `tide_tests` (653), native ASan; on web-debug `tide_tests` and the
+  platform draw (and RGBA fallback), targets, compute, kernels, occlusion and cull pages.
+- **Measured** (release, hidden, 1920x1080, Vulkan, RTX 4080 SUPER; the previous commit d9af710b3 against this, both
+  through one scratch `TIDE_EXTERNAL_DIRS` folder):
+  - `bench_occlusion`, two alternating pairs of 4 blocks of 300 frames: with one prop a list (the measure's fixed
+    cost) 0.123 / 0.123 -> 0.101 / 0.101 ms with occlusion on, 0.052 off both; the town 0.528 / 0.532 -> 0.425 /
+    0.420 ms median on (off 6.3 ms both, at the clocks of that session).
+  - Mount & Rifle f34b07a's menu field scene (`SetOcclusion(true)` at DrawFlora's start under a define, so the same
+    game with it off is the base; `--profile --profile-warmup 300`, 1,800 frames, fresh `--data-dir`, alternating):
+    the scene target's passes 35.81 -> 34.81 a frame with occlusion on (34.81 off): its span is measured 3 steps
+    before its first, where the pass had ended anyway; the same 1.109 M of 1.968 M instances hidden. GPU p50 with
+    occlusion on 5.342 / 5.375 -> 5.261 / 5.291 ms (another session's three pairs: 5.40-5.55 -> 5.34-5.35), off
+    5.21-5.23 -> 5.20: occlusion's cost there about 0.15 -> 0.07 ms. Draw calls 719.5 a frame both ways, as the scene
+    has no ordinary listed runs. Runs where another program used the GPU (frames of 6-9 ms, either build and either
+    way) are left out; the machine was shared with other agents' GPU tests.
+- **Gaps**: the window's Vulkan copy stays (a one-sample image read in place would save it; no test draws the
+  window's span measured); occlusion's cost in Mount & Rifle is now mostly the measure itself (the samples' layout
+  turns and the pyramid's reads of 4 samples, about 0.07 ms), which its far, cheap levels don't win back; a span's own
+  draws still don't hide each other; the cross-group handoff relies on device-scoped atomics, as SPD does on WebGPU;
+  WebGPU on hardware, other GPUs, Linux, macOS and Android unmeasured.
+
 ## Occlusion with runs drawn by a count, joined (2026-11-05)
 
 Task: merge the two branches built from 6c2b5d53c the same day (Culled runs drawn by a count, joined; Occlusion culling
@@ -46,8 +141,11 @@ Claude's, Provisional.
   by one in a color byte at a few pixels (1 to 12 a shot of `tide_platform_occlusion`, at walls 4 and 6 too), with
   occlusion off as well (fewer), never in one-sample destinations; Vulkan doesn't. A resolve of samples whose colors
   differ by rounding between the listed and ordinary vertex stages is the likely cause; unexamined. No test draws WebGPU
-  on hardware (the runner's default is SwiftShader).
-- **Not measured**: Mount & Rifle with occlusion on and off at this merge. `bench_occlusion --quick` passes (sanitize).
+  on hardware (the runner's default is SwiftShader). (Since, the same day: not the vertex stages, and not ours. That
+  device draws the same 4-sample frame differently from one time to the next, the CPU path too, and a replay of the pass
+  with nothing of Tide's does as well. `tide_platform_occlusion` notes those shots there rather than failing them, and
+  the hardware lane runs it: `notes/testing.md`, A GPU whose 4-sample frames differ from themselves.)
+- **Not measured**: Mount & Rifle with occlusion on and off at this merge. `bench_occlusion --quick` passes (sanitize). (Since: Occlusion's measure made cheaper, above.)
 
 ## Culled runs drawn by a count, joined (2026-11-05)
 
@@ -142,7 +240,8 @@ Provisional.
   - Chrome's multi-draw-indirect path is written to its documented signature but unrun: Chrome here doesn't offer the
     feature, so WebGPU draws a record a call (empty buckets cost a validated zero-instance draw each, as before).
   - Sets still don't join runs of bytes (a culled set beside an ordinary listed or copied run of the same mesh: a
-    separate pipeline, or places in another buffer); joins are of culled steps alone. A draw whose levels start lower
+    separate pipeline, or places in another buffer); joins are of culled steps alone. (Since: ordinary listed runs drawn
+    through their listed pipeline join; runs of bytes still don't. Occlusion's measure made cheaper, above.) A draw whose levels start lower
     than its set's still starts another set at recording; the renderer joins them back into one call where they're
     one after another, but they're separate draws in the call.
   - Levels of different meshes can't share a call (their vertices are other buffers); a shader that rolls is a call a
@@ -256,7 +355,8 @@ per-draw setting; pixel-identical frames as the bar. Every pick below is Claude'
     still can't run at this commit (its first click misses the new menu).
 - **Gaps**: no occlusion among a span's own draws (the two-phase form that had it couldn't keep ties' order); the
   measure always splits the pass at the span (riding a break the destination already has before it would save most of
-  the multisampled cost, and a single-dispatch downsample the per-level barriers); the visible window's paths
+  the multisampled cost, and a single-dispatch downsample the per-level barriers; both built since, with samples read
+  in place: Occlusion's measure made cheaper, above); the visible window's paths
   (Vulkan's copy, WebGPU's canvas texture) are built but run by no test (every test draws into targets, and no window
   may be shown); a Vulkan device without the MAX depth resolve measures no multisampled target; the CPU's decided runs
   and the recorder don't occlusion-cull; counts are per frame, not per draw row; Linux, macOS, Android, other GPUs and

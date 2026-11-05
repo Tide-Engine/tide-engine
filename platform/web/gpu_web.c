@@ -51,7 +51,8 @@ TIDE_WEB_IMPORT(gpu_target_limit) int tide_web_gpu_target_limit(void);
 TIDE_WEB_IMPORT(gpu_target_texture) tide_gpu_id tide_web_gpu_target_texture(tide_gpu_id target, uint32_t color);
 TIDE_WEB_IMPORT(gpu_target_depth) tide_gpu_id tide_web_gpu_target_depth(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_resolve_depth) void tide_web_gpu_resolve_depth(tide_gpu_id target);
-TIDE_WEB_IMPORT(gpu_depth_far) tide_gpu_id tide_web_gpu_depth_far(tide_gpu_id target);
+TIDE_WEB_IMPORT(gpu_depth_now) tide_gpu_id tide_web_gpu_depth_now(tide_gpu_id target);
+TIDE_WEB_IMPORT(gpu_depth_samples) uint32_t tide_web_gpu_depth_samples(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_target_free) void tide_web_gpu_target_free(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_target_read) void tide_web_gpu_target_read(tide_gpu_id target, uint8_t *rgba);
 TIDE_WEB_IMPORT(gpu_begin) void tide_web_gpu_begin(tide_gpu_id target, bool clear);
@@ -107,6 +108,13 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
 
 // WebGPU has two sample counts, 1 and 4, for every format here: what asks for
 // more than 1 has 4. A target of depth alone has 1.
+// What a target's depth holds now: its texture, or a multisampled one's samples (gpu.h)
+static tide_gpu_id tide_web_gpu_depth_now_of(const tide_gpu_id target, uint32_t *samples)
+{
+    *samples = tide_web_gpu_depth_samples(target);
+    return tide_web_gpu_depth_now(target);
+}
+
 static uint32_t tide_web_gpu_target_samples(const tide_gpu_target_format format)
 {
     return tide_gpu_target_samples(format) > 1u && tide_gpu_target_colors(format) ? 4u : 1u;
@@ -149,7 +157,7 @@ const tide_gpu tide_gpu_webgpu = {
     .target_texture = tide_web_gpu_target_texture,
     .target_depth = tide_web_gpu_target_depth,
     .resolve_depth = tide_web_gpu_resolve_depth,
-    .depth_far = tide_web_gpu_depth_far,
+    .depth_now = tide_web_gpu_depth_now_of,
     .target_free = tide_web_gpu_target_free,
     .target_read = tide_web_gpu_target_read,
     .begin = tide_web_gpu_begin,

@@ -164,11 +164,17 @@ typedef struct vk_target {
     uint32_t color_count;
     tide_gpu_id colors[TIDE_GPU_MAX_COLORS]; // Textures: what's sampled and read back, and a multisampled one's resolves
     tide_gpu_id depth;                        // A texture: 0 for a multisampled one's until its depth is resolved
-    tide_gpu_id far;                          // A multisampled one's farthest depth of each pixel's samples (depth_far)
+    tide_gpu_id far;                          // A multisampled one's farthest depth of each pixel's samples (depth_now)
     // A multisampled one's images of samples, which passes draw into
     VkImage many[TIDE_GPU_MAX_COLORS], many_depth;
     VkImageView many_views[TIDE_GPU_MAX_COLORS], many_depth_view;
     vk_alloc many_memory[TIDE_GPU_MAX_COLORS], many_depth_memory;
+    // ...whose depth's samples a kernel reads (depth_now) where the device samples a depth of so many: a texture
+    // that's its image seen as depth alone, and whether the image is turned for reading till its next use as depth
+    bool samples_read;
+    tide_gpu_id samples_texture;
+    VkImageView samples_view;
+    bool samples_turned;
     bool bytes;       // Its first color image is 4 bytes a pixel: what's read back
     bool face;        // A cube's face
     tide_gpu_id cube; // ...of this cube
@@ -244,7 +250,7 @@ static struct {
     uint32_t epoch;
     bool lost;
     bool push; // Draws push what they read (VK_KHR_push_descriptor), else write sets of the frame's
-    bool depth_max; // A multisampled depth resolves to the farthest of its samples (VK_RESOLVE_MODE_MAX_BIT): depth_far
+    bool depth_max; // A multisampled depth resolves to the farthest of its samples (VK_RESOLVE_MODE_MAX_BIT): depth_now
     double timestamp_ns; // A timestamp's tick, in nanoseconds: 0 for none
 
     // The window's images
@@ -259,7 +265,7 @@ static struct {
     VkImageView window_depth_view;
     vk_alloc window_depth_memory;
     bool window_depth_new;       // Its layout is still undefined
-    tide_gpu_id window_far;      // A copy of its depth, for occlusion culling to measure (depth_far)...
+    tide_gpu_id window_far;      // A copy of its depth, for occlusion culling to measure (depth_now)...
     uint32_t window_far_epoch;   // ...made on this device
     uint32_t image;              // The image the frame draws in...
     bool acquired;               // ...once it has one
@@ -1094,7 +1100,7 @@ static bool make_swapchain(void)
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = vk.depth_format,
         .extent = {extent.width, extent.height, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, // ...copied by depth_far
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, // ...copied by depth_now
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
     if (!make_image(&depth, &vk.window_depth_memory, &vk.window_depth)) {
@@ -1740,9 +1746,12 @@ static tide_gpu_id vk_target_make(const tide_gpu_target_format format, const int
             vkCmdClearColorImage(cb, t->many[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &all);
             turn(cb, t->many[i], f, 0, 1, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
+        // Its samples read by occlusion culling's kernel (depth_now) where the device samples a depth of so many
+        t->samples_read = (vk.properties.limits.sampledImageDepthSampleCounts & t->samples) != 0;
         if (!many_image(vk.depth_format, width, height, t->samples,
-                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, &t->many_depth,
-                        &t->many_depth_memory, &t->many_depth_view)) {
+                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                            | (t->samples_read ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u),
+                        &t->many_depth, &t->many_depth_memory, &t->many_depth_view)) {
             fprintf(stderr, "tide: Vulkan: no memory for a target of %u samples a pixel\n", (unsigned)t->samples);
             abort();
         }
@@ -1821,6 +1830,9 @@ static void vk_target_free(const tide_gpu_id id)
     if (depth) forget_texture(depth);
     vk_texture *far = texture_of(t->far);
     if (far) forget_texture(far);
+    vk_texture *samples = texture_of(t->samples_texture);
+    if (samples) forget_texture(samples); // Its image is the target's, and its view, below
+    DISCARD(VK_OBJECT_TYPE_IMAGE_VIEW, t->samples_view, NULL);
     for (uint32_t i = 0; i < TIDE_GPU_MAX_COLORS; i++) {
         DISCARD(VK_OBJECT_TYPE_IMAGE_VIEW, t->many_views[i], NULL);
         DISCARD(VK_OBJECT_TYPE_IMAGE, t->many[i], &t->many_memory[i]);
@@ -1828,6 +1840,15 @@ static void vk_target_free(const tide_gpu_id id)
     DISCARD(VK_OBJECT_TYPE_IMAGE_VIEW, t->many_depth_view, NULL);
     DISCARD(VK_OBJECT_TYPE_IMAGE, t->many_depth, &t->many_depth_memory);
     *t = (vk_target){0};
+}
+
+// A multisampled target's samples, turned for a kernel to read them (depth_now), turned back for use as depth.
+static void samples_back(const VkCommandBuffer cb, vk_target *t)
+{
+    if (!t->samples_turned) return;
+    turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    t->samples_turned = false;
 }
 
 // A multisampled target's depth, a sample of each pixel's, into a texture of
@@ -1846,6 +1867,7 @@ static void vk_resolve_depth(const tide_gpu_id id)
     vk_texture *d = &vk.textures[t->depth - 1u];
     const VkCommandBuffer cb = outside();
     barrier_attachments(cb); // The passes that drew its samples
+    samples_back(cb, t);
     turn(cb, d->image, d->format, 0, 1, 0, 1, d->rest, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     const VkRenderingAttachmentInfo depth = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = t->many_depth_view,
@@ -1860,11 +1882,12 @@ static void vk_resolve_depth(const tide_gpu_id id)
     turn(cb, d->image, d->format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, d->rest);
 }
 
-// What a target's depth holds now, each pixel the farthest of its samples: its own depth texture, or for a
-// multisampled one, its samples resolved by the most of them into a texture of its own (gpu.h). None for the
-// window, whose depth is no texture, nor on a device that resolves no depth by the most.
-static tide_gpu_id vk_depth_far(const tide_gpu_id id)
+// What a target's depth holds now (gpu.h): its own depth texture; for a multisampled one, its samples, turned to be
+// read till their next use as depth (samples_back), or on a device that samples no depth of so many, resolved by
+// the most of them into a texture of its own; the window's copied. None on a device that can do none of those.
+static tide_gpu_id vk_depth_now(const tide_gpu_id id, uint32_t *samples)
 {
+    *samples = 1;
     if (vk.lost) return 0;
     if (!id) { // The window's, copied: its depth is an image of its own, drawn into in this frame's passes
         if (!vk.window_depth || vk.window_depth_new) return 0;
@@ -1898,6 +1921,29 @@ static tide_gpu_id vk_depth_far(const tide_gpu_id id)
     }
     vk_target *t = &vk.targets[id - 1u];
     if (t->samples <= 1u) return t->depth;
+    if (t->samples_read) { // Its samples as they are, seen as depth alone, in the layout a depth is read in
+        if (!t->samples_texture) {
+            const tide_gpu_id texture = texture_place();
+            t = &vk.targets[id - 1u];
+            t->samples_view = make_view(t->many_depth, VK_IMAGE_VIEW_TYPE_2D, vk.depth_format, VK_IMAGE_ASPECT_DEPTH_BIT,
+                                        0, 1, 0, 1);
+            vk.textures[texture - 1u] = (vk_texture){
+                .image = t->many_depth, .view = t->samples_view, .attach = t->samples_view, .format = vk.depth_format,
+                .width = t->width, .height = t->height, .levels = 1, .layers = 1,
+                .rest = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+                .depth = true, .owned = true, .shared = true};
+            t->samples_texture = texture;
+        }
+        if (!t->samples_turned) {
+            const VkCommandBuffer cb = outside();
+            barrier_attachments(cb); // The passes that drew its samples
+            turn(cb, t->many_depth, vk.depth_format, 0, 1, 0, 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                 VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+            t->samples_turned = true;
+        }
+        *samples = t->samples;
+        return t->samples_texture;
+    }
     if (!vk.depth_max) return 0;
     if (!t->far) {
         const tide_gpu_id far = depth_texture(t->width, t->height);
@@ -1908,6 +1954,7 @@ static tide_gpu_id vk_depth_far(const tide_gpu_id id)
     vk_texture *d = &vk.textures[t->far - 1u];
     const VkCommandBuffer cb = outside();
     barrier_attachments(cb); // The passes that drew its samples
+    samples_back(cb, t);
     turn(cb, d->image, d->format, 0, 1, 0, 1, d->rest, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     // Depth alone: its stencil, which a resolve by the most needn't take, is left as it is
     const VkRenderingAttachmentInfo depth = {
@@ -2248,7 +2295,8 @@ static void vk_begin(const tide_gpu_id target, const bool clear)
         depth.imageView = vk.window_depth_view;
         vk.image_drawn = true;
     } else {
-        const vk_target *t = &vk.targets[target - 1u];
+        vk_target *t = &vk.targets[target - 1u];
+        samples_back(vk.pass, t); // A kernel read its samples since the last pass on it
         width = t->width, height = t->height;
         for (uint32_t i = 0; i < t->color_count; i++) {
             const vk_texture *c = t->face ? texture_of(t->cube) : texture_of(t->colors[i]);
@@ -3173,7 +3221,7 @@ static bool create_device(const bool say)
         vkGetPhysicalDeviceProperties2(vk.physical, &properties);
         vk.push = pushes.maxPushDescriptors >= TIDE_GPU_STORAGE_BINDING + TIDE_GPU_MAX_STORAGE;
     }
-    { // Whether a multisampled depth resolves to its farthest sample: occlusion culling's measure (depth_far)
+    { // Whether a multisampled depth resolves to its farthest sample: occlusion culling's measure (depth_now)
         VkPhysicalDeviceDepthStencilResolveProperties resolves = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES};
         VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &resolves};
         vkGetPhysicalDeviceProperties2(vk.physical, &properties);
@@ -3503,7 +3551,7 @@ const tide_gpu tide_gpu_vulkan = {
     .target_texture = vk_target_texture,
     .target_depth = vk_target_depth,
     .resolve_depth = vk_resolve_depth,
-    .depth_far = vk_depth_far,
+    .depth_now = vk_depth_now,
     .target_free = vk_target_free,
     .target_read = vk_target_read,
     .target_read_part = vk_target_read_part,

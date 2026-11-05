@@ -207,6 +207,7 @@ typedef struct shot {
     float slide;
     int width, height;
     bool hides; // Some are hidden behind the walls
+    bool aside; // Something's drawn into another target between the walls and the field
 } shot;
 
 // (Walls at 9 to 13 aren't shot: there the second wall stands before box 32 of the first patch, and SwiftShader, the
@@ -214,18 +215,46 @@ typedef struct shot {
 // 4-sample target pass the depth test through the wall, 1.7 units nearer, on the CPU's path too. Chrome on this
 // machine's own GPU and Vulkan draw the wall there. Not ours: notes/drawing.md, Occlusion culling.)
 static const shot shots[] = {
-    {0, 0, WIDTH, HEIGHT, true},   {0, 0, WIDTH, HEIGHT, true},   {0, 6, WIDTH, HEIGHT, true},
-    {0, 4, WIDTH, HEIGHT, true},   {0, 30, WIDTH, HEIGHT, true},  {1, 30, WIDTH, HEIGHT, false},
-    {1, 30, WIDTH, HEIGHT, false}, {2, 30, WIDTH, HEIGHT, false}, {2, 30, WIDTH, HEIGHT, false},
-    {0, 0, WIDTH, HEIGHT, true},   {0, 0, 128, 80, true},         {0, 0, 128, 80, true},
+    {0, 0, WIDTH, HEIGHT, true, false},   {0, 0, WIDTH, HEIGHT, true, false},   {0, 6, WIDTH, HEIGHT, true, false},
+    {0, 4, WIDTH, HEIGHT, true, false},   {0, 30, WIDTH, HEIGHT, true, false},  {1, 30, WIDTH, HEIGHT, false, false},
+    {1, 30, WIDTH, HEIGHT, false, false}, {2, 30, WIDTH, HEIGHT, false, false}, {2, 30, WIDTH, HEIGHT, false, false},
+    {0, 0, WIDTH, HEIGHT, true, false},   {0, 0, WIDTH, HEIGHT, true, true},    {0, 4, WIDTH, HEIGHT, true, true},
+    {1, 30, WIDTH, HEIGHT, false, true},  {0, 0, 128, 80, true, false},         {0, 0, 128, 80, true, false},
 };
 enum { SHOTS = sizeof shots / sizeof *shots };
 
 typedef struct shot_tally {
     uint64_t hidden;
     int hid, hiding; // Shots that hid some, of those that should
-    uint32_t pyramids, spans, shots;
+    uint32_t pyramids, spans, measured, shots;
 } shot_tally;
+
+// Whether every pixel where a 4-sample shot's culled frame differs from the CPU's path is one the CPU's path itself
+// also draws that way, drawn up to 32 times more: some devices draw the same 4-sample frame differently from one time
+// to the next, at a few pixels (Chrome's WebGPU on an RTX 4080 SUPER, D3D12: notes/testing.md, A GPU whose 4-sample
+// frames differ from themselves), and not every time, so a count of frames that came out alike says nothing. Vulkan
+// and SwiftShader draw the same frame alike every time, so there a pixel that differs is never explained, and the shot
+// fails as ever.
+static bool explained_by_cpu(const int width, const int height)
+{
+    static uint32_t again[PIXELS];
+    static bool left[PIXELS];
+    int unexplained = 0;
+    for (int p = 0; p < width * height; p++) {
+        left[p] = culled[p] != plain[p];
+        unexplained += left[p];
+    }
+    for (int k = 0; k < 32 && unexplained; k++) {
+        draw_frame(width, height, false, again);
+        for (int p = 0; p < width * height; p++) {
+            if (left[p] && again[p] == culled[p]) {
+                left[p] = false;
+                unexplained--;
+            }
+        }
+    }
+    return unexplained == 0;
+}
 
 // A run of shots into `into`. False where the GPU's culling wasn't there yet (its pipelines still being made).
 static bool shots_drawn(const int into, const char *when, shot_tally *tally)
@@ -241,12 +270,31 @@ static bool shots_drawn(const int into, const char *when, shot_tally *tally)
         local.Shot.slide = s->slide;
         local.Shot.into = into;
         local.Shot.occlusion = true;
+        local.Shot.aside = s->aside;
         draw_frame(width, height, true, culled);
         tide_platform_occlusion(&report, false);
-        if (!report.spans) return false; // Its culling on the CPU, this frame
+        tide_platform_cull_report culling;
+        tide_platform_cull_compare(NULL, &culling);
+        if (!culling.runs) return false; // Its culling on the CPU, this frame
         tally->pyramids += report.pyramids;
         tally->spans += report.spans;
+        tally->measured += report.measured;
         tally->shots++;
+        {
+            // Two runs testing it measured, each after the walls, a draw without it between them: the run after the
+            // depth is cleared measures nothing, nor does any where nothing is drawn before (the camera inside the
+            // field). With something drawn into another target after the walls, both are measured there: the pass
+            // it ended, and one pyramid
+            char what[256];
+            const uint32_t spans = s->camera == 2 ? 0u : 2u;
+            snprintf(what, sizeof what, "%s, shot %d: %u runs testing occlusion, %u measured, %u pyramids, %u passes "
+                     "ended for them", names[into], i, report.spans, report.measured, report.pyramids, report.breaks);
+            const bool measured = report.measured == report.spans || (into == 2 && !report.measured);
+            expect(report.spans == spans && measured && report.pyramids <= report.measured
+                       && (!s->aside || !report.measured || (report.breaks == 0 && report.pyramids == 1))
+                       && (s->aside || !report.measured || (report.breaks == 2 && report.pyramids == 2)),
+                   what, when);
+        }
 #ifndef __wasm__
         tide_platform_occlusion(&report, true); // This frame's counts, back
         tally->hidden += report.hidden;
@@ -279,6 +327,12 @@ static bool shots_drawn(const int into, const char *when, shot_tally *tally)
                  "pixels as the CPU's path (%u differ of %u drawn; %llu hidden of %llu tested)", names[into], i,
                  s->camera, (double)s->slide, width, height, differ, drawn, (unsigned long long)report.hidden,
                  (unsigned long long)report.tested);
+        if (differ && into == 2 && explained_by_cpu(width, height)) {
+            // The CPU's path draws those pixels so too: notes/testing.md, A GPU whose 4-sample frames differ from
+            // themselves
+            printf("note: %s: each pixel that differs is one the CPU's path also draws so, another time\n", what);
+            continue;
+        }
         expect(differ == 0 && drawn > (uint32_t)(width * height / 20), what, when);
     }
     return true;
@@ -371,13 +425,14 @@ static int frame(void *user, const float seconds)
         for (int i = 0; i < 3; i++) {
             char what[200];
             snprintf(what, sizeof what, "into %d: %llu hidden by occlusion, in %d of the %d shots with the walls before "
-                     "the field; %u pyramids made, one for each of %u runs testing it", i,
+                     "the field; %u pyramids made for the %u runs testing it measured, of %u", i,
                      (unsigned long long)tallies[i].hidden, tallies[i].hid, tallies[i].hiding, tallies[i].pyramids,
-                     tallies[i].spans);
-            // A target of 4 samples has no pyramid on a device that can't resolve its depth by the most
+                     tallies[i].measured, tallies[i].spans);
+            // A target of 4 samples has no pyramid on a device that can neither read its samples nor resolve its
+            // depth by the most
             const bool measured = tallies[i].pyramids > 0 || i != 2;
-            expect(!measured || (tallies[i].hid == tallies[i].hiding && tallies[i].pyramids == tallies[i].spans
-                                 && tallies[i].spans >= 2u * tallies[i].shots), what, when);
+            expect(!measured || (tallies[i].hid == tallies[i].hiding && tallies[i].measured == tallies[i].spans
+                                 && tallies[i].spans > 0), what, when);
             if (!measured) printf("note: this device resolves no multisampled depth by its farthest sample\n");
         }
         stage = stage == 2 ? 3 : 7;

@@ -25,6 +25,13 @@ passes the last list drawn began, which `tide_platform_kernels` pins (2; 3 witho
 shader's pipeline has a vertex slot of stride 0, and one with GPU indices draws `draw_indirect` with the list's count.
 Details: notes/compute.md, Meshes over GPU lists.
 
+## Occlusion culling's depth, read where it is (2026-11-05)
+
+`gpu.h depth_now(target, &samples)` replaced `depth_far`: a multisampled target's depth is given as its samples
+(`TIDE_GPU_READ_SAMPLES`), which the renderer's pyramid kernel (shaders.h, one dispatch) loads, instead of being
+resolved by the farthest sample into a texture first; Vulkan makes such depth images `SAMPLED` where the device samples
+that many, and turns them back for their next pass. drawing.md, Occlusion's measure made cheaper.
+
 ## Occlusion culling's depth (2026-11-05)
 
 `gpu.h depth_far(target)`: what a destination's depth holds now, each pixel the farthest of its samples (a target's

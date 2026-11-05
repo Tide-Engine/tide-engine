@@ -1499,17 +1499,17 @@
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
     const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
     const READ_DATA = 4;        // TIDE_GPU_READ_DATA: ints, each pixel by its place
+    const READ_SAMPLES = 5;     // TIDE_GPU_READ_SAMPLES: a multisampled depth, each sample loaded
     const MAX_STORAGE = 7;      // TIDE_GPU_MAX_STORAGE
     const STORAGE_BINDING = 1 + 2 * MAX_TEXTURES; // TIDE_GPU_STORAGE_BINDING: storage buffer i is at this + i
-    const readsDepth = read => read === 1 || read === READ_COMPARE;
+    const readsDepth = read => read === 1 || read === READ_COMPARE || read === READ_SAMPLES;
     // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
-    let layouts = null, samplers = null, mipPipelines = null, depthResolver = null, depthFarthest = null;
+    let layouts = null, samplers = null, mipPipelines = null, depthResolver = null;
     function gpuStart() {
         layouts = new Map();
         mipPipelines = new Map();
         depthResolver = null;
-        depthFarthest = null;
         // By how it's read past its edges, then between pixels: 3 * tide_gpu_wrap's number + tide_gpu_filter's.
         // Only the last filter reads a texture's smaller images (gpu_mipmaps): the others keep to its own
         // pixels whatever it has and however a shader asks (lodMaxClamp). A change to either enum goes here.
@@ -1543,7 +1543,8 @@
             reads.forEach((read, i) => {
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
                     ? { sampleType: 'float', viewDimension: 'cube' }
-                    : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float' } });
+                    : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float',
+                        multisampled: read === READ_SAMPLES } });
                 // A depth is whole only at its nearest pixel, which a sampler that blends none reads. Ints are
                 // loaded, through no sampler: theirs is there so every texture's bindings are two
                 entries.push({ binding: 2 + 2 * i, visibility: stages, sampler: { type: read === READ_COMPARE ? 'comparison'
@@ -1631,7 +1632,7 @@
     const depthFormat = 'depth24plus-stencil8';
     const depthFor = (width, height, sampled) => device.createTexture({ size: [width, height], format: depthFormat,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | (sampled ? GPUTextureUsage.TEXTURE_BINDING : 0) });
-    // The canvas's depth, sampled too where occlusion culling measures it (gpu_depth_far): `far` is its texture's id
+    // The canvas's depth, sampled too where occlusion culling measures it (gpu_depth_now): `far` is its texture's id
     const windowTarget = { context: null, depth: null, far: 0, width: 0, height: 0 };
     function followCanvas() {
         if (windowTarget.width !== canvas.width || windowTarget.height !== canvas.height) {
@@ -2191,11 +2192,11 @@
             resolve.end();
             device.queue.submit([encoder.finish()]);
         },
-        // What a target's depth holds now, each pixel the farthest of its samples (occlusion culling's measure):
-        // its own depth texture, or a multisampled one's samples, the most of each pixel's, written by a pass over a
-        // texture of its own. None for the canvas, whose depth is no texture of the program's
-        gpu_depth_far(id) {
-            if (!id) { // The canvas's own, as its passes left it
+        // What a target's depth holds now (occlusion culling's measure): its own depth texture, or a multisampled
+        // one's samples as they are, which a kernel loads one by one (gpu_depth_samples says how many); the canvas's
+        // own, as its passes left it
+        gpu_depth_now(id) {
+            if (!id) {
                 const w = followCanvas();
                 if (!w.far) w.far = gpuAdd('texture', { texture: w.depth, view: w.depth.createView({ aspect: 'depth-only' }),
                     whole: w.depth.createView(), width: w.width, height: w.height, row: 0, groups: new Set() });
@@ -2203,43 +2204,11 @@
             }
             const t = gpuTables.target[id];
             if (!t.sampled) return t.depth;
-            if (!t.far) {
-                const texture = depthFor(t.width, t.height, true);
-                t.far = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
-                    whole: texture.createView(), width: t.width, height: t.height, row: 0, groups: new Set() });
-            }
-            if (!depthFarthest) {
-                const module = device.createShaderModule({ code: `
-                    @vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-                        return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0.0, 1.0);
-                    }
-                    @group(0) @binding(0) var samples: texture_depth_multisampled_2d;
-                    @fragment fn fragment(@builtin(position) at: vec4f) -> @builtin(frag_depth) f32 {
-                        var most = 0.0;
-                        for (var i = 0u; i < textureNumSamples(samples); i++) {
-                            most = max(most, textureLoad(samples, vec2i(at.xy), i32(i)));
-                        }
-                        return most;
-                    }` });
-                const layout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT,
-                    texture: { sampleType: 'depth', multisampled: true } }] });
-                depthFarthest = { layout, pipeline: device.createRenderPipeline({
-                    layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-                    vertex: { module, entryPoint: 'vertex' }, fragment: { module, entryPoint: 'fragment', targets: [] },
-                    depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'always' } }) };
-            }
-            const encoder = device.createCommandEncoder();
-            const resolve = encoder.beginRenderPass({ colorAttachments: [], depthStencilAttachment: {
-                view: gpuTables.texture[t.far].whole, depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: 1,
-                stencilLoadOp: 'clear', stencilStoreOp: 'store', stencilClearValue: 0 } });
-            resolve.setPipeline(depthFarthest.pipeline);
-            resolve.setBindGroup(0, device.createBindGroup({ layout: depthFarthest.layout,
-                entries: [{ binding: 0, resource: t.sampledDepth.only }] }));
-            resolve.draw(3);
-            resolve.end();
-            device.queue.submit([encoder.finish()]);
-            return t.far;
+            if (!t.samples) t.samples = gpuAdd('texture', { texture: t.sampledDepth.texture, view: t.sampledDepth.only,
+                whole: t.sampledDepth.view, width: t.width, height: t.height, row: 0, groups: new Set() });
+            return t.samples;
         },
+        gpu_depth_samples: id => id && gpuTables.target[id].sampled ? 4 : 1,
         gpu_target_free(id) {
             const t = gpuTables.target[id];
             for (const color of t.colors) {
@@ -2250,7 +2219,10 @@
                 for (const many of t.sampled) many.texture.destroy();
                 t.sampledDepth.texture.destroy();
                 if (t.depth) platform.gpu_texture_free(t.depth);
-                if (t.far) platform.gpu_texture_free(t.far);
+                if (t.samples) { // Its samples' texture, which is theirs
+                    for (const key of gpuTables.texture[t.samples].groups) bindGroups.delete(key);
+                    gpuRemove('texture', t.samples);
+                }
             } else {
                 platform.gpu_texture_free(t.depth);
             }

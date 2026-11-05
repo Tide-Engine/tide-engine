@@ -9,6 +9,9 @@
 # WebGPU validation errors and shader warnings fail it, as
 # platform/web/test_shell.html does. The page is cross-origin isolated, so the
 # program runs on threads. The test is skipped if no browser is found.
+# TIDE_WEB_HARDWARE=1 in a test's environment draws on the machine's own GPU
+# instead, failing if the browser gives a software adapter (cmake/web_gpu.mjs;
+# `ctest --preset web-hardware` runs the PIXELS tests that way).
 #
 # QUERY is the program's own words, before anything else in the page's
 # address. EXPECT is a line the program has to print. SECONDS is how long the
