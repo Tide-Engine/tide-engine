@@ -182,6 +182,7 @@ static inline uint32_t tide_run_entity_count(const void *world)
 static inline void tide_run_unload(void)
 {
     tide_render_targets_free();
+    tide_gpu_lists_free();
     tide_scratch_free();
 #ifdef TIDE_HAS_ASSETS
     tide_pack_unload();

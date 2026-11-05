@@ -66,54 +66,47 @@ static type slot_element(const emit *em, const int slot)
 static void put_store(emit *em, const type t, const char *access, int *f, int *i, const char *array, const char *base,
                       const bool atomic)
 {
-    char word[256];
-#define STORE(at, value) do { \
-        if (atomic) sb_printf(em->o, "    atomicStore(&%s[%s + %du], bitcast<i32>(%s));\n", array, base, at, value); \
-        else sb_printf(em->o, "    %s[%s + %du] = %s;\n", array, base, at, value); \
+    // Its paths are as long as its fields' names and its nesting make them: built, never cut short
+#define STORE(at, ...) do { \
+        sb value = {0}; \
+        sb_printf(&value, __VA_ARGS__); \
+        if (atomic) sb_printf(em->o, "    atomicStore(&%s[%s + %du], bitcast<i32>(%s));\n", array, base, at, value.data); \
+        else sb_printf(em->o, "    %s[%s + %du] = %s;\n", array, base, at, value.data); \
     } while (0)
     const int dim = type_dim(t);
     const int n = matrix_dim(t);
     if (t.kind == TY_BOOL) {
-        snprintf(word, sizeof word, "select(0u, 1u, %s)", access);
-        STORE(*i, word);
+        STORE(*i, "select(0u, 1u, %s)", access);
         *i += 1;
     } else if (t.kind == TY_BYTE || t.kind == TY_ENUM || t.kind == TY_CHAR || (dim == 1 && !type_is_float_based(t))) {
-        snprintf(word, sizeof word, "bitcast<u32>(%s)", access);
-        STORE(*i, word);
+        STORE(*i, "bitcast<u32>(%s)", access);
         *i += 1;
     } else if (dim == 1) {
-        snprintf(word, sizeof word, "bitcast<u32>(%s)", access);
-        STORE(*f, word);
+        STORE(*f, "bitcast<u32>(%s)", access);
         *f += 1;
     } else if (dim > 1 || t.kind == TY_COLOR || t.kind == TY_QUATERNION) {
         const int count = dim > 1 ? dim : 4;
         const bool floats = dim == 0 || type_is_float_based(t);
-        for (int k = 0; k < count; k++) {
-            snprintf(word, sizeof word, "bitcast<u32>((%s).%c)", access, "xyzw"[k]);
-            STORE(floats ? *f + k : *i + k, word);
-        }
+        for (int k = 0; k < count; k++) STORE(floats ? *f + k : *i + k, "bitcast<u32>((%s).%c)", access, "xyzw"[k]);
         *(floats ? f : i) += count;
     } else if (n > 0) {
         for (int c = 0; c < n; c++) {
-            for (int r = 0; r < n; r++) {
-                snprintf(word, sizeof word, "bitcast<u32>((%s)[%d][%d])", access, c, r);
-                STORE(*f + c * n + r, word);
-            }
+            for (int r = 0; r < n; r++) STORE(*f + c * n + r, "bitcast<u32>((%s)[%d][%d])", access, c, r);
         }
         *f += n * n;
     } else if (t.kind == TY_ARRAY) {
         for (int k = 0; k < t.decl->array_length; k++) {
-            char inner[200];
-            snprintf(inner, sizeof inner, "(%s)[%d]", access, k);
-            put_store(em, t.decl->fields.items[0].type, inner, f, i, array, base, atomic);
+            sb inner = {0};
+            sb_printf(&inner, "(%s)[%d]", access, k);
+            put_store(em, t.decl->fields.items[0].type, inner.data, f, i, array, base, atomic);
         }
     } else if (is_struct_like(t)) {
         for (int k = 0; k < t.decl->fields.count; k++) {
             const field *fl = &t.decl->fields.items[k];
             if (fl->hidden) continue;
-            char inner[200];
-            snprintf(inner, sizeof inner, "(%s).%s", access, field_name(fl));
-            put_store(em, fl->type, inner, f, i, array, base, atomic);
+            sb inner = {0};
+            sb_printf(&inner, "(%s).%s", access, field_name(fl));
+            put_store(em, fl->type, inner.data, f, i, array, base, atomic);
         }
     }
 #undef STORE

@@ -83,7 +83,12 @@ TIDE_TEST(compute_runs_and_gpu_lists_are_recorded_in_frame_order)
     const tide_draw_compute *cull = &draw.computes[command(TIDE_DRAW_COMPUTE, 0)->compute.run];
     TIDE_REQUIRE(cull->shader && cull->shader->compute);
     const tide_shader *k = cull->shader;
-    TIDE_CHECK(strcmp(k->name, "compute Thin") == 0 && k->wgsl == NULL && k->spirv && k->spirv_words > 0);
+    TIDE_CHECK(strcmp(k->name, "compute Thin") == 0);
+#ifdef __wasm__
+    TIDE_CHECK(k->wgsl && strstr(k->wgsl, "@compute @workgroup_size(32, 1, 1)") && !k->spirv); // WebGPU's
+#else
+    TIDE_CHECK(k->wgsl == NULL && k->spirv && k->spirv_words > 0); // Vulkan's
+#endif
     TIDE_CHECK(k->group[0] == 32 && k->group[1] == 1 && k->group[2] == 1);
     TIDE_CHECK(cull->over == m->blades.id && k->storage_count == 2 && cull->storage);
     TIDE_CHECK(draw.storage[cull->storage - 1u] == m->blades.id && draw.storage[cull->storage] == m->shown.id);
