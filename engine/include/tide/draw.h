@@ -1327,10 +1327,11 @@ typedef struct tide_mesh_levels {
 // TIDE_MESH_ONCE_BYTES, the same way. Found again, it's in the first.
 //
 // Past either budget, what's farthest from where the frame's camera was goes first (tide_draw_mesh_data.where;
-// then the longest unused, then by place), so turning round keeps what's around. A mesh of a world's lists that
-// a frame didn't draw, and that the renderer has, keeps no copy of its own (`hollow`): the lists have it. It
-// stays while the renderer keeps it on the GPU, under the renderer's budget of the device's memory; where the
-// renderer lets it go (TIDE_MESH_GPU_DROPPED) its place goes at the next reset, and a draw of it copies it again.
+// then the longest unused, then by place). A mesh of a world's lists that a frame didn't draw, and that the
+// renderer has, keeps no copy of its own (`hollow`): the lists have it. It's in neither budget: it stays while its
+// lists are at the versions it was copied from, as the game keeps them, and the renderer keeps its buffers unless
+// the device runs short (platform.c, mesh_held_bytes), the farthest going first. Where the renderer lets one go
+// (TIDE_MESH_GPU_DROPPED) its place goes at the next reset, and a draw of it copies it again.
 enum { TIDE_MESH_GPU_NONE, TIDE_MESH_GPU_HAS, TIDE_MESH_GPU_DROPPED };
 enum { TIDE_MESH_IDLE_FRAMES = 36000, TIDE_MESH_IDLE_COUNT = 16384 };
 #define TIDE_MESH_IDLE_BYTES (UINT64_C(64) * 1024u * 1024u)

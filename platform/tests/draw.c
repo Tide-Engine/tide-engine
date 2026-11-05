@@ -4236,14 +4236,29 @@ static void hollow_meshes_kept(void)
     expect(place && list.meshes[place - 1u].hollow && list.meshes[place - 1u].vertices == NULL,
            "and the list kept no copy of its own");
     expect(tide_platform_gpu_memory() == memory, "its buffers stayed counted");
+    // Unused for longer than any budget keeps others, it stays while its lists are as they were
     const uint32_t frames = tide_mesh_idle_frames;
     tide_mesh_idle_frames = 1;
     for (int i = 0; i < 3; i++) hollow_frame(false, corners, faces, &got, NULL);
     tide_mesh_idle_frames = frames;
-    expect(tide_platform_gpu_memory() < memory, "unused for longer than the GPU keeps it, its buffers go");
+    expect(tide_platform_gpu_memory() == memory, "unused for many frames, its buffers stay while its lists do");
+    // The device running short lets it go
+    tide_mesh_held_most = 0;
+    hollow_frame(false, corners, faces, &got, NULL);
+    tide_mesh_held_most = UINT64_MAX;
+    expect(tide_platform_gpu_memory() < memory, "the device running short, its buffers go");
     expect(hollow_frame(true, corners, faces, &got, &place) == 1u && near(got, rgba(red), 0),
            "then the list copies it again from its lists, and it's sent and drawn");
     expect(place && !list.meshes[place - 1u].hollow, "with a copy of the list's own again");
+    // Its list changed and drawn again: the old mesh goes as the frame ends, and its buffers with it
+    hollow_frame(false, corners, faces, &got, NULL);
+    hollow_frame(false, corners, faces, &got, NULL); // Its copy goes, the GPU's stays
+    const uint32_t old = place;
+    ((tide_vertex3 *)tide_list_at_mut(corners, 0, sizeof(tide_vertex3)))->position.x -= 1.0f;
+    expect(hollow_frame(true, corners, faces, &got, &place) == 1u && place != old, "its list changed, it's another mesh");
+    hollow_frame(false, corners, faces, &got, NULL);
+    expect(old && list.meshes[old - 1u].space == TIDE_MESH_NONE, "and the old one went");
+    expect(tide_platform_gpu_memory() <= memory, "with its buffers");
     tide_draw_forget(&list);
     tide_list_release(&corners, TIDE_IN_LOCAL);
     tide_list_release(&faces, TIDE_IN_LOCAL);

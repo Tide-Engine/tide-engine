@@ -2,6 +2,40 @@
 
 OpenGL 3.3, OpenGL ES 3 and WebGL 2 were removed 2026-11-05 (`notes/rendering.md`, GL backends removed): what this file says of OpenGL, WebGL, GLSL, `gpu_gl.c`, `gl.h`, `*_opengl` tests or `_d3d11`/WebGL runs is history; Vulkan and WebGPU are the backends, and every web test runs on WebGPU.
 
+## Meshes of a world's lists kept as the game keeps them (2026-11-05)
+
+The owner, after Turning round (below): is 64 MiB enough, and should a game tune it? Ideally games don't worry
+about it. As Unity keeps a loaded mesh until the game unloads it (and drops its CPU copy where it's not
+readable), a mesh of a world's lists is now kept while the game keeps its lists as they were, with no budget
+but the device's. Internal; no Tide or C API change. Benchmarked on Mount & Rifle against the engine before the
+day's work and against `dev` before this, as the owner asked, to be sure it's a net gain.
+
+- **No budget for them.** A hollow mesh (Turning round) is outside the list's budgets: no count, no bytes. It
+  goes when a frame draws its lists at another version (the superseding rule the others have), after
+  `TIDE_MESH_IDLE_FRAMES` frames unused, or when the renderer drops it. The renderer keeps the buffers of every
+  idle mesh of a world's lists (`relisted` or `hollow`: one the list hasn't yet given its copy up for, as the
+  frame that leaves it behind draws, is one too) unless the device runs short (`mesh_held_bytes`): all it has
+  within three quarters of `tide_gpu.device_memory`, or where a device doesn't say, 256 MiB of them
+  (`TIDE_MESH_HELD_BYTES`); farthest from the camera first. Other idle meshes keep `TIDE_MESH_IDLE_BYTES`
+  (64 MiB). The device-sized budget of Turning round is gone. `tide_mesh_held_most` is a test hook.
+- **Tried and dropped: checking each idle mesh's lists every frame** (`tide_draw_mesh_lists_kept`, a safe read
+  of a handle that may have gone: `list_readable` checks the block and its chunks lie within the heap's `used`).
+  At `tide_draw_reset` Mount & Rifle's lists don't resolve to their heap (every check failed as unreadable), so
+  it let them all go. The check stays for appending a hollow mesh (`tide_draw_mesh_relist`), during the frame.
+- **Measured** (mount-and-rifle 2330682, 1920x1080, release, hidden, Vulkan, RTX 4080 SUPER, pinned; three
+  builds run alternately: the engine at 47fb11512, `dev` at 42bde0c0f, this). Ten 180° turns: each turn after
+  the first 76-88 / 6-12 / 5.2-6.8 ms; the first 131-151 / 131-155 / 131 (first sight). Performance route, four
+  runs of the base and of this: mean 6.31-6.69 against 5.84-6.37 ms (one run 7.23, its sprint and aim slow),
+  p95 10.8-11.7 against 10.1-10.7 (14.9 in that run), p99 16.6-18.0 against 16.1-16.7. Peak working set 3.35 GB
+  in all three; peak dedicated GPU memory 1.13-1.25 GB / 1.35-1.41 / 1.35-1.41 (the scenery kept).
+- A first version weighed a world's meshes in the renderer's 64 MiB budget on the frame that left them behind
+  (the list gives their copies up only at its reset after): they were dropped, couldn't give their copies up, and
+  turning back made 479, 364 and 137 new places on the first three turns (57, 33, 15 ms).
+- **Tests**: `draw_idle_meshes_of_lists_the_renderer_has_keep_no_copy` (a hollow mesh drawn at another version
+  goes, one unused goes after exactly `TIDE_MESH_IDLE_FRAMES`); `hollow_meshes_kept` (stays on the GPU
+  however long unused, goes when the device runs short, and when its list is drawn changed). Native ASan: tide_tests (640) and 615
+  draw/mesh/LOD/skinned/target/embed/prewarm/shader/compute/Render3D/game CTests; web: tide_tests, the platform
+  draw/targets fixtures and the instancing/LOD/frustum/skinned/compute e2es.).
 ## Meshes over GPU lists and Draw.Transform on indirect draws (2026-11-05)
 
 `Draw.Mesh`/`Draw.Instanced`/a target's `Mesh` over a `GPUList` of vertices, with a `GPUList<int>` or `List<int>` of
@@ -165,7 +199,7 @@ API change.
   place it hasn't got (a lost device, a new epoch, the Unity recorder reset). That place isn't drawn that frame
   (`mesh_drawable`); at the reset the list lets a dropped hollow place go, so the next draw copies it again from
   its lists, and a dropped full one is sent again. A new or freed place is `_NONE`.
-- **The renderer's budget is the device's** (`mesh_idle_bytes`): `TIDE_MESH_IDLE_BYTES`, or a sixteenth of
+- **The renderer's budget is the device's** (`mesh_idle_bytes`; replaced the same day by Meshes of a world's lists kept as the game keeps them, above): `TIDE_MESH_IDLE_BYTES`, or a sixteenth of
   `tide_gpu.device_memory` where that's more (1 GiB on the RTX 4080 SUPER; 64 MiB on integrated GPUs, phones
   and the web). `TIDE_MESH_IDLE_COUNT` went from 4,096 to 16,384 (a hollow place is about 400 bytes).
 - **Farthest first** (`tide_draw_mesh_data.where`, `placed`, `tide_draw_list.idle_eye`). As a frame ends,

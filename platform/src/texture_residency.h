@@ -79,5 +79,8 @@ static inline void tide_texture_idle_trim(tide_texture_idle *images, const uint3
 // tide/draw.h. How many lists the renderer keeps one for: TIDE_MESH_IDLE_FRAMES, which a test sets lower to see
 // one expire.
 extern uint32_t tide_mesh_idle_frames;
+// The bytes the unused meshes of a world's lists are kept within, where a test says (as though the device ran
+// short): UINT64_MAX for the renderer's own (mesh_held_bytes in platform.c).
+extern uint64_t tide_mesh_held_most;
 // How many times the renderer has sent a mesh to the GPU (mesh_for), which tests read.
 extern uint64_t tide_mesh_uploads;
