@@ -15722,7 +15722,7 @@ static void check_asset_decl(checker *c, decl *k)
         if (path) vec_push(k->asset_paths, (expr *)path);
         else valid = false;
     }
-    compile_progress("Importing asset", str_to_cstr(k->qualified));
+    compile_progress("Importing asset", str_to_cstr(k->qualified), 0, 0);
     const double import_began = build_report_current() ? build_report_clock_ms() : 0.0;
     if (typed && fills && valid) {
         if (catalog) {
@@ -15776,7 +15776,7 @@ static void check_asset_decl(checker *c, decl *k)
             if (!humanoid_asset_read(&k->asset->items[0], k->value->at, c->prog->game_folder)) k->asset = NULL;
     }
     if (build_report_current()) k->import_ms = build_report_clock_ms() - import_began;
-    compile_progress("Checking Tide", k->unit->src->path);
+    compile_progress("Checking Tide", k->unit->src->path, 0, 0);
     if (retarget) check_retarget_attribute(c, k, retarget);
     if (built && typed && fills) build_asset_function(c, k);
     k->index = 2;
@@ -17789,7 +17789,7 @@ static void check_audio_signature(checker *c, decl *m)
 
 static void check_method_body(checker *c, decl *m)
 {
-    if (m->unit && m->unit->src) compile_progress("Checking Tide", m->unit->src->path);
+    if (m->unit && m->unit->src) compile_progress("Checking Tide", m->unit->src->path, 0, 0);
     if (m->body_checked) return;
     m->body_checked = true;
     c->method = m;

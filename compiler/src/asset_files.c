@@ -857,7 +857,6 @@ static void say_missing(const char *written, const char *abs, const char *folder
 // can't be read as one.
 static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at, const char *game_folder)
 {
-    compile_progress("Importing asset", path);
     read_file *f = read_at(path);
     if (!f) {
         diag_error(at, "'%s' can't be read (%s)", written, path);
@@ -1339,6 +1338,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
         v->count = 1;
         resolve_item(&v->items[0], written, NULL, kind, written, at, true, cache_folder);
     } else if (url) {
+        compile_progress("Importing asset", written, 0, 1);
         const fetched *f = fetch_url(written, game_folder);
         if (!f->path) {
             diag_error(at, "'%s' can't be fetched: %s", written, f->failed);
@@ -1348,6 +1348,7 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
             ok = read_item(&v->items[0], written, f->path, kind, written, at, cache_folder);
+            if (ok) compile_progress("Importing asset", written, 1, 1);
         }
     } else if (glob) {
         const size_t prefix_len = fixed_prefix(written);
@@ -1374,8 +1375,11 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
             qsort(pairs, (size_t)w.keys.count, sizeof(char *) * 2u, key_order);
             v->items = arena_alloc(sizeof(asset_match) * (size_t)w.keys.count);
             v->count = w.keys.count;
-            for (int i = 0; i < w.keys.count && ok; i++)
+            for (int i = 0; i < w.keys.count && ok; i++) {
+                if (!paths_only) compile_progress("Importing asset", pairs[2 * i + 1], i, w.keys.count);
                 ok = resolve_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at, paths_only, cache_folder);
+                if (!paths_only && ok) compile_progress("Importing asset", pairs[2 * i + 1], i + 1, w.keys.count);
+            }
             free(pairs);
             if (ok && kind == ASSET_CUBEMAP) ok = order_cube(v, written, at);
         }
@@ -1389,7 +1393,9 @@ static asset_value *asset_resolve_impl(const char *declaring_as_given, const str
         } else {
             v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
+            if (!paths_only) compile_progress("Importing asset", abs, 0, 1);
             ok = resolve_item(&v->items[0], written, abs, kind, written, at, paths_only, cache_folder);
+            if (!paths_only && ok) compile_progress("Importing asset", abs, 1, 1);
         }
         free(abs);
     }
