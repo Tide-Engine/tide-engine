@@ -16,6 +16,23 @@ emulator needs no GPU. The renderer's apps (`tide_platform_draw_app`,
 `_targets_app`, `_shaders_app`) need a Vulkan 1.3 device: the emulator booted
 with `-gpu host`, or a phone.
 
+Tried on this machine's emulator (x86_64, API 36), the android-debug build:
+- `-gpu swiftshader_indirect`: `demo.apk` logged "Vulkan: no device has Vulkan
+  1.3, the newest being 1.2" and the message, `am start -W` said `Status: ok`,
+  the activity stayed resumed and its screen showed the message (captured with
+  `adb exec-out screencap`). Back ended the app.
+- `-gpu host`: `demo.apk` drew with Vulkan, and `tide_platform_draw_app` passed
+  its checks (3,377 `ok`s, no `FAIL`) on Vulkan.
+- Both apps' exits end with `FORTIFY: pthread_mutex_lock called on a destroyed
+  mutex` and a SIGABRT in Android's own `hwuiTask0` thread as `exit()` runs:
+  the normal draw app's exit does it too, so it isn't the message screen's.
+  Not looked into further: a gap for whoever next touches how an app ends.
+- `apk.c` no longer declares the OpenGL ES 3 `uses-feature`. A Vulkan one
+  (`android.hardware.vulkan.version`, 0x403000), which would have Play leave
+  out devices without 1.3, needs `android:version`'s attribute ID in the
+  manifest writer: not added (Play then offers the app to such devices, which
+  show the screen).
+
 CLI modes (2026-10-30): --release is optimized with symbols and debuggable APKs,
 using a default app ID if needed, and links with --gc-sections. --distribution
 owns symbol stripping, shipping exports, appId requirement and AAB creation. The CLI builds warning-free under Windows ASan;

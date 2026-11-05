@@ -3804,7 +3804,7 @@ The owner: "compute shaders will be a guarantee now, if a render backend can't s
     - Unity's WebGL export, and Unity on GLES 3.0 devices;
     - very old GPUs, VMs and remote desktop.
   - Costs that are easy to miss:
-    - tidec's helper texts are written once in GLSL and spelled into WGSL (`put_helper`), so dropping GLSL means making WGSL their source: a refactor of `shader.c` with every golden checked.
+    - tidec's helper texts are written once in GLSL and spelled into WGSL (`put_helper`), so dropping GLSL means making WGSL their source: a refactor of `shader.c` with every golden checked. (As built, Claude's pick, Provisional: the emitter is WGSL only and the helper texts stay in their C-like notation, which `put_helper` spells into WGSL; every WGSL and SPIR-V output came out byte-identical: `notes/shaders.md`.)
     - WebGPU's compatibility mode (Chrome's path on GLES 3.1 Android) allows no storage buffers in the vertex stage by default, so this targets core WebGPU only.
     - Android's emulator falls back to GLES with SwiftShader (its Vulkan there is 1.2), so emulator GPU runs would need a Vulkan 1.3 software device. Today's CI runs no GPU test on it, but this should be checked.
     - CI can use lavapipe or SwiftShader for Vulkan and Dawn's software adapter, as it uses SwiftShader WebGPU now.
