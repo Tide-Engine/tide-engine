@@ -181,6 +181,18 @@ static bool muted;
 
 // With TIDEC_TIMES set in the environment, says on stderr how long each phase
 // of a compile took: the time since the last call, under `what`.
+static compile_progress_sink progress_sink;
+
+void compile_set_progress(compile_progress_sink receiver)
+{
+    progress_sink = receiver;
+}
+
+void compile_progress(const char *stage, const char *detail, const int completed, const int total)
+{
+    if (progress_sink) progress_sink(stage, detail, completed, total);
+}
+
 void diag_phase(const char *what)
 {
     static int enabled = -1;

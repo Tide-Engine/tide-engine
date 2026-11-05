@@ -76,3 +76,51 @@ TIDE_TEST(recompile_keeps_lane_analysis_inside_each_program)
     free(expected[1]);
     arena_reset();
 }
+
+static unsigned progress_seen;
+
+static void progress(const char *stage, const char *detail, const int completed, const int total)
+{
+    TIDE_CHECK(completed >= 0 && total >= completed);
+    if (strcmp(stage, "Parsing Tide") == 0 && detail && strstr(detail, "progress.tide")) {
+        progress_seen |= 1;
+        TIDE_CHECK(total == 1);
+        if (completed == 1) progress_seen |= 32;
+    }
+    if (strcmp(stage, "Checking Tide") == 0) progress_seen |= 2;
+    if (strcmp(stage, "Importing asset") == 0 && detail && strstr(detail, "progress.txt")) {
+        progress_seen |= 4;
+        TIDE_CHECK(total == 1 || total == 2);
+        if (completed == total) progress_seen |= 64;
+    }
+    if (strcmp(stage, "Importing asset") == 0 && total == 2 && completed == 2) progress_seen |= 128;
+    if (strcmp(stage, "Packing asset") == 0 && detail && strcmp(detail, "rules") == 0) {
+        progress_seen |= 8;
+        TIDE_CHECK(total == 2);
+    }
+    if (strcmp(stage, "Packing assets") == 0 && total == 2 && completed == 2) progress_seen |= 256;
+    if (strcmp(stage, "Generating C") == 0) progress_seen |= 16;
+}
+
+TIDE_TEST(compile_progress_identifies_sources_and_assets)
+{
+    FILE *file = fopen(RECOMPILE_WORK "/progress.txt", "wb");
+    TIDE_REQUIRE(file);
+    fputs("rules", file);
+    fclose(file);
+    file = fopen(RECOMPILE_WORK "/progress-other.txt", "wb");
+    TIDE_REQUIRE(file);
+    fputs("more rules", file);
+    fclose(file);
+    const compile_input input = {.path = RECOMPILE_WORK "/progress.tide",
+        .text = "asset string rules = \"progress.txt\"; asset List<string> allRules = \"progress*.txt\"; scene Main;"};
+    const codegen_options options = {.name = "game", .out_dir = RECOMPILE_WORK,
+        .pack = RECOMPILE_WORK "/progress.pack"};
+    progress_seen = 0;
+    compile_set_progress(progress);
+    const bool ok = compile_inputs(&input, 1, &options, NULL);
+    compile_set_progress(NULL);
+    TIDE_CHECK(ok);
+    TIDE_CHECK(progress_seen == 511);
+    arena_reset();
+}

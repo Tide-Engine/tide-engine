@@ -57,7 +57,33 @@ A crash on Windows, macOS or Linux leaves a folder of its own in `Crashes`, name
 
 The log also notes the GPU the game draws with and its driver, which isn't printed to the terminal.
 
-A game built with `tide build` has `tide-crash` beside it, which a crash opens. It's a small window of its own, so it opens at once however big the game is. It names the game by its title, says a report was saved, and offers **Show report** and **Close**. Show report adds `system.txt` (the system's version, processor and memory) to the crash's folder, zips the folder beside it as `Crash_<UTC date>_<time>.zip`, and opens the file manager there, so the player can send you the zip. On Linux it needs an X display, which Wayland desktops provide too; without one it opens nothing. `tide run` doesn't put it beside the game, so a crash while you work goes to the terminal.
+A game built with `tide build` has `tide-crash` beside it, which a crash opens. It's a small window of its own, so it opens at once however big the game is. It names the game by its title and shows what the report says: the crash and its stack, then the last lines of the log, which may help a player see what led to it. Its **Show report** button opens the file manager at the crash's zip, `Crash_<UTC date>_<time>.zip` beside its folder. The zip holds `crash.txt`, `system.txt` (the system's version, processor and memory), the end of `Player.log` (at most its last 4 MB) and the minidump. On Linux it needs an X display, which Wayland desktops provide too; without one it opens nothing, and the zip is still there. `tide run` doesn't put it beside the game, so a crash while you work goes to the terminal.
+
+### What a report leaves out
+
+Before the zip is made, `tide-crash` masks what would say who the player is, with `*` in place of each character, so a report can go to you as it is:
+
+- the folder after `Users` or `home` in every path, which is usually the player's name (`C:\Users\*****\AppData\...`); `Public` and `Default` stay
+- the player's user name and the computer's name, wherever they're a whole word
+- IP addresses, except the machine's own (`127.0.0.1`, `::1`), and email addresses
+
+It masks them in the log, in `crash.txt` and `system.txt`, and in the minidump: the paths of its modules and the memory it holds. Only the zip is masked; the crash's folder keeps the files as they were. The masking can't know everything your game writes, so don't `Debug.Log` a player's account details, chat or other personal data.
+
+### Receiving reports
+
+A game linked to a hosting project with crash reports on sends each report there by itself, without asking the player. Its window then says the report was sent, and still shows what it says. Turn reports on for the project in the [hosting console](../multiplayer/hosting.md), which shows the project's report key. `tide deploy` writes the key into the game's `tide.deploy.json` as `"reports"`, or you can add it there yourself:
+
+```json
+{
+  "origin": "https://console.tide-engine.dev",
+  "project": "<project id>",
+  "reports": "<report key>"
+}
+```
+
+`tide build` then puts `crash.json` beside the game, with the key, the service's address and the build's ID (the SHA-256 of the game's program), and `tide-crash` sends there. Ship `crash.json` with the game. The console groups reports by what crashed and where, with how often and on which builds, systems and GPUs, and keeps each report's files. Reports are billed with the project's hosting.
+
+The key ships inside the game, so all it can do is add reports to its project. Replacing it in the console stops the old one, and the next build carries the new one. Turning reports off and building again removes `crash.json`. A run with `TIDE_HIDDEN` set never sends.
 
 The ten newest crash folders and their zips are kept. Under a debugger the debugger has the crash instead. A run with no window (`--frames`, `--capture`, `--script`) writes no log, as its output is the test's.
 

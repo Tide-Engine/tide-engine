@@ -292,11 +292,16 @@ static bool load_project(const char *path, const char *origin, char **id)
     json_release(); free(text);
     return same;
 }
-static bool save_project(const char *path, const char *origin, const char *id)
+// `reports` is the project's crash report key, when it has reports on, for
+// tide build to put beside the game (crash.json). The account says each
+// deploy, so reports turned off, or a new key, reach the next build.
+static bool save_project(const char *path, const char *origin, const char *id, const char *reports)
 {
     jbuf config = {0}, temporary = {0};
     jb_put(&config, "{\n  \"origin\": "); jb_string(&config, origin);
-    jb_put(&config, ",\n  \"project\": "); jb_string(&config, id); jb_put(&config, "\n}\n");
+    jb_put(&config, ",\n  \"project\": "); jb_string(&config, id);
+    if (reports) { jb_put(&config, ",\n  \"reports\": "); jb_string(&config, reports); }
+    jb_put(&config, "\n}\n");
     jb_printf(&temporary, "%s.tmp-%u", path, sys_pid());
     const bool ok = sys_write_file(temporary.data, config.data, config.len) && sys_rename(temporary.data, path);
     if (!ok) { sys_remove(temporary.data); fprintf(stderr, "tide: cannot save deployment link to %s\n", path); }
@@ -372,12 +377,15 @@ int tide_hosting_command(const char *root, const int argc, char **argv)
     if (!reply) goto done;
     const json *account = json_parse(reply, strlen(reply));
     const json *projects = json_get(account, "projects");
-    char *found = NULL, *region = copy(json_str(json_get(account, "region")));
+    char *found = NULL, *reports = NULL, *region = copy(json_str(json_get(account, "region")));
     for (int i = 0; projects && i < projects->count; i++) {
         const json *p = projects->items[i];
         const char *pn = json_str(json_get(p, "name")), *pi = json_str(json_get(p, "id"));
         if (project_id(pi) && ((pn && strcmp(pn, target) == 0) || strcmp(pi, target) == 0)) {
-            found = copy(pi); name = copy(pn); break;
+            found = copy(pi); name = copy(pn);
+            const char *key = json_str(json_get(p, "reports"));
+            if (key) reports = copy(key);
+            break;
         }
     }
     json_release(); free(reply);
@@ -398,7 +406,9 @@ int tide_hosting_command(const char *root, const int argc, char **argv)
     }
     free(region);
     free(id); id = found;
-    if (!id || !save_project(link, origin, id)) goto done;
+    const bool saved = id && save_project(link, origin, id, reports);
+    free(reports);
+    if (!saved) goto done;
     printf("Deploying to %s (%s)\nLinked in %s\n", name ? name : id, id, link);
     char *path = id ? bundle(root, absolute, server_only) : NULL;
     if (path) {

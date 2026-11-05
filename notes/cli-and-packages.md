@@ -1,5 +1,52 @@
 # `tide`, packages and the package
 
+## Windows watched-run shutdown (2026-11-05)
+
+Closing a game's window could leave `tide run` blocked during CRT exit: its
+detached terminal reader held stdin's FILE lock in `fgets`. The Windows reader
+now uses `ReadFile` on the CRT stdin descriptor's OS handle, so it holds no
+stdio lock while waiting. This also respects redirected stdin. Restart-line
+handoff, CR/newline trimming, EOF and final partial lines remain in place;
+Windows now chunks raw bytes like POSIX (255 bytes, including CR in CRLF).
+No host/runtime boundary or watch policy changed.
+
+`tide_cli_terminal_exit` keeps an input pipe open after sending a restart line
+and returns while the reader waits again; CTest bounds shutdown to 10 seconds.
+The old Windows implementation times out in the same probe; the fixed ASan
+executable exits in 0.16 seconds. Windows Clang 23.1.2 ASan CLI build and six
+focused CTests pass: unit, run_exit, terminal_exit, help, hidden and build_overlap
+(Node 24.22.1). The overlap fixture first lacked its compiler helper; after
+building that target, it passes. No visible game was launched. Console close
+interaction and Linux/macOS remain manual/CI coverage; no WASM code changed.
+
+## Tide compilation progress labels (2026-11-05)
+
+The terminal build display now receives synchronous compiler progress through
+`compile_set_progress`/`compile_progress` in common.h. The CLI installs the receiver
+only around source generation and copies labels under its existing feedback lock.
+Parsing and method checking name the Tide source; imports name each resolved file
+(including individual glob matches); packing names the qualified asset declaration.
+Generating C has its own label. The terminal uses basenames so absolute directory
+prefixes cannot hide the filename. Redirected output and build-report stages stay
+unchanged. This is host-tool feedback only; no generated code/runtime contract changes.
+
+Validation: Windows Clang 23.1.2 ASan builds of tide, tidec and CLI tests;
+CLI unit/help and recompile CTests pass. The recompile regression checks actual
+parsing, checking, file import, asset packing and C-generation notifications.
+Docs production build passes with the usual unstaged example-page 404s.
+Other OS terminals remain CI/manual coverage; no web runtime code changed.
+
+
+Progress counts follow-up (2026-11-05): the compiler callback now includes
+completed/total item counts (zero total means indeterminate). Parsing counts input
+files, importing counts each resolved set of files (glob matches included), and
+packing counts asset declarations. The existing terminal bar shows those stage
+counts and percentages; checking and C generation retain activity animation.
+Counts describe work items, not time estimates or whole-build completion.
+Redirected output is unchanged. ASan CLI unit/help and compiler recompile checks
+pass, including notification count bounds and parsing/import completion. Docs
+production build passes; other host terminals remain CI/manual coverage.
+
 ## Optimized plumbing in debug builds (2026-11-04)
 
 Asked for by the owner: a plain debug `tide run` of a large game (Mount & Rifle) was unplayable, while

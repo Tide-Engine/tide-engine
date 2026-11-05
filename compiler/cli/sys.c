@@ -1274,23 +1274,25 @@ static int typed_ended; // ...and that the input ended
 
 static bool read_typed_line(char *line, const size_t size)
 {
-#ifdef _WIN32
-    return fgets(line, (int)size, stdin) != NULL;
-#else
     // A detached fgets reader holds stdin's FILE lock while waiting. libc's
     // exit cleanup can then block on that lock after the watched game exits.
     size_t used = 0;
     while (used + 1 < size) {
         char byte;
+#ifdef _WIN32
+        DWORD got = 0;
+        const HANDLE input = (HANDLE)_get_osfhandle(_fileno(stdin));
+        if (!ReadFile(input, &byte, 1, &got, NULL) || got == 0) break;
+#else
         ssize_t got;
         do { got = read(STDIN_FILENO, &byte, 1); } while (got < 0 && errno == EINTR);
         if (got <= 0) break;
+#endif
         line[used++] = byte;
         if (byte == '\n') break;
     }
     line[used] = '\0';
     return used != 0;
-#endif
 }
 
 #ifdef _WIN32

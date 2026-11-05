@@ -210,6 +210,11 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
         const reporter = join(dirname(output), process.platform === "win32" ? "tide-crash.exe" : "tide-crash");
         check(existsSync(reporter) && (process.platform === "win32" || (statSync(reporter).mode & 0o111) !== 0),
             `${target}: tide-crash isn't beside the game, runnable, at ${reporter}`);
+        const link = join(dirname(output), "crash.json");
+        const linked = existsSync(link) ? JSON.parse(readFileSync(link, "utf8")) : null;
+        check(linked?.origin === "https://console.example.test" && linked?.reports === "ReportKey_0123456789-abcdef"
+            && linked?.build === createHash("sha256").update(program).digest("hex"),
+            `${target}: crash.json beside the game doesn't carry the link and the program's SHA-256: ${JSON.stringify(linked)}`);
     }
     if (!release && target === "native") {
         for (const suffix of [".natvis", "_lldb.py", ...(process.platform === "win32" ? [".pdb"] : [])])
@@ -257,6 +262,10 @@ async function strippingTests(tide, installation, root, target, embedded) {
     console.log(`Build modes and distribution stripping: ${target}`);
     const game = join(root, `strip-${target}`);
     mkdirSync(game);
+    // Linked to a hosting project with crash reports on: a native build has crash.json beside it
+    writeFileSync(join(game, "tide.deploy.json"), JSON.stringify({
+        origin: "https://console.example.test", project: "0123456789abcdef0123456789abcdef", reports: "ReportKey_0123456789-abcdef",
+    }));
     const engine = join(installation, "src", "engine", "strip_test.c");
     check(!existsSync(engine), "private installation already contains strip_test.c");
     const markers = {
