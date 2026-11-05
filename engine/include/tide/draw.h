@@ -1040,6 +1040,7 @@ typedef struct tide_draw_texture {
     uint32_t format;  // What a pixel is: TIDE_TEXELS_*
     int32_t width, height;
     uint32_t frame;    // The frame that last drew with it
+    uint32_t held;     // Nonzero: kept by frames that don't draw with it (a page of listed regions, tide/mesh.h)
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
     uint32_t capacity; // Bytes `pixels` has room for: 0 where they aren't the list's own
     // width * height pixels, rows from the first, 4 bytes each or 2 (tide_texels_bytes): the list's own copy,
@@ -1302,16 +1303,21 @@ typedef struct tide_mesh_levels {
 // keeps its place, so renderers can keep theirs by its place. One a frame
 // didn't draw is kept for when it's drawn again (a chunk of terrain that left
 // the view, a mesh a game skipped for a frame), within the idle budget below,
-// if a frame before drew it too and its lists weren't drawn at another
-// version since: a mesh made again each frame goes as the next frame starts.
+// where its lists weren't drawn at another version since.
 //
 // The idle budget, a list's and the renderer's each: unused meshes are kept
 // for TIDE_MESH_IDLE_FRAMES frames at most (ten minutes' at 60 a second), and
 // TIDE_MESH_IDLE_COUNT of them and TIDE_MESH_IDLE_BYTES of their copies at
 // most, the longest unused going first (by their places where they're as
-// old). Meshes a frame draws are outside it.
+// old). Meshes a frame draws are outside it. A mesh only one frame drew (one
+// drawn every other frame, or every few, before it's found again; or one made
+// again each frame of lists that are told apart by version alone) has a budget
+// of its own: TIDE_MESH_ONCE_FRAMES frames, TIDE_MESH_ONCE_COUNT meshes and
+// TIDE_MESH_ONCE_BYTES, the same way. Found again, it's in the first.
 enum { TIDE_MESH_IDLE_FRAMES = 36000, TIDE_MESH_IDLE_COUNT = 4096 };
 #define TIDE_MESH_IDLE_BYTES (UINT64_C(64) * 1024u * 1024u)
+enum { TIDE_MESH_ONCE_FRAMES = 8, TIDE_MESH_ONCE_COUNT = 1024 };
+#define TIDE_MESH_ONCE_BYTES (UINT64_C(16) * 1024u * 1024u)
 typedef struct tide_draw_mesh_data {
     uint64_t id, other; // Whose: C's addresses of its vertices and indices, or Tide's lists
     uint64_t version;

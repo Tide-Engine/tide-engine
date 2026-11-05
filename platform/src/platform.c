@@ -2481,6 +2481,7 @@ typedef struct gpu_texture {
     uint32_t epoch; // Its list's when it copied them (see tide_draw_forget)
     tide_gpu_id texture;
     uint32_t frame; // The frame that last drew with it
+    uint32_t held;  // 1 + the frame its list held it in, though it didn't draw with it (tide_draw_texture.held)
     bool mipped;    // Its smaller images are of these pixels: made when a draw first reads it between them (prepare_mipmaps)
     bool compressed;
     bool protected; // Referenced by a later step of the current list
@@ -3419,9 +3420,9 @@ static void spare_mesh(gpu_mesh *g)
 
 // The buffers of the places of meshes the list doesn't draw are spares for
 // those it draws that need some, before any is uploaded: but for those the
-// list still has as they are on the GPU and drew in more than one frame,
-// which stay for when they're drawn again, within the idle budget
-// (TIDE_MESH_IDLE_FRAMES, tide/draw.h).
+// list still has as they are on the GPU, which stay for when they're drawn
+// again, within the idle budget (TIDE_MESH_IDLE_FRAMES, tide/draw.h), or the
+// budget of meshes one frame alone drew (TIDE_MESH_ONCE_FRAMES).
 static void spare_unused_meshes(const tide_draw_list *list)
 {
     for (uint32_t i = 0; i < step_count; i++) {
@@ -3434,23 +3435,29 @@ static void spare_unused_meshes(const tide_draw_list *list)
                                    (size_t)gpu_mesh_count * sizeof *idle_meshes);
         idle_mesh_capacity = gpu_mesh_count;
     }
-    uint32_t idle_count = 0;
+    // Those drawn in more than one frame from the first, those one frame alone drew from the last
+    uint32_t idle_count = 0, once_count = 0;
     for (uint32_t i = 0; i < gpu_mesh_count; i++) {
         gpu_mesh *g = &gpu_meshes[i];
         if (g->wanted == gpu_frame + 1u || (!g->vertices && !g->indices)) continue;
-        // One drawn in one frame alone (a mesh made again each frame) the list lets go at its next reset: its
-        // buffers are spares now, as they always were
-        if (!gpu_mesh_current(list, i + 1u) || list->meshes[i].made == list->meshes[i].frame) {
+        if (!gpu_mesh_current(list, i + 1u)) {
             spare_mesh(g);
             continue;
         }
-        idle_meshes[idle_count++] = (tide_texture_idle){
+        const bool once = list->meshes[i].made == list->meshes[i].frame;
+        idle_meshes[once ? gpu_mesh_count - ++once_count : idle_count++] = (tide_texture_idle){
             .bytes = (uint64_t)g->vertex_capacity + g->index_capacity, .age = gpu_frame - g->frame, .place = i};
     }
-    if (!idle_count) return;
-    tide_texture_idle_trim(idle_meshes, idle_count, TIDE_MESH_IDLE_BYTES, TIDE_MESH_IDLE_COUNT, tide_mesh_idle_frames);
+    tide_texture_idle *once = idle_meshes + gpu_mesh_count - once_count;
+    if (idle_count) {
+        tide_texture_idle_trim(idle_meshes, idle_count, TIDE_MESH_IDLE_BYTES, TIDE_MESH_IDLE_COUNT, tide_mesh_idle_frames);
+    }
+    if (once_count) tide_texture_idle_trim(once, once_count, TIDE_MESH_ONCE_BYTES, TIDE_MESH_ONCE_COUNT, TIDE_MESH_ONCE_FRAMES);
     for (uint32_t i = 0; i < idle_count; i++) {
         if (!idle_meshes[i].keep) spare_mesh(&gpu_meshes[idle_meshes[i].place]);
+    }
+    for (uint32_t i = 0; i < once_count; i++) {
+        if (!once[i].keep) spare_mesh(&gpu_meshes[once[i].place]);
     }
 }
 
@@ -4039,7 +4046,7 @@ static void prepare_data_textures(const tide_draw_list *list)
     uint32_t count = 0;
     for (uint32_t i = 0; i < gpu_texture_count; i++) {
         const gpu_texture *g = &gpu_textures[i];
-        if (g->texture && !g->protected && g->frame != gpu_frame && g->space == TIDE_PIXELS_LIST
+        if (g->texture && !g->protected && g->frame != gpu_frame && g->held != gpu_frame + 1u && g->space == TIDE_PIXELS_LIST
             && g->format == TIDE_TEXELS_INTS && (g->id >> 63)) count++;
     }
     spare_data_count = 0;
@@ -4064,7 +4071,7 @@ static void prepare_data_textures(const tide_draw_list *list)
     memset(spare_data_index, 0, (size_t)slots * sizeof(uint32_t));
     for (uint32_t i = 0; i < gpu_texture_count; i++) {
         gpu_texture *g = &gpu_textures[i];
-        if (!g->texture || g->protected || g->frame == gpu_frame || g->space != TIDE_PIXELS_LIST
+        if (!g->texture || g->protected || g->frame == gpu_frame || g->held == gpu_frame + 1u || g->space != TIDE_PIXELS_LIST
             || g->format != TIDE_TEXELS_INTS || !(g->id >> 63)) continue;
         const uint32_t bucket = data_shape_hash(g->width, g->height) & (slots - 1u);
         spare_data_textures[spare_data_count] = (spare_data_texture){g->texture, g->width, g->height, spare_data_index[bucket]};
@@ -4205,6 +4212,18 @@ uint64_t tide_texture_idle_bytes(void)
     return tide_texture_idle_budget(tide_texture_device_memory());
 }
 
+// What the list holds though no step drew with it (a page of listed regions, tide_draw_texture.held) stays as
+// it is on the GPU, uploaded or not.
+static void hold_textures(const tide_draw_list *list)
+{
+    for (uint32_t i = 0; i < list->texture_count; i++) {
+        const tide_draw_texture *t = &list->textures[i];
+        if (!t->held) continue;
+        gpu_texture *g = find_gpu_texture(t->space, t->id);
+        if (g) g->held = gpu_frame + 1u;
+    }
+}
+
 // Retain only immutable content identities, never C addresses, grid handles,
 // targets or scratch data. The cache owns GPU ids, not borrowed pack pointers.
 static void forget_textures(const uint32_t epoch)
@@ -4218,7 +4237,7 @@ static void forget_textures(const uint32_t epoch)
     uint32_t idle_count = 0;
     for (uint32_t i = 0; i < gpu_texture_count; i++) {
         gpu_texture *g = &gpu_textures[i];
-        if (g->frame == gpu_frame || !g->texture) continue;
+        if (g->frame == gpu_frame || !g->texture || (g->held == gpu_frame + 1u && g->epoch == epoch)) continue;
         if (g->epoch != epoch || (g->space != TIDE_PIXELS_PACK && g->space != TIDE_PIXELS_PACK_CUBE)) {
             free_texture(g->texture);
             g->texture = 0;
@@ -4945,6 +4964,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
 
     // What the steps draw from goes to the GPU first
     renderer_start();
+    if (!over) hold_textures(list);
     if (!over) prepare_data_textures(list);
     if (!over) spare_unused_meshes(list);
     find_pipelines(list);

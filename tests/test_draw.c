@@ -142,9 +142,17 @@ TIDE_TEST(draw_idle_meshes_are_kept_for_when_drawn_again)
     const uint32_t once = idle_mesh(&d, TIDE_MESH_MEMORY, 3, 4, 7, &fill);
     tide_draw_reset(&d);
     TIDE_CHECK(idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill) == kept && !fill);
-    // A mesh one frame drew and the next didn't goes, as one made again each frame does
+    // A mesh one frame drew stays a while (TIDE_MESH_ONCE_FRAMES): drawn every other frame, it's found where it
+    // was, uncopied
     tide_draw_reset(&d);
-    TIDE_CHECK(mesh_gone(&d, once) && !mesh_gone(&d, kept));
+    TIDE_CHECK(!mesh_gone(&d, once) && !mesh_gone(&d, kept));
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_MEMORY, 3, 4, 7, &fill) == once && !fill);
+    // ...and one drawn once and never again goes once TIDE_MESH_ONCE_FRAMES frames went by without it
+    const uint32_t brief = idle_mesh(&d, TIDE_MESH_MEMORY, 8, 9, 7, &fill);
+    for (uint32_t i = 0; i < TIDE_MESH_ONCE_FRAMES + 1u; i++) tide_draw_reset(&d);
+    TIDE_CHECK(!mesh_gone(&d, brief));
+    tide_draw_reset(&d);
+    TIDE_CHECK(mesh_gone(&d, brief) && !mesh_gone(&d, once) && !mesh_gone(&d, kept));
     // One drawn in two frames stays through a frame that skips it, and is found where it was, uncopied
     tide_draw_reset(&d);
     TIDE_CHECK(!mesh_gone(&d, kept));
@@ -170,6 +178,15 @@ TIDE_TEST(draw_idle_meshes_are_kept_for_when_drawn_again)
     idle_mesh(&d, TIDE_MESH_BYTES, scratch, scratch, 11, &fill);
     tide_draw_reset(&d);
     TIDE_CHECK(!mesh_gone(&d, a) && !mesh_gone(&d, b));
+    // ...as made meshes are (tide_draw_mesh_key's UINT64_MAX): two drawn on alternate frames are each found again
+    const uint32_t made_a = idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 21, &fill);
+    tide_draw_reset(&d);
+    const uint32_t made_b = idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 22, &fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 21, &fill) == made_a && !fill);
+    tide_draw_reset(&d);
+    TIDE_CHECK(idle_mesh(&d, TIDE_MESH_BYTES, UINT64_MAX, UINT64_MAX, 22, &fill) == made_b && !fill);
+    tide_draw_reset(&d);
 
     // Kept for TIDE_MESH_IDLE_FRAMES frames unused, and no longer
     idle_mesh(&d, TIDE_MESH_MEMORY, 1, 2, 7, &fill);
@@ -208,6 +225,24 @@ TIDE_TEST(draw_idle_meshes_past_the_budget_go_longest_unused_first)
     TIDE_CHECK(gone == 1u && mesh_gone(&d, meshes[COUNT - 2u]) && !mesh_gone(&d, meshes[COUNT - 1u]));
     free(meshes);
     tide_draw_free(&d);
+
+    // TIDE_MESH_ONCE_COUNT of those one frame drew, a budget apart from the others': of as old, the one in the
+    // highest place goes, and a mesh in the other budget stays
+    tide_draw_list brief = {0};
+    enum { ONCE = TIDE_MESH_ONCE_COUNT + 1 };
+    uint32_t *briefs = malloc(ONCE * sizeof(uint32_t));
+    TIDE_REQUIRE(briefs);
+    const uint32_t lasting = idle_mesh(&brief, TIDE_MESH_MEMORY, 50u, 0, 1, &fill);
+    tide_draw_reset(&brief);
+    idle_mesh(&brief, TIDE_MESH_MEMORY, 50u, 0, 1, &fill);
+    for (uint32_t i = 0; i < ONCE; i++) briefs[i] = idle_mesh(&brief, TIDE_MESH_MEMORY, 300u + i, 0, 1, &fill);
+    tide_draw_reset(&brief);
+    tide_draw_reset(&brief);
+    gone = 0;
+    for (uint32_t i = 0; i < ONCE; i++) gone += mesh_gone(&brief, briefs[i]);
+    TIDE_CHECK(gone == 1u && mesh_gone(&brief, briefs[ONCE - 1u]) && !mesh_gone(&brief, lasting));
+    free(briefs);
+    tide_draw_free(&brief);
 
     // TIDE_MESH_IDLE_BYTES of their copies at most: two meshes over half of it each
     tide_draw_list big = {0};

@@ -209,7 +209,10 @@ budget like the one inactive pack images have (`notes/textures.md`).
   is kept unless one of these holds:
   - Only one frame drew it (`tide_draw_mesh_data.made == frame`). So a mesh
     rebuilt every frame still goes at the next reset, as before, and the
-    renderer's spare-buffer reuse for it is unchanged.
+    renderer's spare-buffer reuse for it is unchanged. (Since 2026-11-05 such a
+    mesh stays `TIDE_MESH_ONCE_FRAMES` frames within a budget of its own, on
+    the GPU too: `notes/drawing.md`, Idle listed regions, held pages and
+    one-frame meshes.)
   - The frame drew the same lists (space, id, other) at another version. The
     old copy can never draw again. Scratch and pack lists all share one id
     (`mesh3_slot`), so only the budget evicts those.
