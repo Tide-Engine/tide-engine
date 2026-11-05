@@ -25,7 +25,11 @@
 
 typedef uint32_t tide_gpu_id; // A buffer, texture, pipeline or target; 0 is none, and the window as a target
 
-typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES } tide_gpu_buffer_kind;
+// TIDE_GPU_STORAGE is a buffer shaders read and compute shaders write (WGSL's
+// var<storage>), which is also usable as a draw's vertices or indices, as
+// indirect arguments (draw_indirect, dispatch_indirect), and as either side of
+// buffer_copy and buffer_read. It starts zeroed where no data is given.
+typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES, TIDE_GPU_STORAGE } tide_gpu_buffer_kind;
 
 // A texture's pixels: 4 bytes each (red, green, blue, alpha), 1 (red), or one
 // float of 16 bits (red: any number a half holds). One of a single channel
@@ -211,6 +215,12 @@ typedef enum tide_gpu_filter {
 
 enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 12 };
 
+// The most storage buffers a pipeline binds. Storage buffer i is at binding
+// TIDE_GPU_STORAGE_BINDING + i of group 0, after the textures' bindings, so a
+// pipeline's whole layout is 32 descriptors at most: Vulkan's least
+// maxPushDescriptors, and within WebGPU's default 8 storage buffers a stage.
+enum { TIDE_GPU_MAX_STORAGE = 7, TIDE_GPU_STORAGE_BINDING = 1 + 2 * TIDE_GPU_MAX_TEXTURES };
+
 // The most a pipeline's uniform block takes, in bytes.
 #define TIDE_GPU_MAX_UNIFORMS 4096u
 
@@ -274,6 +284,16 @@ typedef struct tide_gpu_pipeline_desc {
     // leaves of them is as it was. Only for targets of colors and samples
     // (`into`); the renderer gives none for others.
     bool alpha_to_coverage;
+    // A compute pipeline: its WGSL's entry point is `compute` (@compute, with
+    // its own @workgroup_size), as is its SPIR-V's, and everything above
+    // about vertices, blending, depth, stencil, targets and outputs isn't
+    // read. It's used inside compute_begin/compute_end, never in a pass.
+    bool compute;
+    // The storage buffers it binds (storage), at TIDE_GPU_STORAGE_BINDING + i,
+    // and whether it writes each: WGSL's var<storage, read_write>, where the
+    // others are var<storage, read>. Only a compute pipeline writes one.
+    uint32_t storage_count;
+    bool storage_writes[TIDE_GPU_MAX_STORAGE];
 } tide_gpu_pipeline_desc;
 
 typedef struct tide_gpu {
@@ -463,6 +483,48 @@ typedef struct tide_gpu {
     // Triangles, three vertices (or indices) each, `instances` times over.
     void (*draw)(uint32_t first, uint32_t count, uint32_t instances);
     void (*draw_indexed)(uint32_t count, uint32_t instances);
+
+    // Compute and what it gives draws. NULL on a backend that can't compute
+    // (OpenGL's, which goes: compute is guaranteed on every render backend),
+    // all of them together.
+    //
+    // Storage buffer `slot` (TIDE_GPU_STORAGE_BINDING + slot), all of it, for
+    // the draws or dispatches after it, set as `sample` is, after `use`.
+    void (*storage)(uint32_t slot, tide_gpu_id buffer);
+    // A compute pass, outside passes: `use` a compute pipeline, its uniforms,
+    // samples and storage, then dispatches. Everything recorded before the
+    // pass (draws, dispatches, writes, copies) is done before it reads or
+    // writes anything, and everything after sees what it wrote: a backend
+    // puts the barriers that takes, as Vulkan needs, where WebGPU has them.
+    void (*compute_begin)(void);
+    void (*compute_end)(void);
+    // That many workgroups along each axis, each of the pipeline's
+    // @workgroup_size invocations. A count of 0 runs none.
+    void (*dispatch)(uint32_t x, uint32_t y, uint32_t z);
+    // ...or as many as three uint32s at `offset` of a storage buffer say, as
+    // the GPU has them then (a compute pass before wrote them).
+    void (*dispatch_indirect)(tide_gpu_id buffer, size_t offset);
+    // In a pass: draw or draw_indexed, with their numbers read by the GPU at
+    // `offset` of a storage buffer (a multiple of 4): four uint32s (vertex
+    // count, instances, first vertex, first instance) or five (index count,
+    // instances, first index, base vertex, first instance). The first
+    // instance is always 0: WebGPU takes no other without a feature.
+    void (*draw_indirect)(tide_gpu_id buffer, size_t offset);
+    void (*draw_indexed_indirect)(tide_gpu_id buffer, size_t offset);
+    // Outside passes: `size` bytes copied between storage buffers (all
+    // multiples of 4), in order with the passes and compute passes around it.
+    void (*buffer_copy)(tide_gpu_id from, size_t from_offset, tide_gpu_id to, size_t to_offset, size_t size);
+    // Outside passes: begins reading `size` bytes at `offset` of a storage
+    // buffer back (multiples of 4), as they are once everything recorded
+    // before is done. A token, never 0, or 0 where none could begin.
+    // buffer_read_done copies them into `data` (`size` bytes) and returns 1
+    // once they're here, 0 while they aren't, and -1 for a read the device
+    // lost; the token is let go once it returns anything but 0. It never
+    // waits. buffer_read_wait waits until every read begun is here (for runs
+    // whose frames must repeat exactly); NULL on the web, which can't wait.
+    uint32_t (*buffer_read)(tide_gpu_id buffer, size_t offset, size_t size);
+    int (*buffer_read_done)(uint32_t token, void *data);
+    void (*buffer_read_wait)(void);
 } tide_gpu;
 
 // What makes SPIR-V of a pipeline's WGSL where it has none, for Vulkan

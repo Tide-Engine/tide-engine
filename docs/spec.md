@@ -3610,7 +3610,7 @@ view DrawHud(Arena arena)
 - `verified World`: the confirmed world's other entities, by their handles.
 - Queries in local code: `with ownership` in a query; a local handler's match rows as each event's turn left things, where they're the tick's once it's done. Attached local-field reads and mutable bindings are decided above.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there. What was agreed of the GPU side, built since, is in What the GPU side gains.
+- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws (decided in part 2026-11-05: see Compute on the GPU, below); `while` and `switch` there. What was agreed of the GPU side, built since, is in What the GPU side gains.
 - Target formats beyond the three: floats of 32 bits, which keep a place in a big world where 16 bits don't (WebGPU neither blends them nor reads them blended without features a device may lack, and OpenGL ES 3 needs more extensions for the same, so they'd be read at the nearest pixel and replace what's there, everywhere); images of one or two channels, which take less memory for a mask, a speed or a shadow's two moments; and a byte format that isn't a color's.
 - A blend for each of a frag's outputs (OpenGL ES 3 and WebGL 2 have one for a draw); a clear's color for each of a target's images, and past 1 for a float one; and whether a game can ask if `Format.Rgba16f` images are floats on this machine, to draw another way where they aren't, which would be the first thing a game reads of the machine it runs on.
 - A `DepthTexture` as a draw's own source, for a pass over the screen that reads a scene's depth with no singleton between.
@@ -3619,6 +3619,191 @@ view DrawHud(Arena arena)
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers.
 - Textures: a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
+
+## Compute on the GPU
+
+### Decided and provisional (2026-11-05), not built
+
+Claude proposed this after the Mount & Rifle performance pass, and the owner answered it the same day.
+
+- **Decided:**
+  - Compute is guaranteed on every render backend, and a backend that can't run it is removed (Backends, below).
+  - The `compute` declaration, with `this.index`, `this.at`, `this.local`, `this.group` and `[Group(...)]`.
+  - `GPU.Run` in drawing code, ordered with draws as if serial.
+  - Readback only by `await list.Read()` in local async code.
+  - Any draw over a GPU list is indirect, with nothing more written.
+  - The engine's own culling is written as a Tide kernel.
+  - The order of work (the owner's): compute shaders, then indirect drawing, then GPU culling.
+- **Provisional** (Claude's picks): the name `GPUList<T>` (Questions settled, below), ordered `Add` and atomics (the owner: "i trust you here"), and every other rule here.
+
+**Why.** Measured on Mount & Rifle (Vulkan, RTX 4080 SUPER, 1080p), the target is 144 Hz (6.9 ms a frame). Recording meshes takes about 21% of the main thread on foot. DrawFlora makes 665 draws and 159k instances a frame, 47k of them frustum-tested one by one, though their instance data already lives on the GPU in listed pages. The vegetation pass takes about 2 ms of GPU time at any resolution: 17.9M indices a frame, mostly sub-pixel grass. Culling, picking levels of detail and compacting on the GPU replace that CPU work, and only a GPU-side count can then feed a draw.
+
+#### Kernels
+
+- **A `compute` declaration is code the GPU runs that isn't tied to a draw,** a declaration kind beside `frag` and `vert`. Its signature says what it reads, and the engine supplies it, as for a frag: the components of the entity the calling view runs for, singletons, and one struct of values given at the dispatch. It returns nothing. What a frag's code can do, a kernel's can: math, noise, lists, grids, maps, functions, and `Sample` at a texture's own level.
+- **Its `this` is the invocation,** as a frag's is its pixel: `this.index` (an `int`, for a run over a count or a list), or `this.at` (an `int2` or `int3`, for a run over a size), with `this.local` and `this.group` for its place in its group. Ordinary helpers get no `this`, as now.
+- **Group size is an attribute:** `[Group(64)]`, `[Group(8, 8)]`, `[Group(4, 4, 4)]`, 64 when left out. The compiler holds it to what every target has (WebGPU's defaults: 256 invocations a group, 64 along z) and says so at the attribute.
+- Invocations past the count never run the body. The engine rounds up to whole groups and guards the rest, so a kernel needs no `if (this.index >= n) return;` of its own.
+
+```csharp
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+component Meadow
+{
+    local GPUList<Blade> blades;   // Every blade, made once by Scatter
+    local GPUList<Blade> shown;    // This frame's survivors, in order
+    local Grid2<float> heights;
+}
+
+[Group(8, 8)]
+compute Scatter(Meadow meadow)
+{
+    float2 at = float2(this.at) * 0.25;    // Run once over the heights' size: GPU.Run(Scatter, meadow.heights.size)
+    meadow.blades.Add(Blade { root = float3(at.x, meadow.heights[this.at], at.y), height = 0.4 });
+}
+
+[Group(64)]
+compute Cull(Meadow meadow, Eye eye)     // Eye: a local singleton of the game's
+{
+    Blade blade = meadow.blades[this.index];
+    if (Math.Distance(blade.root, eye.position) < eye.reach)
+        meadow.shown.Add(blade);
+}
+
+view DrawMeadow(Meadow meadow, Models models)
+{
+    meadow.shown.Clear();                // In frame order, before Cull adds
+    GPU.Run(Cull, meadow.blades);        // Once for each blade the GPU has
+    Draw.Instanced(models.blade, meadow.shown, Sway, Grass);   // Indirect: draws as many as Cull kept
+}
+```
+
+#### GPU lists
+
+- **`GPUList<T>` is a list that lives on the GPU,** as `RenderTarget` is an image that does: machine-local, never match state (a match component or singleton can't hold one), made in local code as `GPUList<T>(capacity)`, `Resize(capacity)` (which empties it), `Dispose()`. Copies share the list. Its elements are what a GPU list's are today: GPU values, not `long`, text, entities or containers.
+- **Its contents and count stay from frame to frame** until something writes them. A lost device or a hot reload that changes `T`'s layout leaves it empty, as a target's image is left. A `contentRevision`, as `RenderTarget` has, says when that happened, so a game knows to fill it again.
+- **Its count is on the GPU,** between 0 and its capacity. GPU code reads `count`, `[i]` and `foreach`, as for a `List<T>`. Reads past the count are zeros.
+- **Kernels write it:** `list[i] = v` (a write past the capacity goes nowhere), and `list.Add(v)` (below). Local code writes it in frame order: `list.Set(items)` sends a `List<T>` and sets the count, and `list.Clear()` sets the count to 0.
+- **Writing needs no `mut`.** It's a handle, as drawing into a target needs no `mut` on what holds the target. The compiler records which GPU lists each kernel, frag and vert reads and writes, by the field that names them, and frame ordering (below) is built on that.
+- **Frags and verts read it** as they read a `List<T>`.
+- **Ordinary `List<T>` fields** are read by kernels the same way frags read them now, uploaded when they change.
+
+#### Adding in order, and atomics
+
+- **`list.Add(v)` in a kernel keeps invocation order:** what invocation 3 adds comes before what invocation 7 adds, and the count is how many were added. The result is the same whatever order the GPU ran them in, so captures stay bit-stable. A culling kernel needs nothing else.
+  - An invocation adds at most once to a given list on any path. The check works like definite assignment: "'Cull' can add to 'shown' twice". `Add` in a loop is an error that names atomics.
+  - Lowering (Claude's pick): the kernel writes a flag and the value for each invocation, then the engine's own reduce, scan and scatter dispatches compact them. That needs no subgroup operations or forward-progress guarantees, so it is portable. A kernel's `Add`s to several lists share the scan.
+- **Atomics** are methods on an `int` element of a GPU list or of a `shared` array: `counts.AtomicAdd(i, 1)` gives the old value, with `AtomicMin`, `AtomicMax`, `AtomicAnd`, `AtomicOr`, `AtomicXor`, `AtomicExchange` and `AtomicCompareExchange`. Only `int`: no backend has portable float atomics.
+  - What atomics return depends on timing, so results that depend on it differ between runs. GPU results are visual only, so atomics are allowed, and the docs say that a capture can then differ between runs.
+
+#### Within a group
+
+- **`shared int[64] sums;`** is a local in a kernel that the whole group shares: one copy a group, zeroed as the group starts (WebGPU does this, and Vulkan 1.3 has it core). It is a fixed-size array of GPU values, within 16 KiB a kernel.
+- **`GPU.Barrier()`** waits until every invocation of the group reaches it, with their writes to shared and GPU lists seen.
+  - Every invocation must reach it. A barrier inside a branch or loop whose condition can differ between invocations is tidec's error, by WGSL's uniformity rules. A shader compiler's error would be a tidec bug, as now.
+
+#### Running a kernel, and order in a frame
+
+- **`GPU.Run(kernel, over[, values])`** records a dispatch into the frame's draw list. It goes where a draw does: in views, local handlers that draw, and drawing functions. `over` is one of these:
+  - an `int`, `int2` or `int3`: that many invocations, read as `this.index` or `this.at`;
+  - a `GPUList`: once for each element of its GPU-side count, an indirect dispatch, so kernels chain without reading back;
+  - a `List<T>`: its count.
+- **`values`** is a struct sent once for the dispatch, as a draw's values are.
+- **A frame's GPU work happens as if in recording order.** A draw recorded after a run sees what the run wrote; one recorded before it doesn't. The same holds between runs. This is the scheduler's rule applied within a frame.
+  - The renderer knows each command's GPU-list reads and writes from the compiler, and places exactly the barriers they need.
+  - It may move a run earlier, out of the render pass it fell in, when nothing between them writes what the run reads or reads what it writes. A render pass is never split for a run that doesn't need it.
+  - Parallel views keep recording order, as for draws.
+- **Kernels write GPU lists only.** Writing a texture (storage textures) is open: a Hi-Z pyramid can be built with `Blit` into float targets, so culling doesn't need it.
+
+#### Results in local code
+
+- **Never the match:** the CPU can't read a GPU list synchronously. `meadow.blades.count` in CPU code is an error that says to read the list back.
+- **`await list.Read()`** in local async code gives a `List<T>`, an owned copy, a frame or more later, as a local worker's result arrives. `await list.ReadCount()` gives the count alone. A lost device fails it (`fails`). The game publishes the result into local state.
+- **Headless runs (Claude's pick):** a read completes at the start of the next frame, so scripted runs and captures repeat exactly. Real runs complete when the GPU is done.
+- In-flight reads are bounded, and a read past the bound waits for an earlier one.
+
+#### Indirect drawing follows
+
+- **A draw over a GPU list is indirect, with nothing more said:**
+  - `Draw.Instanced(mesh, list, ...)` draws as many instances as the list's GPU count;
+  - `Draw.Mesh` takes `GPUList` vertices and indices too, for geometry a kernel makes (grass, particles, terrain), with their counts on the GPU.
+  - The CPU records one command and reads nothing back. No game writes indirect arguments.
+- **No CPU culling or level picking** applies to such a draw (the CPU has no instances to test): the kernel does that. A game draws one list a level, filled by one kernel.
+- **Backends:**
+  - Vulkan uses `vkCmdDrawIndexedIndirect`, with `DrawIndirectCount` (core since 1.2) for many runs in one call.
+  - WebGPU uses `drawIndexedIndirect`, one a draw. A nonzero first instance there needs the optional `indirect-first-instance` feature, so the instance base goes with the draw's uniforms instead.
+  - Unity uses `Graphics.RenderPrimitivesIndexedIndirect` and `CommandBuffer.DispatchCompute`.
+
+#### GPU culling of listed runs: the engine's own
+
+This is the first use, step 1 of the agreed plan. It is internal: no language surface, and the same pixels. It is listed here because the owner asked for it to be written as a Tide kernel, which tests whether the language above is complete enough.
+
+- A listed run (`tide_draw_run.listed`) already has its candidates' instances in a GPU page. The CPU then records one entry a run: its page region, mesh bounds, level thresholds, whether it mirrors, and its camera. No per-instance work is left on the CPU.
+- One kernel per frame, `engine` code in a `.tide` file in `platform/`, does the rest for every entry's candidates:
+  - compiled when the engine builds, by the tool that makes the renderer's SPIR-V now;
+  - the frustum test, the level pick and the mirror split, each by the CPU's rule;
+  - an ordered `Add` into one list for each run, level and side;
+  - the indirect arguments for each.
+- **Order is the CPU path's,** so where the GPU and CPU tests agree the runs are the same. They can differ at a boundary: GPU float rounding isn't the quick test's error bound. That changes only which instances near the frustum's edge draw, visually, and is said where captures are compared.
+- **Later:** Hi-Z occlusion against last frame's depth, from a pyramid built by `Blit`. The grass's 2 ms of rasterizing is a separate problem. It comes down when distant levels thin out and occluded blades stop drawing, both of which this makes cheap.
+- Separate gap, still needed for cached and alternating shadow maps: a listed page and a mesh drawn only every other frame are freed at the reset between (`transient_data_textures`). GPU lists that a game owns persist by construction, but the engine's pages need their own fix.
+
+#### What tidec writes
+
+- **WGSL first, as now:**
+  - `@compute @workgroup_size(...)` entry points, `var<storage, read>` and `read_write` runtime-sized arrays, `var<workgroup>`, `workgroupBarrier`, `atomicAdd` and the rest.
+  - Elements keep the word layout lists use now (float packs, then int packs, only the parts read), as `array<vec4<u32>>` with bitcasts. The CPU writer, the GPU readers and Unity then share one layout, not WGSL's storage alignment rules.
+  - tidec bounds-checks reads and writes itself, rather than relying on robust buffer access for writes.
+- **SPIR-V** (`spirv.c`) gains:
+  - the GLCompute execution model with LocalSize, and the invocation built-ins;
+  - the StorageBuffer class with Block, ArrayStride and runtime arrays;
+  - Workgroup variables, `OpControlBarrier` and `OpAtomic*`.
+- **HLSL** (`hlsl.c`) gains:
+  - `[numthreads]`, `RWByteAddressBuffer`, `groupshared`, `GroupMemoryBarrierWithGroupSync` and `Interlocked*`;
+  - a `.compute` file per kernel for `tide unity`.
+- **GLSL** is not written, once the GL backends are removed (Backends, below).
+- **`gpu.h`** gains storage buffers, compute pipelines, `dispatch`, `dispatch_indirect`, `draw_indexed_indirect`, and asynchronous buffer reads. The recorder (`gpu_record.c`) records them for Unity.
+- **Tests:**
+  - goldens, `spirv-val` and fxc `cs_5_0 /WX`;
+  - a platform fixture that runs the same Tide functions on the CPU and in a kernel and compares them, as `tide_platform_shaders` does for frags;
+  - ordered `Add`'s order and count pinned across group sizes;
+  - device loss mid-frame.
+
+#### Backends (decided 2026-11-05)
+
+The owner: "compute shaders will be a guarantee now, if a render backend can't support it then we should remove it".
+
+- **Compute is the baseline: Vulkan 1.3 (desktop, Android, MoltenVK), WebGPU (web) and Unity's compute (DX11/12, Vulkan, Metal). OpenGL 3.3, OpenGL ES 3 and WebGL 2 are removed.**
+  - Gains:
+    - one code path;
+    - `gpu_gl.c`, `gl.h`, the GL half of `tide.js`, KHR_parallel_shader_compile and the ANGLE D3D11 runs deleted;
+    - lists, grids, maps and listed pages as storage buffers rather than int textures, without the 1024-pixel rows or the 2,097,152-pixel cap.
+  - Losses:
+    - Android devices without Vulkan 1.3 (lowering to 1.1 plus extensions is possible later);
+    - browsers without WebGPU: Firefox on Linux, Android and Intel Macs for now;
+    - Unity's WebGL export, and Unity on GLES 3.0 devices;
+    - very old GPUs, VMs and remote desktop.
+  - Costs that are easy to miss:
+    - tidec's helper texts are written once in GLSL and spelled into WGSL (`put_helper`), so dropping GLSL means making WGSL their source: a refactor of `shader.c` with every golden checked.
+    - WebGPU's compatibility mode (Chrome's path on GLES 3.1 Android) allows no storage buffers in the vertex stage by default, so this targets core WebGPU only.
+    - Android's emulator falls back to GLES with SwiftShader (its Vulkan there is 1.2), so emulator GPU runs would need a Vulkan 1.3 software device. Today's CI runs no GPU test on it, but this should be checked.
+    - CI can use lavapipe or SwiftShader for Vulkan and Dawn's software adapter, as it uses SwiftShader WebGPU now.
+  - Staging: build compute and indirect drawing on Vulkan and WebGPU, then delete GL in the same series. Between those steps, a game that runs a kernel refuses an OpenGL window and says why. That restriction is temporary: GL goes once compute lands.
+- **Not taken:**
+  - keeping GL with kernels on CPU threads there, the earlier plan in `notes/rendering.md`. It meant everything twice, and GL slow where compute matters;
+  - keeping GL for drawing only. A game using compute wouldn't then run on every machine.
+
+#### Questions settled
+
+The owner answered every question on 2026-11-05. The one left to Claude was the type's name. The owner was torn between `ComputeBuffer<T>`, `ComputeList<T>` and `GPUList<T>`: "they are usually called buffers in the GPU land no?".
+
+- **Pick, Provisional: `GPUList<T>`.** It is used as a list is (`count`, `[i]`, `foreach`, `Add`, `Set`), and Tide names a container by how it's used (`List`, `Grid`, `Map`). It goes where a `List<T>` goes in GPU code. Its count travels with it, which a buffer of the GPU's own doesn't have.
+- `ComputeBuffer` is Unity's name for a raw buffer without a count. `ComputeList` would suggest only kernels use it, though frags, verts and draws read it too.
+- `GPU` capitalized follows `GUI`. A rename stays cheap until it's built.
 
 ## GUI
 

@@ -39,6 +39,8 @@ TIDE_WEB_IMPORT(gpu_pipeline_begin) void tide_web_gpu_pipeline_begin(const char 
 TIDE_WEB_IMPORT(gpu_pipeline_slot) void tide_web_gpu_pipeline_slot(uint32_t stride, bool per_instance);
 TIDE_WEB_IMPORT(gpu_pipeline_attribute) void tide_web_gpu_pipeline_attribute(uint32_t slot, tide_gpu_attribute_format format,
                                                                      uint32_t offset);
+// Its storage buffers, a bit of `writes` for each that's written, and whether it's a compute pipeline
+TIDE_WEB_IMPORT(gpu_pipeline_storage) void tide_web_gpu_pipeline_storage(uint32_t count, uint32_t writes, bool compute);
 TIDE_WEB_IMPORT(gpu_pipeline_end) tide_gpu_id tide_web_gpu_pipeline_end(void);
 TIDE_WEB_IMPORT(gpu_pipeline_free) void tide_web_gpu_pipeline_free(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_background) void tide_web_gpu_background(bool on);
@@ -62,6 +64,17 @@ TIDE_WEB_IMPORT(gpu_vertices) void tide_web_gpu_vertices(uint32_t slot, tide_gpu
 TIDE_WEB_IMPORT(gpu_indices) void tide_web_gpu_indices(tide_gpu_id buffer, bool wide);
 TIDE_WEB_IMPORT(gpu_draw) void tide_web_gpu_draw(uint32_t first, uint32_t count, uint32_t instances);
 TIDE_WEB_IMPORT(gpu_draw_indexed) void tide_web_gpu_draw_indexed(uint32_t count, uint32_t instances);
+TIDE_WEB_IMPORT(gpu_storage) void tide_web_gpu_storage(uint32_t slot, tide_gpu_id buffer);
+TIDE_WEB_IMPORT(gpu_compute_begin) void tide_web_gpu_compute_begin(void);
+TIDE_WEB_IMPORT(gpu_compute_end) void tide_web_gpu_compute_end(void);
+TIDE_WEB_IMPORT(gpu_dispatch) void tide_web_gpu_dispatch(uint32_t x, uint32_t y, uint32_t z);
+TIDE_WEB_IMPORT(gpu_dispatch_indirect) void tide_web_gpu_dispatch_indirect(tide_gpu_id buffer, size_t offset);
+TIDE_WEB_IMPORT(gpu_draw_indirect) void tide_web_gpu_draw_indirect(tide_gpu_id buffer, size_t offset);
+TIDE_WEB_IMPORT(gpu_draw_indexed_indirect) void tide_web_gpu_draw_indexed_indirect(tide_gpu_id buffer, size_t offset);
+TIDE_WEB_IMPORT(gpu_buffer_copy)
+void tide_web_gpu_buffer_copy(tide_gpu_id from, size_t from_offset, tide_gpu_id to, size_t to_offset, size_t size);
+TIDE_WEB_IMPORT(gpu_buffer_read) uint32_t tide_web_gpu_buffer_read(tide_gpu_id buffer, size_t offset, size_t size);
+TIDE_WEB_IMPORT(gpu_buffer_read_done) int tide_web_gpu_buffer_read_done(uint32_t token, void *data);
 
 static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
 {
@@ -76,6 +89,12 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
     for (uint32_t i = 0; i < desc->slot_count; i++) tide_web_gpu_pipeline_slot(desc->slots[i].stride, desc->slots[i].per_instance);
     for (uint32_t i = 0; i < desc->attribute_count; i++) {
         tide_web_gpu_pipeline_attribute(desc->attributes[i].slot, desc->attributes[i].format, desc->attributes[i].offset);
+    }
+    const uint32_t storage = desc->storage_count < TIDE_GPU_MAX_STORAGE ? desc->storage_count : TIDE_GPU_MAX_STORAGE;
+    if (storage || desc->compute) {
+        uint32_t writes = 0;
+        for (uint32_t i = 0; i < storage; i++) writes |= (desc->compute && desc->storage_writes[i] ? 1u : 0u) << i;
+        tide_web_gpu_pipeline_storage(storage, writes, desc->compute);
     }
     return tide_web_gpu_pipeline_end();
 }
@@ -144,4 +163,15 @@ const tide_gpu tide_gpu_webgpu = {
     .indices = tide_web_gpu_indices,
     .draw = tide_web_gpu_draw,
     .draw_indexed = tide_web_gpu_draw_indexed,
+    .storage = tide_web_gpu_storage,
+    .compute_begin = tide_web_gpu_compute_begin,
+    .compute_end = tide_web_gpu_compute_end,
+    .dispatch = tide_web_gpu_dispatch,
+    .dispatch_indirect = tide_web_gpu_dispatch_indirect,
+    .draw_indirect = tide_web_gpu_draw_indirect,
+    .draw_indexed_indirect = tide_web_gpu_draw_indexed_indirect,
+    .buffer_copy = tide_web_gpu_buffer_copy,
+    .buffer_read = tide_web_gpu_buffer_read,
+    .buffer_read_done = tide_web_gpu_buffer_read_done,
+    .buffer_read_wait = NULL, // The page's thread can't wait for the GPU
 };

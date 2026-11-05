@@ -3,9 +3,10 @@
 // goes through it as it goes through WebGPU's:
 //
 // - Shaders are SPIR-V that tidec translated from the WGSL (spirv.c), so a
-//   pipeline's bindings are WebGPU's: set 0, the uniforms at binding 0 and
-//   texture i and its sampler at 1 + 2i and 2 + 2i. Every pipeline has one
-//   layout of all of them, and a draw pushes what it's given there.
+//   pipeline's bindings are WebGPU's: set 0, the uniforms at binding 0,
+//   texture i and its sampler at 1 + 2i and 2 + 2i, and storage buffer i at
+//   25 + i. Every pipeline, drawing or computing, has one layout of all of
+//   them, and a draw or a dispatch pushes what it's given there.
 // - Clip space is WebGPU's in the shaders already (they move depth from -1
 //   to 1 to 0 to 1); the viewport is turned upside down, so y goes up in clip
 //   space and rows go from the top in every image, the window's too.
@@ -71,7 +72,9 @@
     X(vkCmdSetStencilReference) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw)                        \
     X(vkCmdDrawIndexed) X(vkCreatePipelineCache) X(vkDestroyPipelineCache) X(vkGetPipelineCacheData)               \
     X(vkMergePipelineCaches) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool)          \
-    X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCmdBindDescriptorSets)
+    X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) X(vkCmdBindDescriptorSets) X(vkGetFenceStatus)        \
+    X(vkCmdFillBuffer) X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkCmdDispatchIndirect) X(vkCmdDrawIndirect)   \
+    X(vkCmdDrawIndexedIndirect)
 
 #define VK_DEVICE_OPTIONAL(X) X(vkCmdPushDescriptorSetKHR)
 
@@ -120,6 +123,7 @@ typedef struct vk_buffer {
     VkBuffer buffer; // VK_NULL_HANDLE: a free place
     vk_alloc memory;
     VkDeviceSize size;
+    bool storage; // TIDE_GPU_STORAGE: bound as storage, read as indirect numbers, copied and read back
 } vk_buffer;
 
 typedef struct vk_texture {
@@ -146,6 +150,8 @@ typedef struct vk_pipeline {
     uint32_t texture_count;
     uint8_t reads[TIDE_GPU_MAX_TEXTURES];
     tide_gpu_target_format into;
+    bool compute;           // Used in compute passes, and never in a pass
+    uint32_t storage_count; // The storage buffers it binds
 } vk_pipeline;
 
 typedef struct vk_target {
@@ -197,6 +203,17 @@ typedef struct vk_frame {
     uint32_t pool_count, pool_used; // ...of which those before `pool_used` are full
     bool pool_used_any;             // ...and the one at `pool_used` has sets taken
 } vk_frame;
+
+// A storage buffer's bytes on their way back (tide_gpu.buffer_read): copied
+// into memory the host reads, there once the submission they went with is done.
+typedef struct vk_read {
+    uint32_t token;    // 0: a free place
+    bool lost;         // The device went before they were there
+    VkBuffer buffer;   // VK_NULL_HANDLE once let go of
+    vk_alloc memory;
+    VkDeviceSize size, room; // What's read, and what the buffer holds
+    uint64_t serial;   // The submission the copy goes with
+} vk_read;
 
 // Samplers: by tide_gpu_wrap, then tide_gpu_filter; then the one that compares, and the nearest one that clamps.
 enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1, FILTERS = TIDE_GPU_FILTER_MIPMAPS + 1 };
@@ -272,6 +289,9 @@ static struct {
 
     // The pass
     bool in_pass, skip_pass;
+    bool in_compute; // A compute pass, whose command buffer is `pass` as a pass's is
+    bool dispatched; // ...and it dispatched: the next dispatch waits for what that wrote
+    tide_gpu_id storage_bound[TIDE_GPU_MAX_STORAGE];
     tide_gpu_id pass_target; // 0 for the window
     int pass_width, pass_height;
     tide_gpu_id current; // The pipeline the pass uses: 0 for none
@@ -302,6 +322,12 @@ static struct {
     size_t cache_read;  // The bytes of it this device took from the file (tide_gpu_vk_pipeline_cache_read)
     uint64_t cache_hash; // ...and their hash: what's written as the backend closes, unless it's that again
     bool lose_asked;                   // For tests (tide_gpu_vk_lose): lost as the frame is shown
+
+    // Storage read back (tide_gpu.buffer_read), and buffers of reads that are done, kept for the next
+    vk_read *reads;
+    uint32_t read_count, read_capacity;
+    uint32_t read_token; // The last given
+    vk_read spare_reads[4];
 } vk;
 
 
@@ -604,13 +630,18 @@ static VkDeviceSize ring_take(const VkDeviceSize size, const VkDeviceSize align,
 // their own as they turn from one layout to another (turn).
 
 enum {
-    DRAW_STAGES = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+    DRAW_STAGES = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT
+                | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
     ATTACHMENT_STAGES = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
                       | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     ATTACHMENT_WRITES = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
     ATTACHMENT_ACCESS = ATTACHMENT_WRITES | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
-    DRAW_READS = VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT
-               | VK_ACCESS_SHADER_READ_BIT,
+    DRAW_READS = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT
+               | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+    // What a dispatch reads and writes, its size where it's indirect too
+    DISPATCH_STAGES = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+    DISPATCH_ACCESS = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT
+                    | VK_ACCESS_SHADER_WRITE_BIT,
 };
 
 static void barrier(const VkCommandBuffer cb, const VkPipelineStageFlags from, const VkAccessFlags written,
@@ -641,6 +672,31 @@ static void barrier_transfers(const VkCommandBuffer cb)
 {
     barrier(cb, DRAW_STAGES | ATTACHMENT_STAGES, ATTACHMENT_WRITES, VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+}
+
+// A compute pass begins once everything before it is done: transfers, draws
+// (whose attachments it may sample) and the compute passes before it, which
+// may have read what it writes as well as written what it reads.
+static void barrier_compute(const VkCommandBuffer cb)
+{
+    barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT | DRAW_STAGES | ATTACHMENT_STAGES | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | ATTACHMENT_WRITES, DISPATCH_STAGES, DISPATCH_ACCESS);
+}
+
+// A dispatch after another in a compute pass, which sees what that one wrote,
+// and writes nothing it was still reading.
+static void barrier_dispatches(const VkCommandBuffer cb)
+{
+    barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, DISPATCH_STAGES, DISPATCH_ACCESS);
+}
+
+// What a compute pass wrote, for everything after it: draws' numbers,
+// indices, vertices and shaders, compute passes, copies and writes.
+static void barrier_computed(const VkCommandBuffer cb)
+{
+    barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+            DRAW_STAGES | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            DRAW_READS | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
 }
 
 // A command buffer of the frame's, recording.
@@ -733,9 +789,10 @@ static void layout_use(const VkImageLayout layout, VkPipelineStageFlags *stages,
     case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL: // Its resolve is at color output
         *stages = ATTACHMENT_STAGES, *access = ATTACHMENT_ACCESS;
         break;
-    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: // Sampled by draws and dispatches alike
     case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
-        *stages = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, *access = VK_ACCESS_SHADER_READ_BIT;
+        *stages = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        *access = VK_ACCESS_SHADER_READ_BIT;
         break;
     case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
         *stages = VK_PIPELINE_STAGE_TRANSFER_BIT, *access = VK_ACCESS_TRANSFER_READ_BIT;
@@ -795,8 +852,9 @@ static VkDescriptorSet frame_set(void)
                 {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, POOL_SETS},
                 {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, POOL_SETS * TIDE_GPU_MAX_TEXTURES},
                 {VK_DESCRIPTOR_TYPE_SAMPLER, POOL_SETS * TIDE_GPU_MAX_TEXTURES},
+                {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, POOL_SETS * TIDE_GPU_MAX_STORAGE},
             };
-            const VkDescriptorPoolCreateInfo info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, NULL, 0, POOL_SETS, 3, sizes};
+            const VkDescriptorPoolCreateInfo info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, NULL, 0, POOL_SETS, 4, sizes};
             VkDescriptorPool pool;
             if (!check(vkCreateDescriptorPool(vk.device, &info, NULL, &pool), "vkCreateDescriptorPool")) return VK_NULL_HANDLE;
             f->pools = tide_realloc(f->pools, f->pool_count * sizeof(VkDescriptorPool), (f->pool_count + 1u) * sizeof(VkDescriptorPool));
@@ -1305,15 +1363,30 @@ static tide_gpu_id vk_buffer_make(const tide_gpu_buffer_kind kind, const size_t 
     if (vk.lost) return 0;
     const tide_gpu_id id = buffer_place();
     vk_buffer *b = &vk.buffers[id - 1u];
-    const VkBufferUsageFlags usage = (kind == TIDE_GPU_VERTICES ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
-                                   | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    const bool storage = kind == TIDE_GPU_STORAGE;
+    const VkBufferUsageFlags usage = storage ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+                                                   | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT
+                                                   | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                   : (kind == TIDE_GPU_VERTICES ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
+                                         | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     if (!make_buffer(size ? size : 4u, usage, USE_GPU, &b->buffer, &b->memory)) {
         fprintf(stderr, "tide: Vulkan: no memory for a buffer of %llu bytes\n", (unsigned long long)size);
         abort();
     }
     b->size = size;
-    if (data) vk_buffer_write(id, 0, data, size);
+    b->storage = storage;
+    if (data) {
+        vk_buffer_write(id, 0, data, size);
+    } else if (storage) { // Zeros, as WebGPU's are: what a shader reads of it before anything wrote it
+        vkCmdFillBuffer(outside(), b->buffer, 0, VK_WHOLE_SIZE, 0);
+    }
     return id;
+}
+
+// A storage buffer, by its id: NULL for none, or for a buffer of another kind.
+static const vk_buffer *storage_of(const tide_gpu_id id)
+{
+    return id && id <= vk.buffer_count && vk.buffers[id - 1u].buffer && vk.buffers[id - 1u].storage ? &vk.buffers[id - 1u] : NULL;
 }
 
 static void vk_buffer_free(const tide_gpu_id id)
@@ -1855,6 +1928,34 @@ static VkFormat attribute_format(const tide_gpu_attribute_format format)
 
 uint32_t *(*tide_gpu_spirv_of)(const char *wgsl, size_t *count, char *error, size_t error_size);
 
+// A compute pipeline of the module's `compute`, in the layout every pipeline
+// has, and through the cache graphics pipelines go through.
+static tide_gpu_id compute_pipeline(const tide_gpu_pipeline_desc *desc, const VkShaderModule module, const char *name)
+{
+    const VkComputePipelineCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "compute", NULL},
+        .layout = vk.layout, .basePipelineIndex = -1,
+    };
+    VkPipeline pipeline;
+    const VkResult result = vkCreateComputePipelines(vk.device, vk.pipeline_cache, 1, &info, NULL, &pipeline);
+    vkDestroyShaderModule(vk.device, module, NULL);
+    if (result != VK_SUCCESS) {
+        if (result == VK_ERROR_DEVICE_LOST) {
+            lose(result);
+            return 0;
+        }
+        fprintf(stderr, "tide: Vulkan made no compute pipeline of %s (%d)\n", name, (int)result);
+        abort();
+    }
+    const tide_gpu_id id = pipeline_place();
+    vk_pipeline *p = &vk.pipelines[id - 1u];
+    *p = (vk_pipeline){.pipeline = pipeline, .texture_count = desc->texture_count, .compute = true,
+                       .storage_count = desc->storage_count < TIDE_GPU_MAX_STORAGE ? desc->storage_count : TIDE_GPU_MAX_STORAGE};
+    memcpy(p->reads, desc->reads, sizeof p->reads);
+    return id;
+}
+
 static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
 {
     if (vk.lost) return 0;
@@ -1883,6 +1984,7 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
         fprintf(stderr, "tide: the SPIR-V of %s didn't make a Vulkan shader module\n", name);
         abort();
     }
+    if (desc->compute) return compute_pipeline(desc, module, name);
     const VkPipelineShaderStageCreateInfo stages[2] = {
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_VERTEX_BIT, module, "vertex", NULL},
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_FRAGMENT_BIT, module, "fragment", NULL},
@@ -1984,7 +2086,8 @@ static tide_gpu_id vk_pipeline_make(const tide_gpu_pipeline_desc *desc)
     }
     const tide_gpu_id id = pipeline_place();
     vk_pipeline *p = &vk.pipelines[id - 1u];
-    *p = (vk_pipeline){.pipeline = pipeline, .texture_count = desc->texture_count, .into = desc->into};
+    *p = (vk_pipeline){.pipeline = pipeline, .texture_count = desc->texture_count, .into = desc->into,
+                       .storage_count = desc->storage_count < TIDE_GPU_MAX_STORAGE ? desc->storage_count : TIDE_GPU_MAX_STORAGE};
     memcpy(p->reads, desc->reads, sizeof p->reads);
     return id;
 }
@@ -2152,6 +2255,17 @@ static void vk_use(const tide_gpu_id id)
 {
     if (vk.skip_pass) return;
     const vk_pipeline *p = &vk.pipelines[id - 1u];
+    if (p->compute != vk.in_compute) {
+        fprintf(stderr, p->compute ? "tide: a compute pipeline is used in a pass: it's for compute passes (compute_begin)\n"
+                                   : "tide: a pipeline that draws is used in a compute pass\n");
+        abort();
+    }
+    if (vk.in_compute) {
+        vk.current = id;
+        vk.bound = false;
+        vkCmdBindPipeline(vk.pass, VK_PIPELINE_BIND_POINT_COMPUTE, p->pipeline);
+        return;
+    }
     // A pipeline is for one kind of target
     const tide_gpu_target_format kind = vk.pass_target ? vk.targets[vk.pass_target - 1u].format : TIDE_GPU_TARGET_COLOR;
     if (p->into != kind) {
@@ -2210,9 +2324,11 @@ static bool bind(void)
     if (vk.bound) return true;
     if (!uniform_buffer) return false;
     const vk_pipeline *p = &vk.pipelines[vk.current - 1u];
+    const VkPipelineBindPoint point = vk.in_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
     VkDescriptorBufferInfo block = {uniform_buffer, vk.uniforms_at, TIDE_GPU_MAX_UNIFORMS};
     VkDescriptorImageInfo images[TIDE_GPU_MAX_TEXTURES], samplers[TIDE_GPU_MAX_TEXTURES];
-    VkWriteDescriptorSet writes[1 + 2 * TIDE_GPU_MAX_TEXTURES];
+    VkDescriptorBufferInfo storage[TIDE_GPU_MAX_STORAGE];
+    VkWriteDescriptorSet writes[1 + 2 * TIDE_GPU_MAX_TEXTURES + TIDE_GPU_MAX_STORAGE];
     uint32_t count = 0;
     if (uniform_buffer) {
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 0, 0, 1,
@@ -2237,15 +2353,26 @@ static bool bind(void)
         writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE, 2u + 2u * i, 0, 1,
                                                  VK_DESCRIPTOR_TYPE_SAMPLER, &samplers[i], NULL, NULL};
     }
+    // Each storage buffer whole, at its binding after the textures'
+    for (uint32_t i = 0; i < p->storage_count; i++) {
+        const vk_buffer *b = storage_of(vk.storage_bound[i]);
+        if (!b) continue;
+        // ...as far as a shader reaches one (past that, an index reads nothing, as past its end)
+        const VkDeviceSize reach = vk.properties.limits.maxStorageBufferRange;
+        storage[i] = (VkDescriptorBufferInfo){b->buffer, 0, b->size < 4u ? 4u : b->size < reach ? b->size : reach};
+        writes[count++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, VK_NULL_HANDLE,
+                                                 TIDE_GPU_STORAGE_BINDING + i, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL,
+                                                 &storage[i], NULL};
+    }
     if (count && vk.push) {
-        vkCmdPushDescriptorSetKHR(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.layout, 0, count, writes);
+        vkCmdPushDescriptorSetKHR(vk.pass, point, vk.layout, 0, count, writes);
     } else if (count) {
         // A set of the frame's, with what the draw reads, bound for it: the GPU reads it as the frame runs
         const VkDescriptorSet set = frame_set();
         if (!set) return false;
         for (uint32_t i = 0; i < count; i++) writes[i].dstSet = set;
         vkUpdateDescriptorSets(vk.device, count, writes, 0, NULL);
-        vkCmdBindDescriptorSets(vk.pass, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.layout, 0, 1, &set, 0, NULL);
+        vkCmdBindDescriptorSets(vk.pass, point, vk.layout, 0, 1, &set, 0, NULL);
     }
     vk.bound = true;
     return true;
@@ -2261,6 +2388,267 @@ static void vk_draw_indexed(const uint32_t count, const uint32_t instances)
 {
     if (vk.skip_pass || !vk.current || !bind()) return;
     vkCmdDrawIndexed(vk.pass, count, instances, 0, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Compute: storage buffers, compute passes, what the GPU's numbers draw, and
+// what's copied and read back.
+//
+// A compute pass is a command buffer of its own, as a pass is: what's written
+// or uploaded while it's on goes into one before it (`before`), what's recorded
+// outside passes after it goes on in its own, and its barriers are by the
+// stages that write and read (barrier_compute, barrier_dispatches,
+// barrier_computed).
+
+static void vk_storage(const uint32_t slot, const tide_gpu_id buffer)
+{
+    if (vk.skip_pass || slot >= TIDE_GPU_MAX_STORAGE) return;
+    vk.storage_bound[slot] = buffer;
+    vk.bound = false;
+}
+
+static void vk_compute_begin(void)
+{
+    vk.in_compute = true;
+    vk.skip_pass = true; // Until it has a command buffer
+    vk.current = 0;
+    vk.bound = false;
+    vk.dispatched = false;
+    uniform_buffer = VK_NULL_HANDLE; // A compute pass's dispatches read the uniforms written in it
+    vk.uniforms_at = 0;
+    if (vk.lost) return;
+    flush_if_full();
+    if (vk.lost) return;
+    close_outside();
+    vk.pass = command_buffer();
+    barrier_compute(vk.pass);
+    vk.pass_pending = vk.pending_count;
+    queue_up(vk.pass);
+    vk.before = VK_NULL_HANDLE;
+    vk.skip_pass = false;
+}
+
+static void vk_compute_end(void)
+{
+    vk.in_compute = false;
+    if (vk.skip_pass) return;
+    vk.skip_pass = true;
+    if (vk.lost) { // Nothing recorded goes
+        vk.pass = vk.before = VK_NULL_HANDLE;
+        return;
+    }
+    if (vk.dispatched) barrier_computed(vk.pass);
+    vk.outside = vk.pass; // What's recorded outside passes next goes on after it
+    vk.pass = VK_NULL_HANDLE;
+    if (vk.before) check(vkEndCommandBuffer(vk.before), "vkEndCommandBuffer");
+    vk.before = VK_NULL_HANDLE;
+}
+
+// Whether a dispatch can go, with what it reads bound and after the one before it.
+static bool dispatching(void)
+{
+    if (!vk.in_compute || vk.skip_pass || !vk.current || !bind()) return false;
+    if (vk.dispatched) barrier_dispatches(vk.pass);
+    vk.dispatched = true;
+    return true;
+}
+
+static void vk_dispatch(const uint32_t x, const uint32_t y, const uint32_t z)
+{
+    if (!x || !y || !z) return; // None run
+    if (!dispatching()) return;
+    const uint32_t *most = vk.properties.limits.maxComputeWorkGroupCount;
+    vkCmdDispatch(vk.pass, x < most[0] ? x : most[0], y < most[1] ? y : most[1], z < most[2] ? z : most[2]);
+}
+
+static void vk_dispatch_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    const vk_buffer *b = storage_of(buffer);
+    if (!b || offset % 4u || offset > b->size || b->size - offset < 12u || !dispatching()) return;
+    vkCmdDispatchIndirect(vk.pass, b->buffer, offset);
+}
+
+static void vk_draw_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    const vk_buffer *b = storage_of(buffer);
+    if (vk.skip_pass || vk.in_compute || !vk.current || !b || offset % 4u || offset > b->size || b->size - offset < 16u
+        || !bind()) return;
+    vkCmdDrawIndirect(vk.pass, b->buffer, offset, 1, 16);
+}
+
+static void vk_draw_indexed_indirect(const tide_gpu_id buffer, const size_t offset)
+{
+    const vk_buffer *b = storage_of(buffer);
+    if (vk.skip_pass || vk.in_compute || !vk.current || !b || offset % 4u || offset > b->size || b->size - offset < 20u
+        || !bind()) return;
+    vkCmdDrawIndexedIndirect(vk.pass, b->buffer, offset, 1, 20);
+}
+
+// Copies and writes in one command buffer have no order of their own: one
+// that reads or writes what one before wrote goes after it.
+static void barrier_copies(const VkCommandBuffer cb)
+{
+    barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+}
+
+// Whether `size` bytes from `offset` are inside a buffer of `has`.
+static bool inside(const VkDeviceSize has, const size_t offset, const size_t size)
+{
+    return offset <= has && size <= has - offset;
+}
+
+static void vk_buffer_copy(const tide_gpu_id from, const size_t from_offset, const tide_gpu_id to, const size_t to_offset,
+                           const size_t size)
+{
+    const vk_buffer *a = storage_of(from), *b = storage_of(to);
+    if (vk.lost || !size || !a || !b || !inside(a->size, from_offset, size) || !inside(b->size, to_offset, size)) return;
+    // Bytes copied onto themselves are no copy Vulkan (or WebGPU) makes
+    if (from == to && from_offset < to_offset + size && to_offset < from_offset + size) return;
+    const VkCommandBuffer cb = outside();
+    barrier_copies(cb);
+    const VkBufferCopy copy = {from_offset, to_offset, size};
+    vkCmdCopyBuffer(cb, a->buffer, b->buffer, 1, &copy);
+}
+
+// Whether the GPU is done with submission `serial`, asking the fences of the
+// frames it's waited on by without waiting for them.
+static bool reached(const uint64_t serial)
+{
+    if (serial <= vk.completed) return true;
+    if (vk.lost || serial > vk.submitted) return false;
+    for (uint32_t i = 0; i < FRAMES; i++) {
+        const vk_frame *f = &vk.frames[i];
+        if (!f->fenced || f->serial < serial) continue;
+        const VkResult status = vkGetFenceStatus(vk.device, f->fence);
+        if (status == VK_SUCCESS) {
+            vk.completed = f->serial; // Everything submitted before it is done too
+            return true;
+        }
+        if (status != VK_NOT_READY) lose(status);
+    }
+    return false;
+}
+
+// A read's buffer let go of: kept for the next read where there's room for
+// it, or destroyed once the GPU is done with the frame.
+static void release_read(vk_read *r)
+{
+    if (r->buffer && !vk.lost) {
+        // In a free spare place, or in place of the smallest spare where it's bigger
+        vk_read *s = &vk.spare_reads[0];
+        for (uint32_t i = 0; i < sizeof vk.spare_reads / sizeof vk.spare_reads[0]; i++) {
+            if (!vk.spare_reads[i].buffer) {
+                s = &vk.spare_reads[i];
+                break;
+            }
+            if (vk.spare_reads[i].room < s->room) s = &vk.spare_reads[i];
+        }
+        if (!s->buffer || s->room < r->room) {
+            if (s->buffer) DISCARD(VK_OBJECT_TYPE_BUFFER, s->buffer, &s->memory);
+            *s = (vk_read){.buffer = r->buffer, .memory = r->memory, .room = r->room};
+            r->buffer = VK_NULL_HANDLE;
+        }
+    }
+    if (r->buffer) DISCARD(VK_OBJECT_TYPE_BUFFER, r->buffer, &r->memory);
+    *r = (vk_read){0};
+}
+
+static vk_read *read_of(const uint32_t token)
+{
+    for (uint32_t i = 0; i < vk.read_count; i++) {
+        if (token && vk.reads[i].token == token) return &vk.reads[i];
+    }
+    return NULL;
+}
+
+static uint32_t vk_buffer_read(const tide_gpu_id buffer, const size_t offset, const size_t size)
+{
+    const vk_buffer *b = storage_of(buffer);
+    if (vk.lost || !size || !b || !inside(b->size, offset, size)) return 0;
+    uint32_t place = 0;
+    while (place < vk.read_count && vk.reads[place].token) place++;
+    if (place == vk.read_count) {
+        if (vk.read_count == vk.read_capacity) {
+            const uint32_t capacity = vk.read_capacity ? vk.read_capacity * 2u : 16u;
+            vk.reads = tide_realloc(vk.reads, vk.read_capacity * sizeof(vk_read), capacity * sizeof(vk_read));
+            vk.read_capacity = capacity;
+        }
+        vk.reads[vk.read_count++] = (vk_read){0};
+    }
+    vk_read *r = &vk.reads[place];
+    // Memory the host reads, of a spare read's where one has room and isn't far bigger
+    VkDeviceSize room = 256;
+    while (room < size) room *= 2u;
+    for (uint32_t i = 0; i < sizeof vk.spare_reads / sizeof vk.spare_reads[0] && !r->buffer; i++) {
+        vk_read *s = &vk.spare_reads[i];
+        if (s->buffer && s->room >= room && s->room <= room * 4u) {
+            r->buffer = s->buffer, r->memory = s->memory, r->room = s->room;
+            *s = (vk_read){0};
+        }
+    }
+    if (!r->buffer) {
+        if (!make_buffer(room, VK_BUFFER_USAGE_TRANSFER_DST_BIT, USE_READBACK, &r->buffer, &r->memory)) {
+            *r = (vk_read){0};
+            return 0;
+        }
+        r->room = room;
+    }
+    do vk.read_token++;
+    while (!vk.read_token || read_of(vk.read_token));
+    r->token = vk.read_token;
+    r->size = size;
+    r->serial = vk.submitted + 1u; // Everything recorded goes with the next submission, whichever submits it
+    const VkCommandBuffer cb = outside();
+    barrier_copies(cb);
+    const VkBufferCopy copy = {offset, 0, size};
+    vkCmdCopyBuffer(cb, b->buffer, r->buffer, 1, &copy);
+    barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
+    return r->token;
+}
+
+static int vk_buffer_read_done(const uint32_t token, void *data)
+{
+    vk_read *r = read_of(token);
+    if (!r) return -1;
+    if (!r->lost && !reached(r->serial)) {
+        if (!vk.lost) return 0;
+        r->lost = true; // What was recorded with it never goes to the GPU
+    }
+    const bool lost = r->lost;
+    if (!lost) memcpy(data, r->memory.mapped, r->size);
+    release_read(r);
+    return lost ? -1 : 1;
+}
+
+static void vk_buffer_read_wait(void)
+{
+    for (uint32_t i = 0; i < vk.read_count; i++) {
+        const vk_read *r = &vk.reads[i];
+        if (r->token && !r->lost && r->serial > vk.completed) {
+            flush(); // Everything goes, and is waited for
+            return;
+        }
+    }
+}
+
+// Every read's memory goes with the device: those not yet done are lost.
+static void forget_reads(void)
+{
+    for (uint32_t i = 0; i < vk.read_count; i++) {
+        vk_read *r = &vk.reads[i];
+        if (r->buffer) vkDestroyBuffer(vk.device, r->buffer, NULL);
+        give_back(&r->memory);
+        r->buffer = VK_NULL_HANDLE;
+        r->memory = (vk_alloc){0};
+        if (r->token) r->lost = true; // ...and whatever had come back with them, which nobody took
+    }
+    for (uint32_t i = 0; i < sizeof vk.spare_reads / sizeof vk.spare_reads[0]; i++) {
+        vk_read *s = &vk.spare_reads[i];
+        if (s->buffer) vkDestroyBuffer(vk.device, s->buffer, NULL);
+        give_back(&s->memory);
+        *s = (vk_read){0};
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2560,6 +2948,7 @@ static void destroy_device(void)
     if (readback.buffer) vkDestroyBuffer(vk.device, readback.buffer, NULL);
     give_back(&readback.memory);
     readback.buffer = VK_NULL_HANDLE, readback.memory = (vk_alloc){0}, readback.size = 0;
+    forget_reads();
     if (vk.pass_queries) vkDestroyQueryPool(vk.device, vk.pass_queries, NULL);
     if (vk.queries) vkDestroyQueryPool(vk.device, vk.queries, NULL);
     vk.pass_queries = VK_NULL_HANDLE;
@@ -2583,7 +2972,7 @@ static void destroy_device(void)
     vk.device = VK_NULL_HANDLE;
     vk.pending_count = 0;
     vk.outside = vk.pass = vk.before = VK_NULL_HANDLE;
-    vk.acquired = vk.in_pass = vk.drawn = false;
+    vk.acquired = vk.in_pass = vk.in_compute = vk.drawn = false;
     uniform_buffer = VK_NULL_HANDLE;
 }
 
@@ -2618,6 +3007,15 @@ static bool create_device(const bool say)
             why = "no device has dynamic rendering and independent blending";
             continue;
         }
+        // Compute as WebGPU's defaults have it, which every render backend has: a pipeline's storage
+        // buffers in each stage, and workgroups of 256 invocations, 64 deep
+        const VkPhysicalDeviceLimits *limits = &properties.limits;
+        if (limits->maxPerStageDescriptorStorageBuffers < TIDE_GPU_MAX_STORAGE || limits->maxComputeWorkGroupInvocations < 256u
+            || limits->maxComputeWorkGroupSize[0] < 256u || limits->maxComputeWorkGroupSize[1] < 256u
+            || limits->maxComputeWorkGroupSize[2] < 64u || limits->maxComputeSharedMemorySize < 16384u) {
+            why = "no device computes with the storage buffers and workgroups compute shaders are given";
+            continue;
+        }
         VkQueueFamilyProperties families[32];
         uint32_t family_count = 32;
         vkGetPhysicalDeviceQueueFamilyProperties(devices[d], &family_count, families);
@@ -2625,10 +3023,11 @@ static bool create_device(const bool say)
         for (uint32_t f = 0; f < family_count && family < 0; f++) {
             VkBool32 shows = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(devices[d], f, vk.surface, &shows);
-            if ((families[f].queueFlags & VK_QUEUE_GRAPHICS_BIT) && shows) family = (int)f;
+            const VkQueueFlags both = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
+            if ((families[f].queueFlags & both) == both && shows) family = (int)f;
         }
         if (family < 0) {
-            why = "no device draws in the window";
+            why = "no device draws and computes in the window";
             continue;
         }
         const int score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 4
@@ -2662,6 +3061,12 @@ static bool create_device(const bool say)
     // Push descriptors where there are some; TIDE_VULKAN_DESCRIPTOR_SETS has a test write sets where there are too
     const char *sets = getenv("TIDE_VULKAN_DESCRIPTOR_SETS");
     vk.push = listed(extensions, extension_count, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) && !(sets && *sets && strcmp(sets, "0") != 0);
+    if (vk.push) { // ...all of a pipeline's layout at once: 32, the least a device that has them pushes
+        VkPhysicalDevicePushDescriptorPropertiesKHR pushes = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
+        VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pushes};
+        vkGetPhysicalDeviceProperties2(vk.physical, &properties);
+        vk.push = pushes.maxPushDescriptors >= TIDE_GPU_STORAGE_BINDING + TIDE_GPU_MAX_STORAGE;
+    }
     if (vk.push) enabled[enabled_count++] = VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
     if (listed(extensions, extension_count, "VK_KHR_portability_subset")) enabled[enabled_count++] = "VK_KHR_portability_subset";
     VkPhysicalDeviceVulkan13Features has13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -2676,6 +3081,8 @@ static bool create_device(const bool say)
     want.features.textureCompressionBC = has.features.textureCompressionBC;
     vk.compression = has.features.textureCompressionBC;
     want.features.alphaToOne = has.features.alphaToOne;
+    // A draw's first instance as the GPU's numbers have it (gpu.h has them 0), where a device takes another
+    want.features.drawIndirectFirstInstance = has.features.drawIndirectFirstInstance;
     vk.alpha_to_one = has.features.alphaToOne;
     const float priority = 1.0f;
     const VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, NULL, 0, vk.family, 1, &priority};
@@ -2719,17 +3126,23 @@ static bool create_device(const bool say)
         return false;
     }
 
-    // One layout for every pipeline: the uniforms, then each texture and its sampler, pushed with each draw
-    VkDescriptorSetLayoutBinding bindings[1 + 2 * TIDE_GPU_MAX_TEXTURES];
-    const VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    // One layout for every pipeline, drawing or computing: the uniforms, then each texture and its sampler, then
+    // the storage buffers, pushed with each draw and dispatch
+    enum { BINDINGS = TIDE_GPU_STORAGE_BINDING + TIDE_GPU_MAX_STORAGE };
+    VkDescriptorSetLayoutBinding bindings[BINDINGS];
+    const VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     bindings[0] = (VkDescriptorSetLayoutBinding){0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stages, NULL};
     for (uint32_t i = 0; i < TIDE_GPU_MAX_TEXTURES; i++) {
         bindings[1 + 2 * i] = (VkDescriptorSetLayoutBinding){1 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, stages, NULL};
         bindings[2 + 2 * i] = (VkDescriptorSetLayoutBinding){2 + 2 * i, VK_DESCRIPTOR_TYPE_SAMPLER, 1, stages, NULL};
     }
+    for (uint32_t i = 0; i < TIDE_GPU_MAX_STORAGE; i++) {
+        bindings[TIDE_GPU_STORAGE_BINDING + i] = (VkDescriptorSetLayoutBinding){TIDE_GPU_STORAGE_BINDING + i,
+                                                                                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, stages, NULL};
+    }
     const VkDescriptorSetLayoutCreateInfo set = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL,
                                                  vk.push ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0,
-                                                 1 + 2 * TIDE_GPU_MAX_TEXTURES, bindings};
+                                                 BINDINGS, bindings};
     check(vkCreateDescriptorSetLayout(vk.device, &set, NULL, &vk.set_layout), "vkCreateDescriptorSetLayout");
     const VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, NULL, 0, 1, &vk.set_layout, 0, NULL};
     check(vkCreatePipelineLayout(vk.device, &layout, NULL, &vk.layout), "vkCreatePipelineLayout");
@@ -2904,6 +3317,7 @@ void tide_gpu_vk_close(void)
     free(vk.pipelines);
     free(vk.targets);
     free(vk.pending);
+    free(vk.reads);
     memset(&vk, 0, sizeof vk);
 }
 
@@ -2979,5 +3393,16 @@ const tide_gpu tide_gpu_vulkan = {
     .indices = vk_indices,
     .draw = vk_draw,
     .draw_indexed = vk_draw_indexed,
+    .storage = vk_storage,
+    .compute_begin = vk_compute_begin,
+    .compute_end = vk_compute_end,
+    .dispatch = vk_dispatch,
+    .dispatch_indirect = vk_dispatch_indirect,
+    .draw_indirect = vk_draw_indirect,
+    .draw_indexed_indirect = vk_draw_indexed_indirect,
+    .buffer_copy = vk_buffer_copy,
+    .buffer_read = vk_buffer_read,
+    .buffer_read_done = vk_buffer_read_done,
+    .buffer_read_wait = vk_buffer_read_wait,
 };
 
