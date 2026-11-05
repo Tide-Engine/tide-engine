@@ -276,6 +276,9 @@ static bool shots_drawn(const int into, const char *when, shot_tally *tally)
         tide_platform_cull_report culling;
         tide_platform_cull_compare(NULL, &culling);
         if (!culling.runs) return false; // Its culling on the CPU, this frame
+        // ...or its pyramid's kernels still being made, as they are in the background on the web: on the next device,
+        // slower ones (CI's) draw a few frames before they're there, testing nothing
+        if (report.spans && !report.measured && !report.failed && into != 2) return false;
         tally->pyramids += report.pyramids;
         tally->spans += report.spans;
         tally->measured += report.measured;
