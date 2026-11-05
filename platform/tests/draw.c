@@ -4679,8 +4679,9 @@ static const char *dump_path;
 // Pipelines made in the background (tide_platform_background_pipelines), across frames, as a game's are: the shaders'
 // pipelines let go of (the list forgot them, and a frame drew without them), then drawn again with background on.
 // On WebGPU the first frame can't have made them (that takes the page's turn), so it leaves the shaded draws out, and
-// the rest draw; on every backend they show, drawn right, within BACKGROUND_FRAMES. A backend that makes them as
-// they're asked for draws them in the first.
+// the rest draw; on every backend they show, drawn right, within BACKGROUND_FRAMES: all of them, in a frame that
+// began with every pipeline the first one asked for made, as Vulkan's pool threads finish them in any order. A
+// backend that makes them as they're asked for draws them in the first.
 enum { BACKGROUND_FRAMES = 600 };
 
 static int background_frame(void)
@@ -4696,9 +4697,10 @@ static int background_frame(void)
     } else {
         tide_float2 point = tide_f2(orange_quad.x, orange_quad.y);
         uint32_t got = 0;
+        const bool made = tide_platform_shader_pipelines_waiting() == 0;
         shaded_scene();
         tide_platform_read_pixels(&list, &point, 1, &got);
-        const bool drawn = near(got, rgba(orange), 8);
+        const bool drawn = near(got, rgba(orange), 8) && made && !tide_platform_shader_pipelines_waiting();
 #ifdef __wasm__
         if (frames == 1 && strcmp(tide_platform_renderer(), "WebGPU") == 0)
             expect(!drawn && near(got, rgba(background), 8), "a shader's first frame with background pipelines leaves its draws out on WebGPU");

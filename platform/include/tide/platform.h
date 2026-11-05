@@ -336,7 +336,8 @@ const char *tide_platform_log_path(void);
 // Nothing before tide_platform_log_begin, or where there's no log.
 void tide_platform_log_note(const char *text);
 // Whether a GPU pipeline (a shader with how it blends, tests depth and culls)
-// is made in the background where the backend can: WebGPU. Making one takes tens of
+// is made in the background where the backend can: WebGPU, and Vulkan on the
+// job pool's threads, several at once. Making one takes tens of
 // milliseconds; in the background, nothing that draws with it shows till it's
 // made, a frame or a few later, where otherwise the frame that first draws it
 // waits for it. Off at first, so a frame read back draws everything it's

@@ -4071,6 +4071,18 @@ uint32_t tide_platform_shader_pipelines(void)
     return shader_pipeline_count;
 }
 
+uint32_t tide_platform_shader_pipelines_waiting(void)
+{
+    if (!gpu || !gpu->pipeline_ready) return 0;
+    uint32_t waiting = 0;
+    for (uint32_t i = 0; i < shader_pipeline_count; i++) {
+        const tide_gpu_id pipeline = shader_pipelines[i].pipeline;
+        const bool failed = pipeline && gpu->pipeline_failed && gpu->pipeline_failed(pipeline);
+        waiting += pipeline && !failed && !gpu->pipeline_ready(pipeline);
+    }
+    return waiting;
+}
+
 uint32_t tide_platform_prewarm_waiting(void)
 {
     if (!gpu || !gpu->pipeline_ready || warm_epoch != gpu_epoch) return 0;
