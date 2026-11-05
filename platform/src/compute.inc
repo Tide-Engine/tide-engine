@@ -237,7 +237,8 @@ static void forget_kernel_pipelines(void)
 
 static bool pipeline_usable(const tide_gpu_id pipeline)
 {
-    return pipeline && (!gpu->pipeline_ready || gpu->pipeline_ready(pipeline));
+    return pipeline && (!gpu->pipeline_ready || gpu->pipeline_ready(pipeline))
+        && !(gpu->pipeline_failed && gpu->pipeline_failed(pipeline));
 }
 
 static bool engine_kernels(void)

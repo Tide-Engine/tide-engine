@@ -8,6 +8,10 @@
 // kept. The stats' vertices and draws, read back from the GPU a frame or more later, are the CPU's culling's. Then
 // the device is lost, and it's all again on the next.
 // Under TIDE_GPU_CULLING=decide the renderer has the CPU decide the recorded runs, and draws the same.
+// On the web with `fail-pipeline=CullListed,pyramid` in the page's address (the test
+// tide_platform_cull_fallback), the browser can't make those kernels, as a driver whose compiler refuses them (Dawn's
+// FXC on Direct3D 11 did): the renderer says so once, the runs are decided on the CPU, and every shot is the same
+// pixels still, with no error from a pipeline used that isn't there.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +40,7 @@ static int failures;
 static tide_float2 points[PIXELS];
 static tide_draw_diagnostics diagnostics; // Geometry rows, for the counts' last round
 static uint32_t culled[PIXELS], plain[PIXELS];
+static bool said_failed; // A shot's report said the culling's kernels can't be made
 
 // The box's two simpler levels: three of its faces, then one
 static const uint32_t simpler[18] = {0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4};
@@ -78,6 +83,7 @@ static bool shots(const char *when, const bool computes)
             tide_platform_cull_report report;
             const bool read = tide_platform_cull_compare(&list, &report);
             all &= report.runs > 0 || !computes;
+            said_failed |= report.failed;
             // Where none was culled on the GPU yet (its kernels or a pipeline still being made), the renderer had
             // the CPU decide them: the same pixels still
             char what[160];
@@ -222,7 +228,13 @@ static int frame(void *user, const float seconds)
     const char *renderer = tide_platform_renderer();
     // TIDE_GPU_CULLING=decide: runs are recorded to be culled, and the renderer has the CPU decide them as it draws
     const char *said = getenv("TIDE_GPU_CULLING");
-    const bool computes = !(said && strcmp(said, "decide") == 0);
+#ifdef __wasm__
+    static int failing = -1; // fail-pipeline=: the page's browser can't make the culling's kernels
+    if (failing < 0) failing = tide_web_eval("new URLSearchParams(location.search).has('fail-pipeline')");
+#else
+    const int failing = 0;
+#endif
+    const bool computes = !(said && strcmp(said, "decide") == 0) && !failing;
     if (stage == 0) {
         printf("renderer: %s\n", renderer);
         draw_shot(0, 0, false, plain); // The field made, and its mesh's levels given
@@ -232,6 +244,13 @@ static int frame(void *user, const float seconds)
     if (stage == 1 || stage == 3) {
         if (!shots(stage == 1 ? "" : ", on the next device", computes) && ++tries < 600) return TIDE_KEEP_RUNNING;
         if (computes) expect(tries < 600, "the GPU culled every shot's runs once its pipelines were made", stage == 1 ? "" : ", again");
+        if (failing) { // The browser says so as it runs, a frame or more later: the shots again until it has
+            tide_platform_occlusion_report occlusion;
+            tide_platform_occlusion(&occlusion, false);
+            if (!(said_failed && occlusion.failed) && ++tries < 600) return TIDE_KEEP_RUNNING;
+            expect(said_failed && occlusion.failed, "the culling's kernels and the pyramid's couldn't be made, said, and every "
+                   "shot was culled on the CPU", stage == 1 ? "" : ", again");
+        }
         tries = 0;
         if (failures) return failures;
         stage = stage == 1 ? 4 : 5;

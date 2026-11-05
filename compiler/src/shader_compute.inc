@@ -217,7 +217,7 @@ static const char *need_atomic(emit *em, const int slot, const str name, const c
         snprintf(place, sizeof place, "&%s[4u + u32(tide_i)]", array);
     } else {
         sb_printf(&text, "    if (tide_i < 0 || tide_i >= %d) {\n        return 0;\n    }\n", length);
-        snprintf(place, sizeof place, "&%s[tide_i]", array);
+        snprintf(place, sizeof place, "&%s.tide_cells[tide_i]", array); // A shared array, its struct (shared_atomic_length)
     }
     if (exchange) sb_printf(&text, "    return atomicCompareExchangeWeak(%s, tide_c, tide_v).old_value;\n}\n\n", place);
     else sb_printf(&text, "    return %s(%s, tide_v);\n}\n\n", op, place);
@@ -258,9 +258,10 @@ static const char *need_shared_access(emit *em, const stmt *local, const bool st
     const int length = local->type.decl->array_length;
     sb text = {0};
     if (store) sb_printf(&text, "fn %s(tide_i: i32, tide_v: i32) {\n    if (tide_i >= 0 && tide_i < %d) {\n"
-                                "        atomicStore(&%s[tide_i], tide_v);\n    }\n}\n\n", fn.data, length, local_name(local->name));
+                                "        atomicStore(&%s.tide_cells[tide_i], tide_v);\n    }\n}\n\n", fn.data, length,
+                         local_name(local->name));
     else sb_printf(&text, "fn %s(tide_i: i32) -> i32 {\n    if (tide_i < 0 || tide_i >= %d) {\n        return 0;\n    }\n"
-                          "    return atomicLoad(&%s[tide_i]);\n}\n\n", fn.data, length, local_name(local->name));
+                          "    return atomicLoad(&%s.tide_cells[tide_i]);\n}\n\n", fn.data, length, local_name(local->name));
     sb_put(&em->functions, text.data);
     return fn.data;
 }

@@ -1,5 +1,16 @@
 # Web builds
 
+## Pipelines the browser can't make, and Dawn's Direct3D 11 (2026-11-05)
+
+`tide.js`: a pipeline made at once is made inside `validation` and `internal` error scopes, and one whose scopes
+catch an error or whose background promise rejects is `failed` (`gpu_pipeline_failed`, gpu_web.c's
+`pipeline_failed`), let go and said once; `gpu_pipeline_optional` marks one the renderer can do without (the GPU
+culling's and the depth pyramid's kernels), made in the background whatever `gpu_background` says. `fail-pipeline=`
+in the address makes the named pipelines fail as they're made, for tests. The test runners' adapter probe
+(`cmake/web_gpu.mjs`) also reports `backend`, and `TIDE_WEB_HARDWARE=d3d11` (`ctest --preset web-hardware-d3d11`) runs
+the hardware lane on Dawn's D3D11. The release runtime was regenerated. notes/drawing.md, A culling kernel that can't be
+made; notes/shaders.md, Kernels on Dawn's Direct3D 11; notes/testing.md, The hardware web lane on Direct3D 11.
+
 ## Occlusion culling's depth on WebGPU, its samples read (2026-11-05)
 
 `gpu_depth_far` became `gpu_depth_now` with `gpu_depth_samples` (`depth_now` in gpu_web.c): a multisampled target's

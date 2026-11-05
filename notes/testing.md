@@ -11,6 +11,51 @@
 - **What the test does now** (`occlusion.c`, `Shot.split` in `occlusion.tide`): where a shot's culled frame differs from the CPU's path and its measures ended passes (`report.breaks`), the CPU's path is drawn again with the destination's pass ended at the same places (something drawn into another target before each run testing occlusion), and the culled frame must be that, byte for byte; then it's a `note:`. Where a pass ending changes nothing (Vulkan, SwiftShader), that frame is the one already compared, so nothing is loosened; on this GPU the comparison is exact rather than "explained" (`explained_by_cpu` stays for the noise below, and wasn't needed in the runs here). A culling mistake still fails: the split frame draws everything.
 - **Not done**: no Chromium or NVIDIA bug filed; other GPUs and Chrome on Vulkan or Metal not tried; which of the two is right by WebGPU's rules (centre interpolation per face) not worked out.
 
+## The hardware web lane on Direct3D 11 (2026-11-05)
+
+Chrome's WebGPU on Dawn's D3D11 adapter (some Windows machines get it instead of D3D12) compiles shaders through FXC,
+which refused four of the renderer's and tidec's kernels. The lane that finds that, Claude's, Provisional:
+
+- **Running it:** `ctest --preset web-hardware-d3d11` after a `web-debug` build: the `pixels` tests with
+  `TIDE_WEB_HARDWARE=d3d11`, which is the hardware lane's flags plus `--use-webgpu-adapter=d3d11`
+  (`cmake/web_gpu.mjs`). The adapter's probe now also reports `backend` (Chrome gives it with
+  `--enable-webgpu-developer-features`, which the lane passes: `D3D11`, `D3D12`), printed after the description
+  (`WebGPU adapter: nvidia, lovelace, 0x2702, NVIDIA GeForce RTX 4080 SUPER (D3D11)`), and a page whose backend isn't
+  D3D11 fails at once. Run it beside the D3D12 lane for anything reaching WebGPU's shaders (tidec's WGSL, the
+  renderer's kernels, `tide.js`'s pipelines).
+- **Before the fixes**, 27 of 35 passed: `tide_platform_draw`, `_draw_rgba_fallback`, `_prewarm` and `_web_stats`
+  stopped at the prewarmed pyramid kernel's FXC error, `_cull` and `_occlusion` at CullListed's and the pyramid's,
+  `_kernels` at its `Prefix` kernel's, `_compute` at its hand-written shared-memory kernel's. Every render pipeline
+  compiled. FXC's own text only shows with `--enable-dawn-features=dump_shaders` (else Dawn says `FXC compile failed
+  with error: E_FAIL.` alone); the errors and their fixes are in notes/shaders.md, Kernels on Dawn's Direct3D 11.
+- **After:** 36 of 36 (the new `tide_platform_cull_fallback` too) in 107 seconds, Chrome 156.0.8078.81, RTX 4080
+  SUPER, driver 32.0.16.1742. There the GPU culls every shot of `tide_platform_cull` and `_occlusion` (occlusion hides
+  1,450 boxes in the steady frame) with the CPU path's pixels byte for byte, before and after a lost device, and no
+  4-sample shot of `_occlusion` differs (the noise below is D3D12's).
+- **A sweep of every shader** (not committed; scratch scripts): every WGSL module the goldens
+  (`compiler/tests/shaders/*.txt`), the translator fixtures (`compiler/tests/wgsl`), the renderer (`TIDE_RENDERER_WGSL`)
+  and `tidec --shaders` of `platform/src/cull.tide`+`occlusion.tide` and each `platform/tests/*.tide` hold, 382
+  (38 kernels), made into pipelines in one headless page (`layout: 'auto'`, vertex buffers and targets from the entry
+  points' signatures) inside error scopes. Before: 375 on D3D11, the 7 failing all kernels; SwiftShader 382. After:
+  381 on D3D11 and 382 on SwiftShader; the one left is `compiler/tests/wgsl/atomics.wgsl`, a translator fixture of bare
+  workgroup atomics (`&name`, `&name[i]`) that no WebGPU page runs, kept as it is to test those forms.
+- **The D3D12 lane's `tide_platform_occlusion` fails today**, 2 pixels of shots 2 and 3 of the 4-sample target (the
+  noise of "A GPU whose 4-sample frames differ" below, at the same place): its probe drew the CPU path 17 times and saw
+  no difference, so the shots were checked and failed. Not this work's: the parent commit 63c718e5c, built alone in a
+  scratch worktree, fails the same 6 runs of 6, and so does this branch with the old pyramid kernel, with optional
+  pipelines made at once and without the new error scopes. Left as it is (loosening it is the owner's call); the D3D11
+  lane draws those shots the same as the CPU path.
+- **Validation** (Windows, Clang 23, Node 24.22.1, Chrome 156.0.8078.81, `TIDE_HIDDEN`, `-DTIDE_EXTERNAL_DIRS=`):
+  `web-hardware-d3d11` 36/36 (100 s); `web-hardware` (D3D12) 35/36, `tide_platform_occlusion` failing as above; the
+  whole `web-debug` suite on SwiftShader 3,000 of 3,001 (636 s), the one `tide_web_runtime`, whose two layout sandboxes
+  lacked `READ_SAMPLES` since the occlusion commit before this (f8960a08c added it to `layoutFor`): given it, it passes.
+  Native `sanitize`: the 64 `gpu` tests on Vulkan with the validation layer, and 345 shader tests (goldens, spirv-val,
+  every `tidec_hlsl_*`/`wgsl_hlsl_*` through fxc, `tide_spirv_shaders_valid`, `tide_hlsl_shaders_valid`,
+  `tidec_e2e_compute`, the GPU/kernel error tests).
+- **Not run:** another GPU vendor, Chrome on Vulkan, a machine whose Chrome picks D3D11 by itself (the flag forces it
+  here); FXC on a driver other than this machine's `d3dcompiler_47.dll`. Whether the D3D11 lane joins `AGENTS.md`'s
+  required validation for rendering changes is the owner's call.
+
 ## The hardware web lane (2026-11-05)
 
 Every web test draws on Chrome's software WebGPU (SwiftShader), so bugs that only show on a real GPU's WebGPU went unseen. The lane runs the web tests on this machine's GPU through Chrome instead, headless and muted as always. Claude's arrangement, Provisional:
@@ -19,7 +64,7 @@ Every web test draws on Chrome's software WebGPU (SwiftShader), so bugs that onl
 - **Not CI's (the owner, 2026-11-05):** "im not always going to have my computer on and i dont want it stressing it out either so for now i guess CI wont test real GPUs". CI tests WebGPU on software adapters alone (SwiftShader on Windows and macOS, `gpu=none` on Linux), and real-GPU WebGPU coverage is this lane, run locally. No self-hosted or GPU job exists (`notes/releases-and-ci.md`).
 - **`cmake/web_gpu.mjs`** is the one place the runners get their GPU flags (`gpuFlags()`): `run_web_served_test.mjs`, `platform/tests/web_rooms.mjs`, `web_threads.mjs` and `docs/tests/examples.mjs` (`bench/lag.mjs` keeps its own). Software, as before: `--enable-unsafe-webgpu --use-webgpu-adapter=swiftshader --disable-gpu-watchdog`, `--use-angle=d3d11-warp` on Windows and SwiftShader's Vulkan on Linux with `TIDE_WEB_LINUX_VULKAN=1`. `web_rooms.mjs` and `web_threads.mjs` gained `--disable-gpu-watchdog` with this, and every runner now honors `TIDE_WEBGPU_FLAGS`, which still replaces the flags in either mode. Hardware: `--enable-unsafe-webgpu --enable-webgpu-developer-features` (the adapter's full description) `--ignore-gpu-blocklist --use-webgpu-power-preference=default-high-performance --disable-gpu-watchdog`, and no ANGLE choice: the browser's own drawing goes as Chrome picks.
 - **Which adapter it was** is asked before every test page: the browser goes to `/tide-adapter?next=<the test's address>` first, a page of the runner's (`probeRoute`) that calls `navigator.gpu.requestAdapter()` as `tide.js` does, posts its `info` (vendor, architecture, device, description, `isFallbackAdapter`) back and replaces itself with the test's page. `examples.mjs`, which drives its pages over DevTools, evaluates the same expression (`adapterExpression`) in its first page. The served runner keeps the line in a failure's account in both modes. In the hardware lane it's printed (`WebGPU adapter: nvidia, lovelace, 0x2702, NVIDIA GeForce RTX 4080 SUPER`), and the test fails at once when the adapter is a fallback one, names SwiftShader, llvmpipe, lavapipe, WARP or Microsoft's Basic Render Driver, or there's none, and fails at its end if no adapter was ever reported. Checked: `TIDE_WEBGPU_FLAGS` set to the software flags with `TIDE_WEB_HARDWARE=1` fails `tide_platform_draw` with "the browser gave its fallback adapter".
-- **Found, run the first time** (`web-debug`, all 35 `pixels` tests): 34 passed as they were. `tide_platform_occlusion` failed at four 4-sample shots, 2 to 17 pixels a shot: the GPU's, below. `--use-webgpu-adapter=d3d11` (Dawn's D3D11, compatibility mode) is no lane: there FXC fails to compile the renderer's `CullListed` (`E_FAIL`), and its one-sample shots differ from the CPU path by hundreds of pixels. Not looked into: the D3D11 adapter isn't what Chrome gives a page. `force-low-power` gets no adapter here (the AMD iGPU isn't offered).
+- **Found, run the first time** (`web-debug`, all 35 `pixels` tests): 34 passed as they were. `tide_platform_occlusion` failed at four 4-sample shots, 2 to 17 pixels a shot: the GPU's, below. `--use-webgpu-adapter=d3d11` (Dawn's D3D11) was no lane: there FXC failed to compile the renderer's `CullListed` (`E_FAIL`), and its one-sample shots differed from the CPU path by hundreds of pixels (the culled runs' draws went unwritten). Since, fixed and a lane: The hardware web lane on Direct3D 11, above. `force-low-power` gets no adapter here (the AMD iGPU isn't offered).
 - **The rest of the web suite** works in the lane too: `tide_platform_web_rooms*` and `_web_threads` pass with `TIDE_WEB_HARDWARE=1`, and so does the docs examples test (`TIDE_EXAMPLES=assets,audio,commands node tests/examples.mjs` after a `-DTIDE_DOC_EXAMPLES=ON` `docs_examples` build and `npm run build`). Both modes print the adapter (`google, swiftshader (a fallback adapter)` in software).
 
 ## A GPU whose 4-sample frames differ from themselves (2026-11-05)

@@ -293,6 +293,12 @@ typedef struct tide_gpu_pipeline_desc {
     // others are var<storage, read>. Only a compute pipeline writes one.
     uint32_t storage_count;
     bool storage_writes[TIDE_GPU_MAX_STORAGE];
+    // One the renderer does without until it's ready (the GPU culling's
+    // kernels and occlusion's pyramid, whose frames are the CPU's otherwise,
+    // the same pixels): a backend that makes pipelines in the background
+    // makes this one so whatever `background` says, so it's never used before
+    // the backend knows it could make it (pipeline_failed).
+    bool optional;
 } tide_gpu_pipeline_desc;
 
 typedef struct tide_gpu {
@@ -395,6 +401,14 @@ typedef struct tide_gpu {
     // for a backend that only makes them so.
     void (*background)(bool on);
     bool (*pipeline_ready)(tide_gpu_id pipeline);
+    // Optional: true once the backend knows a pipeline can't be made (WebGPU's
+    // browser refused it: its driver's compiler, as Dawn's FXC on Direct3D 11
+    // may). The renderer never uses one (pipeline_usable) and does without it
+    // where it can. The backend says why, once. WebGPU knows it a moment after
+    // `pipeline` for one made at once, so frames before may still use it;
+    // before it's ready for one made in the background. NULL for a backend
+    // whose `pipeline` makes one or stops the program.
+    bool (*pipeline_failed)(tide_gpu_id pipeline);
 
     // Pixels of its own to draw into, with depth and stencil: the color
     // images `format` says, in order, rows from the top. Each color image is

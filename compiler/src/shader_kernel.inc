@@ -20,6 +20,23 @@ static int kernel_group(const decl *k)
     return k->group[0] * k->group[1] * k->group[2];
 }
 
+// A shared array that atomics are used on, as WGSL declares it: a struct of its elements then a word of no use,
+// `struct tide_atomics_<name> { tide_cells: array<atomic<i32>, n>, tide_plain: u32 }`, with at least 2 elements and
+// never as many as the group's invocations (the elements past the Tide array's length are never touched). So it
+// compiles on Direct3D 11: Dawn's HLSL there zeroes workgroup memory as a group starts, an atomic by an
+// InterlockedExchange, and FXC refuses (X4000, "used without having been completely initialized") any groupshared
+// variable that no plain store has written before its first Interlocked call. The plain word is that store: Dawn
+// zeroes it in the first invocation alone, before the array, whose elements are zeroed one an invocation after it as
+// long as there are 2 or more and not one an invocation of the whole group (FXC folds that `if` away and refuses it
+// again), and it has to come after the array, as FXC tracks the struct. Measured with Chrome 156's Dawn on its D3D11
+// adapter and fxc 10.0.22621: notes/shaders.md, Kernels on Dawn's Direct3D 11.
+static int shared_atomic_length(const decl *k, const stmt *s)
+{
+    int n = s->type.decl->array_length < 2 ? 2 : s->type.decl->array_length;
+    if (n == kernel_group(k)) n++;
+    return n;
+}
+
 // The scan of a kernel's Adds' flags, a lane a list, where there are several (at most 3: a kernel binds 7 storage
 // buffers, a list and its scratch for each, and its run's record).
 static const char *kernel_scan(const int adds)
@@ -65,8 +82,11 @@ static void write_kernel(program *prog, shader *sh)
     for (int i = 0; k->body && i < k->body->stmts.count; i++) { // Its shared locals, the group's
         const stmt *s = k->body->stmts.items[i];
         if (s->kind != S_VAR || !s->is_shared) continue;
-        if (s->shared_atomic) sb_printf(&o, "var<workgroup> %s: array<atomic<i32>, %d>;\n", local_name(s->name),
-                                        s->type.decl->array_length);
+        if (s->shared_atomic) {
+            sb_printf(&o, "struct tide_atomics_%s {\n    tide_cells: array<atomic<i32>, %d>,\n    tide_plain: u32,\n}\n",
+                      local_name(s->name), shared_atomic_length(k, s));
+            sb_printf(&o, "var<workgroup> %s: tide_atomics_%s;\n", local_name(s->name), local_name(s->name));
+        }
         else sb_printf(&o, "var<workgroup> %s: %s;\n", local_name(s->name), ty(&em, s->type));
     }
     if (k->rolls) need(&em, H_HASH4); // What each invocation's generator is made of, below
@@ -200,6 +220,7 @@ static shader *plan_kernel(program *prog, const expr *call, decl *k)
         const stmt *s = k->body->stmts.items[i];
         if (s->kind != S_VAR || !s->is_shared || s->type.kind == TY_ERROR) continue;
         shared_bytes += type_layout(s->type).size;
+        if (s->shared_atomic) shared_bytes += (shared_atomic_length(k, s) - s->type.decl->array_length + 1) * 4;
         shares = true;
     }
     shared_bytes += shares ? 4 : 0; // ...and the word its writes to them are under (writes_shared)

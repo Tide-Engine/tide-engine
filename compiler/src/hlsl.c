@@ -387,6 +387,29 @@ static const gdecl *workgroup_global(translation *x, const expr *e)
     return g && !g->is_const && g->space == SPACE_WORKGROUP ? g : NULL;
 }
 
+// A workgroup's variable, or a member of one that's a struct (tidec's shared atomics are `name.tide_cells`), that `e`
+// names: its type, its HLSL in `dest`; 0 for anything else.
+static int workgroup_place(translation *x, const expr *e, hs *dest)
+{
+    if (e->kind == X_NAME) {
+        const gdecl *g = workgroup_global(x, e);
+        if (!g) return 0;
+        put_name(dest, g->name, g->len);
+        return resolve(x, g->type);
+    }
+    if (e->kind != X_MEMBER) return 0;
+    const int t = workgroup_place(x, e->a, dest);
+    if (!t || T(x, t)->kind != K_STRUCT) return 0;
+    const sdecl *s = T(x, t)->s;
+    for (int i = 0; i < s->count; i++) {
+        if (s->members[i].len != e->len || memcmp(s->members[i].name, e->name, (size_t)e->len) != 0) continue;
+        hput(dest, ".");
+        put_name(dest, e->name, e->len);
+        return s->member_types[i];
+    }
+    return 0;
+}
+
 // Storage buffer i of a pipeline is at binding 25 + i (gpu.h's TIDE_GPU_STORAGE_BINDING), at most 7: `_TideStorage<i>`.
 static int storage_slot(translation *x, const gdecl *g)
 {
@@ -1217,14 +1240,16 @@ static bool compute_call(translation *x, const expr *e, hs *o, int *t)
         free(at.s);
     } else {
         const bool indexed = place && place->kind == X_INDEX;
-        const gdecl *g = place ? workgroup_global(x, indexed ? place->a : place) : NULL;
-        if (!g) fail(x, line, col, "%s takes an atomic in storage or a workgroup's memory: &name or &name[i]", atomics[which].wgsl);
-        const int gt = resolve(x, g->type);
+        hs dest = {0}, name = {0};
+        const int gt = place ? workgroup_place(x, indexed ? place->a : place, &dest) : 0;
+        if (!gt) fail(x, line, col, "%s takes an atomic in storage or a workgroup's memory: &name, &name[i], &name.member or "
+                      "&name.member[i]", atomics[which].wgsl);
         held = indexed ? (T(x, gt)->kind == K_ARRAY ? T(x, gt)->elem : 0) : gt;
         if (!held || T(x, held)->kind != K_ATOMIC) fail(x, line, col, "%s takes a pointer to an atomic", atomics[which].wgsl);
-        hs dest = {0}, name = {0};
-        put_name(&dest, g->name, g->len);
-        hprintf(&name, "tidehl_%s_%s", atomics[which].wgsl, dest.s);
+        hput(&name, "tidehl_");
+        hput(&name, atomics[which].wgsl);
+        hput(&name, "_");
+        for (size_t i = 0; i < dest.n; i++) hprintf(&name, "%c", dest.s[i] == '.' ? '_' : dest.s[i]);
         atomic_helper(x, which, name.s, T(x, held)->elem, 0, dest.s, indexed);
         hput(&call, name.s);
         hput(&call, "(");

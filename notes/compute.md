@@ -37,6 +37,9 @@ backend, and one that can't run it (OpenGL 3.3, OpenGL ES 3, WebGL 2) is removed
 - [x] Occlusion's pyramid in one dispatch (a hand-written WGSL kernel, shaders.h), multisampled depth read in place
       (`gpu.h depth_now`, `TIDE_GPU_READ_SAMPLES`), measured at a pass break the frame has; ordinary listed runs in culled
       runs' calls, 2026-11-05: notes/drawing.md, Occlusion's measure made cheaper
+- [x] Kernels on Dawn's Direct3D 11 (shared atomics in a struct, the pyramid's levels unrolled), a kernel the browser
+      can't make done without, the D3D11 hardware lane, 2026-11-05: notes/shaders.md, Kernels on Dawn's Direct3D 11;
+      notes/drawing.md, A culling kernel that can't be made
 
 ## Built: the language, the engine and the renderer (2026-11-05)
 
@@ -506,7 +509,9 @@ What the translators take (SPIR-V for Vulkan, HLSL for Unity):
 - `atomicLoad`, `atomicStore`, `atomicAdd`, `atomicSub`, `atomicMax`,
   `atomicMin`, `atomicAnd`, `atomicOr`, `atomicXor`, `atomicExchange`, and
   `atomicCompareExchangeWeak` with `.old_value` and `.exchanged`, each on
-  `&name[i]` or `&name`.
+  `&name[i]` or `&name`, and on a workgroup struct's member, `&name.member[i]`
+  or `&name.member` (tidec's shared atomics since 2026-11-05: notes/shaders.md,
+  Kernels on Dawn's Direct3D 11).
 - Storage reads in vertex and fragment stages (read-only).
 
 ## The translators (2026-11-05)

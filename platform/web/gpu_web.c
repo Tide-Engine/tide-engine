@@ -42,10 +42,13 @@ TIDE_WEB_IMPORT(gpu_pipeline_attribute) void tide_web_gpu_pipeline_attribute(uin
                                                                      uint32_t offset);
 // Its storage buffers, a bit of `writes` for each that's written, and whether it's a compute pipeline
 TIDE_WEB_IMPORT(gpu_pipeline_storage) void tide_web_gpu_pipeline_storage(uint32_t count, uint32_t writes, bool compute);
+// One the renderer does without until it's made (gpu.h, optional): made in the background whatever gpu_background says
+TIDE_WEB_IMPORT(gpu_pipeline_optional) void tide_web_gpu_pipeline_optional(void);
 TIDE_WEB_IMPORT(gpu_pipeline_end) tide_gpu_id tide_web_gpu_pipeline_end(void);
 TIDE_WEB_IMPORT(gpu_pipeline_free) void tide_web_gpu_pipeline_free(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_background) void tide_web_gpu_background(bool on);
 TIDE_WEB_IMPORT(gpu_pipeline_ready) bool tide_web_gpu_pipeline_ready(tide_gpu_id pipeline);
+TIDE_WEB_IMPORT(gpu_pipeline_failed) bool tide_web_gpu_pipeline_failed(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_target) tide_gpu_id tide_web_gpu_target(tide_gpu_target_format format, int width, int height);
 TIDE_WEB_IMPORT(gpu_target_limit) int tide_web_gpu_target_limit(void);
 TIDE_WEB_IMPORT(gpu_target_texture) tide_gpu_id tide_web_gpu_target_texture(tide_gpu_id target, uint32_t color);
@@ -103,6 +106,7 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
         for (uint32_t i = 0; i < storage; i++) writes |= (desc->compute && desc->storage_writes[i] ? 1u : 0u) << i;
         tide_web_gpu_pipeline_storage(storage, writes, desc->compute);
     }
+    if (desc->optional) tide_web_gpu_pipeline_optional();
     return tide_web_gpu_pipeline_end();
 }
 
@@ -151,6 +155,7 @@ const tide_gpu tide_gpu_webgpu = {
     .pipeline_free = tide_web_gpu_pipeline_free,
     .background = tide_web_gpu_background,
     .pipeline_ready = tide_web_gpu_pipeline_ready,
+    .pipeline_failed = tide_web_gpu_pipeline_failed,
     .target = tide_web_gpu_target,
     .target_limit = tide_web_gpu_target_limit,
     .target_samples = tide_web_gpu_target_samples,

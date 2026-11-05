@@ -151,7 +151,11 @@ var<private> tide_inv_group: vec3i;
 var<private> tide_inv_count: vec3i;
 var<workgroup> tide_zero: u32;
 var<workgroup> t_partial: array<f32, 64>;
-var<workgroup> t_seen: array<atomic<i32>, 2>;
+struct tide_atomics_t_seen {
+    tide_cells: array<atomic<i32>, 2>,
+    tide_plain: u32,
+}
+var<workgroup> t_seen: tide_atomics_t_seen;
 fn tide_i(x: i32) -> i32 {
     return x;
 }
@@ -189,7 +193,7 @@ fn tide_atomic_t_seen_AtomicAdd(tide_i: i32, tide_v: i32) -> i32 {
     if (tide_i < 0 || tide_i >= 2) {
         return 0;
     }
-    return atomicAdd(&t_seen[tide_i], tide_v);
+    return atomicAdd(&t_seen.tide_cells[tide_i], tide_v);
 }
 
 fn tide_el0(tide_a: array<f32, 64>, tide_i: i32) -> f32 {
@@ -219,7 +223,7 @@ fn tide_list0(tide_i: vec2i) -> f32 {
 
 fn tide_store_t_seen(tide_i: i32, tide_v: i32) {
     if (tide_i >= 0 && tide_i < 2) {
-        atomicStore(&t_seen[tide_i], tide_v);
+        atomicStore(&t_seen.tide_cells[tide_i], tide_v);
     }
 }
 
@@ -227,7 +231,7 @@ fn tide_load_t_seen(tide_i: i32) -> i32 {
     if (tide_i < 0 || tide_i >= 2) {
         return 0;
     }
-    return atomicLoad(&t_seen[tide_i]);
+    return atomicLoad(&t_seen.tide_cells[tide_i]);
 }
 
 fn ts_Sum() {

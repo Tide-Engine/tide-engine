@@ -156,6 +156,15 @@
       "filter": { "include": { "label": "pixels" } },
       "output": { "outputOnFailure": true }
     },
+    {
+      "name": "web-hardware-d3d11",
+      "displayName": "Web pixels on this machine's GPU through Direct3D 11",
+      "description": "The hardware lane on Dawn's Direct3D 11 adapter (FXC compiles its shaders), failing where Chrome gives another backend (notes/testing.md, The hardware web lane on Direct3D 11).",
+      "configurePreset": "web-debug",
+      "environment": { "TIDE_WEB_HARDWARE": "d3d11" },
+      "filter": { "include": { "label": "pixels" } },
+      "output": { "outputOnFailure": true }
+    },
     { "name": "web-release", "configurePreset": "web-release", "output": { "outputOnFailure": true } },
     { "name": "mingw-release", "configurePreset": "mingw-release", "output": { "outputOnFailure": true } },
     { "name": "android-debug", "configurePreset": "android-debug", "output": { "outputOnFailure": true } },
