@@ -3996,7 +3996,7 @@ static const decl *gpu_code(const checker *c)
 
 static const char *shader_word(const decl *d)
 {
-    return d->is_compute ? "compute" : d->is_frag ? "frag" : "vert";
+    return d->is_compute ? "kernel" : d->is_frag ? "frag" : "vert";
 }
 
 // The function or method being checked, where it's one code the GPU runs can
@@ -13945,8 +13945,15 @@ static bool always_returns(const stmt *s)
     }
 }
 
+static decl *kernel_own(const checker *c);
+
 static void check_var(checker *c, stmt *s)
 {
+    if (s->is_shared && !kernel_own(c)) {
+        diag_error(s->shared_at, "a shared local is a kernel's group's: it goes in a 'compute' declaration's own body");
+        diag_note("drop 'shared' for a local of this code's own");
+        s->is_shared = false;
+    }
     expr placeholder = {.kind = E_DEFAULT, .at = s->at};
     if (s->delayed) {
         c->outs++;

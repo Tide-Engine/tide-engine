@@ -1,0 +1,88 @@
+// What GPU.Run, GPU lists' operations and an indirect draw over a GPU list
+// record into the frame's draw list, in their order among the draws
+// (compute_test.c): each run's kernel, size or list it's over, uniforms and
+// GPU lists; Set's words, Clear and SetCount; and the indirect draw's list.
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+    int kind;
+    bool lit;
+}
+
+struct Settings
+{
+    float far;
+    int every;
+}
+
+struct Corner
+{
+    float3 position;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<Blade> shown;
+    GPUList<int> counts;
+    List<Blade> sent;
+    float scale;
+    int frames;
+    int capacity;
+    long revision;
+}
+
+[Group(32)]
+compute Thin(Meadow meadow, Settings settings)
+{
+    Blade blade = meadow.blades[this.index];
+    if (blade.height * meadow.scale < settings.far && this.index % settings.every == 0)
+        meadow.shown.Add(blade);
+}
+
+[Group(4, 4)]
+compute Count(Meadow meadow)
+{
+    meadow.counts.AtomicAdd(this.at.x, 1);
+}
+
+vert Place(mut Corner corner, Blade blade)
+{
+    corner.position += blade.root;
+}
+
+frag Paint(Corner corner, Blade blade, out Color color)
+{
+    color = Color(blade.height, 0, 0, 1);
+}
+
+view Show(mut Meadow meadow)
+{
+    if (meadow.frames == 0)
+    {
+        meadow.blades = GPUList<Blade>(16);
+        meadow.shown = GPUList<Blade>(16);
+        meadow.counts = GPUList<int>(4);
+        meadow.sent.Add(Blade { root = float3(1, 2, 3), height = 0.5, kind = 7, lit = true });
+        meadow.sent.Add(Blade { root = float3(4, 5, 6), height = 1.5, kind = -2, lit = false });
+        meadow.scale = 2;
+        meadow.shown.Resize(32);
+    }
+    meadow.frames += 1;
+    meadow.capacity = meadow.shown.capacity;
+    meadow.revision = meadow.shown.contentRevision;
+    Draw.Clear(Color.black);
+    meadow.blades.Set(meadow.sent);
+    meadow.shown.Clear();
+    meadow.counts.SetCount(3);
+    GPU.Run(Thin, meadow.blades, Settings { far = 2, every = 1 });
+    GPU.Run(Count, int2(5, 6));
+    GPU.Run(Count, 7);
+    List<Corner> corners = [Corner { position = float3(0, 0, 0) }, Corner { position = float3(1, 0, 0) },
+                            Corner { position = float3(0, 1, 0) }];
+    Draw.Instanced(corners, [0, 1, 2], meadow.shown, Place, Paint);
+    if (meadow.frames == 3) meadow.counts.Dispose();
+}

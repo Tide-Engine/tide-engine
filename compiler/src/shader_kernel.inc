@@ -61,6 +61,7 @@ static void write_kernel(program *prog, shader *sh)
                                         s->type.decl->array_length);
         else sb_printf(&o, "var<workgroup> %s: %s;\n", local_name(s->name), ty(&em, s->type));
     }
+    if (k->rolls) need(&em, H_HASH4); // What each invocation's generator is made of, below
     sb rest = {0};
     put_structs(&em, &rest);
     put_helpers(&em, &rest);
@@ -77,7 +78,6 @@ static void write_kernel(program *prog, shader *sh)
                "    tide_inv_index = i32(tide_gid.x + tide_size.x * (tide_gid.y + tide_size.y * tide_gid.z));\n");
     if (k->rolls) { // Each invocation's generator, of its place and the frame's roll
         em.o = &o;
-        need(&em, H_HASH4);
         sb_put(&o, "    tide_dice = u32(tide_hash4(vec4i(tide_inv_at, ");
         put_word(&em, 'v', sh->rolled_at);
         sb_printf(&o, " ^ %u)));\n", roll_site(k));

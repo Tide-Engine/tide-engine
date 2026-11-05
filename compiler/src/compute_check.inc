@@ -73,7 +73,8 @@ static type check_gpu_list_member(checker *c, expr *e, const type obj)
 static type check_gpu_list_index(checker *c, expr *e, const type obj)
 {
     const type index = check_expr_want(c, e->lhs, T_INT_);
-    if (!gpu_list_read_ok(c, e->at, "elements")) return T_ERR;
+    // What an assignment writes is its own to say (check_gpu_list_write)
+    if (!(c->property_target == e && !gpu_code(c)) && !gpu_list_read_ok(c, e->at, "elements")) return T_ERR;
     if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
         diag_error(e->lhs->at, "a GPU list's index is an int, not %s", type_name(index));
         return T_ERR;

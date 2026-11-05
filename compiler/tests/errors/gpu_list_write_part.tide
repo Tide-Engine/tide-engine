@@ -1,0 +1,20 @@
+// expect: a kernel writes a GPU list's whole element
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Grow(Meadow meadow)
+{
+    meadow.blades[this.index].height = 2;
+}
+view Show(Meadow meadow) { GPU.Run(Grow, 4); }

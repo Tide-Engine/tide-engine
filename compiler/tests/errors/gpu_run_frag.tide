@@ -1,0 +1,18 @@
+// expect: GPU.Run runs a kernel, a 'compute' declaration, and 'Paint' is a frag
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+struct Corner { float2 position; }
+frag Paint(Corner corner, out Color color) { color = Color.white; }
+view Show(Meadow meadow) { GPU.Run(Paint, 4); }

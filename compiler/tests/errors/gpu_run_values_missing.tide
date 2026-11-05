@@ -1,0 +1,18 @@
+// expect: kernel 'Inner' takes a Settings: give it after what it runs over
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+struct Settings { float speed; }
+compute Inner(Meadow meadow, Settings settings) { meadow.counts[0] = int(settings.speed); }
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

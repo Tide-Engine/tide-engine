@@ -1,0 +1,19 @@
+// expect: 'await' waits, and only async functions and handlers can
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+view Show(Meadow meadow)
+{
+    var items = await meadow.blades.Read();
+}

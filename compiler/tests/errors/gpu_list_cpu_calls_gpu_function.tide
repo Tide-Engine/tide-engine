@@ -1,0 +1,23 @@
+// expect: 'Height' reads a GPU list's elements or its count, which only code the GPU runs does
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+float Height(Meadow meadow)
+{
+    return meadow.blades[0].height;
+}
+view Show(Meadow meadow)
+{
+    Draw.Circle(float2(0, 0), Height(meadow), Color.white);
+}

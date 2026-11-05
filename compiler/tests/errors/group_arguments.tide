@@ -1,0 +1,18 @@
+// expect: Group takes a kernel's group size along one, two or three axes
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+[Group]
+compute Inner(Meadow meadow) { meadow.counts[0] = 1; }
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

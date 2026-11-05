@@ -1,0 +1,24 @@
+// expect: a GPU list in code the GPU runs is a field of what it takes, by its name
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+float First(GPUList<Blade> blades)
+{
+    return blades[0].height;
+}
+compute Look(Meadow meadow)
+{
+    meadow.counts[0] = int(First(meadow.blades));
+}
+view Show(Meadow meadow) { GPU.Run(Look, 1); }

@@ -1,0 +1,20 @@
+// expect: AtomicAdd takes the element's index and a value
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Count(Meadow meadow)
+{
+    meadow.counts.AtomicAdd(0);
+}
+view Show(Meadow meadow) { GPU.Run(Count, 4); }

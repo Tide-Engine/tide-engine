@@ -1,0 +1,18 @@
+// expect: a group is 256 invocations at the most, and 64 along z
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+[Group(32, 16)]
+compute Inner(Meadow meadow) { meadow.counts[0] = 1; }
+view Show(Meadow meadow) { GPU.Run(Inner, 4); }

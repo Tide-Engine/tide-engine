@@ -1,0 +1,20 @@
+// expect: atomics work on ints, and this list holds Blade
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Count(Meadow meadow)
+{
+    meadow.blades.AtomicAdd(0, 1);
+}
+view Show(Meadow meadow) { GPU.Run(Count, 4); }

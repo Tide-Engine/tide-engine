@@ -1,0 +1,16 @@
+// expect: a kernel reads what it takes, and writes GPU lists: drop 'mut'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(mut Meadow meadow) { meadow.counts[0] = 1; }

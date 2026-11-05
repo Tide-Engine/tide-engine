@@ -178,7 +178,7 @@ static void put_assigned(emit *em, const stmt *s);
 
 static const char *shader_word(const decl *d)
 {
-    return d->is_compute ? "compute" : d->is_frag ? "frag" : "vert";
+    return d->is_compute ? "kernel" : d->is_frag ? "frag" : "vert";
 }
 
 // Something the GPU can't run, where it's written. Code a frag or vert only

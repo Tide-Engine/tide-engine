@@ -1,0 +1,20 @@
+// expect: a kernel's invocation adds to a GPU list once at the most, so Add can't be in a loop
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Keep(Meadow meadow)
+{
+    for (var i = 0; i < 2; i++) meadow.counts.Add(i);
+}
+view Show(Meadow meadow) { GPU.Run(Keep, 4); }

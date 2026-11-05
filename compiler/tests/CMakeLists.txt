@@ -462,6 +462,7 @@ tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate
 tide_e2e_test(measure_text) # Draw.MeasureText: on the screen, under a camera and in a render target
 tide_e2e_test(text) # Draw.Text at an anchor and in a weight, and measuring in one
 tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
+tide_e2e_test(compute) # GPU.Run, GPU lists' operations and indirect draws: what they record, in frame order
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(draw_values) # A draw's values: a struct after its vert and frag, sent once for the draw
 tide_e2e_test(draw_helpers) # Shaded helpers bind only explicit parameters, forwarding attached local fields

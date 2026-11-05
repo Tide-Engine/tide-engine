@@ -1,0 +1,16 @@
+// expect: a GPUList can't hold long: the GPU's ints are 32 bits
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+local singleton Big { GPUList<long> numbers; }

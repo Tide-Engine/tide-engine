@@ -1,0 +1,21 @@
+// expect: so it can't run a kernel
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Inner(Meadow meadow) { meadow.counts[0] = 1; }
+compute Outer(Meadow meadow)
+{
+    GPU.Run(Inner, 1);
+}
+view Show(Meadow meadow) { GPU.Run(Outer, 1); }

@@ -1,0 +1,19 @@
+// expect: a kernel's own body writes GPU lists, so a function can't add to a GPU list
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+void Keep(Meadow meadow, Blade b)
+{
+    meadow.blades.Add(b);
+}

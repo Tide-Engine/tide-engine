@@ -1,0 +1,19 @@
+// expect: Set takes one argument: 'list.Set(items)'
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+view Show(Meadow meadow)
+{
+    meadow.blades.Set();
+}

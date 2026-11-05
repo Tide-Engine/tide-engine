@@ -1,0 +1,25 @@
+// expect: a loop with GPU.Barrier() in it runs to its end for every invocation
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Wait(Meadow meadow)
+{
+    for (var i = 0; i < 4; i++)
+    {
+        GPU.Barrier();
+        if (this.index == i) break;
+    }
+    meadow.counts[0] = 1;
+}
+view Show(Meadow meadow) { GPU.Run(Wait, 64); }

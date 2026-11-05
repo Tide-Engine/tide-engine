@@ -1,0 +1,20 @@
+// expect: a kernel runs on the GPU, for each invocation, so it can't change what a GPU list is
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+compute Look(Meadow meadow)
+{
+    meadow.counts.Clear();
+}
+view Show(Meadow meadow) { GPU.Run(Look, 1); }

@@ -1,0 +1,19 @@
+// expect: Read is a read the GPU finishes later: await it
+scene Main { }
+
+struct Blade
+{
+    float3 root;
+    float height;
+}
+
+local singleton Meadow
+{
+    GPUList<Blade> blades;
+    GPUList<int> counts;
+    List<Blade> sent;
+}
+async void Load(Meadow meadow)
+{
+    var items = meadow.blades.Read();
+}
