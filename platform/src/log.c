@@ -117,6 +117,7 @@ static void put_number(text *t, uint64_t value, const unsigned width)
     put(t, reversed);
 }
 
+#ifdef CRASHES
 static void put_hex(text *t, uint64_t value)
 {
     char digits[19] = "0x";
@@ -130,6 +131,7 @@ static void put_hex(text *t, uint64_t value)
     digits[2u + count] = '\0';
     put(t, digits);
 }
+#endif
 
 // UTC, from seconds since 1970: as a name (2026-11-05_143012), or for a
 // person (2026-11-05 14:30:12 UTC). Days to a date by Howard Hinnant's
@@ -164,6 +166,7 @@ static void put_time(text *t, const int64_t seconds, const bool name)
     if (!name) put(t, " UTC");
 }
 
+#ifdef CRASHES
 static bool make_new_folder(const char *path);
 
 // A folder of its own for a crash in Crashes, by its UTC time, with a number
@@ -183,6 +186,7 @@ static bool new_crash_folder(text *folder, const int64_t seconds)
     }
     return false;
 }
+#endif
 
 static const char *system_name(void)
 {
@@ -271,7 +275,7 @@ static void rotate(void)
     if (widen(narrow, previous, PATH_MOST)) MoveFileExW(wide_log, previous, MOVEFILE_REPLACE_EXISTING);
 }
 
-static DWORD WINAPI tee(void *unused);
+static DWORD WINAPI log_tee(void *unused);
 
 static bool start_tee(void)
 {
@@ -295,7 +299,7 @@ static bool start_tee(void)
     pipe_write = _fileno(stderr);
     setvbuf(stderr, NULL, _IONBF, 0);
     SetStdHandle(STD_ERROR_HANDLE, (HANDLE)_get_osfhandle(pipe_write));
-    tee_thread = CreateThread(NULL, 0, tee, NULL, 0, NULL);
+    tee_thread = CreateThread(NULL, 0, log_tee, NULL, 0, NULL);
     return tee_thread != NULL;
 }
 
@@ -649,7 +653,7 @@ static void rotate(void)
     rename(log_path, previous);
 }
 
-static void *tee(void *unused);
+static void *log_tee(void *unused);
 
 static bool start_tee(void)
 {
@@ -668,7 +672,7 @@ static bool start_tee(void)
     close(ends[1]);
     setvbuf(stderr, NULL, _IONBF, 0);
     pipe_read = ends[0];
-    piped = pthread_create(&tee_thread, NULL, tee, NULL) == 0;
+    piped = pthread_create(&tee_thread, NULL, log_tee, NULL) == 0;
     return piped;
 }
 
@@ -697,6 +701,7 @@ static void end_tee(void)
     }
 }
 
+#ifdef CRASHES
 static bool make_folder(const char *path)
 {
     return mkdir(path, 0755) == 0 || errno == EEXIST;
@@ -706,6 +711,7 @@ static bool make_new_folder(const char *path)
 {
     return mkdir(path, 0755) == 0;
 }
+#endif
 
 #ifdef CRASHES
 
@@ -919,9 +925,9 @@ static void forward(const char *bytes, const size_t size)
 }
 
 #ifdef _WIN32
-static DWORD WINAPI tee(void *unused)
+static DWORD WINAPI log_tee(void *unused)
 #else
-static void *tee(void *unused)
+static void *log_tee(void *unused)
 #endif
 {
     (void)unused;
@@ -1006,6 +1012,8 @@ void tide_platform_log_begin(const char *app_id, const char *title, const char *
         find_reporter(title && *title ? title : app_id && *app_id ? app_id : "The game");
         catch_crashes();
     }
+#else
+    (void)title;
 #endif
 }
 
